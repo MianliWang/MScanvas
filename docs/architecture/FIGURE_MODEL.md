@@ -146,7 +146,25 @@ See [ADR 0030](adr/0030-png-copy-plot-and-figure-settings.md).
 
 FIG-004 is partial: selected-spectrum CSV/TSV exists, chromatogram data export
 does not. FIG-006 through FIG-008 are unimplemented. There is no current-range
-export, no zoom or pan, no TIC, BPC or XIC, no linked figure, no saved
-specification and no composer, and the screen renderer still does not consume
-`FigureSpec` — screen and export agree by both being right rather than by
-sharing a type.
+export, no XIC, no linked figure, no saved specification and no composer, and the
+screen renderer still does not consume `FigureSpec` — screen and export agree by
+both being right rather than by sharing a type.
+
+TIC and BPC now exist on screen, with a retention-time viewport a user zooms and
+pans. That closes the second half of the sentence above and makes the first half
+answerable rather than hypothetical: **the range a current-range export would
+describe is `ViewerInteractionState.committedDomain`** — `null` for the whole
+run, otherwise a finite forward interval inside it. It is deliberately not the
+gesture in progress, so an export taken mid-drag cannot describe a range the user
+never settled on, and it is deliberately not the SVG's coordinates, the visible
+ticks or anything a pointer holds. Nothing consumes it yet. See
+[ADR 0032](adr/0032-viewer-interaction-and-viewport-state.md) and
+[ADR 0033](adr/0033-visible-linked-tic-bpc-viewer.md).
+
+The screen chromatogram is not drawn from a `PlotSpec`. It reads the same
+scientific model the rest of the viewer does and draws with the repository's own
+SVG, exactly as the stick spectrum does; the linked figure that would need a
+shared specification is FIG-006, and it is not built. What the two already agree
+on is the posture that matters — an unreported unit stays unreported, a reduction
+is disclosed rather than presented as the data, and a value below zero is drawn
+below zero.

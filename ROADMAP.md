@@ -68,14 +68,72 @@ a viewport change, and geometry in which the visible value range comes from the
 clipped polyline rather than from source points outside it. See
 [ADR 0032](docs/architecture/adr/0032-viewer-interaction-and-viewport-state.md).
 
-**VIEW-002, VIEW-005 and VIEW-006 remain unimplemented.** R0 ships no
-chromatogram, no linked selection and no keyboard navigation; it ships the
-contract the next slice builds them against.
+**Viewer Closure R1 — the visible linked TIC/BPC viewer.** Closed.
+**VIEW-002, VIEW-005 and VIEW-006 are implemented.** The viewer column is three
+linked panels: the run's shape over retention time, the scans it is made of, and
+the one scan the user chose.
+
+TIC and BPC are per-scan values projected from the loaded spectrum table — each
+scan's own total ion current and base peak intensity, at its own retention time.
+Not a stored chromatogram record, and the caption says so; neither axis carries a
+unit, because nothing that crosses the boundary establishes one. A preview that
+did not load the complete table draws no trace at all and says why.
+
+There is one selected scan and one commit revision, held by R0's reducer: a
+click in the plot, a click or Enter in the table, and Previous/Next all commit
+through one operation, and the marker, the row and the spectrum follow that one
+commit. The plot zooms, pans and resets by wheel, drag, keyboard and button, and
+none of it reads the backend. R1 is a wiring slice over ADR 0032, and adds no
+Rust change, no backend query, no cache and no dependency. See
+[ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
+
+**Viewer Closure R1.1 — the visible adapter.** Closed with R1. The first review
+of the visible viewer ran to a fourth round, and its last finding was that the
+viewport control group advertised `Zoom in` and `Zoom out` as available where
+pressing them changed nothing — in the state the viewer opens in, and for a run
+whose scans share one retention time. That PR was frozen as evidence rather than
+patched again, and R1.1 was taken from its exact reviewed head so the whole slice
+arrives together.
+
+R1.1 replaces three separate availability answers with one rule: a visible
+viewport action is available exactly when applying it would change the effective
+rendered domain. Every boundary follows from it without being named. See
+[ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
+
+**Viewer Closure R1.2 — pointer-gesture ownership.** Closed with R1. R1.1's pull
+request was frozen at its reviewed head in turn, and R1.2 was taken from that
+head. The chromatogram had been cancelling the browser's default action for every
+non-zero wheel delta, including where the viewport provably cannot move — so at
+full range, on a laptop window where the viewer column scrolls, a wheel over the
+plot neither zoomed nor let the reader reach the panels below it.
+
+R1.2 makes wheel ownership a consequence of R1.1's rule: MSCanvas may claim a
+wheel event only when applying it through the canonical interaction contract
+would change the effective rendered domain. Where it cannot, it cancels nothing
+and dispatches nothing, and ordinary scrolling stays available. Touch scrolling
+over the plot remains statically suppressed and is recorded as open. See
+[ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
+
+**Viewer Closure R1.3 — wheel input normalization.** Closed with R1. R1.2's pull
+request was frozen at its reviewed head in turn, and R1.3 was taken from that
+head. Its review found that the wheel read one bit of the event — the sign of
+`deltaY` — and applied a fixed step per event, so the zoom rate was decided by how
+many `WheelEvent` objects a device chose to emit rather than by how far the user
+scrolled: from the whole run to the narrowest viewport took 57 events whatever
+those events said, and a device that reports a gesture as a stream of small
+deltas reached maximum zoom from one flick.
+
+R1.3 reads both `deltaY` and `deltaMode` and maps them continuously, so that
+splitting one gesture into more events cannot change where it lands. R1.2's
+ownership rule is untouched: magnitude decides what the wheel asks for, and
+productivity still decides whether MSCanvas may claim the event. Parity between
+physical devices is not claimed — no such measurement was made. See
+[ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
 
 Still outside it, and unchanged:
 
-- Current-range export, which needs the committed viewport R0 defines and a
-  visible viewer to choose one in.
+- Current-range export. The committed viewport R0 defined is now a range a user
+  can actually choose, and the handoff is tested — but no export consumes it.
 - Chromatogram data export, and a linked chromatogram + spectrum figure
   template.
 - XIC, spectrum zoom/pan, and multi-layer comparison.
@@ -84,6 +142,22 @@ Still outside it, and unchanged:
 
 - Windows installer/signing plan, accessibility pass, crash/error diagnostics and public fixtures.
 - Saved settings, layout persistence and beta feedback instrumentation that remains local-first.
+- **Touch gestures over the chromatogram.** The plot declares
+  `touch-action: none`, so a touch drag over it scrolls nothing, and unlike a
+  wheel that is a static declaration rather than a claim made per event. Closing
+  it means deciding what a touch drag over a chromatogram means — a pan, a
+  scroll, or a selection — which is product semantics rather than adapter
+  wiring. Recorded by Viewer Closure R1.2, which closed the wheel and left this
+  as it found it. See
+  [ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
+- **Viewer selection-availability affordance consistency.** Deferred from Viewer
+  Closure R1 with a recorded reason. The scan table's rows and the
+  chromatogram's plot are both clickable throughout, and a click on either
+  commits nothing while the selected-spectrum lane is blocked — a running
+  conversion, an installation check, a backend resolved unavailable — without
+  either surface saying so. Decide consistently how both communicate temporary
+  unavailability, while preserving the hover, zoom and pan that need no backend.
+  See [ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
 
 ## M6 — Artifact and QC foundation
 

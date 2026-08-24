@@ -24,9 +24,13 @@ function renderTable(rowCount: number) {
   const onRendered = vi.fn();
   const result = render(
     <SpectrumTable
+      canSelectNext={false}
+      canSelectPrevious={false}
       onRendered={onRendered}
       onSelect={onSelect}
-      selectedIndex={null}
+      onSelectNext={() => undefined}
+      onSelectPrevious={() => undefined}
+      selection={null}
       table={{ rows, totalRowCount: rowCount, truncated: false }}
     />,
   );

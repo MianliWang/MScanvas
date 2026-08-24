@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 
 import { usePreviewApi } from "./api";
 import type { ConversionOperation } from "./useConversionOperation";
@@ -14,6 +22,7 @@ import type {
   SelectedFile,
   SelectedSpectrum,
   SpectrumExportFormat,
+  SpectrumRow,
   WorkspaceDropRejectionReason,
   WorkspaceDropUpdate,
   WorkspaceOutputAdoptionResult,
@@ -39,6 +48,11 @@ import {
   type RosterState,
   type WorkspaceNotice,
 } from "./rosterSelection";
+import type { ViewerEvent, ViewerInteractionState } from "./viewer/interactionState";
+import { buildPreviewScanModel } from "./viewer/previewScanModel";
+import type { ScanModel, TraceKind } from "./viewer/scanModel";
+import { adjacentScan } from "./viewer/scanModel";
+import { useViewerInteraction } from "./viewer/useViewerInteraction";
 
 /**
  * Every typed failure that means the backend is not the one that read what is
@@ -111,6 +125,89 @@ const DEFAULT_FIGURE_SETTINGS: FigureSettings = {
   pngDpi: DEFAULT_PNG_DPI,
   theme: "light",
 };
+
+/**
+ * The rows the linked views walk while nothing is loaded.
+ *
+ * A shared frozen array rather than a fresh `[]` each render, so the memoized
+ * work downstream of it does not invalidate on every pass.
+ */
+const EMPTY_ROWS: readonly SpectrumRow[] = Object.freeze([]);
+
+/**
+ * The scientific model while no preview is loaded.
+ *
+ * One shared object, so the lifecycle effect below can compare by identity
+ * and a render that changed nothing else announces nothing.
+ */
+const UNLOADED_SCAN_MODEL: ScanModel = { status: "unavailable", reason: "no-spectra" };
+
+/** Which chromatogram traces are drawn. A viewer preference, never written down. */
+export interface TraceVisibility {
+  readonly tic: boolean;
+  readonly bpc: boolean;
+}
+
+/**
+ * What the viewer starts showing.
+ *
+ * TIC alone. Both traces at once is a comparison a reader asks for rather than
+ * the first thing they should have to disentangle, and the total ion current is
+ * the summary of a scan rather than one feature of it.
+ */
+const INITIAL_TRACES: TraceVisibility = { tic: true, bpc: false };
+
+/**
+ * What a selection needs before it can look at a target at all.
+ *
+ * The four facts `selectSpectrum` reads before it has considered *which* row
+ * was asked for. They are about the lane rather than about the row: a run to
+ * select from, a backend worth launching, and neither of the two things that
+ * own the one backend lane already doing so.
+ */
+export interface SpectrumSelectionLane {
+  /** Whether a run's spectrum table is loaded to select a row of. */
+  readonly hasLoadedPreview: boolean;
+  /** Whether this session's own verdict says the backend can be launched. */
+  readonly backendUsable: boolean;
+  /** Whether an installation check or change owns the backend lane. */
+  readonly backendBusy: boolean;
+  /** Whether a conversion owns it. */
+  readonly conversionBusy: boolean;
+}
+
+/**
+ * Whether a selection could reach its target-specific checks right now.
+ *
+ * One rule with two readers, and that is the whole reason it is a function.
+ * The operation asks it from refs, inside a handler that may be several
+ * commits older than the truth; the interface asks it from rendered state, to
+ * decide whether a control may advertise itself as available. Two handwritten
+ * expressions that merely looked alike is how a button came to say a scan step
+ * was available for the length of a conversion queue and do nothing when it
+ * was pressed.
+ *
+ * Deliberately **not** in it:
+ *
+ * - whether an adjacent row exists, or the requested row is in the table, or
+ *   that exact row is already being read. Those are questions about a target,
+ *   and a control that had to predict them would be predicting a different
+ *   thing for every target;
+ * - whether another selected-spectrum read is unresolved. A newer selection of
+ *   a *different* scan is allowed to supersede an older one -- that is the
+ *   contract `spectrumToken` exists for, and disabling a scan step for it
+ *   would take away a step the operation would have accepted. It is why this
+ *   is not `canPreview`, which includes exactly that and several policies
+ *   belonging to other actions.
+ */
+export function canStartSpectrumSelection(lane: SpectrumSelectionLane): boolean {
+  return (
+    lane.hasLoadedPreview &&
+    lane.backendUsable &&
+    !lane.backendBusy &&
+    !lane.conversionBusy
+  );
+}
 
 /** Whether this format is drawn rather than written. */
 function isFigureFormat(format: SpectrumExportFormat): boolean {
@@ -287,6 +384,45 @@ export interface PreviewWorkspace {
   readonly backend: BackendState;
   readonly preview: PreviewState;
   readonly spectrum: SpectrumState;
+  /**
+   * The scientific model of the loaded run, or the reason there is none.
+   *
+   * Derived from the preview on screen rather than fetched, held as a second
+   * copy of the table, or rebuilt by anything a pointer does. Nothing in it is
+   * a drawing: see `viewer/scanModel.ts`.
+   */
+  readonly scanModel: ScanModel;
+  /**
+   * The one interaction state: committed viewport, transient gesture,
+   * persistent selection, selection revision and hover.
+   *
+   * ADR 0032 owns every rule inside it. What lives here is the single instance
+   * of it that the visible viewer reads and dispatches into.
+   */
+  readonly viewerInteraction: ViewerInteractionState;
+  /**
+   * Applies one interaction event, and answers with the state it produced.
+   *
+   * The answer is what a wheel or a drag adapter reads its reducer-assigned
+   * epoch out of. No caller allocates an epoch or a selection revision.
+   */
+  readonly dispatchViewerEvent: (event: ViewerEvent) => ViewerInteractionState;
+  /**
+   * The interaction state as it stands right now.
+   *
+   * For a native listener, which runs between renders and would otherwise
+   * decide from whatever the state was when its closure was made. It reads the
+   * same held value {@link dispatchViewerEvent} writes, so it is a second
+   * reader rather than a second authority.
+   */
+  readonly readViewerInteraction: () => ViewerInteractionState;
+  /**
+   * The scan the session has selected, projected from the interaction state.
+   *
+   * Not a second field that something has to keep in step with it: there is one
+   * persistent selection, it lives in {@link viewerInteraction}, and this is a
+   * read of it.
+   */
   readonly selectedIndex: number | null;
   readonly measurements: readonly PreviewMeasurement[];
   /**
@@ -444,6 +580,35 @@ export interface PreviewWorkspace {
   readonly copySpectrumPlot: () => void;
   /** Returns the export to rest after a result has been read. */
   readonly dismissSpectrumExport: () => void;
+  /** Which chromatogram traces are drawn. Session state, never written down. */
+  readonly chromatogramTraces: TraceVisibility;
+  readonly toggleChromatogramTrace: (trace: TraceKind) => void;
+  /**
+   * The scan before or after the selected one, in the order the table shows.
+   *
+   * Table order rather than arithmetic on the index, and committed through the
+   * same `selectSpectrum` operation the table and the plot use -- so there is
+   * still one selected scan and one backend read per selection.
+   */
+  readonly selectPreviousScan: () => void;
+  readonly selectNextScan: () => void;
+  /**
+   * Whether a selection could reach its target-specific checks right now.
+   *
+   * The rendered reading of the same rule `selectSpectrum` guards itself with.
+   * A control that advertises availability has to tell the truth about the
+   * lane; what it cannot be asked to predict is a target -- whether a
+   * particular row is in the table, or is already being read.
+   */
+  readonly spectrumSelectionAvailable: boolean;
+  /**
+   * Whether a scan step can act: the lane, and a row to step to.
+   *
+   * Both halves. Adjacency alone left the buttons enabled and silently inert
+   * for the length of a conversion queue.
+   */
+  readonly canSelectPreviousScan: boolean;
+  readonly canSelectNextScan: boolean;
   /** The figure settings as the user is editing them. */
   readonly figureSettings: FigureSettingsDraft;
   /** The figure they describe, or `null` while they describe none. */
@@ -492,7 +657,27 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const [pickerError, setPickerError] = useState<PreviewError | null>(null);
   const [workspaceError, setWorkspaceError] = useState<PreviewError | null>(null);
   const [spectrum, setSpectrum] = useState<SpectrumState>({ status: "none" });
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  /**
+   * The session's one viewer interaction, and the only selection authority.
+   *
+   * Held here rather than inside a component because the selection is committed
+   * from three places -- the plot, the scan table, Previous and Next -- and all
+   * three go through `selectSpectrum` below, where the request guards are. A
+   * component-level copy of any part of it would be the second authority ADR
+   * 0032 exists to make unrepresentable.
+   */
+  const viewer = useViewerInteraction();
+  const { dispatch: dispatchViewerEvent, current: readViewerInteraction } = viewer;
+  /**
+   * The selected scan, read from the one place it is decided.
+   *
+   * Projected rather than stored. A second `useState` beside the reducer would
+   * be a second writable answer to the same question, and the two would
+   * eventually disagree about which scan a linked view is pointing at.
+   */
+  const selectedIndex = viewer.state.selection?.index ?? null;
+  const [chromatogramTraces, setChromatogramTraces] =
+    useState<TraceVisibility>(INITIAL_TRACES);
   const [measurements, setMeasurements] = useState<readonly PreviewMeasurement[]>([]);
 
   const [roster, dispatchRoster] = useReducer(rosterReducer, initialRosterState);
@@ -703,6 +888,16 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const spectrumToken = useRef(0);
   const rosterToken = useRef(0);
   const inFlightSpectrum = useRef<{ index: number; token: number } | null>(null);
+  /**
+   * The loaded run's rows where a handler can read them.
+   *
+   * A selection commit has to say which retention time it is at, and the answer
+   * comes from the table that is loaded now. A callback closing over the
+   * rendered value would answer from the table that was loaded when the closure
+   * was made -- which for a click that arrives during a preview change is
+   * exactly the wrong table.
+   */
+  const previewRowsRef = useRef<readonly SpectrumRow[]>(EMPTY_ROWS);
   const pendingSpectrumRender = useRef<{ index: number; startedAt: number } | null>(null);
   const pendingOpenRender = useRef<{ rowCount: number; startedAt: number } | null>(null);
   const openHandle = useRef<string | null>(null);
@@ -739,8 +934,13 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     openHandle.current = null;
     setPreview({ status: "empty" });
     setSpectrum({ status: "none" });
-    setSelectedIndex(null);
-  }, []);
+    // Everything the viewer holds belongs to the preview that was on screen: a
+    // range chosen in one run, a scan selected in it, an observation of what a
+    // pointer was over. The event also advances the gesture epoch, so a settle
+    // still in flight can never commit into whatever is loaded next -- which is
+    // why this does not depend on a timer having been cleared in time.
+    dispatchViewerEvent({ type: "preview-closed" });
+  }, [dispatchViewerEvent]);
 
   /**
    * Drops everything on screen that a backend produced.
@@ -1055,7 +1255,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       pendingOpenRender.current = null;
       setPreview({ status: "opening" });
       setSpectrum({ status: "none" });
-      setSelectedIndex(null);
+      // The preview on screen is being replaced, so its interaction stops being
+      // authoritative here rather than when the reply lands. A new one is
+      // announced by the lifecycle effect below, once there is a model to
+      // announce.
+      dispatchViewerEvent({ type: "preview-closed" });
       openHandle.current = handle;
       activeOpen.current = { token, handle };
       // Said here, where a read actually begins, rather than by whatever asked
@@ -1177,6 +1381,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       beginViewerRequest,
       checkBackend,
       discardBackendDerivedState,
+      dispatchViewerEvent,
       endViewerRequest,
     ],
   );
@@ -1861,24 +2066,33 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const selectSpectrum = useCallback(
     (index: number) => {
       const handle = openHandle.current;
-      if (handle === null) {
-        return;
-      }
+      // The lane, from the refs rather than from the render: this handler can
+      // be several commits older than the truth, and for a click that arrives
+      // during an installation change that is exactly the wrong answer.
+      //
       // Reading a row is backend work, so "one outstanding backend request"
       // has to cover it or it means nothing. Started while an installation is
       // being probed, this either reads the backend being replaced or queues
       // behind the change and then fails on it -- one process launch either
-      // way, for a result that was never going to be shown.
-      if (backendBusyRef.current || conversionBusyRef.current) {
-        return;
-      }
-      // And a backend this session has stopped trusting is not one to launch a
-      // read against. A preview loaded before a stop stays on screen -- nothing
-      // about it became untrue -- so its table is still there to click, and
-      // every click would replace the spectrum beside it with a refusal the
-      // user can do nothing about. Read from the same verdict the banner shows,
-      // so the row and the banner cannot come to disagree.
-      if (!backendUsableRef.current) {
+      // way, for a result that was never going to be shown. And a backend this
+      // session has stopped trusting is not one to launch a read against: a
+      // preview loaded before a stop stays on screen -- nothing about it became
+      // untrue -- so its table is still there to click, and every click would
+      // replace the spectrum beside it with a refusal the user can do nothing
+      // about. The verdict is the one the banner shows, so the row and the
+      // banner cannot come to disagree.
+      //
+      // The null handle is written out as well as passed in, because it is what
+      // narrows the handle for the read below.
+      if (
+        handle === null ||
+        !canStartSpectrumSelection({
+          hasLoadedPreview: handle !== null,
+          backendUsable: backendUsableRef.current,
+          backendBusy: backendBusyRef.current,
+          conversionBusy: conversionBusyRef.current,
+        })
+      ) {
         return;
       }
       // A repeat of the row already being read is dropped. Every selection is
@@ -1893,11 +2107,28 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       ) {
         return;
       }
+      // Every guard has passed, so this is a commit. What it commits to is a
+      // row of the table that is loaded *now*: a selection carries the
+      // retention time the linked plot reveals it at, and there is nowhere
+      // honest to get one from for an index this preview does not contain. So
+      // an index that cannot be reconciled is refused rather than guessed at,
+      // which leaves the selection exactly as it was and launches nothing.
+      const row = previewRowsRef.current.find((candidate) => candidate.index === index);
+      if (row === undefined) {
+        return;
+      }
       const startedAt = now();
+      // The reducer allocates the revision. Several producers reach this one
+      // function -- the plot, the table, Previous and Next -- and the number
+      // that tells two commits apart is not theirs to invent.
+      dispatchViewerEvent({
+        type: "selection-committed",
+        index,
+        retentionTime: row.retentionTime.value,
+      });
       spectrumToken.current += 1;
       const token = spectrumToken.current;
       inFlightSpectrum.current = { index, token };
-      setSelectedIndex(index);
       setSpectrum({ status: "loading", index });
       beginViewerRequest();
       void api
@@ -1961,12 +2192,52 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           endViewerRequest();
         });
     },
-    [api, beginViewerRequest, checkBackend, discardBackendDerivedState, endViewerRequest],
+    [
+      api,
+      beginViewerRequest,
+      checkBackend,
+      discardBackendDerivedState,
+      dispatchViewerEvent,
+      endViewerRequest,
+    ],
   );
+
+  /**
+   * The scientific model of what is on screen.
+   *
+   * Built once per loaded preview and not again: not for a pointer move, not
+   * for a zoom, not for a hover, and not when the selected spectrum finishes
+   * loading. `preview` is replaced only when a different reading arrives, so
+   * its identity is the identity of the run.
+   */
+  const scanModel = useMemo(
+    () =>
+      preview.status === "loaded"
+        ? buildPreviewScanModel(preview.preview.spectrumTable)
+        : UNLOADED_SCAN_MODEL,
+    [preview],
+  );
+
+  /**
+   * Whether the viewer has a run to draw and has not been told about it yet.
+   *
+   * The run's domain reaches the interaction in a layout effect, so the commit
+   * that first renders a loaded preview draws the plot's placeholder rather
+   * than the plot. Nobody sees that -- a layout effect's update is flushed
+   * before the browser paints -- but a stopwatch stopped there would time
+   * everything except the drawing.
+   */
+  const viewerAwaitingDomain = scanModel.status === "ready" && viewer.state.fullDomain === null;
 
   const completeRenderMeasurements = useCallback(() => {
     const openPending = pendingOpenRender.current;
-    if (openPending !== null) {
+    // The open measurement names the moment the preview is on screen, and the
+    // chromatogram is part of what is on screen. Left standing until the plot
+    // itself has been committed, because otherwise this would exclude the
+    // clipping, the reduction and the path -- and would exclude more of them
+    // the larger the run, which is the one size where the number is worth
+    // having.
+    if (openPending !== null && !viewerAwaitingDomain) {
       pendingOpenRender.current = null;
       recordMeasurement(
         "openToFirstPreview",
@@ -1983,13 +2254,89 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         `Selecting row ${String(spectrumPending.index)} through that spectrum being in the document.`,
       );
     }
-  }, [recordMeasurement]);
+  }, [recordMeasurement, viewerAwaitingDomain]);
 
   const retrySpectrum = useCallback(() => {
     if (selectedIndex !== null) {
       selectSpectrum(selectedIndex);
     }
   }, [selectSpectrum, selectedIndex]);
+
+  /**
+   * The rows the linked views navigate, or none while no preview is loaded.
+   *
+   * Read from the preview rather than copied into state of its own: a second
+   * copy of the scan table is a second thing to keep in step with the first.
+   */
+  const previewRows =
+    preview.status === "loaded" ? preview.preview.spectrumTable.rows : EMPTY_ROWS;
+  // Written during the render whose value it mirrors, not in an effect, for the
+  // same reason every other mirror here is: a commit arriving in the gap would
+  // reconcile against the table before the last change.
+  previewRowsRef.current = previewRows;
+
+  /**
+   * Tells the interaction which run it belongs to, once there is one to name.
+   *
+   * A layout effect rather than a passive one, so the first painted frame of a
+   * new preview already has an axis. Guarded by the model's own identity: a
+   * render that changed something else announces nothing, and announcing again
+   * would drop a selection the user had just made.
+   *
+   * A model that refuses leaves the interaction closed. The scan table beside
+   * it stays usable, and selecting a row through it still commits here -- there
+   * is simply no viewport for a chromatogram nobody can draw.
+   */
+  const announcedModel = useRef<ScanModel | null>(null);
+  useLayoutEffect(() => {
+    if (announcedModel.current === scanModel) {
+      return;
+    }
+    announcedModel.current = scanModel;
+    if (scanModel.status === "ready") {
+      dispatchViewerEvent({ type: "preview-loaded", fullDomain: scanModel.fullDomain });
+    }
+  }, [dispatchViewerEvent, scanModel]);
+
+  const toggleChromatogramTrace = useCallback((trace: TraceKind) => {
+    setChromatogramTraces((current) => ({ ...current, [trace]: !current[trace] }));
+  }, []);
+
+  /**
+   * The scans either side of the selected one, kept off the cursor's path.
+   *
+   * `adjacentScan` walks the table to find the selected row, because the table's
+   * order is the order Previous and Next mean and nothing promises the indices
+   * are a gapless ascending run. That walk is linear, and this hook re-renders
+   * whenever the pointer crosses from one scan to another -- which at a full-run
+   * zoom over a large acquisition is most pointer frames. Unmemoized, a
+   * selection near the end of a 36,319-row table put two whole-table walks into
+   * every one of them.
+   *
+   * Neither input changes on a hover, so the memo answers without walking
+   * anything.
+   */
+  const scanSteps = useMemo(
+    () => ({
+      previous: adjacentScan(previewRows, selectedIndex, -1),
+      next: adjacentScan(previewRows, selectedIndex, 1),
+    }),
+    [previewRows, selectedIndex],
+  );
+  const previousScanIndex = scanSteps.previous;
+  const nextScanIndex = scanSteps.next;
+
+  const selectPreviousScan = useCallback(() => {
+    if (previousScanIndex !== null) {
+      selectSpectrum(previousScanIndex);
+    }
+  }, [previousScanIndex, selectSpectrum]);
+
+  const selectNextScan = useCallback(() => {
+    if (nextScanIndex !== null) {
+      selectSpectrum(nextScanIndex);
+    }
+  }, [nextScanIndex, selectSpectrum]);
 
   // Session state, deliberately not persisted: a figure size is a decision
   // about one export, and a size silently restored from a previous run is a
@@ -2240,6 +2587,42 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   // asking and leaving a panel loading for the length of a conversion.
   const conversionBusyRef = conversion.busyRef;
 
+  /**
+   * The same lane rule, from the facts a render can see.
+   *
+   * Each fact is the rendered half of the ref the operation reads: `backend`
+   * and `backendUsableRef` are written together in `showBackend`, `backendBusy`
+   * and `backendBusyRef` in `markBackendBusy`. Two of them are deliberately
+   * narrower than their ref, and both narrow the same way -- towards refusing:
+   *
+   * - a loaded preview rather than a retained handle. A handle outlives the
+   *   reading it was made for, so that a backend change can offer "read this
+   *   again"; but with no table on screen there is no row to step to, and no
+   *   control to advertise;
+   * - the interface's own conversion-busy rather than the queue slot's. It
+   *   also covers a retry or an adoption this document has dispatched and not
+   *   been answered on, which is what every other action here treats as
+   *   converting.
+   *
+   * Narrower is the safe direction: a control may refuse where the operation
+   * would have accepted, and the reverse is the defect this rule exists for.
+   *
+   * One edge is not covered, and is named rather than glossed. `convert` claims
+   * the conversion lane in a ref the moment it dispatches, and the rendered
+   * busy follows only when the slot is read back -- so between those two there
+   * is a window in which the operation refuses and this says available. It is
+   * the same window every conversion-gated control in this interface has,
+   * `Preview focused` included, and closing it belongs to the conversion lane's
+   * own contract rather than to this adapter.
+   */
+  const spectrumSelectionAvailable = canStartSpectrumSelection({
+    hasLoadedPreview: preview.status === "loaded",
+    backendUsable:
+      backend.status === "resolved" && backend.availability.state === "available",
+    backendBusy,
+    conversionBusy: conversion.busy,
+  });
+
   const activeDataset = useMemo(
     () => roster.datasets.find((dataset) => dataset.handle === roster.active) ?? null,
     [roster.active, roster.datasets],
@@ -2249,6 +2632,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     backend,
     preview,
     spectrum,
+    scanModel,
+    viewerInteraction: viewer.state,
+    dispatchViewerEvent,
+    readViewerInteraction,
     selectedIndex,
     measurements,
     backendBusy,
@@ -2296,6 +2683,13 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     exportSpectrum,
     copySpectrumPlot,
     dismissSpectrumExport,
+    chromatogramTraces,
+    toggleChromatogramTrace,
+    selectPreviousScan,
+    selectNextScan,
+    spectrumSelectionAvailable,
+    canSelectPreviousScan: spectrumSelectionAvailable && previousScanIndex !== null,
+    canSelectNextScan: spectrumSelectionAvailable && nextScanIndex !== null,
     figureSettings,
     resolvedRenderSettings,
     resolvedPngDpi,

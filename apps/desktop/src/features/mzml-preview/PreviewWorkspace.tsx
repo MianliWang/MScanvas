@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 
 import { BackendStatus } from "./BackendStatus";
+import { Chromatogram } from "./Chromatogram";
 import type { WorkspaceDropRejectionReason } from "./contracts";
 import { conversionJudgedAnyOutput, isConvertibleSourceKind } from "./contracts";
 import { ConversionPanel } from "./ConversionPanel";
@@ -640,10 +641,23 @@ export function PreviewWorkspace() {
 
         {preview.status === "loaded" ? (
           <div className="viewer-stack">
+            <Chromatogram
+              dispatch={workspace.dispatchViewerEvent}
+              interaction={workspace.viewerInteraction}
+              model={workspace.scanModel}
+              onSelect={workspace.selectSpectrum}
+              onToggleTrace={workspace.toggleChromatogramTrace}
+              readInteraction={workspace.readViewerInteraction}
+              traces={workspace.chromatogramTraces}
+            />
             <SpectrumTable
+              canSelectNext={workspace.canSelectNextScan}
+              canSelectPrevious={workspace.canSelectPreviousScan}
               onRendered={handleTableRendered}
               onSelect={workspace.selectSpectrum}
-              selectedIndex={workspace.selectedIndex}
+              onSelectNext={workspace.selectNextScan}
+              onSelectPrevious={workspace.selectPreviousScan}
+              selection={workspace.viewerInteraction.selection}
               table={preview.preview.spectrumTable}
             />
             <SelectedSpectrumPanel

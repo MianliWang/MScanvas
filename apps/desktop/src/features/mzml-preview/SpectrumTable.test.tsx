@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import appStyles from "../../app/app.css?raw";
 import { buildRows } from "../../test/previewFixtures";
 import { SpectrumTable } from "./SpectrumTable";
+import type { Selection } from "./viewer/interactionState";
 
 const COLUMN_LABELS = [
   "Index",
@@ -36,18 +37,51 @@ function mountAppStyles(): void {
   mountedStyles.push(style);
 }
 
-function renderTable(rowCount = 40, selectedIndex: number | null = null) {
+/** One selection commit, as the interaction reducer would have produced it. */
+function commit(index: number, revision: number): Selection {
+  return { index, revision, retentionTime: index * 0.0125 };
+}
+
+interface TableOptions {
+  readonly rowCount?: number;
+  readonly selection?: Selection | null;
+  readonly truncated?: boolean;
+  readonly canSelectPrevious?: boolean;
+  readonly canSelectNext?: boolean;
+}
+
+function renderTable(options: TableOptions = {}) {
+  const rowCount = options.rowCount ?? 40;
   const onSelect = vi.fn();
   const onRendered = vi.fn();
-  const result = render(
-    <SpectrumTable
-      onRendered={onRendered}
-      onSelect={onSelect}
-      selectedIndex={selectedIndex}
-      table={{ rows: buildRows(rowCount), totalRowCount: rowCount, truncated: false }}
-    />,
-  );
-  return { ...result, onSelect, onRendered };
+  const onSelectPrevious = vi.fn();
+  const onSelectNext = vi.fn();
+  const props = (selection: Selection | null) => ({
+    canSelectNext: options.canSelectNext ?? false,
+    canSelectPrevious: options.canSelectPrevious ?? false,
+    onRendered,
+    onSelect,
+    onSelectNext,
+    onSelectPrevious,
+    selection,
+    table: {
+      rows: buildRows(rowCount),
+      totalRowCount: options.truncated === true ? rowCount * 10 : rowCount,
+      truncated: options.truncated ?? false,
+    },
+  });
+  const result = render(<SpectrumTable {...props(options.selection ?? null)} />);
+  return {
+    ...result,
+    onSelect,
+    onRendered,
+    onSelectPrevious,
+    onSelectNext,
+    /** Publishes another selection commit, as the workspace would. */
+    commitSelection: (selection: Selection | null) => {
+      result.rerender(<SpectrumTable {...props(selection)} />);
+    },
+  };
 }
 
 function requireElement(container: HTMLElement, selector: string): HTMLElement {
@@ -76,7 +110,7 @@ describe("spectrum table columns", () => {
   });
 
   it("still counts every row the run has, not the rendered window", () => {
-    const { container } = renderTable(400);
+    const { container } = renderTable({ rowCount: 400 });
 
     const grid = screen.getByRole("grid", { name: "Spectra" });
     expect(grid).toHaveAttribute("aria-rowcount", "401");
@@ -182,7 +216,7 @@ describe("spectrum table rows", () => {
     // The header occupies the first row of the scrolling box, so a page is one
     // row shorter than that box. Counting the whole box would page the focus
     // one row further than the user can see.
-    renderTable(400);
+    renderTable({ rowCount: 400 });
     const grid = screen.getByRole("grid", { name: "Spectra" });
     within(grid).getAllByRole("row")[1]?.focus();
 
@@ -192,13 +226,13 @@ describe("spectrum table rows", () => {
   });
 
   it("carries exactly one tab stop among the rendered rows", () => {
-    const { container } = renderTable(400);
+    const { container } = renderTable({ rowCount: 400 });
 
     expect(container.querySelectorAll('[role="row"][tabindex="0"]')).toHaveLength(1);
   });
 
   it("marks the selected row for a reader as well as for the eye", () => {
-    renderTable(40, 3);
+    renderTable({ rowCount: 40, selection: commit(3, 1) });
 
     const grid = screen.getByRole("grid", { name: "Spectra" });
     const selected = within(grid)
@@ -208,5 +242,140 @@ describe("spectrum table rows", () => {
     expect(selected).toHaveLength(1);
     expect(selected[0]).toHaveAttribute("aria-rowindex", "5");
     expect(within(selected[0] as HTMLElement).getByText("Selected,")).toBeInTheDocument();
+  });
+});
+
+/*
+ * The reveal, measured in scroll positions.
+ *
+ * jsdom lays nothing out, so the numbers below come from the component's own
+ * arithmetic rather than from a rendered box -- but that arithmetic is
+ * `revealScrollTop`'s, and these are the two cases the wrong version of it got
+ * wrong. The viewport reports no height here, so the table falls back to its
+ * 600px default: the header takes a row, leaving 570px for rows of 30px each.
+ */
+describe("bringing a row into view", () => {
+  function viewportOf(container: HTMLElement): HTMLElement {
+    const viewport = container.querySelector<HTMLElement>(".spectrum-table-viewport");
+    expect(viewport).not.toBeNull();
+    return viewport as HTMLElement;
+  }
+
+  it("scrolls down the least that shows a row below the fold", () => {
+    const { container, commitSelection } = renderTable({ rowCount: 400 });
+    const viewport = viewportOf(container);
+
+    // Row 30 sits at canvas offset 900 and the rows have 570px, so the least
+    // scroll that shows all of it is 900 + 30 - 570.
+    commitSelection(commit(30, 1));
+
+    expect(viewport.scrollTop).toBe(360);
+  });
+
+  it("puts a row above the fold exactly at the top of the canvas, header included once", () => {
+    // The discriminating case. The header is `position: sticky`, so the canvas
+    // already begins after it and `scrollTop = rowTop` places the row
+    // immediately below it. Subtracting the header again would land on 570 and
+    // scroll a row that was about to be perfectly placed one row too far.
+    const { container, commitSelection } = renderTable({ rowCount: 400 });
+    const viewport = viewportOf(container);
+    fireEvent.scroll(viewport, { target: { scrollTop: 900 } });
+
+    commitSelection(commit(20, 1));
+
+    expect(viewport.scrollTop).toBe(600);
+  });
+
+  it("leaves a row that is already in view exactly where it is", () => {
+    const { container, commitSelection } = renderTable({ rowCount: 400 });
+    const viewport = viewportOf(container);
+    fireEvent.scroll(viewport, { target: { scrollTop: 300 } });
+
+    commitSelection(commit(12, 1));
+
+    expect(viewport.scrollTop).toBe(300);
+  });
+
+  it("reveals again when the same scan is committed a second time", () => {
+    // A selection is an event. The user who selected a scan, scrolled its row
+    // away and asked for that scan again was asking to be shown it -- and a
+    // surface watching the index alone cannot tell that happened.
+    const { container, commitSelection } = renderTable({ rowCount: 400 });
+    const viewport = viewportOf(container);
+    commitSelection(commit(30, 1));
+    expect(viewport.scrollTop).toBe(360);
+
+    fireEvent.scroll(viewport, { target: { scrollTop: 0 } });
+    commitSelection(commit(30, 2));
+
+    expect(viewport.scrollTop).toBe(360);
+  });
+
+  it("does not undo a scroll the user made while the same commit stands", () => {
+    // The other half of the same rule. Once a revision has been consumed, a
+    // re-render -- a resize, a sibling's state, anything -- must not pull the
+    // viewport back.
+    const { container, commitSelection } = renderTable({ rowCount: 400 });
+    const viewport = viewportOf(container);
+    commitSelection(commit(30, 1));
+
+    fireEvent.scroll(viewport, { target: { scrollTop: 0 } });
+    commitSelection(commit(30, 1));
+
+    expect(viewport.scrollTop).toBe(0);
+  });
+
+  it("moves the tab stop to the revealed row without taking focus from elsewhere", () => {
+    // The control that committed the selection keeps the keyboard. Tabbing in
+    // afterwards still lands on the selected row rather than back at the top.
+    const { container, commitSelection } = renderTable({ rowCount: 400 });
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    outside.focus();
+
+    commitSelection(commit(30, 1));
+
+    expect(document.activeElement).toBe(outside);
+    expect(container.querySelector('[role="row"][tabindex="0"]')).toHaveAttribute(
+      "aria-rowindex",
+      "32",
+    );
+    outside.remove();
+  });
+
+  it("forgets its bookmark when nothing is selected", () => {
+    const { container, commitSelection } = renderTable({ rowCount: 400 });
+    const viewport = viewportOf(container);
+    commitSelection(commit(30, 1));
+    commitSelection(null);
+
+    fireEvent.scroll(viewport, { target: { scrollTop: 0 } });
+    commitSelection(commit(30, 1));
+
+    expect(viewport.scrollTop).toBe(360);
+  });
+});
+
+describe("stepping through scans from the table", () => {
+  it("offers Previous and Next, and disables them where the table ends", () => {
+    const { onSelectPrevious, onSelectNext } = renderTable({ canSelectNext: true });
+
+    const previous = screen.getByRole("button", { name: "Previous scan" });
+    const next = screen.getByRole("button", { name: "Next scan" });
+    expect(previous).toBeDisabled();
+    expect(next).toBeEnabled();
+
+    fireEvent.click(next);
+
+    expect(onSelectNext).toHaveBeenCalledTimes(1);
+    expect(onSelectPrevious).not.toHaveBeenCalled();
+  });
+
+  it("does not present the end of a truncated prefix as the end of the run", () => {
+    renderTable({ rowCount: 40, truncated: true });
+
+    expect(
+      screen.getByText(/step through these rows and stop at the end of them, which is not the end of the run/),
+    ).toBeVisible();
   });
 });

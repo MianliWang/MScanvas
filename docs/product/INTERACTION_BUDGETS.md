@@ -17,6 +17,8 @@ Budgets are design hypotheses. Prototype tests may revise them, but regressions 
 | Retry a failed item | 1 action | 0 | 0 | New run state without duplicate workspace row |
 | Open output folder | 1 action | 0 | 1 external app | Correct output highlighted when possible |
 | Export current plot PNG | at most 2 actions | 0–1 | 0 | Export preview/path confirmation |
+| Change the retention-time range | 1 wheel notch, drag, key or button | 0 | 0 | The range on screen, said in numbers, and Reset range live only while zoomed |
+| Hide or show a trace | 1 action per trace | 0 | 0 | The trace, and a legend that distinguishes the two without colour |
 
 ## Cognitive-cost checklist
 

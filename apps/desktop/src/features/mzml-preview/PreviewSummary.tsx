@@ -1,3 +1,5 @@
+import { memo } from "react";
+
 import type { Metadata, RunSummary, SelectedFile } from "./contracts";
 import {
   formatByteLength,
@@ -18,7 +20,15 @@ export interface PreviewSummaryProps {
   readonly measurements: readonly PreviewMeasurement[];
 }
 
-export function PreviewSummary({
+/**
+ * What the loaded acquisition is, beside every number read out of it.
+ *
+ * Memoized because the viewer above it publishes a new interaction state
+ * whenever the pointer crosses from one scan to another, which at a full-run
+ * zoom is most pointer frames. None of that reaches these props, and this is
+ * what makes "does not reach" mean "does not re-render".
+ */
+export const PreviewSummary = memo(function PreviewSummary({
   file,
   runSummary,
   metadata,
@@ -144,7 +154,7 @@ export function PreviewSummary({
       </div>
     </section>
   );
-}
+})
 
 function MeasurementRow({
   label,

@@ -85,8 +85,20 @@ Build a session workspace of local `.mzML` files and inspect one of them:
   array units are shown as unreported rather than guessed, because the backend
   output this preview reads does not carry them. That says nothing about whether
   the acquisition itself records them.
+- **TIC and BPC are drawn over retention time, and linked to everything else.**
+  Both traces toggle independently; the range zooms, pans and resets by wheel,
+  drag, keyboard and button; the pointer reports the scan it is over; and a
+  click, a table row, Enter, `Previous scan` or `Next scan` all select one scan
+  that the plot's marker, the table's row and the spectrum panel follow together.
+  Nothing but a selection reads the file.
+- What those traces are is stated rather than implied: **per-scan values
+  projected from the loaded spectrum table** — each scan's own total ion current
+  and base peak intensity — and not a stored chromatogram record. Neither axis
+  carries a unit, for the same reason the retention-time column does not. A
+  preview that did not load the complete spectrum table draws **no** trace rather
+  than a prefix presented as the whole run, and says which of those it is.
 
-Not implemented yet: vendor RAW preview; TIC, BPC and chromatogram views;
+Not implemented yet: vendor RAW preview; XIC; spectrum zoom and pan;
 directory-formatted acquisition recognition; filtering the workspace by
 anything other than filename, and grouping it; a workspace that outlives the
 session, which includes remembering a search or a sort; conversion progress as a
@@ -95,8 +107,8 @@ stopped queue; a conversion queue that survives closing the application;
 diagnostics for anything but the latest attempt of each item, a diagnostics
 history, complete raw converter logs, and sending a diagnostics file anywhere;
 and every figure export but the selected spectrum's own SVG, PNG, CSV and TSV --
-there is no chromatogram and no current-range export, and figure settings are not
-remembered across a restart. mzXML output stays disabled and fail-closed until
+there is no chromatogram export and no current-range export, and figure settings
+are not remembered across a restart. mzXML output stays disabled and fail-closed until
 representative multi-source integrity checks pass.
 
 A conversion queue is reachable, and its limits are the claim. `Add files…`
@@ -182,12 +194,12 @@ is yours to read before you decide who sees it.
 The first usable product is the target below, not a description of today. A
 session file workspace exists, built from the file and folder pickers and native
 Windows Explorer drop. Of the second item, metadata, spectrum and scan-table
-exploration are built and TIC/BPC are not; nothing else in this list is built
+exploration and TIC/BPC are built for mzML; nothing else in this list is built
 yet. See [What works today](#what-works-today).
 
 - drag-and-drop file and folder workspaces;
-- metadata, TIC/BPC, spectrum and scan-table exploration;
-- linked selection across views;
+- metadata, TIC/BPC, spectrum and scan-table exploration (shipped for mzML);
+- linked selection across views (shipped for mzML);
 - conversion to mzML through user-installed ProteoWizard, with mzXML gated behind
   representative multi-source integrity checks;
 - queue, cancellation, retry and actionable errors;
