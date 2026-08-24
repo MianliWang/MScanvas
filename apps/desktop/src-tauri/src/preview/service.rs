@@ -5654,6 +5654,31 @@ impl TableRowFacts {
         self.total_ion_current
     }
 
+    /// One retained row, for tests in this crate.
+    ///
+    /// The base peak m/z is not a parameter: no export reads it, and a test that
+    /// could set it would imply it decides something here.
+    #[cfg(test)]
+    pub(super) fn for_test(
+        index: u64,
+        scan_number: Option<u64>,
+        ms_level: u32,
+        retention_time: f64,
+        retention_time_unit_known: bool,
+        total_ion_current: f64,
+        base_peak_intensity: f64,
+    ) -> Self {
+        Self {
+            identity: SpectrumIdentity::from_index_for_tests(index, scan_number),
+            ms_level,
+            retention_time,
+            retention_time_unit_known,
+            base_peak_mz: 400.0,
+            base_peak_intensity,
+            total_ion_current,
+        }
+    }
+
     fn contradicts(&self, spectrum: &SelectedSpectrumResult) -> bool {
         self.ms_level != spectrum.ms_level()
             || differs(self.retention_time, spectrum.retention_time().value())

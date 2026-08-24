@@ -751,3 +751,782 @@ pub(super) fn svg_document(
         source, resolved, traces, settings,
     )?))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mscanvas_plot_spec::spec::{DataScope, FigureTheme};
+
+    /// One run, from the four facts an export reads.
+    fn run(rows: &[(u64, Option<u64>, f64, f64, f64)]) -> Arc<Vec<TableRowFacts>> {
+        Arc::new(
+            rows.iter()
+                .map(|(index, scan_number, retention_time, tic, bpc)| {
+                    TableRowFacts::for_test(
+                        *index,
+                        *scan_number,
+                        1,
+                        *retention_time,
+                        false,
+                        *tic,
+                        *bpc,
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    fn source(rows: &Arc<Vec<TableRowFacts>>) -> ChromatogramSource {
+        ChromatogramSource::from_rows(rows, false).expect("an exportable run")
+    }
+
+    fn ordinary() -> ChromatogramSource {
+        source(&run(&[
+            (0, Some(1), 1.0, 100.0, 40.0),
+            (1, Some(2), 2.0, 300.0, 120.0),
+            (2, Some(3), 3.0, 200.0, 90.0),
+        ]))
+    }
+
+    fn full(source: &ChromatogramSource) -> ResolvedRange {
+        source
+            .resolve(RangeRequest::from_wire("full", None, None).expect("a full request"))
+            .expect("the whole run is always inside itself")
+    }
+
+    fn current(source: &ChromatogramSource, low: f64, high: f64) -> ResolvedRange {
+        source
+            .resolve(RangeRequest::from_wire("current", Some(low), Some(high)).expect("a request"))
+            .expect("a range inside the run")
+    }
+
+    fn settings() -> FigureRenderSettings {
+        FigureRenderSettings::default()
+    }
+
+    fn both() -> TraceSet {
+        TraceSet::from_wire(true, true)
+    }
+
+    /// The records of one data document, without its preamble or header.
+    fn records(document: &str) -> Vec<&str> {
+        document
+            .lines()
+            .skip_while(|line| line.starts_with('#'))
+            .skip(1)
+            .collect()
+    }
+
+    /// One preamble value, by key.
+    fn preamble<'a>(document: &'a str, key: &str, delimiter: char) -> &'a str {
+        document
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("#{key}{delimiter}")))
+            .unwrap_or_else(|| panic!("the preamble carries {key}"))
+    }
+
+    // ------------------------------------------------------ what is exportable
+
+    /// A run the viewer would not draw is a run this export does not have.
+    ///
+    /// Rust retains every row the backend reported while the webview receives a
+    /// bounded prefix, so "Rust happens to hold more" is exactly the door this
+    /// refusal closes: a truncated table has no chromatogram on screen and must
+    /// have none in a file either.
+    #[test]
+    fn a_truncated_table_is_not_exportable() {
+        let rows = run(&[(0, Some(1), 1.0, 100.0, 40.0)]);
+
+        assert!(ChromatogramSource::from_rows(&rows, true).is_none());
+        assert!(ChromatogramSource::from_rows(&rows, false).is_some());
+    }
+
+    /// The model's own refusals, reached from the same facts.
+    #[test]
+    fn a_run_the_model_refuses_is_not_exportable() {
+        assert!(ChromatogramSource::from_rows(&run(&[]), false).is_none());
+        assert!(
+            ChromatogramSource::from_rows(&run(&[(0, Some(1), f64::NAN, 100.0, 40.0)]), false)
+                .is_none(),
+            "a retention time that is not a number cannot be placed on an axis"
+        );
+        assert!(
+            ChromatogramSource::from_rows(&run(&[(0, Some(1), 1.0, f64::INFINITY, 40.0)]), false)
+                .is_none()
+        );
+        assert!(
+            ChromatogramSource::from_rows(
+                &run(&[(0, Some(1), 1.0, 100.0, f64::NEG_INFINITY)]),
+                false
+            )
+            .is_none()
+        );
+        // A unit this build cannot name cannot be honestly labelled, in a figure
+        // or in a document header.
+        let claimed = Arc::new(vec![TableRowFacts::for_test(
+            0,
+            Some(1),
+            1,
+            1.0,
+            true,
+            100.0,
+            40.0,
+        )]);
+        assert!(ChromatogramSource::from_rows(&claimed, false).is_none());
+    }
+
+    /// The export's order is the screen's: retention time, then table position.
+    #[test]
+    fn scans_are_exported_in_retention_time_then_table_order() {
+        let rows = run(&[
+            (0, Some(1), 3.0, 30.0, 3.0),
+            (1, Some(2), 1.0, 10.0, 1.0),
+            // Two scans at one retention time. Table order decides, and it is
+            // decided rather than left to a sort's stability.
+            (2, Some(3), 2.0, 20.0, 2.0),
+            (3, Some(4), 2.0, 21.0, 2.1),
+        ]);
+        let source = source(&rows);
+        let document = data_document(&source, full(&source), ChromatogramExportFormat::Csv)
+            .expect("a data document")
+            .0;
+
+        let indices: Vec<&str> = records(&document)
+            .iter()
+            .map(|line| line.split(',').next().expect("a first field"))
+            .collect();
+        assert_eq!(indices, ["1", "2", "3", "0"]);
+        // And the retained table is untouched: other readers depend on its own
+        // order, and an export is a projection rather than a sort.
+        assert_eq!(rows[0].retention_time(), 3.0);
+    }
+
+    // ------------------------------------------------------------- the range
+
+    #[test]
+    fn a_full_run_needs_no_range_from_the_caller() {
+        let source = ordinary();
+        let resolved = full(&source);
+
+        assert_eq!(resolved.scope(), RangeScope::Full);
+        assert_eq!(resolved.domain(), source.full_domain());
+        assert!(resolved.covers_everything());
+        // A full request carrying a window is a contradiction rather than extra
+        // information.
+        assert!(RangeRequest::from_wire("full", Some(1.0), Some(2.0)).is_none());
+    }
+
+    /// A viewer that committed nothing has no narrower range, and says so.
+    #[test]
+    fn a_current_range_with_no_committed_window_is_the_whole_run() {
+        let source = ordinary();
+        let resolved = source
+            .resolve(RangeRequest::from_wire("current", None, None).expect("a request"))
+            .expect("the whole run");
+
+        // The scope the user chose survives into the document, even though the
+        // rows are the same ones a full export would write.
+        assert_eq!(resolved.scope(), RangeScope::Current);
+        assert_eq!(resolved.domain(), source.full_domain());
+        assert!(resolved.covers_everything());
+    }
+
+    /// A range this run does not have is refused rather than clamped.
+    #[test]
+    fn a_range_outside_the_run_is_refused() {
+        let source = ordinary();
+
+        for (low, high) in [(0.5, 2.0), (2.0, 3.5), (-10.0, 10.0)] {
+            let request = RangeRequest::from_wire("current", Some(low), Some(high))
+                .expect("a well-formed request");
+            assert_eq!(
+                source.resolve(request),
+                Err(RangeRefusal::OutsideSource),
+                "{low} to {high}"
+            );
+        }
+        // And a pair that is not an interval never becomes a request at all.
+        assert!(RangeRequest::from_wire("current", Some(3.0), Some(1.0)).is_none());
+        assert!(RangeRequest::from_wire("current", Some(f64::NAN), Some(2.0)).is_none());
+        assert!(RangeRequest::from_wire("current", Some(1.0), None).is_none());
+        assert!(RangeRequest::from_wire("sideways", None, None).is_none());
+    }
+
+    /// A range of no width is a range.
+    #[test]
+    fn a_zero_width_range_is_accepted() {
+        let source = ordinary();
+        let resolved = current(&source, 2.0, 2.0);
+
+        assert_eq!(resolved.domain().low(), resolved.domain().high());
+        let document = data_document(&source, resolved, ChromatogramExportFormat::Csv)
+            .expect("a document")
+            .0;
+        assert_eq!(records(&document).len(), 1, "the scan at exactly 2.0");
+    }
+
+    // -------------------------------------------------------- the data document
+
+    #[test]
+    fn the_data_document_states_what_it_is() {
+        let source = ordinary();
+        let (document, rows) = data_document(&source, full(&source), ChromatogramExportFormat::Csv)
+            .expect("a document");
+
+        assert_eq!(rows, 3);
+        assert_eq!(
+            preamble(&document, "format", ','),
+            CHROMATOGRAM_DATA_FORMAT_ID
+        );
+        assert_eq!(preamble(&document, "schema_version", ','), "1");
+        assert_eq!(preamble(&document, "source", ','), SOURCE_DESCRIPTION);
+        assert_eq!(preamble(&document, "range_scope", ','), "full");
+        assert_eq!(preamble(&document, "source_scan_count", ','), "3");
+        assert_eq!(preamble(&document, "row_count", ','), "3");
+        assert_eq!(preamble(&document, "full_range_low", ','), "1");
+        assert_eq!(preamble(&document, "full_range_high", ','), "3");
+        assert_eq!(preamble(&document, "export_range_low", ','), "1");
+        assert_eq!(preamble(&document, "export_range_high", ','), "3");
+        assert_eq!(preamble(&document, "retention_time_unit", ','), UNREPORTED);
+        assert_eq!(preamble(&document, "intensity_unit", ','), UNREPORTED);
+        assert_eq!(preamble(&document, "row_order", ','), ROW_ORDER);
+        assert!(document.contains(
+            "spectrum_index,scan_number,ms_level,retention_time,total_ion_current,\
+             base_peak_intensity\n"
+        ));
+        assert_eq!(
+            records(&document),
+            ["0,1,1,1,100,40", "1,2,1,2,300,120", "2,3,1,3,200,90"]
+        );
+        assert!(document.ends_with('\n'));
+    }
+
+    /// The same document, with tabs.
+    #[test]
+    fn tsv_is_the_same_document_with_another_delimiter() {
+        let source = ordinary();
+        let csv = data_document(&source, full(&source), ChromatogramExportFormat::Csv)
+            .expect("a document")
+            .0;
+        let tsv = data_document(&source, full(&source), ChromatogramExportFormat::Tsv)
+            .expect("a document")
+            .0;
+
+        assert_eq!(tsv, csv.replace(',', "\t"));
+        assert!(!tsv.contains(','));
+    }
+
+    /// A scan number the run did not report is empty rather than invented.
+    #[test]
+    fn an_unreported_scan_number_is_an_empty_field() {
+        let rows = run(&[(0, None, 1.0, 100.0, 40.0)]);
+        let source = source(&rows);
+        let document = data_document(&source, full(&source), ChromatogramExportFormat::Csv)
+            .expect("a document")
+            .0;
+
+        // Empty, because every number that could stand for "none" is also a
+        // scan number.
+        assert_eq!(records(&document), ["0,,1,1,100,40"]);
+    }
+
+    /// No field can need quoting, and that is asserted rather than trusted.
+    #[test]
+    fn no_field_needs_a_quoting_rule() {
+        let source = source(&run(&[
+            (0, Some(1), -0.0, -1.5e-320, 9_007_199_254_740_993.0),
+            (1, None, 1.0, f64::MIN_POSITIVE, -0.0),
+        ]));
+        for format in [ChromatogramExportFormat::Csv, ChromatogramExportFormat::Tsv] {
+            let delimiter = if matches!(format, ChromatogramExportFormat::Csv) {
+                ','
+            } else {
+                '\t'
+            };
+            let document = data_document(&source, full(&source), format)
+                .expect("a document")
+                .0;
+            for line in document.lines() {
+                for field in line.split(delimiter) {
+                    assert!(!field.contains('"'), "{field}");
+                    assert!(!field.contains('\n'), "{field}");
+                    assert!(!field.contains('\r'), "{field}");
+                    let other = if delimiter == ',' { '\t' } else { ',' };
+                    assert!(!field.contains(other), "{field}");
+                }
+            }
+        }
+    }
+
+    /// The numbers come back out of the file exactly as they went in.
+    #[test]
+    fn numbers_round_trip_bit_for_bit() {
+        let values = [
+            -0.0_f64,
+            f64::MIN_POSITIVE,
+            -1.5e-320,
+            9_007_199_254_740_993.0,
+            1.7976931348623157e308,
+            0.1 + 0.2,
+        ];
+        let rows: Vec<(u64, Option<u64>, f64, f64, f64)> = values
+            .iter()
+            .enumerate()
+            .map(|(position, value)| {
+                (
+                    position as u64,
+                    Some(position as u64),
+                    position as f64,
+                    *value,
+                    *value,
+                )
+            })
+            .collect();
+        let source = source(&run(&rows));
+        let document = data_document(&source, full(&source), ChromatogramExportFormat::Csv)
+            .expect("a document")
+            .0;
+
+        for (line, expected) in records(&document).iter().zip(values.iter()) {
+            let written: f64 = line
+                .split(',')
+                .nth(4)
+                .expect("the total ion current field")
+                .parse()
+                .expect("a number this file wrote is a number");
+            assert_eq!(
+                written.to_bits(),
+                expected.to_bits(),
+                "{line} should carry {expected}"
+            );
+        }
+        // Locale-independent, with no thousands separator anywhere.
+        assert!(!document.contains(' '));
+    }
+
+    /// A current range contains scans, and only scans.
+    #[test]
+    fn a_current_range_carries_the_real_scans_inside_it() {
+        let source = source(&run(&[
+            (0, Some(1), 1.0, 10.0, 1.0),
+            (1, Some(2), 2.0, 20.0, 2.0),
+            (2, Some(3), 3.0, 30.0, 3.0),
+            (3, Some(4), 4.0, 40.0, 4.0),
+        ]));
+        let (document, rows) = data_document(
+            &source,
+            current(&source, 2.0, 3.0),
+            ChromatogramExportFormat::Csv,
+        )
+        .expect("a document");
+
+        // Edges included, and nothing interpolated at either of them.
+        assert_eq!(rows, 2);
+        assert_eq!(records(&document), ["1,2,1,2,20,2", "2,3,1,3,30,3"]);
+        assert_eq!(preamble(&document, "range_scope", ','), "current");
+        assert_eq!(preamble(&document, "export_range_low", ','), "2");
+        assert_eq!(preamble(&document, "export_range_high", ','), "3");
+        // The run is still reported whole, so a reader can see how much of it
+        // this file is.
+        assert_eq!(preamble(&document, "source_scan_count", ','), "4");
+    }
+
+    /// A range with no scans in it is a successful export of no records.
+    ///
+    /// The distinction this milestone is really about. The figure for the same
+    /// range draws the segment crossing it, interpolated between the samples
+    /// outside either side -- and that line is geometry the source asserts
+    /// between its own points. It is not a scan, and inventing a row for it
+    /// would put a measurement in a file that the instrument never made.
+    #[test]
+    fn a_range_between_two_scans_carries_no_rows_and_is_not_a_failure() {
+        let source = source(&run(&[
+            (0, Some(1), 1.0, 10.0, 1.0),
+            (1, Some(2), 9.0, 90.0, 9.0),
+        ]));
+        let resolved = current(&source, 4.0, 5.0);
+        let (document, rows) =
+            data_document(&source, resolved, ChromatogramExportFormat::Csv).expect("a document");
+
+        assert_eq!(rows, 0);
+        assert!(records(&document).is_empty());
+        assert_eq!(preamble(&document, "row_count", ','), "0");
+        // And the figure over that same range is a line.
+        let figure = figure_spec(&source, resolved, both(), settings()).expect("a figure");
+        let document = mscanvas_plot_spec::svg::render(&figure);
+        assert!(
+            document.contains("<path d=\"M"),
+            "the crossing segment is drawn: {document}"
+        );
+    }
+
+    /// Both measured columns, whatever the screen is showing.
+    #[test]
+    fn the_data_document_carries_both_traces() {
+        let source = ordinary();
+        // The builder takes no trace set at all, which is the strongest form of
+        // this: there is nothing to pass that could remove a column.
+        let document = data_document(&source, full(&source), ChromatogramExportFormat::Csv)
+            .expect("a document")
+            .0;
+
+        assert!(document.contains("total_ion_current"));
+        assert!(document.contains("base_peak_intensity"));
+        for line in records(&document) {
+            assert_eq!(line.split(',').count(), 6, "{line}");
+        }
+    }
+
+    // ------------------------------------------------------------- the figure
+
+    /// A figure carries the whole run, whatever range it declares.
+    #[test]
+    fn a_current_range_figure_still_carries_the_complete_source() {
+        let source = source(&run(&[
+            (0, Some(1), 9.0, 9_000_000.0, 10.0),
+            (1, Some(2), 10.0, 90.0, 20.0),
+            (2, Some(3), 11.0, 100.0, 30.0),
+            (3, Some(4), 12.0, 110.0, 40.0),
+            (4, Some(5), 13.0, 120.0, 50.0),
+        ]));
+        let figure = figure_spec(&source, current(&source, 10.0, 13.0), both(), settings())
+            .expect("a figure");
+        let panel = &figure.panels()[0];
+
+        assert!(panel.is_full_source());
+        for series in panel.series() {
+            assert_eq!(series.scope(), DataScope::FullSource);
+            assert_eq!(series.len(), 5, "every scan, including the ones outside");
+        }
+        assert_eq!(panel.full_domain().low(), 9.0);
+        assert_eq!(panel.visible_domain().expect("a window").low(), 10.0);
+    }
+
+    /// A peak outside the window does not decide the window's value axis.
+    ///
+    /// The Viewer Closure y-extent finding, at the export layer. Nine million at
+    /// retention time 9 is in the document -- it is part of the run -- and a
+    /// figure of the range 10 to 13 that scaled to it would flatten everything
+    /// the reader asked to see onto the baseline.
+    #[test]
+    fn an_out_of_window_peak_does_not_scale_a_current_range_figure() {
+        let source = source(&run(&[
+            (0, Some(1), 9.0, 9_000_000.0, 10.0),
+            (1, Some(2), 10.0, 90.0, 20.0),
+            (2, Some(3), 11.0, 100.0, 30.0),
+            (3, Some(4), 12.0, 110.0, 40.0),
+            (4, Some(5), 13.0, 120.0, 50.0),
+        ]));
+        let traces = TraceSet::from_wire(true, false);
+        let figure = figure_spec(&source, current(&source, 10.0, 13.0), traces, settings())
+            .expect("a figure");
+        let panel = &figure.panels()[0];
+
+        // The source range still says how far the run reaches.
+        assert_eq!(panel.value_domain().high(), 9_000_000.0);
+        // The drawing does not.
+        let window = panel.visible_value_domain().expect("a value window");
+        assert_eq!(window.low(), 0.0);
+        assert!(
+            (window.high() - 120.0).abs() < 1e-9,
+            "the window ends at the tallest value in view, not at the peak: {window:?}"
+        );
+
+        // And nothing drawn mentions the peak.
+        let document = mscanvas_plot_spec::svg::render(&figure);
+        let drawn = document
+            .split("</desc>")
+            .nth(1)
+            .expect("a document has a body");
+        assert!(!drawn.contains("9000000"));
+    }
+
+    /// A boundary crossing does set the value axis, because it is on the page.
+    #[test]
+    fn an_interpolated_boundary_value_participates_in_the_value_window() {
+        // The window cuts the segment from 1 to 3 at 2, where the trace is 200.
+        let source = source(&run(&[
+            (0, Some(1), 1.0, 100.0, 1.0),
+            (1, Some(2), 3.0, 300.0, 3.0),
+        ]));
+        let traces = TraceSet::from_wire(true, false);
+        let figure =
+            figure_spec(&source, current(&source, 1.5, 2.0), traces, settings()).expect("a figure");
+        let window = figure.panels()[0]
+            .visible_value_domain()
+            .expect("a value window");
+
+        // No scan lies inside 1.5 to 2.0, so the only geometry is the two
+        // interpolated crossings: 150 and 200.
+        assert!(
+            (window.high() - 200.0).abs() < 1e-9,
+            "the right crossing sets the top: {window:?}"
+        );
+        assert_eq!(window.low(), 0.0);
+    }
+
+    /// A full-run figure declares no window at all.
+    #[test]
+    fn a_full_run_figure_declares_no_window() {
+        let source = ordinary();
+        let figure = figure_spec(&source, full(&source), both(), settings()).expect("a figure");
+        let panel = &figure.panels()[0];
+
+        assert_eq!(panel.visible_domain(), None);
+        assert_eq!(panel.visible_value_domain(), None);
+        assert_eq!(panel.displayed_value_domain(), panel.value_domain());
+    }
+
+    /// A current range that turns out to be the whole run declares none either.
+    #[test]
+    fn a_current_range_covering_everything_declares_no_window() {
+        let source = ordinary();
+        let resolved = source
+            .resolve(RangeRequest::from_wire("current", None, None).expect("a request"))
+            .expect("the whole run");
+        let figure = figure_spec(&source, resolved, both(), settings()).expect("a figure");
+        let panel = &figure.panels()[0];
+
+        assert_eq!(panel.visible_domain(), None);
+        assert_eq!(panel.visible_value_domain(), None);
+    }
+
+    /// The traces on screen decide what a figure draws, and what it is called.
+    #[test]
+    fn a_figure_draws_the_traces_that_are_visible() {
+        let source = ordinary();
+        let resolved = full(&source);
+
+        let tic = figure_spec(
+            &source,
+            resolved,
+            TraceSet::from_wire(true, false),
+            settings(),
+        )
+        .expect("a figure");
+        assert_eq!(tic.panels()[0].series().len(), 1);
+        assert_eq!(tic.panels()[0].series()[0].id().as_str(), "TIC");
+        assert_eq!(tic.panels()[0].series()[0].role(), StyleRole::Measurement);
+
+        let bpc = figure_spec(
+            &source,
+            resolved,
+            TraceSet::from_wire(false, true),
+            settings(),
+        )
+        .expect("a figure");
+        assert_eq!(bpc.panels()[0].series().len(), 1);
+        assert_eq!(bpc.panels()[0].series()[0].id().as_str(), "BPC");
+        // Its own role, not promoted because it is alone.
+        assert_eq!(
+            bpc.panels()[0].series()[0].role(),
+            StyleRole::SecondaryMeasurement
+        );
+
+        let together = figure_spec(&source, resolved, both(), settings()).expect("a figure");
+        assert_eq!(together.panels()[0].series().len(), 2);
+    }
+
+    /// A figure of no series is refused rather than drawn blank.
+    #[test]
+    fn a_figure_with_no_visible_trace_is_refused() {
+        let source = ordinary();
+
+        assert!(
+            figure_spec(
+                &source,
+                full(&source),
+                TraceSet::from_wire(false, false),
+                settings()
+            )
+            .is_err()
+        );
+    }
+
+    /// The figure says what it is and what it is not.
+    #[test]
+    fn the_figure_names_its_source_without_claiming_a_record() {
+        let source = ordinary();
+        let document = svg_document(&source, full(&source), both(), settings()).expect("a figure");
+
+        // What it is, in the words the product uses everywhere else.
+        assert!(document.contains("Per-scan values projected from the loaded spectrum table"));
+        // And what it is not, said rather than left to be assumed: a reader
+        // holding this file must not take it for a chromatogram the instrument
+        // recorded.
+        assert!(document.contains("not a stored chromatogram record"));
+        assert!(document.contains("Retention time"));
+        // Neither axis claims a unit.
+        assert!(!document.contains("Retention time ("));
+    }
+
+    /// One scan is a run, and it draws.
+    #[test]
+    fn a_single_scan_run_exports() {
+        let source = source(&run(&[(0, Some(1), 4.0, 9_000.0, 700.0)]));
+        let resolved = full(&source);
+
+        assert_eq!(source.full_domain().low(), source.full_domain().high());
+        let (document, rows) =
+            data_document(&source, resolved, ChromatogramExportFormat::Csv).expect("a document");
+        assert_eq!(rows, 1);
+        assert_eq!(records(&document), ["0,1,1,4,9000,700"]);
+
+        let figure = svg_document(&source, resolved, both(), settings()).expect("a figure");
+        assert!(figure.contains("<path d=\"M"), "a lone sample is drawn");
+    }
+
+    /// A run whose measurements are all zero still exports.
+    #[test]
+    fn an_all_zero_run_exports() {
+        let source = source(&run(&[
+            (0, Some(1), 1.0, 0.0, 0.0),
+            (1, Some(2), 2.0, 0.0, 0.0),
+        ]));
+
+        let (document, rows) = data_document(&source, full(&source), ChromatogramExportFormat::Csv)
+            .expect("a document");
+        assert_eq!(rows, 2);
+        assert_eq!(records(&document), ["0,1,1,1,0,0", "1,2,1,2,0,0"]);
+        assert!(svg_document(&source, full(&source), both(), settings()).is_ok());
+    }
+
+    /// Negative intensity is preserved rather than clamped.
+    #[test]
+    fn negative_and_mixed_intensities_survive() {
+        let source = source(&run(&[
+            (0, Some(1), 1.0, -50.0, -5.0),
+            (1, Some(2), 2.0, 100.0, 10.0),
+        ]));
+        let document = data_document(&source, full(&source), ChromatogramExportFormat::Csv)
+            .expect("a document")
+            .0;
+
+        assert_eq!(records(&document), ["0,1,1,1,-50,-5", "1,2,1,2,100,10"]);
+        let figure = figure_spec(&source, full(&source), both(), settings()).expect("a figure");
+        assert_eq!(figure.panels()[0].value_domain().low(), -50.0);
+    }
+
+    /// The figure and the data describe the same resolved range.
+    ///
+    /// Neither is reconstructed from the other: the document's metadata comes
+    /// from the range the export was bound to, and the panel's window comes from
+    /// the same one. This is what makes them siblings rather than one being a
+    /// reading of the other.
+    #[test]
+    fn the_figure_and_the_data_agree_about_the_range() {
+        let source = source(&run(&[
+            (0, Some(1), 1.0, 10.0, 1.0),
+            (1, Some(2), 2.0, 20.0, 2.0),
+            (2, Some(3), 3.0, 30.0, 3.0),
+        ]));
+        let resolved = current(&source, 1.5, 2.5);
+
+        let document = data_document(&source, resolved, ChromatogramExportFormat::Csv)
+            .expect("a document")
+            .0;
+        let window = figure_spec(&source, resolved, both(), settings())
+            .expect("a figure")
+            .panels()[0]
+            .visible_domain()
+            .expect("a window");
+
+        assert_eq!(preamble(&document, "export_range_low", ','), "1.5");
+        assert_eq!(preamble(&document, "export_range_high", ','), "2.5");
+        assert_eq!(window.low(), 1.5);
+        assert_eq!(window.high(), 2.5);
+    }
+
+    /// Both themes render, and neither is the other.
+    #[test]
+    fn a_chromatogram_renders_in_either_theme() {
+        let source = ordinary();
+        let mut documents = Vec::new();
+        for theme in [FigureTheme::Light, FigureTheme::Dark] {
+            let settings = FigureRenderSettings::from_wire(1_200, 640, theme_name(theme))
+                .expect("accepted settings");
+            documents
+                .push(svg_document(&source, full(&source), both(), settings).expect("a figure"));
+        }
+        assert_ne!(documents[0], documents[1]);
+    }
+
+    fn theme_name(theme: FigureTheme) -> &'static str {
+        match theme {
+            FigureTheme::Light => "light",
+            FigureTheme::Dark => "dark",
+        }
+    }
+
+    /// A representative acquisition exports without copying the table.
+    #[test]
+    fn a_representative_run_exports_bounded_work() {
+        let rows: Vec<(u64, Option<u64>, f64, f64, f64)> = (0..36_319_u64)
+            .map(|index| {
+                (
+                    index,
+                    Some(index + 1),
+                    index as f64 * 0.0125,
+                    10_000.0 + index as f64,
+                    1_000.0 + index as f64,
+                )
+            })
+            .collect();
+        let retained = run(&rows);
+        let before = Arc::strong_count(&retained);
+        let source = source(&retained);
+
+        // A handle, not a copy. The retained table is one allocation and the
+        // export is a second reader of it.
+        assert_eq!(Arc::strong_count(&retained), before + 1);
+        assert_eq!(source.scan_count(), 36_319);
+
+        let (_, written) = data_document(&source, full(&source), ChromatogramExportFormat::Csv)
+            .expect("a document");
+        assert_eq!(written, 36_319);
+        // One pass for a narrow window, and the count is the scans inside it.
+        let (_, inside) = data_document(
+            &source,
+            current(&source, 1.0, 2.0),
+            ChromatogramExportFormat::Csv,
+        )
+        .expect("a document");
+        assert_eq!(inside, 81);
+    }
+
+    /// The suggested name says the format and the scope, and nothing else.
+    #[test]
+    fn the_suggested_name_comes_from_the_request_alone() {
+        assert_eq!(
+            ChromatogramExportFormat::Csv.suggested_file_name(RangeScope::Full),
+            "mscanvas-chromatogram-full.csv"
+        );
+        assert_eq!(
+            ChromatogramExportFormat::Svg.suggested_file_name(RangeScope::Current),
+            "mscanvas-chromatogram-current.svg"
+        );
+        assert_eq!(
+            ChromatogramExportFormat::Png.suggested_file_name(RangeScope::Full),
+            "mscanvas-chromatogram-full.png"
+        );
+        assert_eq!(
+            ChromatogramExportFormat::Tsv.suggested_file_name(RangeScope::Current),
+            "mscanvas-chromatogram-current.tsv"
+        );
+    }
+
+    /// The dialogs say which surface they belong to.
+    #[test]
+    fn the_dialog_names_the_chromatogram() {
+        assert_eq!(
+            ChromatogramExportFormat::Svg.dialog().title,
+            "Export chromatogram figure"
+        );
+        assert_eq!(
+            ChromatogramExportFormat::Csv.dialog().title,
+            "Export chromatogram data"
+        );
+        assert!(ChromatogramExportFormat::Png.is_figure());
+        assert!(!ChromatogramExportFormat::Tsv.is_figure());
+    }
+}
