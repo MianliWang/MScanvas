@@ -177,7 +177,11 @@ export const Chromatogram = memo(function Chromatogram({
   } as const;
 
   return (
-    <section aria-labelledby="chromatogram-heading" className="panel chromatogram-panel">
+    <section
+      aria-labelledby="chromatogram-heading"
+      className="panel chromatogram-panel"
+      data-export-open={exportPanel === null || exportPanel === undefined ? undefined : "true"}
+    >
       {/* One line, and every control on it. The viewer is three stacked panels
           in a column that is about 480px tall at a 768px window, so what this
           panel spends on chrome it takes from the scan table and the spectrum
