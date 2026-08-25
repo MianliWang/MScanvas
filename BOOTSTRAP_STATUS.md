@@ -4587,6 +4587,14 @@ visibly live to reach Rust and come back refused. Availability is all that is
 shared -- each surface keeps its own result, status message and token binding,
 and neither panel is hidden while the other runs.
 
+**A data document has no figure settings.** CSV and TSV are not drawn, so
+width, height, theme, PNG DPI and the raster budget are never validation inputs
+to a chromatogram data export -- the format is read first, and a reservation for
+a data document carries no `FigureRenderSettings` at all. The panel already left
+those actions available when a figure setting was unusable, correctly, because
+none of them reaches a list of numbers; Rust now means the same thing. The
+figure formats keep every check they had, in the order they had it.
+
 **Which preview open owns the chromatogram** is a separate question from which
 read may commit facts for a dataset, and it now has its own answer. The
 per-dataset request epoch cannot order two opens of two *different* files --
@@ -4598,6 +4606,15 @@ completion the session has passed can neither install nor revoke, and a newer
 open that fails leaves no chromatogram rather than resurrecting the old one --
 exactly what the webview does with the preview itself. An export already claimed
 still finishes from the snapshot it began on.
+
+The ticket is taken at **intent** rather than at success: after Rust has proved
+the request names an existing, previewable mzML row, and before anything that
+can refuse for a reason of the moment -- a backend that stopped being trusted, a
+conversion that took the slot. The webview has already replaced what was on
+screen by then and shows a refusal rather than restoring it, so a read refused
+at those gates must still revoke, or Rust would go on naming a run nothing is
+showing. A malformed handle, an unknown dataset and a vendor row revoke nothing:
+none of them is a preview attempt.
 
 ### Still not implemented
 

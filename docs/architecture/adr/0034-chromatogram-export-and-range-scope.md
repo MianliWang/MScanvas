@@ -116,6 +116,53 @@ than restoring what it replaced. Rust matches it — a failed newer open leaves 
 chromatogram at all — because offering an export of a run nothing is showing is
 the same defect as a stale token.
 
+### The ticket is taken at intent, not at success
+
+**A real mzML preview attempt revokes the previous chromatogram authority before
+any refusal that is about the moment rather than about the target.** This closes
+M4.3's second final-observation finding.
+
+The order that matters is exactly this, and each step is load-bearing:
+
+1. resolve the handle;
+2. prove the dataset exists;
+3. prove its source kind is the mzML preview surface;
+4. **take the `PreviewOpenTicket`** — which revokes the current chromatogram at
+   that moment;
+5. only now the conditions that are about *this moment*: is the backend still
+   trusted, is a conversion holding the slot, will the process gate admit this;
+6. the existing per-dataset epoch and backend read;
+7. on success, commit the dataset's preview facts and reconcile the chromatogram
+   with the ticket taken in step 4;
+8. on any failure after step 4, restore nothing.
+
+Steps 1–3 are about the *target* and answer the same way however often they are
+asked. Step 5 can refuse for a reason that did not exist a moment ago — and by
+then `loadPreview` has already raised its counter, taken the old preview off the
+screen and shown the refusal in its place. A read refused at step 5 without
+having taken the ticket would leave Rust still naming a run nothing is showing,
+and a delayed or replayed command could export it.
+
+The distinction between the two halves is the whole rule, and it is not "every
+failed command revokes":
+
+| request | revokes the current chromatogram? |
+| --- | --- |
+| malformed handle | no |
+| dataset the session does not have | no |
+| vendor row / non-previewable source | no |
+| **real mzML row, refused because the backend became unusable** | **yes** |
+| **real mzML row, refused because a conversion started** | **yes** |
+| real mzML row, read succeeds | yes, and it installs its own |
+
+One consequence is deliberate and worth naming: opening a *vendor* row while the
+backend is quarantined now answers `dataset_not_previewable` rather than
+`backend_quarantined`. An open has to establish what it names before it can
+supersede what is on screen, so the target is what it reports on — and that is
+the truer answer anyway, because no backend repair would make that row
+previewable. The frontend never reaches either case: it refuses vendor
+activation before it calls.
+
 The ownership test and the installation are **one critical section** of the
 export slot. Compare, unlock, install later is the same race with an extra step
 in it: a newer open begins in the gap and the older completion still wins. The
@@ -393,6 +440,43 @@ screen at once and two elements sharing an `id`, or two radio groups sharing a
 `name`, would leave a label pointing at the wrong control and one theme choice
 silently changing the other. There is no second figure-settings authority.
 
+## A data document has no figure settings
+
+**CSV and TSV are not figures, so the figure contract is never asked about
+one.** Width, height, theme, PNG DPI and the raster budget are not validation
+inputs to a chromatogram data export, and a reservation for one carries no
+`FigureRenderSettings` at all.
+
+This closes M4.3's first final-observation finding, and the case was reachable
+through the ordinary interface with no race and no replayed command. The panel's
+own rule is *a whole number of at least 1*, deliberately — the panel is not the
+authority on what MSCanvas can draw — so a width of 20,001 leaves every action
+live and is forwarded as typed. Rust validated the whole `FigureSettingsDto`
+before it had looked at the format, so `Export CSV…` came back
+`figure_settings_refused`: *"That is not a figure size MSCanvas can draw"*, about
+a document with no width in it.
+
+The rule is now the same on both sides of the boundary, which is what makes the
+affordance honest rather than lucky:
+
+| | closes | leaves open |
+| --- | --- | --- |
+| unusable width/height | SVG, PNG, Copy plot | CSV, TSV |
+| unusable PNG DPI | PNG | SVG, Copy plot, CSV, TSV |
+
+The format is read **first**, and nothing is validated before it is known. A
+data export still answers for everything that does belong to it — the token, the
+one scientific lane, the range request, the source snapshot, the format itself
+and the write transaction — and the figure formats keep every check they had, in
+the order they had it: an unusable size is refused before a resolution is read,
+and a resolution before the pixel budget.
+
+The wire shape is unchanged. The frontend still forwards one
+`FigureSettingsDto`, because narrowing the wire per format would be scope this
+slice does not need; what changed is that the data path ignores the fields that
+are not about it. The selected-spectrum export already had this posture and is
+untouched — the chromatogram was brought to it, not the other way round.
+
 ## The interface
 
 A disclosure in the chromatogram's own panel, **closed by default**, opened from
@@ -426,14 +510,14 @@ consistency, and touch gestures over the chromatogram.
 
 ## Evidence
 
-**Rust:** 1,202 tests. The chromatogram module's own thirty-one cover
+**Rust:** 1,211 tests. The chromatogram module's own thirty-one cover
 eligibility, ordering, range resolution and refusal, the schema, number
 round-tripping, real-scans-only, the zero-row range, the value window and the
 9,000,000 regression, the trace set and the one-scan run. The export lane's
 cover both directions of the cross-source refusal, supersession, claim identity,
 token staleness and dataset-scoped revocation.
 
-Fourteen of them cover preview-open ownership: the older open that cannot
+Nineteen of them cover preview-open ownership: the older open that cannot
 install over a newer one, the older open finishing first while the newer one is
 still reading, the newer open that fails leaving nothing rather than the run it
 replaced, current-and-ineligible revoking against stale-and-anything mutating
@@ -441,41 +525,77 @@ nothing, a claimed export finishing from its begin-time snapshot across a
 replacement, revocation at begin rather than at completion, a vendor row that is
 not a preview open, two opens of one dataset still decided by the request epoch,
 Remove and Clear during a read, and one concurrent case at the real command
-boundary. The contract's own cover the two new shapes and everything they must
-still refuse.
+boundary.
 
-**Frontend:** 998 tests, eighteen of them at the shipped composition — the token
+M4.3.1 adds the intent boundary to that set: a backend that became unusable and
+a conversion that started each refusing a real mzML open while still taking the
+chromatogram away, an unknown handle and a vendor row each leaving the visible
+run exportable, an older completion landing after a newer attempt failed early
+and installing nothing, and a claimed export finishing across a replacement that
+never succeeded. Four more cover the data/figure split at the service boundary:
+CSV and TSV beginning at every size the panel accepts and the figure contract
+refuses, at an unknown theme and an unusable resolution, the figure formats
+still answering for all of it in the accepted order, and the selected spectrum
+answering exactly as it always did. The contract's own cover the two new shapes
+and everything they must still refuse.
+
+**Frontend:** 999 tests, nineteen of them at the shipped composition — the token
 sent, the committed range rather than a transient one, the traces on screen, the
 lane, the surface absent where there is no chromatogram, and a zero-scan range
 reported as the success it is. Seven cover the shared lane in both directions:
 four on the callbacks, where a refusal means no operation is dispatched at all,
 and three on the rendered panels, where it means a control the user meets is
-closed rather than live and refused on arrival.
+closed rather than live and refused on arrival. One more walks the reachable
+case of the data/figure split end to end: a width of 20,001 typed into the
+panel, `Export CSV…` still live, clicked, and the request crossing with that
+width forwarded as typed.
 
 **Browser QA:** 15 rendered cases at 1366×768, 1920×1080 and 960×640 — the closed
 disclosure costing the measured layout nothing, every control inside its panel,
 and what actually crossed the boundary. Zero newly introduced console errors,
 warnings, unhandled rejections or exceptions.
 
-**Real Tauri QA:** 5 spec files on WebView2, including the 4 chromatogram cases
+**Real Tauri QA:** 5 spec files and 25 cases on WebView2, including the 4
+chromatogram cases
 with `begin_chromatogram_export` and `copy_chromatogram_plot` left real, against
 a seeded run installed through the production parser and the ordinary
 eligibility — and now through the ordinary preview-open ticket as well, because
 the seed reconciles rather than installing directly.
 
-**Twenty-three mutations**, applied and restored byte-for-byte. The nine added
-for export ownership cover both directions of the shared lane in the callbacks
-and in each panel, the absent ticket check, a stale completion allowed to
-revoke, a begin that does not revoke, the ticket standing in for the per-dataset
-epoch, and a begin that cancels a claimed export.
+**Thirty-two mutations**, applied and restored byte-for-byte. The nine for
+export ownership cover both directions of the shared lane in the callbacks and
+in each panel, the absent ticket check, a stale completion allowed to revoke, a
+begin that does not revoke, the ticket standing in for the per-dataset epoch,
+and a begin that cancels a claimed export.
 
-One of the nine — check-then-act split across two acquisitions of the export
-slot — is **not killed by a test**, and is closed structurally instead: the slot
-answers "may this open install" and never "is this open current", and the
-installer is private, so writing the split means adding public surface to
-`ScientificExportSlots` rather than reordering two lines at a call site. The
-window a split would open is narrower than a thread wake, so a test that claimed
-to catch it would be claiming more than it could show.
+The nine for M4.3.1's closure cover the unconditional settings validation
+restored ahead of the format branch, the CSV control made to depend on figure
+validity instead, the ticket taken after the backend gate, after the conversion
+gate, and before the target is known at all, an older completion allowed to
+install after a newer attempt failed early, a begin that cancels a claimed
+export, and both halves of the API-surface rule below.
+
+One of them — check-then-act split across two acquisitions of the export slot —
+is **still not killed by a behavioural test**, and that has not changed: the
+window a split would open is narrower than a thread wake, so a test claiming to
+catch it would be claiming scheduling luck as evidence. It is closed by the API
+surface instead, and M4.3.1 makes that structural claim *checkable* rather than
+merely argued. `check_repo.py` now pins two facts about `preview/export.rs`:
+
+- `install_chromatogram` is private, and nothing outside the module calls it;
+- the only functions naming `latest_preview_open` are the one that advances it
+  and the one that compares **and** mutates under the same `&mut self`.
+
+The second is deliberately not a list of forbidden names: any new way to ask
+"is this ticket current" on its own has to read that field, whatever it is
+called. Adding a query-only `is_current_preview_open`, or making the installer
+`pub(super)`, fails the check. So the classification is now:
+
+**NOT KILLED BY TIMING TEST; CLOSED BY API/TYPE SURFACE, AND THAT SURFACE IS
+CHECKED.**
+
+The behavioural race tests are retained as supporting evidence and are not the
+proof.
 
 **Live ProteoWizard evidence: NOT RUN**, and not required: the export semantics
 depend on retained facts rather than on a backend read.
