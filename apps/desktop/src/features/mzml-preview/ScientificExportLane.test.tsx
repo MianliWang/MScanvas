@@ -25,7 +25,7 @@ import { describe, expect, it } from "vitest";
 
 import { PreviewApiProvider, type PreviewApi } from "./api";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
-import { createFakePreviewApi, selectedFile } from "../../test/previewFixtures";
+import { buildPreview, createFakePreviewApi, selectedFile } from "../../test/previewFixtures";
 
 function wrapper(api: PreviewApi) {
   return function Wrapper({ children }: { readonly children: ReactNode }) {
@@ -59,6 +59,26 @@ async function bothSurfacesReady(
 
 function oneDataset(): { readonly file: typeof selectedFile; readonly parents: never[] } {
   return { file: selectedFile, parents: [] };
+}
+
+/**
+ * A preview whose chromatogram is named freshly on every open.
+ *
+ * What Rust does: the token is a counter, and installing a chromatogram issues
+ * a new one, so no two opens are ever named the same -- including two opens of
+ * one dataset. The shared fixture answers with a fixed token, which is enough
+ * for the cases that only need *a* token and wrong for the ones that turn on a
+ * replacement being distinguishable from the run it replaced.
+ */
+function previewsNamedPerOpen(): () => Promise<ReturnType<typeof buildPreview>> {
+  let opens = 0;
+  return () => {
+    opens += 1;
+    return Promise.resolve({
+      ...buildPreview(),
+      chromatogramExportToken: `chromatogram-token-${opens}`,
+    });
+  };
 }
 
 describe("the one scientific export lane", () => {
@@ -214,6 +234,135 @@ describe("the one scientific export lane", () => {
     await waitFor(() => {
       expect(result.current.scientificExportBusy).toBe(false);
     });
+  });
+
+  it("keeps the lane held when a preview replaces the run being written", async () => {
+    /*
+     * Round 1 of M4.3.1's review found this. A result belongs to the run it
+     * describes, so the binding effect cleared the export state the moment the
+     * token changed -- which also cleared the fact that Rust was still holding
+     * the one scientific lane. Opening another preview during a clipboard
+     * rasterization, or after a save dialog closed while a large PNG was still
+     * being written, therefore reported the lane free while it was not, and the
+     * newly enabled actions dispatched a second operation Rust refuses as
+     * already in progress.
+     *
+     * Occupancy now outlives the run: it ends when the operation settles,
+     * because that is when Rust lets the lane go. What the token change ends is
+     * the claim that this surface's label is about the run on screen.
+     */
+    let release: (() => void) | null = null;
+    const api = createFakePreviewApi({
+      initialDatasets: [oneDataset()],
+      preview: previewsNamedPerOpen(),
+      chromatogramExport: async () =>
+        new Promise((resolve) => {
+          release = () => {
+            resolve({ status: "cancelled" });
+          };
+        }),
+    });
+    const { result } = await bothSurfacesReady(api);
+
+    act(() => {
+      result.current.exportChromatogram("png");
+    });
+    await waitFor(() => {
+      expect(api.chromatogramExportRequests).toHaveLength(1);
+    });
+    expect(result.current.scientificExportBusy).toBe(true);
+
+    // The user opens another run while that write is still in flight.
+    act(() => {
+      result.current.activateDataset(selectedFile.handle);
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("loaded");
+    });
+
+    // Rust has not let go, so neither has the interface.
+    expect(result.current.scientificExportBusy).toBe(true);
+    expect(result.current.chromatogramExport).toEqual({
+      status: "running",
+      operation: "png",
+      // ...but the label no longer claims the run now on screen is the one
+      // being written.
+      namesVisibleRun: false,
+    });
+
+    // And nothing gets through to Rust in the meantime.
+    act(() => {
+      result.current.exportChromatogram("csv");
+      result.current.copyChromatogramPlot();
+      result.current.exportSpectrum("csv");
+    });
+    expect(api.chromatogramExportRequests).toHaveLength(1);
+    expect(api.chromatogramCopyRequests).toEqual([]);
+    expect(api.spectrumExportRequests).toEqual([]);
+
+    // The lane is released when the operation ends, and the answer it carries
+    // is never published: it describes a run the user has moved past.
+    act(() => {
+      release?.();
+    });
+    await waitFor(() => {
+      expect(result.current.scientificExportBusy).toBe(false);
+    });
+    expect(result.current.chromatogramExport).toEqual({ status: "idle" });
+
+    // What was refused was the lane, not the action.
+    act(() => {
+      result.current.exportChromatogram("csv");
+    });
+    await waitFor(() => {
+      expect(api.chromatogramExportRequests).toHaveLength(2);
+    });
+  });
+
+  it("keeps the lane held when a preview replaces a spectrum being written", async () => {
+    // The same rule on the other surface. A spectrum export outliving the
+    // spectrum it names holds the lane exactly as a chromatogram's does.
+    let release: (() => void) | null = null;
+    const api = createFakePreviewApi({
+      initialDatasets: [oneDataset()],
+      preview: previewsNamedPerOpen(),
+      spectrumExport: async () =>
+        new Promise((resolve) => {
+          release = () => {
+            resolve({ status: "cancelled" });
+          };
+        }),
+    });
+    const { result } = await bothSurfacesReady(api);
+
+    act(() => {
+      result.current.exportSpectrum("png");
+    });
+    await waitFor(() => {
+      expect(api.spectrumExportRequests).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.activateDataset(selectedFile.handle);
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("loaded");
+    });
+
+    expect(result.current.scientificExportBusy).toBe(true);
+    expect(result.current.spectrumExport).toEqual({
+      status: "running",
+      operation: "png",
+      namesVisibleRun: false,
+    });
+
+    act(() => {
+      release?.();
+    });
+    await waitFor(() => {
+      expect(result.current.scientificExportBusy).toBe(false);
+    });
+    expect(result.current.spectrumExport).toEqual({ status: "idle" });
   });
 
   it("says the lane is free where neither surface is running", async () => {

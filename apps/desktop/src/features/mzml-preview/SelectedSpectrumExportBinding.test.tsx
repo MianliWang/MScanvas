@@ -233,7 +233,16 @@ describe("selected spectrum export binding", () => {
     await waitFor(() => {
       expect(result.current.spectrum.status).toBe("loaded");
     });
-    expect(result.current.spectrumExport.status).toBe("idle");
+    // Still running, because Rust is still writing. Moving to another spectrum
+    // ends this export's claim on *this panel's words*, not its hold on the one
+    // scientific lane -- and reporting the lane free here would re-offer every
+    // export while a file is being written, which Rust refuses.
+    expect(result.current.spectrumExport).toEqual({
+      status: "running",
+      operation: "csv",
+      namesVisibleRun: false,
+    });
+    expect(result.current.scientificExportBusy).toBe(true);
 
     await act(async () => {
       finishExport();
@@ -241,8 +250,10 @@ describe("selected spectrum export binding", () => {
     });
 
     // The file was written. It is simply not this spectrum's file, so this
-    // spectrum says nothing about it.
+    // spectrum says nothing about it -- and the lane is free again, because the
+    // operation that held it has ended.
     expect(result.current.spectrumExport.status).toBe("idle");
+    expect(result.current.scientificExportBusy).toBe(false);
   });
 
   /** Drives one workspace to a loaded spectrum and answers with its hook. */
@@ -419,7 +430,14 @@ describe("selected spectrum export binding", () => {
     await waitFor(() => {
       expect(result.current.spectrum.status).toBe("loaded");
     });
-    expect(result.current.spectrumExport.status).toBe("idle");
+    // A clipboard rasterization holds the lane exactly as a save does, and the
+    // same rule applies: what the move ends is this panel's claim on it.
+    expect(result.current.spectrumExport).toEqual({
+      status: "running",
+      operation: "copy",
+      namesVisibleRun: false,
+    });
+    expect(result.current.scientificExportBusy).toBe(true);
 
     await act(async () => {
       finishCopy();
@@ -427,6 +445,7 @@ describe("selected spectrum export binding", () => {
     });
 
     expect(result.current.spectrumExport.status).toBe("idle");
+    expect(result.current.scientificExportBusy).toBe(false);
   });
 
   it("still exports data while the figure settings describe no figure", async () => {

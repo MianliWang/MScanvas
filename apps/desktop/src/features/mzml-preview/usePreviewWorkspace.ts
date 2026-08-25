@@ -234,7 +234,20 @@ export type FigureOperation = SpectrumExportFormat | "copy";
 
 export type SpectrumExportState =
   | { readonly status: "idle" }
-  | { readonly status: "running"; readonly operation: FigureOperation }
+  | {
+      readonly status: "running";
+      readonly operation: FigureOperation;
+      /**
+       * Whether the run being written is still the one on screen.
+       *
+       * `false` once a newer preview has replaced it. The lane is still held --
+       * Rust is still writing, and nothing else may begin -- but what this
+       * surface now shows is a different run, so its label must not say that
+       * *this* one is being exported. Availability and identity are separate
+       * facts, and only the first of them survives the replacement.
+       */
+      readonly namesVisibleRun: boolean;
+    }
   | { readonly status: "cancelled" }
   | {
       readonly status: "saved";
@@ -265,7 +278,20 @@ export type SpectrumExportState =
  */
 export type ChromatogramExportState =
   | { readonly status: "idle" }
-  | { readonly status: "running"; readonly operation: FigureOperation }
+  | {
+      readonly status: "running";
+      readonly operation: FigureOperation;
+      /**
+       * Whether the run being written is still the one on screen.
+       *
+       * `false` once a newer preview has replaced it. The lane is still held --
+       * Rust is still writing, and nothing else may begin -- but what this
+       * surface now shows is a different run, so its label must not say that
+       * *this* one is being exported. Availability and identity are separate
+       * facts, and only the first of them survives the replacement.
+       */
+      readonly namesVisibleRun: boolean;
+    }
   | { readonly status: "cancelled" }
   | {
       readonly status: "saved";
@@ -2488,7 +2514,16 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const boundExportToken = useRef<string | null>(null);
   useEffect(() => {
     boundExportToken.current = exportedSpectrumToken;
-    setSpectrumExport({ status: "idle" });
+    // A *result* stops being ours here. The lane does not: Rust holds it until
+    // the operation it is running settles, and saying otherwise would re-offer
+    // every scientific action while a file is still being written -- which is
+    // the one thing the shared projection exists to prevent. So a running state
+    // survives the change and only stops naming the run on screen.
+    setSpectrumExport((current) =>
+      current.status === "running"
+        ? { ...current, namesVisibleRun: false }
+        : { status: "idle" },
+    );
   }, [exportedSpectrumToken]);
 
   const dismissSpectrumExport = useCallback(() => {
@@ -2535,7 +2570,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           ? DEFAULT_FIGURE_SETTINGS
           : figureSettingsFor(resolvedRenderSettings, resolvedPngDpi);
       const token = spectrum.spectrum.exportToken;
-      setSpectrumExport({ status: "running", operation: format });
+      setSpectrumExport({ status: "running", operation: format, namesVisibleRun: true });
       void api
         .exportSelectedSpectrum(token, format, settings)
         .then((outcome) => {
@@ -2545,6 +2580,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           // way this surface could mislead about which measurement a file holds,
           // and a confirmation the user has to distrust is worth less than none.
           if (boundExportToken.current !== token) {
+            // Finished, so the lane is free even though its answer describes a
+            // spectrum nobody is looking at. Released when the operation ends
+            // rather than when the token moved, which is what stops a second
+            // export being offered over the top of this one.
+            setSpectrumExport({ status: "idle" });
             return;
           }
           setSpectrumExport(
@@ -2561,6 +2601,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         })
         .catch((cause: unknown) => {
           if (boundExportToken.current !== token) {
+            // Finished, so the lane is free even though its answer describes a
+            // spectrum nobody is looking at. Released when the operation ends
+            // rather than when the token moved, which is what stops a second
+            // export being offered over the top of this one.
+            setSpectrumExport({ status: "idle" });
             return;
           }
           setSpectrumExport({
@@ -2596,7 +2641,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }
     const settings = figureSettingsFor(render, resolvedPngDpi);
     const token = spectrum.spectrum.exportToken;
-    setSpectrumExport({ status: "running", operation: "copy" });
+    setSpectrumExport({ status: "running", operation: "copy", namesVisibleRun: true });
     void api
       .copySelectedSpectrumPlot(token, settings)
       .then((outcome) => {
@@ -2605,6 +2650,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         // pixels did not come from would say the wrong thing about what is on
         // the clipboard.
         if (boundExportToken.current !== token) {
+          // Finished, so the lane is free even though its answer describes a
+          // spectrum nobody is looking at. Released when the operation ends
+          // rather than when the token moved, which is what stops a second
+          // export being offered over the top of this one.
+          setSpectrumExport({ status: "idle" });
           return;
         }
         setSpectrumExport({
@@ -2615,6 +2665,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       })
       .catch((cause: unknown) => {
         if (boundExportToken.current !== token) {
+          // Finished, so the lane is free even though its answer describes a
+          // spectrum nobody is looking at. Released when the operation ends
+          // rather than when the token moved, which is what stops a second
+          // export being offered over the top of this one.
+          setSpectrumExport({ status: "idle" });
           return;
         }
         setSpectrumExport({
@@ -2638,7 +2693,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const boundChromatogramToken = useRef<string | null>(null);
   useEffect(() => {
     boundChromatogramToken.current = chromatogramExportToken;
-    setChromatogramExport({ status: "idle" });
+    // The rule the selected spectrum's binding follows above, for the same
+    // reason: the result stops being ours at this moment, the lane does not
+    // stop being held until Rust says so.
+    setChromatogramExport((current) =>
+      current.status === "running"
+        ? { ...current, namesVisibleRun: false }
+        : { status: "idle" },
+    );
   }, [chromatogramExportToken]);
 
   const dismissChromatogramExport = useCallback(() => {
@@ -2714,11 +2776,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           ? DEFAULT_FIGURE_SETTINGS
           : figureSettingsFor(resolvedRenderSettings, resolvedPngDpi);
       const range = chromatogramRange();
-      setChromatogramExport({ status: "running", operation: format });
+      setChromatogramExport({ status: "running", operation: format, namesVisibleRun: true });
       void api
         .exportChromatogram(token, format, range, visible, settings)
         .then((outcome) => {
           if (boundChromatogramToken.current !== token) {
+            // Finished, so the lane is free -- and its answer belongs to a run
+            // the user has moved past, so it is not published.
+            setChromatogramExport({ status: "idle" });
             return;
           }
           setChromatogramExport(
@@ -2739,6 +2804,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         })
         .catch((cause: unknown) => {
           if (boundChromatogramToken.current !== token) {
+            // Finished, so the lane is free -- and its answer belongs to a run
+            // the user has moved past, so it is not published.
+            setChromatogramExport({ status: "idle" });
             return;
           }
           setChromatogramExport({
@@ -2777,11 +2845,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }
     const settings = figureSettingsFor(render, resolvedPngDpi);
     const range = chromatogramRange();
-    setChromatogramExport({ status: "running", operation: "copy" });
+    setChromatogramExport({ status: "running", operation: "copy", namesVisibleRun: true });
     void api
       .copyChromatogramPlot(token, range, visible, settings)
       .then((outcome) => {
         if (boundChromatogramToken.current !== token) {
+          // Finished, so the lane is free -- and its answer belongs to a run
+          // the user has moved past, so it is not published.
+          setChromatogramExport({ status: "idle" });
           return;
         }
         setChromatogramExport({
@@ -2795,6 +2866,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       })
       .catch((cause: unknown) => {
         if (boundChromatogramToken.current !== token) {
+          // Finished, so the lane is free -- and its answer belongs to a run
+          // the user has moved past, so it is not published.
+          setChromatogramExport({ status: "idle" });
           return;
         }
         setChromatogramExport({

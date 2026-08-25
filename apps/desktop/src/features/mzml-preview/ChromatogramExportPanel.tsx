@@ -109,8 +109,11 @@ export function ChromatogramExportPanel({
   onFigureSetting,
   onFigureTheme,
 }: ChromatogramExportPanelProps) {
-  // What this surface is doing, which is what its labels are allowed to say.
-  const running = exportState.status === "running";
+  // What this surface is doing *to the run it is showing*, which is what its
+  // labels are allowed to say. An operation that outlived the preview it was
+  // begun on still holds the lane -- so the controls below stay closed -- but
+  // it is no longer this run being written, and no label here says it is.
+  const running = exportState.status === "running" && exportState.namesVisibleRun;
   // A figure nothing can be drawn from is not offered. The data formats stay
   // live: a width nobody could draw at says nothing about a list of numbers.
   //

@@ -210,6 +210,18 @@ callbacks read the projection and both panels render it, so while either is
 running the other's figure, data and copy controls are unavailable rather than
 visibly live and refused on arrival.
 
+Occupancy outlives the run it was begun on. An export is still being written
+when the user opens another preview or selects another spectrum, and Rust does
+not let the lane go until it settles -- so neither does this. What the
+replacement ends is the *result*: the answer belongs to the run it describes and
+is never published against a different one, and when it lands the lane is
+released rather than left held. A `running` state therefore carries
+`namesVisibleRun`, which is false once the run it names has been replaced: the
+controls stay closed because the lane is genuinely busy, and no label claims the
+run now on screen is the one being written. Clearing the state at the moment the
+token moved would have reported the lane free while a file was still going to
+disk, and every re-offered action would have reached Rust and been refused.
+
 What is shared is **availability and nothing else**. Neither panel shows the
 other's status message or the other's result, and neither is hidden while the
 other runs — a control that vanished mid-write would move everything below it
@@ -539,7 +551,7 @@ still answering for all of it in the accepted order, and the selected spectrum
 answering exactly as it always did. The contract's own cover the two new shapes
 and everything they must still refuse.
 
-**Frontend:** 999 tests, nineteen of them at the shipped composition — the token
+**Frontend:** 1,002 tests, nineteen of them at the shipped composition — the token
 sent, the committed range rather than a transient one, the traces on screen, the
 lane, the surface absent where there is no chromatogram, and a zero-scan range
 reported as the success it is. Seven cover the shared lane in both directions:
@@ -562,7 +574,7 @@ a seeded run installed through the production parser and the ordinary
 eligibility — and now through the ordinary preview-open ticket as well, because
 the seed reconciles rather than installing directly.
 
-**Thirty-two mutations**, applied and restored byte-for-byte. The nine for
+**Thirty-four mutations**, applied and restored byte-for-byte. The nine for
 export ownership cover both directions of the shared lane in the callbacks and
 in each panel, the absent ticket check, a stale completion allowed to revoke, a
 begin that does not revoke, the ticket standing in for the per-dataset epoch,
@@ -573,7 +585,11 @@ restored ahead of the format branch, the CSV control made to depend on figure
 validity instead, the ticket taken after the backend gate, after the conversion
 gate, and before the target is known at all, an older completion allowed to
 install after a newer attempt failed early, a begin that cancels a claimed
-export, and both halves of the API-surface rule below.
+export, and both halves of the API-surface rule below. Two more cover lane survival in
+both of the ways it can be got wrong: a token change that clears a running lane,
+and a stale settle that never releases one -- the first reports the lane free
+while a file is being written, the second wedges it for the rest of the
+session.
 
 One of them — check-then-act split across two acquisitions of the export slot —
 is **still not killed by a behavioural test**, and that has not changed: the
