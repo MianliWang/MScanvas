@@ -957,6 +957,37 @@ button:disabled {
   flex-direction: column;
 }
 
+/* Open, the panel scrolls its own content.
+
+   The preferred repair was to let the grid row grow to the surface, so the one
+   column already scrolling would carry it. That was tried twice and measured
+   twice, and it crashes the renderer: a content-based track minimum here is
+   cyclic. The row's minimum would come from the panel's content, the content
+   includes an axis caption and a plot that size against the available width,
+   and the available width depends on whether this column is showing a
+   scrollbar -- which depends on the row's height. Chrome resolves that loop by
+   growing until the tab dies, and it took the whole spec file down with it.
+
+   So the surface gets its own scroll owner, which is what the layout rules
+   allow once a growing track is shown to produce another defect. Every length
+   below is definite, and that is the point: nothing here asks the panel how
+   tall its content wants to be.
+
+   The body stops filling and keeps the floor the three-panel column was
+   measured with -- 6px of padding, the 52px the plot floors at, the axis
+   caption's two lines, the readout, and 8px below -- so the plot stays a plot
+   instead of being squeezed out by a taller surface. The surface's own height
+   stays content-driven: a label that wraps, or a settings problem that appears,
+   makes it taller and the panel simply has more to scroll through. */
+.chromatogram-panel[data-export-open="true"] {
+  overflow-y: auto;
+}
+
+.chromatogram-panel[data-export-open="true"] .chromatogram-body {
+  min-height: 124px;
+  flex: none;
+}
+
 /* The same treatment the selected-spectrum header needed. The controls beside
    the title are taller than a title, so a header that does not grow to fit them
    centres them outside itself; below the width where both fit on one line they
@@ -1032,6 +1063,39 @@ button:disabled {
   flex: 1;
   flex-direction: column;
   gap: 4px;
+}
+
+/* The export surface, opened from the chromatogram's own header.
+
+   Closed it costs nothing: the control that opens it sits in the header row
+   that already exists, so the measured floors of the three-panel column are
+   unchanged. Open, it takes the width of the panel and pushes the plot down
+   inside a column that scrolls, which is the honest trade for a surface the
+   user asked for. */
+.chromatogram-export-panel {
+  border-top: 1px solid var(--border-subtle, #d5d9e0);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0 0;
+}
+
+.chromatogram-export-range {
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+}
+
+/* One sentence per thing a reader would otherwise have to guess: which traces a
+   figure draws, that data carries both columns, and what the current range
+   currently is. */
+.chromatogram-export-note {
+  color: var(--text-muted, #56606e);
+  font-size: 0.85rem;
+  margin: 0;
 }
 
 .chromatogram-svg {

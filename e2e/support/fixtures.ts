@@ -25,6 +25,18 @@ export const MZML_ROW = selectedFile;
 /** How many points the mocked backend says a complete exported spectrum holds. */
 export const COMPLETE_POINT_COUNT = 1_000_000;
 
+/**
+ * How many scans the mocked backend says the run holds.
+ *
+ * Unlike any row count this document receives, deliberately: Rust counts the
+ * facts it retained, and a fixture whose answer matched the transfer would let
+ * an export that read the transfer pass.
+ */
+export const COMPLETE_SCAN_COUNT = 36_319;
+
+/** The end of the run the mocked chromatogram export reports covering. */
+const FULL_RANGE_HIGH = 0.0625;
+
 /** The spectrum index the QA run selects. */
 export const SELECTED_INDEX = 0;
 
@@ -76,6 +88,30 @@ export function ipcTable(options: { readonly emptySpectrum?: boolean } = {}) {
     },
     // One command rather than two: a copy chooses no destination, so there is
     // no dialog to gate and nothing to come back from.
+    // The chromatogram export, in the same two-phase shape. The reservation is
+    // opaque and the outcome is replaced per test through `setInvokeResult`.
+    begin_chromatogram_export: "chromatogram-reservation-1",
+    save_chromatogram_export: {
+      status: "saved",
+      format: "csv",
+      fileName: "mscanvas-chromatogram-full.csv",
+      figure: null,
+      traces: null,
+      rangeScope: "full",
+      rangeLow: 0,
+      rangeHigh: FULL_RANGE_HIGH,
+      sourceScanCount: COMPLETE_SCAN_COUNT,
+      rowCount: COMPLETE_SCAN_COUNT,
+    },
+    copy_chromatogram_plot: {
+      status: "copied",
+      figure: { width: 1_200, height: 640, theme: "light" },
+      traces: { tic: true, bpc: false },
+      rangeScope: "full",
+      rangeLow: 0,
+      rangeHigh: FULL_RANGE_HIGH,
+      sourceScanCount: COMPLETE_SCAN_COUNT,
+    },
     copy_selected_spectrum_plot: {
       status: "copied",
       // A size and a theme, as Rust answers. No resolution: the clipboard holds

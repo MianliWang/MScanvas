@@ -63,6 +63,10 @@ use mscanvas_proteowizard::{
     SelectedSpectrumResult, SpectrumRepresentationState, UnitState as SourceUnitState,
 };
 
+use super::chromatogram::{
+    ChromatogramExportFormat, ChromatogramSource, RangeRefusal, RangeRequest, ResolvedRange,
+    TraceSet,
+};
 use super::dialog::SaveDialogFacts;
 use super::figure::{FigureRenderSettings, PngDpi, RasterFailure, encode_png, rasterize};
 use super::selection::DatasetId;
@@ -257,22 +261,158 @@ impl SpectrumSnapshot {
     }
 }
 
-/// Where the session's one selected-spectrum export is.
+/// Which chromatogram one export writes.
 ///
-/// One slot, for the reason the diagnostics export has one: this is an action
-/// on the spectrum that is on screen, and a list of them would be a list
-/// nothing reads a second entry of. It holds no path at any point.
+/// The same shape as a spectrum snapshot and for the same reasons: the science
+/// is held by handle rather than copied, the owner is the minimum needed to
+/// answer "was this dataset removed", and the token is a counter that names
+/// nothing outside this session.
+#[derive(Debug, Clone)]
+pub(super) struct ChromatogramSnapshot {
+    token: ChromatogramExportToken,
+    owner: DatasetId,
+    source: ChromatogramSource,
+}
+
+impl ChromatogramSnapshot {
+    pub(super) const fn token(&self) -> ChromatogramExportToken {
+        self.token
+    }
+
+    pub(super) const fn source(&self) -> &ChromatogramSource {
+        &self.source
+    }
+
+    pub(super) const fn owner(&self) -> DatasetId {
+        self.owner
+    }
+}
+
+/// Which preview open owns the right to name the session's chromatogram.
+///
+/// **Not a dataset, not a request epoch, not a backend generation and not a
+/// path.** The per-dataset request epoch answers "may these facts commit for
+/// *this* dataset", and two opens of two different datasets are each current by
+/// it at the same time -- correctly, because they are answers to different
+/// questions. There is only ever one chromatogram a webview is looking at, so
+/// installing one has to be decided by a single order across every open, and
+/// that order is this.
+///
+/// It is session-scoped, monotonic, and never crosses to the webview. The
+/// frontend keeps its own counter for discarding stale replies; the two
+/// independently encode the same latest-open-wins semantic at their own
+/// boundary, and neither gets to tell the other which completion is current.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PreviewOpenTicket(u64);
+
+/// One session-scoped name for one retained chromatogram.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ChromatogramExportToken(u64);
+
+impl ChromatogramExportToken {
+    pub(super) fn as_wire(self) -> String {
+        self.0.to_string()
+    }
+
+    fn from_wire(value: &str) -> Option<Self> {
+        value.parse::<u64>().ok().map(Self)
+    }
+}
+
+/// What a claimed chromatogram reservation hands to the code that writes it.
+#[derive(Debug, Clone)]
+pub struct ClaimedChromatogramExport {
+    pub(super) snapshot: ChromatogramSnapshot,
+    pub(super) format: ChromatogramExportFormat,
+    pub(super) range: ResolvedRange,
+    pub(super) traces: TraceSet,
+    /// How to draw it, for the formats that are drawn.
+    ///
+    /// `None` for a data document, and that absence is the point rather than a
+    /// convenience. A CSV is the same list of numbers whatever size a figure
+    /// would have been, so a reservation for one that carried a width would be
+    /// carrying an answer to a question nobody asked -- and the moment it is
+    /// there, something can read it. The same shape `dpi` already has below,
+    /// for the same reason: only the output that has a resolution holds one.
+    pub(super) settings: Option<FigureRenderSettings>,
+    pub(super) dpi: Option<PngDpi>,
+}
+
+impl ClaimedChromatogramExport {
+    /// How this export is drawn.
+    ///
+    /// Only a figure has an answer, and every caller is already inside a branch
+    /// that decided this is one -- the same contract [`Self::dpi`] has for a
+    /// PNG. A data document never reaches here, because nothing about how a
+    /// figure would have looked reaches a list of numbers.
+    pub(super) fn figure_settings(&self) -> FigureRenderSettings {
+        self.settings
+            .expect("a figure export reserved the settings it is drawn at")
+    }
+
+    /// How this export's save dialog presents itself.
+    #[must_use]
+    pub const fn dialog(&self) -> SaveDialogFacts {
+        self.format.dialog()
+    }
+
+    /// The name that dialog offers first.
+    #[must_use]
+    pub fn suggested_file_name(&self) -> String {
+        self.format.suggested_file_name(self.range.scope())
+    }
+}
+
+/// One export that has been claimed, whichever source it is of.
+///
+/// The lane below holds one of these at a time, which is the whole point: two
+/// scientific exports cannot be in flight because there is one place for the
+/// claim to live.
+#[derive(Debug, Clone)]
+pub enum ClaimedExport {
+    Spectrum(ClaimedSpectrumExport),
+    Chromatogram(ClaimedChromatogramExport),
+}
+
+/// Where every scientific export of this session is.
+///
+/// **One lane, two sources.** A selected spectrum and a chromatogram are
+/// separately visible surfaces with separately retained science, and each keeps
+/// its own snapshot -- but there is exactly one answer to "may another
+/// scientific export begin now", and it lives here rather than in a disabled
+/// button. Two native save dialogs for one window is not a state this
+/// application can be in, and a clipboard rasterization racing a file write is
+/// two claims on the same memory that nothing on screen would explain.
+///
+/// It holds no path at any point.
 #[derive(Debug)]
-pub(super) struct SpectrumExportSlot {
+pub(super) struct ScientificExportSlots {
+    /// One counter for both kinds. A token is an identity rather than an index,
+    /// so nothing needs them to be dense per source -- and one sequence makes it
+    /// impossible for a spectrum token and a chromatogram token to read the
+    /// same, which is one fewer way for a stale one to be mistaken for a live
+    /// one.
     next_token: u64,
     next_reservation: u64,
     /// The spectrum a new export may be started for.
+    spectrum: Option<SpectrumSnapshot>,
+    /// The chromatogram a new export may be started for.
     ///
-    /// Replaced whenever a newer selection is interpreted, and dropped when the
-    /// preview it belonged to closes. An export already under way does not read
-    /// this: it took its own handle when it claimed one.
-    current: Option<SpectrumSnapshot>,
-    state: ExportState,
+    /// Installed only for a preview the visible viewer would draw. A truncated
+    /// table has no chromatogram on screen, and Rust holding more rows than the
+    /// webview received is not a reason to open an export door onto a
+    /// capability the product does not otherwise have.
+    chromatogram: Option<ChromatogramSnapshot>,
+    /// The next preview open's ticket, and the one that has the chromatogram.
+    ///
+    /// Kept here rather than beside the workspace because this is the thing
+    /// being ordered: the question is which completion may install a
+    /// chromatogram, and the answer has to be read and acted on without letting
+    /// go in between. A generation compared under one lock and installed under
+    /// another is the same race with an extra step.
+    next_preview_open: u64,
+    latest_preview_open: PreviewOpenTicket,
+    lane: ExportState,
 }
 
 #[derive(Debug, Clone)]
@@ -284,23 +424,12 @@ enum ExportState {
     AwaitingDestination {
         reservation: SpectrumReservationId,
         claimed: bool,
-        /// The snapshot this export is for, taken when the reservation was
-        /// issued. Held here rather than read from `current` at claim time, so
-        /// a selection that lands in between cannot move an export that has
-        /// already been started onto a different spectrum.
-        snapshot: SpectrumSnapshot,
-        format: SpectrumExportFormat,
-        /// What the figure was asked to look like when the export began.
-        ///
-        /// Held here for the same reason the snapshot is: the user is about to
-        /// be in a modal dialog, and a settings change that lands in between
-        /// must not move an export that has already started onto a different
-        /// figure. What is written is what was asked for.
-        settings: FigureRenderSettings,
-        /// The physical resolution this export records, for the one format
-        /// that records one. `None` for every other format, because there is
-        /// nowhere in them for it to live.
-        dpi: Option<PngDpi>,
+        /// Everything this export writes, taken when the reservation was
+        /// issued. Held here rather than read from the slots at claim time, so
+        /// a selection, a preview, a viewport or a settings change that lands
+        /// in between cannot move an export that has already been started onto
+        /// different science.
+        export: ClaimedExport,
     },
     /// A destination was chosen and the bytes are being written.
     Writing,
@@ -351,19 +480,33 @@ impl ClaimedSpectrumExport {
     }
 }
 
-impl Default for SpectrumExportSlot {
+impl Default for ScientificExportSlots {
     fn default() -> Self {
         Self {
             // Both begin at one, so zero is never a live identifier.
             next_token: 1,
             next_reservation: 1,
-            current: None,
-            state: ExportState::Idle,
+            spectrum: None,
+            chromatogram: None,
+            // Tickets are issued from one, so the ticket nothing holds is zero
+            // and no open can ever be mistaken for the session's initial state.
+            next_preview_open: 1,
+            latest_preview_open: PreviewOpenTicket(0),
+            lane: ExportState::Idle,
         }
     }
 }
 
-impl SpectrumExportSlot {
+impl ScientificExportSlots {
+    fn issue_token(&mut self) -> u64 {
+        let token = self.next_token;
+        self.next_token = self
+            .next_token
+            .checked_add(1)
+            .expect("a session retains fewer than u64::MAX exportable sources");
+        token
+    }
+
     /// Retains one interpreted spectrum as the one a new export may name.
     ///
     /// The previous snapshot is dropped here, which is the whole bound: one
@@ -375,17 +518,107 @@ impl SpectrumExportSlot {
         owner: DatasetId,
         spectrum: SelectedSpectrumResult,
     ) -> SpectrumSnapshot {
-        let token = SpectrumExportToken(self.next_token);
-        self.next_token = self
-            .next_token
-            .checked_add(1)
-            .expect("a session interprets fewer than u64::MAX selected spectra");
+        let token = SpectrumExportToken(self.issue_token());
         let snapshot = SpectrumSnapshot {
             token,
             owner,
             spectrum: Arc::new(spectrum),
         };
-        self.current = Some(snapshot.clone());
+        self.spectrum = Some(snapshot.clone());
+        snapshot
+    }
+
+    /// Starts one preview open and hands back the ticket that names it.
+    ///
+    /// Two things happen here, and they are one decision. This open becomes the
+    /// only one that may install a chromatogram, and the chromatogram the
+    /// previous open installed stops being current **immediately** -- not when
+    /// this one succeeds, because it may not succeed, and the preview it
+    /// replaced is already off the screen either way. A newer open that fails
+    /// leaves no chromatogram at all rather than resurrecting the old one, which
+    /// is exactly what the webview does with the preview itself.
+    ///
+    /// An export already begun is untouched. It holds its own snapshot, taken
+    /// when its reservation was issued, and moving the viewer is not a reason to
+    /// cancel a file that is already being written.
+    pub(super) fn begin_preview_open(&mut self) -> PreviewOpenTicket {
+        let ticket = PreviewOpenTicket(self.next_preview_open);
+        self.next_preview_open = self
+            .next_preview_open
+            .checked_add(1)
+            .expect("a session opens fewer than u64::MAX previews");
+        self.latest_preview_open = ticket;
+        self.chromatogram = None;
+        ticket
+    }
+
+    /// Installs, or revokes, the chromatogram one *completed* preview open owns.
+    ///
+    /// The ownership test and the installation are one critical section on
+    /// purpose. Reading "am I still the latest open", letting go, and installing
+    /// afterwards is the race this exists to close: a newer open can begin in
+    /// that gap and the older completion would still win.
+    ///
+    /// Which is why there is no way to ask the question on its own. The slot
+    /// answers "may this open install", never "is this open current", and the
+    /// installer below is private -- so the two halves cannot be taken apart at
+    /// a call site. Splitting them means adding to this type, where it is
+    /// visible, rather than reordering two lines somewhere else.
+    ///
+    /// Three outcomes, and the difference between the last two is the whole
+    /// point:
+    ///
+    /// - **stale** -- another open has begun since. Nothing is touched. An older
+    ///   completion may not install, and may not revoke either: the chromatogram
+    ///   it would be taking away belongs to the preview the user is looking at.
+    /// - **current, with a source** -- it becomes the one a new export may name.
+    /// - **current, with none** -- this run has no chromatogram on screen, so the
+    ///   session has none. Install *or* revoke, never neither.
+    pub(super) fn reconcile_preview_chromatogram(
+        &mut self,
+        ticket: PreviewOpenTicket,
+        owner: DatasetId,
+        source: Option<ChromatogramSource>,
+    ) -> Option<ChromatogramSnapshot> {
+        // Asked and acted on without letting go, which is the whole mechanism.
+        // `&mut self` is the slot's lock: no other open can begin between this
+        // comparison and the write below, so there is no window in which a
+        // completion that read "I am current" installs after it stopped being.
+        if ticket != self.latest_preview_open {
+            return None;
+        }
+        match source {
+            Some(source) => Some(self.install_chromatogram(owner, source)),
+            None => {
+                self.chromatogram = None;
+                None
+            }
+        }
+    }
+
+    /// Retains one chromatogram as the one a new export may name.
+    ///
+    /// Takes the source already decided to be exportable rather than deciding
+    /// here: whether a run is one the viewer would draw is a scientific
+    /// question, and it is answered where the science is.
+    ///
+    /// Private, and that is load-bearing. Every production installation goes
+    /// through [`Self::reconcile_preview_chromatogram`], so there is no path by
+    /// which a completion can install without first proving it is the open the
+    /// session is currently on -- the ordering rule cannot be forgotten at a
+    /// call site because there are no call sites outside this file.
+    fn install_chromatogram(
+        &mut self,
+        owner: DatasetId,
+        source: ChromatogramSource,
+    ) -> ChromatogramSnapshot {
+        let token = ChromatogramExportToken(self.issue_token());
+        let snapshot = ChromatogramSnapshot {
+            token,
+            owner,
+            source,
+        };
+        self.chromatogram = Some(snapshot.clone());
         snapshot
     }
 
@@ -396,7 +629,22 @@ impl SpectrumExportSlot {
     /// An export under way keeps its own handle and finishes; what this ends is
     /// the ability to start a *new* one against the old token.
     pub(super) fn forget(&mut self) {
-        self.current = None;
+        self.spectrum = None;
+    }
+
+    /// Forgets the retained chromatogram.
+    pub(super) fn forget_chromatogram(&mut self) {
+        self.chromatogram = None;
+    }
+
+    /// Which chromatogram the slot holds, if it holds one.
+    ///
+    /// Test-only. Every production reader names a token and is answered by
+    /// [`Self::chromatogram_for`]; this exists so a test can say "and now there
+    /// is none at all", which is a state no token could describe.
+    #[cfg(test)]
+    pub(super) fn current_chromatogram_token(&self) -> Option<ChromatogramExportToken> {
+        self.chromatogram.as_ref().map(ChromatogramSnapshot::token)
     }
 
     /// Which spectrum the slot holds, if it holds one.
@@ -405,7 +653,7 @@ impl SpectrumExportSlot {
     /// "the read I am revoking for is still the current one" from "something
     /// newer arrived while I was waiting".
     pub(super) fn current_token(&self) -> Option<SpectrumExportToken> {
-        self.current.as_ref().map(|snapshot| snapshot.token)
+        self.spectrum.as_ref().map(|snapshot| snapshot.token)
     }
 
     /// Forgets the retained spectrum only if it is still the one named here.
@@ -426,25 +674,35 @@ impl SpectrumExportSlot {
         if self.current_token() != Some(expected) {
             return false;
         }
-        self.current = None;
+        self.spectrum = None;
         true
     }
 
-    /// Forgets the retained spectrum only if one of these datasets owns it.
+    /// Forgets whatever these datasets own.
     ///
     /// Removing rows around the preview is not a reason to revoke what the user
     /// is reading -- the frontend keeps the preview open in exactly that case,
-    /// and a slot that forgot anyway would refuse the next export of a spectrum
+    /// and a slot that forgot anyway would refuse the next export of science
     /// still on screen. Answers whether it dropped anything.
     pub(super) fn forget_if_owned_by(&mut self, removed: &[DatasetId]) -> bool {
-        let owned = self
-            .current
+        let mut dropped = false;
+        if self
+            .spectrum
             .as_ref()
-            .is_some_and(|snapshot| removed.contains(&snapshot.owner()));
-        if owned {
-            self.current = None;
+            .is_some_and(|snapshot| removed.contains(&snapshot.owner()))
+        {
+            self.spectrum = None;
+            dropped = true;
         }
-        owned
+        if self
+            .chromatogram
+            .as_ref()
+            .is_some_and(|snapshot| removed.contains(&snapshot.owner()))
+        {
+            self.chromatogram = None;
+            dropped = true;
+        }
+        dropped
     }
 
     /// A handle that does not keep the spectrum alive.
@@ -456,7 +714,7 @@ impl SpectrumExportSlot {
     /// have produced it.
     #[cfg(test)]
     pub(super) fn weak_current(&self) -> Option<std::sync::Weak<SelectedSpectrumResult>> {
-        self.current
+        self.spectrum
             .as_ref()
             .map(|snapshot| Arc::downgrade(&snapshot.spectrum))
     }
@@ -467,44 +725,28 @@ impl SpectrumExportSlot {
     /// *unclaimed* reservation is neither: it is a document having asked and not
     /// yet followed through, and refusing on it is what would let one reload
     /// between the two commands wedge the slot for the rest of the session.
+    ///
+    /// Asked of the one lane, so the answer is the same whichever source is
+    /// asking. A chromatogram export cannot begin while a spectrum's picker is
+    /// open, and neither can the reverse.
     const fn is_committed(&self) -> bool {
         matches!(
-            self.state,
+            self.lane,
             ExportState::Writing | ExportState::AwaitingDestination { claimed: true, .. }
         )
     }
 
-    /// Issues one reservation for one named spectrum.
+    /// Issues one reservation for one already-bound export.
     ///
     /// Refuses while an export is committed, and supersedes an unclaimed
     /// reservation rather than refusing on it. Two dialogs for one session stay
     /// impossible -- claiming is what opens one, and a superseded reservation
     /// can no longer be claimed -- while a document that reloaded after asking
     /// leaves nothing behind that a later export has to wait for.
-    ///
-    /// The token is checked against the retained snapshot rather than trusted:
-    /// a webview that has been holding a token across a newer selection is
-    /// naming a spectrum this session no longer has, and the honest answer is
-    /// that it is gone rather than a file of whatever is current now.
-    pub(super) fn begin(
+    fn reserve(
         &mut self,
-        token: &str,
-        format: SpectrumExportFormat,
-        settings: FigureRenderSettings,
-        dpi: Option<PngDpi>,
+        export: ClaimedExport,
     ) -> Result<SpectrumReservationId, BeginExportRefusal> {
-        // Asked before whether anything else is running, because the two
-        // refusals send the user somewhere different. "Already exporting" means
-        // wait; "no longer loaded" means select the spectrum again. A stale
-        // token answered with the first would send someone to wait for an
-        // export whose finishing cannot help them.
-        let requested = SpectrumExportToken::from_wire(token).ok_or(BeginExportRefusal::Stale)?;
-        let snapshot = self
-            .current
-            .as_ref()
-            .filter(|snapshot| snapshot.token == requested)
-            .ok_or(BeginExportRefusal::Stale)?
-            .clone();
         if self.is_committed() {
             return Err(BeginExportRefusal::AlreadyExporting);
         }
@@ -512,16 +754,99 @@ impl SpectrumExportSlot {
         self.next_reservation = self
             .next_reservation
             .checked_add(1)
-            .expect("a session issues fewer than u64::MAX spectrum export reservations");
-        self.state = ExportState::AwaitingDestination {
+            .expect("a session issues fewer than u64::MAX export reservations");
+        self.lane = ExportState::AwaitingDestination {
             reservation,
             claimed: false,
+            export,
+        };
+        Ok(reservation)
+    }
+
+    /// Reads back the retained spectrum this token names.
+    ///
+    /// The token is checked against the snapshot rather than trusted: a webview
+    /// that has been holding one across a newer selection is naming science this
+    /// session no longer has, and the honest answer is that it is gone rather
+    /// than a file of whatever is current now.
+    fn spectrum_for(&self, token: &str) -> Result<SpectrumSnapshot, BeginExportRefusal> {
+        let requested = SpectrumExportToken::from_wire(token).ok_or(BeginExportRefusal::Stale)?;
+        self.spectrum
+            .as_ref()
+            .filter(|snapshot| snapshot.token == requested)
+            .ok_or(BeginExportRefusal::Stale)
+            .cloned()
+    }
+
+    /// Reads back the retained chromatogram this token names.
+    fn chromatogram_for(&self, token: &str) -> Result<ChromatogramSnapshot, BeginExportRefusal> {
+        let requested =
+            ChromatogramExportToken::from_wire(token).ok_or(BeginExportRefusal::Stale)?;
+        self.chromatogram
+            .as_ref()
+            .filter(|snapshot| snapshot.token == requested)
+            .ok_or(BeginExportRefusal::Stale)
+            .cloned()
+    }
+
+    /// Binds one selected-spectrum export and reserves the lane for it.
+    ///
+    /// Asked in this order deliberately. "Already exporting" means wait; "no
+    /// longer loaded" means select the spectrum again -- and a stale token
+    /// answered with the first would send someone to wait for an export whose
+    /// finishing cannot help them.
+    pub(super) fn begin(
+        &mut self,
+        token: &str,
+        format: SpectrumExportFormat,
+        settings: FigureRenderSettings,
+        dpi: Option<PngDpi>,
+    ) -> Result<SpectrumReservationId, BeginExportRefusal> {
+        let snapshot = self.spectrum_for(token)?;
+        self.reserve(ClaimedExport::Spectrum(ClaimedSpectrumExport {
             snapshot,
             format,
             settings,
             dpi,
-        };
-        Ok(reservation)
+        }))
+    }
+
+    /// Binds one chromatogram export and reserves the lane for it.
+    ///
+    /// The range is resolved here, against the snapshot the token named, and
+    /// the resolved range is what the export carries from this moment on. A
+    /// viewport that moves while the picker is open changes nothing about a file
+    /// already being written.
+    pub(super) fn begin_chromatogram(
+        &mut self,
+        token: &str,
+        format: ChromatogramExportFormat,
+        request: RangeRequest,
+        traces: TraceSet,
+        settings: Option<FigureRenderSettings>,
+        dpi: Option<PngDpi>,
+    ) -> Result<SpectrumReservationId, BeginExportRefusal> {
+        let snapshot = self.chromatogram_for(token)?;
+        let range = snapshot
+            .source()
+            .resolve(request)
+            .map_err(|refusal| match refusal {
+                RangeRefusal::OutsideSource => BeginExportRefusal::RangeOutsideSource,
+            })?;
+        // A figure of no series is not a figure of nothing, and the contract
+        // refuses one. Answered here rather than at the renderer so the refusal
+        // names what the user can change.
+        if format.is_figure() && !traces.any() {
+            return Err(BeginExportRefusal::NoVisibleTrace);
+        }
+        self.reserve(ClaimedExport::Chromatogram(ClaimedChromatogramExport {
+            snapshot,
+            format,
+            range,
+            traces,
+            settings,
+            dpi,
+        }))
     }
 
     /// Claims one issued reservation, so its save dialog may be shown.
@@ -529,28 +854,57 @@ impl SpectrumExportSlot {
     /// Claiming once is the rule. A second claim of the same reservation is a
     /// second dialog for one export, and answering it would leave two windows
     /// able to publish the same file.
-    pub(super) fn claim(&mut self, reservation: &str) -> Option<ClaimedSpectrumExport> {
+    ///
+    /// **The surface is checked before the claim is committed**, and that order
+    /// is the whole of this function. Each save command names its own kind, and
+    /// a reservation of the other one is not its to open a dialog for -- but
+    /// marking the lane claimed on the way to refusing it would leave the lane
+    /// committed with no dialog, no writer and nothing to cancel it. Every later
+    /// scientific export of the session would then be refused as "already
+    /// exporting", for a reason nothing on screen could explain, until the
+    /// application was restarted.
+    ///
+    /// The two kinds share one reservation counter, so a chromatogram's
+    /// reservation is a perfectly well-formed spectrum reservation: a document
+    /// that reloaded and replayed a stored identifier reaches exactly this.
+    fn claim_matching<Claimed>(
+        &mut self,
+        reservation: &str,
+        of_this_kind: impl FnOnce(&ClaimedExport) -> Option<Claimed>,
+    ) -> Option<Claimed> {
         let requested = SpectrumReservationId::from_wire(reservation)?;
         let ExportState::AwaitingDestination {
             reservation: held,
             claimed,
-            snapshot,
-            format,
-            settings,
-            dpi,
-        } = &mut self.state
+            export,
+        } = &mut self.lane
         else {
             return None;
         };
         if *held != requested || *claimed {
             return None;
         }
+        let picked = of_this_kind(export)?;
         *claimed = true;
-        Some(ClaimedSpectrumExport {
-            snapshot: snapshot.clone(),
-            format: *format,
-            settings: *settings,
-            dpi: *dpi,
+        Some(picked)
+    }
+
+    /// Claims one issued reservation as a selected-spectrum export.
+    pub(super) fn claim_spectrum(&mut self, reservation: &str) -> Option<ClaimedSpectrumExport> {
+        self.claim_matching(reservation, |export| match export {
+            ClaimedExport::Spectrum(claimed) => Some(claimed.clone()),
+            ClaimedExport::Chromatogram(_) => None,
+        })
+    }
+
+    /// Claims one issued reservation as a chromatogram export.
+    pub(super) fn claim_chromatogram(
+        &mut self,
+        reservation: &str,
+    ) -> Option<ClaimedChromatogramExport> {
+        self.claim_matching(reservation, |export| match export {
+            ClaimedExport::Chromatogram(claimed) => Some(claimed.clone()),
+            ClaimedExport::Spectrum(_) => None,
         })
     }
 
@@ -565,23 +919,23 @@ impl SpectrumExportSlot {
         };
         let ExportState::AwaitingDestination {
             reservation: held, ..
-        } = &self.state
+        } = &self.lane
         else {
             return false;
         };
         if *held != requested {
             return false;
         }
-        self.state = ExportState::Idle;
+        self.lane = ExportState::Idle;
         true
     }
 
     /// Moves a claimed export from choosing a destination to writing one.
     pub(super) fn begin_write(&mut self) {
-        self.state = ExportState::Writing;
+        self.lane = ExportState::Writing;
     }
 
-    /// Claims the one figure-operation lane for an operation with no dialog.
+    /// Claims the one lane for an operation with no dialog.
     ///
     /// Copy plot renders the same figure a PNG export would and puts it on the
     /// clipboard, so it belongs in the same lane: two of these at once are two
@@ -594,29 +948,47 @@ impl SpectrumExportSlot {
         &mut self,
         token: &str,
     ) -> Result<SpectrumSnapshot, BeginExportRefusal> {
-        let requested = SpectrumExportToken::from_wire(token).ok_or(BeginExportRefusal::Stale)?;
-        let snapshot = self
-            .current
-            .as_ref()
-            .filter(|snapshot| snapshot.token == requested)
-            .ok_or(BeginExportRefusal::Stale)?
-            .clone();
+        let snapshot = self.spectrum_for(token)?;
         if self.is_committed() {
             return Err(BeginExportRefusal::AlreadyExporting);
         }
-        self.state = ExportState::Writing;
+        self.lane = ExportState::Writing;
         Ok(snapshot)
+    }
+
+    /// Claims the one lane for a chromatogram clipboard operation.
+    pub(super) fn begin_chromatogram_copy(
+        &mut self,
+        token: &str,
+        request: RangeRequest,
+        traces: TraceSet,
+    ) -> Result<(ChromatogramSnapshot, ResolvedRange), BeginExportRefusal> {
+        let snapshot = self.chromatogram_for(token)?;
+        let range = snapshot
+            .source()
+            .resolve(request)
+            .map_err(|refusal| match refusal {
+                RangeRefusal::OutsideSource => BeginExportRefusal::RangeOutsideSource,
+            })?;
+        if !traces.any() {
+            return Err(BeginExportRefusal::NoVisibleTrace);
+        }
+        if self.is_committed() {
+            return Err(BeginExportRefusal::AlreadyExporting);
+        }
+        self.lane = ExportState::Writing;
+        Ok((snapshot, range))
     }
 
     /// Ends this write, however it went.
     ///
-    /// Only a write. A successful export has already returned the slot to idle
+    /// Only a write. A successful export has already returned the lane to idle
     /// by the time the guard falls, and another export may have reserved it in
     /// between -- clearing that would refuse a file somebody else is in the
     /// middle of choosing.
     pub(super) fn release_write(&mut self) -> bool {
-        if matches!(self.state, ExportState::Writing) {
-            self.state = ExportState::Idle;
+        if matches!(self.lane, ExportState::Writing) {
+            self.lane = ExportState::Idle;
             return true;
         }
         false
@@ -628,8 +1000,21 @@ impl SpectrumExportSlot {
 pub(super) enum BeginExportRefusal {
     /// Another export of this session has not finished.
     AlreadyExporting,
-    /// The named spectrum is not the one this session holds.
+    /// The named science is not what this session holds.
     Stale,
+    /// The requested range reaches outside the run it was asked of.
+    ///
+    /// Not clamped to the nearest range that does fit. A request for a window
+    /// this source does not have is a request about something else, and quietly
+    /// exporting the nearest thing would answer a question nobody asked.
+    RangeOutsideSource,
+    /// A figure was asked for with no measured trace visible.
+    ///
+    /// A panel of no series is refused by the contract, and rightly: a blank
+    /// plotting area cannot be told from a renderer that failed. The data
+    /// export beside it stays available, because hiding a trace is a
+    /// presentation choice rather than a decision to drop measured science.
+    NoVisibleTrace,
 }
 
 /// Builds the figure one selected spectrum exports as.
@@ -775,6 +1160,29 @@ pub(super) fn figure_raster(
     rasterize(&svg, settings.width(), settings.height()).map_err(FigureFailure::Raster)
 }
 
+/// Rasterizes one figure that has already been specified.
+///
+/// The pixels every figure surface produces come through here, so a raster of a
+/// chromatogram and a raster of a spectrum are the same renderer at the same
+/// size rather than two paths that happen to agree.
+pub(super) fn raster_of(
+    figure: &FigureSpec,
+    settings: FigureRenderSettings,
+) -> Result<super::figure::FigureRaster, FigureFailure> {
+    let svg = mscanvas_plot_spec::svg::render(figure);
+    rasterize(&svg, settings.width(), settings.height()).map_err(FigureFailure::Raster)
+}
+
+/// Encodes one already-specified figure as the PNG a user receives.
+pub(super) fn png_of(
+    figure: &FigureSpec,
+    settings: FigureRenderSettings,
+    dpi: PngDpi,
+) -> Result<Vec<u8>, FigureFailure> {
+    let raster = raster_of(figure, settings)?;
+    encode_png(&raster, dpi.get()).map_err(FigureFailure::Raster)
+}
+
 /// Renders one selected spectrum as the PNG document a user receives.
 pub(super) fn png_document(
     spectrum: &SelectedSpectrumResult,
@@ -871,6 +1279,7 @@ pub(super) fn data_document(
 
 #[cfg(test)]
 mod tests {
+    use super::super::chromatogram::RangeScope;
     use super::*;
     use mscanvas_plot_spec::spec::DataScope;
     use mscanvas_plot_spec::spec::FigureTheme;
@@ -1300,7 +1709,7 @@ mod tests {
     /// A token names one retained spectrum, and a superseded one names nothing.
     #[test]
     fn a_stale_token_is_refused_rather_than_rebound() {
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let first = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let stale = first.token().as_wire();
         // A newer selection replaces the retained spectrum.
@@ -1326,7 +1735,7 @@ mod tests {
     /// A claimed export finishes from the spectrum it claimed.
     #[test]
     fn a_claimed_export_is_unaffected_by_a_later_selection() {
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let first = slot.install(owner(1), spectrum(1, vec![100.0, 200.0], vec![1.0, 2.0]));
         let reservation = slot
             .begin(
@@ -1337,7 +1746,7 @@ mod tests {
             )
             .expect("a reservation");
         let claimed = slot
-            .claim(&reservation.as_wire())
+            .claim_spectrum(&reservation.as_wire())
             .expect("the reservation is claimable once");
         // The user is now in a save dialog. Two more selections land.
         slot.install(owner(1), spectrum(2, vec![300.0], vec![3.0]));
@@ -1353,7 +1762,7 @@ mod tests {
     /// Claiming happens once, and a superseded reservation cannot claim at all.
     #[test]
     fn a_reservation_claims_once_and_a_superseded_one_never_does() {
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
         let first = slot
@@ -1366,12 +1775,12 @@ mod tests {
             .begin(&token, SpectrumExportFormat::Csv, defaults(), None)
             .expect("an unclaimed reservation is superseded");
         assert!(
-            slot.claim(&first.as_wire()).is_none(),
+            slot.claim_spectrum(&first.as_wire()).is_none(),
             "the superseded reservation can no longer open a dialog",
         );
-        assert!(slot.claim(&second.as_wire()).is_some());
+        assert!(slot.claim_spectrum(&second.as_wire()).is_some());
         assert!(
-            slot.claim(&second.as_wire()).is_none(),
+            slot.claim_spectrum(&second.as_wire()).is_none(),
             "and a claimed one cannot be claimed twice",
         );
     }
@@ -1379,13 +1788,14 @@ mod tests {
     /// An open dialog and a running write both refuse a second export.
     #[test]
     fn a_committed_export_refuses_another() {
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
         let reservation = slot
             .begin(&token, SpectrumExportFormat::Svg, defaults(), None)
             .expect("a reservation");
-        slot.claim(&reservation.as_wire()).expect("claimed");
+        slot.claim_spectrum(&reservation.as_wire())
+            .expect("claimed");
         assert_eq!(
             slot.begin(&token, SpectrumExportFormat::Csv, defaults(), None),
             Err(BeginExportRefusal::AlreadyExporting),
@@ -1407,7 +1817,7 @@ mod tests {
     /// Cancelling returns the slot to rest, and forgetting drops the spectrum.
     #[test]
     fn cancelling_frees_the_slot_and_forgetting_drops_the_spectrum() {
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
         let reservation = slot
@@ -1517,7 +1927,7 @@ mod tests {
         // exporting" means wait; "no longer loaded" means select the spectrum
         // again. A token that can never become valid must not be answered with
         // the one that says waiting will help.
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let first = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let reservation = slot
             .begin(
@@ -1527,7 +1937,8 @@ mod tests {
                 Some(PngDpi::default()),
             )
             .expect("the first export begins");
-        slot.claim(&reservation.as_wire()).expect("claimed");
+        slot.claim_spectrum(&reservation.as_wire())
+            .expect("claimed");
 
         // The spectrum is replaced while the dialog stands open.
         let second = slot.install(owner(1), spectrum(2, vec![200.0], vec![2.0]));
@@ -1565,7 +1976,7 @@ mod tests {
         // lands while they are standing in it must not move an export that has
         // already started onto a different figure: what is written is what was
         // asked for.
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let snapshot = slot.install(owner(1), spectrum(1, vec![100.0, 200.0], vec![1.0, 2.0]));
         let reservation = slot
             .begin(
@@ -1576,7 +1987,9 @@ mod tests {
             )
             .expect("the export begins");
 
-        let claimed = slot.claim(&reservation.as_wire()).expect("claimed");
+        let claimed = slot
+            .claim_spectrum(&reservation.as_wire())
+            .expect("claimed");
 
         assert_eq!(claimed.settings, defaults());
         assert_ne!(claimed.settings, other_settings());
@@ -1593,7 +2006,7 @@ mod tests {
 
     #[test]
     fn a_copy_takes_the_lane_and_holds_it_against_every_other_operation() {
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
 
@@ -1627,7 +2040,7 @@ mod tests {
 
     #[test]
     fn a_write_holds_the_lane_and_an_unclaimed_reservation_does_not() {
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
 
@@ -1901,7 +2314,7 @@ mod tests {
         // user is actually looking at -- the panel keeps showing it, because the
         // frontend discards the superseded answer, and only the export fails, as
         // stale, for a reason nothing on screen explains.
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let older = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let newer = slot.install(owner(1), spectrum(2, vec![200.0], vec![2.0]));
 
@@ -1929,10 +2342,776 @@ mod tests {
     fn revoking_against_nothing_revokes_nothing() {
         // A read that began when the slot was empty owns nothing, so a failure
         // afterwards must not take away whatever arrived in the meantime.
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let arrived = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
 
         assert!(!slot.forget_if_current(None));
         assert_eq!(slot.current_token(), Some(arrived.token()));
+    }
+
+    // ------------------------------------------- one lane, two scientific sources
+
+    /// One exportable run, for the lane tests.
+    fn seeded_chromatogram() -> ChromatogramSource {
+        let rows = std::sync::Arc::new(vec![
+            super::super::service::TableRowFacts::for_test(0, Some(1), 1, 1.0, false, 100.0, 40.0),
+            super::super::service::TableRowFacts::for_test(1, Some(2), 1, 2.0, false, 300.0, 120.0),
+        ]);
+        ChromatogramSource::from_rows(&rows, false).expect("an exportable run")
+    }
+
+    fn full_range() -> RangeRequest {
+        RangeRequest::from_wire("full", None, None).expect("a full request")
+    }
+
+    fn tic_only() -> TraceSet {
+        TraceSet::from_wire(true, false)
+    }
+
+    /// A chromatogram export cannot begin while a spectrum's picker is open.
+    ///
+    /// One lane across both surfaces, and this is what having one means: a
+    /// claimed reservation is a dialog somebody is standing in front of, and a
+    /// second scientific export is refused there rather than by a disabled
+    /// button in a document that may have reloaded.
+    #[test]
+    fn a_claimed_spectrum_export_refuses_a_chromatogram_one() {
+        let mut slots = ScientificExportSlots::default();
+        let spectrum = slots
+            .install(owner(1), spectrum(1, vec![100.0], vec![1.0]))
+            .token()
+            .as_wire();
+        let chromatogram = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+        let reservation = slots
+            .begin(&spectrum, SpectrumExportFormat::Csv, defaults(), None)
+            .expect("a first export");
+        slots
+            .claim_spectrum(&reservation.as_wire())
+            .expect("its dialog");
+
+        assert_eq!(
+            slots.begin_chromatogram(
+                &chromatogram,
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                None,
+                None,
+            ),
+            Err(BeginExportRefusal::AlreadyExporting),
+        );
+        // And the clipboard operation is the same lane.
+        assert_eq!(
+            slots
+                .begin_chromatogram_copy(&chromatogram, full_range(), tic_only())
+                .err(),
+            Some(BeginExportRefusal::AlreadyExporting),
+        );
+    }
+
+    /// And the reverse, which is the half a second lane would have hidden.
+    #[test]
+    fn a_claimed_chromatogram_export_refuses_a_spectrum_one() {
+        let mut slots = ScientificExportSlots::default();
+        let spectrum = slots
+            .install(owner(1), spectrum(1, vec![100.0], vec![1.0]))
+            .token()
+            .as_wire();
+        let chromatogram = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+        let reservation = slots
+            .begin_chromatogram(
+                &chromatogram,
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                None,
+                None,
+            )
+            .expect("a first export");
+        slots
+            .claim_chromatogram(&reservation.as_wire())
+            .expect("its dialog");
+
+        assert_eq!(
+            slots.begin(&spectrum, SpectrumExportFormat::Csv, defaults(), None),
+            Err(BeginExportRefusal::AlreadyExporting),
+        );
+        assert_eq!(
+            slots.begin_copy(&spectrum),
+            Err(BeginExportRefusal::AlreadyExporting),
+        );
+    }
+
+    /// A clipboard operation of either kind closes the lane while it runs.
+    #[test]
+    fn a_copy_of_either_kind_holds_the_lane() {
+        let mut slots = ScientificExportSlots::default();
+        let spectrum = slots
+            .install(owner(1), spectrum(1, vec![100.0], vec![1.0]))
+            .token()
+            .as_wire();
+        let chromatogram = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+
+        slots.begin_copy(&spectrum).expect("a spectrum copy");
+        assert_eq!(
+            slots
+                .begin_chromatogram_copy(&chromatogram, full_range(), tic_only())
+                .err(),
+            Some(BeginExportRefusal::AlreadyExporting),
+        );
+        assert!(slots.release_write());
+
+        slots
+            .begin_chromatogram_copy(&chromatogram, full_range(), tic_only())
+            .expect("a chromatogram copy");
+        assert_eq!(
+            slots.begin_copy(&spectrum),
+            Err(BeginExportRefusal::AlreadyExporting),
+        );
+        assert!(slots.release_write());
+    }
+
+    /// An unclaimed reservation is superseded rather than refused, across kinds.
+    ///
+    /// The accepted semantics, unchanged: a document that asked and then
+    /// reloaded leaves nothing behind for a later export to wait for. Two
+    /// dialogs stay impossible because claiming is what opens one.
+    #[test]
+    fn an_unclaimed_reservation_is_superseded_by_either_surface() {
+        let mut slots = ScientificExportSlots::default();
+        let spectrum = slots
+            .install(owner(1), spectrum(1, vec![100.0], vec![1.0]))
+            .token()
+            .as_wire();
+        let chromatogram = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+
+        let first = slots
+            .begin(&spectrum, SpectrumExportFormat::Csv, defaults(), None)
+            .expect("a spectrum reservation");
+        let second = slots
+            .begin_chromatogram(
+                &chromatogram,
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                None,
+                None,
+            )
+            .expect("a chromatogram reservation supersedes an unclaimed one");
+
+        assert!(
+            slots.claim_spectrum(&first.as_wire()).is_none(),
+            "the superseded reservation can no longer open a dialog"
+        );
+        assert!(slots.claim_chromatogram(&second.as_wire()).is_some());
+    }
+
+    /// A claim answers with the kind it was made for, and no other.
+    #[test]
+    fn a_claim_carries_the_surface_it_belongs_to() {
+        let mut slots = ScientificExportSlots::default();
+        let chromatogram = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+        let reservation = slots
+            .begin_chromatogram(
+                &chromatogram,
+                ChromatogramExportFormat::Tsv,
+                full_range(),
+                tic_only(),
+                None,
+                None,
+            )
+            .expect("a reservation");
+
+        let chromatogram = slots
+            .claim_chromatogram(&reservation.as_wire())
+            .expect("its claim");
+        assert_eq!(chromatogram.format, ChromatogramExportFormat::Tsv);
+        assert_eq!(chromatogram.range.scope(), RangeScope::Full);
+        assert_eq!(
+            chromatogram.suggested_file_name(),
+            "mscanvas-chromatogram-full.tsv"
+        );
+        assert_eq!(chromatogram.dialog().title, "Export chromatogram data");
+    }
+
+    // --------------------------------------------- what a token stops naming
+
+    /// A token from a preview this session has replaced is refused.
+    #[test]
+    fn a_replaced_chromatogram_is_no_longer_exportable() {
+        let mut slots = ScientificExportSlots::default();
+        let first = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+        let second = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+
+        assert_ne!(first, second);
+        assert_eq!(
+            slots.begin_chromatogram(
+                &first,
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                None,
+                None,
+            ),
+            Err(BeginExportRefusal::Stale),
+            "an old token is never rebound to whatever is current now"
+        );
+        assert!(
+            slots
+                .begin_chromatogram(
+                    &second,
+                    ChromatogramExportFormat::Csv,
+                    full_range(),
+                    tic_only(),
+                    None,
+                    None,
+                )
+                .is_ok()
+        );
+    }
+
+    /// An export already under way finishes against the run it started with.
+    #[test]
+    fn an_export_in_flight_keeps_the_run_it_claimed() {
+        let mut slots = ScientificExportSlots::default();
+        let token = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token();
+        let reservation = slots
+            .begin_chromatogram(
+                &token.as_wire(),
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                None,
+                None,
+            )
+            .expect("a reservation");
+        let claimed = slots
+            .claim_chromatogram(&reservation.as_wire())
+            .expect("its claim");
+
+        // A newer preview lands while the picker is open.
+        slots.install_chromatogram(owner(1), seeded_chromatogram());
+
+        assert_eq!(claimed.snapshot.token(), token);
+    }
+
+    /// Removing the dataset the run came from revokes it; removing another does
+    /// not.
+    #[test]
+    fn only_the_owning_dataset_revokes_a_chromatogram() {
+        let mut slots = ScientificExportSlots::default();
+        let token = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+
+        assert!(!slots.forget_if_owned_by(&[owner(2)]));
+        assert!(
+            slots
+                .begin_chromatogram(
+                    &token,
+                    ChromatogramExportFormat::Csv,
+                    full_range(),
+                    tic_only(),
+                    None,
+                    None,
+                )
+                .is_ok()
+        );
+
+        assert!(slots.forget_if_owned_by(&[owner(1)]));
+        assert_eq!(
+            slots.begin_chromatogram(
+                &token,
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                None,
+                None,
+            ),
+            Err(BeginExportRefusal::Stale),
+        );
+    }
+
+    /// A figure with no visible trace is refused before anything is reserved.
+    #[test]
+    fn a_figure_with_no_trace_is_refused_and_leaves_the_lane_alone() {
+        let mut slots = ScientificExportSlots::default();
+        let token = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+        let hidden = TraceSet::from_wire(false, false);
+
+        assert_eq!(
+            slots.begin_chromatogram(
+                &token,
+                ChromatogramExportFormat::Svg,
+                full_range(),
+                hidden,
+                Some(defaults()),
+                None,
+            ),
+            Err(BeginExportRefusal::NoVisibleTrace),
+        );
+        // The data export beside it is untouched: hiding a trace is a choice
+        // about a plot, not a decision to leave measured science out of a file.
+        assert!(
+            slots
+                .begin_chromatogram(
+                    &token,
+                    ChromatogramExportFormat::Csv,
+                    full_range(),
+                    hidden,
+                    None,
+                    None,
+                )
+                .is_ok()
+        );
+    }
+
+    /// A range the run does not have is refused at begin.
+    #[test]
+    fn a_forged_range_is_refused_at_begin() {
+        let mut slots = ScientificExportSlots::default();
+        let token = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+        let outside = RangeRequest::from_wire("current", Some(-50.0), Some(5_000.0))
+            .expect("a well-formed request");
+
+        assert_eq!(
+            slots.begin_chromatogram(
+                &token,
+                ChromatogramExportFormat::Csv,
+                outside,
+                tic_only(),
+                None,
+                None,
+            ),
+            Err(BeginExportRefusal::RangeOutsideSource),
+        );
+    }
+
+    /// A reservation claimed through the other surface's command leaves the lane
+    /// exactly as it was.
+    ///
+    /// Round 1 of M4.3's review found this, and it is the failure mode that
+    /// makes the ordering worth stating: the two kinds share one reservation
+    /// counter, so a chromatogram's identifier is a perfectly well-formed
+    /// spectrum reservation, and a document that reloaded and replayed a stored
+    /// one reaches this. Marking the lane claimed on the way to refusing it
+    /// would leave it committed with no dialog, no writer and nothing to cancel
+    /// it -- and every later scientific export of the session would be refused
+    /// as "already exporting" for a reason nothing on screen could explain.
+    #[test]
+    fn a_claim_through_the_wrong_command_does_not_wedge_the_lane() {
+        let mut slots = ScientificExportSlots::default();
+        let spectrum = slots.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
+        let chromatogram = slots.install_chromatogram(owner(1), seeded_chromatogram());
+        let reservation = slots
+            .begin_chromatogram(
+                &chromatogram.token().as_wire(),
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                None,
+                None,
+            )
+            .expect("a chromatogram reservation");
+
+        // The spectrum's save command, handed the chromatogram's reservation.
+        assert!(slots.claim_spectrum(&reservation.as_wire()).is_none());
+
+        // The lane is not committed: the reservation it holds can still be
+        // claimed by the command it belongs to.
+        assert!(
+            slots.claim_chromatogram(&reservation.as_wire()).is_some(),
+            "the refused claim left the reservation intact"
+        );
+        slots.cancel(&reservation.as_wire());
+
+        // And a later export of either surface still begins.
+        assert!(
+            slots
+                .begin(
+                    &spectrum.token().as_wire(),
+                    SpectrumExportFormat::Csv,
+                    defaults(),
+                    None,
+                )
+                .is_ok(),
+            "a mismatched claim did not wedge the session"
+        );
+    }
+
+    /// The same, in the other direction.
+    #[test]
+    fn a_spectrum_reservation_claimed_as_a_chromatogram_leaves_the_lane_open() {
+        let mut slots = ScientificExportSlots::default();
+        let spectrum = slots.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
+        slots.install_chromatogram(owner(1), seeded_chromatogram());
+        let reservation = slots
+            .begin(
+                &spectrum.token().as_wire(),
+                SpectrumExportFormat::Csv,
+                defaults(),
+                None,
+            )
+            .expect("a spectrum reservation");
+
+        assert!(slots.claim_chromatogram(&reservation.as_wire()).is_none());
+        assert!(slots.claim_spectrum(&reservation.as_wire()).is_some());
+    }
+
+    // ------------------------------------- which preview open owns the chromatogram
+
+    /// A second exportable run, told apart from the first by how long it is.
+    fn other_chromatogram() -> ChromatogramSource {
+        let rows = std::sync::Arc::new(vec![
+            super::super::service::TableRowFacts::for_test(0, Some(1), 1, 10.0, false, 100.0, 40.0),
+            super::super::service::TableRowFacts::for_test(
+                1,
+                Some(2),
+                1,
+                20.0,
+                false,
+                300.0,
+                120.0,
+            ),
+            super::super::service::TableRowFacts::for_test(
+                2,
+                Some(3),
+                1,
+                30.0,
+                false,
+                500.0,
+                220.0,
+            ),
+        ]);
+        ChromatogramSource::from_rows(&rows, false).expect("an exportable run")
+    }
+
+    /// One whole preview open, in the two halves the service performs it in.
+    fn preview_open(
+        slots: &mut ScientificExportSlots,
+        dataset: DatasetId,
+        source: Option<ChromatogramSource>,
+    ) -> Option<ChromatogramSnapshot> {
+        let ticket = slots.begin_preview_open();
+        slots.reconcile_preview_chromatogram(ticket, dataset, source)
+    }
+
+    /// An older open cannot install over the preview the user is looking at.
+    ///
+    /// Round 2 of M4.3's review found this, and two *different* datasets are
+    /// what make it reachable. The per-dataset request epoch is not an ordering
+    /// between them: each open is the newest request for its own dataset, so
+    /// both are current by that test, and whichever completion arrived last used
+    /// to own the one chromatogram the session has -- which is the older open
+    /// whenever the newer file is the faster read.
+    #[test]
+    fn an_older_preview_open_cannot_install_over_a_newer_one() {
+        let mut slots = ScientificExportSlots::default();
+        // Both opens begin, in the order the user asked for them.
+        let older = slots.begin_preview_open();
+        let newer = slots.begin_preview_open();
+
+        // The newer one is the faster read and comes back first.
+        let visible = slots
+            .reconcile_preview_chromatogram(newer, owner(2), Some(other_chromatogram()))
+            .expect("the open the user is waiting for installs");
+
+        // The older one comes back afterwards, carrying a perfectly valid
+        // description of a dataset that is still registered.
+        assert!(
+            slots
+                .reconcile_preview_chromatogram(older, owner(1), Some(seeded_chromatogram()))
+                .is_none(),
+            "an open the session has already passed installs nothing",
+        );
+        assert_eq!(slots.current_chromatogram_token(), Some(visible.token()));
+        // And what the webview is holding still names the run on its screen.
+        assert_eq!(
+            slots
+                .chromatogram_for(&visible.token().as_wire())
+                .expect("the visible run is still exportable")
+                .source()
+                .scan_count(),
+            3,
+        );
+    }
+
+    /// While a newer open is still reading, the session has no chromatogram.
+    ///
+    /// The other order of the same race, and the one that says what "newer open
+    /// wins" has to mean: not "the newest completion wins", which is the defect,
+    /// but "only the newest *intent* may speak at all". This mirrors the webview
+    /// exactly -- it is in its opening state, showing neither run.
+    #[test]
+    fn an_older_open_finishing_first_installs_nothing_and_revokes_the_previous_run() {
+        let mut slots = ScientificExportSlots::default();
+        let previous = preview_open(&mut slots, owner(1), Some(seeded_chromatogram()))
+            .expect("a run on screen");
+        let previous_token = previous.token().as_wire();
+
+        let older = slots.begin_preview_open();
+        let newer = slots.begin_preview_open();
+        // Beginning took the previous run away at the moment the user asked,
+        // rather than whenever a read happens to finish.
+        assert_eq!(slots.current_chromatogram_token(), None);
+        assert_eq!(
+            slots
+                .begin_chromatogram_copy(&previous_token, full_range(), tic_only())
+                .err(),
+            Some(BeginExportRefusal::Stale),
+        );
+
+        // The older open finishes while the newer one is still reading.
+        assert!(
+            slots
+                .reconcile_preview_chromatogram(older, owner(1), Some(seeded_chromatogram()))
+                .is_none(),
+        );
+        assert_eq!(
+            slots.current_chromatogram_token(),
+            None,
+            "a run the user has moved past does not become the exportable one",
+        );
+
+        // Then the open they are actually waiting for lands.
+        let visible = slots
+            .reconcile_preview_chromatogram(newer, owner(2), Some(other_chromatogram()))
+            .expect("the newest open installs");
+        assert_eq!(slots.current_chromatogram_token(), Some(visible.token()));
+    }
+
+    /// A newer open that fails does not resurrect the run it replaced.
+    ///
+    /// The webview does not either: it shows the failure, not the preview from
+    /// before. Restoring the old chromatogram here would leave Rust offering an
+    /// export of a run that is no longer on any screen.
+    #[test]
+    fn a_newer_preview_open_that_fails_leaves_no_chromatogram_at_all() {
+        let mut slots = ScientificExportSlots::default();
+        let previous = preview_open(&mut slots, owner(1), Some(seeded_chromatogram()))
+            .expect("a run on screen");
+        let previous_token = previous.token().as_wire();
+
+        // It begins and never comes back: an unreadable file, a backend that
+        // stopped, a source that changed underneath it.
+        let _abandoned = slots.begin_preview_open();
+
+        assert_eq!(slots.current_chromatogram_token(), None);
+        assert_eq!(
+            slots.begin_chromatogram(
+                &previous_token,
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                None,
+                None,
+            ),
+            Err(BeginExportRefusal::Stale),
+        );
+    }
+
+    /// The current open of a run with no chromatogram leaves the session none.
+    ///
+    /// Install *or* revoke, never neither. A truncated table, an empty run or
+    /// one whose retention times this build cannot read has no chromatogram on
+    /// screen, and keeping the previous one would let an export reach a run the
+    /// viewer stopped drawing.
+    #[test]
+    fn the_current_open_of_an_ineligible_run_revokes_the_previous_chromatogram() {
+        let mut slots = ScientificExportSlots::default();
+        preview_open(&mut slots, owner(1), Some(seeded_chromatogram())).expect("a run on screen");
+
+        assert!(preview_open(&mut slots, owner(2), None).is_none());
+        assert_eq!(slots.current_chromatogram_token(), None);
+    }
+
+    /// A *stale* open of an ineligible run revokes nothing.
+    ///
+    /// This is the distinction the whole rule turns on. "Current and ineligible"
+    /// means the session has no chromatogram; "stale, whatever it found" means
+    /// this completion has no say at all -- and letting it revoke would take the
+    /// export away from the run the user is looking at, for a reason nothing on
+    /// screen could explain.
+    #[test]
+    fn a_stale_open_of_an_ineligible_run_does_not_revoke_the_visible_one() {
+        let mut slots = ScientificExportSlots::default();
+        let older = slots.begin_preview_open();
+        let newer = slots.begin_preview_open();
+        let visible = slots
+            .reconcile_preview_chromatogram(newer, owner(2), Some(other_chromatogram()))
+            .expect("the newest open installs");
+
+        // The older read finished, and its run has no chromatogram.
+        assert!(
+            slots
+                .reconcile_preview_chromatogram(older, owner(1), None)
+                .is_none(),
+        );
+
+        assert_eq!(
+            slots.current_chromatogram_token(),
+            Some(visible.token()),
+            "a completion the session has passed revokes nothing",
+        );
+    }
+
+    /// The ticket test and the installation never come apart.
+    ///
+    /// A completion that decided it was current, let the slot go, and installed
+    /// afterwards would be the same race with one more step in it: a newer open
+    /// can begin in that gap and the older completion would still win. Driven
+    /// from two threads through one lock, the invariant is unconditional --
+    /// whichever order the lock grants, an open a newer one has passed never
+    /// leaves its run as the exportable one.
+    #[test]
+    fn a_completion_racing_a_newer_open_never_leaves_the_older_run_installed() {
+        use std::sync::Mutex;
+
+        for _ in 0..200 {
+            let slots = Arc::new(Mutex::new(ScientificExportSlots::default()));
+            let older = slots
+                .lock()
+                .expect("an uncontended lock")
+                .begin_preview_open();
+
+            let completing = {
+                let slots = Arc::clone(&slots);
+                std::thread::spawn(move || {
+                    slots
+                        .lock()
+                        .expect("the other thread does not panic")
+                        .reconcile_preview_chromatogram(
+                            older,
+                            owner(1),
+                            Some(seeded_chromatogram()),
+                        )
+                })
+            };
+            let opening = {
+                let slots = Arc::clone(&slots);
+                std::thread::spawn(move || {
+                    slots
+                        .lock()
+                        .expect("the other thread does not panic")
+                        .begin_preview_open()
+                })
+            };
+            completing.join().expect("the completion finished");
+            opening.join().expect("the newer open began");
+
+            assert_eq!(
+                slots
+                    .lock()
+                    .expect("both threads finished")
+                    .current_chromatogram_token(),
+                None,
+                "either the completion installed and the newer open took it away, or the \
+                 completion was already stale -- both leave nothing exportable",
+            );
+        }
+    }
+
+    /// An export already claimed finishes from the run it was begun on.
+    ///
+    /// ADR 0029's principle, across a preview replacement: the snapshot is taken
+    /// when the reservation is issued and is never rebound. Opening another run
+    /// while the picker is open moves what a *new* export would name; it does
+    /// not cancel a file the user is in the middle of choosing a destination
+    /// for, and it does not switch that file onto different science.
+    #[test]
+    fn a_claimed_chromatogram_export_survives_a_newer_preview_open() {
+        let mut slots = ScientificExportSlots::default();
+        let visible = preview_open(&mut slots, owner(1), Some(seeded_chromatogram()))
+            .expect("a run on screen");
+        let visible_token = visible.token().as_wire();
+        let reservation = slots
+            .begin_chromatogram(
+                &visible_token,
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                None,
+                None,
+            )
+            .expect("a reservation");
+        let claimed = slots
+            .claim_chromatogram(&reservation.as_wire())
+            .expect("its dialog");
+
+        // The user opens another run while that dialog is still open.
+        let next = slots.begin_preview_open();
+        let installed = slots
+            .reconcile_preview_chromatogram(next, owner(2), Some(other_chromatogram()))
+            .expect("the newer open installs");
+
+        // What is being written is still the run it was begun from.
+        assert_eq!(claimed.snapshot.source().scan_count(), 2);
+        // And the lane is still committed, so the newly visible run cannot
+        // start a second export over the top of it.
+        assert_eq!(
+            slots.begin_chromatogram(
+                &installed.token().as_wire(),
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                None,
+                None,
+            ),
+            Err(BeginExportRefusal::AlreadyExporting),
+        );
+
+        // Once it ends, the newly visible run exports and the replaced one is
+        // stale for anything new.
+        slots.begin_write();
+        assert!(slots.release_write());
+        assert!(
+            slots
+                .begin_chromatogram(
+                    &installed.token().as_wire(),
+                    ChromatogramExportFormat::Csv,
+                    full_range(),
+                    tic_only(),
+                    None,
+                    None,
+                )
+                .is_ok(),
+        );
+        slots.cancel(&reservation.as_wire());
+        assert_eq!(
+            slots
+                .begin_chromatogram_copy(&visible_token, full_range(), tic_only())
+                .err(),
+            Some(BeginExportRefusal::Stale),
+        );
     }
 }

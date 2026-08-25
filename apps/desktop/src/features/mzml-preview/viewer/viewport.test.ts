@@ -100,3 +100,83 @@ describe("revealing a retention time", () => {
     expect(revealDomain({ low: 0, high: 20 }, FULL, 100)).toEqual({ low: 80, high: 100 });
   });
 });
+
+describe("a clamped viewport is inside the run to the last bit", () => {
+  /*
+   * Round 1 of M4.3.2's review. Holding a viewport inside the run was written
+   * as arithmetic rather than as a fact: the left edge is `full.high - span`
+   * and the right edge is that plus the span again. Neither step is required to
+   * land back on the run's own numbers in binary floating point.
+   *
+   * Nothing on screen shows one unit in the last place. But the committed
+   * viewport is the range a current-range export asks for, and Rust refuses a
+   * range reaching outside the run rather than quietly exporting the nearest
+   * one it has -- so the viewer could hand its own export boundary a range that
+   * boundary must reject.
+   *
+   * These retention times are ones the arithmetic was actually searched for and
+   * found on, in minutes with fractional seconds, which is what a run is.
+   */
+  const AWKWARD: readonly RetentionTimeDomain[] = [
+    { low: 5.400241350394454, high: 82.72436049997539 },
+    { low: 1.4667649833154983, high: 8.634284613181652 },
+  ];
+
+  it("returns the whole run unchanged when that is what it is given", () => {
+    for (const full of AWKWARD) {
+      // The step that used to move it: the furthest left edge a full-width
+      // span may start at rounds *below* the run's own start.
+      expect(full.high - (full.high - full.low)).toBeLessThan(full.low);
+
+      expect(clampDomain({ low: full.low, high: full.high }, full)).toEqual(full);
+    }
+  });
+
+  it("never leaves the run at either edge, whatever it is given", () => {
+    // The property, over the shapes a gesture produces: any span, any position,
+    // panned or zoomed past either end.
+    for (const full of AWKWARD) {
+      const fullSpan = full.high - full.low;
+      for (let step = 0; step <= 200; step++) {
+        const span = (fullSpan * (step + 1)) / 201;
+        for (const low of [
+          -1e9,
+          full.low - span,
+          full.low,
+          full.low + fullSpan / 3,
+          full.high - span,
+          full.high,
+          1e9,
+        ]) {
+          const clamped = clampDomain({ low, high: low + span }, full);
+          expect(clamped.low).toBeGreaterThanOrEqual(full.low);
+          expect(clamped.high).toBeLessThanOrEqual(full.high);
+          expect(clamped.high).toBeGreaterThanOrEqual(clamped.low);
+        }
+      }
+    }
+  });
+
+  it("keeps zoom and pan inside the run over a long session", () => {
+    // Every gesture clamps through the same door, so the invariant is about the
+    // state a session can reach rather than about one call. Deterministic: the
+    // sequence is fixed, and it is the shape that found the defect.
+    for (const full of AWKWARD) {
+      let visible: RetentionTimeDomain = { low: full.low, high: full.high };
+      for (let step = 0; step < 200; step++) {
+        visible =
+          step % 3 === 0
+            ? zoomDomain(visible, full, 0.6 + (step % 7) / 10, (step % 11) / 10)
+            : clampDomain(
+                {
+                  low: visible.low + (visible.high - visible.low) * (((step % 5) - 2) / 3),
+                  high: visible.high + (visible.high - visible.low) * (((step % 5) - 2) / 3),
+                },
+                full,
+              );
+        expect(visible.low).toBeGreaterThanOrEqual(full.low);
+        expect(visible.high).toBeLessThanOrEqual(full.high);
+      }
+    }
+  });
+});

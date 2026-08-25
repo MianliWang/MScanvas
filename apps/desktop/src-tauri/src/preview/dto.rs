@@ -497,6 +497,78 @@ pub fn spectrum_export_stale() -> PreviewErrorDto {
     )
 }
 
+/// Another scientific export of this session has not finished.
+///
+/// One lane for the selected spectrum and the chromatogram together, so two
+/// save dialogs cannot be open over one window and a clipboard rasterization
+/// cannot race a file write.
+#[must_use]
+pub fn scientific_export_in_progress() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "scientific_export_in_progress",
+        "MSCanvas is already exporting. Finish or cancel that export first.",
+        false,
+    )
+}
+
+/// The named chromatogram is not the one this session holds.
+///
+/// Retryable, and the recovery is ordinary: the chromatogram on screen has its
+/// own token, so opening the preview again -- or simply exporting the one that
+/// is there -- works. Nothing is written from a run other than the one asked
+/// for, and no token is ever rebound to whatever is current now.
+#[must_use]
+pub fn chromatogram_export_stale() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "chromatogram_export_stale",
+        "That chromatogram is no longer the one MSCanvas has loaded, so nothing was exported. \
+         Open the preview again and export it.",
+        true,
+    )
+}
+
+/// The requested range is not one this run covers.
+///
+/// Refused rather than clamped. A window outside the run is a request about a
+/// different run, and quietly exporting the nearest range this one does have
+/// would answer a question nobody asked -- in a file that would look like the
+/// answer to the one they did.
+#[must_use]
+pub fn chromatogram_range_outside_source() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "chromatogram_range_outside_source",
+        "That retention-time range is not inside the run MSCanvas has loaded, so nothing was \
+         exported.",
+        true,
+    )
+}
+
+/// A figure was asked for with neither trace visible.
+///
+/// Retryable, and the recovery is on screen: show a trace. The data exports are
+/// unaffected, because hiding a trace is a choice about a plot rather than a
+/// decision to leave measured science out of a file.
+#[must_use]
+pub fn chromatogram_no_visible_trace() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "chromatogram_no_visible_trace",
+        "A chromatogram figure needs at least one visible trace. Show TIC or BPC, or export the \
+         data instead.",
+        true,
+    )
+}
+
+/// The specification refused the chromatogram, so no figure was drawn.
+#[must_use]
+pub fn chromatogram_export_refused() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "chromatogram_export_refused",
+        "MSCanvas could not build a figure this chromatogram can be drawn in honestly, so no \
+         file was written.",
+        false,
+    )
+}
+
 /// The specification refused the spectrum, so no figure was drawn.
 ///
 /// Not retryable: the same reading will be refused the same way. It is a fact
@@ -570,6 +642,29 @@ pub fn spectrum_not_finalized(temporary_left_behind: bool) -> PreviewErrorDto {
             true,
         ),
         temporary_left_behind,
+    )
+}
+
+/// A save destination whose name does not say what the file holds.
+///
+/// Carries the sentence the dialog's own facts produced -- which extension to
+/// use, for which document -- and nothing about where the user was working. A
+/// refusal is not a place to disclose a path.
+///
+/// Retryable, because it is: the user chooses another name and the export
+/// begins again.
+#[must_use]
+pub fn spectrum_destination_misnamed(guidance: &str) -> PreviewErrorDto {
+    PreviewErrorDto::new("spectrum_destination_misnamed", guidance, true)
+}
+
+/// The same refusal for the one document that is not an export of science.
+#[must_use]
+pub fn diagnostics_destination_misnamed() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "diagnostics_destination_misnamed",
+        "Choose a filename ending in .json for a JSON export.",
+        true,
     )
 }
 
@@ -1715,6 +1810,19 @@ pub struct PreviewDto {
     pub metadata: MetadataDto,
     pub run_summary: RunSummaryDto,
     pub spectrum_table: SpectrumTableDto,
+    /// The opaque name of the chromatogram this run may be exported as.
+    ///
+    /// `None` where there is no chromatogram to export, which is exactly where
+    /// the viewer draws none: a table this session could not transfer whole, a
+    /// run with no spectra, a retention time or an intensity that is not a
+    /// finite number, or a unit this build cannot name. Rust retains every row
+    /// the backend reported and the webview receives a bounded prefix, so
+    /// issuing a token for a run the viewer refuses would open an export door
+    /// onto a capability the product does not otherwise have.
+    ///
+    /// Opaque, session-scoped, and meaningless to anything that did not receive
+    /// it here. It is not a path, not a dataset handle and not an index.
+    pub chromatogram_export_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq)]
@@ -1789,6 +1897,91 @@ pub enum SpectrumExportOutcomeDto {
         /// truncated transfer cannot make them disagree, because this one did
         /// not come from the transfer.
         point_count: usize,
+    },
+}
+
+/// How much of a run one chromatogram export covers.
+///
+/// `scope` is `full` or `current`. The two numbers are the committed viewport
+/// for a current-range request that has one, and are absent both for a full-run
+/// request and for a current-range request whose viewer has committed nothing
+/// narrower than the whole run -- a real state, and one Rust resolves rather
+/// than the interface inventing a range to fill it.
+///
+/// Nothing here is a viewport authority. It is a request, checked against the
+/// run this session holds before any of it is believed.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChromatogramRangeDto {
+    pub scope: String,
+    pub low: Option<f64>,
+    pub high: Option<f64>,
+}
+
+/// Which measured traces a chromatogram figure draws.
+///
+/// The figure shows what is on screen. A data export carries both columns
+/// whatever this says, because hiding a trace is a presentation choice about a
+/// plot rather than a decision to leave measured science out of a file.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChromatogramTracesDto {
+    pub tic: bool,
+    pub bpc: bool,
+}
+
+/// What one chromatogram export did, in facts a user can be told.
+///
+/// No path, no dataset handle and no source file name. The range is the one
+/// that was resolved when the export began, so a viewport that moved while the
+/// dialog was open cannot make this sentence describe a different file.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase", tag = "status")]
+pub enum ChromatogramExportOutcomeDto {
+    #[serde(rename_all = "camelCase")]
+    Cancelled,
+    #[serde(rename_all = "camelCase")]
+    Saved {
+        /// `svg`, `png`, `csv` or `tsv`.
+        format: String,
+        /// The name the file was given, and nothing about where it went.
+        file_name: String,
+        /// What the figure was rendered as, for the formats that are figures.
+        figure: Option<ExportedFigureDto>,
+        /// The traces the figure drew. `None` for the data documents, which
+        /// carry both columns whatever is on screen.
+        traces: Option<ChromatogramTracesDto>,
+        /// `full` or `current`, as asked for rather than as it resolved. A
+        /// current-range export of a viewer that committed nothing writes the
+        /// whole run and is still a current-range export.
+        range_scope: String,
+        /// The retention-time range actually exported over.
+        range_low: f64,
+        range_high: f64,
+        /// How many scans the run holds, from the facts Rust retained rather
+        /// than from the rows the webview received.
+        source_scan_count: usize,
+        /// How many source scans the data document carries. `None` for a
+        /// figure, which draws the complete series and declares a window.
+        ///
+        /// Zero is a successful export: a range can legitimately contain no
+        /// scans while the figure still draws a segment crossing it.
+        row_count: Option<usize>,
+    },
+}
+
+/// What a chromatogram figure put on the clipboard was.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase", tag = "status")]
+pub enum ChromatogramCopyOutcomeDto {
+    #[serde(rename_all = "camelCase")]
+    Copied {
+        figure: CopiedFigureDto,
+        traces: ChromatogramTracesDto,
+        range_scope: String,
+        range_low: f64,
+        range_high: f64,
+        source_scan_count: usize,
     },
 }
 

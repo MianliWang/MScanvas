@@ -35,6 +35,11 @@ function renderPanel(
   draft: FigureSettingsDraft = DEFAULT_DRAFT,
   renderProblem: string | null = null,
   dpiProblem: string | null = null,
+  // What the composition passes: the lane is busy while *either* surface owns
+  // it, and this panel's own running state is one of the two ways it can be.
+  // Defaulted from that so every case written before the lane was shared keeps
+  // saying exactly what it said.
+  scientificExportBusy: boolean = exportState.status === "running",
 ): {
   readonly onExport: ReturnType<typeof vi.fn>;
   readonly onDismiss: ReturnType<typeof vi.fn>;
@@ -59,6 +64,7 @@ function renderPanel(
       onRetry={() => undefined}
       pngDpiProblem={dpiProblem}
       renderSettingsProblem={renderProblem}
+      scientificExportBusy={scientificExportBusy}
       state={state}
     />,
   );
@@ -102,6 +108,7 @@ describe("selected spectrum export affordance", () => {
           onRetry={() => undefined}
           pngDpiProblem={null}
           renderSettingsProblem={null}
+          scientificExportBusy={false}
           state={state}
         />,
       );
@@ -161,7 +168,7 @@ describe("selected spectrum export affordance", () => {
   });
 
   it("closes every action while one export is running and says which", () => {
-    renderPanel(loaded(), { status: "running", operation: "svg" });
+    renderPanel(loaded(), { status: "running", operation: "svg", namesVisibleRun: true });
 
     // Rust holds one export slot and refuses a second, so leaving the others
     // live would offer an action already known to fail.
@@ -173,6 +180,35 @@ describe("selected spectrum export affordance", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "Choose where to save the SVG file.",
     );
+  });
+
+  it("closes every action for an export that outlived the spectrum it names", () => {
+    /*
+     * An export begun on one spectrum and still being written when the user
+     * opens another. Rust is holding the one scientific lane until it settles,
+     * so every action stays closed -- but the spectrum on screen is not the one
+     * being written, and no label here may say that it is.
+     *
+     * The two facts are separate on purpose. Availability is about the lane and
+     * survives the replacement; the running label is about identity and does
+     * not.
+     */
+    renderPanel(
+      loaded(),
+      { status: "running", operation: "svg", namesVisibleRun: false },
+      DEFAULT_DRAFT,
+      null,
+      null,
+      // The composition still reports the lane busy, because Rust still holds it.
+      true,
+    );
+
+    for (const format of ["SVG", "PNG", "CSV", "TSV"]) {
+      expect(screen.getByRole("button", { name: `Export ${format}…` })).toBeDisabled();
+    }
+    expect(screen.getByRole("button", { name: "Copy plot" })).toBeDisabled();
+    // Plain labels: nothing claims this spectrum is the one being exported.
+    expect(screen.queryByRole("button", { name: "Exporting SVG…" })).toBeNull();
   });
 
   it("reports a saved export by name and point count, and never a path", () => {
@@ -423,7 +459,7 @@ describe("selected spectrum export affordance", () => {
   });
 
   it("closes every figure and data action while a copy is running", () => {
-    renderPanel(loaded(), { status: "running", operation: "copy" });
+    renderPanel(loaded(), { status: "running", operation: "copy", namesVisibleRun: true });
 
     for (const name of ["Export SVG…", "Export PNG…", "Export CSV…", "Export TSV…"]) {
       expect(screen.getByRole("button", { name })).toBeDisabled();
@@ -434,7 +470,7 @@ describe("selected spectrum export affordance", () => {
   });
 
   it("closes every action while a PNG is being written and says which", () => {
-    renderPanel(loaded(), { status: "running", operation: "png" });
+    renderPanel(loaded(), { status: "running", operation: "png", namesVisibleRun: true });
 
     for (const name of ["Export SVG…", "Copy plot", "Export CSV…", "Export TSV…"]) {
       expect(screen.getByRole("button", { name })).toBeDisabled();

@@ -780,6 +780,25 @@ impl fmt::Debug for SelectedSpectrumResult {
     }
 }
 
+impl SpectrumIdentity {
+    /// Builds one identity from the two facts a table row is read by, for tests
+    /// in this workspace.
+    ///
+    /// Off in every shipped build, like the constructors beside it. No
+    /// representation string is fabricated: the raw identifiers are what a
+    /// parser reads out of a backend's own line, and a caller that wanted to
+    /// test those should be testing the parser.
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub const fn from_index_for_tests(index: u64, scan_number: Option<u64>) -> Self {
+        Self {
+            index,
+            representations: Vec::new(),
+            scan_number,
+        }
+    }
+}
+
 impl SelectedSpectrumResult {
     /// Builds one selected spectrum from its points, for tests in this
     /// workspace.

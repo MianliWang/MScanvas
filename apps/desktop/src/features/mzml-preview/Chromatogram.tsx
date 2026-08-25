@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 
 import { formatCount, formatIntensity } from "./format";
@@ -106,6 +107,17 @@ export interface ChromatogramProps {
   readonly onToggleTrace: (trace: TraceKind) => void;
   /** The one selected-spectrum operation, which the table and the steps share. */
   readonly onSelect: (index: number) => void;
+  /**
+   * The control that opens this panel's export surface.
+   *
+   * Rendered into the header's existing control row rather than below the plot,
+   * so a viewer with the surface closed is exactly as tall as it was: the
+   * three-panel column's floors are measured, and a disclosure that added a row
+   * to the body would push a control out of a panel that clips.
+   */
+  readonly exportToggle?: ReactNode;
+  /** The export surface itself, when it is open. */
+  readonly exportPanel?: ReactNode;
 }
 
 /**
@@ -133,6 +145,8 @@ export const Chromatogram = memo(function Chromatogram({
   traces,
   onToggleTrace,
   onSelect,
+  exportToggle,
+  exportPanel,
 }: ChromatogramProps) {
   const domain = renderedDomain(interaction);
   const full = interaction.fullDomain;
@@ -163,7 +177,11 @@ export const Chromatogram = memo(function Chromatogram({
   } as const;
 
   return (
-    <section aria-labelledby="chromatogram-heading" className="panel chromatogram-panel">
+    <section
+      aria-labelledby="chromatogram-heading"
+      className="panel chromatogram-panel"
+      data-export-open={exportPanel === null || exportPanel === undefined ? undefined : "true"}
+    >
       {/* One line, and every control on it. The viewer is three stacked panels
           in a column that is about 480px tall at a 768px window, so what this
           panel spends on chrome it takes from the scan table and the spectrum
@@ -217,9 +235,11 @@ export const Chromatogram = memo(function Chromatogram({
                 </button>
               ))}
             </fieldset>
+            {exportToggle}
           </div>
         ) : null}
       </header>
+      {exportPanel}
       <div className="chromatogram-body">
         {model.status === "ready" && domain !== null && full !== null ? (
           <ChromatogramPlot

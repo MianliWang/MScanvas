@@ -13,6 +13,11 @@ import type { WorkspaceDropUpdate } from "../features/mzml-preview/contracts";
 import type { WorkspaceDropTransport } from "../features/mzml-preview/dropTransport";
 import type {
   BackendAvailability,
+  ChromatogramCopyOutcome,
+  ChromatogramExportFormat,
+  ChromatogramExportOutcome,
+  ChromatogramRange,
+  ChromatogramTraceSet,
   ConversionConflictPolicy,
   ConversionDiagnosticsExport,
   ConversionDiagnosticsState,
@@ -233,6 +238,9 @@ export function buildPreview(rowCount = 6, truncated = false, installationGenera
   const rows = buildRows(rowCount);
   return {
     installationGeneration,
+    // Issued exactly where Rust issues one: for a run the viewer would draw. A
+    // truncated table has no chromatogram on screen and no chromatogram export.
+    chromatogramExportToken: truncated || rowCount === 0 ? null : "chromatogram-token",
     file: selectedFile,
     metadata: {
       sections: [
@@ -474,6 +482,33 @@ export interface SpectrumCopyRequest {
   readonly settings: FigureSettings;
 }
 
+/** One chromatogram export the fake was asked for. */
+export interface ChromatogramExportRequest {
+  readonly exportToken: string;
+  readonly format: ChromatogramExportFormat;
+  /** The range as it crossed the boundary, before Rust resolved it. */
+  readonly range: ChromatogramRange;
+  readonly traces: ChromatogramTraceSet;
+  readonly settings: FigureSettings;
+}
+
+/** One chromatogram `Copy plot`, as it reached the boundary. */
+export interface ChromatogramCopyRequest {
+  readonly exportToken: string;
+  readonly range: ChromatogramRange;
+  readonly traces: ChromatogramTraceSet;
+  readonly settings: FigureSettings;
+}
+
+/**
+ * How many scans the fake says the run holds.
+ *
+ * Deliberately unlike any transferred row count. Rust counts the facts it
+ * retained, and a fixture whose answer happened to equal the length of the
+ * arrays this side holds would let an export that read the transfer pass.
+ */
+export const FAKE_COMPLETE_SCAN_COUNT = 36_319;
+
 /** The figure every fixture exports at unless a test says otherwise. */
 export const FAKE_FIGURE_SETTINGS: FigureSettings = {
   widthPx: 1_200,
@@ -537,6 +572,26 @@ export interface FakePreviewApiOptions {
     exportToken: string,
     settings: FigureSettings,
   ) => Promise<SpectrumCopyOutcome>;
+  /**
+   * What a chromatogram export answers with.
+   *
+   * Defaults to a saved document. A test about cancelling, a refusal, or a
+   * range that holds no scans supplies its own.
+   */
+  readonly chromatogramExport?: (
+    exportToken: string,
+    format: ChromatogramExportFormat,
+    range: ChromatogramRange,
+    traces: ChromatogramTraceSet,
+    settings: FigureSettings,
+  ) => Promise<ChromatogramExportOutcome>;
+  /** What a chromatogram `Copy plot` answers with. */
+  readonly chromatogramCopy?: (
+    exportToken: string,
+    range: ChromatogramRange,
+    traces: ChromatogramTraceSet,
+    settings: FigureSettings,
+  ) => Promise<ChromatogramCopyOutcome>;
   /** What the session already holds when the webview mounts. */
   readonly initialDatasets?: readonly HeldFile[];
   /** What the conversion slot holds when the webview mounts. */
@@ -657,6 +712,10 @@ export interface FakePreviewApi extends PreviewApi {
   readonly spectrumExportRequests: SpectrumExportRequest[];
   /** Every `Copy plot` this fake was asked for, in order. */
   readonly spectrumCopyRequests: SpectrumCopyRequest[];
+  /** Every chromatogram export this fake was asked for, in order. */
+  readonly chromatogramExportRequests: ChromatogramExportRequest[];
+  /** Every chromatogram `Copy plot` this fake was asked for, in order. */
+  readonly chromatogramCopyRequests: ChromatogramCopyRequest[];
   readonly requestedSpectra: number[];
   readonly openCount: () => number;
   /** Every handle this fake was asked to read, in order. */
@@ -907,6 +966,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   const diagnosticsExportRequests: string[] = [];
   const spectrumExportRequests: SpectrumExportRequest[] = [];
   const spectrumCopyRequests: SpectrumCopyRequest[] = [];
+  const chromatogramExportRequests: ChromatogramExportRequest[] = [];
+  const chromatogramCopyRequests: ChromatogramCopyRequest[] = [];
   // The diagnostics export slot, modelled the way Rust holds it: eligibility is
   // derived from the terminal queue rather than tracked, an export is a claim
   // that closes every other action on that queue, and the last result survives
@@ -1093,6 +1154,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   const fake: FakePreviewApi = {
     spectrumExportRequests,
     spectrumCopyRequests,
+    chromatogramExportRequests,
+    chromatogramCopyRequests,
     requestedSpectra,
     openedHandles,
     openCount: () => openCount,
@@ -1409,6 +1472,45 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         status: "copied",
         figure: fakeCopiedFigure(settings),
         pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+      };
+    },
+    // Modelled as Rust behaves: the token names the run Rust retained, the
+    // range is resolved there rather than here, and what comes back counts the
+    // facts Rust holds rather than the rows this side received.
+    exportChromatogram: async (exportToken, format, range, traces, settings) => {
+      chromatogramExportRequests.push({ exportToken, format, range, traces, settings });
+      if (options.chromatogramExport !== undefined) {
+        return options.chromatogramExport(exportToken, format, range, traces, settings);
+      }
+      const figure = format === "svg" || format === "png";
+      return {
+        status: "saved",
+        format,
+        fileName: `mscanvas-chromatogram-${range.scope}.${format}`,
+        figure: figure ? fakeExportedFigure(settings, format) : null,
+        traces: figure ? traces : null,
+        rangeScope: range.scope,
+        rangeLow: range.low ?? 0,
+        rangeHigh: range.high ?? FAKE_COMPLETE_SCAN_COUNT * 0.0125,
+        sourceScanCount: FAKE_COMPLETE_SCAN_COUNT,
+        // A data document reports what it wrote; a figure carries the whole
+        // source series and reports none.
+        rowCount: figure ? null : FAKE_COMPLETE_SCAN_COUNT,
+      };
+    },
+    copyChromatogramPlot: async (exportToken, range, traces, settings) => {
+      chromatogramCopyRequests.push({ exportToken, range, traces, settings });
+      if (options.chromatogramCopy !== undefined) {
+        return options.chromatogramCopy(exportToken, range, traces, settings);
+      }
+      return {
+        status: "copied",
+        figure: fakeCopiedFigure(settings),
+        traces,
+        rangeScope: range.scope,
+        rangeLow: range.low ?? 0,
+        rangeHigh: range.high ?? FAKE_COMPLETE_SCAN_COUNT * 0.0125,
+        sourceScanCount: FAKE_COMPLETE_SCAN_COUNT,
       };
     },
     // Modelled as Rust behaves: the claim closes every other action on the

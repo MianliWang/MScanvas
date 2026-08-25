@@ -19,11 +19,20 @@ use std::fmt;
 
 /// The contract version this build writes and accepts.
 ///
-/// One rather than two: the shape this replaced was a scaffold with no reader
-/// anywhere in the workspace and no serialized instance in existence, so there
-/// is no version 1 data for a version 2 to be compatible with. What is new is
-/// that this one is a contract rather than a sketch.
-pub const SCHEMA_VERSION: u32 = 1;
+/// **Two, because version 1 cannot read what this build writes.** M4.3 added two
+/// pieces of representable meaning: a panel may declare a *visible value domain*
+/// beside its full one, and a series may take the `secondary_measurement` role.
+/// Every wire shape here is `deny_unknown_fields` and every enum is closed, so a
+/// build that knows only version 1 refuses a document carrying either -- and it
+/// refuses it as an unknown field or an unknown variant, which tells a reader
+/// nothing about why. Bumping makes the same refusal say what actually happened.
+///
+/// Nothing is migrated, because there is nothing to migrate: no `FigureSpec` is
+/// persisted anywhere, none crosses into the webview, and the saved-figure
+/// feature that would create one (FIG-007) is unimplemented. The cost of this
+/// decision is repository fixtures, and it was paid deliberately rather than by
+/// leaving a version number that quietly disagreed with `deny_unknown_fields`.
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// The longest a label may be.
 ///
@@ -112,6 +121,8 @@ pub enum SpecError {
     DuplicateSeriesRole,
     /// A panel declared no series at all.
     PanelHasNoSeries,
+    /// A panel's visible value window left the value range its source covers.
+    VisibleValueDomainOutsideValueDomain,
     /// A decoded document declared a schema this build does not accept.
     UnknownSchemaVersion,
 }
@@ -145,6 +156,9 @@ impl fmt::Display for SpecError {
                 "a panel carried two series of the same style role, which cannot be told apart"
             }
             Self::PanelHasNoSeries => "a panel declared no series at all",
+            Self::VisibleValueDomainOutsideValueDomain => {
+                "a panel's visible value window left the value range its source covers"
+            }
             Self::UnknownSchemaVersion => "the document declares an unknown schema version",
         })
     }
@@ -611,8 +625,39 @@ pub enum DataScope {
 pub enum StyleRole {
     /// The measured data itself.
     Measurement,
+    /// A second independently measured series, needing its own visual treatment.
+    ///
+    /// A chromatogram panel plots the total ion current and the base peak
+    /// intensity of the same scans. Both are measurements: neither is derived
+    /// from the other, neither is a model of the other, and a reader compares
+    /// them. Before this role there were only two ways to say that, and both
+    /// were false -- calling one of them a [`Self::Baseline`] claims it is a
+    /// reference the other is read against, and giving both
+    /// [`Self::Measurement`] makes them indistinguishable in the drawing and in
+    /// the words, which is what [`SpecError::DuplicateSeriesRole`] refuses.
+    ///
+    /// It is **not** a baseline, a fit, a prediction, a derived quantity or a
+    /// comparison result. It is another thing the instrument measured.
+    ///
+    /// Which series takes it is a property of the quantity, not of what happens
+    /// to be visible: base peak intensity stays secondary when total ion current
+    /// is hidden, so a figure of one trace and a figure of two agree about what
+    /// that trace is.
+    SecondaryMeasurement,
     /// A reference line the data is read against.
     Baseline,
+}
+
+impl StyleRole {
+    /// Whether this role is something the instrument measured.
+    ///
+    /// The distinction a reader makes first, and the one the zero-baseline and
+    /// joining rules are really about: a measurement is data, a baseline is a
+    /// reference drawn beside it.
+    #[must_use]
+    pub const fn is_measured(self) -> bool {
+        matches!(self, Self::Measurement | Self::SecondaryMeasurement)
+    }
 }
 
 /// One ordered set of points, and what it is.
@@ -868,8 +913,22 @@ pub struct PanelSpec {
     pub(crate) full_domain: Domain,
     /// The part of it on screen, when that is narrower than the whole.
     pub(crate) visible_domain: Option<Domain>,
-    /// The value range, which may reach below zero.
+    /// The value range the source covers, which may reach below zero.
     pub(crate) value_domain: Domain,
+    /// The value range actually displayed, when that is narrower than the whole.
+    ///
+    /// Why a panel needs both. A current-range chromatogram must carry its
+    /// **complete** source series -- that is what makes the figure a scientific
+    /// document rather than a picture of a screen -- so [`Self::value_domain`]
+    /// has to cover every source value, including a peak far outside the
+    /// window. Scaling the drawing to that peak would flatten the range the
+    /// reader actually asked for into a line along the bottom of the panel.
+    ///
+    /// So this is the window, and it does not claim the values outside it do
+    /// not exist. `None` means the whole value range is shown, which is what
+    /// every full-range figure says and what every selected-spectrum figure has
+    /// always said.
+    pub(crate) visible_value_domain: Option<Domain>,
     pub(crate) series: Vec<SeriesSpec>,
     pub(crate) markers: Vec<Marker>,
 }
@@ -893,6 +952,7 @@ struct WirePanel {
     full_domain: WireDomain,
     visible_domain: Option<WireDomain>,
     value_domain: WireDomain,
+    visible_value_domain: Option<WireDomain>,
     series: Vec<WireSeries>,
     markers: Vec<WireMarker>,
 }
@@ -906,6 +966,7 @@ impl From<WirePanel> for PanelSpec {
             full_domain: wire.full_domain.into(),
             visible_domain: wire.visible_domain.map(Into::into),
             value_domain: wire.value_domain.into(),
+            visible_value_domain: wire.visible_value_domain.map(Into::into),
             series: wire.series.into_iter().map(Into::into).collect(),
             markers: wire.markers.into_iter().map(Into::into).collect(),
         }
@@ -950,6 +1011,7 @@ impl PanelSpec {
             full_domain,
             visible_domain: None,
             value_domain,
+            visible_value_domain: None,
             series,
             markers: Vec::new(),
         };
@@ -1018,14 +1080,20 @@ impl PanelSpec {
         // written against `Measurement` alone left two baselines drawing the
         // same grey line as each other.
         //
-        // Refused rather than styled around. Telling more series apart needs a
-        // style system with a legend to decode it, and a legend is figure
-        // layout -- FIG-008, a named non-goal of this milestone. One
-        // measurement read against one baseline stays representable and stays
-        // distinguishable, in the drawing and in the words. An overlay of two
-        // measurements is VIEW-008's multi-layer comparison, and it should
-        // arrive with the component that can draw it rather than as a figure
-        // that renders ambiguously today.
+        // Refused rather than styled around. Two series can be told apart only
+        // if they carry different roles, because a role is what a renderer maps
+        // to a stroke and to a legend entry: `Measurement` solid,
+        // `SecondaryMeasurement` dashed, `Baseline` a thin reference line. A
+        // chromatogram's total ion current and base peak intensity are two
+        // measurements and take the first two -- which is why that role exists,
+        // rather than one of them being called a baseline it is not.
+        //
+        // What stays refused is *two series claiming the same role*, which is
+        // ambiguous in the drawing and in the words however many roles exist.
+        // An arbitrary overlay of many measured layers is VIEW-008's
+        // multi-layer comparison and needs a style system this contract does
+        // not have; it should arrive with the component that can draw it rather
+        // than as a figure that renders ambiguously today.
         let mut roles: Vec<StyleRole> = Vec::with_capacity(self.series.len());
         for series in &self.series {
             if roles.contains(&series.role) {
@@ -1059,6 +1127,24 @@ impl PanelSpec {
             visible.validate()?;
             if visible.low() < self.full_domain.low() || visible.high() > self.full_domain.high() {
                 return Err(SpecError::DomainInverted);
+            }
+        }
+        // The displayed value window, held to the range the source covers.
+        //
+        // Contained rather than merely finite, because this window is what the
+        // value axis is labelled with: a window reaching above every measured
+        // value prints a top label no measurement comes near, and one reaching
+        // below prints a floor the data never visits. Both are the axis telling
+        // a reader about space the figure does not contain.
+        //
+        // Deliberately *not* checked against the series the way `value_domain`
+        // is. A source point outside this window is the normal case and the
+        // whole reason the field exists: a peak at another retention time is
+        // still in the document, and comes back into view if the window widens.
+        if let Some(window) = self.visible_value_domain {
+            window.validate()?;
+            if window.low() < self.value_domain.low() || window.high() > self.value_domain.high() {
+                return Err(SpecError::VisibleValueDomainOutsideValueDomain);
             }
         }
         for series in &self.series {
@@ -1104,6 +1190,18 @@ impl PanelSpec {
         Ok(self)
     }
 
+    /// Narrows the panel's value axis to the range actually shown.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a window reaching outside [`Self::value_domain`], which would
+    /// label the axis with values the source does not contain.
+    pub fn with_visible_value_domain(mut self, window: Domain) -> Result<Self, SpecError> {
+        self.visible_value_domain = Some(window);
+        self.validate()?;
+        Ok(self)
+    }
+
     /// Attaches markers to the panel.
     ///
     /// # Errors
@@ -1145,6 +1243,21 @@ impl PanelSpec {
     #[must_use]
     pub const fn value_domain(&self) -> Domain {
         self.value_domain
+    }
+
+    #[must_use]
+    pub const fn visible_value_domain(&self) -> Option<Domain> {
+        self.visible_value_domain
+    }
+
+    /// The value range a renderer projects onto: the window when there is one.
+    ///
+    /// The counterpart of [`Self::drawn_domain`], and stated here for the same
+    /// reason -- the projection, the axis labels and the sentences describing
+    /// the drawing all have to agree about which range reached the page.
+    #[must_use]
+    pub fn displayed_value_domain(&self) -> Domain {
+        self.visible_value_domain.unwrap_or(self.value_domain)
     }
 
     #[must_use]

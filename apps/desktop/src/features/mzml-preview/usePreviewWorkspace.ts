@@ -13,6 +13,10 @@ import type { ConversionOperation } from "./useConversionOperation";
 import { useConversionOperation } from "./useConversionOperation";
 import type {
   BackendAvailability,
+  ChromatogramExportFormat,
+  ChromatogramRange,
+  ChromatogramRangeScope,
+  ChromatogramTraceSet,
   CopiedFigure,
   ExportedFigure,
   FigureSettings,
@@ -50,7 +54,7 @@ import {
 } from "./rosterSelection";
 import type { ViewerEvent, ViewerInteractionState } from "./viewer/interactionState";
 import { buildPreviewScanModel } from "./viewer/previewScanModel";
-import type { ScanModel, TraceKind } from "./viewer/scanModel";
+import type { RetentionTimeDomain, ScanModel, TraceKind } from "./viewer/scanModel";
 import { adjacentScan } from "./viewer/scanModel";
 import { useViewerInteraction } from "./viewer/useViewerInteraction";
 
@@ -214,6 +218,11 @@ function isFigureFormat(format: SpectrumExportFormat): boolean {
   return format === "svg" || format === "png";
 }
 
+/** Whether this chromatogram format is drawn rather than written. */
+function isChromatogramFigureFormat(format: ChromatogramExportFormat): boolean {
+  return format === "svg" || format === "png";
+}
+
 /**
  * What the one figure-operation lane is doing, named the way the panel says it.
  *
@@ -225,7 +234,20 @@ export type FigureOperation = SpectrumExportFormat | "copy";
 
 export type SpectrumExportState =
   | { readonly status: "idle" }
-  | { readonly status: "running"; readonly operation: FigureOperation }
+  | {
+      readonly status: "running";
+      readonly operation: FigureOperation;
+      /**
+       * Whether the run being written is still the one on screen.
+       *
+       * `false` once a newer preview has replaced it. The lane is still held --
+       * Rust is still writing, and nothing else may begin -- but what this
+       * surface now shows is a different run, so its label must not say that
+       * *this* one is being exported. Availability and identity are separate
+       * facts, and only the first of them survives the replacement.
+       */
+      readonly namesVisibleRun: boolean;
+    }
   | { readonly status: "cancelled" }
   | {
       readonly status: "saved";
@@ -240,6 +262,56 @@ export type SpectrumExportState =
       /** A size and a theme. A clipboard image records no resolution. */
       readonly figure: CopiedFigure;
       readonly pointCount: number;
+    }
+  | {
+      readonly status: "failed";
+      readonly operation: FigureOperation;
+      readonly error: PreviewError;
+    };
+
+/**
+ * Where one chromatogram export is.
+ *
+ * The same shape a spectrum export has, plus the two facts that make a
+ * chromatogram export what it is: how much of the run it covered, and -- for a
+ * data document -- how many source scans that turned out to be.
+ */
+export type ChromatogramExportState =
+  | { readonly status: "idle" }
+  | {
+      readonly status: "running";
+      readonly operation: FigureOperation;
+      /**
+       * Whether the run being written is still the one on screen.
+       *
+       * `false` once a newer preview has replaced it. The lane is still held --
+       * Rust is still writing, and nothing else may begin -- but what this
+       * surface now shows is a different run, so its label must not say that
+       * *this* one is being exported. Availability and identity are separate
+       * facts, and only the first of them survives the replacement.
+       */
+      readonly namesVisibleRun: boolean;
+    }
+  | { readonly status: "cancelled" }
+  | {
+      readonly status: "saved";
+      readonly format: ChromatogramExportFormat;
+      readonly fileName: string;
+      readonly figure: ExportedFigure | null;
+      readonly rangeScope: ChromatogramRangeScope;
+      readonly rangeLow: number;
+      readonly rangeHigh: number;
+      readonly sourceScanCount: number;
+      /** How many source scans the data document holds. `null` for a figure. */
+      readonly rowCount: number | null;
+    }
+  | {
+      readonly status: "copied";
+      readonly figure: CopiedFigure;
+      readonly rangeScope: ChromatogramRangeScope;
+      readonly rangeLow: number;
+      readonly rangeHigh: number;
+      readonly sourceScanCount: number;
     }
   | {
       readonly status: "failed";
@@ -562,6 +634,42 @@ export interface PreviewWorkspace {
    * the measurement it describes.
    */
   readonly spectrumExport: SpectrumExportState;
+  /**
+   * Whether the session's one scientific export lane is occupied.
+   *
+   * One answer for both surfaces, because Rust has one lane: while a
+   * chromatogram is being saved or copied the selected spectrum's actions are
+   * unavailable, and while a spectrum is being saved or copied the
+   * chromatogram's are. Derived from the two export states rather than stored
+   * beside them, so it cannot drift from either.
+   *
+   * Availability only. Neither surface shows the other's result or the other's
+   * status message: what is shared is the lane, not what happened in it.
+   */
+  readonly scientificExportBusy: boolean;
+  /**
+   * The opaque name of the chromatogram this run may be exported as.
+   *
+   * `null` where Rust issued none, which is exactly where the viewer draws no
+   * chromatogram. Nothing on this side decides it.
+   */
+  readonly chromatogramExportToken: string | null;
+  /** How much of the run the next chromatogram export will cover. */
+  readonly chromatogramRangeScope: ChromatogramRangeScope;
+  readonly setChromatogramRangeScope: (scope: ChromatogramRangeScope) => void;
+  /**
+   * The committed retention-time range, or `null` where none is committed.
+   *
+   * The **committed** one, and deliberately not what a wheel or a drag is
+   * transiently showing: an export invoked mid-gesture writes the last range
+   * the user settled on, and the gesture is neither settled nor cancelled by
+   * having been exported over.
+   */
+  readonly chromatogramCommittedDomain: RetentionTimeDomain | null;
+  readonly chromatogramExport: ChromatogramExportState;
+  readonly exportChromatogram: (format: ChromatogramExportFormat) => void;
+  readonly copyChromatogramPlot: () => void;
+  readonly dismissChromatogramExport: () => void;
   /**
    * Exports the loaded selected spectrum as one file.
    *
@@ -2364,7 +2472,35 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   );
   const pngDpiProblem = useMemo(() => describePngDpiProblem(figureSettings), [figureSettings]);
 
+  // ------------------------------------------------- scientific exports
+  //
+  // Two states, and they stay two. A selected spectrum and a chromatogram
+  // publish different results, bind different tokens and say different things
+  // about what was written, so one state standing for both would have to invent
+  // a result for whichever surface did not run.
+  //
+  // They are declared together because there is exactly one lane underneath
+  // them, and the projection below has to be able to see both.
   const [spectrumExport, setSpectrumExport] = useState<SpectrumExportState>({ status: "idle" });
+  const [chromatogramExport, setChromatogramExport] = useState<ChromatogramExportState>({
+    status: "idle",
+  });
+  /**
+   * Whether the session's one scientific export lane is occupied.
+   *
+   * Derived, and deliberately not stored. Rust holds a single lane across both
+   * surfaces -- two native save dialogs for one window is not a state this
+   * application can be in -- so "may another scientific export begin now" has
+   * one answer, and a third state machine here could only disagree with it.
+   *
+   * It governs *availability* and nothing else. Each surface keeps its own
+   * result, its own status message and its own token binding, because each of
+   * those is a fact about that surface rather than about the lane. And Rust
+   * remains the safety boundary: this is what makes the interface truthful, not
+   * what makes it safe.
+   */
+  const scientificExportBusy =
+    spectrumExport.status === "running" || chromatogramExport.status === "running";
   // A result belongs to the spectrum it describes. Loading another one clears
   // it, so a panel can never show "saved 1,000,000 points" beside a different
   // measurement -- which is the one way this surface could mislead about which
@@ -2378,7 +2514,16 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const boundExportToken = useRef<string | null>(null);
   useEffect(() => {
     boundExportToken.current = exportedSpectrumToken;
-    setSpectrumExport({ status: "idle" });
+    // A *result* stops being ours here. The lane does not: Rust holds it until
+    // the operation it is running settles, and saying otherwise would re-offer
+    // every scientific action while a file is still being written -- which is
+    // the one thing the shared projection exists to prevent. So a running state
+    // survives the change and only stops naming the run on screen.
+    setSpectrumExport((current) =>
+      current.status === "running"
+        ? { ...current, namesVisibleRun: false }
+        : { status: "idle" },
+    );
   }, [exportedSpectrumToken]);
 
   const dismissSpectrumExport = useCallback(() => {
@@ -2393,7 +2538,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       if (spectrum.status !== "loaded") {
         return;
       }
-      if (spectrumExport.status === "running") {
+      // The one scientific lane, whichever surface is holding it. A
+      // chromatogram export running is exactly as much a reason not to start
+      // this one as a spectrum export running: Rust refuses either way, and
+      // offering an action already known to be refused is offering something
+      // that cannot work.
+      if (scientificExportBusy) {
         return;
       }
       // A figure the settings could not describe is not offered, so reaching
@@ -2420,7 +2570,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           ? DEFAULT_FIGURE_SETTINGS
           : figureSettingsFor(resolvedRenderSettings, resolvedPngDpi);
       const token = spectrum.spectrum.exportToken;
-      setSpectrumExport({ status: "running", operation: format });
+      setSpectrumExport({ status: "running", operation: format, namesVisibleRun: true });
       void api
         .exportSelectedSpectrum(token, format, settings)
         .then((outcome) => {
@@ -2430,6 +2580,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           // way this surface could mislead about which measurement a file holds,
           // and a confirmation the user has to distrust is worth less than none.
           if (boundExportToken.current !== token) {
+            // Finished, so the lane is free even though its answer describes a
+            // spectrum nobody is looking at. Released when the operation ends
+            // rather than when the token moved, which is what stops a second
+            // export being offered over the top of this one.
+            setSpectrumExport({ status: "idle" });
             return;
           }
           setSpectrumExport(
@@ -2446,6 +2601,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         })
         .catch((cause: unknown) => {
           if (boundExportToken.current !== token) {
+            // Finished, so the lane is free even though its answer describes a
+            // spectrum nobody is looking at. Released when the operation ends
+            // rather than when the token moved, which is what stops a second
+            // export being offered over the top of this one.
+            setSpectrumExport({ status: "idle" });
             return;
           }
           setSpectrumExport({
@@ -2455,21 +2615,21 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           });
         });
     },
-    [api, resolvedPngDpi, resolvedRenderSettings, spectrum, spectrumExport.status],
+    [api, resolvedPngDpi, resolvedRenderSettings, scientificExportBusy, spectrum],
   );
 
   /**
    * Puts the loaded spectrum's figure on the system clipboard.
    *
-   * The same lane as an export, because Rust has one: a copy while a save is
-   * running is refused there, and offering it here would be offering an action
-   * already known to fail.
+   * The same lane as an export, because Rust has one: a copy while any
+   * scientific save is running is refused there, and offering it here would be
+   * offering an action already known to fail.
    */
   const copySpectrumPlot = useCallback(() => {
     if (spectrum.status !== "loaded") {
       return;
     }
-    if (spectrumExport.status === "running") {
+    if (scientificExportBusy) {
       return;
     }
     // The figure, and nothing about a resolution. A clipboard image is RGBA
@@ -2481,7 +2641,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }
     const settings = figureSettingsFor(render, resolvedPngDpi);
     const token = spectrum.spectrum.exportToken;
-    setSpectrumExport({ status: "running", operation: "copy" });
+    setSpectrumExport({ status: "running", operation: "copy", namesVisibleRun: true });
     void api
       .copySelectedSpectrumPlot(token, settings)
       .then((outcome) => {
@@ -2490,6 +2650,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         // pixels did not come from would say the wrong thing about what is on
         // the clipboard.
         if (boundExportToken.current !== token) {
+          // Finished, so the lane is free even though its answer describes a
+          // spectrum nobody is looking at. Released when the operation ends
+          // rather than when the token moved, which is what stops a second
+          // export being offered over the top of this one.
+          setSpectrumExport({ status: "idle" });
           return;
         }
         setSpectrumExport({
@@ -2500,6 +2665,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       })
       .catch((cause: unknown) => {
         if (boundExportToken.current !== token) {
+          // Finished, so the lane is free even though its answer describes a
+          // spectrum nobody is looking at. Released when the operation ends
+          // rather than when the token moved, which is what stops a second
+          // export being offered over the top of this one.
+          setSpectrumExport({ status: "idle" });
           return;
         }
         setSpectrumExport({
@@ -2508,7 +2678,214 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           error: toPreviewError(cause),
         });
       });
-  }, [api, resolvedPngDpi, resolvedRenderSettings, spectrum, spectrumExport.status]);
+  }, [api, resolvedPngDpi, resolvedRenderSettings, scientificExportBusy, spectrum]);
+
+  // ------------------------------------------------- chromatogram export
+
+  const [chromatogramRangeScope, setChromatogramRangeScope] =
+    useState<ChromatogramRangeScope>("full");
+  // Rust's answer, forwarded. `null` is a run with no chromatogram -- a table
+  // this session could not transfer whole, or one the model refuses -- and it
+  // is the same run the viewer draws nothing for.
+  const chromatogramExportToken = preview.status === "loaded" ? preview.preview.chromatogramExportToken : null;
+  // A result belongs to the run it describes, exactly as a spectrum result
+  // belongs to its spectrum.
+  const boundChromatogramToken = useRef<string | null>(null);
+  useEffect(() => {
+    boundChromatogramToken.current = chromatogramExportToken;
+    // The rule the selected spectrum's binding follows above, for the same
+    // reason: the result stops being ours at this moment, the lane does not
+    // stop being held until Rust says so.
+    setChromatogramExport((current) =>
+      current.status === "running"
+        ? { ...current, namesVisibleRun: false }
+        : { status: "idle" },
+    );
+  }, [chromatogramExportToken]);
+
+  const dismissChromatogramExport = useCallback(() => {
+    setChromatogramExport({ status: "idle" });
+  }, []);
+
+  /**
+   * What a current-range export would cover, as the viewer has committed it.
+   *
+   * Read from the reducer's committed domain and from nothing else. Not the
+   * rendered domain, which a gesture in flight owns; not the SVG's viewBox, not
+   * an axis end and not a pointer position. A viewer that has committed nothing
+   * has no narrower range, and `null` says exactly that rather than a subrange
+   * invented to make the option look different.
+   */
+  const chromatogramCommittedDomain = viewer.state.committedDomain;
+
+  /** The range one export is taken over, read at the moment it is invoked. */
+  const chromatogramRange = useCallback(
+    (): ChromatogramRange => {
+      // Through the controller's own reader rather than a render closure. The
+      // committed range can move between the render that drew a button and the
+      // press that reaches it -- a settling gesture is exactly that -- and what
+      // is exported is what the viewer has committed *now*.
+      const committed = viewer.current().committedDomain;
+      if (chromatogramRangeScope === "full" || committed === null) {
+        return { scope: chromatogramRangeScope, low: null, high: null };
+      }
+      return { scope: "current", low: committed.low, high: committed.high };
+    },
+    [chromatogramRangeScope, viewer],
+  );
+
+  /** Which traces a figure would draw: the ones on screen, at this moment. */
+  const visibleTraces = useCallback(
+    (): ChromatogramTraceSet => ({
+      tic: chromatogramTraces.tic,
+      bpc: chromatogramTraces.bpc,
+    }),
+    [chromatogramTraces],
+  );
+
+  const exportChromatogram = useCallback(
+    (format: ChromatogramExportFormat) => {
+      const token = chromatogramExportToken;
+      if (token === null) {
+        return;
+      }
+      // One scientific lane, and Rust owns it. Offering an action already known
+      // to be refused there would be offering something that cannot work.
+      if (scientificExportBusy) {
+        return;
+      }
+      const drawing = isChromatogramFigureFormat(format);
+      // The same rule the spectrum panel follows: a figure the settings could
+      // not describe is not sent, and a data document is untouched by a figure
+      // setting it has no use for.
+      if (drawing && resolvedRenderSettings === null) {
+        return;
+      }
+      if (format === "png" && resolvedPngDpi === null) {
+        return;
+      }
+      const visible = visibleTraces();
+      // A figure of no series is refused by the contract, so it is not offered.
+      // The data exports stay available, because hiding a trace is a choice
+      // about a plot rather than a decision to leave measured science out.
+      if (drawing && !visible.tic && !visible.bpc) {
+        return;
+      }
+      const settings =
+        resolvedRenderSettings === null
+          ? DEFAULT_FIGURE_SETTINGS
+          : figureSettingsFor(resolvedRenderSettings, resolvedPngDpi);
+      const range = chromatogramRange();
+      setChromatogramExport({ status: "running", operation: format, namesVisibleRun: true });
+      void api
+        .exportChromatogram(token, format, range, visible, settings)
+        .then((outcome) => {
+          if (boundChromatogramToken.current !== token) {
+            // Finished, so the lane is free -- and its answer belongs to a run
+            // the user has moved past, so it is not published.
+            setChromatogramExport({ status: "idle" });
+            return;
+          }
+          setChromatogramExport(
+            outcome.status === "cancelled"
+              ? { status: "cancelled" }
+              : {
+                  status: "saved",
+                  format: outcome.format,
+                  fileName: outcome.fileName,
+                  figure: outcome.figure,
+                  rangeScope: outcome.rangeScope,
+                  rangeLow: outcome.rangeLow,
+                  rangeHigh: outcome.rangeHigh,
+                  sourceScanCount: outcome.sourceScanCount,
+                  rowCount: outcome.rowCount,
+                },
+          );
+        })
+        .catch((cause: unknown) => {
+          if (boundChromatogramToken.current !== token) {
+            // Finished, so the lane is free -- and its answer belongs to a run
+            // the user has moved past, so it is not published.
+            setChromatogramExport({ status: "idle" });
+            return;
+          }
+          setChromatogramExport({
+            status: "failed",
+            operation: format,
+            error: toPreviewError(cause),
+          });
+        });
+    },
+    [
+      api,
+      chromatogramExportToken,
+      chromatogramRange,
+      resolvedPngDpi,
+      resolvedRenderSettings,
+      scientificExportBusy,
+      visibleTraces,
+    ],
+  );
+
+  const copyChromatogramPlot = useCallback(() => {
+    const token = chromatogramExportToken;
+    if (token === null) {
+      return;
+    }
+    if (scientificExportBusy) {
+      return;
+    }
+    const render = resolvedRenderSettings;
+    if (render === null) {
+      return;
+    }
+    const visible = visibleTraces();
+    if (!visible.tic && !visible.bpc) {
+      return;
+    }
+    const settings = figureSettingsFor(render, resolvedPngDpi);
+    const range = chromatogramRange();
+    setChromatogramExport({ status: "running", operation: "copy", namesVisibleRun: true });
+    void api
+      .copyChromatogramPlot(token, range, visible, settings)
+      .then((outcome) => {
+        if (boundChromatogramToken.current !== token) {
+          // Finished, so the lane is free -- and its answer belongs to a run
+          // the user has moved past, so it is not published.
+          setChromatogramExport({ status: "idle" });
+          return;
+        }
+        setChromatogramExport({
+          status: "copied",
+          figure: outcome.figure,
+          rangeScope: outcome.rangeScope,
+          rangeLow: outcome.rangeLow,
+          rangeHigh: outcome.rangeHigh,
+          sourceScanCount: outcome.sourceScanCount,
+        });
+      })
+      .catch((cause: unknown) => {
+        if (boundChromatogramToken.current !== token) {
+          // Finished, so the lane is free -- and its answer belongs to a run
+          // the user has moved past, so it is not published.
+          setChromatogramExport({ status: "idle" });
+          return;
+        }
+        setChromatogramExport({
+          status: "failed",
+          operation: "copy",
+          error: toPreviewError(cause),
+        });
+      });
+  }, [
+    api,
+    chromatogramExportToken,
+    chromatogramRange,
+    resolvedPngDpi,
+    resolvedRenderSettings,
+    scientificExportBusy,
+    visibleTraces,
+  ]);
 
   // A conversion's report carries the installation sequence it ran at. If it is
   // newer than what this document has applied, the banner and everything read
@@ -2634,6 +3011,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     spectrum,
     scanModel,
     viewerInteraction: viewer.state,
+    chromatogramExportToken,
+    chromatogramRangeScope,
+    setChromatogramRangeScope,
+    chromatogramCommittedDomain,
+    chromatogramExport,
+    exportChromatogram,
+    copyChromatogramPlot,
+    dismissChromatogramExport,
     dispatchViewerEvent,
     readViewerInteraction,
     selectedIndex,
@@ -2680,6 +3065,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     selectSpectrum,
     retrySpectrum,
     spectrumExport,
+    scientificExportBusy,
     exportSpectrum,
     copySpectrumPlot,
     dismissSpectrumExport,

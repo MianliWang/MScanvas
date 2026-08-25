@@ -132,8 +132,13 @@ run is already shown, inward at the narrowest viewport, either direction for a r
 of one scan — is left to the page at any size, so the same wheel goes on scrolling
 the column to the panels below the plot.
 
+The run itself can be exported: SVG, PNG or `Copy plot` for the figure and
+CSV/TSV for the per-scan data, over the whole run or over the range the viewer
+has committed to. A figure draws the traces that are visible; a data export
+carries both measured columns whichever of them is on screen.
+
 Still missing from the acquisition view: XIC, spectrum zoom and pan, multi-layer
-comparison, and any export of the chromatogram or of the range on screen. See
+comparison, and a linked two-panel figure. See
 [ADR 0032](../architecture/adr/0032-viewer-interaction-and-viewport-state.md) and
 [ADR 0033](../architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
 
@@ -291,12 +296,16 @@ ordinary outcome and leaves the spectrum exactly as it was. What is written is
 the complete spectrum Rust read, not the bounded arrays the interface drew from.
 
 What is still missing from steps 2 to 4: PNG is a save rather than a quick copy
-target, there is no range chooser -- the chromatogram now has a zoom and a pan,
-and the viewport they settle on is the authority a current-range export will
-read, but no export consumes it yet -- and step 4's export-specific preview does
-not exist: the figure is described by its settings rather than shown before it is
-written. Neither a chromatogram nor a current-range export exists. See
-[ADR 0029](../architecture/adr/0029-first-visible-spectrum-figure-and-data-export.md).
+target, and step 4's export-specific preview does not exist -- the figure is
+described by its settings rather than shown before it is written.
+
+The chromatogram exports as SVG, PNG, `Copy plot`, CSV and TSV, over the full
+run or the range the viewer has committed to, and that range is
+`ViewerInteractionState.committedDomain` rather than a gesture in progress. A
+*selected spectrum* still exports its full source only: there is no range
+chooser on that surface. See
+[ADR 0029](../architecture/adr/0029-first-visible-spectrum-figure-and-data-export.md)
+and [ADR 0034](../architecture/adr/0034-chromatogram-export-and-range-scope.md).
 
 **Success:** output is independent of app chrome/theme and corresponds to a defined PlotSpec/FigureSpec.
 

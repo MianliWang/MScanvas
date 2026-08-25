@@ -12,6 +12,7 @@
 
 mod adoption;
 pub mod backend;
+mod chromatogram;
 mod conversion;
 mod destination;
 /// Redacted, bounded diagnostics for the attempts a terminal queue could not

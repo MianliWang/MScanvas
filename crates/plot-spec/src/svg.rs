@@ -113,6 +113,19 @@ const MIN_MARKER_LABEL_SIZE: f64 = MIN_TEXT_SIZE;
 /// How far a marker label stays from either edge of the document.
 const MARKER_LABEL_INSET: f64 = 4.0;
 
+/// The size a legend entry is drawn at: a marker label's, for one voice.
+const LEGEND_SIZE: f64 = MARKER_LABEL_SIZE;
+
+/// How long a legend's sample of a stroke is.
+///
+/// Long enough that a dash pattern is visibly a dash pattern rather than one
+/// mark: the secondary measurement's `6 3` needs more than one period in view or
+/// the swatch says nothing the colour did not already say.
+const LEGEND_SWATCH: f64 = 18.0;
+
+/// The gap between a legend's stroke sample and the name it belongs to.
+const LEGEND_GAP: f64 = 4.0;
+
 /// The gutter around the plotting area, in figure units.
 const MARGIN_LEFT: f64 = 64.0;
 const MARGIN_RIGHT: f64 = 20.0;
@@ -128,6 +141,7 @@ struct Palette {
     axis: &'static str,
     text: &'static str,
     measurement: &'static str,
+    secondary_measurement: &'static str,
     baseline: &'static str,
     marker: &'static str,
 }
@@ -145,6 +159,13 @@ const fn palette(theme: FigureTheme) -> Palette {
             // wide, which is where a low-contrast hairline stops being visible
             // at all once a figure is scaled down or printed. The grey it
             // replaced managed 2.81:1. A test holds every role to the floor.
+            // 6.26:1 against this background, and a different hue family
+            // from the measurement blue rather than a second shade of it --
+            // blue against amber is the pair that survives the common colour
+            // vision deficiencies. It is also drawn dashed, because a figure
+            // that can only be read in colour cannot be read in a monochrome
+            // print, and this role exists to be told apart.
+            secondary_measurement: "#9a4a00",
             baseline: "#8a8a8a",
             marker: "#b3261e",
         },
@@ -153,6 +174,7 @@ const fn palette(theme: FigureTheme) -> Palette {
             axis: "#c9d1d9",
             text: "#f0f3f6",
             measurement: "#7aa7ff",
+            secondary_measurement: "#f0a35e",
             baseline: "#5c6470",
             marker: "#ff7b72",
         },
@@ -247,7 +269,7 @@ fn coordinate_precision(figure: &FigureSpec, frames: &[Frame]) -> Precision {
     let mut smallest = f64::INFINITY;
     for (panel, frame) in figure.panels.iter().zip(frames) {
         let drawn = panel.drawn_domain();
-        let values = panel.value_domain;
+        let values = panel.displayed_value_domain();
         for series in &panel.series {
             let height = |value: f64| project(value, values, frame.plot_bottom, frame.plot_top);
             let mut across: Option<f64> = None;
@@ -629,6 +651,7 @@ fn panel_description(
             .map(|series| {
                 let role = match series.role() {
                     StyleRole::Measurement => "measured data",
+                    StyleRole::SecondaryMeasurement => "a second measured series",
                     StyleRole::Baseline => "a reference baseline",
                 };
                 format!("\"{}\" is {role}", series.id().as_str())
@@ -636,6 +659,33 @@ fn panel_description(
             .collect::<Vec<_>>()
             .join(", ");
         sentences.push(format!("Series: {named}."));
+    }
+
+    // A value axis that is a window rather than the whole range, said in words.
+    //
+    // The two numbers printed beside the axis are the window's, and nothing on
+    // the page distinguishes that from a source whose values happen to end
+    // there. It is exactly the case a current-range chromatogram is in, and a
+    // reader deciding whether this figure shows the tallest thing in the run
+    // needs to be told that it does not.
+    //
+    // Two facts, kept apart on purpose. Where the source reaches is something
+    // this renderer knows and can therefore write down. What *this document*
+    // holds is a different question, and the answer is the window: joined
+    // series are clipped to the drawn domain before their paths are
+    // serialized, and nothing here embeds the `FigureSpec` or the source
+    // arrays. An earlier wording said the off-window values were "in the
+    // document but not drawn" -- true of the specification this was rendered
+    // from, false of the file, and a description that is read by screen readers
+    // and by tools parsing the metadata may not conflate the two.
+    if let Some(window) = panel.visible_value_domain() {
+        let (window_low, window_high) = axis_ends(window);
+        let (source_low, source_high) = axis_ends(panel.value_domain());
+        sentences.push(format!(
+            "The value axis shows {window_low} to {window_high}, which is a window into a \
+             source that reaches {source_low} to {source_high}. This figure draws only that \
+             window.",
+        ));
     }
 
     let drawn = panel.drawn_domain();
@@ -853,7 +903,7 @@ fn panel_description(
                 && draws_without_length(
                     project(
                         *value,
-                        panel.value_domain,
+                        panel.displayed_value_domain(),
                         frame.plot_bottom,
                         frame.plot_top,
                     ),
@@ -872,7 +922,7 @@ fn panel_description(
     // otherwise name the zero line has to ask this first, because naming a rule
     // that is not zero hands the reader the wrong datum to measure every depth
     // against, and contradicts the value-axis ends the same document prints.
-    let values = panel.value_domain;
+    let values = panel.displayed_value_domain();
     let shows_zero = values.low() <= 0.0 && values.high() >= 0.0;
     if negatives > 0 {
         if shows_zero {
@@ -965,7 +1015,7 @@ fn panel_description(
                 && draws_without_length(
                     project(
                         **value,
-                        panel.value_domain,
+                        panel.displayed_value_domain(),
                         frame.plot_bottom,
                         frame.plot_top,
                     ),
@@ -1208,7 +1258,7 @@ fn panel_frames(figure: &FigureSpec, width: f64, height: f64) -> Vec<Frame> {
             let bottom = MARGIN_TOP + panel_height * (index as f64 + 1.0);
             let plot_top = top + 8.0;
             let plot_bottom = bottom - 34.0;
-            let values = panel.value_domain;
+            let values = panel.displayed_value_domain();
             // Where zero falls in the value range, so a negative value hangs
             // below it and a positive one rises above it. A range that never
             // reaches zero puts the line at the nearer edge rather than off the
@@ -1278,7 +1328,7 @@ fn render_panel(
     precision: Precision,
 ) -> Vec<usize> {
     let domain = panel.drawn_domain();
-    let values = panel.value_domain;
+    let values = panel.displayed_value_domain();
     let plot_top = frame.plot_top;
     let plot_bottom = frame.plot_bottom;
     let zero_y = frame.zero_y;
@@ -1305,6 +1355,10 @@ fn render_panel(
     for series in &panel.series {
         render_series(out, panel, series, frame, colours, precision);
     }
+
+    // After the traces, so the names are not drawn under them, and before the
+    // annotations, so a marker label can be told where the names already are.
+    let legend = render_legend(out, panel, frame, colours, precision);
 
     // The two domain ends and the two value ends, as real text rather than as
     // paths, so the figure remains searchable and re-typesettable after export.
@@ -1356,6 +1410,7 @@ fn render_panel(
             MARKER_LABEL_SIZE,
         ));
     }
+    occupied.extend(legend);
     // Which markers lost their labels, by index rather than by label text. Two
     // markers may legitimately carry the same words, and matching on those
     // words would attach one marker's layout failure to the other's clause.
@@ -1493,12 +1548,9 @@ fn render_series(
         return;
     }
     let domain = panel.drawn_domain();
-    let values = panel.value_domain;
+    let values = panel.displayed_value_domain();
     let (plot_top, plot_bottom, zero_y) = (frame.plot_top, frame.plot_bottom, frame.zero_y);
-    let stroke = match series.role {
-        StyleRole::Measurement => colours.measurement,
-        StyleRole::Baseline => colours.baseline,
-    };
+    let (stroke, dashes) = stroke_for(series.role, colours);
 
     // Sticks or a trace, and the choice is the specification's rather than this
     // renderer's preference. Only established profile data may be joined:
@@ -1658,8 +1710,107 @@ fn render_series(
 
     let _ = writeln!(
         out,
-        "<path d=\"{path}\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"1\"/>",
+        "<path d=\"{path}\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"1\"{dashes}/>",
     );
+}
+
+/// How one role is drawn: its colour, and whether the stroke is broken.
+///
+/// One place, because the legend and the trace have to agree exactly. A legend
+/// whose sample is a different dash pattern from the line it names is worse than
+/// no legend: it looks like a third series.
+///
+/// The dash is not decoration. A second measured series distinguished by hue
+/// alone disappears in a monochrome print, in a rasterization read by anyone
+/// with a colour vision deficiency, and in a figure whose reader does not know
+/// this product's palette -- and telling two measurements apart is the entire
+/// reason the role exists.
+fn stroke_for(role: StyleRole, colours: &Palette) -> (&'static str, &'static str) {
+    match role {
+        StyleRole::Measurement => (colours.measurement, ""),
+        StyleRole::SecondaryMeasurement => {
+            (colours.secondary_measurement, " stroke-dasharray=\"6 3\"")
+        }
+        StyleRole::Baseline => (colours.baseline, ""),
+    }
+}
+
+/// Names the series a panel draws, where the drawing needs naming.
+///
+/// Only where two measured series share a panel. One measurement -- read against
+/// a reference baseline or alone -- is already named by the description and by
+/// its own axis, and a legend for it would add a second thing to lay out in a
+/// plotting area that has a trace in it. Two measurements is the case the
+/// drawing genuinely cannot resolve: two lines, and nothing on the page saying
+/// which is the total ion current and which the base peak.
+///
+/// Returns the boxes it occupied, so a marker label steps around it rather than
+/// over it.
+fn render_legend(
+    out: &mut String,
+    panel: &PanelSpec,
+    frame: &Frame,
+    colours: &Palette,
+    precision: Precision,
+) -> Vec<TextBox> {
+    let measured = panel
+        .series()
+        .iter()
+        .filter(|series| series.role().is_measured())
+        .count();
+    if measured < 2 {
+        return Vec::new();
+    }
+
+    // Right-aligned inside the plotting area. The value-axis ends are written
+    // at its left edge, so this is the one side of the panel that is not
+    // already spoken for.
+    let right = frame.right - MARKER_LABEL_INSET;
+    let room = (frame.right - frame.left) - LEGEND_SWATCH - LEGEND_GAP - MARKER_LABEL_INSET;
+    let mut occupied = Vec::with_capacity(panel.series().len());
+    for (row, series) in panel.series().iter().enumerate() {
+        let (stroke, dashes) = stroke_for(series.role(), colours);
+        let name = series.id().as_str();
+        // Condensed rather than clipped, exactly as an axis end is: a name the
+        // page had no room for is a legend entry that names nothing.
+        let width = fitted_width(name, LEGEND_SIZE, room);
+        let baseline = frame.plot_top + LEGEND_SIZE + (row as f64) * (LEGEND_SIZE + 3.0);
+        if baseline > frame.plot_bottom {
+            break;
+        }
+        let text_left = right - width;
+        let swatch_right = text_left - LEGEND_GAP;
+        let swatch_left = swatch_right - LEGEND_SWATCH;
+        let _ = writeln!(
+            out,
+            "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{stroke}\" \
+             stroke-width=\"1\"{dashes}/>",
+            precision.coordinate(swatch_left.max(frame.left)),
+            precision.coordinate(baseline - LEGEND_SIZE / 3.0),
+            precision.coordinate(swatch_right.max(frame.left)),
+            precision.coordinate(baseline - LEGEND_SIZE / 3.0),
+        );
+        let _ = writeln!(
+            out,
+            "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" \
+             font-size=\"{}\" text-anchor=\"end\" textLength=\"{}\" \
+             lengthAdjust=\"spacingAndGlyphs\">{}</text>",
+            precision.coordinate(right),
+            precision.coordinate(baseline),
+            colours.text,
+            precision.coordinate(LEGEND_SIZE),
+            precision.coordinate(width),
+            escape(name),
+        );
+        occupied.push(TextBox::new(
+            swatch_left.max(frame.left),
+            baseline,
+            right - swatch_left.max(frame.left),
+            0.0,
+            LEGEND_SIZE,
+        ));
+    }
+    occupied
 }
 
 /// How many decimals an axis end needs to distinguish itself from the other.

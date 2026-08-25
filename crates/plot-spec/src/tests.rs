@@ -5712,3 +5712,680 @@ fn every_crossing_series_is_disclosed_with_its_own_scope() {
         "one sentence per crossing series: {description:?}",
     );
 }
+
+// ------------------------------------------- two measured series in one panel
+
+/// A chromatogram's two measured series, built here rather than in each test.
+///
+/// Named as the product names them, because the id is the one field in this
+/// contract that says *which* measurement a trace is, and a figure of one
+/// unnamed intensity trace against retention time is unreadable.
+fn chromatogram_series(id: &str, role: StyleRole, x: Vec<f64>, y: Vec<f64>) -> SeriesSpec {
+    SeriesSpec::new(label(id), role, DataScope::FullSource, x, y).expect("a test series is valid")
+}
+
+fn chromatogram_panel(series: Vec<SeriesSpec>) -> PanelSpec {
+    let mut x_low = f64::INFINITY;
+    let mut x_high = f64::NEG_INFINITY;
+    let mut y_low = 0.0_f64;
+    let mut y_high = 0.0_f64;
+    for one in &series {
+        for at in one.x() {
+            x_low = x_low.min(*at);
+            x_high = x_high.max(*at);
+        }
+        for value in one.y() {
+            y_low = y_low.min(*value);
+            y_high = y_high.max(*value);
+        }
+    }
+    PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Retention time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(x_low, x_high.max(x_low)),
+        domain(y_low, y_high.max(y_low)),
+        series,
+    )
+    .expect("a test panel is valid")
+}
+
+/// Every stroke colour the document carries, in the order it first uses them.
+fn strokes(document: &str) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    for piece in document.split("stroke=\"").skip(1) {
+        if let Some(colour) = piece.split('"').next()
+            && colour.starts_with('#')
+            && !seen.iter().any(|already| already == colour)
+        {
+            seen.push(colour.to_owned());
+        }
+    }
+    seen
+}
+
+/// A chromatogram panel carries two measurements, and they stay distinguishable.
+///
+/// The shape this contract could not represent before. A total ion current and
+/// a base peak intensity over the same scans are two things the instrument
+/// measured: neither is derived from the other, neither is a reference the other
+/// is read against, and a reader compares them. The two ways of saying that
+/// without this role were both false -- one of them called a baseline, or both
+/// given the same role and drawn identically.
+#[test]
+fn a_chromatogram_panel_carries_two_measured_series() {
+    let panel = chromatogram_panel(vec![
+        chromatogram_series(
+            "TIC",
+            StyleRole::Measurement,
+            vec![1.0, 2.0, 3.0],
+            vec![100.0, 300.0, 200.0],
+        ),
+        chromatogram_series(
+            "BPC",
+            StyleRole::SecondaryMeasurement,
+            vec![1.0, 2.0, 3.0],
+            vec![40.0, 120.0, 90.0],
+        ),
+    ]);
+
+    assert_eq!(panel.series().len(), 2);
+    assert!(
+        panel
+            .series()
+            .iter()
+            .all(|series| series.role().is_measured())
+    );
+    assert!(panel.is_full_source());
+}
+
+/// The secondary role is a measurement, not a baseline.
+///
+/// The distinction the name exists to make. A baseline is a reference line the
+/// data is read against, and a base peak trace is not one -- so the rules that
+/// treat a baseline differently, joining it whatever the panel draws, must not
+/// pick this role up.
+#[test]
+fn a_secondary_measurement_is_not_a_baseline() {
+    assert!(StyleRole::Measurement.is_measured());
+    assert!(StyleRole::SecondaryMeasurement.is_measured());
+    assert!(!StyleRole::Baseline.is_measured());
+
+    // A spectrum joins nothing it measured, and that is decided by the panel
+    // kind for a measurement of either rank. Only a baseline is joined anyway.
+    let secondary = chromatogram_series(
+        "BPC",
+        StyleRole::SecondaryMeasurement,
+        vec![100.0, 200.0],
+        vec![10.0, 20.0],
+    );
+    let spectrum = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(100.0, 200.0),
+        domain(0.0, 20.0),
+        vec![secondary.clone()],
+    )
+    .expect("a panel of one series is valid");
+    assert!(!spectrum.joins(&secondary));
+}
+
+/// Two series of the same role are still refused.
+///
+/// The new role widens what can be said, not what can be left ambiguous: two
+/// traces claiming to be the same thing are drawn in one stroke and named
+/// identically in the description, whichever roles exist.
+#[test]
+fn two_series_of_one_role_are_still_refused() {
+    let same = |id: &str| {
+        chromatogram_series(id, StyleRole::Measurement, vec![1.0, 2.0], vec![10.0, 20.0])
+    };
+    let refused = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Retention time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(1.0, 2.0),
+        domain(0.0, 20.0),
+        vec![same("TIC"), same("BPC")],
+    );
+
+    assert_eq!(refused.unwrap_err(), SpecError::DuplicateSeriesRole);
+}
+
+/// A lone base peak trace keeps the role its quantity has.
+///
+/// Not promoted to `Measurement` because it happens to be the only visible
+/// trace. A figure of one trace and a figure of two would otherwise disagree
+/// about what that trace is, and the figure a reader keeps says base peak
+/// intensity either way.
+#[test]
+fn a_lone_secondary_series_keeps_its_role() {
+    let panel = chromatogram_panel(vec![chromatogram_series(
+        "BPC",
+        StyleRole::SecondaryMeasurement,
+        vec![1.0, 2.0, 3.0],
+        vec![40.0, 120.0, 90.0],
+    )]);
+
+    assert_eq!(panel.series()[0].role(), StyleRole::SecondaryMeasurement);
+    let document = svg::render(&figure_of(panel));
+    // Its own stroke, and its own dash pattern, rather than the primary's.
+    assert!(document.contains("stroke-dasharray=\"6 3\""));
+    assert!(description_of(&document).contains("&quot;BPC&quot; is a second measured series"));
+}
+
+/// Two measured series are drawn apart by more than colour, and named on the
+/// page.
+///
+/// Colour alone is not a distinction: a monochrome print, a rasterization read
+/// by anyone with a colour vision deficiency, and a reader who does not know
+/// this product's palette all lose it. And two lines with no legend is a
+/// comparison a reader cannot attribute, which is worse than one trace.
+#[test]
+fn two_measured_series_are_told_apart_by_stroke_and_by_name() {
+    let document = svg::render(&figure_of(chromatogram_panel(vec![
+        chromatogram_series(
+            "TIC",
+            StyleRole::Measurement,
+            vec![1.0, 2.0, 3.0],
+            vec![100.0, 300.0, 200.0],
+        ),
+        chromatogram_series(
+            "BPC",
+            StyleRole::SecondaryMeasurement,
+            vec![1.0, 2.0, 3.0],
+            vec![40.0, 120.0, 90.0],
+        ),
+    ])));
+
+    // Two different strokes for the two traces, and one of them broken.
+    let painted = strokes(&document);
+    assert!(painted.len() >= 3, "axis and two traces: {painted:?}");
+    assert_eq!(document.matches("stroke-dasharray=\"6 3\"").count(), 2);
+
+    // Both named on the page, in a legend rather than only in the words.
+    assert!(document.contains(">TIC</text>"));
+    assert!(document.contains(">BPC</text>"));
+
+    // And in the description, with what each one is.
+    let described = description_of(&document);
+    assert!(described.contains("&quot;TIC&quot; is measured data"));
+    assert!(described.contains("&quot;BPC&quot; is a second measured series"));
+}
+
+/// One measured series draws no legend, so every existing figure is unchanged.
+///
+/// A legend is laid out inside the plotting area, and adding one to the figures
+/// that existed before this milestone would change bytes for no reader's
+/// benefit: a single trace is already named by the description and by its axis.
+#[test]
+fn one_measured_series_draws_no_legend() {
+    let spectrum = svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )));
+    assert!(!spectrum.contains(">measurement</text>"));
+
+    // A measurement read against a reference line is still one measurement.
+    let baseline = chromatogram_series(
+        "baseline",
+        StyleRole::Baseline,
+        vec![1.0, 3.0],
+        vec![5.0, 5.0],
+    );
+    let with_reference = svg::render(&figure_of(chromatogram_panel(vec![
+        chromatogram_series(
+            "TIC",
+            StyleRole::Measurement,
+            vec![1.0, 2.0, 3.0],
+            vec![100.0, 300.0, 200.0],
+        ),
+        baseline,
+    ])));
+    assert!(!with_reference.contains(">TIC</text>"));
+}
+
+// -------------------------------------------------- the visible value window
+
+/// A panel may show a narrower value window than its source covers.
+#[test]
+fn a_panel_may_declare_a_visible_value_window() {
+    let panel = chromatogram_panel(vec![chromatogram_series(
+        "TIC",
+        StyleRole::Measurement,
+        vec![9.0, 10.0, 11.0],
+        vec![9_000_000.0, 90.0, 100.0],
+    )])
+    .with_visible_value_domain(domain(0.0, 100.0))
+    .expect("a window inside the source range is valid");
+
+    assert_eq!(panel.visible_value_domain(), Some(domain(0.0, 100.0)));
+    assert_eq!(panel.displayed_value_domain(), domain(0.0, 100.0));
+    // The source is still there, and still says how far it reaches.
+    assert_eq!(panel.value_domain(), domain(0.0, 9_000_000.0));
+}
+
+/// The window is held to the range the source covers.
+#[test]
+fn a_visible_value_window_outside_the_source_range_is_refused() {
+    let panel = || {
+        chromatogram_panel(vec![chromatogram_series(
+            "TIC",
+            StyleRole::Measurement,
+            vec![1.0, 2.0],
+            vec![10.0, 20.0],
+        )])
+    };
+
+    assert_eq!(
+        panel()
+            .with_visible_value_domain(domain(-5.0, 20.0))
+            .unwrap_err(),
+        SpecError::VisibleValueDomainOutsideValueDomain,
+    );
+    assert_eq!(
+        panel()
+            .with_visible_value_domain(domain(0.0, 21.0))
+            .unwrap_err(),
+        SpecError::VisibleValueDomainOutsideValueDomain,
+    );
+    // And the whole range is always acceptable, which is what `None` means.
+    assert!(panel().with_visible_value_domain(domain(0.0, 20.0)).is_ok());
+}
+
+/// Source points outside the window are valid, and that is the whole point.
+///
+/// The alternative -- deleting them -- would make the figure a picture of a
+/// screen. `value_domain` covers the source; the window covers the drawing.
+#[test]
+fn source_values_outside_the_window_are_kept() {
+    let panel = chromatogram_panel(vec![chromatogram_series(
+        "TIC",
+        StyleRole::Measurement,
+        vec![9.0, 10.0, 11.0, 12.0, 13.0],
+        vec![9_000_000.0, 90.0, 100.0, 110.0, 120.0],
+    )])
+    .with_visible_domain(domain(10.0, 13.0))
+    .expect("an x window inside the source is valid")
+    .with_visible_value_domain(domain(0.0, 120.0))
+    .expect("a y window inside the source is valid");
+
+    assert!(panel.is_full_source());
+    assert_eq!(panel.series()[0].len(), 5);
+    assert_eq!(panel.value_domain().high(), 9_000_000.0);
+}
+
+/// A panel with no window is unchanged, which is every figure before this one.
+#[test]
+fn a_panel_without_a_window_displays_its_whole_value_range() {
+    let panel = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    );
+
+    assert_eq!(panel.visible_value_domain(), None);
+    assert_eq!(panel.displayed_value_domain(), panel.value_domain());
+}
+
+/// The renderer projects onto the window, not onto the source range.
+///
+/// The Viewer Closure y-extent finding, at the export layer. A peak of nine
+/// million at another retention time must not decide the value axis of a figure
+/// of the range 10 to 13 -- every drawn value would collapse onto the baseline
+/// and the axis would print a number nothing in view comes near.
+#[test]
+fn the_renderer_scales_to_the_visible_value_window() {
+    let panel = chromatogram_panel(vec![chromatogram_series(
+        "TIC",
+        StyleRole::Measurement,
+        vec![9.0, 10.0, 11.0, 12.0, 13.0],
+        vec![9_000_000.0, 90.0, 100.0, 110.0, 120.0],
+    )])
+    .with_visible_domain(domain(10.0, 13.0))
+    .expect("an x window")
+    .with_visible_value_domain(domain(0.0, 120.0))
+    .expect("a y window");
+    let document = svg::render(&figure_of(panel));
+
+    // The axis states the window, and nothing drawn states the peak. The
+    // description is checked separately below, because it says the opposite
+    // thing on purpose.
+    // The body, which is written after the description rather than before it.
+    let drawn = document
+        .split("</desc>")
+        .nth(1)
+        .expect("a document has a body after its description");
+    assert!(
+        drawn.contains(">120</text>"),
+        "the value axis ends at the window"
+    );
+    assert!(
+        !drawn.contains("9000000"),
+        "no drawn element mentions the out-of-window peak: {drawn}"
+    );
+
+    // And the description says the source reaches further, so a reader is not
+    // left thinking this is the tallest thing in the run.
+    let described = description_of(&document);
+    assert!(
+        described.contains("a source that reaches"),
+        "the description discloses the window: {described}"
+    );
+}
+
+/// The description says what this file holds, not what the renderer knew.
+///
+/// Round 2 of M4.3.1 found the earlier wording claiming that off-window values
+/// were "in the document but not drawn". True of the `FigureSpec` this was
+/// rendered from, and false of the SVG: joined series are clipped to the drawn
+/// domain before their paths are serialized, and neither the specification nor
+/// the source arrays are embedded anywhere. A `<desc>` is read by screen
+/// readers and by tools parsing the metadata, so it may not describe one and
+/// call it the other.
+#[test]
+fn a_windowed_description_never_claims_the_off_window_values_are_embedded() {
+    let panel = chromatogram_panel(vec![chromatogram_series(
+        "TIC",
+        StyleRole::Measurement,
+        vec![9.0, 10.0, 11.0, 12.0, 13.0],
+        vec![9_000_000.0, 90.0, 100.0, 110.0, 120.0],
+    )])
+    .with_visible_domain(domain(10.0, 13.0))
+    .expect("an x window")
+    .with_visible_value_domain(domain(0.0, 120.0))
+    .expect("a y window");
+    let document = svg::render(&figure_of(panel));
+    let described = description_of(&document);
+
+    // The window, and the source it is a window into: both facts, kept apart.
+    assert!(
+        described.contains("The value axis shows 0 to 120"),
+        "the window is stated: {described}"
+    );
+    assert!(
+        described.contains("a source that reaches 0 to 9000000"),
+        "the source range is stated as a fact about the source: {described}"
+    );
+    assert!(
+        described.contains("This figure draws only that window."),
+        "and what the file itself holds is stated: {described}"
+    );
+
+    // None of the ways of claiming the file carries what it does not.
+    for lie in [
+        "in the document but not drawn",
+        "in the document",
+        "are embedded",
+        "present but invisible",
+    ] {
+        assert!(
+            !described.contains(lie),
+            "the description must not claim {lie:?}: {described}"
+        );
+    }
+
+    // And the claim is checked against the artifact rather than trusted: the
+    // peak is nowhere in the file at all.
+    assert!(
+        !document.contains("9000000") || described.contains("9000000"),
+        "the only mention of the source peak is the description's own disclosure"
+    );
+    let body = document
+        .split("</desc>")
+        .nth(1)
+        .expect("a document has a body after its description");
+    assert!(
+        !body.contains("9000000"),
+        "nothing outside the description carries the off-window value: {body}"
+    );
+}
+
+/// Every trace set a current range can be exported with says the same thing.
+///
+/// The disclosure is a property of the window rather than of which measurements
+/// are drawn in it, so one trace, the other, or both must each get it.
+#[test]
+fn every_current_range_trace_set_discloses_the_window() {
+    for traces in [
+        vec![("TIC", StyleRole::Measurement)],
+        vec![("BPC", StyleRole::SecondaryMeasurement)],
+        vec![
+            ("TIC", StyleRole::Measurement),
+            ("BPC", StyleRole::SecondaryMeasurement),
+        ],
+    ] {
+        let drawn: Vec<_> = traces
+            .iter()
+            .map(|(name, role)| {
+                chromatogram_series(
+                    name,
+                    *role,
+                    vec![9.0, 10.0, 11.0, 12.0, 13.0],
+                    vec![9_000_000.0, 90.0, 100.0, 110.0, 120.0],
+                )
+            })
+            .collect();
+        let named: Vec<&str> = traces.iter().map(|(name, _)| *name).collect();
+        let panel = chromatogram_panel(drawn)
+            .with_visible_domain(domain(10.0, 13.0))
+            .expect("an x window")
+            .with_visible_value_domain(domain(0.0, 120.0))
+            .expect("a y window");
+        let described = description_of(&svg::render(&figure_of(panel)));
+
+        assert!(
+            described.contains("a source that reaches 0 to 9000000"),
+            "{named:?} discloses the source range: {described}"
+        );
+        assert!(
+            described.contains("This figure draws only that window."),
+            "{named:?} says what the file holds: {described}"
+        );
+        assert!(
+            !described.contains("in the document"),
+            "{named:?} claims nothing about embedded values: {described}"
+        );
+    }
+}
+
+/// A figure of a whole source says nothing about a window it does not have.
+///
+/// The sentence exists to correct an axis that would otherwise be read as the
+/// source's own range. Where the axis *is* the source's range there is nothing
+/// to correct, and a disclosure would be noise that reads as a caveat.
+#[test]
+fn a_full_range_figure_carries_no_window_disclosure() {
+    let full = chromatogram_panel(vec![chromatogram_series(
+        "TIC",
+        StyleRole::Measurement,
+        vec![9.0, 10.0, 11.0, 12.0, 13.0],
+        vec![9_000_000.0, 90.0, 100.0, 110.0, 120.0],
+    )]);
+    let described = description_of(&svg::render(&figure_of(full)));
+    assert!(
+        !described.contains("a window into"),
+        "a full-range chromatogram has no window to disclose: {described}"
+    );
+
+    // And the selected spectrum, which never carries a value window at all.
+    let spectrum = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    );
+    let described = description_of(&svg::render(&figure_of(spectrum)));
+    assert!(
+        !described.contains("a window into"),
+        "a selected-spectrum figure gains no window sentence: {described}"
+    );
+    assert!(
+        !described.contains("This figure draws only that window."),
+        "nor the sentence that follows it: {described}"
+    );
+}
+
+/// Both themes draw the second measurement in their own palette, legibly.
+#[test]
+fn both_themes_distinguish_the_second_measurement() {
+    let mut used: Vec<String> = Vec::new();
+    for theme in [FigureTheme::Light, FigureTheme::Dark] {
+        let document = svg::render(
+            &FigureSpec::new(
+                theme,
+                FigureSize::new(900.0, 500.0).expect("a size"),
+                vec![chromatogram_panel(vec![
+                    chromatogram_series(
+                        "TIC",
+                        StyleRole::Measurement,
+                        vec![1.0, 2.0],
+                        vec![100.0, 300.0],
+                    ),
+                    chromatogram_series(
+                        "BPC",
+                        StyleRole::SecondaryMeasurement,
+                        vec![1.0, 2.0],
+                        vec![40.0, 120.0],
+                    ),
+                ])],
+            )
+            .expect("one panel"),
+        );
+
+        fn channel(component: f64) -> f64 {
+            if component <= 0.03928 {
+                component / 12.92
+            } else {
+                ((component + 0.055) / 1.055).powf(2.4)
+            }
+        }
+        fn luminance(colour: &str) -> f64 {
+            let value = |at: usize| {
+                f64::from(
+                    u8::from_str_radix(&colour[at..at + 2], 16).expect("a six-digit hex colour"),
+                ) / 255.0
+            };
+            0.2126 * channel(value(1)) + 0.7152 * channel(value(3)) + 0.0722 * channel(value(5))
+        }
+        let ground = document
+            .split("fill=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("the background rect names its fill")
+            .to_owned();
+        for ink in strokes(&document) {
+            let (a, b) = (luminance(&ink), luminance(&ground));
+            let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+            assert!(
+                ratio >= 3.0,
+                "{ink} on {ground} is {ratio:.2}:1, below the 3:1 floor",
+            );
+            used.push(ink);
+        }
+    }
+    // The two themes do not paint the traces with the same colours.
+    assert!(used.len() >= 6, "both themes painted several strokes");
+}
+
+/// A chromatogram of one scan still draws, and still names both series.
+#[test]
+fn a_one_scan_chromatogram_draws_both_series() {
+    let document = svg::render(&figure_of(chromatogram_panel(vec![
+        chromatogram_series("TIC", StyleRole::Measurement, vec![4.0], vec![9_000.0]),
+        chromatogram_series(
+            "BPC",
+            StyleRole::SecondaryMeasurement,
+            vec![4.0],
+            vec![700.0],
+        ),
+    ])));
+
+    // Two paths, because a lone sample is drawn as its own short tick rather
+    // than as nothing.
+    assert_eq!(document.matches("<path d=\"").count(), 2);
+    assert!(document.contains(">TIC</text>"));
+    assert!(document.contains(">BPC</text>"));
+}
+
+/// The contract's own version says the shape changed.
+#[test]
+fn the_schema_version_records_the_extended_shape() {
+    // Not an accident of a constant: a document carrying either new field is
+    // exactly what a version 1 reader cannot decode, and the version is what
+    // says so.
+    assert_eq!(SCHEMA_VERSION, 2);
+
+    let json = FigureSpec::new(
+        FigureTheme::Light,
+        FigureSize::new(900.0, 500.0).expect("a size"),
+        vec![
+            chromatogram_panel(vec![
+                chromatogram_series(
+                    "TIC",
+                    StyleRole::Measurement,
+                    vec![1.0, 2.0],
+                    vec![100.0, 300.0],
+                ),
+                chromatogram_series(
+                    "BPC",
+                    StyleRole::SecondaryMeasurement,
+                    vec![1.0, 2.0],
+                    vec![40.0, 120.0],
+                ),
+            ])
+            .with_visible_value_domain(domain(0.0, 300.0))
+            .expect("a window"),
+        ],
+    )
+    .expect("one panel")
+    .to_json()
+    .expect("a figure serializes");
+
+    assert!(json.contains("\"schema_version\":2"));
+    assert!(json.contains("secondary_measurement"));
+    assert!(json.contains("visible_value_domain"));
+
+    // And it round-trips through the same rules it was built with.
+    let decoded = FigureSpec::from_json(&json).expect("a figure this build wrote is readable");
+    assert_eq!(
+        decoded.panels()[0].visible_value_domain(),
+        Some(domain(0.0, 300.0))
+    );
+    assert_eq!(
+        decoded.panels()[0].series()[1].role(),
+        StyleRole::SecondaryMeasurement
+    );
+}
+
+/// A decoded window is held to the same rule its constructor holds.
+#[test]
+fn a_decoded_visible_value_window_is_validated() {
+    let json = FigureSpec::new(
+        FigureTheme::Light,
+        FigureSize::new(900.0, 500.0).expect("a size"),
+        vec![
+            chromatogram_panel(vec![chromatogram_series(
+                "TIC",
+                StyleRole::Measurement,
+                vec![1.0, 2.0],
+                vec![100.0, 300.0],
+            )])
+            .with_visible_value_domain(domain(0.0, 300.0))
+            .expect("a window"),
+        ],
+    )
+    .expect("one panel")
+    .to_json()
+    .expect("a figure serializes");
+
+    let forged = json.replace(
+        "\"visible_value_domain\":{\"low\":0.0,\"high\":300.0}",
+        "\"visible_value_domain\":{\"low\":0.0,\"high\":9000000.0}",
+    );
+    assert_ne!(forged, json, "the fixture rewrote the window");
+    assert!(
+        FigureSpec::from_json(&forged).is_err(),
+        "a window outside the source range is refused however it arrives"
+    );
+}

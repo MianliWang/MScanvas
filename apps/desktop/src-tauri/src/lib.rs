@@ -568,6 +568,116 @@ async fn save_selected_spectrum_export(
     .await?
 }
 
+/// Binds one chromatogram export and reserves the right to choose a file.
+///
+/// The webview names the run by the opaque token it received with the preview,
+/// the format by one of four fixed words, and how much of the run to cover by a
+/// scope and -- for a current range -- the viewport it has committed to. It
+/// supplies no path, no arrays, no dataset handle and no screen geometry: what
+/// this writes comes from the facts Rust retained when the preview was read.
+///
+/// The range is checked against that run rather than trusted, and refused
+/// rather than clamped where it does not fit. A token from an earlier preview is
+/// refused too, rather than answered with whatever run is loaded now.
+///
+/// Launches no process and changes no preview. Exporting a chromatogram is not
+/// opening one.
+#[tauri::command]
+async fn begin_chromatogram_export(
+    export_token: String,
+    format: String,
+    range: preview::dto::ChromatogramRangeDto,
+    traces: preview::dto::ChromatogramTracesDto,
+    settings: preview::dto::FigureSettingsDto,
+    service: State<'_, SharedService>,
+) -> Result<String, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || {
+        service.begin_chromatogram_export(&export_token, &format, &range, traces, &settings)
+    })
+    .await?
+}
+
+/// Draws the chromatogram and puts it on the clipboard.
+///
+/// The same figure a PNG export would write, through the same renderer and the
+/// same rasterizer. No screenshot and no DOM: the webview receives what was
+/// copied in words, and no pixels come back to it.
+#[tauri::command]
+async fn copy_chromatogram_plot(
+    export_token: String,
+    range: preview::dto::ChromatogramRangeDto,
+    traces: preview::dto::ChromatogramTracesDto,
+    settings: preview::dto::FigureSettingsDto,
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+) -> Result<preview::dto::ChromatogramCopyOutcomeDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    // Rasterizing a large figure is real work, and the clipboard write is a
+    // platform call. Neither belongs on an async worker.
+    off_the_async_runtime(move || {
+        service.copy_chromatogram_plot(&app, &export_token, &range, traces, &settings)
+    })
+    .await?
+}
+
+/// Shows the native save dialog for one exact chromatogram reservation and
+/// writes the file.
+///
+/// The webview names no path and receives none back. Rust consumes and validates
+/// the claim **before** dispatching the dialog, so a reload or a second request
+/// that overtook it fails without opening one -- and the range, the trace set and
+/// the figure settings were all taken when the export began, so a viewport that
+/// moves while the dialog is open cannot change what is written.
+///
+/// Cancelling is an ordinary outcome: nothing was created, nothing was written,
+/// and the preview on screen is exactly as it was.
+#[tauri::command]
+async fn save_chromatogram_export(
+    reservation_id: String,
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+) -> Result<preview::dto::ChromatogramExportOutcomeDto, PreviewErrorDto> {
+    let owner = main_window_handle(&app);
+    let service = Arc::clone(&service);
+    let claimed = service.claim_chromatogram_export(&reservation_id)?;
+    let dialog = claimed.dialog();
+    let suggested = claimed.suggested_file_name();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    if app
+        .run_on_main_thread(move || {
+            let _ = sender.send(preview::dialog::choose_save_destination(
+                owner, dialog, &suggested,
+            ));
+        })
+        .is_err()
+    {
+        // The claim already took the lane. A dispatch that never happened leaves
+        // nothing to close it, so without this the session would hold a
+        // reservation whose dialog does not exist -- and every later scientific
+        // export would stay refused until a reload.
+        service.cancel_chromatogram_export(&reservation_id);
+        return Err(spectrum_picker_unavailable());
+    }
+
+    let claimed_reservation = reservation_id;
+    off_the_async_runtime(move || {
+        let chosen = match receiver.recv().map_err(|_| spectrum_picker_unavailable())? {
+            Ok(chosen) => chosen,
+            Err(error) => {
+                service.cancel_chromatogram_export(&claimed_reservation);
+                return Err(error);
+            }
+        };
+        let Some(destination) = chosen else {
+            service.cancel_chromatogram_export(&claimed_reservation);
+            return Ok(preview::dto::ChromatogramExportOutcomeDto::Cancelled);
+        };
+        service.write_chromatogram_export(&claimed, &destination)
+    })
+    .await?
+}
+
 /// Reads the session's one conversion slot.
 ///
 /// The authoritative answer about a conversion, and the only one that survives a
@@ -936,6 +1046,9 @@ pub fn run() {
             save_workspace_conversion_diagnostics,
             begin_selected_spectrum_export,
             save_selected_spectrum_export,
+            begin_chromatogram_export,
+            save_chromatogram_export,
+            copy_chromatogram_plot,
             copy_selected_spectrum_plot
         ])
         .run(tauri::generate_context!())

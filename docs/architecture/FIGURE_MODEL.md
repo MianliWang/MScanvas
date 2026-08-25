@@ -144,9 +144,10 @@ See [ADR 0030](adr/0030-png-copy-plot-and-figure-settings.md).
 
 ## Still open
 
-FIG-004 is partial: selected-spectrum CSV/TSV exists, chromatogram data export
-does not. FIG-006 through FIG-008 are unimplemented. There is no current-range
-export, no XIC, no linked figure, no saved specification and no composer, and the
+FIG-001 through FIG-004 cover the selected spectrum and the chromatogram, the
+chromatogram over the whole run or the range the viewer has committed to. FIG-006
+through FIG-008 are unimplemented. There is no current-range export of a selected
+spectrum, no XIC, no linked figure, no saved specification and no composer, and the
 screen renderer still does not consume `FigureSpec` — screen and export agree by
 both being right rather than by sharing a type.
 

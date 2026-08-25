@@ -48,6 +48,21 @@ export function isFullDomain(
  *
  * A pan that would leave the run stops at the edge rather than shortening, so
  * panning to the end and back does not slowly narrow the viewport.
+ *
+ * **Inside means inside, to the last bit.** Stopping a pan at the edge used to
+ * be written as "start it at `full.high - span`, and it ends at `full.high`",
+ * which is arithmetic rather than a fact: `(full.high - span) + span` is not
+ * required to be `full.high` in binary floating point, and for around one
+ * flush-right viewport in fifty it lands one unit in the last place above it.
+ * Nothing on screen could show the difference, but the viewport is the range a
+ * current-range export asks for, and Rust refuses a range reaching outside the
+ * run rather than quietly exporting the nearest one it has -- so a viewport the
+ * viewer's own clamping produced could be refused as `OutsideSource`.
+ *
+ * Both ends are therefore held to the run explicitly, rather than trusted to
+ * arrive there. A viewport that would have overshot loses at most one unit in
+ * the last place of its span, which is not a width any reader can see and is
+ * the right trade against describing a range the run does not have.
  */
 export function clampDomain(
   visible: RetentionTimeDomain,
@@ -63,8 +78,12 @@ export function clampDomain(
     span = fullSpan;
   }
   let low = Number.isFinite(visible.low) ? visible.low : full.low;
-  low = Math.min(Math.max(low, full.low), full.high - span);
-  return { low, high: low + span };
+  // The furthest left edge that still fits the span, and never left of the run:
+  // `full.high - span` can itself round below `full.low` when the span is the
+  // whole run.
+  const furthest = Math.max(full.low, full.high - span);
+  low = Math.min(Math.max(low, full.low), furthest);
+  return { low, high: Math.min(full.high, low + span) };
 }
 
 /**

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "reac
 
 import { BackendStatus } from "./BackendStatus";
 import { Chromatogram } from "./Chromatogram";
+import { ChromatogramExportPanel } from "./ChromatogramExportPanel";
 import type { WorkspaceDropRejectionReason } from "./contracts";
 import { conversionJudgedAnyOutput, isConvertibleSourceKind } from "./contracts";
 import { ConversionPanel } from "./ConversionPanel";
@@ -39,6 +40,16 @@ const DROP_BUSY_STATUS =
 export function PreviewWorkspace() {
   const workspace = usePreviewWorkspace();
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
+  /**
+   * Whether the chromatogram's export surface is open.
+   *
+   * Closed to begin with, and the control that opens it sits in the panel's
+   * existing header row: the three-panel column's floors are measured, and a
+   * disclosure that added a row to the body would push a control out of a panel
+   * that clips. Local to this component -- it is a preference about what is on
+   * screen, not a fact about the run.
+   */
+  const [chromatogramExportOpen, setChromatogramExportOpen] = useState(false);
   const [restoreAddFolderFocusToken, setRestoreAddFolderFocusToken] = useState(0);
   const [restoreAddFilesFocusToken, setRestoreAddFilesFocusToken] = useState(0);
 
@@ -643,6 +654,42 @@ export function PreviewWorkspace() {
           <div className="viewer-stack">
             <Chromatogram
               dispatch={workspace.dispatchViewerEvent}
+              exportPanel={
+                chromatogramExportOpen && workspace.chromatogramExportToken !== null ? (
+                  <ChromatogramExportPanel
+                    committedDomain={workspace.chromatogramCommittedDomain}
+                    exportState={workspace.chromatogramExport}
+                    figureSettings={workspace.figureSettings}
+                    onCopyPlot={workspace.copyChromatogramPlot}
+                    onDismiss={workspace.dismissChromatogramExport}
+                    onExport={workspace.exportChromatogram}
+                    onFigureSetting={workspace.setFigureSetting}
+                    onFigureTheme={workspace.setFigureTheme}
+                    onRangeScope={workspace.setChromatogramRangeScope}
+                    pngDpiProblem={workspace.pngDpiProblem}
+                    rangeScope={workspace.chromatogramRangeScope}
+                    renderSettingsProblem={workspace.renderSettingsProblem}
+                    scientificExportBusy={workspace.scientificExportBusy}
+                    traces={workspace.chromatogramTraces}
+                  />
+                ) : null
+              }
+              exportToggle={
+                workspace.chromatogramExportToken === null ? null : (
+                  <button
+                    aria-controls="chromatogram-export-panel"
+                    aria-expanded={chromatogramExportOpen}
+                    className="secondary-button"
+                    id="chromatogram-export-toggle"
+                    onClick={() => {
+                      setChromatogramExportOpen((open) => !open);
+                    }}
+                    type="button"
+                  >
+                    Export
+                  </button>
+                )
+              }
               interaction={workspace.viewerInteraction}
               model={workspace.scanModel}
               onSelect={workspace.selectSpectrum}
@@ -671,6 +718,7 @@ export function PreviewWorkspace() {
               onRetry={workspace.retrySpectrum}
               pngDpiProblem={workspace.pngDpiProblem}
               renderSettingsProblem={workspace.renderSettingsProblem}
+              scientificExportBusy={workspace.scientificExportBusy}
               state={spectrum}
             />
           </div>

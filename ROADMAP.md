@@ -130,12 +130,30 @@ productivity still decides whether MSCanvas may claim the event. Parity between
 physical devices is not claimed — no such measurement was made. See
 [ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
 
+**M4.3 — chromatogram export, over the full run or the current range.** Closed.
+The run the viewer draws is now a scientific document: SVG, PNG and `Copy plot`
+for the figure, CSV/TSV for the data, each over the whole run or over the range
+the viewer has committed to.
+
+The source is the complete per-scan facts Rust retained when the preview was
+read — never the bounded rows the interface received, never the screen's clipped
+or reduced geometry — and a run whose table could not be transferred whole has no
+chromatogram export, because it has no chromatogram on screen. `Current range`
+reads the committed viewport and nothing else: a zoom or pan still in flight is
+a drawing rather than a decision, and Rust refuses a range the run does not have
+rather than clamping it.
+
+A figure and a data file are siblings over one snapshot and one resolved range,
+and differ in one place on purpose: a figure draws the segment crossing a window
+edge, and a data document contains scans, so a range between two scans is a
+figure with a line through it and a table with no rows. Data exports carry both
+measured columns whatever the screen shows. One scientific export lane now
+serves the spectrum and the chromatogram together. See
+[ADR 0034](docs/architecture/adr/0034-chromatogram-export-and-range-scope.md).
+
 Still outside it, and unchanged:
 
-- Current-range export. The committed viewport R0 defined is now a range a user
-  can actually choose, and the handoff is tested — but no export consumes it.
-- Chromatogram data export, and a linked chromatogram + spectrum figure
-  template.
+- A linked chromatogram + spectrum figure template.
 - XIC, spectrum zoom/pan, and multi-layer comparison.
 
 ## M5 — Public beta hardening
