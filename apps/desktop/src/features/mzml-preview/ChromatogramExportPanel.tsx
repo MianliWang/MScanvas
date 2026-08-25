@@ -268,7 +268,18 @@ function ChromatogramExportResult({
   if (state.status === "failed") {
     return (
       <p className="spectrum-export-message">
-        {state.error.summary} <DismissButton onDismiss={onDismiss} />
+        {state.error.summary}{" "}
+        {/* Both halves, exactly as the selected spectrum's own failure does.
+            The summary says what happened; the detail is where a failure puts
+            the part the user has to act on -- above all that the export could
+            not remove the temporary file it left in their folder. The two
+            surfaces share `spectrum_write_failure`, so they receive the same
+            `detail`, and a panel that rendered only the summary would leave a
+            `.mscanvas-export-*` file in a folder having told nobody. */}
+        {state.error.detail === null ? null : (
+          <span className="notice-detail">{state.error.detail}</span>
+        )}
+        <DismissButton onDismiss={onDismiss} />
       </p>
     );
   }

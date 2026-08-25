@@ -551,6 +551,76 @@ describe("what the chromatogram can be exported as", () => {
     });
   });
 
+  it("reads out the part of a failure the user has to act on", async () => {
+    /*
+     * Round 2 of M4.3.2's review. A failed write attaches its actionable half
+     * to `detail`: above all that the export could not remove the temporary
+     * file it left in the user's folder. This panel rendered only `summary`, so
+     * a `.mscanvas-export-*` file was left behind having told nobody.
+     *
+     * Both surfaces map their write failures through the same
+     * `spectrum_write_failure`, so they receive the same `detail` -- which is
+     * why this asserts the pair together. A panel that drifts from the other is
+     * the shape the defect had.
+     */
+    const RESIDUE =
+      'MSCanvas also left a temporary file whose name begins with ".mscanvas-export-" in that ' +
+      "folder and could not remove it.";
+    const failure = {
+      kind: "spectrum_not_finalized",
+      summary:
+        "MSCanvas wrote the export and could not give it the name you chose, so nothing was saved under that name.",
+      detail: RESIDUE,
+      retryable: true,
+    };
+
+    const preview = api({
+      chromatogramExport: () => Promise.reject(failure),
+      spectrumExport: () => Promise.reject(failure),
+    });
+    await openTheViewer(preview);
+    await selectAScan();
+    openExport();
+
+    fireEvent.click(button("Export CSV\u2026"));
+    await waitFor(() => {
+      expect(exportStatus()).toContain("could not give it the name you chose");
+    });
+    expect(exportStatus()).toContain(RESIDUE);
+
+    // And the selected spectrum, which already did this, still does -- so the
+    // two surfaces say the same thing about the same failure.
+    fireEvent.click(spectrumButton("Export CSV\u2026"));
+    await waitFor(() => {
+      const said = within(spectrumPanel()).getByRole("status").textContent ?? "";
+      expect(said).toContain("could not give it the name you chose");
+    });
+    expect(within(spectrumPanel()).getByRole("status").textContent ?? "").toContain(RESIDUE);
+  });
+
+  it("says nothing extra where a failure has no actionable half", async () => {
+    // `detail` is `null` for a refusal the user can act on from the summary
+    // alone. Rendering an empty element there would put a blank line under
+    // every ordinary refusal.
+    const preview = api({
+      chromatogramExport: () =>
+        Promise.reject({
+          kind: "chromatogram_export_stale",
+          summary: "That run is no longer the one on screen.",
+          detail: null,
+          retryable: true,
+        }),
+    });
+    await openTheViewer(preview);
+    openExport();
+
+    fireEvent.click(button("Export CSV\u2026"));
+    await waitFor(() => {
+      expect(exportStatus()).toContain("no longer the one on screen");
+    });
+    expect(panel().querySelector(".notice-detail")).toBeNull();
+  });
+
   it("holds every scientific export in one lane", async () => {
     /*
      * Rust owns one lane across both surfaces and refuses a second export
