@@ -14211,6 +14211,49 @@ fn export_diagnostics(
     service.write_conversion_diagnostics(&reservation.reservation_id, destination)
 }
 
+/// The diagnostics document is named as what it holds, like every other export.
+///
+/// Not an export of science, and the rule is the same one: whatever opens this
+/// file next reads its extension, and a JSON document called `.txt` misleads
+/// exactly as a CSV called `.svg` does. The expected extension comes from
+/// `DIAGNOSTICS_SAVE_DIALOG` -- the same facts the dialog was built from -- so
+/// the filter a user saw and the name this boundary accepts cannot drift.
+#[test]
+fn a_diagnostics_export_is_refused_under_another_extension() {
+    let fixture = TestFile::new("diagnostics-extension");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    // The planned output name is already taken, so the queue ends with
+    // something to report and a diagnostics document exists to export.
+    fs::write(destination.join("one.mzML"), b"taken").expect("occupy the output name");
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = terminal_operation(&update);
+
+    let wrong = destination.join("diagnostics.txt");
+    let refusal = export_diagnostics(&service, &operation, &wrong)
+        .expect_err("a name that says something else is refused");
+    assert_eq!(refusal.kind, "diagnostics_destination_misnamed");
+    assert_eq!(
+        refusal.summary,
+        "Choose a filename ending in .json for a JSON export.",
+    );
+    assert!(refusal.retryable, "another name is the way out of this");
+    assert!(
+        !wrong.exists(),
+        "nothing was created under the name it refused",
+    );
+
+    // The right name is written, in either case, and the offer survived the
+    // refusal -- so the slot was released rather than left holding a write.
+    for name in ["diagnostics.json", "diagnostics-upper.JSON"] {
+        let saved = destination.join(name);
+        export_diagnostics(&service, &operation, &saved)
+            .unwrap_or_else(|error| panic!("{name} names a JSON document: {error:?}"));
+        assert!(saved.exists());
+    }
+}
+
 /// The operation identifier of a terminal queue.
 fn terminal_operation(update: &WorkspaceConversionUpdateDto) -> String {
     let WorkspaceConversionStateDto::Terminal { operation_id, .. } = &update.state else {
@@ -21071,6 +21114,214 @@ fn choosing_another_file_through_the_picker_revokes_the_retained_spectrum() {
             .expect_err("stale")
             .kind,
         "spectrum_export_stale"
+    );
+}
+
+// ------------------------------- a saved file is named as what it holds
+
+/// Writes one selected-spectrum export to a chosen name, answering the refusal.
+fn spectrum_saved_as(
+    service: &PreviewService,
+    token: &str,
+    format: &str,
+    destination: &Path,
+) -> Option<PreviewErrorDto> {
+    let reservation = service
+        .begin_spectrum_export(token, format, &default_figure_settings())
+        .expect("the export begins");
+    let claimed = service
+        .claim_spectrum_export(&reservation)
+        .expect("its dialog");
+    service.write_spectrum_export(&claimed, destination).err()
+}
+
+/// The same, for the chromatogram.
+fn chromatogram_saved_as(
+    service: &PreviewService,
+    token: &str,
+    format: &str,
+    destination: &Path,
+) -> Option<PreviewErrorDto> {
+    let reservation = service
+        .begin_chromatogram_export(
+            token,
+            format,
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        )
+        .expect("the export begins");
+    let claimed = service
+        .claim_chromatogram_export(&reservation)
+        .expect("its dialog");
+    service
+        .write_chromatogram_export(&claimed, destination)
+        .err()
+}
+
+/// A selected-spectrum file is named as the document it holds.
+///
+/// The cross-writer finding M4.3's review raised. The dialog's filter is
+/// guidance -- it appends its own extension only where the typed name carries
+/// none -- so a user who types one of their own gets it back unchanged, and the
+/// writer used to publish whatever bytes the format decided under whatever name
+/// came back. A CSV called `.svg` is read as an SVG by everything downstream.
+#[test]
+fn a_selected_spectrum_export_is_refused_under_another_format_s_extension() {
+    let file = TestFile::new("spectrum-extension");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
+        one_spectrum(),
+        one_spectrum(),
+        one_spectrum(),
+        one_spectrum(),
+        one_spectrum(),
+        one_spectrum(),
+    ])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+    let folder = file.path.parent().expect("a folder");
+
+    // What matches is written, whatever case it was typed in.
+    for (format, name) in [
+        ("csv", "measured.csv"),
+        ("csv", "measured-upper.CSV"),
+        ("csv", "measured-mixed.CsV"),
+        ("tsv", "measured.tsv"),
+        ("png", "measured.png"),
+    ] {
+        assert_eq!(
+            spectrum_saved_as(&service, &token, format, &folder.join(name)).map(|error| error.kind),
+            None,
+            "{name} names a {format} document",
+        );
+    }
+
+    // And what does not is refused, in either direction.
+    for (format, name) in [("csv", "measured-wrong.svg"), ("svg", "measured-wrong.csv")] {
+        let refusal = spectrum_saved_as(&service, &token, format, &folder.join(name))
+            .expect("a name that says something else is refused");
+        assert_eq!(refusal.kind, "spectrum_destination_misnamed");
+    }
+}
+
+/// The chromatogram answers to the same rule, from the same facts.
+#[test]
+fn a_chromatogram_export_is_refused_under_another_format_s_extension() {
+    let file = TestFile::new("chromatogram-extension");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
+    let token = chromatogram_ready(&file, &service);
+    let folder = file.path.parent().expect("a folder");
+
+    for (format, name) in [
+        ("csv", "run.csv"),
+        ("csv", "run-upper.CSV"),
+        ("tsv", "run.tsv"),
+        ("svg", "run.svg"),
+    ] {
+        assert_eq!(
+            chromatogram_saved_as(&service, &token, format, &folder.join(name))
+                .map(|error| error.kind),
+            None,
+            "{name} names a {format} document",
+        );
+    }
+
+    for (format, name) in [("csv", "run-wrong.svg"), ("svg", "run-wrong.csv")] {
+        let refusal = chromatogram_saved_as(&service, &token, format, &folder.join(name))
+            .expect("a name that says something else is refused");
+        assert_eq!(refusal.kind, "spectrum_destination_misnamed");
+    }
+}
+
+/// Everything that is not an extension this document could have fails closed.
+///
+/// The final extension is what is compared, so a name that ends in something
+/// else is refused however it got there -- a second suffix after the right one,
+/// a trailing dot that names nothing, or no extension at all. The dialog
+/// normally appends one; the writer checks rather than assuming it did.
+#[test]
+fn a_destination_with_no_usable_extension_is_refused() {
+    let file = TestFile::new("extension-edges");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
+    let token = chromatogram_ready(&file, &service);
+    let folder = file.path.parent().expect("a folder");
+
+    for name in ["run.csv.txt", "run.", "run"] {
+        let refusal = chromatogram_saved_as(&service, &token, "csv", &folder.join(name))
+            .expect("a name that is not a CSV's is refused");
+        assert_eq!(refusal.kind, "spectrum_destination_misnamed", "{name}");
+        // The correction names the extension and the document, and nothing
+        // about where the user was working.
+        assert_eq!(
+            refusal.summary,
+            "Choose a filename ending in .csv for a CSV export.",
+        );
+        assert!(
+            !refusal
+                .summary
+                .contains(&folder.to_string_lossy().to_string())
+        );
+        assert!(refusal.retryable, "another name is the way out of this");
+    }
+}
+
+/// A refusal writes nothing and leaves the lane ready for the next attempt.
+#[test]
+fn a_misnamed_destination_writes_nothing_and_frees_the_lane() {
+    let file = TestFile::new("misnamed-frees-lane");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
+    let token = chromatogram_ready(&file, &service);
+    let folder = file.path.parent().expect("a folder");
+
+    // A file already sitting at the wrong name is not touched either: the
+    // refusal happens before anything is opened or created.
+    let occupied = folder.join("taken.svg");
+    fs::write(&occupied, b"someone else's file").expect("write the existing file");
+
+    assert_eq!(
+        chromatogram_saved_as(&service, &token, "csv", &occupied)
+            .expect("refused")
+            .kind,
+        "spectrum_destination_misnamed",
+    );
+    assert_eq!(
+        fs::read(&occupied).expect("the existing file is still there"),
+        b"someone else's file",
+        "nothing was written over a file this export was never going to name",
+    );
+
+    // And the next export begins normally, which is what "retryable" has to
+    // mean: the lane was released rather than left holding a write.
+    assert_eq!(
+        chromatogram_saved_as(&service, &token, "csv", &folder.join("taken.csv")).map(|e| e.kind),
+        None,
+    );
+}
+
+/// A correctly named destination that exists is still the no-overwrite refusal.
+///
+/// Naming is an admission condition in front of the publication rule, not a
+/// replacement for it. A name that says what it holds and is already taken
+/// still fails where it always did, with the answer it always gave.
+#[test]
+fn a_correctly_named_destination_that_exists_still_refuses_as_before() {
+    let file = TestFile::new("named-but-taken");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
+    let token = chromatogram_ready(&file, &service);
+    let folder = file.path.parent().expect("a folder");
+    let taken = folder.join("already-here.csv");
+    fs::write(&taken, b"an earlier export").expect("write the existing file");
+
+    let refusal = chromatogram_saved_as(&service, &token, "csv", &taken)
+        .expect("a name already taken is refused");
+    assert_ne!(
+        refusal.kind, "spectrum_destination_misnamed",
+        "the name is right; what is wrong is that it is taken",
+    );
+    assert_eq!(
+        fs::read(&taken).expect("still there"),
+        b"an earlier export",
+        "and the file that was there is untouched",
     );
 }
 

@@ -645,6 +645,29 @@ pub fn spectrum_not_finalized(temporary_left_behind: bool) -> PreviewErrorDto {
     )
 }
 
+/// A save destination whose name does not say what the file holds.
+///
+/// Carries the sentence the dialog's own facts produced -- which extension to
+/// use, for which document -- and nothing about where the user was working. A
+/// refusal is not a place to disclose a path.
+///
+/// Retryable, because it is: the user chooses another name and the export
+/// begins again.
+#[must_use]
+pub fn spectrum_destination_misnamed(guidance: &str) -> PreviewErrorDto {
+    PreviewErrorDto::new("spectrum_destination_misnamed", guidance, true)
+}
+
+/// The same refusal for the one document that is not an export of science.
+#[must_use]
+pub fn diagnostics_destination_misnamed() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "diagnostics_destination_misnamed",
+        "Choose a filename ending in .json for a JSON export.",
+        true,
+    )
+}
+
 /// The chosen folder is not one this boundary will create a file in.
 #[must_use]
 pub fn diagnostics_destination_unusable() -> PreviewErrorDto {

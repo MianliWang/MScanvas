@@ -55,6 +55,7 @@ use super::diagnostics::{
     DIAGNOSTICS_FILE_NAME, DiagnosticsExportRequest, DiagnosticsExportSlot,
     MAX_DIAGNOSTIC_EXPORT_BYTES,
 };
+use super::dialog::{DIAGNOSTICS_SAVE_DIALOG, SaveDialogFacts};
 use super::discovery::{
     DiscoveryBudget, DiscoveryError, DiscoveryErrorKind, DiscoveryLimit, DiscoveryResult,
     discover_mzml_candidates,
@@ -88,15 +89,16 @@ use super::dto::{
     chromatogram_export_stale, chromatogram_no_visible_trace, chromatogram_range_outside_source,
     figure_clipboard_unavailable, figure_font_unavailable, figure_not_rasterizable,
     figure_settings_refused, scientific_export_in_progress, spectrum_destination_exists,
-    spectrum_destination_unusable, spectrum_export_in_progress, spectrum_export_refused,
-    spectrum_export_stale, spectrum_not_finalized, spectrum_not_written,
+    spectrum_destination_misnamed, spectrum_destination_unusable, spectrum_export_in_progress,
+    spectrum_export_refused, spectrum_export_stale, spectrum_not_finalized, spectrum_not_written,
 };
 use super::dto::{
     ConversionDiagnosticsExportDto, ConversionDiagnosticsReservationDto,
     ConversionDiagnosticsStateDto, MAX_CANDIDATE_NAME_CHARS, diagnostics_destination_exists,
-    diagnostics_destination_unusable, diagnostics_export_in_progress,
-    diagnostics_export_superseded, diagnostics_not_finalized, diagnostics_not_written,
-    diagnostics_too_large, diagnostics_unavailable, invalid_diagnostics_reservation,
+    diagnostics_destination_misnamed, diagnostics_destination_unusable,
+    diagnostics_export_in_progress, diagnostics_export_superseded, diagnostics_not_finalized,
+    diagnostics_not_written, diagnostics_too_large, diagnostics_unavailable,
+    invalid_diagnostics_reservation,
 };
 use super::dto::{
     FolderDiscoverySummaryDto, FolderImportReservationDto, FolderIngestionResultDto,
@@ -2213,6 +2215,27 @@ impl PreviewService {
         validate_raster_budget(settings).map_err(Self::settings_refusal)
     }
 
+    /// Refuses a destination that is not named as the document it will hold.
+    ///
+    /// One rule for every save-dialog export, read from the same
+    /// [`SaveDialogFacts`] the dialog itself was built from, so the filter a
+    /// user saw and the name this boundary accepts cannot drift apart.
+    ///
+    /// Refused rather than corrected. Rewriting `trace.svg` to `trace.csv`
+    /// would publish under a name the user did not choose, and could collide
+    /// with an existing `trace.csv` they never asked to be near -- a
+    /// no-overwrite refusal about a file they did not name. So the answer is to
+    /// say what would be right and write nothing.
+    fn require_named_document(
+        destination: &Path,
+        facts: SaveDialogFacts,
+    ) -> Result<(), PreviewErrorDto> {
+        if facts.names_this_document(destination) {
+            return Ok(());
+        }
+        Err(spectrum_destination_misnamed(&facts.extension_refusal()))
+    }
+
     /// The sentence for each way a figure could not be drawn as asked.
     ///
     /// Each names the number to change, because a reader told only that
@@ -2413,6 +2436,10 @@ impl PreviewService {
                 .into_bytes(),
         };
 
+        // Named as what it holds, before anything is opened or created. The
+        // dialog's filter is guidance and the user may type past it, so what is
+        // checked is the path that came back.
+        Self::require_named_document(destination, claimed.dialog())?;
         let (parent, file_name) = match (destination.parent(), destination.file_name()) {
             (Some(parent), Some(file_name)) => (parent, file_name),
             _ => return Err(spectrum_destination_unusable()),
@@ -2606,6 +2633,8 @@ impl PreviewService {
             }
         };
 
+        // The same rule the selected spectrum answers to, from the same facts.
+        Self::require_named_document(destination, claimed.dialog())?;
         let (parent, file_name) = match (destination.parent(), destination.file_name()) {
             (Some(parent), Some(file_name)) => (parent, file_name),
             _ => return Err(spectrum_destination_unusable()),
@@ -2920,6 +2949,12 @@ impl PreviewService {
             return Err(diagnostics_too_large());
         }
 
+        // And the one document that is not an export of science answers to it
+        // too: a diagnostics file named `.txt` is as misleading to whatever
+        // opens it next as a CSV named `.svg`.
+        if !DIAGNOSTICS_SAVE_DIALOG.names_this_document(destination) {
+            return Err(diagnostics_destination_misnamed());
+        }
         let (parent, file_name) = match (destination.parent(), destination.file_name()) {
             (Some(parent), Some(file_name)) => (parent, file_name),
             _ => return Err(diagnostics_destination_unusable()),

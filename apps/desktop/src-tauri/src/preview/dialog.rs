@@ -4,6 +4,8 @@
 //! the native picker is invoked here and only the chosen path enters Rust. The
 //! frontend receives an opaque handle and a display name, never a path.
 
+use std::path::Path;
+
 use super::dto::PreviewErrorDto;
 
 /// How one save dialog presents itself.
@@ -26,6 +28,46 @@ pub struct SaveDialogFacts {
     pub filter_pattern: &'static str,
     /// The extension appended when the typed name carries none.
     pub default_extension: &'static str,
+}
+
+impl SaveDialogFacts {
+    /// Whether a chosen destination is named as the document it will hold.
+    ///
+    /// The dialog is guidance: it shows a filter and appends
+    /// [`Self::default_extension`] when the typed name carries none. It is not
+    /// an authority, because a user may type an extension of their own and the
+    /// dialog hands that back unchanged. So the writer checks the path it
+    /// actually received rather than assuming what the dialog would have done.
+    ///
+    /// The **final** extension is what is compared, so `trace.csv.txt` is a
+    /// `txt` and is refused for a CSV. Comparison is case-insensitive: these
+    /// identifiers are ASCII and Windows file extensions do not distinguish
+    /// case, so `.CSV` is the same document as `.csv`.
+    ///
+    /// Everything else fails closed -- no extension at all, an empty one, and a
+    /// name whose extension is not valid Unicode. A file the boundary cannot
+    /// read the name of is not one it can promise anything about.
+    #[must_use]
+    pub fn names_this_document(&self, destination: &Path) -> bool {
+        destination
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case(self.default_extension))
+    }
+
+    /// What to tell someone whose filename does not match, in their words.
+    ///
+    /// Names the extension to use and the document it belongs to, and nothing
+    /// else. No path, no folder and no source: a refusal is not a place to
+    /// disclose where the user was working.
+    #[must_use]
+    pub fn extension_refusal(&self) -> String {
+        format!(
+            "Choose a filename ending in .{} for a {} export.",
+            self.default_extension,
+            self.default_extension.to_ascii_uppercase(),
+        )
+    }
 }
 
 #[cfg(windows)]
