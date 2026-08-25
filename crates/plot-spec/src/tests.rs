@@ -6226,6 +6226,240 @@ fn a_full_range_figure_carries_no_window_disclosure() {
     );
 }
 
+// ------------------------------------ two ordered panels, drawn as two panels
+
+/// Every `y` this document places anything at.
+///
+/// Coordinates rather than elements, because what has to be proved is where the
+/// drawing *is*: a renderer that placed a second panel's axis inside the first
+/// one's band would still emit well-formed elements.
+fn vertical_coordinates(document: &str) -> Vec<f64> {
+    let mut found = Vec::new();
+    for attribute in ["y=\"", "y1=\"", "y2=\""] {
+        let mut rest = document;
+        while let Some(at) = rest.find(attribute) {
+            rest = &rest[at + attribute.len()..];
+            let end = rest.find('"').expect("an attribute is closed");
+            if let Ok(value) = rest[..end].parse::<f64>() {
+                found.push(value);
+            }
+            rest = &rest[end..];
+        }
+    }
+    found
+}
+
+/// Where one piece of text sits, by its own words.
+///
+/// The element's *own* baseline, read from the start of the `<text>` that holds
+/// the words rather than from whatever attribute happened to come last: a marker
+/// label is a `<tspan>` inside a `<text>`, and scanning backwards from the words
+/// would find whichever of the two the markup put nearer.
+fn text_baseline(document: &str, words: &str) -> f64 {
+    let body = document
+        .split("</desc>")
+        .nth(1)
+        .expect("a document has a body after its description");
+    let element = body
+        .split("<text")
+        .find(|chunk| chunk.contains(&format!(">{words}<")))
+        .unwrap_or_else(|| panic!("the drawing says {words:?}"));
+    let start = element
+        .find(" y=\"")
+        .expect("a text element carries a baseline")
+        + 4;
+    let end = element[start..].find('"').expect("closed") + start;
+    element[start..end]
+        .parse()
+        .unwrap_or_else(|_| panic!("a baseline is a number for {words:?}"))
+}
+
+/// One linked figure with content in both panels, for the geometry checks.
+fn linked_figure(size: FigureSize, theme: FigureTheme) -> FigureSpec {
+    let top = chromatogram_panel(vec![
+        chromatogram_series(
+            "TIC",
+            StyleRole::Measurement,
+            vec![10.0, 11.0, 12.0, 13.0],
+            vec![90.0, 100.0, 118.0, 120.0],
+        ),
+        chromatogram_series(
+            "BPC",
+            StyleRole::SecondaryMeasurement,
+            vec![10.0, 11.0, 12.0, 13.0],
+            vec![40.0, 55.0, 61.0, 58.0],
+        ),
+    ])
+    .with_markers(vec![
+        Marker::new(11.0, Some(label("Selected scan"))).expect("a marker"),
+    ])
+    .expect("one marker");
+    let bottom = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(
+            vec![100.0, 200.0, 300.0, 400.0],
+            vec![10.0, 90.0, 45.0, 22.0],
+        ),
+    );
+    FigureSpec::new(theme, size, vec![top, bottom])
+        .expect("two panels")
+        .with_title(label("Selected spectrum in chromatographic context"))
+        .with_caption(
+            Caption::new(
+                "Two panels. Above, a chromatogram; the marker identifies spectrum index 1, \
+                 shown below in full.",
+            )
+            .expect("a caption"),
+        )
+}
+
+/// The two panels are two panels: ordered, separate, and inside the document.
+///
+/// The first real use of the multi-panel renderer, and the gate M4.4 had to pass
+/// before anything was built on it. What is asserted is the *drawing* rather
+/// than the specification: each panel's own words -- its axis labels, its
+/// legend, its marker -- must sit strictly above or below the other's, which is
+/// what "two panels that do not overlap" means to a reader.
+#[test]
+fn a_linked_figure_draws_two_ordered_panels_that_do_not_overlap() {
+    for (width, height, theme, what) in [
+        (
+            1_200.0,
+            640.0,
+            FigureTheme::Light,
+            "the default size, light",
+        ),
+        (1_200.0, 640.0, FigureTheme::Dark, "the default size, dark"),
+        (
+            1_200.0,
+            260.0,
+            FigureTheme::Light,
+            "the two-panel minimum height",
+        ),
+        (
+            MIN_FIGURE_WIDTH,
+            640.0,
+            FigureTheme::Light,
+            "the narrowest accepted width",
+        ),
+    ] {
+        let size = FigureSize::new(width, height).expect("an accepted size");
+        let document = svg::render(&linked_figure(size, theme));
+
+        // The drawing, without the title and description that precede it: those
+        // carry the same words and would answer "is this printed" wrongly.
+        let body = document
+            .split("</desc>")
+            .nth(1)
+            .expect("a document has a body after its description");
+
+        // Nothing is drawn outside the page it declares.
+        for y in vertical_coordinates(&document) {
+            assert!(
+                (0.0..=height).contains(&y),
+                "{what}: a coordinate at {y} is outside a page {height} tall",
+            );
+        }
+
+        // The top panel's own words, and the bottom panel's own words.
+        let top_axis = text_baseline(&document, "Retention time");
+        let top_legend = text_baseline(&document, "TIC");
+        let bottom_axis = text_baseline(&document, "m/z");
+
+        // Ordered, and every part of the first panel above every part of the
+        // second. A legend that had drifted into the panel below would be
+        // labelling the wrong science.
+        for (name, y) in [
+            ("the retention-time axis", top_axis),
+            ("the trace legend", top_legend),
+        ] {
+            assert!(
+                y < bottom_axis,
+                "{what}: {name} at {y} is not above the lower panel's axis at {bottom_axis}",
+            );
+        }
+
+        // The marker's label where the page had room for it, and an honest
+        // disclosure where it did not. A small figure that quietly dropped the
+        // words would leave a dashed line nothing explains, which is why the
+        // renderer reports it rather than hiding it.
+        let described = description_of(&document);
+        if body.contains(">Selected scan<") {
+            let top_marker = text_baseline(&document, "Selected scan");
+            assert!(
+                top_marker < bottom_axis,
+                "{what}: the selected-scan label at {top_marker} left the upper panel",
+            );
+        }
+        // Whether or not the words fitted as one run, the marker itself is named
+        // and placed at the retention time it marks.
+        assert!(
+            described.contains("Selected scan"),
+            "{what}: the description names the marker: {described}",
+        );
+
+        // And the title is chrome rather than content: where the page has room
+        // to print it, it sits clear of the first panel's own drawing. Where it
+        // does not, the renderer says so instead of shrinking it past reading.
+        if body.contains(">Selected spectrum in chromatographic context<") {
+            let title = text_baseline(&document, "Selected spectrum in chromatographic context");
+            assert!(
+                title < top_axis,
+                "{what}: the title at {title} is not above the first panel",
+            );
+        } else {
+            assert!(
+                described.contains("too long to print legibly"),
+                "{what}: an unprinted title is disclosed: {described}",
+            );
+        }
+    }
+}
+
+/// Each panel keeps a plotting area with room in it.
+///
+/// A band that collapsed to nothing would still satisfy "ordered and separate",
+/// and would draw a figure with no figure in it. The value ends each panel
+/// prints are its own, so two distinct pairs of them is two real plotting areas.
+#[test]
+fn both_linked_panels_keep_a_plotting_area() {
+    let size = FigureSize::new(1_200.0, 260.0).expect("the two-panel minimum");
+    let document = svg::render(&linked_figure(size, FigureTheme::Light));
+
+    // The chromatogram's own domain ends, and the spectrum's.
+    let top_low = text_baseline(&document, "10.00");
+    let bottom_low = text_baseline(&document, "100");
+    assert!(
+        top_low < bottom_low,
+        "the panels print their own axes in order: {top_low} then {bottom_low}",
+    );
+    // Each band is tall enough to have drawn something between its axis label
+    // and the panel below it.
+    assert!(
+        bottom_low - top_low > 40.0,
+        "the second panel starts well below the first: {top_low} then {bottom_low}",
+    );
+}
+
+/// The description says what the two panels are, in the order they are drawn.
+#[test]
+fn a_linked_figure_describes_both_panels_in_order() {
+    let size = FigureSize::new(1_200.0, 640.0).expect("a size");
+    let described = description_of(&svg::render(&linked_figure(size, FigureTheme::Light)));
+
+    assert!(
+        described.contains("Panel 1 of 2, counting from the top."),
+        "the first panel says which it is: {described}",
+    );
+    assert!(
+        described.contains("Panel 2 of 2, counting from the top."),
+        "and so does the second: {described}",
+    );
+    let first = described.find("Panel 1 of 2").expect("the first");
+    let second = described.find("Panel 2 of 2").expect("the second");
+    assert!(first < second, "in the order they are drawn: {described}");
+}
+
 /// Both themes draw the second measurement in their own palette, legibly.
 #[test]
 fn both_themes_distinguish_the_second_measurement() {
