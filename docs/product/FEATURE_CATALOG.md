@@ -99,7 +99,9 @@ The acceptance table remains the target, including the parts called out below.
   of the loaded rows is not the end of the run.
 
 Still unimplemented across the viewer: XIC (VIEW-007), spectrum zoom and pan,
-multi-layer comparison (VIEW-008), and any chromatogram or current-range export.
+multi-layer comparison (VIEW-008), and current-range export of a selected
+spectrum. The chromatogram exports over the full run or the current range; see
+FIG-001 through FIG-004.
 
 ## Conversion
 

@@ -844,6 +844,50 @@ def validate_the_chromatogram_authority_has_one_installation_path(
         )
 
 
+def validate_the_current_status_section_has_one_answer(errors: list[str]) -> None:
+    """The newest status section does not deny what it just described.
+
+    `BOOTSTRAP_STATUS.md` is a log: each section describes what was true when it
+    was written, and older sections must keep saying a capability was absent
+    then, because it was. What cannot happen is one section saying both. The
+    M4.3 section described the chromatogram's exports at length and then listed
+    "chromatogram data or figure export" and "current-range export of anything"
+    among what is still not implemented, which left the repository's own status
+    document unusable as a basis for planning: whichever half a reader trusted,
+    the other one contradicted it.
+
+    So this checks the **current** section only -- the last `## ` heading -- and
+    only for claims that the thing the section is about does not exist. Nothing
+    here reads prose for tone or pins a snapshot of it; a section is free to say
+    anything except that its own subject is unbuilt.
+    """
+    source = ROOT / "BOOTSTRAP_STATUS.md"
+    if not source.is_file():
+        return
+    sections = source.read_text(encoding="utf-8").split("\n## ")
+    if len(sections) < 2:
+        return
+    current = sections[-1]
+    title = current.split("\n", 1)[0].strip()
+    if "chromatogram export" not in title.lower():
+        return
+
+    denials = (
+        "chromatogram data or figure\nexport",
+        "chromatogram data or figure export",
+        "current-range export of anything",
+        "the export is not built",
+    )
+    for denial in denials:
+        if denial in current:
+            errors.append(
+                f"BOOTSTRAP_STATUS.md: the current section ({title!r}) describes the "
+                f"chromatogram export and also says {denial!r}. A status document that "
+                "answers a milestone question both ways cannot be the basis for the next "
+                "one; correct the current section rather than the historical ones"
+            )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_required(errors)
@@ -861,6 +905,7 @@ def main() -> int:
         validate_no_font_is_bundled_or_fetched(errors)
         validate_every_raster_entry_point_asks_the_budget(errors)
         validate_the_chromatogram_authority_has_one_installation_path(errors)
+        validate_the_current_status_section_has_one_answer(errors)
 
     if errors:
         print("Repository validation failed:")

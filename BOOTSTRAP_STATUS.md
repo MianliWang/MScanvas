@@ -4618,8 +4618,13 @@ none of them is a preview attempt.
 
 ### Still not implemented
 
-XIC, spectrum zoom and pan, multi-layer comparison, chromatogram data or figure
-export, current-range export of anything, the linked two-panel figure, a saved
-`FigureSpec`, a figure composer, vendor-format direct preview and a preview
-cache. `ViewerInteractionState.committedDomain` is the authority a current-range
-export will consume, and the handoff is tested; the export is not built.
+The linked chromatogram + selected-spectrum two-panel figure, current-range
+export of a *selected spectrum*, XIC, spectrum zoom and pan, multi-layer
+comparison, a saved `FigureSpec`, a figure composer, vendor-format direct
+preview and a preview cache.
+
+Not on this list any more, because this milestone is what built them: the
+chromatogram's SVG, PNG, `Copy plot`, CSV and TSV, over the full run or the
+current range. `ViewerInteractionState.committedDomain` is no longer an
+authority waiting for a consumer -- the chromatogram's current-range export
+consumes it.
