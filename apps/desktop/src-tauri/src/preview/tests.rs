@@ -6884,6 +6884,21 @@ impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
         Arc::clone(&self.installation_label)
     }
 
+    /// The same provider, answering `previews` ordinary previews and parking in
+    /// none of them.
+    ///
+    /// For the tests that need a run visible *before* a conversion takes the
+    /// slot: the preview has to succeed first, and only then does the condition
+    /// under test exist.
+    fn answering_previews(mut self, previews: usize) -> Self {
+        let mut responses = Vec::new();
+        for _ in 0..previews {
+            responses.extend(open_responses());
+        }
+        self.inner = FakeProvider::available(responses);
+        self
+    }
+
     /// The same provider, answering previews and parking inside the first one.
     fn parking_the_first_preview(mut self) -> (Self, mpsc::Receiver<()>, mpsc::Sender<()>) {
         let (started, observe_start) = mpsc::channel();
@@ -9600,11 +9615,25 @@ fn nothing_can_move_the_bound_row_on_while_a_conversion_holds_the_slot() {
         .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
         .expect("the conversion holds the slot from here");
 
+    // An open of this row answers about the row rather than about the
+    // conversion: it is a vendor acquisition, and nothing in this product
+    // previews one whether or not a conversion happens to be running. An open
+    // has to establish what it names before it can supersede the preview on
+    // screen, so the target is what it reports on. A conversion refusing a
+    // *previewable* open -- and that open still revoking the chromatogram it
+    // replaced -- is pinned by
+    // `a_conversion_that_started_refuses_the_open_and_leaves_no_chromatogram`.
+    assert_eq!(
+        service
+            .open_preview(&handle)
+            .expect_err("a vendor row is not previewable")
+            .kind,
+        "dataset_not_previewable",
+    );
     for refusal in [
         service
             .load_spectrum(&handle, 0)
             .expect_err("a spectrum is backend work like any other"),
-        service.open_preview(&handle).expect_err("so is an open"),
         service
             .remove_datasets(std::slice::from_ref(&handle))
             .expect_err("the converting row cannot be removed"),
@@ -11890,12 +11919,23 @@ fn an_unconfirmed_stop_quarantines_the_backend_and_refuses_every_operation() {
         // Every operation that would launch a process is refused.
         let handle = queue.items[0].dataset_handle.clone();
         assert_eq!(
-            service.open_preview(&handle).unwrap_err().kind,
-            "backend_quarantined"
-        );
-        assert_eq!(
             service.load_spectrum(&handle, 0).unwrap_err().kind,
             "backend_quarantined"
+        );
+        // Opening a preview of one of these rows is refused for what the row is
+        // rather than for the state of the backend, and that order is on
+        // purpose. An open decides whether the preview on screen is superseded,
+        // so it has to establish what the request names before it can answer
+        // anything about the moment -- a vendor acquisition is not previewable
+        // whatever the backend is doing, and saying "backend quarantined" here
+        // would imply that repairing one would make this row openable.
+        //
+        // That a quarantined backend refuses a genuinely previewable open, and
+        // revokes the chromatogram while doing it, is pinned separately by
+        // `a_backend_that_became_unusable_refuses_the_open_and_leaves_no_chromatogram`.
+        assert_eq!(
+            service.open_preview(&handle).unwrap_err().kind,
+            "dataset_not_previewable"
         );
         let document = current_document(&service);
         assert_eq!(
@@ -21576,6 +21616,277 @@ fn an_open_completing_as_a_newer_one_begins_never_installs_over_it() {
             .expect("and it names the run on screen");
         assert_eq!(chromatogram_export_refusal(&service, &visible), None);
     }
+}
+
+// ------------------------- a real preview attempt supersedes before it can fail
+
+/// A backend that stopped being trusted still takes the preview off the screen.
+///
+/// The second reachable case M4.3's final observation found. `loadPreview`
+/// raises its own counter, clears the preview and *then* calls; when the reply
+/// is a refusal it shows the refusal rather than restoring what it replaced. So
+/// by the time Rust decides it will not start a process, the run it was asked
+/// to replace is already gone from the screen -- and a session that had not
+/// revoked would still be naming it, ready to export science no viewer shows.
+///
+/// The race is real rather than contrived: the frontend refuses to call at all
+/// while it knows the backend is unusable, so this is exactly the window where
+/// quarantine begins after that check and before Rust answers.
+#[test]
+fn a_backend_that_became_unusable_refuses_the_open_and_leaves_no_chromatogram() {
+    let file = TestFile::new("quarantine-replaces");
+    let other = file.copy("other.mzML");
+    let mut responses = open_responses();
+    responses.extend(open_responses());
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let visible = service.add_dataset(&file.path).expect("added");
+    let replacement = service.add_dataset(&other).expect("added");
+
+    let replaced = service
+        .open_preview(&visible.handle)
+        .expect("the first opens")
+        .chromatogram_export_token
+        .expect("a run the viewer draws has a chromatogram export");
+    assert_eq!(chromatogram_export_refusal(&service, &replaced), None);
+
+    // The session stops trusting the backend between the frontend's check and
+    // this call.
+    service.quarantine_backend_now();
+    assert_eq!(
+        service
+            .open_preview(&replacement.handle)
+            .expect_err("nothing launches a process while quarantined")
+            .kind,
+        "backend_quarantined",
+    );
+
+    assert_eq!(
+        chromatogram_export_refusal(&service, &replaced),
+        Some("chromatogram_export_stale".to_owned()),
+        "the run the user navigated away from is not exportable afterwards",
+    );
+}
+
+/// A conversion that took the slot does not leave the old chromatogram behind.
+///
+/// The same rule as quarantine and the same reason. A conversion starting is a
+/// fact about the moment rather than about the row the user activated, and the
+/// row they activated has already replaced what was on screen.
+#[test]
+fn a_conversion_that_started_refuses_the_open_and_leaves_no_chromatogram() {
+    let fixture = TestFile::new("conversion-replaces");
+    let other = fixture.copy("other.mzML");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let service = PreviewService::new(Box::new(
+        ConvertingProvider::faithful().answering_previews(2),
+    ));
+    let visible = service.add_dataset(&fixture.path).expect("added");
+    let replacement = service.add_dataset(&other).expect("added");
+    let converting = add_one_acquisition(&service, &acquisition);
+
+    let replaced = service
+        .open_preview(&visible.handle)
+        .expect("the first opens")
+        .chromatogram_export_token
+        .expect("a run the viewer draws has a chromatogram export");
+    assert_eq!(chromatogram_export_refusal(&service, &replaced), None);
+
+    let document = current_document(&service);
+    service
+        .begin_conversion(&converting, ConversionConflictPolicyDto::Fail, document)
+        .expect("the conversion holds the slot from here");
+
+    assert_eq!(
+        service
+            .open_preview(&replacement.handle)
+            .expect_err("a preview is refused rather than queued behind a conversion")
+            .kind,
+        "conversion_busy",
+    );
+    assert_eq!(
+        chromatogram_export_refusal(&service, &replaced),
+        Some("chromatogram_export_stale".to_owned()),
+        "the run the user navigated away from is not exportable afterwards",
+    );
+}
+
+/// A handle the session does not have supersedes nothing.
+///
+/// The other half of the rule, and the half that keeps it from becoming "every
+/// failed command revokes". Only a genuine mzML preview attempt replaces what is
+/// on screen; a request naming nothing never opened anything, so the preview the
+/// user is still looking at keeps its export.
+#[test]
+fn an_unknown_handle_leaves_the_visible_chromatogram_exportable() {
+    let file = TestFile::new("unknown-handle-keeps");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
+    let visible = chromatogram_ready(&file, &service);
+
+    assert_eq!(
+        service
+            .open_preview("dataset-does-not-exist")
+            .expect_err("a handle naming nothing is an unknown handle")
+            .kind,
+        "unknown_file_handle",
+    );
+
+    assert_eq!(
+        chromatogram_export_refusal(&service, &visible),
+        None,
+        "the preview on screen never went away",
+    );
+}
+
+/// A newer attempt that fails early does not let an older one resurrect a run.
+///
+/// The subtle sequence. Open A is still reading when a valid open of B arrives
+/// and is refused at the conversion gate -- but B's *intent* was real, and it
+/// took the ticket before it was refused. So when A finally completes it is an
+/// open the session has passed, and it may neither install nor revoke. What the
+/// user sees is B's failure over an empty viewer, and what Rust holds matches:
+/// nothing.
+#[test]
+fn an_older_completion_cannot_install_after_a_newer_attempt_failed_early() {
+    let file = TestFile::new("older-after-failed-newer");
+    let slow = file.copy("slow.mzML");
+    let third = file.copy("third.mzML");
+    let mut responses = open_responses();
+    responses.extend(open_responses());
+    responses.extend(open_responses());
+    let (started, observe_start) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+    let service = Arc::new(PreviewService::new(Box::new(BlockOneSourceProvider {
+        inner: FakeProvider::available(responses),
+        blocked: slow.clone(),
+        started,
+        release: Mutex::new(Some(wait_for_release)),
+    })));
+    let visible = service.add_dataset(&file.path).expect("added");
+    let older = service.add_dataset(&slow).expect("added");
+    let newer = service.add_dataset(&third).expect("added");
+
+    // A run on screen, so there is something a wrong answer could resurrect --
+    // and so this fixture is shown to produce chromatograms at all.
+    let replaced = service
+        .open_preview(&visible.handle)
+        .expect("the first opens")
+        .chromatogram_export_token
+        .expect("a run the viewer draws has a chromatogram export");
+    assert_eq!(chromatogram_export_refusal(&service, &replaced), None);
+
+    // The user activates another row, and its read is slow.
+    let opening = {
+        let service = Arc::clone(&service);
+        let handle = older.handle.clone();
+        std::thread::spawn(move || service.open_preview(&handle))
+    };
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the older open reached the provider");
+    assert_eq!(
+        chromatogram_export_refusal(&service, &replaced),
+        Some("chromatogram_export_stale".to_owned()),
+        "beginning that open took the previous run away",
+    );
+
+    // Then a third activation, refused for a reason of the moment -- but its
+    // intent was real and it took the ticket before it was refused.
+    service.quarantine_backend_now();
+    assert_eq!(
+        service
+            .open_preview(&newer.handle)
+            .expect_err("nothing launches a process while quarantined")
+            .kind,
+        "backend_quarantined",
+    );
+
+    release.send(()).expect("the older open is still parked");
+    let landed = opening
+        .join()
+        .expect("the older open finished")
+        .expect("it is still the newest request for its own dataset");
+
+    assert_eq!(
+        landed.chromatogram_export_token, None,
+        "an open a newer intent has already passed installs nothing",
+    );
+    assert_eq!(
+        chromatogram_export_refusal(&service, &replaced),
+        Some("chromatogram_export_stale".to_owned()),
+        "and the run it replaced is not restored either",
+    );
+}
+
+/// An export already claimed finishes, whatever the replacement does next.
+///
+/// ADR 0029's snapshot-at-begin semantics across a replacement that never
+/// succeeded. Moving the viewer changes what a *new* export may name; it does
+/// not cancel a file the user is in the middle of choosing a destination for,
+/// and a preview attempt that was refused does not change that either way.
+#[test]
+fn a_claimed_export_survives_a_replacement_that_was_refused_early() {
+    let file = TestFile::new("claimed-survives-refusal");
+    let other = file.copy("other.mzML");
+    let mut responses = open_responses();
+    responses.extend(open_responses());
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let visible = service.add_dataset(&file.path).expect("added");
+    let replacement = service.add_dataset(&other).expect("added");
+
+    let token = service
+        .open_preview(&visible.handle)
+        .expect("the first opens")
+        .chromatogram_export_token
+        .expect("a run the viewer draws has a chromatogram export");
+    let reservation = service
+        .begin_chromatogram_export(
+            &token,
+            "csv",
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        )
+        .expect("a reservation");
+    let claimed = service
+        .claim_chromatogram_export(&reservation)
+        .expect("its dialog");
+
+    // The user activates another row while that dialog is open, and the session
+    // has stopped trusting the backend by the time Rust answers.
+    service.quarantine_backend_now();
+    assert_eq!(
+        service
+            .open_preview(&replacement.handle)
+            .expect_err("nothing launches a process while quarantined")
+            .kind,
+        "backend_quarantined",
+    );
+
+    // What is being written is still the run it was begun from, and it is still
+    // the lane's: a refused preview attempt neither cancelled the claim nor
+    // rebound it onto whatever is loaded now.
+    assert_eq!(
+        claimed.snapshot.source().scan_count(),
+        3,
+        "the export writes the run it was begun on",
+    );
+    assert_eq!(
+        claimed.suggested_file_name(),
+        "mscanvas-chromatogram-full.csv",
+    );
+    assert_eq!(
+        service
+            .claim_chromatogram_export(&reservation)
+            .expect_err("one reservation opens one dialog")
+            .kind,
+        "chromatogram_export_stale",
+    );
+
+    // And the token it was begun from names nothing new.
+    assert_eq!(
+        chromatogram_export_refusal(&service, &token),
+        Some("chromatogram_export_stale".to_owned()),
+    );
 }
 
 /// Emptying the list while an open was reading leaves no chromatogram behind.

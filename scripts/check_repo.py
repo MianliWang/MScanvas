@@ -764,6 +764,86 @@ def validate_every_raster_entry_point_asks_the_budget(errors: list[str]) -> None
             )
 
 
+def validate_the_chromatogram_authority_has_one_installation_path(
+    errors: list[str],
+) -> None:
+    """Which preview owns the chromatogram is asked and acted on in one step.
+
+    There is one chromatogram a session may export, and only the newest preview
+    open may install it. The defect that rule exists to close is not the
+    comparison being wrong -- it is the comparison being *separated* from what it
+    decides: read "am I still the latest open", let the slot go, and install
+    afterwards, and a newer open begins in the gap while the older completion
+    still wins.
+
+    A test cannot show this. The gap a split would open is narrower than a
+    thread wake, so any test claiming to catch it would be claiming scheduling
+    luck as evidence. What actually closes it is the shape of the API, and that
+    is what is checked here:
+
+    - `install_chromatogram` is private, so no call site outside `export.rs` can
+      install without first proving it may;
+    - the only functions that read `latest_preview_open` are the one that
+      advances it and the one that compares *and* mutates under the same `&mut
+      self` -- so the slot never answers a question it does not also act on.
+
+    The second rule is deliberately not a list of forbidden names. Any new way
+    to ask the question on its own has to read that field, whatever it is
+    called, and that is what fails here.
+    """
+    preview = ROOT / "apps" / "desktop" / "src-tauri" / "src" / "preview"
+    export = preview / "export.rs"
+    if not export.is_file():
+        return
+    content = export.read_text(encoding="utf-8")
+
+    if not re.search(r"\n    fn install_chromatogram\(", content):
+        errors.append(
+            "preview/export.rs no longer defines a private `install_chromatogram`; "
+            "an installer reachable from outside the module can be called without "
+            "the ownership comparison that decides whether it may run"
+        )
+
+    for path in sorted(preview.rglob("*.rs")):
+        if path.name == "export.rs":
+            continue
+        if ".install_chromatogram(" in path.read_text(encoding="utf-8"):
+            errors.append(
+                f"{path.relative_to(ROOT).as_posix()} calls .install_chromatogram() "
+                "directly; every installation goes through "
+                "reconcile_preview_chromatogram, which is where the preview-open "
+                "ticket is checked"
+            )
+
+    # Every function in the file, and whether its body names the field. A line
+    # at column zero ends whatever function was open, so a struct's own field
+    # declarations are not attributed to the function above them.
+    owners: set[str] = set()
+    current: str | None = None
+    for line in content.split("\n"):
+        if line and not line.startswith(" "):
+            current = None
+            continue
+        defined = re.match(r"    (?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?fn (\w+)", line)
+        if defined:
+            current = defined.group(1)
+        elif current is not None and "latest_preview_open" in line:
+            owners.add(current)
+
+    # `default` builds the slot and assigns the field its initial ticket, which
+    # is the one thing that is neither a question nor an answer to one.
+    expected = {"default", "begin_preview_open", "reconcile_preview_chromatogram"}
+    if owners != expected:
+        errors.append(
+            "preview/export.rs: the functions naming `latest_preview_open` are "
+            f"{sorted(owners)}, not {sorted(expected)}. The ownership test and the "
+            "installation have to stay one operation on one `&mut` borrow -- a "
+            "function that only reports whether a ticket is current lets a caller "
+            "check under one slot acquisition, release it, and install under "
+            "another, which is the race the ticket exists to close"
+        )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_required(errors)
@@ -780,6 +860,7 @@ def main() -> int:
         validate_clipboard_stays_write_only(errors)
         validate_no_font_is_bundled_or_fetched(errors)
         validate_every_raster_entry_point_asks_the_budget(errors)
+        validate_the_chromatogram_authority_has_one_installation_path(errors)
 
     if errors:
         print("Repository validation failed:")

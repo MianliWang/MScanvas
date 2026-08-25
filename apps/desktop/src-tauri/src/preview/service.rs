@@ -3738,6 +3738,17 @@ impl PreviewService {
             .expect("no conversion is running in this test")
     }
 
+    /// Stops trusting the backend, as an unconfirmed stop does.
+    ///
+    /// Test-only, and it exists so a test can reach the *state* without driving
+    /// a whole queue to the one ending that produces it. What it stands in for
+    /// is real: once this is set every entry point that would launch a process
+    /// refuses, and a preview is one of those.
+    #[cfg(test)]
+    pub(super) fn quarantine_backend_now(&self) {
+        self.quarantine_backend();
+    }
+
     #[cfg(test)]
     pub(super) fn remove_datasets_now(&self, handles: &[String]) -> WorkspaceRemoveResultDto {
         self.remove_datasets(handles)
@@ -5132,9 +5143,62 @@ impl PreviewService {
         // Re-opening the same dataset is no exception: that clears the selection
         // too, and a spectrum nobody has selected is not one to keep.
         self.spectrum_export_slot().forget();
-        // Asked before anything else. Once a stop could not be confirmed this
-        // session does not start another process at all, and a preview is a
-        // process.
+        // What this request names, before anything is decided about whether it
+        // can be served. The questions below are about the *target*, they are
+        // answered from state the session already holds, and together they are
+        // what makes this an mzML preview attempt rather than some other command
+        // that happened to arrive.
+        //
+        // They come first because the ticket below depends on their answers, and
+        // the ticket has to be taken before anything that can refuse for a
+        // reason of the moment.
+        let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
+        // Both asked of one look at the row. A handle naming nothing is an
+        // unknown handle and must keep saying so: answering "convert it first"
+        // about a dataset the session does not have would send the user to look
+        // for a row that is not there. And the preview boundary reads mzML --
+        // nothing in this product reads a vendor acquisition directly -- so a
+        // row of that family is refused here rather than left to a disabled
+        // button and a backend failure.
+        let previewable = {
+            let workspace = self.workspace();
+            let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
+            dataset.file().source_kind().is_previewable()
+        };
+        if !previewable {
+            return Err(dataset_not_previewable());
+        }
+        // The intent exists, so the preview on screen is already being replaced.
+        //
+        // The ticket says which preview open the session is currently on --
+        // across every dataset, because there is only one chromatogram the user
+        // is looking at and only one that may be exported. It is a different
+        // question from the per-dataset epoch claimed below: two opens of two
+        // different files are each the newest request for their own dataset and
+        // cannot both be current by this.
+        //
+        // Taken **here**, and the position is the whole of it. Everything above
+        // is about the target and answers the same way however often it is
+        // asked; everything below can refuse for a reason of the moment -- a
+        // backend that stopped being trusted, a conversion that started, a
+        // process gate -- and by then the webview has already moved on.
+        // `loadPreview` raises its own counter, takes the old preview off the
+        // screen and only then calls; when the reply is a refusal it shows the
+        // refusal rather than restoring what it replaced. A read refused below
+        // would otherwise leave Rust still naming a run nothing is showing, and
+        // a delayed or replayed command could export it.
+        //
+        // Not taken for a malformed handle, a dataset the session does not have
+        // or a vendor row. None of those is a preview attempt -- all three
+        // return above -- so none of them is a reason to take the chromatogram
+        // away from the preview still on screen.
+        //
+        // The export slots are a leaf, and this holds nothing else.
+        let preview_open = self.spectrum_export_slot().begin_preview_open();
+        // Now the conditions that are about this moment rather than this target.
+        //
+        // Once a stop could not be confirmed this session does not start another
+        // process at all, and a preview is a process.
         self.require_usable_backend()?;
         // Refused rather than queued. The backend gate would serialize it
         // anyway, but a preview that waited behind a whole conversion would sit
@@ -5147,23 +5211,6 @@ impl PreviewService {
         if self.conversion_is_busy() {
             return Err(conversion_busy());
         }
-        let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
-        // Asked before anything is claimed. The preview boundary reads mzML and
-        // nothing in this product reads a vendor acquisition directly, so a row
-        // of that family is refused here rather than left to a disabled button
-        // and a backend failure.
-        // Only about a row that exists. A handle naming nothing is an unknown
-        // handle and must keep saying so: answering "convert it first" about a
-        // dataset the session does not have would send the user to look for a
-        // row that is not there.
-        if self
-            .workspace()
-            .registry
-            .get(id)
-            .is_some_and(|dataset| !dataset.file().source_kind().is_previewable())
-        {
-            return Err(dataset_not_previewable());
-        }
         // Claimed before the wait, so a request that arrives after this one
         // supersedes it -- and claimed by the same per-dataset counter a
         // spectrum uses, because an open and a spectrum are both requests about
@@ -5171,33 +5218,13 @@ impl PreviewService {
         // waiting for. A roster is what makes two opens of one dataset
         // something a user can cause: nothing stops them activating a row
         // twice, or activating it again while the first read is still running.
+        //
+        // `None` only if the row went away between the look above and here,
+        // which is a race rather than an unknown handle and answers the same.
         let (epoch, remembered) = self
             .workspace()
             .begin_open_request(id)
             .ok_or_else(unknown_dataset)?;
-        // And claimed in the *global* order too, which is a different question
-        // from the one above and has to be asked separately.
-        //
-        // The epoch says whether this is the newest request for this dataset.
-        // The ticket says whether this is the preview open the session is
-        // currently on -- across every dataset, because there is only one
-        // chromatogram the user is looking at and only one that may be
-        // exported. Two opens of two different files are each current by the
-        // epoch and cannot both be current by this.
-        //
-        // Taken here, before the backend wait and before any process starts, so
-        // that beginning a newer open supersedes the older one's chromatogram at
-        // the moment the user asks rather than whenever the read happens to
-        // finish. That matches the webview exactly: it raises its own counter
-        // before it calls, and the preview it replaced never comes back.
-        //
-        // Not taken for a vendor row or a handle the session does not have.
-        // Neither of those opens anything -- the frontend refuses a vendor
-        // activation outright, and both return above -- so neither is a reason
-        // to take away the chromatogram of the preview still on screen.
-        //
-        // The export slots are a leaf, and this holds nothing else.
-        let preview_open = self.spectrum_export_slot().begin_preview_open();
         // Taken after the epoch and before anything is established about the
         // file, so what is checked describes the moment the read actually
         // begins rather than the moment the request arrived.
