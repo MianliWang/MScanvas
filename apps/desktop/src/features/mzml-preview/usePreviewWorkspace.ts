@@ -19,6 +19,7 @@ import type {
   ChromatogramTraceSet,
   CopiedFigure,
   ExportedFigure,
+  LinkedFigureFormat,
   FigureSettings,
   FigureTheme,
   Preview,
@@ -276,6 +277,61 @@ export type SpectrumExportState =
  * chromatogram export what it is: how much of the run it covered, and -- for a
  * data document -- how many source scans that turned out to be.
  */
+/** Which of the linked figure's two drawn outputs an operation is. */
+export type LinkedFigureOperation = "svg" | "png" | "copy";
+
+/**
+ * What the linked two-panel surface is doing, and what it last did.
+ *
+ * Its own state rather than a third lane. A linked figure has its own result,
+ * its own status message, its own *pair* of bound tokens and its own selected
+ * index -- none of which the single-source surfaces can carry. What it shares
+ * with them is the lane, and that is derived rather than stored.
+ */
+export type LinkedFigureExportState =
+  | { readonly status: "idle" }
+  | {
+      readonly status: "running";
+      readonly operation: LinkedFigureOperation;
+      /**
+       * Whether the pair being written is still the pair on screen.
+       *
+       * The pair, not either half: replacing the preview or selecting another
+       * scan is enough to make the answer `false`. The lane stays held either
+       * way -- Rust is still writing -- but nothing this surface shows may claim
+       * the chromatogram and spectrum now visible are the ones being exported.
+       */
+      readonly namesVisiblePair: boolean;
+    }
+  | { readonly status: "cancelled" }
+  | {
+      readonly status: "saved";
+      readonly format: LinkedFigureFormat;
+      readonly fileName: string;
+      readonly figure: ExportedFigure;
+      readonly rangeScope: ChromatogramRangeScope;
+      readonly rangeLow: number;
+      readonly rangeHigh: number;
+      readonly sourceScanCount: number;
+      readonly selectedIndex: number;
+      readonly selectedRetentionTime: number;
+    }
+  | {
+      readonly status: "copied";
+      readonly figure: CopiedFigure;
+      readonly rangeScope: ChromatogramRangeScope;
+      readonly rangeLow: number;
+      readonly rangeHigh: number;
+      readonly sourceScanCount: number;
+      readonly selectedIndex: number;
+      readonly selectedRetentionTime: number;
+    }
+  | {
+      readonly status: "failed";
+      readonly operation: LinkedFigureOperation;
+      readonly error: PreviewError;
+    };
+
 export type ChromatogramExportState =
   | { readonly status: "idle" }
   | {
@@ -647,6 +703,25 @@ export interface PreviewWorkspace {
    * status message: what is shared is the lane, not what happened in it.
    */
   readonly scientificExportBusy: boolean;
+  /**
+   * What the linked two-panel surface is doing, and what it last did.
+   *
+   * A third surface over the two sources beside it, and not a third lane.
+   */
+  readonly linkedFigureExport: LinkedFigureExportState;
+  /**
+   * Why a linked figure cannot be exported right now, or `null` when it can.
+   *
+   * One sentence, and only ever about the linked surface: the single-source
+   * exports each answer for themselves. Ordered by what a user would fix first.
+   */
+  readonly linkedFigureUnavailable: string | null;
+  /** Exports the chromatogram and the selected spectrum as one figure. */
+  readonly exportLinkedFigure: (format: LinkedFigureFormat) => void;
+  /** Puts that figure on the clipboard. */
+  readonly copyLinkedPlot: () => void;
+  /** Clears the linked surface's last result. */
+  readonly dismissLinkedFigureExport: () => void;
   /**
    * The opaque name of the chromatogram this run may be exported as.
    *
@@ -2499,8 +2574,13 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * remains the safety boundary: this is what makes the interface truthful, not
    * what makes it safe.
    */
+  const [linkedFigureExport, setLinkedFigureExport] = useState<LinkedFigureExportState>({
+    status: "idle",
+  });
   const scientificExportBusy =
-    spectrumExport.status === "running" || chromatogramExport.status === "running";
+    spectrumExport.status === "running" ||
+    chromatogramExport.status === "running" ||
+    linkedFigureExport.status === "running";
   // A result belongs to the spectrum it describes. Loading another one clears
   // it, so a panel can never show "saved 1,000,000 points" beside a different
   // measurement -- which is the one way this surface could mislead about which
@@ -3000,6 +3080,228 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     conversionBusy: conversion.busy,
   });
 
+  // ------------------------------------------- linked two-panel figure
+  //
+  // A third *surface* over the two sources above, and not a third lane. It has
+  // its own result, its own message and its own bound pair, and it shares the
+  // one scientific export lane with both of them.
+
+  /** The least height a two-panel figure can be drawn at, as Rust computes it. */
+  const LINKED_MINIMUM_HEIGHT = 260;
+
+  /**
+   * The pair a linked operation is bound to, readable from a callback created
+   * before the user moved.
+   *
+   * Both halves, because the pair is what the figure is about: replacing the
+   * preview or selecting another scan is enough to make a landed answer belong
+   * to something else.
+   */
+  const boundLinkedPair = useRef<{ chromatogram: string; spectrum: string } | null>(null);
+  useEffect(() => {
+    boundLinkedPair.current =
+      chromatogramExportToken === null || exportedSpectrumToken === null
+        ? null
+        : { chromatogram: chromatogramExportToken, spectrum: exportedSpectrumToken };
+    // The rule the two single-source surfaces already follow: a *result* stops
+    // being ours here, and the lane does not stop being held until Rust says so.
+    setLinkedFigureExport((current) =>
+      current.status === "running"
+        ? { ...current, namesVisiblePair: false }
+        : { status: "idle" },
+    );
+  }, [chromatogramExportToken, exportedSpectrumToken]);
+
+  const dismissLinkedFigureExport = useCallback(() => {
+    setLinkedFigureExport({ status: "idle" });
+  }, []);
+
+  /**
+   * Why a linked figure cannot be exported right now, or `null` when it can.
+   *
+   * Ordered by what a user would fix first, and each sentence names the thing
+   * they can change. Rust checks every one of these again and is the boundary
+   * that matters; this exists so an action that is known to be refused is not
+   * offered as though it might work.
+   *
+   * The selected-scan containment rule is deliberately *not* computed here.
+   * Which scan the retained table holds at which retention time is Rust's fact,
+   * and this side does not have it -- so the guidance below says only what this
+   * side can see, and the refusal that names it comes back typed.
+   */
+  const linkedFigureUnavailable = useMemo((): string | null => {
+    if (chromatogramExportToken === null) {
+      return "This run has no chromatogram to link to.";
+    }
+    if (spectrum.status === "loading") {
+      return "Wait for the selected spectrum to load.";
+    }
+    if (exportedSpectrumToken === null) {
+      return "Select a scan and wait for its spectrum to load.";
+    }
+    if (!chromatogramTraces.tic && !chromatogramTraces.bpc) {
+      return "Show at least one chromatogram trace.";
+    }
+    if (renderSettingsProblem !== null) {
+      return renderSettingsProblem;
+    }
+    if (resolvedRenderSettings !== null && resolvedRenderSettings.heightPx < LINKED_MINIMUM_HEIGHT) {
+      return `A two-panel linked figure needs a height of at least ${LINKED_MINIMUM_HEIGHT}.`;
+    }
+    return null;
+  }, [
+    chromatogramExportToken,
+    chromatogramTraces,
+    exportedSpectrumToken,
+    renderSettingsProblem,
+    resolvedRenderSettings,
+    spectrum.status,
+  ]);
+
+  /** Both tokens, or nothing: a linked operation is about the pair. */
+  const linkedPair = useCallback((): { chromatogram: string; spectrum: string } | null => {
+    if (chromatogramExportToken === null || exportedSpectrumToken === null) {
+      return null;
+    }
+    return { chromatogram: chromatogramExportToken, spectrum: exportedSpectrumToken };
+  }, [chromatogramExportToken, exportedSpectrumToken]);
+
+  /**
+   * Whether a landed linked answer still describes the pair that asked for it.
+   *
+   * Compared against the binding rather than against what is on screen now, so
+   * a result is published beside the pair it is about or not at all.
+   */
+  const linkedAnswerIsOurs = useCallback(
+    (pair: { chromatogram: string; spectrum: string }): boolean => {
+      const bound = boundLinkedPair.current;
+      return (
+        bound !== null &&
+        bound.chromatogram === pair.chromatogram &&
+        bound.spectrum === pair.spectrum
+      );
+    },
+    [],
+  );
+
+  const exportLinkedFigure = useCallback(
+    (format: LinkedFigureFormat) => {
+      const pair = linkedPair();
+      if (pair === null || scientificExportBusy || linkedFigureUnavailable !== null) {
+        return;
+      }
+      const settings =
+        resolvedRenderSettings === null
+          ? DEFAULT_FIGURE_SETTINGS
+          : figureSettingsFor(resolvedRenderSettings, resolvedPngDpi);
+      const visible = visibleTraces();
+      const range = chromatogramRange();
+      setLinkedFigureExport({ status: "running", operation: format, namesVisiblePair: true });
+      void api
+        .exportLinkedFigure(pair.chromatogram, pair.spectrum, format, range, visible, settings)
+        .then((outcome) => {
+          if (!linkedAnswerIsOurs(pair)) {
+            // Finished, so the lane is free -- and its answer belongs to a pair
+            // the user has moved past, so it is not published.
+            setLinkedFigureExport({ status: "idle" });
+            return;
+          }
+          setLinkedFigureExport(
+            outcome.status === "cancelled"
+              ? { status: "cancelled" }
+              : {
+                  status: "saved",
+                  format: outcome.format,
+                  fileName: outcome.fileName,
+                  figure: outcome.figure,
+                  rangeScope: outcome.rangeScope,
+                  rangeLow: outcome.rangeLow,
+                  rangeHigh: outcome.rangeHigh,
+                  sourceScanCount: outcome.sourceScanCount,
+                  selectedIndex: outcome.selectedIndex,
+                  selectedRetentionTime: outcome.selectedRetentionTime,
+                },
+          );
+        })
+        .catch((cause: unknown) => {
+          if (!linkedAnswerIsOurs(pair)) {
+            setLinkedFigureExport({ status: "idle" });
+            return;
+          }
+          setLinkedFigureExport({
+            status: "failed",
+            operation: format,
+            error: toPreviewError(cause),
+          });
+        });
+    },
+    [
+      api,
+      chromatogramRange,
+      linkedAnswerIsOurs,
+      linkedFigureUnavailable,
+      linkedPair,
+      resolvedPngDpi,
+      resolvedRenderSettings,
+      scientificExportBusy,
+      visibleTraces,
+    ],
+  );
+
+  const copyLinkedPlot = useCallback(() => {
+    const pair = linkedPair();
+    if (pair === null || scientificExportBusy || linkedFigureUnavailable !== null) {
+      return;
+    }
+    // The figure, and nothing about a resolution. A clipboard image carries no
+    // physical size, so the number that records one is not sent.
+    const settings =
+      resolvedRenderSettings === null
+        ? DEFAULT_FIGURE_SETTINGS
+        : figureSettingsFor(resolvedRenderSettings, null);
+    const visible = visibleTraces();
+    const range = chromatogramRange();
+    setLinkedFigureExport({ status: "running", operation: "copy", namesVisiblePair: true });
+    void api
+      .copyLinkedPlot(pair.chromatogram, pair.spectrum, range, visible, settings)
+      .then((outcome) => {
+        if (!linkedAnswerIsOurs(pair)) {
+          setLinkedFigureExport({ status: "idle" });
+          return;
+        }
+        setLinkedFigureExport({
+          status: "copied",
+          figure: outcome.figure,
+          rangeScope: outcome.rangeScope,
+          rangeLow: outcome.rangeLow,
+          rangeHigh: outcome.rangeHigh,
+          sourceScanCount: outcome.sourceScanCount,
+          selectedIndex: outcome.selectedIndex,
+          selectedRetentionTime: outcome.selectedRetentionTime,
+        });
+      })
+      .catch((cause: unknown) => {
+        if (!linkedAnswerIsOurs(pair)) {
+          setLinkedFigureExport({ status: "idle" });
+          return;
+        }
+        setLinkedFigureExport({
+          status: "failed",
+          operation: "copy",
+          error: toPreviewError(cause),
+        });
+      });
+  }, [
+    api,
+    chromatogramRange,
+    linkedAnswerIsOurs,
+    linkedFigureUnavailable,
+    linkedPair,
+    resolvedRenderSettings,
+    scientificExportBusy,
+    visibleTraces,
+  ]);
+
   const activeDataset = useMemo(
     () => roster.datasets.find((dataset) => dataset.handle === roster.active) ?? null,
     [roster.active, roster.datasets],
@@ -3013,6 +3315,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     viewerInteraction: viewer.state,
     chromatogramExportToken,
     chromatogramRangeScope,
+    linkedFigureExport,
+    linkedFigureUnavailable,
+    exportLinkedFigure,
+    copyLinkedPlot,
+    dismissLinkedFigureExport,
     setChromatogramRangeScope,
     chromatogramCommittedDomain,
     chromatogramExport,

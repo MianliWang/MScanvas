@@ -14,6 +14,9 @@ import type { WorkspaceDropTransport } from "../features/mzml-preview/dropTransp
 import type {
   BackendAvailability,
   ChromatogramCopyOutcome,
+  LinkedFigureCopyOutcome,
+  LinkedFigureExportOutcome,
+  LinkedFigureFormat,
   ChromatogramExportFormat,
   ChromatogramExportOutcome,
   ChromatogramRange,
@@ -500,6 +503,22 @@ export interface ChromatogramCopyRequest {
   readonly settings: FigureSettings;
 }
 
+/** One linked figure the interface asked Rust for. Both tokens, together. */
+export interface LinkedFigureRequest {
+  readonly chromatogramToken: string;
+  readonly spectrumToken: string;
+  readonly format: LinkedFigureFormat | null;
+  readonly range: ChromatogramRange;
+  readonly traces: ChromatogramTraceSet;
+  readonly settings: FigureSettings;
+}
+
+/** Which spectrum the fake's linked figure says it drew. */
+export const FAKE_SELECTED_INDEX = 0;
+
+/** Where that scan sits, as the retained row would report it. */
+export const FAKE_SELECTED_RETENTION_TIME = 0.0125;
+
 /**
  * How many scans the fake says the run holds.
  *
@@ -592,6 +611,23 @@ export interface FakePreviewApiOptions {
     traces: ChromatogramTraceSet,
     settings: FigureSettings,
   ) => Promise<ChromatogramCopyOutcome>;
+  /** What a linked figure export answers with. */
+  readonly linkedFigureExport?: (
+    chromatogramToken: string,
+    spectrumToken: string,
+    format: LinkedFigureFormat,
+    range: ChromatogramRange,
+    traces: ChromatogramTraceSet,
+    settings: FigureSettings,
+  ) => Promise<LinkedFigureExportOutcome>;
+  /** What a linked `Copy plot` answers with. */
+  readonly linkedFigureCopy?: (
+    chromatogramToken: string,
+    spectrumToken: string,
+    range: ChromatogramRange,
+    traces: ChromatogramTraceSet,
+    settings: FigureSettings,
+  ) => Promise<LinkedFigureCopyOutcome>;
   /** What the session already holds when the webview mounts. */
   readonly initialDatasets?: readonly HeldFile[];
   /** What the conversion slot holds when the webview mounts. */
@@ -716,6 +752,8 @@ export interface FakePreviewApi extends PreviewApi {
   readonly chromatogramExportRequests: ChromatogramExportRequest[];
   /** Every chromatogram `Copy plot` this fake was asked for, in order. */
   readonly chromatogramCopyRequests: ChromatogramCopyRequest[];
+  readonly linkedFigureRequests: LinkedFigureRequest[];
+  readonly linkedFigureCopyRequests: LinkedFigureRequest[];
   readonly requestedSpectra: number[];
   readonly openCount: () => number;
   /** Every handle this fake was asked to read, in order. */
@@ -968,6 +1006,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   const spectrumCopyRequests: SpectrumCopyRequest[] = [];
   const chromatogramExportRequests: ChromatogramExportRequest[] = [];
   const chromatogramCopyRequests: ChromatogramCopyRequest[] = [];
+  const linkedFigureRequests: LinkedFigureRequest[] = [];
+  const linkedFigureCopyRequests: LinkedFigureRequest[] = [];
   // The diagnostics export slot, modelled the way Rust holds it: eligibility is
   // derived from the terminal queue rather than tracked, an export is a claim
   // that closes every other action on that queue, and the last result survives
@@ -1156,6 +1196,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     spectrumCopyRequests,
     chromatogramExportRequests,
     chromatogramCopyRequests,
+    linkedFigureRequests,
+    linkedFigureCopyRequests,
     requestedSpectra,
     openedHandles,
     openCount: () => openCount,
@@ -1511,6 +1553,79 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         rangeLow: range.low ?? 0,
         rangeHigh: range.high ?? FAKE_COMPLETE_SCAN_COUNT * 0.0125,
         sourceScanCount: FAKE_COMPLETE_SCAN_COUNT,
+      };
+    },
+    // Modelled as Rust behaves: the pair is bound in one operation, the range
+    // is resolved there, and the selected scan's retention time comes back from
+    // the retained row rather than from anything this side supplied.
+    exportLinkedFigure: async (
+      chromatogramToken,
+      spectrumToken,
+      format,
+      range,
+      traces,
+      settings,
+    ) => {
+      linkedFigureRequests.push({
+        chromatogramToken,
+        spectrumToken,
+        format,
+        range,
+        traces,
+        settings,
+      });
+      if (options.linkedFigureExport !== undefined) {
+        return options.linkedFigureExport(
+          chromatogramToken,
+          spectrumToken,
+          format,
+          range,
+          traces,
+          settings,
+        );
+      }
+      return {
+        status: "saved",
+        format,
+        fileName: `mscanvas-linked-spectrum-${FAKE_SELECTED_INDEX}-${range.scope}.${format}`,
+        figure: fakeExportedFigure(settings, format),
+        traces,
+        rangeScope: range.scope,
+        rangeLow: range.low ?? 0,
+        rangeHigh: range.high ?? FAKE_COMPLETE_SCAN_COUNT * 0.0125,
+        sourceScanCount: FAKE_COMPLETE_SCAN_COUNT,
+        selectedIndex: FAKE_SELECTED_INDEX,
+        selectedRetentionTime: FAKE_SELECTED_RETENTION_TIME,
+      };
+    },
+    copyLinkedPlot: async (chromatogramToken, spectrumToken, range, traces, settings) => {
+      linkedFigureCopyRequests.push({
+        chromatogramToken,
+        spectrumToken,
+        format: null,
+        range,
+        traces,
+        settings,
+      });
+      if (options.linkedFigureCopy !== undefined) {
+        return options.linkedFigureCopy(
+          chromatogramToken,
+          spectrumToken,
+          range,
+          traces,
+          settings,
+        );
+      }
+      return {
+        status: "copied",
+        figure: fakeCopiedFigure(settings),
+        traces,
+        rangeScope: range.scope,
+        rangeLow: range.low ?? 0,
+        rangeHigh: range.high ?? FAKE_COMPLETE_SCAN_COUNT * 0.0125,
+        sourceScanCount: FAKE_COMPLETE_SCAN_COUNT,
+        selectedIndex: FAKE_SELECTED_INDEX,
+        selectedRetentionTime: FAKE_SELECTED_RETENTION_TIME,
       };
     },
     // Modelled as Rust behaves: the claim closes every other action on the

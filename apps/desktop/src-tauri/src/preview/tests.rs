@@ -3598,6 +3598,16 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // spectrum commands above, so two save dialogs cannot be open at
             // once whichever surface asked.
             "begin_chromatogram_export",
+            // The linked two-panel figure: a third *surface* over the two
+            // sources above, and not a third lane. It takes both tokens at
+            // once, because what it draws is the pair, and it shares the same
+            // one scientific export lane -- so while one of these is running
+            // neither the spectrum nor the chromatogram may start an export of
+            // its own. There is no linked data command: a combined table would
+            // have to interleave two different measurements or drop the link.
+            "begin_linked_figure_export",
+            "copy_linked_plot",
+            "save_linked_figure_export",
             "save_chromatogram_export",
             "copy_chromatogram_plot",
             // Copy plot needs neither phase: there is no destination to choose,

@@ -56,16 +56,17 @@
 use std::sync::Arc;
 
 use mscanvas_plot_spec::spec::{
-    AxisSpec, Caption, DataScope, Domain, FigureSpec, Label, PanelSpec, PlotKind, SeriesSpec,
-    SpecError, SpectrumRepresentation, StyleRole, UnitState,
+    AxisSpec, Caption, DataScope, Domain, FigureSpec, Label, MIN_FIGURE_CHROME_HEIGHT,
+    MIN_PANEL_HEIGHT, PanelSpec, PlotKind, SeriesSpec, SpecError, SpectrumRepresentation,
+    StyleRole, UnitState,
 };
 use mscanvas_proteowizard::{
     SelectedSpectrumResult, SpectrumRepresentationState, UnitState as SourceUnitState,
 };
 
 use super::chromatogram::{
-    ChromatogramExportFormat, ChromatogramSource, RangeRefusal, RangeRequest, ResolvedRange,
-    TraceSet,
+    ChromatogramExportFormat, ChromatogramSource, LinkedFigureFormat, RangeRefusal, RangeRequest,
+    ResolvedRange, TraceSet,
 };
 use super::dialog::SaveDialogFacts;
 use super::figure::{FigureRenderSettings, PngDpi, RasterFailure, encode_png, rasterize};
@@ -363,15 +364,71 @@ impl ClaimedChromatogramExport {
     }
 }
 
+/// What a claimed linked reservation hands to the code that writes it.
+///
+/// **Both snapshots, taken together.** The pair is what this export is about, so
+/// it is bound once at BEGIN and never rebound: the user may select another scan
+/// or open another run while the save dialog is open, and what is written is
+/// still the figure they asked for.
+///
+/// `selected_retention_time` is the retained table row's own number, carried
+/// here so the writer cannot go looking for it again in a source that has since
+/// moved on. `selected_index` is the same spectrum index the caption names.
+#[derive(Debug, Clone)]
+pub struct ClaimedLinkedFigureExport {
+    pub(super) chromatogram: ChromatogramSnapshot,
+    pub(super) spectrum: SpectrumSnapshot,
+    pub(super) selected_index: u64,
+    pub(super) selected_retention_time: f64,
+    pub(super) format: LinkedFigureFormat,
+    pub(super) range: ResolvedRange,
+    pub(super) traces: TraceSet,
+    pub(super) settings: FigureRenderSettings,
+    pub(super) dpi: Option<PngDpi>,
+}
+
+impl ClaimedLinkedFigureExport {
+    /// How this export's save dialog presents itself.
+    #[must_use]
+    pub const fn dialog(&self) -> SaveDialogFacts {
+        self.format.dialog()
+    }
+
+    /// The name that dialog offers first.
+    #[must_use]
+    pub fn suggested_file_name(&self) -> String {
+        self.format
+            .suggested_file_name(self.selected_index, self.range.scope())
+    }
+}
+
+/// Two snapshots proved to describe one scan, and the range they will be drawn
+/// over.
+///
+/// Not a retained identity. This is what one linked operation decided at the
+/// moment it began, and it lives only as long as that operation does -- which is
+/// why there is no third token beside the chromatogram's and the spectrum's.
+#[derive(Debug, Clone)]
+pub(super) struct LinkedPair {
+    pub(super) chromatogram: ChromatogramSnapshot,
+    pub(super) spectrum: SpectrumSnapshot,
+    pub(super) selected_index: u64,
+    pub(super) selected_retention_time: f64,
+    pub(super) range: ResolvedRange,
+}
+
 /// One export that has been claimed, whichever source it is of.
 ///
 /// The lane below holds one of these at a time, which is the whole point: two
 /// scientific exports cannot be in flight because there is one place for the
-/// claim to live.
+/// claim to live. A linked figure is a third *surface* and not a third lane --
+/// it draws two of the sources at once, and while it is being written neither
+/// of them may start an export of its own.
 #[derive(Debug, Clone)]
 pub enum ClaimedExport {
     Spectrum(ClaimedSpectrumExport),
     Chromatogram(ClaimedChromatogramExport),
+    LinkedFigure(ClaimedLinkedFigureExport),
 }
 
 /// Where every scientific export of this session is.
@@ -849,6 +906,154 @@ impl ScientificExportSlots {
         }))
     }
 
+    /// Binds one linked two-panel figure and reserves the one scientific lane.
+    ///
+    /// **One acquisition, one moment.** Everything this figure is about is
+    /// decided here, while the slot is held: which chromatogram, which spectrum,
+    /// that they are the same scan, which range, whether the scan is inside it,
+    /// which traces were on screen and how it is to be drawn. Reading one token,
+    /// letting go, and reading the other would let the pair describe two
+    /// different instants -- the very thing a linked figure claims it does not.
+    ///
+    /// The order below is the order the refusals should reach a reader in: what
+    /// this session no longer holds, then what does not go together, then what
+    /// cannot be drawn.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a stale token, a pair that is not one scan, a selected scan
+    /// outside the requested range, a figure with no visible trace, a figure too
+    /// short for two panels, and a lane that is already busy.
+    pub(super) fn begin_linked_figure(
+        &mut self,
+        chromatogram_token: &str,
+        spectrum_token: &str,
+        format: LinkedFigureFormat,
+        request: RangeRequest,
+        traces: TraceSet,
+        settings: FigureRenderSettings,
+        dpi: Option<PngDpi>,
+    ) -> Result<SpectrumReservationId, BeginExportRefusal> {
+        let pair = self.linked_pair(
+            chromatogram_token,
+            spectrum_token,
+            request,
+            traces,
+            settings,
+        )?;
+        self.reserve(ClaimedExport::LinkedFigure(ClaimedLinkedFigureExport {
+            chromatogram: pair.chromatogram,
+            spectrum: pair.spectrum,
+            selected_index: pair.selected_index,
+            selected_retention_time: pair.selected_retention_time,
+            format,
+            range: pair.range,
+            traces,
+            settings,
+            dpi,
+        }))
+    }
+
+    /// Binds one linked figure and commits the lane straight to writing.
+    ///
+    /// A copy has no destination to choose, so there is nothing to come back
+    /// from and no reservation to claim. Everything the pair is about is decided
+    /// by the same operation a save uses, so the two cannot come to disagree
+    /// about what a linked figure is.
+    ///
+    /// # Errors
+    ///
+    /// The same refusals [`Self::begin_linked_figure`] answers with.
+    pub(super) fn begin_linked_figure_copy(
+        &mut self,
+        chromatogram_token: &str,
+        spectrum_token: &str,
+        request: RangeRequest,
+        traces: TraceSet,
+        settings: FigureRenderSettings,
+    ) -> Result<LinkedPair, BeginExportRefusal> {
+        let pair = self.linked_pair(
+            chromatogram_token,
+            spectrum_token,
+            request,
+            traces,
+            settings,
+        )?;
+        if self.is_committed() {
+            return Err(BeginExportRefusal::AlreadyExporting);
+        }
+        self.lane = ExportState::Writing;
+        Ok(pair)
+    }
+
+    /// Everything a linked figure is about, decided in one acquisition.
+    ///
+    /// **One moment, both sources.** Reading one token, letting go, and reading
+    /// the other would let the pair describe two different instants -- the very
+    /// thing a linked figure claims it does not. `&mut self` is the slot's lock,
+    /// so nothing can move between the two lookups below.
+    ///
+    /// The order is the order the refusals should reach a reader in: what this
+    /// session no longer holds, then what does not go together, then what cannot
+    /// be drawn.
+    fn linked_pair(
+        &self,
+        chromatogram_token: &str,
+        spectrum_token: &str,
+        request: RangeRequest,
+        traces: TraceSet,
+        settings: FigureRenderSettings,
+    ) -> Result<LinkedPair, BeginExportRefusal> {
+        let chromatogram = self.chromatogram_for(chromatogram_token)?;
+        let spectrum = self.spectrum_for(spectrum_token)?;
+
+        // Same dataset first, because two snapshots of different files cannot be
+        // one scan however well their indices line up.
+        if chromatogram.owner() != spectrum.owner() {
+            return Err(BeginExportRefusal::LinkedSourceMismatch);
+        }
+        // Then the exact row, reconciled by identity. Retention time is not an
+        // identity: scans may share one.
+        let row = chromatogram
+            .source()
+            .row_for_spectrum(spectrum.spectrum())
+            .ok_or(BeginExportRefusal::LinkedSourceMismatch)?;
+        let selected_retention_time = row.retention_time();
+        let selected_index = spectrum.spectrum().identity().index();
+
+        let range = chromatogram
+            .source()
+            .resolve(request)
+            .map_err(|refusal| match refusal {
+                RangeRefusal::OutsideSource => BeginExportRefusal::RangeOutsideSource,
+            })?;
+        // The link has to be visible in the figure that claims to make it. A
+        // marker outside the drawn range would be a linked figure with nothing
+        // linked, and widening the range to fit would export something other
+        // than what was asked for. Edges count as inside.
+        if selected_retention_time < range.domain().low()
+            || selected_retention_time > range.domain().high()
+        {
+            return Err(BeginExportRefusal::SelectedScanOutsideRange);
+        }
+        if !traces.any() {
+            return Err(BeginExportRefusal::NoVisibleTrace);
+        }
+        // Two panels need more height than one, and the contract knows how much.
+        // Asked here so a figure that could not be built never opens a dialog.
+        if !fits_two_panels(settings) {
+            return Err(BeginExportRefusal::FigureTooShort);
+        }
+
+        Ok(LinkedPair {
+            chromatogram,
+            spectrum,
+            selected_index,
+            selected_retention_time,
+            range,
+        })
+    }
+
     /// Claims one issued reservation, so its save dialog may be shown.
     ///
     /// Claiming once is the rule. A second claim of the same reservation is a
@@ -893,7 +1098,7 @@ impl ScientificExportSlots {
     pub(super) fn claim_spectrum(&mut self, reservation: &str) -> Option<ClaimedSpectrumExport> {
         self.claim_matching(reservation, |export| match export {
             ClaimedExport::Spectrum(claimed) => Some(claimed.clone()),
-            ClaimedExport::Chromatogram(_) => None,
+            ClaimedExport::Chromatogram(_) | ClaimedExport::LinkedFigure(_) => None,
         })
     }
 
@@ -904,7 +1109,23 @@ impl ScientificExportSlots {
     ) -> Option<ClaimedChromatogramExport> {
         self.claim_matching(reservation, |export| match export {
             ClaimedExport::Chromatogram(claimed) => Some(claimed.clone()),
-            ClaimedExport::Spectrum(_) => None,
+            ClaimedExport::Spectrum(_) | ClaimedExport::LinkedFigure(_) => None,
+        })
+    }
+
+    /// Claims one issued reservation as a linked two-panel figure export.
+    ///
+    /// Its own claim, for the reason the other two have theirs: each save
+    /// command names the kind it is for, and the kind is checked *before* the
+    /// lane is marked claimed. A linked reservation handed to the chromatogram's
+    /// save command is refused and stays claimable by its own.
+    pub(super) fn claim_linked_figure(
+        &mut self,
+        reservation: &str,
+    ) -> Option<ClaimedLinkedFigureExport> {
+        self.claim_matching(reservation, |export| match export {
+            ClaimedExport::LinkedFigure(claimed) => Some(claimed.clone()),
+            ClaimedExport::Spectrum(_) | ClaimedExport::Chromatogram(_) => None,
         })
     }
 
@@ -1015,6 +1236,43 @@ pub(super) enum BeginExportRefusal {
     /// export beside it stays available, because hiding a trace is a
     /// presentation choice rather than a decision to drop measured science.
     NoVisibleTrace,
+    /// The two sources a linked figure was asked for do not describe one scan.
+    ///
+    /// Same dataset is necessary and not sufficient: the selected spectrum has
+    /// to be a scan of the *retained table* this chromatogram was built from,
+    /// reconciled by identity rather than by retention time, which scans may
+    /// share. A disagreement is refused rather than resolved in favour of one
+    /// of the two.
+    LinkedSourceMismatch,
+    /// The selected scan is not inside the chromatogram range that was asked
+    /// for.
+    ///
+    /// A user may select a scan and then pan away from it, and that is an
+    /// ordinary thing to do. What a linked figure may not do is widen the range
+    /// back, move the viewer, or draw a marker outside its own panel and still
+    /// call the result linked.
+    SelectedScanOutsideRange,
+    /// The figure is too short to hold two panels.
+    ///
+    /// A one-panel figure remains valid at heights this refuses: the contract's
+    /// minimum grows with the number of panels, and only the linked surface has
+    /// two.
+    FigureTooShort,
+}
+
+/// The least height a two-panel figure can be drawn at.
+///
+/// The contract's own arithmetic rather than a number copied beside it: the
+/// chrome a figure always needs, plus one panel's minimum for each panel it
+/// holds. A one-panel figure keeps its own smaller minimum, which is why this is
+/// asked only of the linked surface.
+pub(super) fn two_panel_minimum_height() -> f64 {
+    MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT * 2.0
+}
+
+/// Whether these settings can hold two panels.
+fn fits_two_panels(settings: FigureRenderSettings) -> bool {
+    f64::from(settings.height()) >= two_panel_minimum_height()
 }
 
 /// Builds the figure one selected spectrum exports as.
@@ -1034,6 +1292,34 @@ pub(super) fn figure_spec(
     spectrum: &SelectedSpectrumResult,
     settings: FigureRenderSettings,
 ) -> Result<FigureSpec, SpecError> {
+    let panel = spectrum_panel(spectrum)?;
+    Ok(
+        FigureSpec::new(settings.theme(), settings.size(), vec![panel])?
+            .with_title(Label::new(format!(
+                "Spectrum {}",
+                spectrum.identity().index()
+            ))?)
+            .with_caption(Caption::new(format!(
+                "Complete selected spectrum, {} points. Representation {UNREPORTED}; m/z and \
+         intensity units {UNREPORTED}.",
+                spectrum.mz_values().len()
+            ))?),
+    )
+}
+
+/// The selected spectrum as one panel, with no figure around it.
+///
+/// Factored out for the same reason the chromatogram's is: the linked figure's
+/// lower panel must be the *same* spectrum the single-panel export draws, down
+/// to the representation and unit posture, rather than a second reading of the
+/// same result.
+///
+/// # Errors
+///
+/// Answers with the contract's own refusal. A spectrum whose m/z values are not
+/// non-decreasing, or which carries a value the contract will not accept, is
+/// refused here rather than drawn into a figure that misstates it.
+pub(super) fn spectrum_panel(spectrum: &SelectedSpectrumResult) -> Result<PanelSpec, SpecError> {
     // Exhaustive, with no wildcard arm. Both of these enumerations carry one
     // state today, and that is exactly why the match is written this way: a
     // backend that starts emitting a real representation or a real unit must
@@ -1070,18 +1356,7 @@ pub(super) fn figure_spec(
         vec![series],
     )?;
 
-    Ok(
-        FigureSpec::new(settings.theme(), settings.size(), vec![panel])?
-            .with_title(Label::new(format!(
-                "Spectrum {}",
-                spectrum.identity().index()
-            ))?)
-            .with_caption(Caption::new(format!(
-                "Complete selected spectrum, {} points. Representation {UNREPORTED}; m/z and \
-         intensity units {UNREPORTED}.",
-                spectrum.mz_values().len()
-            ))?),
-    )
+    Ok(panel)
 }
 
 /// The domain the exported spectrum covers.

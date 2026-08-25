@@ -38,11 +38,14 @@
 use std::sync::Arc;
 
 use mscanvas_plot_spec::spec::{
-    AxisSpec, Caption, DataScope, Domain, FigureSpec, Label, PanelSpec, PlotKind, SeriesSpec,
-    SpecError, StyleRole, UnitState,
+    AxisSpec, Caption, DataScope, Domain, FigureSpec, Label, Marker, PanelSpec, PlotKind,
+    SeriesSpec, SpecError, StyleRole, UnitState,
 };
 
+use mscanvas_proteowizard::SelectedSpectrumResult;
+
 use super::dialog::SaveDialogFacts;
+use super::export::spectrum_panel;
 use super::figure::FigureRenderSettings;
 use super::service::TableRowFacts;
 
@@ -151,6 +154,68 @@ impl ChromatogramExportFormat {
     pub(super) fn suggested_file_name(self, scope: RangeScope) -> String {
         format!(
             "mscanvas-chromatogram-{}.{}",
+            scope.stable_id(),
+            self.stable_id()
+        )
+    }
+}
+
+/// What a linked two-panel figure can be written as.
+///
+/// Drawings only. A linked figure is a statement about where one scan sits in a
+/// run, and there is no honest table of that: a combined CSV would have to
+/// either interleave two different measurements or pick one and drop the link.
+/// So the linked surface offers no data document, and the two single-source
+/// exports keep theirs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LinkedFigureFormat {
+    Svg,
+    Png,
+}
+
+impl LinkedFigureFormat {
+    pub(super) const fn stable_id(self) -> &'static str {
+        match self {
+            Self::Svg => "svg",
+            Self::Png => "png",
+        }
+    }
+
+    pub(super) fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "svg" => Some(Self::Svg),
+            "png" => Some(Self::Png),
+            _ => None,
+        }
+    }
+
+    /// How this format's save dialog presents itself.
+    pub(super) const fn dialog(self) -> SaveDialogFacts {
+        match self {
+            Self::Svg => SaveDialogFacts {
+                title: "Export linked figure",
+                filter_label: "SVG figure (*.svg)",
+                filter_pattern: "*.svg",
+                default_extension: "svg",
+            },
+            Self::Png => SaveDialogFacts {
+                title: "Export linked figure",
+                filter_label: "PNG image (*.png)",
+                filter_pattern: "*.png",
+                default_extension: "png",
+            },
+        }
+    }
+
+    /// The name the save dialog offers first.
+    ///
+    /// The selected spectrum's index, the chromatogram's scope, and the format.
+    /// The index is a scientific position in the run that the interface already
+    /// shows; no part of a path, a workspace handle or a dataset display name
+    /// reaches a name this boundary proposes.
+    pub(super) fn suggested_file_name(self, index: u64, scope: RangeScope) -> String {
+        format!(
+            "mscanvas-linked-spectrum-{index}-{}.{}",
             scope.stable_id(),
             self.stable_id()
         )
@@ -414,6 +479,33 @@ impl ChromatogramSource {
         self.full_domain
     }
 
+    /// The retained row this selected spectrum was read from, if it is one.
+    ///
+    /// **Same dataset is necessary and not sufficient.** Two snapshots can be
+    /// owned by one dataset and still not describe the same moment -- a
+    /// spectrum read before a reload, a table replaced underneath it -- so a
+    /// linked figure has to establish that *this* spectrum is a scan of *this*
+    /// retained table rather than of one that looked like it.
+    ///
+    /// The zero-based spectrum index is the table position, so the row is found
+    /// in constant time and the answer does not depend on the scan count. Found
+    /// is not enough either: the row's identity has to reconcile with the
+    /// spectrum's, which is the same reconciliation the selected-spectrum
+    /// loader already performs against the row it read. A disagreement answers
+    /// `None` rather than choosing one of the two.
+    ///
+    /// Retention time is deliberately not a key here. Scans may share one, and
+    /// a lookup by time could not say which of them was selected.
+    pub(super) fn row_for_spectrum(
+        &self,
+        spectrum: &SelectedSpectrumResult,
+    ) -> Option<&TableRowFacts> {
+        let index = usize::try_from(spectrum.identity().index()).ok()?;
+        let row = self.rows.get(index)?;
+        row.identity().reconcile(spectrum.identity()).ok()?;
+        Some(row)
+    }
+
     pub(super) fn scan_count(&self) -> usize {
         self.order.len()
     }
@@ -672,6 +764,53 @@ pub(super) fn figure_spec(
     traces: TraceSet,
     settings: FigureRenderSettings,
 ) -> Result<FigureSpec, SpecError> {
+    let panel = chromatogram_panel(source, resolved, traces)?;
+    Ok(
+        FigureSpec::new(settings.theme(), settings.size(), vec![panel])?
+            .with_title(Label::new("Chromatogram")?)
+            .with_caption(Caption::new(format!(
+                "{} over {}, from {} scans. Per-scan values projected from the loaded \
+                 spectrum table, not a stored chromatogram record. Retention time and intensity \
+                 units {UNREPORTED}.",
+                traces.describe(),
+                scope_phrase(resolved),
+                source.scan_count(),
+            ))?),
+    )
+}
+
+/// How a caption names the range a chromatogram was taken over.
+///
+/// Shared by the single-panel figure and the linked one, so the two cannot come
+/// to describe the same range differently.
+fn scope_phrase(resolved: ResolvedRange) -> String {
+    match resolved.scope() {
+        RangeScope::Full => "the full run".to_owned(),
+        RangeScope::Current => format!(
+            "the range {} to {}",
+            resolved.domain().low(),
+            resolved.domain().high()
+        ),
+    }
+}
+
+/// The chromatogram as one panel, with no figure around it.
+///
+/// Factored out so the linked two-panel figure draws the *same* chromatogram
+/// the single-panel export does rather than a second implementation of it. Every
+/// scientific decision -- the complete source series, the full value domain, the
+/// window a current range declares, the trace roles -- lives here and has
+/// exactly one home.
+///
+/// # Errors
+///
+/// Answers with the contract's own refusal. A panel of no series is one of
+/// them, and is what a request with both traces hidden becomes.
+pub(super) fn chromatogram_panel(
+    source: &ChromatogramSource,
+    resolved: ResolvedRange,
+    traces: TraceSet,
+) -> Result<PanelSpec, SpecError> {
     let retention_times: Vec<f64> = source
         .ordered()
         .map(TableRowFacts::retention_time)
@@ -714,23 +853,60 @@ pub(super) fn figure_spec(
         panel = panel.with_visible_value_domain(Domain::new(low, high)?)?;
     }
 
-    let scope = match resolved.scope() {
-        RangeScope::Full => "the full run".to_owned(),
-        RangeScope::Current => format!(
-            "the range {} to {}",
-            resolved.domain().low(),
-            resolved.domain().high()
-        ),
-    };
+    Ok(panel)
+}
+
+/// What the linking marker is called in the figure it appears in.
+const SELECTED_SCAN_LABEL: &str = "Selected scan";
+
+/// Builds the linked two-panel figure: a chromatogram above the scan it names.
+///
+/// Two ordered panels and nothing else. The top is the chromatogram this
+/// session would export on its own, over whichever range was asked for, with one
+/// marker added *after* its ordinary scientific semantics are built -- so the
+/// link is an annotation on the science rather than a change to it. The bottom
+/// is the complete selected spectrum, exactly as its own export writes it: never
+/// clipped to the chromatogram's range, because the range is a statement about
+/// where the scan sits in the run and not about which of its peaks are real.
+///
+/// The marker's position is `row.retention_time()` -- the retained table row's
+/// own number. Nothing here accepts a retention time from the webview or infers
+/// one from a coordinate: a marker drawn at a time the source does not have
+/// would be the figure claiming a scan was acquired when it was not.
+///
+/// # Errors
+///
+/// Answers with the contract's own refusal, including a figure too short for
+/// two panels and a chromatogram panel with no visible trace.
+pub(super) fn linked_figure_spec(
+    source: &ChromatogramSource,
+    spectrum: &SelectedSpectrumResult,
+    row: &TableRowFacts,
+    resolved: ResolvedRange,
+    traces: TraceSet,
+    settings: FigureRenderSettings,
+) -> Result<FigureSpec, SpecError> {
+    let marker = Marker::new(row.retention_time(), Some(Label::new(SELECTED_SCAN_LABEL)?))?;
+    let top = chromatogram_panel(source, resolved, traces)?.with_markers(vec![marker])?;
+    let bottom = spectrum_panel(spectrum)?;
+
+    // Order is the meaning. The renderer places panels in the sequence it is
+    // given, top to bottom, and the caption below says which is which -- so a
+    // figure whose panels were swapped would be a figure that lies about both.
     Ok(
-        FigureSpec::new(settings.theme(), settings.size(), vec![panel])?
-            .with_title(Label::new("Chromatogram")?)
+        FigureSpec::new(settings.theme(), settings.size(), vec![top, bottom])?
+            .with_title(Label::new("Selected spectrum in chromatographic context")?)
             .with_caption(Caption::new(format!(
-                "{} over {scope}, from {} scans. Per-scan values projected from the loaded \
-                 spectrum table, not a stored chromatogram record. Retention time and intensity \
-                 units {UNREPORTED}.",
+                "Two panels. Above, {} over {}, from {} scans -- per-scan values projected from \
+                 the loaded spectrum table, not a stored chromatogram record. The marker there \
+                 identifies spectrum index {}, shown below in full: the complete selected \
+                 spectrum, {} points, never narrowed to the chromatogram range. Retention time, \
+                 m/z and intensity units {UNREPORTED}.",
                 traces.describe(),
+                scope_phrase(resolved),
                 source.scan_count(),
+                spectrum.identity().index(),
+                spectrum.mz_values().len(),
             ))?),
     )
 }
