@@ -426,6 +426,50 @@ describe("what the chromatogram can be exported as", () => {
     expect(button("Export CSV…").disabled).toBe(false);
   });
 
+  it("sends a data export at a width no figure could be drawn at", async () => {
+    /*
+     * The exact reachable case M4.3's final observation found, kept as a case a
+     * user could walk through: a chromatogram ready, the disclosure open, a
+     * width typed that is a whole number and still outside what MSCanvas draws,
+     * and `Export CSV…` clicked.
+     *
+     * 20,001 is deliberate. The panel's rule is "a whole number of at least 1",
+     * because the panel is not the authority on the figure contract, so this
+     * value leaves every action live and is forwarded exactly as typed. Rust
+     * used to validate the whole settings object before it looked at the
+     * format, and answered `figure_settings_refused` -- for a document with no
+     * width in it.
+     *
+     * What is asserted is that the operation *happens*: the click is not a
+     * local no-op, the request crosses, and it carries the range and traces it
+     * always did. The figure action beside it is still refused by Rust, and
+     * that is the contract rather than a regression.
+     */
+    const preview = api();
+    await openTheViewer(preview);
+    openExport();
+
+    fireEvent.change(within(panel()).getByRole("textbox", { name: /^Width/u }), {
+      target: { value: "20001" },
+    });
+
+    // Nothing about a list of numbers changed, so nothing closes.
+    expect(button("Export CSV\u2026").disabled).toBe(false);
+    expect(button("Export TSV\u2026").disabled).toBe(false);
+
+    fireEvent.click(button("Export CSV\u2026"));
+    await waitFor(() => {
+      expect(preview.chromatogramExportRequests).toHaveLength(1);
+    });
+    const sent = preview.chromatogramExportRequests[0];
+    expect(sent?.format).toBe("csv");
+    expect(sent?.range.scope).toBe("full");
+    // Forwarded as typed rather than corrected here: the wire shape is
+    // unchanged, and the data path is what ignores the fields it has no use
+    // for.
+    expect(sent?.settings.widthPx).toBe(20001);
+  });
+
   it("keeps the two panels' settings identifiers apart", async () => {
     // Both export surfaces can be on screen at once. Two elements sharing an
     // id, or two radio groups sharing a name, would leave a label pointing at

@@ -2499,14 +2499,29 @@ impl PreviewService {
             ChromatogramExportFormat::from_wire(format).ok_or_else(chromatogram_export_stale)?;
         let request = RangeRequest::from_wire(&range.scope, range.low, range.high)
             .ok_or_else(chromatogram_range_outside_source)?;
-        let settings = Self::render_settings(settings_wire)?;
-        // The same order the spectrum path takes, and for the same reason: a
-        // figure both too large to hold as pixels and asked for at an unusable
+        // Each output is asked only about what it actually consumes, and the
+        // format is what decides that -- so it is read first and nothing is
+        // validated before it is known.
+        //
+        // A CSV or a TSV has no width, no height, no theme and no resolution.
+        // Asking the figure contract about one and refusing the document when
+        // the answer is no is refusing a list of numbers for the shape of a
+        // drawing nobody asked for: the panel leaves those actions available
+        // when a figure setting is unusable, precisely because none of them
+        // reaches a data document, and Rust has to mean the same thing.
+        //
+        // The order inside the figure branch is the spectrum path's, unchanged:
+        // a figure both too large to hold as pixels and asked for at an unusable
         // resolution is refused over the resolution first, because it is the
         // smaller correction of the two.
+        let settings = if format.is_figure() {
+            Some(Self::render_settings(settings_wire)?)
+        } else {
+            None
+        };
         let dpi = if matches!(format, ChromatogramExportFormat::Png) {
             let dpi = Self::png_dpi(settings_wire)?;
-            Self::raster_budget(settings)?;
+            Self::raster_budget(settings.expect("a figure export read its settings"))?;
             Some(dpi)
         } else {
             None
@@ -2569,16 +2584,17 @@ impl PreviewService {
         let mut row_count = None;
         let bytes = match claimed.format {
             ChromatogramExportFormat::Svg => {
-                chromatogram_svg(source, claimed.range, claimed.traces, claimed.settings)
+                let settings = claimed.figure_settings();
+                chromatogram_svg(source, claimed.range, claimed.traces, settings)
                     .map_err(|_| chromatogram_export_refused())?
                     .into_bytes()
             }
             ChromatogramExportFormat::Png => {
                 let dpi = claimed.dpi.expect("a PNG export reserved a resolution");
-                let figure =
-                    chromatogram_figure(source, claimed.range, claimed.traces, claimed.settings)
-                        .map_err(|_| chromatogram_export_refused())?;
-                png_of(&figure, claimed.settings, dpi).map_err(Self::figure_failure)?
+                let settings = claimed.figure_settings();
+                let figure = chromatogram_figure(source, claimed.range, claimed.traces, settings)
+                    .map_err(|_| chromatogram_export_refused())?;
+                png_of(&figure, settings, dpi).map_err(Self::figure_failure)?
             }
             // The data documents, which no figure setting and no trace toggle
             // reaches. Both measured columns are written whatever is on screen.
@@ -2672,11 +2688,12 @@ impl PreviewService {
 
     /// What a chromatogram figure export was drawn as.
     fn exported_chromatogram_figure(claimed: &ClaimedChromatogramExport) -> ExportedFigureDto {
+        let settings = claimed.figure_settings();
         ExportedFigureDto {
-            width: claimed.settings.width(),
-            height: claimed.settings.height(),
+            width: settings.width(),
+            height: settings.height(),
             dpi: claimed.dpi.map(PngDpi::get),
-            theme: Self::theme_name(claimed.settings),
+            theme: Self::theme_name(settings),
         }
     }
 

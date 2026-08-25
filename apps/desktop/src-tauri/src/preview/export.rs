@@ -326,11 +326,30 @@ pub struct ClaimedChromatogramExport {
     pub(super) format: ChromatogramExportFormat,
     pub(super) range: ResolvedRange,
     pub(super) traces: TraceSet,
-    pub(super) settings: FigureRenderSettings,
+    /// How to draw it, for the formats that are drawn.
+    ///
+    /// `None` for a data document, and that absence is the point rather than a
+    /// convenience. A CSV is the same list of numbers whatever size a figure
+    /// would have been, so a reservation for one that carried a width would be
+    /// carrying an answer to a question nobody asked -- and the moment it is
+    /// there, something can read it. The same shape `dpi` already has below,
+    /// for the same reason: only the output that has a resolution holds one.
+    pub(super) settings: Option<FigureRenderSettings>,
     pub(super) dpi: Option<PngDpi>,
 }
 
 impl ClaimedChromatogramExport {
+    /// How this export is drawn.
+    ///
+    /// Only a figure has an answer, and every caller is already inside a branch
+    /// that decided this is one -- the same contract [`Self::dpi`] has for a
+    /// PNG. A data document never reaches here, because nothing about how a
+    /// figure would have looked reaches a list of numbers.
+    pub(super) fn figure_settings(&self) -> FigureRenderSettings {
+        self.settings
+            .expect("a figure export reserved the settings it is drawn at")
+    }
+
     /// How this export's save dialog presents itself.
     #[must_use]
     pub const fn dialog(&self) -> SaveDialogFacts {
@@ -804,7 +823,7 @@ impl ScientificExportSlots {
         format: ChromatogramExportFormat,
         request: RangeRequest,
         traces: TraceSet,
-        settings: FigureRenderSettings,
+        settings: Option<FigureRenderSettings>,
         dpi: Option<PngDpi>,
     ) -> Result<SpectrumReservationId, BeginExportRefusal> {
         let snapshot = self.chromatogram_for(token)?;
@@ -2379,7 +2398,7 @@ mod tests {
                 ChromatogramExportFormat::Csv,
                 full_range(),
                 tic_only(),
-                defaults(),
+                None,
                 None,
             ),
             Err(BeginExportRefusal::AlreadyExporting),
@@ -2411,7 +2430,7 @@ mod tests {
                 ChromatogramExportFormat::Csv,
                 full_range(),
                 tic_only(),
-                defaults(),
+                None,
                 None,
             )
             .expect("a first export");
@@ -2487,7 +2506,7 @@ mod tests {
                 ChromatogramExportFormat::Csv,
                 full_range(),
                 tic_only(),
-                defaults(),
+                None,
                 None,
             )
             .expect("a chromatogram reservation supersedes an unclaimed one");
@@ -2513,7 +2532,7 @@ mod tests {
                 ChromatogramExportFormat::Tsv,
                 full_range(),
                 tic_only(),
-                defaults(),
+                None,
                 None,
             )
             .expect("a reservation");
@@ -2552,7 +2571,7 @@ mod tests {
                 ChromatogramExportFormat::Csv,
                 full_range(),
                 tic_only(),
-                defaults(),
+                None,
                 None,
             ),
             Err(BeginExportRefusal::Stale),
@@ -2565,7 +2584,7 @@ mod tests {
                     ChromatogramExportFormat::Csv,
                     full_range(),
                     tic_only(),
-                    defaults(),
+                    None,
                     None,
                 )
                 .is_ok()
@@ -2585,7 +2604,7 @@ mod tests {
                 ChromatogramExportFormat::Csv,
                 full_range(),
                 tic_only(),
-                defaults(),
+                None,
                 None,
             )
             .expect("a reservation");
@@ -2617,7 +2636,7 @@ mod tests {
                     ChromatogramExportFormat::Csv,
                     full_range(),
                     tic_only(),
-                    defaults(),
+                    None,
                     None,
                 )
                 .is_ok()
@@ -2630,7 +2649,7 @@ mod tests {
                 ChromatogramExportFormat::Csv,
                 full_range(),
                 tic_only(),
-                defaults(),
+                None,
                 None,
             ),
             Err(BeginExportRefusal::Stale),
@@ -2653,7 +2672,7 @@ mod tests {
                 ChromatogramExportFormat::Svg,
                 full_range(),
                 hidden,
-                defaults(),
+                Some(defaults()),
                 None,
             ),
             Err(BeginExportRefusal::NoVisibleTrace),
@@ -2667,7 +2686,7 @@ mod tests {
                     ChromatogramExportFormat::Csv,
                     full_range(),
                     hidden,
-                    defaults(),
+                    None,
                     None,
                 )
                 .is_ok()
@@ -2691,7 +2710,7 @@ mod tests {
                 ChromatogramExportFormat::Csv,
                 outside,
                 tic_only(),
-                defaults(),
+                None,
                 None,
             ),
             Err(BeginExportRefusal::RangeOutsideSource),
@@ -2720,7 +2739,7 @@ mod tests {
                 ChromatogramExportFormat::Csv,
                 full_range(),
                 tic_only(),
-                defaults(),
+                None,
                 None,
             )
             .expect("a chromatogram reservation");
@@ -2914,7 +2933,7 @@ mod tests {
                 ChromatogramExportFormat::Csv,
                 full_range(),
                 tic_only(),
-                defaults(),
+                None,
                 None,
             ),
             Err(BeginExportRefusal::Stale),
@@ -3041,7 +3060,7 @@ mod tests {
                 ChromatogramExportFormat::Csv,
                 full_range(),
                 tic_only(),
-                defaults(),
+                None,
                 None,
             )
             .expect("a reservation");
@@ -3065,7 +3084,7 @@ mod tests {
                 ChromatogramExportFormat::Csv,
                 full_range(),
                 tic_only(),
-                defaults(),
+                None,
                 None,
             ),
             Err(BeginExportRefusal::AlreadyExporting),
@@ -3082,7 +3101,7 @@ mod tests {
                     ChromatogramExportFormat::Csv,
                     full_range(),
                     tic_only(),
-                    defaults(),
+                    None,
                     None,
                 )
                 .is_ok(),

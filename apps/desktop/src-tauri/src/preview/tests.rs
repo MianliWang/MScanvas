@@ -21034,6 +21034,186 @@ fn choosing_another_file_through_the_picker_revokes_the_retained_spectrum() {
     );
 }
 
+// ------------------------------------ a data document has no figure settings
+
+/// Figure settings that are a whole number and still outside what Rust draws.
+///
+/// The frontend accepts these: its rule is "a whole number of at least 1",
+/// deliberately, because it is not the authority on the figure contract. So
+/// this is the shape that actually reaches the boundary from a real interface,
+/// not a value only a test could produce.
+fn figure_settings_sized(width: u32, height: u32) -> FigureSettingsDto {
+    FigureSettingsDto {
+        width_px: width,
+        height_px: height,
+        ..default_figure_settings()
+    }
+}
+
+/// One chromatogram to export, and the token that names it.
+fn chromatogram_ready(file: &TestFile, service: &PreviewService) -> String {
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the run opens")
+        .chromatogram_export_token
+        .expect("a run the viewer draws has a chromatogram export")
+}
+
+/// Begins one chromatogram export and returns it to idle, answering the refusal.
+fn chromatogram_export_attempt(
+    service: &PreviewService,
+    token: &str,
+    format: &str,
+    settings: &FigureSettingsDto,
+) -> Option<String> {
+    match service.begin_chromatogram_export(
+        token,
+        format,
+        &full_run_range(),
+        both_traces(),
+        settings,
+    ) {
+        Ok(reservation) => {
+            service.cancel_chromatogram_export(&reservation);
+            None
+        }
+        Err(error) => Some(error.kind),
+    }
+}
+
+/// CSV and TSV are lists of numbers, and no figure setting reaches one.
+///
+/// The reachable case M4.3's final observation found. The panel leaves the data
+/// actions available when a figure setting is unusable -- correctly, because a
+/// width says nothing about a column of retention times -- and forwards the
+/// draft it has. Rust was validating the whole `FigureSettingsDto` before it had
+/// looked at the format, so `Export CSV…` came back refused for the shape of a
+/// drawing nobody had asked for.
+///
+/// Every one of these sizes is a whole number the frontend accepts and the
+/// figure contract refuses: too wide, too narrow, too short.
+#[test]
+fn a_chromatogram_data_export_ignores_figure_settings_it_has_no_use_for() {
+    let file = TestFile::new("data-has-no-figure");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
+    let token = chromatogram_ready(&file, &service);
+
+    for settings in [
+        default_figure_settings(),
+        figure_settings_sized(20_001, 900),
+        figure_settings_sized(5, 900),
+        figure_settings_sized(1_200, 1),
+        figure_settings_sized(20_001, 20_001),
+    ] {
+        for format in ["csv", "tsv"] {
+            assert_eq!(
+                chromatogram_export_attempt(&service, &token, format, &settings),
+                None,
+                "{format} at {}x{} is the same list of numbers",
+                settings.width_px,
+                settings.height_px,
+            );
+        }
+    }
+}
+
+/// A theme no figure has is still not a property of a data document.
+///
+/// The size is the reachable case, but the rule is about the whole of the
+/// figure settings rather than about two of its fields. A CSV is not drawn, so
+/// nothing about how it would have been drawn can refuse it.
+#[test]
+fn a_chromatogram_data_export_ignores_an_unknown_theme_and_an_unusable_resolution() {
+    let file = TestFile::new("data-has-no-theme");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
+    let token = chromatogram_ready(&file, &service);
+    let odd = FigureSettingsDto {
+        theme: "chartreuse".to_owned(),
+        png_dpi: 0,
+        ..default_figure_settings()
+    };
+
+    assert_eq!(
+        chromatogram_export_attempt(&service, &token, "csv", &odd),
+        None,
+    );
+    assert_eq!(
+        chromatogram_export_attempt(&service, &token, "tsv", &odd),
+        None,
+    );
+    // And the figure formats still answer for both of them.
+    assert_eq!(
+        chromatogram_export_attempt(&service, &token, "svg", &odd),
+        Some("figure_settings_refused".to_owned()),
+    );
+}
+
+/// The figure formats keep every check they had.
+///
+/// The repair is about which outputs are asked, not about relaxing the contract
+/// for the outputs that are drawn. The order inside this block is the accepted
+/// one and is asserted rather than assumed: an unusable size is refused before
+/// a resolution is even read, and a resolution before the pixel budget.
+#[test]
+fn a_chromatogram_figure_export_still_answers_for_every_figure_setting() {
+    let file = TestFile::new("figure-still-checked");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
+    let token = chromatogram_ready(&file, &service);
+    let oversize = figure_settings_sized(20_001, 900);
+
+    assert_eq!(
+        chromatogram_export_attempt(&service, &token, "svg", &oversize),
+        Some("figure_settings_refused".to_owned()),
+    );
+    assert_eq!(
+        chromatogram_export_attempt(&service, &token, "png", &oversize),
+        Some("figure_settings_refused".to_owned()),
+    );
+    // A resolution nothing records, at a size that is fine.
+    let bad_dpi = FigureSettingsDto {
+        png_dpi: 3,
+        ..default_figure_settings()
+    };
+    assert_eq!(
+        chromatogram_export_attempt(&service, &token, "png", &bad_dpi),
+        Some("figure_settings_refused".to_owned()),
+    );
+    // And an SVG, which has no resolution to be wrong about, is untouched by it.
+    assert_eq!(
+        chromatogram_export_attempt(&service, &token, "svg", &bad_dpi),
+        None,
+    );
+}
+
+/// The selected spectrum's answers do not move.
+///
+/// It already had the right posture -- this repair brought the chromatogram to
+/// it -- so the two now say the same thing about the same settings, and that is
+/// what is pinned here rather than a second copy of the rule.
+#[test]
+fn the_selected_spectrum_export_answers_the_same_way_it_always_did() {
+    let file = TestFile::new("spectrum-unmoved");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+    let oversize = figure_settings_sized(20_001, 900);
+
+    for format in ["csv", "tsv"] {
+        let reservation = service
+            .begin_spectrum_export(&token, format, &oversize)
+            .expect("a data document has no figure settings here either");
+        service.cancel_spectrum_export(&reservation);
+    }
+    assert_eq!(
+        service
+            .begin_spectrum_export(&token, "svg", &oversize)
+            .expect_err("a figure still answers for its size")
+            .kind,
+        "figure_settings_refused",
+    );
+}
+
 // -------------------------------------- which preview open owns the chromatogram
 
 /// Holds every read of one named file until the test lets it go.
