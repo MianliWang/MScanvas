@@ -665,17 +665,26 @@ fn panel_description(
     //
     // The two numbers printed beside the axis are the window's, and nothing on
     // the page distinguishes that from a source whose values happen to end
-    // there. It is exactly the case a current-range chromatogram is in: the
-    // document carries every source point, including a peak far outside the
-    // window, and a reader deciding whether this figure shows the tallest thing
-    // in the run needs to be told that it does not.
+    // there. It is exactly the case a current-range chromatogram is in, and a
+    // reader deciding whether this figure shows the tallest thing in the run
+    // needs to be told that it does not.
+    //
+    // Two facts, kept apart on purpose. Where the source reaches is something
+    // this renderer knows and can therefore write down. What *this document*
+    // holds is a different question, and the answer is the window: joined
+    // series are clipped to the drawn domain before their paths are
+    // serialized, and nothing here embeds the `FigureSpec` or the source
+    // arrays. An earlier wording said the off-window values were "in the
+    // document but not drawn" -- true of the specification this was rendered
+    // from, false of the file, and a description that is read by screen readers
+    // and by tools parsing the metadata may not conflate the two.
     if let Some(window) = panel.visible_value_domain() {
         let (window_low, window_high) = axis_ends(window);
         let (source_low, source_high) = axis_ends(panel.value_domain());
         sentences.push(format!(
-            "The value axis shows {window_low} to {window_high}; the source reaches \
-             {source_low} to {source_high}, and values outside the window are in the document \
-             but not drawn.",
+            "The value axis shows {window_low} to {window_high}, which is a window into a \
+             source that reaches {source_low} to {source_high}. This figure draws only that \
+             window.",
         ));
     }
 

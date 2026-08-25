@@ -6071,8 +6071,158 @@ fn the_renderer_scales_to_the_visible_value_window() {
     // left thinking this is the tallest thing in the run.
     let described = description_of(&document);
     assert!(
-        described.contains("the source reaches"),
+        described.contains("a source that reaches"),
         "the description discloses the window: {described}"
+    );
+}
+
+/// The description says what this file holds, not what the renderer knew.
+///
+/// Round 2 of M4.3.1 found the earlier wording claiming that off-window values
+/// were "in the document but not drawn". True of the `FigureSpec` this was
+/// rendered from, and false of the SVG: joined series are clipped to the drawn
+/// domain before their paths are serialized, and neither the specification nor
+/// the source arrays are embedded anywhere. A `<desc>` is read by screen
+/// readers and by tools parsing the metadata, so it may not describe one and
+/// call it the other.
+#[test]
+fn a_windowed_description_never_claims_the_off_window_values_are_embedded() {
+    let panel = chromatogram_panel(vec![chromatogram_series(
+        "TIC",
+        StyleRole::Measurement,
+        vec![9.0, 10.0, 11.0, 12.0, 13.0],
+        vec![9_000_000.0, 90.0, 100.0, 110.0, 120.0],
+    )])
+    .with_visible_domain(domain(10.0, 13.0))
+    .expect("an x window")
+    .with_visible_value_domain(domain(0.0, 120.0))
+    .expect("a y window");
+    let document = svg::render(&figure_of(panel));
+    let described = description_of(&document);
+
+    // The window, and the source it is a window into: both facts, kept apart.
+    assert!(
+        described.contains("The value axis shows 0 to 120"),
+        "the window is stated: {described}"
+    );
+    assert!(
+        described.contains("a source that reaches 0 to 9000000"),
+        "the source range is stated as a fact about the source: {described}"
+    );
+    assert!(
+        described.contains("This figure draws only that window."),
+        "and what the file itself holds is stated: {described}"
+    );
+
+    // None of the ways of claiming the file carries what it does not.
+    for lie in [
+        "in the document but not drawn",
+        "in the document",
+        "are embedded",
+        "present but invisible",
+    ] {
+        assert!(
+            !described.contains(lie),
+            "the description must not claim {lie:?}: {described}"
+        );
+    }
+
+    // And the claim is checked against the artifact rather than trusted: the
+    // peak is nowhere in the file at all.
+    assert!(
+        !document.contains("9000000") || described.contains("9000000"),
+        "the only mention of the source peak is the description's own disclosure"
+    );
+    let body = document
+        .split("</desc>")
+        .nth(1)
+        .expect("a document has a body after its description");
+    assert!(
+        !body.contains("9000000"),
+        "nothing outside the description carries the off-window value: {body}"
+    );
+}
+
+/// Every trace set a current range can be exported with says the same thing.
+///
+/// The disclosure is a property of the window rather than of which measurements
+/// are drawn in it, so one trace, the other, or both must each get it.
+#[test]
+fn every_current_range_trace_set_discloses_the_window() {
+    for traces in [
+        vec![("TIC", StyleRole::Measurement)],
+        vec![("BPC", StyleRole::SecondaryMeasurement)],
+        vec![
+            ("TIC", StyleRole::Measurement),
+            ("BPC", StyleRole::SecondaryMeasurement),
+        ],
+    ] {
+        let drawn: Vec<_> = traces
+            .iter()
+            .map(|(name, role)| {
+                chromatogram_series(
+                    name,
+                    *role,
+                    vec![9.0, 10.0, 11.0, 12.0, 13.0],
+                    vec![9_000_000.0, 90.0, 100.0, 110.0, 120.0],
+                )
+            })
+            .collect();
+        let named: Vec<&str> = traces.iter().map(|(name, _)| *name).collect();
+        let panel = chromatogram_panel(drawn)
+            .with_visible_domain(domain(10.0, 13.0))
+            .expect("an x window")
+            .with_visible_value_domain(domain(0.0, 120.0))
+            .expect("a y window");
+        let described = description_of(&svg::render(&figure_of(panel)));
+
+        assert!(
+            described.contains("a source that reaches 0 to 9000000"),
+            "{named:?} discloses the source range: {described}"
+        );
+        assert!(
+            described.contains("This figure draws only that window."),
+            "{named:?} says what the file holds: {described}"
+        );
+        assert!(
+            !described.contains("in the document"),
+            "{named:?} claims nothing about embedded values: {described}"
+        );
+    }
+}
+
+/// A figure of a whole source says nothing about a window it does not have.
+///
+/// The sentence exists to correct an axis that would otherwise be read as the
+/// source's own range. Where the axis *is* the source's range there is nothing
+/// to correct, and a disclosure would be noise that reads as a caveat.
+#[test]
+fn a_full_range_figure_carries_no_window_disclosure() {
+    let full = chromatogram_panel(vec![chromatogram_series(
+        "TIC",
+        StyleRole::Measurement,
+        vec![9.0, 10.0, 11.0, 12.0, 13.0],
+        vec![9_000_000.0, 90.0, 100.0, 110.0, 120.0],
+    )]);
+    let described = description_of(&svg::render(&figure_of(full)));
+    assert!(
+        !described.contains("a window into"),
+        "a full-range chromatogram has no window to disclose: {described}"
+    );
+
+    // And the selected spectrum, which never carries a value window at all.
+    let spectrum = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    );
+    let described = description_of(&svg::render(&figure_of(spectrum)));
+    assert!(
+        !described.contains("a window into"),
+        "a selected-spectrum figure gains no window sentence: {described}"
+    );
+    assert!(
+        !described.contains("This figure draws only that window."),
+        "nor the sentence that follows it: {described}"
     );
 }
 
