@@ -21,6 +21,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import appStyles from "./app.css?raw";
+import tokenStyles from "../design-system/tokens.css?raw";
 import type { PreviewApi } from "../features/mzml-preview/api";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
 import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTransport";
@@ -771,5 +773,112 @@ describe("a linked operation that outlives the pair on screen", () => {
     // showing an outcome belonging to the run that was replaced.
     expect(linkedReason()).toBe("Select a scan and wait for its spectrum to load.");
     expect(linkedStatus()).toBe("");
+  });
+});
+
+describe("two results in one surface", () => {
+  /*
+   * Found in review, and by four readers independently: the accessible name
+   * added for the linked section's dismiss control reached the chromatogram's
+   * four result branches as well, so this surface's own dismiss announced itself
+   * as the linked figure's -- inverting the disambiguation it was added to
+   * provide. Nothing asserted it, because no test had ever put both results on
+   * screen at once.
+   */
+  it("gives each dismiss control its own name, and clears only its own message", async () => {
+    const preview = api();
+    await openTheViewer(preview);
+    await selectAScan();
+    openExport();
+
+    fireEvent.click(button("Export CSV…"));
+    await waitFor(() => {
+      expect(
+        within(panel()).getByRole("status", { name: "Chromatogram export status" }).textContent ??
+          "",
+      ).toContain("Saved");
+    });
+    fireEvent.click(linkedButton("Export linked SVG…"));
+    await waitFor(() => {
+      expect(linkedStatus()).toContain("Saved");
+    });
+
+    // Both messages are on screen, and a reader listing the controls can tell
+    // the two apart.
+    const chromatogramDismiss = within(panel()).getByRole("button", { name: "Dismiss" });
+    const linkedDismiss = within(linkedSection()).getByRole("button", {
+      name: "Dismiss linked export message",
+    });
+    expect(chromatogramDismiss).not.toBe(linkedDismiss);
+    // The visible word is the same for both; only the name a screen reader
+    // hears distinguishes them, which is the whole point.
+    expect(chromatogramDismiss.textContent).toBe("Dismiss");
+    expect(linkedDismiss.textContent).toBe("Dismiss");
+
+    fireEvent.click(linkedDismiss);
+    expect(linkedStatus()).toBe("");
+    expect(
+      within(panel()).getByRole("status", { name: "Chromatogram export status" }).textContent ?? "",
+    ).toContain("Saved");
+
+    fireEvent.click(chromatogramDismiss);
+    expect(
+      within(panel()).getByRole("status", { name: "Chromatogram export status" }).textContent ?? "",
+    ).toBe("");
+  });
+
+  it("writes the marked scan's retention time the way every other one is written", async () => {
+    /*
+     * Also found in review. The number comes back from Rust as an `f64` and was
+     * rendered raw, so a run whose scan sits at 0.1 printed `0.1` here while the
+     * range note two paragraphs above, the scan table and the plot readout all
+     * print `0.1000`. A reader comparing the two has no way to know they are the
+     * same scan.
+     */
+    const preview = api({
+      linkedFigureExport: async (_chromatogram, _spectrum, format, range, traces, settings) => ({
+        status: "saved",
+        format,
+        fileName: `mscanvas-linked-spectrum-0-${range.scope}.${format}`,
+        figure: { width: settings.widthPx, height: settings.heightPx, dpi: null, theme: settings.theme },
+        traces,
+        rangeScope: range.scope,
+        rangeLow: 0,
+        rangeHigh: 2.5,
+        sourceScanCount: 24,
+        selectedIndex: 0,
+        selectedRetentionTime: 0.1,
+      }),
+    });
+    await openTheViewer(preview);
+    await selectAScan();
+    openExport();
+
+    fireEvent.click(linkedButton("Export linked SVG…"));
+
+    await waitFor(() => {
+      expect(linkedStatus()).toContain("Saved");
+    });
+    expect(linkedStatus()).toContain("at retention time 0.1000");
+    expect(linkedStatus()).not.toContain("at retention time 0.1 ");
+  });
+
+  it("draws its separator with a colour the design system actually defines", async () => {
+    /*
+     * Also found in review. The rule was copied from the export surface's own
+     * separator, which names a token that is defined nowhere -- so both fell back
+     * to a hard-coded light grey and painted a bright line across the dark
+     * theme's surface. Asserted on the stylesheet rather than on a rendered
+     * colour, because what went wrong is the name rather than the paint.
+     */
+    const defined = new Set(
+      [...(tokenStyles + appStyles).matchAll(/(--[\w-]+)\s*:/gu)].map((match) => match[1]),
+    );
+    for (const rule of [".chromatogram-export-panel", ".linked-figure-actions"]) {
+      const body = appStyles.split(`${rule} {`)[1]?.split("}")[0] ?? "";
+      const border = /border-top:[^;]*var\(\s*(--[\w-]+)/u.exec(body)?.[1];
+      expect(border, `${rule} declares a border-top colour`).toBeDefined();
+      expect(defined.has(border ?? ""), `${rule} names ${border ?? "nothing"}`).toBe(true);
+    }
   });
 });

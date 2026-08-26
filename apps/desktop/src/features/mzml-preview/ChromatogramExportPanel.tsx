@@ -45,6 +45,16 @@ import type { RetentionTimeDomain } from "./viewer/scanModel";
 /** What every identifier in this panel is named after. */
 const FIGURE_PREFIX = "chromatogram";
 
+/**
+ * How many decimals a retention time is written with.
+ *
+ * The same four this panel's own range note uses two paragraphs above, and the
+ * same four the scan table, the plot readout and the run summary use. A raw
+ * number here would print `0.1` where the table beside it prints `0.1000`, and a
+ * reader comparing the two has no way to know they are the same scan.
+ */
+const RETENTION_TIME_DECIMALS = 4;
+
 const RANGE_SCOPES: readonly {
   readonly scope: ChromatogramRangeScope;
   readonly label: string;
@@ -489,7 +499,8 @@ function LinkedFigureResult({
   return (
     <p className="spectrum-export-message">
       Saved {state.fileName}, marking spectrum {formatCount(state.selectedIndex)} at retention time{" "}
-      {state.selectedRetentionTime} in a run of {formatCount(state.sourceScanCount)} scans.{" "}
+      {state.selectedRetentionTime.toFixed(RETENTION_TIME_DECIMALS)} in a run of{" "}
+      {formatCount(state.sourceScanCount)} scans.{" "}
       <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
     </p>
   );
@@ -510,7 +521,7 @@ function ChromatogramExportResult({
     return (
       <p className="spectrum-export-message">
         Export cancelled. Nothing was saved.{" "}
-        <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
+        <DismissButton onDismiss={onDismiss} />
       </p>
     );
   }
@@ -528,7 +539,7 @@ function ChromatogramExportResult({
         {state.error.detail === null ? null : (
           <span className="notice-detail">{state.error.detail}</span>
         )}
-        <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
+        <DismissButton onDismiss={onDismiss} />
       </p>
     );
   }
@@ -537,7 +548,7 @@ function ChromatogramExportResult({
       <p className="spectrum-export-message">
         Copied the chromatogram at {state.figure.width}×{state.figure.height} in the{" "}
         {state.figure.theme} theme, from a run of {formatCount(state.sourceScanCount)} scans.{" "}
-        <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
+        <DismissButton onDismiss={onDismiss} />
       </p>
     );
   }
@@ -552,7 +563,7 @@ function ChromatogramExportResult({
         )} scans`;
   return (
     <p className="spectrum-export-message">
-      Saved {state.fileName} {scans}. <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
+      Saved {state.fileName} {scans}. <DismissButton onDismiss={onDismiss} />
     </p>
   );
 }
