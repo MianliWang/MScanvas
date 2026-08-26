@@ -142,10 +142,12 @@ PNG, `Copy plot`, and the figure settings all three figure outputs share.
 
 See [ADR 0030](adr/0030-png-copy-plot-and-figure-settings.md).
 
-## Third slice — M4.4
+## The linked two-panel figure — M4.4
 
 The first figure of more than one panel, and the first use of `markers` outside
-the contract's own tests.
+the contract's own tests. Named for what it is rather than numbered: M4.3 has no
+slice section here, and its decisions live in
+[ADR 0034](adr/0034-chromatogram-export-and-range-scope.md).
 
 | | |
 | --- | --- |
