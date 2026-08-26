@@ -869,18 +869,32 @@ def validate_the_linked_pair_is_bound_in_one_operation(errors: list[str]) -> Non
     No test can catch that. It needs a preview open or a spectrum install to land
     inside a window of a few instructions, so anything claiming to catch it would
     be claiming scheduling luck as evidence. What closes it is the shape of the
-    API, and that is what is checked here:
+    API and of the type, and most of that shape the compiler already enforces:
+    `LinkedPair` lives in its own module with private fields, so the only way to
+    make one -- anywhere in `export.rs`, and a fortiori in any sibling module --
+    is `LinkedPair::new`, which is visible to `export` alone.
 
-    - the two single-source readers are private to `export.rs`, so no call site
+    What no compiler can say is *which* function inside `export` may call it, and
+    that is what is pinned here, together with the shape the compiler's guarantee
+    rests on:
+
+    - the two single-source readers stay private to `export.rs`, so no call site
       outside the module can read one of a pair's halves on its own at all;
-    - the paired bind is private too, and the only functions calling it are the
+    - the paired bind stays private, and the only functions calling it are the
       two operations that complete it under their own `&mut self`;
-    - `LinkedPair` is constructed in exactly one place, so a pair that nothing
-      proved cannot exist.
+    - `LinkedPair`'s fields stay private and `LinkedPair::new` stays visible to
+      `export` alone, which is what makes it the only way in;
+    - exactly one function calls it, and it is the one that proves the two
+      sources are one scan.
 
-    The first two rules are deliberately not lists of forbidden callers. Any new
-    way to read one half on its own has to call one of those two readers,
-    whatever the caller is called, and that is what fails here.
+    None of these is a list of forbidden callers. Any new way to read one half
+    alone has to call one of those two readers, and any new pair has to come
+    through that constructor, whatever the caller is named.
+
+    This replaced a rule that counted `LinkedPair` followed by a brace. That
+    could not tell a construction from `let LinkedPair { .. } = pair` or from an
+    `impl LinkedPair` block, so it failed on correct code -- while a constructor
+    spelled another way would have walked straight past it.
     """
     preview = ROOT / "apps" / "desktop" / "src-tauri" / "src" / "preview"
     export = preview / "export.rs"
@@ -908,6 +922,12 @@ def validate_the_linked_pair_is_bound_in_one_operation(errors: list[str]) -> Non
                     "single-source readers stay private to export.rs so a pair cannot be "
                     "assembled from two separate acquisitions of the export slot"
                 )
+        if "LinkedPair::new(" in text:
+            errors.append(
+                f"{path.relative_to(ROOT).as_posix()} calls LinkedPair::new(); the "
+                "constructor is visible to export.rs alone so that a pair can only be "
+                "made where both sources were read together"
+            )
 
     if not re.search(r"\n    fn linked_pair\(", content):
         errors.append(
@@ -918,7 +938,9 @@ def validate_the_linked_pair_is_bound_in_one_operation(errors: list[str]) -> Non
 
     # Its callers, which are the two operations that complete a bind. The
     # definition itself does not name itself, so it is pinned above instead.
-    owners = functions_naming(content, "self.linked_pair(")
+    # `.linked_pair(` rather than `self.linked_pair(`: rustfmt puts the receiver
+    # on its own line when the call is long, and the owner is the same either way.
+    owners = functions_naming(content, ".linked_pair(")
     expected = {"begin_linked_figure", "begin_linked_figure_copy"}
     if owners != expected:
         errors.append(
@@ -929,16 +951,55 @@ def validate_the_linked_pair_is_bound_in_one_operation(errors: list[str]) -> Non
             "assembled from two different moments"
         )
 
-    # Every construction, however it is spelled. Counting `Ok(LinkedPair {`
-    # counted one way of writing one, and a second built into a local and
-    # returned on the next line would not have been seen at all.
-    constructions = len(re.findall(r"(?<!struct )LinkedPair\s*\{", content))
-    if constructions != 1:
+    _validate_linked_pair_has_one_constructor(content, errors)
+
+
+def _validate_linked_pair_has_one_constructor(content: str, errors: list[str]) -> None:
+    """`LinkedPair::new` is the only way in, and one function walks through it.
+
+    The first half is the compiler's: private fields inside `mod linked_pair`
+    mean a struct literal is a compile error everywhere else, so what is checked
+    here is that the shape which produces that guarantee is still there. The
+    second half is not something a type can express, so it is checked directly.
+    """
+    module = re.search(r"\nmod linked_pair \{(.*?)\n}\n", content, re.DOTALL)
+    if module is None:
         errors.append(
-            f"preview/export.rs constructs `LinkedPair` {constructions} times, not once. "
-            "A pair built anywhere but the operation that proves it is one scan is a "
-            "pair nothing proved"
+            "preview/export.rs no longer keeps `LinkedPair` in its own `mod linked_pair`; "
+            "that module is what makes the fields private to it and `LinkedPair::new` the "
+            "only way a pair can be made"
         )
+        return
+    body = module.group(1)
+
+    fields = re.search(r"struct LinkedPair \{(.*?)\n    \}", body, re.DOTALL)
+    if fields is None:
+        errors.append(
+            "preview/export.rs: `mod linked_pair` no longer declares `struct LinkedPair`"
+        )
+    elif "pub" in fields.group(1):
+        errors.append(
+            "preview/export.rs: `LinkedPair` declares a public field. Its fields are "
+            "private to `mod linked_pair` so that a struct literal is a compile error "
+            "everywhere else, which is what makes `LinkedPair::new` the only way in"
+        )
+
+    if not re.search(r"\n        pub\(super\) const fn new\(", body):
+        errors.append(
+            "preview/export.rs: `LinkedPair::new` is no longer `pub(super)`. Widening it "
+            "would let a sibling module of `preview` assemble two snapshots it read "
+            "separately into something that claims they were read together"
+        )
+
+    builders = functions_naming(content, "LinkedPair::new(")
+    expected = {"linked_pair"}
+    if builders != expected:
+        errors.append(
+            "preview/export.rs: the functions calling `LinkedPair::new` are "
+            f"{sorted(builders)}, not {sorted(expected)}. A pair built anywhere but the "
+            "operation that proves it is one scan is a pair nothing proved"
+        )
+
 
 
 

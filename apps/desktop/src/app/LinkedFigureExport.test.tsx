@@ -151,6 +151,22 @@ function linkedReason(): string | null {
   return document.querySelector("#chromatogram-linked-unavailable")?.textContent ?? null;
 }
 
+/**
+ * What the linked section would announce right now.
+ *
+ * Its own element, mounted from the first paint and empty while nothing is
+ * wrong. Read separately from the visible sentence because the two say
+ * different things: the visible one always says something, and this one speaks
+ * only when there is a correction to make.
+ */
+function linkedAnnouncement(): HTMLElement {
+  const found = document.querySelector('[data-live-region="linked-figure-availability"]');
+  if (found === null) {
+    throw new Error("the linked section has no live region");
+  }
+  return found as HTMLElement;
+}
+
 /** The selected spectrum's own panel, which shares the one export lane. */
 function spectrumPanel(): HTMLElement {
   const found = document.querySelector("section.spectrum-panel");
@@ -414,42 +430,92 @@ describe("the linked chromatogram and spectrum section", () => {
     expect(preview.linkedFigureRequests[0]?.settings.heightPx).toBe(260);
   });
 
-  it("announces the reason as it appears, rather than leaving it to be hunted for", async () => {
+  it("announces a reason as it appears, and says nothing while nothing is wrong", async () => {
     /*
-     * Found in review. The sentence *appears* while the reader is somewhere
-     * else -- typing in the Height field, choosing a range scope -- and closes
-     * three controls as it does. Without a live region nothing is spoken, and a
-     * disabled control cannot be tabbed to, so its `aria-describedby` is not a
-     * way to find the sentence either. The two figure-setting problems on this
-     * same surface are live regions for exactly this reason.
+     * Three states, because two of them were wrong in turn.
+     *
+     * A plain paragraph announced nothing: the reason *appears* while the
+     * reader is somewhere else -- typing a height, choosing a range scope --
+     * and closes three controls as it does, and a disabled control cannot be
+     * tabbed to, so its `aria-describedby` is not a way to find the sentence.
+     *
+     * Making the visible paragraph live announced the wrong thing, twice over:
+     * React reuses the node across the two branches, so `aria-live` arrived
+     * with the text and nothing had been watching; and because that element
+     * also carries the description, becoming *usable* -- the state nobody needs
+     * telling about -- read the whole of it aloud.
+     *
+     * So the announcement is its own element, mounted from the first paint and
+     * empty unless there is a correction to make.
      */
     const preview = api();
     await openTheViewer(preview);
     await selectAScan();
     openExport();
-    expect(linkedReason()).toBeNull();
 
-    // **Before** the reason exists. A region that only becomes live in the same
-    // commit that fills it was never live when its content changed, and nothing
-    // was watching it -- which is what a conditional pair of paragraphs does,
-    // because React reuses the node.
-    const sentence = within(linkedSection()).getByText(/^Two panels: this chromatogram/u);
-    expect(sentence.getAttribute("aria-live")).toBe("polite");
+    // AVAILABLE: the description is visible, and nothing is announced.
+    expect(linkedReason()).toBeNull();
+    expect(
+      within(linkedSection()).getByText(/^Two panels: this chromatogram/u),
+    ).toBeVisible();
+    const announcement = linkedAnnouncement();
+    expect(announcement.getAttribute("aria-live")).toBe("polite");
+    expect(announcement.textContent).toBe("");
+    // The visible sentence is not the announcement, so it cannot read itself out.
+    expect(within(linkedSection()).getByText(/^Two panels: this chromatogram/u)).not.toBe(
+      announcement,
+    );
+
+    // BECOMES UNAVAILABLE: the actionable reason is both shown and announced.
+    fireEvent.change(within(panel()).getByRole("textbox", { name: /^Height/u }), {
+      target: { value: "259" },
+    });
+    const reason = "A two-panel linked figure needs a height of at least 260.";
+    expect(linkedReason()).toBe(reason);
+    // The same element as before, so it was live when its text changed.
+    expect(linkedAnnouncement()).toBe(announcement);
+    expect(announcement.textContent).toBe(reason);
+    expect(linkedButton("Export linked SVG…").disabled).toBe(true);
+    // And a height the figure settings themselves accept, so this is the linked
+    // rule speaking rather than the shared one.
+    expect(within(panel()).queryByText(/Height must be a whole number/u)).toBeNull();
+
+    // BECOMES AVAILABLE AGAIN: the region empties rather than reading out the
+    // description, which is the state nobody needs telling about.
+    fireEvent.change(within(panel()).getByRole("textbox", { name: /^Height/u }), {
+      target: { value: "260" },
+    });
+    expect(linkedReason()).toBeNull();
+    expect(linkedAnnouncement()).toBe(announcement);
+    expect(announcement.textContent).toBe("");
+    expect(
+      within(linkedSection()).getByText(/^Two panels: this chromatogram/u),
+    ).toBeVisible();
+    expect(linkedButton("Export linked SVG…").disabled).toBe(false);
+  });
+
+  it("costs no visible paragraph for the announcement", async () => {
+    // The section shows one sentence at a time because it is measured to the
+    // pixel, and a second *visible* paragraph is what that measurement
+    // rejected. The announcement is carried by an element with no layout.
+    const preview = api();
+    await openTheViewer(preview);
+    await selectAScan();
+    openExport();
+
+    const visible = Array.from(linkedSection().querySelectorAll("p")).filter(
+      (node) => !node.classList.contains("visually-hidden"),
+    );
+    expect(visible).toHaveLength(1);
+    expect(linkedAnnouncement()).toHaveClass("visually-hidden");
 
     fireEvent.change(within(panel()).getByRole("textbox", { name: /^Height/u }), {
       target: { value: "259" },
     });
-
-    const reason = document.querySelector("#chromatogram-linked-unavailable");
-    expect(reason?.textContent).toBe("A two-panel linked figure needs a height of at least 260.");
-    // The same element, still live: only its words changed.
-    expect(reason).toBe(sentence);
-    expect(reason?.getAttribute("aria-live")).toBe("polite");
-    expect(linkedButton("Export linked SVG…").disabled).toBe(true);
-
-    // And a height the figure settings themselves accept, so this is the linked
-    // rule speaking rather than the shared one.
-    expect(within(panel()).queryByText(/Height must be a whole number/u)).toBeNull();
+    const whileClosed = Array.from(linkedSection().querySelectorAll("p")).filter(
+      (node) => !node.classList.contains("visually-hidden"),
+    );
+    expect(whileClosed).toHaveLength(1);
   });
 
   it("closes every linked action when the width is not a size at all", async () => {

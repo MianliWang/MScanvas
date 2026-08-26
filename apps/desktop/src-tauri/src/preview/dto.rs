@@ -710,9 +710,17 @@ pub fn linked_selection_outside_range() -> PreviewErrorDto {
 /// Its own refusal rather than either half's. The boundary knows the *figure*
 /// could not be built and does not know which panel refused it -- and answering
 /// with the chromatogram's would send a reader to change a range or a trace
-/// toggle that had nothing to do with it. In practice the reachable case is the
-/// spectrum's, because a chromatogram this session installed has already been
-/// proved drawable, but the message does not have to guess to be useful.
+/// toggle that had nothing to do with it.
+///
+/// **The route out is named because it works.** The reachable case is a scan
+/// whose m/z array is not ordered: mzML does not require one and nothing here
+/// sorts one, and the figure contract will not draw an unordered series. So the
+/// spectrum's own *figure* is refused for the same reason by the same
+/// `spectrum_panel`, and offering it as the fallback would send a reader to an
+/// action that cannot work. Its **data** export is a different path -- one
+/// record per retained source point, in source order, needing no ordering at
+/// all -- and the chromatogram beside it was already proved drawable when this
+/// session installed it. Those two are what this sentence offers.
 ///
 /// Not retryable: the same pair will be refused the same way. It is a fact about
 /// the two sources rather than about the moment.
@@ -720,8 +728,9 @@ pub fn linked_selection_outside_range() -> PreviewErrorDto {
 pub fn linked_figure_not_drawable() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "linked_figure_not_drawable",
-        "MSCanvas could not build a figure this run and this scan can be drawn in honestly \
-         together, so no file was written. Export the chromatogram and the spectrum separately.",
+        "MSCanvas could not build the linked figure without changing the data, so no file was \
+         written. Export the chromatogram separately, and export the selected spectrum as CSV \
+         or TSV data.",
         false,
     )
 }

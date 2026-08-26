@@ -2920,15 +2920,15 @@ impl PreviewService {
         let _in_flight = SpectrumExportInFlight(self);
 
         let row = pair
-            .chromatogram
+            .chromatogram()
             .source()
-            .row_for_spectrum(pair.spectrum.spectrum())
+            .row_for_spectrum(pair.spectrum().spectrum())
             .ok_or_else(linked_figure_source_mismatch)?;
         let figure = linked_figure_spec(
-            pair.chromatogram.source(),
-            pair.spectrum.spectrum(),
+            pair.chromatogram().source(),
+            pair.spectrum().spectrum(),
             row,
-            pair.range,
+            pair.range(),
             traces,
             settings,
         )
@@ -2947,12 +2947,12 @@ impl PreviewService {
                 tic: traces.tic(),
                 bpc: traces.bpc(),
             },
-            range_scope: pair.range.scope().stable_id().to_owned(),
-            range_low: pair.range.domain().low(),
-            range_high: pair.range.domain().high(),
-            source_scan_count: pair.chromatogram.source().scan_count(),
-            selected_index: pair.selected_index,
-            selected_retention_time: pair.selected_retention_time,
+            range_scope: pair.range().scope().stable_id().to_owned(),
+            range_low: pair.range().domain().low(),
+            range_high: pair.range().domain().high(),
+            source_scan_count: pair.chromatogram().source().scan_count(),
+            selected_index: pair.selected_index(),
+            selected_retention_time: pair.selected_retention_time(),
         })
     }
 

@@ -412,29 +412,40 @@ function LinkedFigureSection({
         underneath their own.
       */}
       {/*
-        One element rather than two, and that is the whole of it.
+        What is read, and what is announced, are two elements doing two jobs.
 
         The reason *appears* while the reader is somewhere else -- typing a
         height, choosing a range scope -- and closes three controls as it does.
         A correction nobody is told about has to be hunted for, and a disabled
         control cannot be tabbed to, so its `aria-describedby` is not a way to
-        find one either.
+        find one either. So it has to be announced.
 
-        Two conditional paragraphs did not achieve that, and looked as though
-        they had. React reconciles same-typed siblings in one slot, so the node
+        Two conditional paragraphs did not announce it, and looked as though
+        they did: React reconciles same-typed siblings in one slot, so the node
         was reused and `aria-live` arrived in the very commit that replaced the
-        text -- nothing was watching a live region there until the mutation
-        itself. The two figure-setting problems on this same surface get it
-        right by always rendering their element and emptying it, and this now
-        does the same: one element, live from the first paint, and only its
-        words change.
+        text. Nothing was watching a live region there until the mutation
+        itself.
+
+        Making the visible paragraph live instead announced the wrong thing.
+        The element also carries the description, so becoming *usable* -- the
+        state nobody needs telling about -- read the whole of it aloud. The two
+        figure-setting problems on this surface avoid that by holding only the
+        problem and emptying it on recovery, and that is what the hidden region
+        below does. It costs no layout, so the visible paragraph stays the one
+        sentence this section can afford.
       */}
       <p
-        aria-live="polite"
         className="chromatogram-export-note"
         id={unavailable === null ? undefined : LINKED_UNAVAILABLE_ID}
       >
         {unavailable ?? LINKED_DESCRIPTION}
+      </p>
+      <p
+        aria-live="polite"
+        className="visually-hidden"
+        data-live-region="linked-figure-availability"
+      >
+        {unavailable ?? ""}
       </p>
       <div className="spectrum-export-actions">
         {LINKED_FIGURE_FORMATS.map(({ format, label, recordsDpi }) => (

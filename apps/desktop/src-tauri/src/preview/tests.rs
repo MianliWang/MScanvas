@@ -23012,24 +23012,75 @@ fn a_linked_figure_the_contract_refuses_is_refused_as_a_pair() {
         .claim_linked_figure_export(&reservation)
         .expect("its dialog");
 
-    assert_eq!(
-        service
-            .write_linked_figure_export(&claimed, &folder.join("linked.svg"))
-            .expect_err("a spectrum the contract will not draw is not a figure")
-            .kind,
-        "linked_figure_not_drawable",
-    );
+    let refusal = service
+        .write_linked_figure_export(&claimed, &folder.join("linked.svg"))
+        .expect_err("a spectrum the contract will not draw is not a figure");
+    assert_eq!(refusal.kind, "linked_figure_not_drawable");
     // Nothing was written under that name.
     assert!(!folder.join("linked.svg").exists());
 
-    // The chromatogram on its own is still perfectly drawable, which is why
-    // blaming it would have been wrong.
+    // **The route out is named because it works.** Both halves of the sentence
+    // are exercised below against this very session, and the one it must not
+    // name is exercised too.
+    assert!(
+        refusal
+            .summary
+            .contains("Export the chromatogram separately"),
+        "the refusal names the export that works: {}",
+        refusal.summary,
+    );
+    assert!(
+        refusal.summary.contains("CSV")
+            && refusal.summary.contains("TSV")
+            && refusal.summary.contains("data"),
+        "and the spectrum's data export, which needs no ordered array: {}",
+        refusal.summary,
+    );
+    // It must not send a reader to the spectrum's own *figure*: that is the
+    // same `spectrum_panel` refusing for the same reason, proved three
+    // assertions below.
+    for misleading in [
+        "the spectrum separately",
+        "export the spectrum figure",
+        "Export the chromatogram and the spectrum separately",
+    ] {
+        assert!(
+            !refusal.summary.contains(misleading),
+            "a recovery that cannot work is not offered: {}",
+            refusal.summary,
+        );
+    }
+
+    // Route one: the chromatogram on its own. Drawable, and written.
     assert_eq!(
         chromatogram_export_refusal(&service, &chromatogram),
         None,
         "the run this session holds is one it can draw",
     );
-    // And the spectrum on its own names itself.
+    if let Some(refusal) =
+        chromatogram_saved_as(&service, &chromatogram, "svg", &folder.join("run.svg"))
+    {
+        panic!("the chromatogram writes: {refusal:?}");
+    }
+    assert!(folder.join("run.svg").exists());
+
+    // Route two: the spectrum as data. One record per retained source point, in
+    // source order, so an array the figure contract will not draw is still a
+    // list of numbers this boundary will write.
+    for format in ["csv", "tsv"] {
+        if let Some(refusal) = spectrum_saved_as(
+            &service,
+            &spectrum,
+            format,
+            &folder.join(format!("scan.{format}")),
+        ) {
+            panic!("{format} writes: {refusal:?}");
+        }
+        assert!(folder.join(format!("scan.{format}")).exists());
+    }
+
+    // And the route the sentence must not name: the spectrum's own figure,
+    // refused by the same panel for the same reason.
     assert_eq!(
         service
             .begin_spectrum_export(&spectrum, "svg", &default_figure_settings())
@@ -23039,4 +23090,5 @@ fn a_linked_figure_the_contract_refuses_is_refused_as_a_pair() {
             .kind,
         "spectrum_export_refused",
     );
+    assert!(!folder.join("one.svg").exists());
 }

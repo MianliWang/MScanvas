@@ -270,15 +270,6 @@ export type SpectrumExportState =
       readonly error: PreviewError;
     };
 
-/**
- * Where one chromatogram export is.
- *
- * The same shape a spectrum export has, plus the two facts that make a
- * chromatogram export what it is: how much of the run it covered, and -- for a
- * data document -- how many source scans that turned out to be.
- *
- * (Continued below, after the linked surface's own states.)
- */
 /** Which of the linked figure's two drawn outputs an operation is. */
 export type LinkedFigureOperation = "svg" | "png" | "copy";
 
@@ -334,6 +325,13 @@ export type LinkedFigureExportState =
       readonly error: PreviewError;
     };
 
+/**
+ * Where one chromatogram export is.
+ *
+ * The same shape a spectrum export has, plus the two facts that make a
+ * chromatogram export what it is: how much of the run it covered, and -- for a
+ * data document -- how many source scans that turned out to be.
+ */
 export type ChromatogramExportState =
   | { readonly status: "idle" }
   | {

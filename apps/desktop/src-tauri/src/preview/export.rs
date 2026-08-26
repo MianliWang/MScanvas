@@ -414,20 +414,107 @@ pub(super) struct LinkedTokens<'a> {
     pub(super) spectrum: &'a str,
 }
 
-/// Two snapshots proved to describe one scan, and the range they will be drawn
-/// over.
+/// The one place a [`LinkedPair`] can come into existence.
 ///
-/// Not a retained identity. This is what one linked operation decided at the
-/// moment it began, and it lives only as long as that operation does -- which is
-/// why there is no third token beside the chromatogram's and the spectrum's.
-#[derive(Debug, Clone)]
-pub(super) struct LinkedPair {
-    pub(super) chromatogram: ChromatogramSnapshot,
-    pub(super) spectrum: SpectrumSnapshot,
-    pub(super) selected_index: u64,
-    pub(super) selected_retention_time: f64,
-    pub(super) range: ResolvedRange,
+/// A module rather than a convention. The fields below are private to it, so the
+/// only way to make a pair -- anywhere in this file, and a fortiori in any
+/// sibling module of `preview` -- is [`LinkedPair::new`], which is visible to
+/// `export` alone. What no compiler can say is *which* function inside `export`
+/// may call it, and that is the one fact `check_repo.py` pins.
+///
+/// The alternative was a rule that read braces. It could not tell a construction
+/// from `let LinkedPair { .. } = pair` or from an `impl LinkedPair` block, so it
+/// failed on correct code while a constructor spelled another way walked past
+/// it. A type cannot be talked around.
+mod linked_pair {
+    use super::{ChromatogramSnapshot, ResolvedRange, SpectrumSnapshot};
+
+    /// Two snapshots proved to describe one scan, and the range they will be
+    /// drawn over.
+    ///
+    /// Not a retained identity. This is what one linked operation decided at the
+    /// moment it began, and it lives only as long as that operation does --
+    /// which is why there is no third token beside the chromatogram's and the
+    /// spectrum's.
+    #[derive(Debug, Clone)]
+    pub(in crate::preview) struct LinkedPair {
+        chromatogram: ChromatogramSnapshot,
+        spectrum: SpectrumSnapshot,
+        selected_index: u64,
+        selected_retention_time: f64,
+        range: ResolvedRange,
+    }
+
+    impl LinkedPair {
+        /// Builds one pair.
+        ///
+        /// Visible to `export` and to nothing else, so a sibling module cannot
+        /// assemble two snapshots it read separately into something that claims
+        /// they were read together. Which function inside `export` may call this
+        /// is pinned by `check_repo.py`: exactly the one operation that proves
+        /// the two sources are one scan.
+        pub(super) const fn new(
+            chromatogram: ChromatogramSnapshot,
+            spectrum: SpectrumSnapshot,
+            selected_index: u64,
+            selected_retention_time: f64,
+            range: ResolvedRange,
+        ) -> Self {
+            Self {
+                chromatogram,
+                spectrum,
+                selected_index,
+                selected_retention_time,
+                range,
+            }
+        }
+
+        pub(in crate::preview) const fn chromatogram(&self) -> &ChromatogramSnapshot {
+            &self.chromatogram
+        }
+
+        pub(in crate::preview) const fn spectrum(&self) -> &SpectrumSnapshot {
+            &self.spectrum
+        }
+
+        pub(in crate::preview) const fn selected_index(&self) -> u64 {
+            self.selected_index
+        }
+
+        pub(in crate::preview) const fn selected_retention_time(&self) -> f64 {
+            self.selected_retention_time
+        }
+
+        pub(in crate::preview) const fn range(&self) -> ResolvedRange {
+            self.range
+        }
+
+        /// Takes the pair apart, for the reservation that carries it onward.
+        ///
+        /// Consuming rather than copying: what comes out is no longer a pair,
+        /// so nothing downstream can be mistaken for one. Putting it back
+        /// together is [`Self::new`], which is where the proof lives.
+        pub(super) fn into_parts(
+            self,
+        ) -> (
+            ChromatogramSnapshot,
+            SpectrumSnapshot,
+            u64,
+            f64,
+            ResolvedRange,
+        ) {
+            (
+                self.chromatogram,
+                self.spectrum,
+                self.selected_index,
+                self.selected_retention_time,
+                self.range,
+            )
+        }
+    }
 }
+
+pub(super) use linked_pair::LinkedPair;
 
 /// One export that has been claimed, whichever source it is of.
 ///
@@ -945,14 +1032,16 @@ impl ScientificExportSlots {
         settings: FigureRenderSettings,
         dpi: Option<PngDpi>,
     ) -> Result<SpectrumReservationId, BeginExportRefusal> {
-        let pair = self.linked_pair(tokens, request, traces, settings)?;
+        let (chromatogram, spectrum, selected_index, selected_retention_time, range) = self
+            .linked_pair(tokens, request, traces, settings)?
+            .into_parts();
         self.reserve(ClaimedExport::LinkedFigure(ClaimedLinkedFigureExport {
-            chromatogram: pair.chromatogram,
-            spectrum: pair.spectrum,
-            selected_index: pair.selected_index,
-            selected_retention_time: pair.selected_retention_time,
+            chromatogram,
+            spectrum,
+            selected_index,
+            selected_retention_time,
             format,
-            range: pair.range,
+            range,
             traces,
             settings,
             dpi,
@@ -1049,13 +1138,13 @@ impl ScientificExportSlots {
             return Err(BeginExportRefusal::FigureTooShort);
         }
 
-        Ok(LinkedPair {
+        Ok(LinkedPair::new(
             chromatogram,
             spectrum,
             selected_index,
             selected_retention_time,
             range,
-        })
+        ))
     }
 
     /// Claims one issued reservation, so its save dialog may be shown.
