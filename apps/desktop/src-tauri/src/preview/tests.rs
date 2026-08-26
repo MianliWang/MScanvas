@@ -22817,6 +22817,44 @@ fn a_saved_linked_figure_is_named_as_what_it_holds_and_replaces_nothing() {
         "and the file that was there is untouched",
     );
 
+    // A PNG is refused under a vector's name for the same reason, in the other
+    // direction, and a name that differs only in case is the same name.
+    assert_eq!(
+        linked_saved_as(
+            &service,
+            &chromatogram,
+            &spectrum,
+            "png",
+            &folder.join("raster.svg"),
+        )
+        .expect_err("a PNG is not an SVG")
+        .kind,
+        "spectrum_destination_misnamed",
+    );
+    linked_saved_as(
+        &service,
+        &chromatogram,
+        &spectrum,
+        "png",
+        &folder.join("UPPER.PNG"),
+    )
+    .expect("Windows extensions do not distinguish case");
+
+    // And every refusal above left the folder as it found it. The write is a
+    // private sibling renamed by handle, so a refused one has nothing to clean
+    // up -- and a residue would be a file the user never asked for, in a folder
+    // this boundary is not allowed to name back to them.
+    let residue: Vec<String> = fs::read_dir(folder)
+        .expect("the folder is readable")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".mscanvas-export"))
+        .collect();
+    assert!(
+        residue.is_empty(),
+        "no temporary file was left behind: {residue:?}"
+    );
+
     // And the lane is free after every one of those, so the next export begins.
     linked_saved_as(
         &service,

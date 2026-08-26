@@ -66,13 +66,15 @@ fn seeded_owner() -> DatasetId {
 /// malformed the seed would fail exactly as a real malformed read does.
 fn synthetic_output() -> String {
     let mut text = String::from("# mscanvas-e2e.mzML\n#\n");
-    text.push_str("# index: 0\n");
-    text.push_str("# id: scan=19\n");
-    text.push_str("# scanNumber: 19\n");
+    text.push_str(&format!("# index: {SEEDED_SELECTED_INDEX}\n"));
+    text.push_str(&format!("# id: scan={SEEDED_FIRST_SCAN_NUMBER}\n"));
+    text.push_str(&format!("# scanNumber: {SEEDED_FIRST_SCAN_NUMBER}\n"));
     text.push_str("# massAnalyzerType: FTMS\n");
     text.push_str("# scanEvent: 1\n");
     text.push_str("# msLevel: 1\n");
-    text.push_str("# retentionTime: 0.10\n");
+    text.push_str(&format!(
+        "# retentionTime: {SEEDED_FIRST_RETENTION_TIME:.2}\n"
+    ));
     text.push_str("# filterString: synthetic\n");
     text.push_str("# mzLow: 100\n");
     text.push_str("# mzHigh: 1000\n");
@@ -120,11 +122,38 @@ fn completed_process() -> ProcessOutput {
 /// enough that every document this produces is instant to write.
 const SEEDED_SCANS: u64 = 24;
 
+/// Which scan of the seeded run the seeded spectrum is.
+///
+/// Zero, because it is the run's first, and named rather than written out so the
+/// two halves of this seed cannot drift apart silently.
+const SEEDED_SELECTED_INDEX: u64 = 0;
+
+/// The scan number the seeded run's first scan reports.
+///
+/// The seeded spectrum's own, which is what makes the pair a pair: the linked
+/// figure reconciles a spectrum against the retained row at its index, by
+/// identity, and two halves that named different scans could never be linked.
+/// Before M4.4 nothing asked, and the seed's table numbered its scans from one
+/// while its spectrum called itself nineteen.
+const SEEDED_FIRST_SCAN_NUMBER: u64 = 19;
+
+/// Where the seeded run's first scan sits.
+///
+/// The seeded spectrum's own retention time, for the same reason. Non-zero on
+/// purpose: it is the coordinate a linked figure's marker is drawn at, and a
+/// zero would be indistinguishable from a number nobody supplied.
+const SEEDED_FIRST_RETENTION_TIME: f64 = 0.10;
+
 /// The backend output one spectrum-table read produces.
 ///
 /// Shaped as `msaccess` writes it, and read by the production parser -- the same
 /// one a real preview goes through. The retention times ascend by a hundredth so
 /// a rendered test can name a range and know which scans are inside it.
+///
+/// The first row **is** the seeded spectrum's row: the same scan number, the
+/// same retention time and the same measured summary. A session that had read
+/// that spectrum from this table would have reconciled the two, and a seed whose
+/// halves described different scans is a seed no linked figure can be made from.
 fn synthetic_table() -> String {
     let mut text = String::from("# mscanvas-e2e.mzML\n");
     text.push_str(
@@ -132,25 +161,30 @@ fn synthetic_table() -> String {
          charge\tprecursorMZ\tthermo_monoMZ\tfilterStringMZ\tionInjectionTime\n",
     );
     for index in 0..SEEDED_SCANS {
-        let retention_time = f64::from(u32::try_from(index).unwrap_or(0)) / 100.0;
-        let total_ion_current = 1_000 + index * 10;
-        let base_peak = 100 + index;
+        let retention_time =
+            SEEDED_FIRST_RETENTION_TIME + f64::from(u32::try_from(index).unwrap_or(0)) / 100.0;
+        let selected = index == SEEDED_SELECTED_INDEX;
+        let (base_peak_mz, base_peak, total_ion_current) = if selected {
+            ("445.12", 9_000, 120_000)
+        } else {
+            ("500", 100 + index, 1_000 + index * 10)
+        };
         text.push_str(&format!(
-            "{index}\tscan={}\t1\tFTMS\tms1\t{retention_time}\t100\t1000\t500\t{base_peak}\t\
-             {total_ion_current}\t\t\t\t\t\n",
-            index + 1,
+            "{index}\tscan={}\t1\tFTMS\tms1\t{retention_time}\t100\t1000\t{base_peak_mz}\t\
+             {base_peak}\t{total_ion_current}\t\t\t\t\t\n",
+            index + SEEDED_FIRST_SCAN_NUMBER,
         ));
     }
     text
 }
 
-/// Installs one synthetic chromatogram into the ordinary export slot.
+/// The synthetic run, read through the production parser and the ordinary
+/// eligibility.
 ///
-/// The rows go through the production parser and then through the ordinary
-/// eligibility -- a truncated or unreadable run would be refused here exactly as
-/// a real one is -- so what a rendered test reaches is the shipped path with a
-/// real snapshot behind it, not a shortcut around one.
-fn install_chromatogram(service: &PreviewService) {
+/// A truncated or unreadable run would be refused here exactly as a real one is,
+/// so what a rendered test reaches is the shipped path with a real snapshot
+/// behind it rather than a shortcut around one.
+fn seeded_chromatogram(service: &PreviewService) -> ChromatogramSource {
     let manifest = PreviewOutputManifest::single_complete_file(synthetic_table().into_bytes());
     let outcome = interpret_preview(
         &PreviewOperation::SpectrumTable,
@@ -165,22 +199,16 @@ fn install_chromatogram(service: &PreviewService) {
         panic!("a seeded table read produces a spectrum table");
     };
     let rows = service.retained_rows_for_seed(&table);
-    let source = ChromatogramSource::from_rows(&rows, false)
-        .expect("the seeded run is one the viewer would draw");
-    service.install_seeded_chromatogram(seeded_owner(), source);
+    ChromatogramSource::from_rows(&rows, false)
+        .expect("the seeded run is one the viewer would draw")
 }
 
-/// Installs one synthetic spectrum into the ordinary export slot.
-///
-/// Called once, at startup, under this feature only. The token it produces is
-/// the session's first, which is what lets a rendered test name it -- and if it
-/// were ever wrong the export would refuse it as stale rather than write
-/// something else, so the test fails loudly rather than quietly passing.
-pub(super) fn install(service: &PreviewService) {
+/// The synthetic spectrum, read the same way.
+fn seeded_spectrum() -> mscanvas_proteowizard::SelectedSpectrumResult {
     let manifest = PreviewOutputManifest::single_complete_file(synthetic_output().into_bytes());
     let outcome = interpret_preview(
         &PreviewOperation::SpectrumByIndex {
-            index: 0,
+            index: SEEDED_SELECTED_INDEX,
             precision: SELECTED_SPECTRUM_PRECISION,
         },
         &completed_process(),
@@ -193,10 +221,31 @@ pub(super) fn install(service: &PreviewService) {
     let PreviewValue::SelectedSpectrum(spectrum) = *value else {
         panic!("a seeded spectrum read produces a selected spectrum");
     };
+    spectrum
+}
+
+/// Installs one synthetic run and one synthetic spectrum of it.
+///
+/// Called once, at startup, under this feature only. The tokens are the
+/// session's first and second, which is what lets a rendered test name them --
+/// and if either were ever wrong the export would refuse it as stale rather than
+/// write something else, so the test fails loudly rather than quietly passing.
+///
+/// **The two halves are checked to be one scan before either is installed.** A
+/// seed whose spectrum did not reconcile with its own run's row would leave
+/// every linked figure refused for a reason no rendered test could act on, and
+/// nothing asked until M4.4: the table numbered its scans from one while the
+/// spectrum called itself nineteen, and both halves worked perfectly on their
+/// own. Asserted here, at the one place that builds both, so a later edit to
+/// either fails the application's own startup rather than one distant test.
+pub(super) fn install(service: &PreviewService) {
+    let spectrum = seeded_spectrum();
+    let source = seeded_chromatogram(service);
+    assert!(
+        source.row_for_spectrum(&spectrum).is_some(),
+        "the seeded spectrum and the seeded run's row at its index describe one scan"
+    );
     service.install_seeded_spectrum(seeded_owner(), spectrum);
-    // After the spectrum, so the tokens are the session's first and second and a
-    // rendered test can name both. If either were ever wrong the export would
-    // refuse it as stale rather than write something else, so the test fails
-    // loudly rather than quietly passing.
-    install_chromatogram(service);
+    // After the spectrum, so the tokens are the session's first and second.
+    service.install_seeded_chromatogram(seeded_owner(), source);
 }
