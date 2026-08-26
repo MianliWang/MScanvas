@@ -896,12 +896,19 @@ pub(super) fn linked_figure_spec(
     Ok(
         FigureSpec::new(settings.theme(), settings.size(), vec![top, bottom])?
             .with_title(Label::new("Selected spectrum in chromatographic context")?)
+            // Which panel is which, in words, and the link named by the one
+            // thing that identifies a scan. **Not by retention time**: scans
+            // may share one, so a sentence naming "the scan at 20.4" would
+            // tell a reader the figure knows something it does not. The
+            // marker's own coordinate is described beside it by the renderer,
+            // as the coordinate it is.
             .with_caption(Caption::new(format!(
-                "Two panels. Above, {} over {}, from {} scans -- per-scan values projected from \
-                 the loaded spectrum table, not a stored chromatogram record. The marker there \
-                 identifies spectrum index {}, shown below in full: the complete selected \
-                 spectrum, {} points, never narrowed to the chromatogram range. Retention time, \
-                 m/z and intensity units {UNREPORTED}.",
+                "Two panels. The upper panel is the chromatogram: {} over {}, from {} scans \
+                 -- per-scan values projected from the loaded spectrum table, not a stored \
+                 chromatogram record. Its one marker identifies spectrum index {}, and that \
+                 scan is the lower panel: the complete selected spectrum, {} points, never \
+                 narrowed to the chromatogram range. Retention time, m/z and intensity units \
+                 {UNREPORTED}.",
                 traces.describe(),
                 scope_phrase(resolved),
                 source.scan_count(),
@@ -1704,5 +1711,466 @@ mod tests {
         );
         assert!(ChromatogramExportFormat::Png.is_figure());
         assert!(!ChromatogramExportFormat::Tsv.is_figure());
+    }
+
+    // ------------------------------------------------- the linked two-panel figure
+    //
+    // Two ordered panels: the chromatogram this session would export on its own,
+    // and beneath it the complete selected spectrum the *spectrum* surface would
+    // export on its own. Both are built by the same two functions the
+    // single-panel exports use, so the linked figure draws the same science
+    // rather than a second implementation of it.
+
+    /// One selected spectrum, for the panel the linked figure draws below.
+    fn selected(index: u64) -> SelectedSpectrumResult {
+        SelectedSpectrumResult::from_points_for_tests(
+            index,
+            vec![100.0, 200.0, 300.0, 400.0],
+            vec![10.0, 90.0, 45.0, 22.0],
+        )
+    }
+
+    /// The linked figure for one source, one spectrum and one range.
+    fn linked(
+        source: &ChromatogramSource,
+        spectrum: &SelectedSpectrumResult,
+        resolved: ResolvedRange,
+        traces: TraceSet,
+    ) -> FigureSpec {
+        let row = source
+            .row_for_spectrum(spectrum)
+            .expect("the spectrum is a scan of this retained table");
+        linked_figure_spec(source, spectrum, row, resolved, traces, settings())
+            .expect("a linked figure")
+    }
+
+    /// What a rendered document says about itself, as words rather than markup.
+    ///
+    /// A description is XML text, so the quotation marks the renderer puts
+    /// around a series name or a marker label arrive escaped. Read back here,
+    /// so an assertion can be written as the sentence a reader hears.
+    fn described(document: &str) -> String {
+        document
+            .split("<desc>")
+            .nth(1)
+            .and_then(|rest| rest.split("</desc>").next())
+            .expect("the document carries a description")
+            .replace("&quot;", "\"")
+            .replace("&amp;", "&")
+    }
+
+    /// The drawing, without the title and description that precede it.
+    fn body(document: &str) -> &str {
+        document
+            .split("</desc>")
+            .nth(1)
+            .expect("a document has a body after its description")
+    }
+
+    /// Panel order is the meaning: chromatogram above, spectrum below.
+    ///
+    /// The renderer places panels in the sequence it is given, top to bottom,
+    /// and the caption says which is which -- so a figure whose panels were
+    /// swapped would be a figure that lies about both, in the drawing and in the
+    /// words. Asserted on the kinds rather than on the contents, because that is
+    /// the claim: the *first* panel is a chromatogram and the *second* is a
+    /// spectrum.
+    #[test]
+    fn the_linked_figure_is_a_chromatogram_above_the_selected_spectrum() {
+        let source = ordinary();
+        let spectrum = selected(1);
+        let figure = linked(&source, &spectrum, full(&source), both());
+
+        assert_eq!(figure.panels().len(), 2);
+        assert_eq!(figure.panels()[0].kind(), PlotKind::Chromatogram);
+        assert!(
+            matches!(figure.panels()[1].kind(), PlotKind::Spectrum { .. }),
+            "the second panel is the spectrum: {:?}",
+            figure.panels()[1].kind(),
+        );
+
+        let description = described(&mscanvas_plot_spec::svg::render(&figure));
+        assert!(
+            description.contains("The upper panel is the chromatogram"),
+            "the words say which panel is which: {description}",
+        );
+        assert!(
+            description.contains("the lower panel: the complete selected spectrum"),
+            "and which the other is: {description}",
+        );
+        assert!(
+            description.contains("Its one marker identifies spectrum index 1"),
+            "and that the marker names the panel below: {description}",
+        );
+        // The renderer's own ordering sentence, so a reader holding only the
+        // words can attach each paragraph to a plot.
+        let first = description
+            .find("Panel 1 of 2")
+            .expect("the first panel says which it is");
+        let second = description
+            .find("Panel 2 of 2")
+            .expect("and so does the second");
+        assert!(first < second, "in the order they are drawn: {description}");
+    }
+
+    /// The linked panels are the panels the single-source exports draw.
+    ///
+    /// Equality against the two builders themselves rather than a re-derivation
+    /// of what they should produce: the upper panel is the chromatogram panel
+    /// plus one marker, and the lower panel is the spectrum panel exactly. A
+    /// linked figure that drew its own version of either would be a second
+    /// implementation of the same science, free to disagree with the first.
+    #[test]
+    fn the_linked_panels_are_the_panels_the_single_source_exports_draw() {
+        let source = ordinary();
+        let spectrum = selected(1);
+        for resolved in [full(&source), current(&source, 1.0, 2.0)] {
+            let figure = linked(&source, &spectrum, resolved, both());
+            let expected_top = chromatogram_panel(&source, resolved, both())
+                .expect("a chromatogram panel")
+                .with_markers(vec![
+                    Marker::new(2.0, Some(Label::new(SELECTED_SCAN_LABEL).expect("a label")))
+                        .expect("a marker"),
+                ])
+                .expect("one marker");
+
+            assert_eq!(figure.panels()[0], expected_top);
+            assert_eq!(
+                figure.panels()[1],
+                spectrum_panel(&spectrum).expect("a spectrum panel"),
+            );
+        }
+    }
+
+    /// The lower panel is the complete spectrum, whatever the top panel covers.
+    ///
+    /// A chromatogram range is a statement about *where the scan sits in the
+    /// run*. It is not a statement about which of that scan's peaks are real, so
+    /// narrowing the spectrum to it would be answering a question nobody asked
+    /// with data the user did not ask to lose.
+    #[test]
+    fn the_lower_panel_is_the_complete_spectrum_whatever_the_top_panel_covers() {
+        let source = ordinary();
+        let spectrum = selected(1);
+        for (resolved, what) in [
+            (full(&source), "the whole run"),
+            (current(&source, 1.0, 2.0), "a current range"),
+            (current(&source, 2.0, 2.0), "a range of one instant"),
+        ] {
+            let figure = linked(&source, &spectrum, resolved, both());
+            let bottom = &figure.panels()[1];
+
+            assert!(bottom.is_full_source(), "{what}: full source");
+            assert_eq!(bottom.visible_domain(), None, "{what}: no window");
+            assert_eq!(
+                bottom.visible_value_domain(),
+                None,
+                "{what}: no value window",
+            );
+            for series in bottom.series() {
+                assert_eq!(series.scope(), DataScope::FullSource, "{what}");
+                assert_eq!(
+                    series.len(),
+                    spectrum.mz_values().len(),
+                    "{what}: every measured point",
+                );
+            }
+            assert_eq!(bottom.full_domain().low(), 100.0, "{what}");
+            assert_eq!(bottom.full_domain().high(), 400.0, "{what}");
+            assert!(
+                bottom.markers().is_empty(),
+                "{what}: the link is annotated on the chromatogram, not on the spectrum",
+            );
+        }
+    }
+
+    /// One linking marker, at the retained row's own retention time.
+    ///
+    /// Exactly one, because the figure links one scan. Its coordinate is the
+    /// row's number rather than the spectrum's own reported retention time --
+    /// these are two readings of one quantity and only one of them is the axis
+    /// the marker is drawn against.
+    #[test]
+    fn the_upper_panel_carries_one_marker_at_the_retained_row() {
+        let source = ordinary();
+        let spectrum = selected(2);
+        let figure = linked(&source, &spectrum, full(&source), both());
+        let markers = figure.panels()[0].markers();
+
+        assert_eq!(markers.len(), 1);
+        assert!(
+            (markers[0].at() - 3.0).abs() < f64::EPSILON,
+            "row 2 sits at 3.0, and the marker is there: {}",
+            markers[0].at(),
+        );
+        assert_eq!(
+            markers[0]
+                .label()
+                .map(mscanvas_plot_spec::spec::Label::as_str),
+            Some("Selected scan"),
+        );
+        // The spectrum's own reading of the same quantity, which is not it.
+        assert!(spectrum.retention_time().value().abs() < f64::EPSILON);
+
+        // And the drawing carries it: a dashed line inside the panel, named in
+        // the words at the coordinate the axis is labelled in.
+        let document = mscanvas_plot_spec::svg::render(&figure);
+        assert!(
+            described(&document).contains("\"Selected scan\" at 3.00"),
+            "the marker is named and placed: {}",
+            described(&document),
+        );
+        assert!(body(&document).contains("stroke-dasharray=\"4 3\""));
+    }
+
+    /// The words identify the scan by index, never by retention time.
+    ///
+    /// **Two scans may share a retention time.** A caption saying "the scan at
+    /// 2.0" would be telling a reader the figure knows which of them was
+    /// selected from a number that cannot say. So the index is what the caption
+    /// names, and the retention time appears only where it belongs -- as the
+    /// coordinate the marker was drawn at.
+    #[test]
+    fn the_linked_caption_identifies_the_scan_by_index_rather_than_by_time() {
+        let source = source(&run(&[
+            (0, Some(1), 1.0, 100.0, 40.0),
+            (1, Some(2), 2.0, 300.0, 120.0),
+            // A second scan at the same retention time as the one above.
+            (2, Some(3), 2.0, 900.0, 700.0),
+        ]));
+        let spectrum = selected(2);
+        let figure = linked(&source, &spectrum, full(&source), both());
+        let description = described(&mscanvas_plot_spec::svg::render(&figure));
+
+        assert!(
+            description.contains("marker identifies spectrum index 2"),
+            "the index names the scan: {description}",
+        );
+        for claim in [
+            "the scan at 2",
+            "the scan at retention time",
+            "identifies the scan at",
+        ] {
+            assert!(
+                !description.contains(claim),
+                "nothing says a retention time names a scan: {description}",
+            );
+        }
+    }
+
+    /// A peak outside the window does not scale the linked figure's top panel.
+    ///
+    /// The M4.3 fixture, carried into the linked surface. Nine million at
+    /// retention time 9 is part of the run and stays in the source range; a top
+    /// panel that scaled to it would flatten everything the reader asked to see
+    /// onto the baseline, and the spectrum below it is untouched either way.
+    #[test]
+    fn an_out_of_window_peak_does_not_scale_the_linked_top_panel() {
+        let source = source(&run(&[
+            (0, Some(1), 9.0, 9_000_000.0, 10.0),
+            (1, Some(2), 10.0, 90.0, 20.0),
+            (2, Some(3), 11.0, 100.0, 30.0),
+            (3, Some(4), 12.0, 110.0, 40.0),
+            (4, Some(5), 13.0, 120.0, 50.0),
+        ]));
+        let spectrum = selected(2);
+        let traces = TraceSet::from_wire(true, false);
+        let figure = linked(&source, &spectrum, current(&source, 10.0, 13.0), traces);
+        let top = &figure.panels()[0];
+
+        // The source range still says how far the run reaches.
+        assert_eq!(top.value_domain().high(), 9_000_000.0);
+        assert_eq!(top.full_domain().low(), 9.0);
+        assert!(top.is_full_source(), "every scan is still in the document");
+        // The drawing does not.
+        let window = top.visible_value_domain().expect("a value window");
+        assert_eq!(window.low(), 0.0);
+        assert!(
+            (window.high() - 120.0).abs() < 1e-9,
+            "the window ends at the tallest value in view: {window:?}",
+        );
+        assert_eq!(top.visible_domain().expect("a window").low(), 10.0);
+
+        // And nothing drawn mentions the peak.
+        let document = mscanvas_plot_spec::svg::render(&figure);
+        assert!(!body(&document).contains("9000000"));
+
+        // The spectrum below is the complete spectrum, exactly as its own
+        // export writes it -- a narrowed chromatogram narrows nothing here.
+        assert_eq!(
+            figure.panels()[1],
+            spectrum_panel(&spectrum).expect("a spectrum panel"),
+        );
+    }
+
+    /// A run of one scan links over the whole run and over a current range.
+    ///
+    /// The singleton is a real acquisition state, and the figure has to stay
+    /// honest about it: the run reaches from that scan to that scan and no
+    /// further, so nothing may invent a width for an axis that has none.
+    #[test]
+    fn a_one_scan_run_links_over_full_and_over_the_current_range() {
+        let source = source(&run(&[(0, Some(1), 4.5, 250.0, 90.0)]));
+        let spectrum = selected(0);
+        let committed = source
+            .resolve(RangeRequest::from_wire("current", None, None).expect("a request"))
+            .expect("the whole run");
+
+        for (resolved, what) in [(full(&source), "full"), (committed, "current")] {
+            let figure = linked(&source, &spectrum, resolved, both());
+            let top = &figure.panels()[0];
+
+            // No invented width: the run is one instant, and says so.
+            assert_eq!(top.full_domain().low(), 4.5, "{what}");
+            assert_eq!(top.full_domain().high(), 4.5, "{what}");
+            assert_eq!(top.visible_domain(), None, "{what}: this range is the run");
+
+            // The marker is there, and it is inside what is drawn.
+            assert_eq!(top.markers().len(), 1, "{what}");
+            assert!((top.markers()[0].at() - 4.5).abs() < f64::EPSILON, "{what}");
+
+            // The one scan is drawn rather than lost between two neighbours it
+            // does not have, and the marker is named in the words.
+            let document = mscanvas_plot_spec::svg::render(&figure);
+            let description = described(&document);
+            assert!(
+                description.contains("\"Selected scan\" at 4.500000"),
+                "{what}: {description}",
+            );
+            assert!(
+                !description.contains("nothing to draw"),
+                "{what}: the singleton is a drawing: {description}",
+            );
+            // A lone sample has no segment to draw, and a blank plotting
+            // area reads as *no data* -- the one thing an export must not
+            // be ambiguous about. The renderer draws a short tick at the
+            // sample's own value instead, so both traces reach the page.
+            let drawn = body(&document).matches("<path d=\"M").count();
+            assert!(
+                drawn >= 2,
+                "{what}: both traces are drawn rather than left blank, found {drawn}",
+            );
+
+            // And the spectrum below it is a complete, valid spectrum.
+            assert_eq!(
+                figure.panels()[1],
+                spectrum_panel(&spectrum).expect("a spectrum panel"),
+                "{what}",
+            );
+        }
+    }
+
+    /// A linked figure is a version 2 document, like every other figure here.
+    ///
+    /// Two panels needed no contract change: the renderer has carried a
+    /// `Vec<PanelSpec>` since ADR 0028, and ordered vertical bands already place
+    /// and describe them.
+    #[test]
+    fn a_linked_figure_needs_no_new_schema_version() {
+        let source = ordinary();
+        let figure = linked(&source, &selected(1), full(&source), both());
+        assert_eq!(
+            figure.schema_version(),
+            mscanvas_plot_spec::spec::SCHEMA_VERSION
+        );
+        assert_eq!(figure.schema_version(), 2);
+    }
+
+    /// A figure too short for two panels is refused by the contract.
+    #[test]
+    fn a_linked_figure_is_refused_below_the_two_panel_minimum() {
+        let source = ordinary();
+        let spectrum = selected(1);
+        let row = source.row_for_spectrum(&spectrum).expect("its row");
+        let short = FigureRenderSettings::from_wire(1_200, 259, "light").expect("a figure size");
+
+        assert!(
+            linked_figure_spec(&source, &spectrum, row, full(&source), both(), short).is_err(),
+            "259 is one pixel short of two panels",
+        );
+        let exact = FigureRenderSettings::from_wire(1_200, 260, "light").expect("a figure size");
+        assert!(linked_figure_spec(&source, &spectrum, row, full(&source), both(), exact).is_ok());
+    }
+
+    /// A linked figure of no visible trace is refused, as its top panel would be.
+    #[test]
+    fn a_linked_figure_of_no_visible_trace_is_refused() {
+        let source = ordinary();
+        let spectrum = selected(1);
+        let row = source.row_for_spectrum(&spectrum).expect("its row");
+        assert!(
+            linked_figure_spec(
+                &source,
+                &spectrum,
+                row,
+                full(&source),
+                TraceSet::from_wire(false, false),
+                settings(),
+            )
+            .is_err(),
+        );
+    }
+
+    /// Neither panel carries a path, a handle or a dataset name.
+    ///
+    /// The same exclusion the single-panel figure already answers, asked again
+    /// of a figure built from *two* sources: twice the science is twice the
+    /// opportunity for a provenance string to reach a document that is meant to
+    /// carry none.
+    #[test]
+    fn a_linked_figure_carries_no_path_or_handle() {
+        let source = ordinary();
+        let document =
+            mscanvas_plot_spec::svg::render(&linked(&source, &selected(1), full(&source), both()));
+        // The SVG namespace declaration is required by the format and locates
+        // nothing, so it is removed before the document is searched.
+        let searchable = document.replace("http://www.w3.org/2000/svg", "");
+        for forbidden in [
+            ":\\", "://", "C:", "/Users/", ".mzML", "file-", "href", "url(", "<image",
+        ] {
+            assert!(
+                !searchable.contains(forbidden),
+                "a linked figure never names where it came from: {forbidden:?}",
+            );
+        }
+    }
+
+    // ------------------------------------------- the single-panel documents
+    //
+    // `chromatogram_panel` was factored out of `figure_spec` for the linked
+    // figure's upper panel, and the same rule applies as for the spectrum: what
+    // this export writes is a document users have already saved, so the bytes
+    // are pinned rather than a property of them. Both range scopes, because the
+    // window and the value window are exactly what the refactor moved.
+
+    /// The run the golden documents were rendered from.
+    ///
+    /// The M4.3 off-window fixture, so the current-range golden carries a
+    /// visible value window that a refactor could disturb.
+    fn golden_chromatogram() -> ChromatogramSource {
+        source(&run(&[
+            (0, Some(1), 9.0, 9_000_000.0, 10.0),
+            (1, Some(2), 10.0, 90.0, 20.0),
+            (2, Some(3), 11.0, 100.0, 30.0),
+            (3, Some(4), 12.0, 110.0, 40.0),
+            (4, Some(5), 13.0, 120.0, 50.0),
+        ]))
+    }
+
+    /// The chromatogram SVGs are byte for byte what they were.
+    #[test]
+    fn the_single_panel_chromatogram_documents_are_unchanged() {
+        let source = golden_chromatogram();
+        assert_eq!(
+            svg_document(&source, full(&source), both(), settings()).expect("a document"),
+            include_str!("../../../../../fixtures/plot-golden/chromatogram-full-run.svg"),
+            "the full-run chromatogram export is unchanged by the linked figure",
+        );
+        assert_eq!(
+            svg_document(&source, current(&source, 10.0, 13.0), both(), settings())
+                .expect("a document"),
+            include_str!("../../../../../fixtures/plot-golden/chromatogram-current-range.svg"),
+            "and so is the current-range one, window and all",
+        );
     }
 }

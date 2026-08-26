@@ -764,6 +764,31 @@ def validate_every_raster_entry_point_asks_the_budget(errors: list[str]) -> None
             )
 
 
+def functions_naming(content: str, needle: str) -> set[str]:
+    """Every function in one Rust file whose body mentions `needle`.
+
+    A line at column zero ends whatever function was open, so a struct's own
+    field declarations are not attributed to the function above them.
+
+    Shared by the two rules that pin an export-slot invariant to the shape of
+    the API rather than to a test: asking which functions can reach a field is
+    the same question in both, and two copies of the scan could answer it
+    differently.
+    """
+    owners: set[str] = set()
+    current: str | None = None
+    for line in content.split("\n"):
+        if line and not line.startswith(" "):
+            current = None
+            continue
+        defined = re.match(r"    (?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?fn (\w+)", line)
+        if defined:
+            current = defined.group(1)
+        elif current is not None and needle in line:
+            owners.add(current)
+    return owners
+
+
 def validate_the_chromatogram_authority_has_one_installation_path(
     errors: list[str],
 ) -> None:
@@ -815,20 +840,7 @@ def validate_the_chromatogram_authority_has_one_installation_path(
                 "ticket is checked"
             )
 
-    # Every function in the file, and whether its body names the field. A line
-    # at column zero ends whatever function was open, so a struct's own field
-    # declarations are not attributed to the function above them.
-    owners: set[str] = set()
-    current: str | None = None
-    for line in content.split("\n"):
-        if line and not line.startswith(" "):
-            current = None
-            continue
-        defined = re.match(r"    (?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?fn (\w+)", line)
-        if defined:
-            current = defined.group(1)
-        elif current is not None and "latest_preview_open" in line:
-            owners.add(current)
+    owners = functions_naming(content, "latest_preview_open")
 
     # `default` builds the slot and assigns the field its initial ticket, which
     # is the one thing that is neither a question nor an answer to one.
@@ -842,6 +854,119 @@ def validate_the_chromatogram_authority_has_one_installation_path(
             "check under one slot acquisition, release it, and install under "
             "another, which is the race the ticket exists to close"
         )
+
+
+def validate_the_linked_pair_is_bound_in_one_operation(errors: list[str]) -> None:
+    """A linked figure reads both of its sources without letting go in between.
+
+    A linked two-panel figure is one claim about two retained sources: that they
+    describe the same scan of the same run, at the same moment. Reading the
+    chromatogram token under one acquisition of the export slot, releasing it,
+    and reading the spectrum token under another would let the pair describe two
+    different instants -- a preview replaced between the two lookups, a selection
+    superseded -- which is the one thing the figure says it does not do.
+
+    No test can catch that. It needs a preview open or a spectrum install to land
+    inside a window of a few instructions, so anything claiming to catch it would
+    be claiming scheduling luck as evidence. What closes it is the shape of the
+    API, and that is what is checked here:
+
+    - the two single-source readers are private to `export.rs`, so no call site
+      outside the module can read one of a pair's halves on its own at all;
+    - the paired bind is private too, and the only functions calling it are the
+      two operations that complete it under their own `&mut self`;
+    - `LinkedPair` is constructed in exactly one place, so a pair that nothing
+      proved cannot exist.
+
+    The first two rules are deliberately not lists of forbidden callers. Any new
+    way to read one half on its own has to call one of those two readers,
+    whatever the caller is called, and that is what fails here.
+    """
+    preview = ROOT / "apps" / "desktop" / "src-tauri" / "src" / "preview"
+    export = preview / "export.rs"
+    if not export.is_file():
+        return
+    content = export.read_text(encoding="utf-8")
+
+    for reader in ("spectrum_for", "chromatogram_for"):
+        if not re.search(rf"\n    fn {reader}\(", content):
+            errors.append(
+                f"preview/export.rs no longer defines a private `{reader}`; a reader "
+                "reachable from outside the module lets a caller take one of a linked "
+                "figure's two sources under one acquisition of the export slot and the "
+                "other under a second, which is the race the paired bind exists to close"
+            )
+
+    for path in sorted(preview.rglob("*.rs")):
+        if path.name == "export.rs":
+            continue
+        text = path.read_text(encoding="utf-8")
+        for reader in ("spectrum_for(", "chromatogram_for("):
+            if f".{reader}" in text:
+                errors.append(
+                    f"{path.relative_to(ROOT).as_posix()} calls .{reader}) directly; the "
+                    "single-source readers stay private to export.rs so a pair cannot be "
+                    "assembled from two separate acquisitions of the export slot"
+                )
+
+    if not re.search(r"\n    fn linked_pair\(", content):
+        errors.append(
+            "preview/export.rs no longer defines a private `linked_pair`; the operation "
+            "that proves two retained sources are one scan is the module's own, and a "
+            "reachable one is one a caller could take apart"
+        )
+
+    # Its callers, which are the two operations that complete a bind. The
+    # definition itself does not name itself, so it is pinned above instead.
+    owners = functions_naming(content, "self.linked_pair(")
+    expected = {"begin_linked_figure", "begin_linked_figure_copy"}
+    if owners != expected:
+        errors.append(
+            "preview/export.rs: the functions calling `linked_pair` are "
+            f"{sorted(owners)}, not {sorted(expected)}. Everything a linked figure is "
+            "about is decided in that one operation, under the one `&mut self` its "
+            "caller holds -- a second way in is a second place the pair could be "
+            "assembled from two different moments"
+        )
+
+    constructions = content.count("Ok(LinkedPair {")
+    if constructions != 1:
+        errors.append(
+            f"preview/export.rs constructs `LinkedPair` {constructions} times, not once. "
+            "A pair built anywhere but the operation that proves it is one scan is a "
+            "pair nothing proved"
+        )
+
+
+
+# What the newest status section may not deny, by the subject it is about.
+#
+# One entry per milestone whose own section could contradict itself. The key is
+# matched against the section's title, case-insensitively, and the phrases are
+# the ways that milestone's capability has actually been denied in this file --
+# so a new section inherits the rule by being titled after its subject rather
+# than by anyone remembering to extend a list.
+STATUS_SUBJECTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "chromatogram export",
+        (
+            "chromatogram data or figure\nexport",
+            "chromatogram data or figure export",
+            "current-range export of anything",
+            "the export is not built",
+        ),
+    ),
+    (
+        "linked two-panel figure",
+        (
+            "linked chromatogram + selected-spectrum two-panel figure",
+            "linked chromatogram + spectrum figure template",
+            "no linked two-panel figure",
+            "the linked two-panel figure (FIG-006)",
+            "there is no linked figure",
+        ),
+    ),
+)
 
 
 def validate_the_current_status_section_has_one_answer(errors: list[str]) -> None:
@@ -860,6 +985,11 @@ def validate_the_current_status_section_has_one_answer(errors: list[str]) -> Non
     only for claims that the thing the section is about does not exist. Nothing
     here reads prose for tone or pins a snapshot of it; a section is free to say
     anything except that its own subject is unbuilt.
+
+    The subjects are a table rather than one hard-coded topic. A rule that only
+    knew about the chromatogram went dormant the moment a later milestone
+    appended its own section -- which is exactly when the same mistake becomes
+    available again, and to a section nobody has reviewed yet.
     """
     source = ROOT / "BOOTSTRAP_STATUS.md"
     if not source.is_file():
@@ -869,24 +999,18 @@ def validate_the_current_status_section_has_one_answer(errors: list[str]) -> Non
         return
     current = sections[-1]
     title = current.split("\n", 1)[0].strip()
-    if "chromatogram export" not in title.lower():
-        return
 
-    denials = (
-        "chromatogram data or figure\nexport",
-        "chromatogram data or figure export",
-        "current-range export of anything",
-        "the export is not built",
-    )
-    for denial in denials:
-        if denial in current:
-            errors.append(
-                f"BOOTSTRAP_STATUS.md: the current section ({title!r}) describes the "
-                f"chromatogram export and also says {denial!r}. A status document that "
-                "answers a milestone question both ways cannot be the basis for the next "
-                "one; correct the current section rather than the historical ones"
-            )
-
+    for subject, denials in STATUS_SUBJECTS:
+        if subject not in title.lower():
+            continue
+        for denial in denials:
+            if denial in current:
+                errors.append(
+                    f"BOOTSTRAP_STATUS.md: the current section ({title!r}) describes the "
+                    f"{subject} and also says {denial!r}. A status document that answers "
+                    "a milestone question both ways cannot be the basis for the next "
+                    "one; correct the current section rather than the historical ones"
+                )
 
 def main() -> int:
     errors: list[str] = []
@@ -905,6 +1029,7 @@ def main() -> int:
         validate_no_font_is_bundled_or_fetched(errors)
         validate_every_raster_entry_point_asks_the_budget(errors)
         validate_the_chromatogram_authority_has_one_installation_path(errors)
+        validate_the_linked_pair_is_bound_in_one_operation(errors)
         validate_the_current_status_section_has_one_answer(errors)
 
     if errors:

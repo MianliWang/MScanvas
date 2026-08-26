@@ -113,7 +113,7 @@ use super::dto::{
 };
 use super::export::{
     BeginExportRefusal, ClaimedChromatogramExport, ClaimedLinkedFigureExport,
-    ClaimedSpectrumExport, FigureFailure, PreviewOpenTicket, ScientificExportSlots,
+    ClaimedSpectrumExport, FigureFailure, LinkedTokens, PreviewOpenTicket, ScientificExportSlots,
     SpectrumExportFormat, data_document, figure_raster, png_document, png_of, raster_of,
     svg_document,
 };
@@ -2785,8 +2785,10 @@ impl PreviewService {
         };
         self.spectrum_export_slot()
             .begin_linked_figure(
-                chromatogram_token,
-                spectrum_token,
+                LinkedTokens {
+                    chromatogram: chromatogram_token,
+                    spectrum: spectrum_token,
+                },
                 format,
                 request,
                 TraceSet::from_wire(traces.tic, traces.bpc),
@@ -2905,8 +2907,10 @@ impl PreviewService {
         let pair = self
             .spectrum_export_slot()
             .begin_linked_figure_copy(
-                chromatogram_token,
-                spectrum_token,
+                LinkedTokens {
+                    chromatogram: chromatogram_token,
+                    spectrum: spectrum_token,
+                },
                 request,
                 traces,
                 settings,
