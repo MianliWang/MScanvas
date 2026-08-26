@@ -135,3 +135,93 @@ describe("Tauri folder-import reservation boundary", () => {
     await expect(first).rejects.toEqual(replayFailure);
   });
 });
+
+describe("the linked figure boundary", () => {
+  afterEach(() => {
+    clearMocks();
+  });
+
+  /*
+   * What actually crosses `invoke`, which no test above this line was watching.
+   *
+   * Found by the M4.4 mutation set: adding two array fields to the linked
+   * export's payload passed the whole unit suite, because every other test
+   * substitutes the `PreviewApi` and therefore records what the *hook* sent
+   * rather than what the adapter did. The rendered suite caught it, which is
+   * slow and far from the change.
+   *
+   * So the payload is pinned here, exactly. A linked figure is the one surface
+   * that could plausibly grow an argument -- it is about two sources, and the
+   * arrays of one of them are sitting right there in the document -- and the
+   * whole posture of this boundary is that they never travel.
+   */
+  const RANGE = { scope: "current", low: 0.25, high: 0.75 } as const;
+  const TRACES = { tic: true, bpc: false } as const;
+  const SETTINGS = { widthPx: 1_200, heightPx: 640, pngDpi: 300, theme: "light" } as const;
+
+  it("sends two tokens, a range, the traces and the settings, and nothing else", async () => {
+    const calls: { readonly command: string; readonly payload: unknown }[] = [];
+    mockIPC((command, payload) => {
+      calls.push({ command, payload });
+      if (command === "begin_linked_figure_export") {
+        return "linked-reservation-1";
+      }
+      if (command === "save_linked_figure_export") {
+        return { status: "cancelled" };
+      }
+      throw new Error(`unexpected command: ${command}`);
+    });
+
+    await tauriPreviewApi.exportLinkedFigure("2", "1", "svg", RANGE, TRACES, SETTINGS);
+
+    expect(calls).toEqual([
+      {
+        command: "begin_linked_figure_export",
+        payload: {
+          chromatogramToken: "2",
+          spectrumToken: "1",
+          format: "svg",
+          range: RANGE,
+          traces: TRACES,
+          settings: SETTINGS,
+        },
+      },
+      { command: "save_linked_figure_export", payload: { reservationId: "linked-reservation-1" } },
+    ]);
+    // No measurement, and no retention time either: where the marked scan sits
+    // is the retained row's fact and travels the other way.
+    const rendered = JSON.stringify(calls);
+    for (const forbidden of ["mz", "intensity", "retentionTime", "path", "handle"]) {
+      expect(rendered).not.toContain(forbidden);
+    }
+  });
+
+  it("copies with the same pair, and claims no destination", async () => {
+    const calls: { readonly command: string; readonly payload: unknown }[] = [];
+    mockIPC((command, payload) => {
+      calls.push({ command, payload });
+      if (command === "copy_linked_plot") {
+        return { status: "copied" };
+      }
+      throw new Error(`unexpected command: ${command}`);
+    });
+
+    await tauriPreviewApi.copyLinkedPlot("2", "1", RANGE, TRACES, SETTINGS);
+
+    expect(calls).toEqual([
+      {
+        command: "copy_linked_plot",
+        payload: {
+          chromatogramToken: "2",
+          spectrumToken: "1",
+          range: RANGE,
+          traces: TRACES,
+          settings: SETTINGS,
+        },
+      },
+    ]);
+    // One command rather than two: a copy chooses no destination, so there is
+    // no dialog to gate and nothing to come back from.
+    expect(calls.map((call) => call.command)).not.toContain("save_linked_figure_export");
+  });
+});
