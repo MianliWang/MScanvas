@@ -209,9 +209,19 @@ describe("the linked chromatogram and spectrum section", () => {
     // And no data document, because there is no honest combined table.
     expect(within(linkedSection()).queryByRole("button", { name: /CSV/u })).toBeNull();
     expect(within(linkedSection()).queryByRole("button", { name: /TSV/u })).toBeNull();
+
+    // One sentence at a time, and which one depends on whether the reader can
+    // act: the reason while the section is closed, what it draws once it opens.
+    expect(linkedReason()).toBe("Select a scan and wait for its spectrum to load.");
+    expect(
+      within(linkedSection()).queryByText(/Two panels: this chromatogram over the range above/u),
+    ).toBeNull();
+
+    await selectAScan();
+    expect(linkedReason()).toBeNull();
     expect(
       within(linkedSection()).getByText(
-        /One figure of two panels: this chromatogram over the range above/u,
+        /Two panels: this chromatogram over the range above, marked at the selected scan/u,
       ),
     ).toBeVisible();
   });

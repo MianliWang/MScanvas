@@ -371,12 +371,28 @@ function LinkedFigureSection({
   return (
     <fieldset className="linked-figure-actions" id={`${LINKED_PREFIX}-section`}>
       <legend>Linked chromatogram + spectrum</legend>
-      <p className="chromatogram-export-note">
-        One figure of two panels: this chromatogram over the range above, marked at the selected
-        scan, and that scan&rsquo;s complete spectrum below it. The spectrum is always the whole
-        source, whichever range the chromatogram covers.
-      </p>
-      {unavailable === null ? null : (
+      {/*
+        One sentence, and which one depends on whether the reader can act.
+
+        Measured, at 1366x768: this section costs the open surface about 145px,
+        and two stacked paragraphs cost enough of it to push the plot below the
+        fold -- the viewer column is 614px there and the surface starts at 189px.
+        The three panels' floors were measured for M4.3 and the export surface's
+        own scroll owner was accepted on that arithmetic, so a third section has
+        to fit inside it rather than spend it.
+
+        Which sentence to drop is not a coin toss. A reader who cannot use this
+        yet needs to know what to change; a reader who can needs to know what
+        they will get. Neither is served by being shown the other's sentence
+        underneath their own.
+      */}
+      {unavailable === null ? (
+        <p className="chromatogram-export-note">
+          Two panels: this chromatogram over the range above, marked at the selected scan, and
+          that scan&rsquo;s complete spectrum below &mdash; always the whole spectrum, whatever
+          the range.
+        </p>
+      ) : (
         <p className="chromatogram-export-note" id={LINKED_UNAVAILABLE_ID}>
           {unavailable}
         </p>

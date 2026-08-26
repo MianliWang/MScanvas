@@ -119,6 +119,98 @@ export async function plotBox(): Promise<Box> {
   }, PLOT) as Promise<Box>;
 }
 
+/**
+ * Scrolls the application's own owners until the plot is genuinely on screen.
+ *
+ * The export surface is taller than the three-panel column has room for -- it
+ * was measured at 1366x768 for M4.3 and again for M4.4 -- so opening it puts the
+ * plot below the fold and the panel scrolls. A gesture test that computed a
+ * pointer position from the plot's box without this asks the driver to move
+ * outside the window, and the driver refuses.
+ *
+ * Through the product's scroll owners rather than `scrollIntoView`, which drives
+ * the browser: a plot only the WebDriver can reveal is not one a user can reach,
+ * and this has to fail in that case rather than paper over it.
+ *
+ * Answers the *visible* part of the plot afterwards, which is what a caller
+ * wanting to put a pointer on it needs. See [[visiblePlotBox]].
+ */
+export async function revealThePlot(): Promise<Box> {
+  await browser.execute((css: string) => {
+    const plot = document.querySelector(css);
+    if (plot === null) {
+      return;
+    }
+    for (
+      let node: HTMLElement | null = (plot as HTMLElement).parentElement;
+      node !== null && node !== document.body;
+      node = node.parentElement
+    ) {
+      const style = getComputedStyle(node);
+      const scrolls =
+        (style.overflowY === "auto" || style.overflowY === "scroll") &&
+        node.scrollHeight > node.clientHeight;
+      if (!scrolls) {
+        continue;
+      }
+      const offset =
+        plot.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop;
+      node.scrollTop = Math.max(0, offset - node.clientHeight / 2);
+    }
+  }, PLOT);
+  return visiblePlotBox();
+}
+
+/**
+ * The part of the plot a pointer could actually be put on.
+ *
+ * Not the same thing as [[plotBox]], and the difference is the point. The plot
+ * is routinely taller than the band its panel gives it -- the three-panel
+ * column is measured, and the export surface takes its room from the same
+ * column -- so the plot's own rectangle names a region that is partly painted
+ * nowhere. A driver asked to move to the centre of that rectangle refuses, and
+ * `elementFromPoint` there answers with whatever is drawn instead.
+ *
+ * So this is the intersection of the plot with the viewport and with every
+ * ancestor that clips: where the plot is, on screen, right now. An empty answer
+ * means the plot is not visible at all, which is a real failure rather than a
+ * measurement to work around.
+ */
+export async function visiblePlotBox(): Promise<Box> {
+  return browser.execute((css: string) => {
+    const plot = document.querySelector(css);
+    if (plot === null) {
+      return { left: 0, top: 0, width: 0, height: 0 };
+    }
+    const rect = plot.getBoundingClientRect();
+    let left = Math.max(rect.left, 0);
+    let top = Math.max(rect.top, 0);
+    let right = Math.min(rect.right, window.innerWidth);
+    let bottom = Math.min(rect.bottom, window.innerHeight);
+    for (
+      let node: HTMLElement | null = (plot as HTMLElement).parentElement;
+      node !== null && node !== document.body;
+      node = node.parentElement
+    ) {
+      const style = getComputedStyle(node);
+      if (style.overflowX === "visible" && style.overflowY === "visible") {
+        continue;
+      }
+      const bounds = node.getBoundingClientRect();
+      left = Math.max(left, bounds.left);
+      top = Math.max(top, bounds.top);
+      right = Math.min(right, bounds.right);
+      bottom = Math.min(bottom, bounds.bottom);
+    }
+    return {
+      left,
+      top,
+      width: Math.max(0, right - left),
+      height: Math.max(0, bottom - top),
+    };
+  }, PLOT) as Promise<Box>;
+}
+
 /** Where a fraction of the drawn width falls, in page pixels. */
 export async function pointAt(fraction: number): Promise<{ readonly x: number; readonly y: number }> {
   const box = await plotBox();

@@ -40,6 +40,16 @@ const FULL_RANGE_HIGH = 0.0625;
 /** The spectrum index the QA run selects. */
 export const SELECTED_INDEX = 0;
 
+/**
+ * Where the mocked backend says that scan sits.
+ *
+ * The retained table row's own number, which is the marker's coordinate. Stated
+ * here because it is Rust's answer rather than the document's: nothing the
+ * webview holds supplies it, and a rendered test asserting it came back proves
+ * the direction it travelled in.
+ */
+export const SELECTED_RETENTION_TIME = 0.0125;
+
 /** A spectrum that loaded and has peaks. */
 export function spectrumWithPeaks() {
   return buildSpectrum(SELECTED_INDEX, 6);
@@ -119,6 +129,35 @@ export function ipcTable(options: { readonly emptySpectrum?: boolean } = {}) {
       // would be modelling a claim the product does not make.
       figure: { width: 1_200, height: 640, theme: "light" },
       pointCount: COMPLETE_POINT_COUNT,
+    },
+    // The linked two-panel figure: a third surface over the two above, in the
+    // same two-phase shape. The retention time it answers with is the retained
+    // row's, which is why the fixture states one at all -- nothing this
+    // document holds could have supplied it.
+    begin_linked_figure_export: "linked-reservation-1",
+    save_linked_figure_export: {
+      status: "saved",
+      format: "svg",
+      fileName: "mscanvas-linked-spectrum-0-full.svg",
+      figure: { width: 1_200, height: 640, dpi: null, theme: "light" },
+      traces: { tic: true, bpc: false },
+      rangeScope: "full",
+      rangeLow: 0,
+      rangeHigh: FULL_RANGE_HIGH,
+      sourceScanCount: COMPLETE_SCAN_COUNT,
+      selectedIndex: SELECTED_INDEX,
+      selectedRetentionTime: SELECTED_RETENTION_TIME,
+    },
+    copy_linked_plot: {
+      status: "copied",
+      figure: { width: 1_200, height: 640, theme: "light" },
+      traces: { tic: true, bpc: false },
+      rangeScope: "full",
+      rangeLow: 0,
+      rangeHigh: FULL_RANGE_HIGH,
+      sourceScanCount: COMPLETE_SCAN_COUNT,
+      selectedIndex: SELECTED_INDEX,
+      selectedRetentionTime: SELECTED_RETENTION_TIME,
     },
   } as Record<string, unknown>;
 }
