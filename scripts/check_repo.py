@@ -929,7 +929,10 @@ def validate_the_linked_pair_is_bound_in_one_operation(errors: list[str]) -> Non
             "assembled from two different moments"
         )
 
-    constructions = content.count("Ok(LinkedPair {")
+    # Every construction, however it is spelled. Counting `Ok(LinkedPair {`
+    # counted one way of writing one, and a second built into a local and
+    # returned on the next line would not have been seen at all.
+    constructions = len(re.findall(r"(?<!struct )LinkedPair\s*\{", content))
     if constructions != 1:
         errors.append(
             f"preview/export.rs constructs `LinkedPair` {constructions} times, not once. "

@@ -543,7 +543,6 @@ export type ChromatogramExportOutcome =
       readonly rowCount: number | null;
     };
 
-/** What a chromatogram figure put on the clipboard was. */
 /** What a linked two-panel figure can be written as. Drawings only. */
 export type LinkedFigureFormat = "svg" | "png";
 
@@ -584,6 +583,7 @@ export interface LinkedFigureCopyOutcome {
   readonly selectedRetentionTime: number;
 }
 
+/** What a chromatogram figure put on the clipboard was. */
 export interface ChromatogramCopyOutcome {
   readonly status: "copied";
   readonly figure: CopiedFigure;

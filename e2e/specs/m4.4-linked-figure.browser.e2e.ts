@@ -505,9 +505,11 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
 
     it(`keeps the chromatogram itself reachable and operable at ${viewport.name}`, async () => {
       /*
-       * What the linked section costs. It makes the open export surface about
-       * 96px taller, and the surface already pushes the plot down inside a
-       * panel that scrolls -- the trade M4.3 measured and accepted. So the
+       * What the linked section costs. It makes the open export surface 116px
+       * taller at this viewport and at 960x640, 96px at 1920x1080 where its
+       * sentence fits on one line -- and the surface already pushes the plot
+       * down inside a panel that scrolls, the trade M4.3 measured and
+       * accepted. So the
        * claim worth making is not that the plot stays where it was, which it
        * does not, but that it is still reachable through the product's own
        * scroll owner and still *works* once it is.

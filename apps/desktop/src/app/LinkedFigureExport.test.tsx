@@ -429,14 +429,21 @@ describe("the linked chromatogram and spectrum section", () => {
     openExport();
     expect(linkedReason()).toBeNull();
 
+    // **Before** the reason exists. A region that only becomes live in the same
+    // commit that fills it was never live when its content changed, and nothing
+    // was watching it -- which is what a conditional pair of paragraphs does,
+    // because React reuses the node.
+    const sentence = within(linkedSection()).getByText(/^Two panels: this chromatogram/u);
+    expect(sentence.getAttribute("aria-live")).toBe("polite");
+
     fireEvent.change(within(panel()).getByRole("textbox", { name: /^Height/u }), {
       target: { value: "259" },
     });
 
     const reason = document.querySelector("#chromatogram-linked-unavailable");
     expect(reason?.textContent).toBe("A two-panel linked figure needs a height of at least 260.");
-    // Its own, rather than an ancestor's: the section's only other live region
-    // holds the result, which is empty here.
+    // The same element, still live: only its words changed.
+    expect(reason).toBe(sentence);
     expect(reason?.getAttribute("aria-live")).toBe("polite");
     expect(linkedButton("Export linked SVG…").disabled).toBe(true);
 

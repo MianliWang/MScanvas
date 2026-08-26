@@ -337,6 +337,16 @@ const LINKED_PREFIX = "chromatogram-linked";
 const LINKED_UNAVAILABLE_ID = `${LINKED_PREFIX}-unavailable`;
 
 /**
+ * What the section says about itself when it can be used.
+ *
+ * A constant rather than markup, because it shares one element with the reason
+ * that replaces it -- see the comment where that element is rendered.
+ */
+const LINKED_DESCRIPTION =
+  "Two panels: this chromatogram over the range above, marked at the selected scan, and that " +
+  "scan\u2019s complete spectrum below \u2014 always the whole spectrum, whatever the range.";
+
+/**
  * The linked two-panel figure, as one compact section of this surface.
  *
  * Three actions and one sentence about each thing that would refuse them. The
@@ -382,7 +392,9 @@ function LinkedFigureSection({
     <fieldset className="linked-figure-actions" id={`${LINKED_PREFIX}-section`}>
       <legend>Linked chromatogram + spectrum</legend>
       {/*
-        One sentence, and which one depends on whether the reader can act.
+        One sentence, in one element that is a live region from the start.
+
+        Which sentence depends on whether the reader can act.
 
         Measured, in the state where the three actions are live: this section
         costs the open surface 116px at 1366x768 and at 960x640, and 96px at
@@ -399,27 +411,31 @@ function LinkedFigureSection({
         they will get. Neither is served by being shown the other's sentence
         underneath their own.
       */}
-      {unavailable === null ? (
-        <p className="chromatogram-export-note">
-          Two panels: this chromatogram over the range above, marked at the selected scan, and
-          that scan&rsquo;s complete spectrum below &mdash; always the whole spectrum, whatever
-          the range.
-        </p>
-      ) : (
-        // A live region, for the reason the two figure-setting problems on this
-        // same surface are: this sentence *appears* while the reader is
-        // somewhere else -- typing a height, choosing a range scope -- and
-        // closes three controls as it does. A correction nobody is told about
-        // has to be hunted for, and a disabled control cannot be tabbed to, so
-        // its `aria-describedby` is not a way to find one either.
-        <p
-          aria-live="polite"
-          className="chromatogram-export-note"
-          id={LINKED_UNAVAILABLE_ID}
-        >
-          {unavailable}
-        </p>
-      )}
+      {/*
+        One element rather than two, and that is the whole of it.
+
+        The reason *appears* while the reader is somewhere else -- typing a
+        height, choosing a range scope -- and closes three controls as it does.
+        A correction nobody is told about has to be hunted for, and a disabled
+        control cannot be tabbed to, so its `aria-describedby` is not a way to
+        find one either.
+
+        Two conditional paragraphs did not achieve that, and looked as though
+        they had. React reconciles same-typed siblings in one slot, so the node
+        was reused and `aria-live` arrived in the very commit that replaced the
+        text -- nothing was watching a live region there until the mutation
+        itself. The two figure-setting problems on this same surface get it
+        right by always rendering their element and emptying it, and this now
+        does the same: one element, live from the first paint, and only its
+        words change.
+      */}
+      <p
+        aria-live="polite"
+        className="chromatogram-export-note"
+        id={unavailable === null ? undefined : LINKED_UNAVAILABLE_ID}
+      >
+        {unavailable ?? LINKED_DESCRIPTION}
+      </p>
       <div className="spectrum-export-actions">
         {LINKED_FIGURE_FORMATS.map(({ format, label, recordsDpi }) => (
           <button
