@@ -660,9 +660,14 @@ export function PreviewWorkspace() {
                     committedDomain={workspace.chromatogramCommittedDomain}
                     exportState={workspace.chromatogramExport}
                     figureSettings={workspace.figureSettings}
+                    linkedExportState={workspace.linkedFigureExport}
+                    linkedUnavailable={workspace.linkedFigureUnavailable}
+                    onCopyLinkedPlot={workspace.copyLinkedPlot}
                     onCopyPlot={workspace.copyChromatogramPlot}
                     onDismiss={workspace.dismissChromatogramExport}
+                    onDismissLinked={workspace.dismissLinkedFigureExport}
                     onExport={workspace.exportChromatogram}
+                    onExportLinked={workspace.exportLinkedFigure}
                     onFigureSetting={workspace.setFigureSetting}
                     onFigureTheme={workspace.setFigureTheme}
                     onRangeScope={workspace.setChromatogramRangeScope}

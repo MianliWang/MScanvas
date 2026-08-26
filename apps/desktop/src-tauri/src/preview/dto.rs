@@ -668,6 +668,84 @@ pub fn diagnostics_destination_misnamed() -> PreviewErrorDto {
     )
 }
 
+/// Neither source a linked figure names is still the one on screen.
+#[must_use]
+pub fn linked_figure_stale() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "linked_figure_stale",
+        "That chromatogram or selected spectrum is no longer the one on screen. Select the scan \
+         again and retry the linked figure.",
+        true,
+    )
+}
+
+/// The two sources named do not describe one scan of one run.
+///
+/// Its own refusal rather than a rendering failure: nothing was wrong with the
+/// drawing, and telling a user their figure could not be drawn would send them
+/// to change a setting that was never the problem.
+#[must_use]
+pub fn linked_figure_source_mismatch() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "linked_figure_source_mismatch",
+        "That selected spectrum is not a scan of the chromatogram on screen. Select a scan from \
+         this run and retry the linked figure.",
+        true,
+    )
+}
+
+/// The scan the figure would link to is not inside the range it would draw.
+#[must_use]
+pub fn linked_selection_outside_range() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "linked_selection_outside_range",
+        "The selected scan is outside the current chromatogram range. Choose Full run, or move \
+         the current range to include the selected scan.",
+        true,
+    )
+}
+
+/// The contract refused the two panels, so no linked figure was drawn.
+///
+/// Its own refusal rather than either half's. The boundary knows the *figure*
+/// could not be built and does not know which panel refused it -- and answering
+/// with the chromatogram's would send a reader to change a range or a trace
+/// toggle that had nothing to do with it.
+///
+/// **The route out is named because it works.** The reachable case is a scan
+/// whose m/z array is not ordered: mzML does not require one and nothing here
+/// sorts one, and the figure contract will not draw an unordered series. So the
+/// spectrum's own *figure* is refused for the same reason by the same
+/// `spectrum_panel`, and offering it as the fallback would send a reader to an
+/// action that cannot work. Its **data** export is a different path -- one
+/// record per retained source point, in source order, needing no ordering at
+/// all -- and the chromatogram beside it was already proved drawable when this
+/// session installed it. Those two are what this sentence offers.
+///
+/// Not retryable: the same pair will be refused the same way. It is a fact about
+/// the two sources rather than about the moment.
+#[must_use]
+pub fn linked_figure_not_drawable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "linked_figure_not_drawable",
+        "MSCanvas could not build the linked figure without changing the data, so no file was \
+         written. Export the chromatogram separately, and export the selected spectrum as CSV \
+         or TSV data.",
+        false,
+    )
+}
+
+/// The figure is too short to hold a chromatogram and a spectrum.
+#[must_use]
+pub fn linked_figure_too_short() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "linked_figure_too_short",
+        "A two-panel linked figure needs a height of at least 260. Increase the height, or \
+         export the chromatogram and the spectrum separately.",
+        true,
+    )
+}
+
 /// The chosen folder is not one this boundary will create a file in.
 #[must_use]
 pub fn diagnostics_destination_unusable() -> PreviewErrorDto {
@@ -1982,6 +2060,55 @@ pub enum ChromatogramCopyOutcomeDto {
         range_low: f64,
         range_high: f64,
         source_scan_count: usize,
+    },
+}
+
+/// What one linked two-panel figure export did.
+///
+/// Path-free like every export outcome, and it says which pair it drew: the
+/// chromatogram's scope and resolved range, the traces that were on screen, and
+/// the selected spectrum by index and retention time. Those last two are the
+/// link, so a reader can tell one linked figure from another without opening it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase", tag = "status")]
+pub enum LinkedFigureExportOutcomeDto {
+    #[serde(rename_all = "camelCase")]
+    Cancelled,
+    #[serde(rename_all = "camelCase")]
+    Saved {
+        /// `svg` or `png`. A linked figure has no data document.
+        format: String,
+        /// The name the file was given, and nothing about where it went.
+        file_name: String,
+        figure: ExportedFigureDto,
+        traces: ChromatogramTracesDto,
+        /// `full` or `current`, as asked for rather than as it resolved.
+        range_scope: String,
+        range_low: f64,
+        range_high: f64,
+        source_scan_count: usize,
+        /// Which spectrum the marker names, by its zero-based index in the run.
+        selected_index: u64,
+        /// Where that scan sits, from the retained table row rather than from
+        /// anything the interface reported.
+        selected_retention_time: f64,
+    },
+}
+
+/// What a linked figure put on the clipboard was.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase", tag = "status")]
+pub enum LinkedFigureCopyOutcomeDto {
+    #[serde(rename_all = "camelCase")]
+    Copied {
+        figure: CopiedFigureDto,
+        traces: ChromatogramTracesDto,
+        range_scope: String,
+        range_low: f64,
+        range_high: f64,
+        source_scan_count: usize,
+        selected_index: u64,
+        selected_retention_time: f64,
     },
 }
 

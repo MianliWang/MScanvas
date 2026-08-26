@@ -678,6 +678,117 @@ async fn save_chromatogram_export(
     .await?
 }
 
+/// Binds one linked two-panel figure and reserves the one scientific lane.
+///
+/// Both tokens travel together because the pair is what the figure is about.
+/// Rust decides in one operation whether they are still current, whether they
+/// describe one scan of one run, whether that scan is inside the range that
+/// would be drawn, and whether the figure is tall enough to hold two panels --
+/// so nothing that could not be drawn ever opens a dialog.
+///
+/// Launches no process, reads no file and changes no preview.
+#[tauri::command]
+async fn begin_linked_figure_export(
+    chromatogram_token: String,
+    spectrum_token: String,
+    format: String,
+    range: preview::dto::ChromatogramRangeDto,
+    traces: preview::dto::ChromatogramTracesDto,
+    settings: preview::dto::FigureSettingsDto,
+    service: State<'_, SharedService>,
+) -> Result<String, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || {
+        service.begin_linked_figure_export(
+            &chromatogram_token,
+            &spectrum_token,
+            &format,
+            &range,
+            traces,
+            &settings,
+        )
+    })
+    .await?
+}
+
+/// Draws the linked figure and puts it on the clipboard.
+///
+/// The same two panels a PNG export would write, through the same renderer and
+/// the same rasterizer. No screenshot and no DOM.
+#[tauri::command]
+async fn copy_linked_plot(
+    chromatogram_token: String,
+    spectrum_token: String,
+    range: preview::dto::ChromatogramRangeDto,
+    traces: preview::dto::ChromatogramTracesDto,
+    settings: preview::dto::FigureSettingsDto,
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+) -> Result<preview::dto::LinkedFigureCopyOutcomeDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || {
+        service.copy_linked_plot(
+            &app,
+            &chromatogram_token,
+            &spectrum_token,
+            &range,
+            traces,
+            &settings,
+        )
+    })
+    .await?
+}
+
+/// Shows the native save dialog for one exact linked reservation and writes the
+/// file.
+///
+/// The pair, the range, the traces and the figure settings were all taken when
+/// the export began, so selecting another scan or opening another run while the
+/// dialog is open cannot change what is written.
+#[tauri::command]
+async fn save_linked_figure_export(
+    reservation_id: String,
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+) -> Result<preview::dto::LinkedFigureExportOutcomeDto, PreviewErrorDto> {
+    let owner = main_window_handle(&app);
+    let service = Arc::clone(&service);
+    let claimed = service.claim_linked_figure_export(&reservation_id)?;
+    let dialog = claimed.dialog();
+    let suggested = claimed.suggested_file_name();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    if app
+        .run_on_main_thread(move || {
+            let _ = sender.send(preview::dialog::choose_save_destination(
+                owner, dialog, &suggested,
+            ));
+        })
+        .is_err()
+    {
+        // The claim already took the lane, and a dispatch that never happened
+        // leaves nothing to close it.
+        service.cancel_linked_figure_export(&reservation_id);
+        return Err(spectrum_picker_unavailable());
+    }
+
+    let claimed_reservation = reservation_id;
+    off_the_async_runtime(move || {
+        let chosen = match receiver.recv().map_err(|_| spectrum_picker_unavailable())? {
+            Ok(chosen) => chosen,
+            Err(error) => {
+                service.cancel_linked_figure_export(&claimed_reservation);
+                return Err(error);
+            }
+        };
+        let Some(destination) = chosen else {
+            service.cancel_linked_figure_export(&claimed_reservation);
+            return Ok(preview::dto::LinkedFigureExportOutcomeDto::Cancelled);
+        };
+        service.write_linked_figure_export(&claimed, &destination)
+    })
+    .await?
+}
+
 /// Reads the session's one conversion slot.
 ///
 /// The authoritative answer about a conversion, and the only one that survives a
@@ -1047,6 +1158,9 @@ pub fn run() {
             begin_selected_spectrum_export,
             save_selected_spectrum_export,
             begin_chromatogram_export,
+            begin_linked_figure_export,
+            copy_linked_plot,
+            save_linked_figure_export,
             save_chromatogram_export,
             copy_chromatogram_plot,
             copy_selected_spectrum_plot

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200.0000" height="640.0000" viewBox="0 0 1200.0000 640.0000" role="img">
+<title>Chromatogram</title>
+<desc>Total ion current and base peak intensity over the full run, from 5 scans. Per-scan values projected from the loaded spectrum table, not a stored chromatogram record. Retention time and intensity units unreported. An ordered trace over the separation axis. Series: &quot;TIC&quot; is measured data, &quot;BPC&quot; is a second measured series. The source file reports no unit for the Retention time or the Intensity axis, so none is shown.</desc>
+<rect x="0" y="0" width="1200.0000" height="640.0000" fill="#ffffff"/>
+<text x="64.0000" y="24.000" fill="#111111" font-family="sans-serif" font-size="16.0000" font-weight="600" xml:space="preserve" textLength="192.0000" lengthAdjust="spacingAndGlyphs">Chromatogram</text>
+<line x1="64.0000" y1="550.0000" x2="1180.0000" y2="550.0000" stroke="#333333" stroke-width="1"/>
+<line x1="64.0000" y1="48.0000" x2="64.0000" y2="550.0000" stroke="#333333" stroke-width="1"/>
+<path d="M64.0000 48.0000L343.0000 549.9950L622.0000 549.9944L901.0000 549.9939L1180.0000 549.9933" fill="none" stroke="#1f4e9c" stroke-width="1"/>
+<path d="M64.0000 549.9994L343.0000 549.9989L622.0000 549.9983L901.0000 549.9978L1180.0000 549.9972" fill="none" stroke="#9a4a00" stroke-width="1" stroke-dasharray="6 3"/>
+<line x1="1121.0000" y1="55.3333" x2="1139.0000" y2="55.3333" stroke="#1f4e9c" stroke-width="1"/>
+<text x="1176.0000" y="59.0000" fill="#111111" font-family="sans-serif" font-size="11.0000" text-anchor="end" textLength="33.0000" lengthAdjust="spacingAndGlyphs">TIC</text>
+<line x1="1121.0000" y1="69.3333" x2="1139.0000" y2="69.3333" stroke="#9a4a00" stroke-width="1" stroke-dasharray="6 3"/>
+<text x="1176.0000" y="73.0000" fill="#111111" font-family="sans-serif" font-size="11.0000" text-anchor="end" textLength="33.0000" lengthAdjust="spacingAndGlyphs">BPC</text>
+<text x="64.0000" y="564.0000" fill="#111111" font-family="sans-serif" font-size="11" textLength="44.0000" lengthAdjust="spacingAndGlyphs">9.00</text>
+<text x="1180.0000" y="564.0000" fill="#111111" font-family="sans-serif" font-size="11" text-anchor="end" textLength="55.0000" lengthAdjust="spacingAndGlyphs">13.00</text>
+<text x="622.0000" y="580.0000" fill="#111111" font-family="sans-serif" font-size="12.0000" text-anchor="middle" xml:space="preserve" textLength="168.0000" lengthAdjust="spacingAndGlyphs">Retention time</text>
+<text x="14.000" y="299.0000" fill="#111111" font-family="sans-serif" font-size="12.0000" text-anchor="middle" transform="rotate(-90 14.000 299.0000)" xml:space="preserve" textLength="108.0000" lengthAdjust="spacingAndGlyphs">Intensity</text>
+<text x="68.0000" y="58.0000" fill="#111111" font-family="sans-serif" font-size="11" textLength="77.0000" lengthAdjust="spacingAndGlyphs">9000000</text>
+</svg>

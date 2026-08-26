@@ -5,6 +5,9 @@ import type {
   WorkspaceOutputAdoptionResult,
   BackendAvailability,
   ChromatogramCopyOutcome,
+  LinkedFigureCopyOutcome,
+  LinkedFigureExportOutcome,
+  LinkedFigureFormat,
   ChromatogramExportFormat,
   ChromatogramExportOutcome,
   ChromatogramRange,
@@ -277,6 +280,43 @@ export interface PreviewApi {
     traces: ChromatogramTraceSet,
     settings: FigureSettings,
   ): Promise<ChromatogramCopyOutcome>;
+
+  /**
+   * Exports the chromatogram and the selected spectrum as one linked figure.
+   *
+   * **Both tokens, together.** The pair is what the figure is about, so Rust
+   * binds them in one operation: that each still names what this session holds,
+   * that they are one scan of one run, that the scan is inside the range that
+   * would be drawn, and that the figure is tall enough for two panels. This side
+   * supplies no arrays, no retention time and no geometry -- the marker's
+   * position comes from the retained table row, not from anything on screen.
+   *
+   * There is no linked data export. A combined table would have to interleave
+   * two different measurements or drop the link.
+   */
+  exportLinkedFigure(
+    chromatogramToken: string,
+    spectrumToken: string,
+    format: LinkedFigureFormat,
+    range: ChromatogramRange,
+    traces: ChromatogramTraceSet,
+    settings: FigureSettings,
+  ): Promise<LinkedFigureExportOutcome>;
+
+  /**
+   * Puts the linked figure on the system clipboard.
+   *
+   * The same two panels a PNG export writes, drawn by the same Rust renderer
+   * from the same retained pair. No image crosses this boundary in either
+   * direction.
+   */
+  copyLinkedPlot(
+    chromatogramToken: string,
+    spectrumToken: string,
+    range: ChromatogramRange,
+    traces: ChromatogramTraceSet,
+    settings: FigureSettings,
+  ): Promise<LinkedFigureCopyOutcome>;
 }
 
 export const tauriPreviewApi: PreviewApi = {
@@ -377,6 +417,25 @@ export const tauriPreviewApi: PreviewApi = {
   copyChromatogramPlot: (exportToken, range, traces, settings) =>
     invoke<ChromatogramCopyOutcome>("copy_chromatogram_plot", {
       exportToken,
+      range,
+      traces,
+      settings,
+    }),
+  exportLinkedFigure: (chromatogramToken, spectrumToken, format, range, traces, settings) =>
+    invoke<string>("begin_linked_figure_export", {
+      chromatogramToken,
+      spectrumToken,
+      format,
+      range,
+      traces,
+      settings,
+    }).then((reservationId) =>
+      invoke<LinkedFigureExportOutcome>("save_linked_figure_export", { reservationId }),
+    ),
+  copyLinkedPlot: (chromatogramToken, spectrumToken, range, traces, settings) =>
+    invoke<LinkedFigureCopyOutcome>("copy_linked_plot", {
+      chromatogramToken,
+      spectrumToken,
       range,
       traces,
       settings,

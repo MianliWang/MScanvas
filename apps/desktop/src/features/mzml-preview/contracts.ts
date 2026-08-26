@@ -543,6 +543,46 @@ export type ChromatogramExportOutcome =
       readonly rowCount: number | null;
     };
 
+/** What a linked two-panel figure can be written as. Drawings only. */
+export type LinkedFigureFormat = "svg" | "png";
+
+/**
+ * What one linked figure export did.
+ *
+ * Path-free like every export outcome, and it names the pair it drew: the
+ * chromatogram's scope and resolved range, the traces on screen, and the
+ * selected spectrum by index and retention time. Those last two are the link.
+ */
+export type LinkedFigureExportOutcome =
+  | { readonly status: "cancelled" }
+  | {
+      readonly status: "saved";
+      readonly format: LinkedFigureFormat;
+      readonly fileName: string;
+      readonly figure: ExportedFigure;
+      readonly traces: ChromatogramTraceSet;
+      readonly rangeScope: ChromatogramRangeScope;
+      readonly rangeLow: number;
+      readonly rangeHigh: number;
+      readonly sourceScanCount: number;
+      readonly selectedIndex: number;
+      /** From the retained table row, never from anything drawn on screen. */
+      readonly selectedRetentionTime: number;
+    };
+
+/** What a linked figure put on the clipboard was. */
+export interface LinkedFigureCopyOutcome {
+  readonly status: "copied";
+  readonly figure: CopiedFigure;
+  readonly traces: ChromatogramTraceSet;
+  readonly rangeScope: ChromatogramRangeScope;
+  readonly rangeLow: number;
+  readonly rangeHigh: number;
+  readonly sourceScanCount: number;
+  readonly selectedIndex: number;
+  readonly selectedRetentionTime: number;
+}
+
 /** What a chromatogram figure put on the clipboard was. */
 export interface ChromatogramCopyOutcome {
   readonly status: "copied";

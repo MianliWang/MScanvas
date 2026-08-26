@@ -19,8 +19,8 @@ use mscanvas_proteowizard::{
 };
 
 use super::chromatogram::{
-    ChromatogramExportFormat, ChromatogramSource, RangeRequest, TraceSet,
-    data_document as chromatogram_data, figure_spec as chromatogram_figure,
+    ChromatogramExportFormat, ChromatogramSource, LinkedFigureFormat, RangeRequest, TraceSet,
+    data_document as chromatogram_data, figure_spec as chromatogram_figure, linked_figure_spec,
     svg_document as chromatogram_svg,
 };
 use super::conversion::conversion_source_kind;
@@ -85,12 +85,15 @@ use super::dto::{
 use super::dto::{
     ChromatogramCopyOutcomeDto, ChromatogramExportOutcomeDto, ChromatogramRangeDto,
     ChromatogramTracesDto, CopiedFigureDto, ExportedFigureDto, FigureSettingsDto,
-    SpectrumCopyOutcomeDto, SpectrumExportOutcomeDto, chromatogram_export_refused,
-    chromatogram_export_stale, chromatogram_no_visible_trace, chromatogram_range_outside_source,
-    figure_clipboard_unavailable, figure_font_unavailable, figure_not_rasterizable,
-    figure_settings_refused, scientific_export_in_progress, spectrum_destination_exists,
-    spectrum_destination_misnamed, spectrum_destination_unusable, spectrum_export_in_progress,
-    spectrum_export_refused, spectrum_export_stale, spectrum_not_finalized, spectrum_not_written,
+    LinkedFigureCopyOutcomeDto, LinkedFigureExportOutcomeDto, SpectrumCopyOutcomeDto,
+    SpectrumExportOutcomeDto, chromatogram_export_refused, chromatogram_export_stale,
+    chromatogram_no_visible_trace, chromatogram_range_outside_source, figure_clipboard_unavailable,
+    figure_font_unavailable, figure_not_rasterizable, figure_settings_refused,
+    linked_figure_not_drawable, linked_figure_source_mismatch, linked_figure_stale,
+    linked_figure_too_short, linked_selection_outside_range, scientific_export_in_progress,
+    spectrum_destination_exists, spectrum_destination_misnamed, spectrum_destination_unusable,
+    spectrum_export_in_progress, spectrum_export_refused, spectrum_export_stale,
+    spectrum_not_finalized, spectrum_not_written,
 };
 use super::dto::{
     ConversionDiagnosticsExportDto, ConversionDiagnosticsReservationDto,
@@ -110,9 +113,10 @@ use super::dto::{
     adoption_superseded, outputs_not_adoptable,
 };
 use super::export::{
-    BeginExportRefusal, ClaimedChromatogramExport, ClaimedSpectrumExport, FigureFailure,
-    PreviewOpenTicket, ScientificExportSlots, SpectrumExportFormat, data_document, figure_raster,
-    png_document, png_of, raster_of, svg_document,
+    BeginExportRefusal, ClaimedChromatogramExport, ClaimedLinkedFigureExport,
+    ClaimedSpectrumExport, FigureFailure, LinkedTokens, PreviewOpenTicket, ScientificExportSlots,
+    SpectrumExportFormat, data_document, figure_raster, png_document, png_of, raster_of,
+    svg_document,
 };
 use super::figure::{
     FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
@@ -2171,9 +2175,31 @@ impl PreviewService {
         match refusal {
             BeginExportRefusal::AlreadyExporting => spectrum_export_in_progress(),
             BeginExportRefusal::Stale => spectrum_export_stale(),
-            BeginExportRefusal::RangeOutsideSource | BeginExportRefusal::NoVisibleTrace => {
-                spectrum_export_refused()
-            }
+            // A selected spectrum has no range, no pair and no second panel, so
+            // none of these can describe a refusal it produced. Named rather
+            // than swept into a wildcard: if a spectrum ever gains one of them,
+            // this stops compiling instead of reporting the wrong sentence.
+            BeginExportRefusal::RangeOutsideSource
+            | BeginExportRefusal::NoVisibleTrace
+            | BeginExportRefusal::LinkedSourceMismatch
+            | BeginExportRefusal::SelectedScanOutsideRange
+            | BeginExportRefusal::FigureTooShort => spectrum_export_refused(),
+        }
+    }
+
+    /// How a lane refusal reads for the linked two-panel surface.
+    fn linked_figure_refusal(refusal: BeginExportRefusal) -> PreviewErrorDto {
+        match refusal {
+            BeginExportRefusal::AlreadyExporting => scientific_export_in_progress(),
+            // One sentence for either token, because a reader cannot act on
+            // which of the two moved: both mean "what this was about is not
+            // what is on screen now".
+            BeginExportRefusal::Stale => linked_figure_stale(),
+            BeginExportRefusal::LinkedSourceMismatch => linked_figure_source_mismatch(),
+            BeginExportRefusal::RangeOutsideSource => chromatogram_range_outside_source(),
+            BeginExportRefusal::SelectedScanOutsideRange => linked_selection_outside_range(),
+            BeginExportRefusal::NoVisibleTrace => chromatogram_no_visible_trace(),
+            BeginExportRefusal::FigureTooShort => linked_figure_too_short(),
         }
     }
 
@@ -2184,6 +2210,11 @@ impl PreviewService {
             BeginExportRefusal::Stale => chromatogram_export_stale(),
             BeginExportRefusal::RangeOutsideSource => chromatogram_range_outside_source(),
             BeginExportRefusal::NoVisibleTrace => chromatogram_no_visible_trace(),
+            // A chromatogram on its own has no paired source and no second
+            // panel. Named for the same reason as above.
+            BeginExportRefusal::LinkedSourceMismatch
+            | BeginExportRefusal::SelectedScanOutsideRange
+            | BeginExportRefusal::FigureTooShort => chromatogram_export_refused(),
         }
     }
 
@@ -2713,6 +2744,240 @@ impl PreviewService {
             range_high: resolved.domain().high(),
             source_scan_count: snapshot.source().scan_count(),
         })
+    }
+
+    // ------------------------------------------------- linked two-panel figure
+
+    /// Binds one linked figure and reserves the one scientific lane.
+    ///
+    /// Both tokens, in one operation, because the pair is what the figure is
+    /// about. Everything that could refuse it is asked before a dialog opens:
+    /// whether either source has moved on, whether they are one scan, whether
+    /// the scan is inside the range that would be drawn, whether anything is
+    /// visible to draw, and whether the figure is tall enough for two panels.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a stale pair, sources that are not one scan, a selected scan
+    /// outside the range, no visible trace, a figure too short, settings no
+    /// figure can be drawn at, and a lane already in use.
+    pub fn begin_linked_figure_export(
+        &self,
+        chromatogram_token: &str,
+        spectrum_token: &str,
+        format: &str,
+        range: &ChromatogramRangeDto,
+        traces: ChromatogramTracesDto,
+        settings_wire: &FigureSettingsDto,
+    ) -> Result<String, PreviewErrorDto> {
+        let format = LinkedFigureFormat::from_wire(format).ok_or_else(linked_figure_stale)?;
+        let request = RangeRequest::from_wire(&range.scope, range.low, range.high)
+            .ok_or_else(chromatogram_range_outside_source)?;
+        // Every linked output is drawn, so the settings are always read. The
+        // resolution and the pixel budget are the raster's alone, in the order
+        // the other figure surfaces already established.
+        let settings = Self::render_settings(settings_wire)?;
+        let dpi = if matches!(format, LinkedFigureFormat::Png) {
+            let dpi = Self::png_dpi(settings_wire)?;
+            Self::raster_budget(settings)?;
+            Some(dpi)
+        } else {
+            None
+        };
+        self.spectrum_export_slot()
+            .begin_linked_figure(
+                LinkedTokens {
+                    chromatogram: chromatogram_token,
+                    spectrum: spectrum_token,
+                },
+                format,
+                request,
+                TraceSet::from_wire(traces.tic, traces.bpc),
+                settings,
+                dpi,
+            )
+            .map(|reservation| reservation.as_wire())
+            .map_err(Self::linked_figure_refusal)
+    }
+
+    /// Claims one issued linked reservation, so its dialog may be shown.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a reservation this session no longer holds, one already claimed,
+    /// and one belonging to another surface.
+    pub fn claim_linked_figure_export(
+        &self,
+        reservation: &str,
+    ) -> Result<ClaimedLinkedFigureExport, PreviewErrorDto> {
+        self.spectrum_export_slot()
+            .claim_linked_figure(reservation)
+            .ok_or_else(linked_figure_stale)
+    }
+
+    /// Returns one linked reservation to idle without writing anything.
+    pub fn cancel_linked_figure_export(&self, reservation: &str) -> bool {
+        self.spectrum_export_slot().cancel(reservation)
+    }
+
+    /// Writes one claimed linked figure to the destination the user chose.
+    ///
+    /// The pair was decided when the export began and is not read again here.
+    /// The user may have selected another scan or opened another run while the
+    /// dialog was open; what is written is the figure they asked for.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a destination this boundary cannot admit or that is not named as
+    /// the document it holds, a write that failed, and a figure the contract
+    /// will not accept.
+    pub fn write_linked_figure_export(
+        &self,
+        claimed: &ClaimedLinkedFigureExport,
+        destination: &Path,
+    ) -> Result<LinkedFigureExportOutcomeDto, PreviewErrorDto> {
+        self.spectrum_export_slot().begin_write();
+        let _in_flight = SpectrumExportInFlight(self);
+
+        let figure = Self::linked_figure_of(claimed)?;
+        let bytes = match claimed.format {
+            // The same renderer and rasterizer every other figure goes
+            // through: one specification in, one document out.
+            LinkedFigureFormat::Svg => mscanvas_plot_spec::svg::render(&figure).into_bytes(),
+            LinkedFigureFormat::Png => {
+                let dpi = claimed.dpi.expect("a PNG export reserved a resolution");
+                png_of(&figure, claimed.settings, dpi).map_err(Self::figure_failure)?
+            }
+        };
+
+        // The same rule every other save-dialog export answers to.
+        Self::require_named_document(destination, claimed.dialog())?;
+        let (parent, file_name) = match (destination.parent(), destination.file_name()) {
+            (Some(parent), Some(file_name)) => (parent, file_name),
+            _ => return Err(spectrum_destination_unusable()),
+        };
+        let (root, _identity, _held) =
+            admit_destination_root(parent).map_err(|_| spectrum_destination_unusable())?;
+        write_new_local_file(&root, file_name, &bytes).map_err(spectrum_write_failure)?;
+
+        Ok(LinkedFigureExportOutcomeDto::Saved {
+            format: claimed.format.stable_id().to_owned(),
+            file_name: bounded_text(&file_name.to_string_lossy(), MAX_CANDIDATE_NAME_CHARS),
+            figure: ExportedFigureDto {
+                width: claimed.settings.width(),
+                height: claimed.settings.height(),
+                dpi: claimed.dpi.map(PngDpi::get),
+                theme: Self::theme_name(claimed.settings),
+            },
+            traces: ChromatogramTracesDto {
+                tic: claimed.traces.tic(),
+                bpc: claimed.traces.bpc(),
+            },
+            range_scope: claimed.range.scope().stable_id().to_owned(),
+            range_low: claimed.range.domain().low(),
+            range_high: claimed.range.domain().high(),
+            source_scan_count: claimed.chromatogram.source().scan_count(),
+            selected_index: claimed.selected_index,
+            selected_retention_time: claimed.selected_retention_time,
+        })
+    }
+
+    /// Draws one linked figure and puts it on the clipboard.
+    ///
+    /// The same figure a PNG export would write, through the same renderer and
+    /// the same rasterizer. No screenshot, no DOM, and no pixels cross back.
+    ///
+    /// # Errors
+    ///
+    /// The refusals a linked export answers with, and a clipboard this platform
+    /// would not accept the image on.
+    pub fn copy_linked_plot(
+        &self,
+        app: &tauri::AppHandle,
+        chromatogram_token: &str,
+        spectrum_token: &str,
+        range: &ChromatogramRangeDto,
+        traces: ChromatogramTracesDto,
+        settings_wire: &FigureSettingsDto,
+    ) -> Result<LinkedFigureCopyOutcomeDto, PreviewErrorDto> {
+        let request = RangeRequest::from_wire(&range.scope, range.low, range.high)
+            .ok_or_else(chromatogram_range_outside_source)?;
+        let settings = Self::render_settings(settings_wire)?;
+        Self::raster_budget(settings)?;
+        let traces = TraceSet::from_wire(traces.tic, traces.bpc);
+        let pair = self
+            .spectrum_export_slot()
+            .begin_linked_figure_copy(
+                LinkedTokens {
+                    chromatogram: chromatogram_token,
+                    spectrum: spectrum_token,
+                },
+                request,
+                traces,
+                settings,
+            )
+            .map_err(Self::linked_figure_refusal)?;
+        let _in_flight = SpectrumExportInFlight(self);
+
+        let row = pair
+            .chromatogram()
+            .source()
+            .row_for_spectrum(pair.spectrum().spectrum())
+            .ok_or_else(linked_figure_source_mismatch)?;
+        let figure = linked_figure_spec(
+            pair.chromatogram().source(),
+            pair.spectrum().spectrum(),
+            row,
+            pair.range(),
+            traces,
+            settings,
+        )
+        .map_err(|_| linked_figure_not_drawable())?;
+        let raster = raster_of(&figure, settings).map_err(Self::figure_failure)?;
+        let (width, height) = (raster.width(), raster.height());
+        let image = tauri::image::Image::new_owned(raster.into_rgba(), width, height);
+
+        use tauri_plugin_clipboard_manager::ClipboardExt;
+        app.clipboard()
+            .write_image(&image)
+            .map_err(|_| figure_clipboard_unavailable())?;
+        Ok(LinkedFigureCopyOutcomeDto::Copied {
+            figure: Self::copied_figure(settings),
+            traces: ChromatogramTracesDto {
+                tic: traces.tic(),
+                bpc: traces.bpc(),
+            },
+            range_scope: pair.range().scope().stable_id().to_owned(),
+            range_low: pair.range().domain().low(),
+            range_high: pair.range().domain().high(),
+            source_scan_count: pair.chromatogram().source().scan_count(),
+            selected_index: pair.selected_index(),
+            selected_retention_time: pair.selected_retention_time(),
+        })
+    }
+
+    /// The two-panel figure one claimed linked export draws.
+    ///
+    /// The row is looked up again from the snapshot the export bound, not from
+    /// whatever is on screen: that snapshot is immutable and still holds the
+    /// scan this figure is about.
+    fn linked_figure_of(
+        claimed: &ClaimedLinkedFigureExport,
+    ) -> Result<mscanvas_plot_spec::spec::FigureSpec, PreviewErrorDto> {
+        let row = claimed
+            .chromatogram
+            .source()
+            .row_for_spectrum(claimed.spectrum.spectrum())
+            .ok_or_else(linked_figure_source_mismatch)?;
+        linked_figure_spec(
+            claimed.chromatogram.source(),
+            claimed.spectrum.spectrum(),
+            row,
+            claimed.range,
+            claimed.traces,
+            claimed.settings,
+        )
+        .map_err(|_| linked_figure_not_drawable())
     }
 
     /// What a chromatogram figure export was drawn as.

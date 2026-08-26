@@ -6,7 +6,7 @@
 //! command can ever return mock data.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
@@ -33,10 +33,10 @@ use super::drop_ingestion::{
 };
 use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, ChromatogramRangeDto, ChromatogramTracesDto,
-    DropIngestionResultDto, DropScanLimitDto, FigureSettingsDto, MAX_CONVERSION_QUEUE_ITEMS,
-    MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto, SelectedSpectrumOutcomeDto,
-    SpectrumExportOutcomeDto, WorkspaceAddOutcomeDto, WorkspaceDropUpdateDto,
-    WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto,
+    DropIngestionResultDto, DropScanLimitDto, FigureSettingsDto, LinkedFigureExportOutcomeDto,
+    MAX_CONVERSION_QUEUE_ITEMS, MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto,
+    SelectedSpectrumOutcomeDto, SpectrumExportOutcomeDto, WorkspaceAddOutcomeDto,
+    WorkspaceDropUpdateDto, WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto,
 };
 use super::dto::{
     ConversionConflictPolicyDto, ConversionDiagnosticsExportDto, ConversionDiagnosticsStateDto,
@@ -3598,6 +3598,16 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // spectrum commands above, so two save dialogs cannot be open at
             // once whichever surface asked.
             "begin_chromatogram_export",
+            // The linked two-panel figure: a third *surface* over the two
+            // sources above, and not a third lane. It takes both tokens at
+            // once, because what it draws is the pair, and it shares the same
+            // one scientific export lane -- so while one of these is running
+            // neither the spectrum nor the chromatogram may start an export of
+            // its own. There is no linked data command: a combined table would
+            // have to interleave two different measurements or drop the link.
+            "begin_linked_figure_export",
+            "copy_linked_plot",
+            "save_linked_figure_export",
             "save_chromatogram_export",
             "copy_chromatogram_plot",
             // Copy plot needs neither phase: there is no destination to choose,
@@ -22278,4 +22288,807 @@ fn two_opens_of_one_dataset_are_still_decided_by_the_request_epoch() {
         .expect("and it names the run on screen");
 
     assert_eq!(chromatogram_export_refusal(&service, &visible), None);
+}
+
+// --------------------------------------- the linked two-panel figure boundary
+//
+// The typed answers the interface actually receives. The slot's own tests drive
+// `ScientificExportSlots` directly; these go through the whole boundary, so what
+// is asserted is the sentence a reader is shown and the file that reaches their
+// folder.
+
+/// The third scan of the canned table, as the backend would print it.
+///
+/// `selected_spectrum_output` always names the first row's measurements, so a
+/// test that needs a *second* selection needs a second spectrum -- one that
+/// agrees with the row it claims to be, or the loader refuses it as a
+/// contradiction.
+fn third_scan_output(points: &[(f64, f64)]) -> String {
+    let mut text = String::from("# sample.mzML\n#\n");
+    text.push_str("# index: 2\n");
+    text.push_str("# id: scan=21\n");
+    text.push_str("# scanNumber: 21\n");
+    text.push_str("# massAnalyzerType: FTMS\n");
+    text.push_str("# scanEvent: 1\n");
+    text.push_str("# msLevel: 1\n");
+    text.push_str("# retentionTime: 0.30\n");
+    text.push_str("# filterString: synthetic\n");
+    text.push_str("# mzLow: 100\n");
+    text.push_str("# mzHigh: 1000\n");
+    text.push_str("# basePeakMZ: 500.00000000\n");
+    text.push_str("# basePeakIntensity: 7000.00000000\n");
+    text.push_str("# totalIonCurrent: 80000.00000000\n");
+    text.push_str("# precursorCount: 0\n");
+    text.push_str(&format!("# binary ({}):\n", points.len()));
+    for (mz, intensity) in points {
+        text.push_str(&format!("{mz:.8} {intensity:.8}\n"));
+    }
+    text
+}
+
+/// One session showing a run and holding a spectrum of it.
+///
+/// The pair a linked figure is about, obtained the way the interface obtains it:
+/// open a preview, then select a scan.
+fn linked_ready(file: &TestFile, service: &PreviewService) -> LinkedSession {
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let chromatogram = service
+        .open_preview(&selected.handle)
+        .expect("the run opens")
+        .chromatogram_export_token
+        .expect("a run the viewer draws has a chromatogram export");
+    let spectrum = loaded_export_token(service, &selected.handle, 0);
+    LinkedSession {
+        handle: selected.handle,
+        chromatogram,
+        spectrum,
+    }
+}
+
+/// What one session holds once a run is open and a scan is selected.
+struct LinkedSession {
+    /// The dataset row, for a test that selects a second scan of the same run.
+    handle: String,
+    chromatogram: String,
+    spectrum: String,
+}
+
+/// The responses one open and one spectrum read consume.
+fn linked_responses() -> Vec<Response> {
+    let mut responses = open_responses();
+    responses.push(Response::File(selected_spectrum_output(
+        0,
+        &[(445.12, 9000.0), (500.0, 1200.0)],
+    )));
+    responses
+}
+
+/// A current range, as the viewer would send one.
+fn current_run_range(low: f64, high: f64) -> ChromatogramRangeDto {
+    ChromatogramRangeDto {
+        scope: "current".to_owned(),
+        low: Some(low),
+        high: Some(high),
+    }
+}
+
+/// Begins one linked SVG export of the whole run, answering the refusal kind.
+fn linked_refusal(
+    service: &PreviewService,
+    chromatogram: &str,
+    spectrum: &str,
+    range: &ChromatogramRangeDto,
+    traces: ChromatogramTracesDto,
+    settings: &FigureSettingsDto,
+) -> Option<String> {
+    match service.begin_linked_figure_export(chromatogram, spectrum, "svg", range, traces, settings)
+    {
+        Ok(reservation) => {
+            // Returned to idle, so one probe does not decide the next one's
+            // answer by leaving the lane reserved.
+            service.cancel_linked_figure_export(&reservation);
+            None
+        }
+        Err(error) => Some(error.kind),
+    }
+}
+
+/// Every way a linked figure is refused reads as the thing the user can change.
+///
+/// One sentence each, and none of them says "the figure could not be drawn": a
+/// reader sent to change a setting that was never the problem has been told
+/// something worse than nothing.
+#[test]
+fn each_linked_refusal_names_what_the_reader_can_change() {
+    let file = TestFile::new("linked-refusals");
+    let service = PreviewService::new(Box::new(FakeProvider::available(linked_responses())));
+    let LinkedSession {
+        chromatogram,
+        spectrum,
+        ..
+    } = linked_ready(&file, &service);
+
+    // The run is 0.10, 0.20, 0.30 and the selected scan is the first of them.
+    assert_eq!(
+        linked_refusal(
+            &service,
+            &chromatogram,
+            &spectrum,
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        ),
+        None,
+        "the pair on screen is exportable",
+    );
+
+    for (range, traces, settings, expected, what) in [
+        (
+            current_run_range(0.20, 0.30),
+            both_traces(),
+            default_figure_settings(),
+            "linked_selection_outside_range",
+            "the selected scan is outside the current range",
+        ),
+        (
+            current_run_range(0.0, 0.30),
+            both_traces(),
+            default_figure_settings(),
+            "chromatogram_range_outside_source",
+            "a range the run does not have",
+        ),
+        (
+            full_run_range(),
+            ChromatogramTracesDto {
+                tic: false,
+                bpc: false,
+            },
+            default_figure_settings(),
+            "chromatogram_no_visible_trace",
+            "nothing on screen to draw",
+        ),
+        (
+            full_run_range(),
+            both_traces(),
+            figure_settings(1_200, 259, 300),
+            "linked_figure_too_short",
+            "one pixel short of two panels",
+        ),
+    ] {
+        assert_eq!(
+            linked_refusal(
+                &service,
+                &chromatogram,
+                &spectrum,
+                &range,
+                traces,
+                &settings,
+            ),
+            Some(expected.to_owned()),
+            "{what}",
+        );
+    }
+
+    // 260 is the height a two-panel figure is drawn at.
+    assert_eq!(
+        linked_refusal(
+            &service,
+            &chromatogram,
+            &spectrum,
+            &full_run_range(),
+            both_traces(),
+            &figure_settings(1_200, 260, 300),
+        ),
+        None,
+        "the two-panel minimum height is accepted",
+    );
+
+    // A token this session no longer holds, either half.
+    assert_eq!(
+        linked_refusal(
+            &service,
+            "999999",
+            &spectrum,
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        ),
+        Some("linked_figure_stale".to_owned()),
+    );
+    assert_eq!(
+        linked_refusal(
+            &service,
+            &chromatogram,
+            "999999",
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        ),
+        Some("linked_figure_stale".to_owned()),
+    );
+
+    // And every refusal above left the lane idle, so the next export begins.
+    assert_eq!(
+        linked_refusal(
+            &service,
+            &chromatogram,
+            &spectrum,
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        ),
+        None,
+    );
+}
+
+/// Two runs on screen at once do not make one linked figure.
+///
+/// Reachable without a race: open one run, open another, and select a scan of
+/// the first -- the session still holds that spectrum, and both tokens are
+/// current. Same session is not same scan, and this is the refusal that says so.
+#[test]
+fn a_spectrum_of_another_run_is_not_a_scan_of_this_chromatogram() {
+    let file = TestFile::new("linked-owner");
+    let other = file.sibling("other.mzML");
+    let mut responses = open_responses();
+    responses.push(Response::File(METADATA_OUTPUT.to_owned()));
+    responses.push(Response::Stdout(run_summary_output()));
+    responses.push(Response::File(OTHER_SPECTRUM_TABLE_OUTPUT.to_owned()));
+    responses.push(Response::File(selected_spectrum_output(
+        0,
+        &[(445.12, 9000.0)],
+    )));
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let first = service.accept_file(&file.path).expect("accepted");
+    let second = service.add_dataset(&other).expect("added");
+
+    service
+        .open_preview(&first.handle)
+        .expect("the first opens");
+    let visible = service
+        .open_preview(&second.handle)
+        .expect("the second opens")
+        .chromatogram_export_token
+        .expect("and it is the run on screen");
+    // A scan of the *first* run, which this session still holds.
+    let spectrum = loaded_export_token(&service, &first.handle, 0);
+
+    assert_eq!(
+        linked_refusal(
+            &service,
+            &visible,
+            &spectrum,
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        ),
+        Some("linked_figure_source_mismatch".to_owned()),
+    );
+    // Neither half is stale, so this is a refusal about the pair rather than
+    // about either token.
+    assert_eq!(chromatogram_export_refusal(&service, &visible), None);
+    let reservation = service
+        .begin_spectrum_export(&spectrum, "svg", &default_figure_settings())
+        .expect("the spectrum this session holds is still exportable");
+    service.cancel_spectrum_export(&reservation);
+}
+
+/// A linked reservation opens the linked dialog and no other.
+///
+/// The three save commands share one reservation counter, so a linked
+/// reservation is a perfectly well-formed identifier for the other two. Each
+/// checks the kind before the lane is marked claimed, so a wrong-kind claim
+/// refuses and leaves the reservation claimable by its own command.
+#[test]
+fn a_linked_reservation_is_claimable_only_by_the_linked_save() {
+    let file = TestFile::new("linked-claim");
+    let service = PreviewService::new(Box::new(FakeProvider::available(linked_responses())));
+    let LinkedSession {
+        chromatogram,
+        spectrum,
+        ..
+    } = linked_ready(&file, &service);
+    let reservation = service
+        .begin_linked_figure_export(
+            &chromatogram,
+            &spectrum,
+            "svg",
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        )
+        .expect("the export begins");
+
+    assert_eq!(
+        service
+            .claim_spectrum_export(&reservation)
+            .expect_err("a linked reservation is not a spectrum's")
+            .kind,
+        "spectrum_export_stale",
+    );
+    assert_eq!(
+        service
+            .claim_chromatogram_export(&reservation)
+            .expect_err("nor a chromatogram's")
+            .kind,
+        "chromatogram_export_stale",
+    );
+
+    let claimed = service
+        .claim_linked_figure_export(&reservation)
+        .expect("its own dialog still opens");
+    assert_eq!(
+        claimed.suggested_file_name(),
+        "mscanvas-linked-spectrum-0-full.svg",
+    );
+    assert_eq!(claimed.dialog().default_extension, "svg");
+    assert_eq!(claimed.dialog().title, "Export linked figure");
+
+    // One reservation opens one dialog.
+    assert_eq!(
+        service
+            .claim_linked_figure_export(&reservation)
+            .expect_err("and only one")
+            .kind,
+        "linked_figure_stale",
+    );
+    assert!(service.cancel_linked_figure_export(&reservation));
+    // The lane is free again.
+    assert_eq!(
+        linked_refusal(
+            &service,
+            &chromatogram,
+            &spectrum,
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        ),
+        None,
+    );
+}
+
+/// The name a linked figure proposes says which scan and how much of the run.
+///
+/// The spectrum's index and the chromatogram's scope, and nothing else. No part
+/// of a path, a workspace handle or a dataset's display name reaches a name this
+/// boundary proposes -- ADR 0035's rule, asked of a surface that draws two
+/// sources at once.
+#[test]
+fn a_linked_suggested_name_carries_the_scan_the_scope_and_nothing_else() {
+    let file = TestFile::new("linked-name");
+    let service = PreviewService::new(Box::new(FakeProvider::available(linked_responses())));
+    let LinkedSession {
+        chromatogram,
+        spectrum,
+        ..
+    } = linked_ready(&file, &service);
+
+    for (format, range, expected) in [
+        (
+            "svg",
+            full_run_range(),
+            "mscanvas-linked-spectrum-0-full.svg",
+        ),
+        (
+            "png",
+            full_run_range(),
+            "mscanvas-linked-spectrum-0-full.png",
+        ),
+        (
+            "svg",
+            current_run_range(0.10, 0.30),
+            "mscanvas-linked-spectrum-0-current.svg",
+        ),
+    ] {
+        let reservation = service
+            .begin_linked_figure_export(
+                &chromatogram,
+                &spectrum,
+                format,
+                &range,
+                both_traces(),
+                &default_figure_settings(),
+            )
+            .expect("the export begins");
+        let claimed = service
+            .claim_linked_figure_export(&reservation)
+            .expect("its dialog");
+        let suggested = claimed.suggested_file_name();
+
+        assert_eq!(suggested, expected);
+        assert!(
+            !suggested.contains("sample"),
+            "no dataset name: {suggested}"
+        );
+        assert!(!suggested.contains(MAIN_SEPARATOR), "no path: {suggested}");
+        service.cancel_linked_figure_export(&reservation);
+    }
+}
+
+/// Writes one linked figure to a chosen name, answering the refusal.
+fn linked_saved_as(
+    service: &PreviewService,
+    chromatogram: &str,
+    spectrum: &str,
+    format: &str,
+    destination: &Path,
+) -> Result<LinkedFigureExportOutcomeDto, PreviewErrorDto> {
+    let reservation = service
+        .begin_linked_figure_export(
+            chromatogram,
+            spectrum,
+            format,
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        )
+        .expect("the export begins");
+    let claimed = service
+        .claim_linked_figure_export(&reservation)
+        .expect("its dialog");
+    service.write_linked_figure_export(&claimed, destination)
+}
+
+/// A saved linked figure is a two-panel document named as what it holds.
+///
+/// The same publication rules every other export answers to: the extension has
+/// to name the document, an existing file is never replaced, and what comes back
+/// says which pair was drawn without saying where it went.
+#[test]
+fn a_saved_linked_figure_is_named_as_what_it_holds_and_replaces_nothing() {
+    let file = TestFile::new("linked-write");
+    let service = PreviewService::new(Box::new(FakeProvider::available(linked_responses())));
+    let LinkedSession {
+        chromatogram,
+        spectrum,
+        ..
+    } = linked_ready(&file, &service);
+    let folder = file.path.parent().expect("a folder");
+
+    let written = linked_saved_as(
+        &service,
+        &chromatogram,
+        &spectrum,
+        "svg",
+        &folder.join("linked.svg"),
+    )
+    .expect("a correctly named destination is written");
+    let LinkedFigureExportOutcomeDto::Saved {
+        format,
+        file_name,
+        figure,
+        range_scope,
+        source_scan_count,
+        selected_index,
+        selected_retention_time,
+        ..
+    } = written
+    else {
+        panic!("a written export is not the cancelled outcome");
+    };
+    assert_eq!(format, "svg");
+    assert_eq!(file_name, "linked.svg");
+    assert_eq!(figure.dpi, None, "a vector document has no resolution");
+    assert_eq!(range_scope, "full");
+    assert_eq!(source_scan_count, 3);
+    assert_eq!(selected_index, 0);
+    assert!(
+        (selected_retention_time - 0.10).abs() < 1e-9,
+        "the retained row's own time reaches the interface: {selected_retention_time}",
+    );
+
+    // A two-panel document, with both panels in it and no path anywhere.
+    let document = fs::read_to_string(folder.join("linked.svg")).expect("the file is there");
+    assert!(document.contains("Panel 1 of 2, counting from the top."));
+    assert!(document.contains("Panel 2 of 2, counting from the top."));
+    assert!(document.contains("Selected scan"));
+    assert!(!document.contains("sample.mzML"), "no source name");
+
+    // A name that does not describe the document is refused rather than
+    // rewritten, and the file that was there is untouched.
+    fs::write(folder.join("taken.png"), b"an earlier export").expect("seed");
+    assert_eq!(
+        linked_saved_as(
+            &service,
+            &chromatogram,
+            &spectrum,
+            "svg",
+            &folder.join("linked.png"),
+        )
+        .expect_err("an SVG is not a PNG")
+        .kind,
+        "spectrum_destination_misnamed",
+    );
+    assert_eq!(
+        linked_saved_as(
+            &service,
+            &chromatogram,
+            &spectrum,
+            "png",
+            &folder.join("taken.png"),
+        )
+        .expect_err("a name already taken is a refusal")
+        .kind,
+        "spectrum_destination_exists",
+    );
+    assert_eq!(
+        fs::read(folder.join("taken.png")).expect("still there"),
+        b"an earlier export",
+        "and the file that was there is untouched",
+    );
+
+    // A PNG is refused under a vector's name for the same reason, in the other
+    // direction, and a name that differs only in case is the same name.
+    assert_eq!(
+        linked_saved_as(
+            &service,
+            &chromatogram,
+            &spectrum,
+            "png",
+            &folder.join("raster.svg"),
+        )
+        .expect_err("a PNG is not an SVG")
+        .kind,
+        "spectrum_destination_misnamed",
+    );
+    linked_saved_as(
+        &service,
+        &chromatogram,
+        &spectrum,
+        "png",
+        &folder.join("UPPER.PNG"),
+    )
+    .expect("Windows extensions do not distinguish case");
+
+    // And every refusal above left the folder as it found it. The write is a
+    // private sibling renamed by handle, so a refused one has nothing to clean
+    // up -- and a residue would be a file the user never asked for, in a folder
+    // this boundary is not allowed to name back to them.
+    let residue: Vec<String> = fs::read_dir(folder)
+        .expect("the folder is readable")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".mscanvas-export"))
+        .collect();
+    assert!(
+        residue.is_empty(),
+        "no temporary file was left behind: {residue:?}"
+    );
+
+    // And the lane is free after every one of those, so the next export begins.
+    linked_saved_as(
+        &service,
+        &chromatogram,
+        &spectrum,
+        "png",
+        &folder.join("linked.png"),
+    )
+    .expect("a raster of the same pair");
+}
+
+/// A linked figure holds the one lane against both of the surfaces it draws.
+#[test]
+fn a_linked_export_in_progress_closes_every_other_scientific_export() {
+    let file = TestFile::new("linked-lane");
+    let service = PreviewService::new(Box::new(FakeProvider::available(linked_responses())));
+    let LinkedSession {
+        chromatogram,
+        spectrum,
+        ..
+    } = linked_ready(&file, &service);
+    let reservation = service
+        .begin_linked_figure_export(
+            &chromatogram,
+            &spectrum,
+            "svg",
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        )
+        .expect("the export begins");
+    service
+        .claim_linked_figure_export(&reservation)
+        .expect("its dialog");
+
+    assert_eq!(
+        service
+            .begin_spectrum_export(&spectrum, "csv", &default_figure_settings())
+            .expect_err("one lane")
+            .kind,
+        "spectrum_export_in_progress",
+    );
+    assert_eq!(
+        chromatogram_export_refusal(&service, &chromatogram),
+        Some("scientific_export_in_progress".to_owned()),
+    );
+    assert_eq!(
+        linked_refusal(
+            &service,
+            &chromatogram,
+            &spectrum,
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        ),
+        Some("scientific_export_in_progress".to_owned()),
+    );
+
+    // And it is released when the dialog is dismissed.
+    assert!(service.cancel_linked_figure_export(&reservation));
+    assert_eq!(chromatogram_export_refusal(&service, &chromatogram), None);
+}
+
+/// The pair a claimed linked export holds is the pair it began on.
+///
+/// The user may select another scan while the save dialog is open. What is
+/// written is the figure they asked for, and the reservation they left behind
+/// still names it.
+#[test]
+fn a_claimed_linked_export_writes_the_pair_it_began_on() {
+    let file = TestFile::new("linked-frozen");
+    let mut responses = linked_responses();
+    responses.push(Response::File(third_scan_output(&[(500.0, 7000.0)])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let LinkedSession {
+        handle,
+        chromatogram,
+        spectrum,
+    } = linked_ready(&file, &service);
+
+    let reservation = service
+        .begin_linked_figure_export(
+            &chromatogram,
+            &spectrum,
+            "svg",
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        )
+        .expect("the export begins");
+    let claimed = service
+        .claim_linked_figure_export(&reservation)
+        .expect("its dialog");
+
+    // The user selects another scan while the dialog is open.
+    let newer = loaded_export_token(&service, &handle, 2);
+    assert_ne!(newer, spectrum);
+
+    let folder = file.path.parent().expect("a folder");
+    let written = service
+        .write_linked_figure_export(&claimed, &folder.join("frozen.svg"))
+        .expect("the figure that was asked for");
+    let LinkedFigureExportOutcomeDto::Saved { selected_index, .. } = written else {
+        panic!("a written export is not the cancelled outcome");
+    };
+    assert_eq!(
+        selected_index, 0,
+        "the scan the export began on, not the one on screen now",
+    );
+}
+
+/// A pair the contract refuses is refused as a *pair*.
+///
+/// Found in review. Both linked writers mapped every `SpecError` to the
+/// chromatogram's refusal, which sends a reader to change a range or a trace
+/// toggle that had nothing to do with it -- and in practice the reachable case
+/// is the other panel's, because a chromatogram this session installed has
+/// already been proved drawable.
+///
+/// Reachable without a race: mzML does not require an ordered m/z array and
+/// nothing here sorts one, so a scan whose points descend is refused by the
+/// contract when it is drawn. The same spectrum exported on its own still
+/// answers with the spectrum's own refusal, which is the point -- each surface
+/// names what it knows.
+#[test]
+fn a_linked_figure_the_contract_refuses_is_refused_as_a_pair() {
+    let file = TestFile::new("linked-unspecifiable");
+    let mut responses = open_responses();
+    // Descending m/z, which the figure contract will not accept as a series.
+    responses.push(Response::File(selected_spectrum_output(
+        0,
+        &[(500.0, 1_000.0), (100.0, 9_000.0)],
+    )));
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let LinkedSession {
+        chromatogram,
+        spectrum,
+        ..
+    } = linked_ready(&file, &service);
+    let folder = file.path.parent().expect("a folder");
+
+    // Nothing refuses it before a destination is chosen: the pair is sound, and
+    // only drawing it is not.
+    let reservation = service
+        .begin_linked_figure_export(
+            &chromatogram,
+            &spectrum,
+            "svg",
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        )
+        .expect("the pair is one scan of one run");
+    let claimed = service
+        .claim_linked_figure_export(&reservation)
+        .expect("its dialog");
+
+    let refusal = service
+        .write_linked_figure_export(&claimed, &folder.join("linked.svg"))
+        .expect_err("a spectrum the contract will not draw is not a figure");
+    assert_eq!(refusal.kind, "linked_figure_not_drawable");
+    // Nothing was written under that name.
+    assert!(!folder.join("linked.svg").exists());
+
+    // **The route out is named because it works.** Both halves of the sentence
+    // are exercised below against this very session, and the one it must not
+    // name is exercised too.
+    assert!(
+        refusal
+            .summary
+            .contains("Export the chromatogram separately"),
+        "the refusal names the export that works: {}",
+        refusal.summary,
+    );
+    assert!(
+        refusal.summary.contains("CSV")
+            && refusal.summary.contains("TSV")
+            && refusal.summary.contains("data"),
+        "and the spectrum's data export, which needs no ordered array: {}",
+        refusal.summary,
+    );
+    // It must not send a reader to the spectrum's own *figure*: that is the
+    // same `spectrum_panel` refusing for the same reason, proved three
+    // assertions below.
+    for misleading in [
+        "the spectrum separately",
+        "export the spectrum figure",
+        "Export the chromatogram and the spectrum separately",
+    ] {
+        assert!(
+            !refusal.summary.contains(misleading),
+            "a recovery that cannot work is not offered: {}",
+            refusal.summary,
+        );
+    }
+
+    // Route one: the chromatogram on its own. Drawable, and written.
+    assert_eq!(
+        chromatogram_export_refusal(&service, &chromatogram),
+        None,
+        "the run this session holds is one it can draw",
+    );
+    if let Some(refusal) =
+        chromatogram_saved_as(&service, &chromatogram, "svg", &folder.join("run.svg"))
+    {
+        panic!("the chromatogram writes: {refusal:?}");
+    }
+    assert!(folder.join("run.svg").exists());
+
+    // Route two: the spectrum as data. One record per retained source point, in
+    // source order, so an array the figure contract will not draw is still a
+    // list of numbers this boundary will write.
+    for format in ["csv", "tsv"] {
+        if let Some(refusal) = spectrum_saved_as(
+            &service,
+            &spectrum,
+            format,
+            &folder.join(format!("scan.{format}")),
+        ) {
+            panic!("{format} writes: {refusal:?}");
+        }
+        assert!(folder.join(format!("scan.{format}")).exists());
+    }
+
+    // And the route the sentence must not name: the spectrum's own figure,
+    // refused by the same panel for the same reason.
+    assert_eq!(
+        service
+            .begin_spectrum_export(&spectrum, "svg", &default_figure_settings())
+            .and_then(|reservation| service.claim_spectrum_export(&reservation))
+            .and_then(|claimed| service.write_spectrum_export(&claimed, &folder.join("one.svg")))
+            .expect_err("the same reading is refused the same way")
+            .kind,
+        "spectrum_export_refused",
+    );
+    assert!(!folder.join("one.svg").exists());
 }

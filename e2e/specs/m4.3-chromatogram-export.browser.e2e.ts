@@ -20,6 +20,7 @@ import {
   openTheViewer,
   pointAt,
   rangeCaption,
+  revealThePlot,
   visibleSpan,
 } from "../support/viewer";
 
@@ -532,16 +533,36 @@ describe("exporting the chromatogram, rendered", () => {
     });
     const committed = await rangeNote();
 
-    // A drag that has moved and has not been released.
-    const plot = await boxOf(PLOT);
+    /*
+     * A drag that has moved and has not been released.
+     *
+     * Two things this needed before it was a drag at all, both found while M4.4
+     * was measuring the same surface.
+     *
+     * The plot is scrolled back onto the screen first. The export surface is
+     * taller than the three-panel column has room for, so opening it puts the
+     * plot below its panel's own fold -- and the panel clips. A pointer put at
+     * the centre of the plot's *layout* box therefore landed on whatever was
+     * painted at that screen point instead: measured at 1366x768 on the M4.3
+     * surface, a `<span>` of the panel below. The gesture this test is about
+     * never started, and every assertion held vacuously.
+     *
+     * And the release is skipped explicitly. `perform()` releases the pointer
+     * when the sequence ends, so "has not been released" was true only for the
+     * 120ms the settle debounce had left to run -- an assertion about
+     * scheduling. `perform(true)` leaves the button down, which is what the
+     * sentence above says.
+     */
+    const plot = await revealThePlot();
     const start = { x: Math.round(plot.left + plot.width * 0.6), y: Math.round(plot.top + plot.height / 2) };
     await browser
       .action("pointer")
       .move({ x: start.x, y: start.y })
       .down()
       .move({ x: start.x - 80, y: start.y })
-      .perform();
+      .perform(true);
     const transient = await rangeCaption();
+    expect(transient).not.toBe(committed);
 
     // The panel still offers the committed range, not the one being drawn.
     expect(await rangeNote()).toBe(committed);

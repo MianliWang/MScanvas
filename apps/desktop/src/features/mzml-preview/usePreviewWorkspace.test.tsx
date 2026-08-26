@@ -197,6 +197,10 @@ function harness(
       Promise.reject(new Error("this test never exports a chromatogram")),
     copyChromatogramPlot: () =>
       Promise.reject(new Error("this test never copies a chromatogram")),
+    exportLinkedFigure: () =>
+      Promise.reject(new Error("this test never exports a linked figure")),
+    copyLinkedPlot: () =>
+      Promise.reject(new Error("this test never copies a linked figure")),
     chooseFiles: () =>
       Promise.resolve<WorkspaceAddResult | null>({
         roster: { datasets: [selectedFile], capacity: FAKE_WORKSPACE_CAPACITY },

@@ -4628,3 +4628,184 @@ chromatogram's SVG, PNG, `Copy plot`, CSV and TSV, over the full run or the
 current range. `ViewerInteractionState.committedDomain` is no longer an
 authority waiting for a consumer -- the chromatogram's current-range export
 consumes it.
+
+## M4.4 — the linked two-panel figure, 2026-08-26
+
+The run on screen and the scan selected in it are now one exportable document:
+two ordered panels, the chromatogram above marked at that scan, and the scan's
+complete spectrum below. SVG, PNG and `Copy plot`. **FIG-006 is implemented**,
+and M4 is complete.
+
+**No third source, and no third token.** Both halves were already separately
+exportable. What this slice decides is what it means to say they describe the
+same thing, and the answer is an *operation* rather than an identity: a pair
+bound when the export begins, never rebound, alive exactly as long as that
+operation is. A separately installed linked identity would have been a fourth
+thing to keep in step with three others, and would have answered the question
+when it was installed rather than when the figure is drawn.
+
+**One acquisition, one moment.** Both tokens are read, ownership proved, the
+exact row found, the range resolved, containment checked, visibility checked and
+the height checked — all under the one `&mut` the caller holds. Reading one
+token, letting go, and reading the other would let the pair describe two
+different instants, which is the one thing this figure claims it does not do. No
+test can catch that: it needs an install to land inside a window of a few
+instructions, so anything claiming to catch it would be claiming scheduling luck.
+What closes it is the shape of the API, and `check_repo.py` now pins that shape —
+the two single-source readers are private to the module, the paired bind is
+private and has exactly two callers, and `LinkedPair` is constructed once.
+
+**Same dataset is necessary and not sufficient.** The selected spectrum has to be
+a scan of *this* retained table, reconciled by identity at its index rather than
+found by position alone. A table whose reported indices are not a gapless
+ascending run puts a different scan at every position after a gap, and nothing in
+the format promises they are — so a lookup that stopped at "is there a row here"
+would draw a marker at a scan nobody selected.
+
+**Retention time is a coordinate, not an identity.** Scans may share one. A
+lookup by time in a run with two scans at 20.4 would find the first, and no
+assertion about the marker's *position* could notice, because both are at the
+same position. So the pair is found by identity, the marker is placed at the
+matched row's own number, and the figure's words name the marked scan by its
+index. Nothing the interface holds can move that marker: the payload crossing
+`invoke` carries no retention time at all, and that payload is now pinned at the
+adapter that produces it.
+
+**A selected scan outside the range is a refusal.** Selecting a scan and then
+panning away from it is an ordinary thing to do. Widening the range back, moving
+the viewer, or settling a gesture to make the export work would each export
+something other than what was asked for. Edges count as inside and there is no
+epsilon. The interface says so before a dialog could open, and names both fixes —
+choose Full run, or bring the scan back into the range — but that sentence is
+guidance: Rust decides it again against the retained row.
+
+**The lower panel is always the whole spectrum.** A chromatogram range is a
+statement about where a scan sits in a run, not about which of its peaks are
+real. Narrowing the spectrum to it would answer a question nobody asked by
+discarding data nobody asked to lose.
+
+**No contract change.** The renderer has carried a `Vec<PanelSpec>` since ADR
+0028 and this is its first two-panel use; `plot_spec::SCHEMA_VERSION` stays 2. The
+two-panel minimum height is the contract's own arithmetic — the chrome a figure
+always needs plus one panel's minimum for each panel it holds, which is 260 —
+asked at the export boundary so a figure that could not be built never opens a
+dialog. The one-panel floor of 180 is untouched, and both single-source exports
+still begin at 259.
+
+**One lane, three surfaces.** `ClaimedExport::LinkedFigure` joins the two existing
+variants rather than adding a lane. Each save command names the kind it is for and
+checks that kind *before* the lane is marked claimed — marking it on the way to
+refusing would leave the lane committed with no dialog, no writer and nothing to
+cancel it, and every later scientific export of the session refused until the
+application was restarted. All nine reservation/claim combinations are pinned.
+
+**Availability is shared; results are not.** A running linked operation is bound
+to both tokens, and replacing either makes `namesVisiblePair` false: the lane
+stays held because Rust is still writing, the running label stops claiming this
+pair is the one being written, and the landed answer is discarded rather than
+published beside a pair it is not about. That holds for a success, a cancellation
+and a failure alike — and a failure carries the part of the answer a user has to
+act on, which is exactly what must not appear beside the wrong pair.
+
+**No combined table.** A linked data document would have to interleave one record
+per scan with one record per point under one header, or drop the link to avoid
+it. Neither is a file that says what it is, so the linked surface offers drawings
+only and the two single-source exports keep their own data documents.
+
+### What the rendered evidence establishes
+
+**Rust: 1,262 tests**, up from 1,220. **Frontend: 1,050 tests**, up from 1,007.
+**Browser QA: 126 cases** across all six spec files at 1366×768, 960×640 and
+1920×1080 — every one of the eight export actions inside everything that clips,
+inside the viewport, and the thing `elementFromPoint` hands a click to; a real
+click dispatching the operation it names; the three views in their own bands; the
+plot still reachable and still operable; no console error, warning, unhandled
+rejection or uncaught exception. **Real-Tauri QA: 12 cases**, eleven executed and one skipped.
+**Fifteen mutations**, applied one at a time and restored byte-for-byte.
+
+The sharpest of the rendered claims is one arithmetic coincidence: the document
+is given a preview of six rows running to 0.0625 and no retention time for the
+scan it selects, while Rust's seeded run begins at 0.10 — so the range that is
+accepted and the range that is refused differ exactly at 0.10, a number this side
+does not hold and never sent.
+
+**Zero delta.** The single-panel SVG documents are pinned as bytes in
+`fixtures/plot-golden`, generated on canonical main before `spectrum_panel` and
+`chromatogram_panel` were factored out and byte-identical after it.
+
+### Layout, measured rather than assumed
+
+The linked section shows one sentence at a time — the reason while it cannot be
+used, the description once it can. A reader who cannot act needs the first; a
+reader who can needs the second, and neither is served by being shown the other's
+underneath their own.
+
+The measurement is the height the open export surface gains, taken in the state
+where the three actions are live:
+
+| | 1366×768 | 960×640 | 1920×1080 |
+| --- | ---: | ---: | ---: |
+| one sentence | 116px | 116px | 96px |
+| two stacked paragraphs | 163px | 163px | 122px |
+
+Below 1920 the description wraps to a second line, which is why the two narrower
+viewports cost the same and the widest costs less. At 1366×768 the viewer column
+is 614px and the surface starts at 189px, so the difference decides whether the
+plot's top edge is still inside the column with the surface open.
+
+Either way the surface leaves the plot below its panel's own fold, which is the
+trade M4.3 measured and accepted when the surface got its own scroll owner. That
+is asserted rather than assumed: at all three viewports the plot is revealed by
+the product's own scroll owner, hit-testable at the centre of the part actually
+painted, and still zooms on a real wheel over it.
+
+### Two things the measuring turned up
+
+**A drag that was never a drag.** M4.3's `does not export the range a gesture is
+still holding` computed a pointer position from the plot's *layout* box. The
+export surface pushes the plot below its panel's fold and the panel clips, so
+measured at 1366×768 on the M4.3 surface that point landed on a `<span>` of the
+panel below: the gesture never started and every assertion held vacuously. It now
+reveals the plot through the product's own scroll owner first, asserts the
+transient caption differs from the committed one, and skips the automatic pointer
+release so "has not been released" is a fact rather than a race against a 120ms
+debounce.
+
+**A seed whose halves were different scans.** The rendered seed's table numbered
+its scans from one while its spectrum called itself nineteen. Both halves worked
+perfectly alone and nothing had ever asked them to be one scan, so no linked
+figure could have been made from the seeded session at all. The table's first row
+is now the spectrum's own row, and the seed asserts the two reconcile before
+either is installed.
+
+### Not run, and why
+
+**The native save dialog.** It does not appear inside the automated WebView2
+session on this machine, and all five pre-existing M4.2 native cases fail there
+in the same way. Product code was not changed to automate it. What it would show
+is proved at the Rust boundary instead: the dialog's own facts, a path-free
+suggested name, an SVG refused under `.png` and a PNG under `.svg`, `.PNG`
+accepted, a name already taken refused with the existing file untouched, and no
+residue left by any refusal.
+
+**`Copy plot`'s finished outcome on the real WebView.** This Windows session's
+clipboard cannot be opened by any process, so the case skips loudly and prints
+why. The clipboard path itself is exercised in Rust.
+
+**Different owners, and a row that does not reconcile, on the real WebView.** The
+seeded session holds one dataset and one spectrum; reaching a second of either
+needs a real ProteoWizard installation. Both are proved at the Rust boundary,
+through the whole service.
+
+**Live ProteoWizard evidence: NOT RUN.**
+
+### Still not implemented
+
+A saved `FigureSpec`, a figure composer, current-range export of a *selected
+spectrum*, XIC, spectrum zoom and pan, multi-layer comparison, vendor-format
+direct preview and a preview cache.
+
+Not on this list any more, because this milestone is what built it: the linked
+two-panel figure of the chromatogram and the selected scan, as SVG, PNG and
+`Copy plot`, over the full run or the current range. See
+[ADR 0036](docs/architecture/adr/0036-linked-chromatogram-spectrum-figure.md).

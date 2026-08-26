@@ -137,8 +137,11 @@ CSV/TSV for the per-scan data, over the whole run or over the range the viewer
 has committed to. A figure draws the traces that are visible; a data export
 carries both measured columns whichever of them is on screen.
 
-Still missing from the acquisition view: XIC, spectrum zoom and pan, multi-layer
-comparison, and a linked two-panel figure. See
+The run and the scan chosen in it can also be exported *together*, as one figure
+of two ordered panels linked by a marker at that scan.
+
+Still missing from the acquisition view: XIC, spectrum zoom and pan, and
+multi-layer comparison. See
 [ADR 0032](../architecture/adr/0032-viewer-interaction-and-viewport-state.md) and
 [ADR 0033](../architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
 
@@ -303,9 +306,18 @@ The chromatogram exports as SVG, PNG, `Copy plot`, CSV and TSV, over the full
 run or the range the viewer has committed to, and that range is
 `ViewerInteractionState.committedDomain` rather than a gesture in progress. A
 *selected spectrum* still exports its full source only: there is no range
-chooser on that surface. See
-[ADR 0029](../architecture/adr/0029-first-visible-spectrum-figure-and-data-export.md)
-and [ADR 0034](../architecture/adr/0034-chromatogram-export-and-range-scope.md).
+chooser on that surface.
+
+The same surface offers the two of them **linked**: one figure of two ordered
+panels, the chromatogram above with a marker at the selected scan and that scan's
+complete spectrum below, as SVG, PNG or `Copy plot`. It reuses the range and the
+figure settings already chosen there, and it says why it cannot be used when it
+cannot — no scan selected, no visible trace, a height below the two-panel minimum
+of 260, or a current range the selected scan is outside. There is no linked data
+document. See
+[ADR 0029](../architecture/adr/0029-first-visible-spectrum-figure-and-data-export.md),
+[ADR 0034](../architecture/adr/0034-chromatogram-export-and-range-scope.md) and
+[ADR 0036](../architecture/adr/0036-linked-chromatogram-spectrum-figure.md).
 
 **Success:** output is independent of app chrome/theme and corresponds to a defined PlotSpec/FigureSpec.
 
