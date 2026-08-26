@@ -100,8 +100,8 @@ The acceptance table remains the target, including the parts called out below.
 
 Still unimplemented across the viewer: XIC (VIEW-007), spectrum zoom and pan,
 multi-layer comparison (VIEW-008), and current-range export of a selected
-spectrum. The chromatogram exports over the full run or the current range; see
-FIG-001 through FIG-004.
+spectrum. The chromatogram exports over the full run or the current range, alone
+or linked with the selected scan; see FIG-001 through FIG-006.
 
 ## Conversion
 
@@ -195,7 +195,7 @@ recognized. See
 | FIG-003 | SVG export | P0.5 | **Implemented for the selected mzML spectrum (full source) and for the chromatogram over the full run or the current range.** Vector output preserves labels, axes and plot semantics, carries the accessible title/description, contains no application chrome and no source path, and is rendered in Rust from the complete retained spectrum rather than from the screen. Width, height and theme are the user's; DPI does not apply, because a vector document has no pixels whose physical size could be recorded. |
 | FIG-004 | Underlying data export | P0.5 | **Implemented for the selected spectrum and for the chromatogram, as CSV/TSV.** A spectrum writes one record per complete source point in source order. A chromatogram writes one record per source **scan** -- retention time, total ion current and base peak intensity, both columns always, whatever the screen is showing -- in retention-time-then-table-position order, over the full run or the current range. Both carry a metadata preamble with a schema version and the unreported unit states, and both round-trip the parsed `f64` exactly. A current range holding no scans writes no records and is a successful export: the figure for that range may still draw the segment crossing it, because a boundary crossing is geometry and not a scan. |
 | FIG-005 | Independent figure theme | P0.5 | **Implemented.** Light or Dark, chosen per export and written into the document, so the file means the same thing wherever it is opened. Independent of the application's own theme in both directions: choosing a dark figure does not darken the application, and a user reading a dark screen still publishes a light figure by default. The palettes are the renderer's; nothing in the interface invents a colour. |
-| FIG-006 | Linked two-panel figure | P1 | Chromatogram + selected spectrum share a reproducible figure specification. |
+| FIG-006 | Linked two-panel figure | P1 | **Implemented for the chromatogram and the scan selected in it.** One figure of two ordered panels — the chromatogram above, over the full run or the current range and carrying one `Selected scan` marker, and that scan's complete spectrum below — built from one `FigureSpec` and offered as SVG, PNG and `Copy plot` from the chromatogram's own export surface. The pair is bound in one operation: same dataset, and then the **exact retained row** at the spectrum's index, reconciled by identity. Retention time is never the key, because scans may share one; it is the marker's coordinate and is taken from the matched row. A selected scan outside the requested range is a typed refusal rather than a widened range or a moved viewer. The lower panel is always the whole spectrum, whatever the chromatogram covers. No data document: a combined table would have to interleave two different measurements or drop the link. |
 | FIG-007 | Saved FigureSpec | P1 | Reopening a spec regenerates the same semantic figure from referenced artifacts. |
 | FIG-008 | Figure composer | P2 | Multi-panel layout is constrained, aligned and provenance-aware rather than a generic slide editor. |
 

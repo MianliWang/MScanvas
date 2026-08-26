@@ -33,7 +33,9 @@ This roadmap sequences product risk; it is not the authoritative feature definit
 
 The renderer foundation is selected and proved: one semantic specification, a
 repository-owned screen renderer and a repository-owned Rust export renderer,
-with no dependency added. The first visible slice has shipped.
+with no dependency added. **The milestone is complete**: the selected spectrum,
+the chromatogram and the linked two-panel figure of the two all export as
+figures and — for the two single sources — as data.
 
 **M4.0 — renderer selection.** Closed. See
 [ADR 0028](docs/architecture/adr/0028-figure-renderer-and-semantic-specification.md).
@@ -151,9 +153,45 @@ measured columns whatever the screen shows. One scientific export lane now
 serves the spectrum and the chromatogram together. See
 [ADR 0034](docs/architecture/adr/0034-chromatogram-export-and-range-scope.md).
 
+**M4.3.2 — a saved file is named as what it holds.** Closed with M4.3. Every
+export that opens a native save dialog refuses a destination whose extension does
+not describe the document it was asked to write, rather than renaming it: a CSV
+published as `trace.svg` is read as an SVG by everything downstream, and the
+reachability is a user typing a name. The no-overwrite transaction is unchanged
+and composes in front of it. See
+[ADR 0035](docs/architecture/adr/0035-export-filename-format-integrity.md).
+
+**M4.4 — the linked two-panel figure.** Closed. **FIG-006 is implemented.** The
+run on screen and the scan selected in it export as one figure of two ordered
+panels: the chromatogram above, marked at that scan, and the scan's complete
+spectrum below. SVG, PNG and `Copy plot`, from the chromatogram's own export
+surface, over the full run or the range the viewer has committed to.
+
+It adds no source. Both halves were already separately exportable, and what this
+slice decides is what it means to say they describe the same thing: one
+operation reads both tokens without letting go, proves one dataset owns them, and
+reconciles the selected spectrum against the **exact retained row** at its index.
+Same dataset is necessary and not sufficient, and retention time is never the
+key — scans may share one, so a lookup by time could not say which was selected.
+The marker's coordinate is the matched row's own number, and nothing the
+interface holds can move it.
+
+A selected scan outside the requested range is a refusal rather than a widening,
+a pan or a settled gesture. The lower panel is always the complete spectrum,
+because a chromatogram range says where a scan sits in a run and not which of its
+peaks are real. There is no linked data document: a combined table would have to
+interleave two different measurements or drop the link.
+
+No contract change was needed. The renderer has carried a `Vec<PanelSpec>` since
+ADR 0028; `FigureSpec`'s schema version stays 2, and the two-panel minimum height
+of 260 is the contract's own arithmetic rather than a number written down beside
+it. The one scientific export lane now serves three surfaces. See
+[ADR 0036](docs/architecture/adr/0036-linked-chromatogram-spectrum-figure.md).
+
 Still outside it, and unchanged:
 
-- A linked chromatogram + spectrum figure template.
+- A saved `FigureSpec` (FIG-007) and a figure composer (FIG-008).
+- Current-range export of a *selected spectrum*.
 - XIC, spectrum zoom/pan, and multi-layer comparison.
 
 ## M5 — Public beta hardening

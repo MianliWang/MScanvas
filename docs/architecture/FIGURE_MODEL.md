@@ -6,7 +6,7 @@ Screen inspection and scientific export should share semantics while supporting 
 
 ## PlotSpec
 
-Implemented for the M4 scenes as `mscanvas_plot_spec::spec` (schema version 1).
+Implemented for the M4 scenes as `mscanvas_plot_spec::spec` (schema version 2).
 The list below is the full intent; what exists today is the subset the measured
 scenes and the next visible slice need — kind, representation, axes with an
 explicit unit state, full and optional visible domains, a value domain that may
@@ -142,14 +142,36 @@ PNG, `Copy plot`, and the figure settings all three figure outputs share.
 
 See [ADR 0030](adr/0030-png-copy-plot-and-figure-settings.md).
 
+## Third slice — M4.4
+
+The first figure of more than one panel, and the first use of `markers` outside
+the contract's own tests.
+
+| | |
+| --- | --- |
+| Panels | two, ordered: `Chromatogram` then `Spectrum`. The renderer places them top to bottom in the order given and numbers them in the description |
+| Upper panel | the chromatogram panel the single-source export draws, plus one `Marker` |
+| Marker | `Marker::new(row.retention_time(), Some("Selected scan"))` — the matched **retained row's** own number, never the spectrum's own reading of the same quantity and never anything the interface holds |
+| Lower panel | the spectrum panel the single-source export draws, unchanged: `DataScope::FullSource`, no visible domain, no value window, whatever range the panel above covers |
+| Schema | version 2, unchanged. No layout enum, no panel weights, no `FigureSpec` v3 |
+| Minimum height | `MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT × 2` = **260**, refused at the export boundary before a dialog can open. The one-panel floor of 180 is untouched |
+| Outputs | SVG, PNG and `Copy plot`. No data document: a combined table would have to interleave two different measurements or drop the link |
+
+Both panels come from `chromatogram_panel` and `spectrum_panel`, factored out of
+the two single-source exports so the linked figure draws the same science rather
+than a second implementation of it. `fixtures/plot-golden` pins the single-panel
+documents as bytes, generated before that refactor and byte-identical after it.
+
+See [ADR 0036](adr/0036-linked-chromatogram-spectrum-figure.md).
+
 ## Still open
 
-FIG-001 through FIG-004 cover the selected spectrum and the chromatogram, the
-chromatogram over the whole run or the range the viewer has committed to. FIG-006
-through FIG-008 are unimplemented. There is no current-range export of a selected
-spectrum, no XIC, no linked figure, no saved specification and no composer, and the
-screen renderer still does not consume `FigureSpec` — screen and export agree by
-both being right rather than by sharing a type.
+FIG-001 through FIG-006 cover the selected spectrum, the chromatogram over the
+whole run or the range the viewer has committed to, and the linked two-panel
+figure of the two. FIG-007 and FIG-008 are unimplemented. There is no
+current-range export of a selected spectrum, no XIC, no saved specification and no
+composer, and the screen renderer still does not consume `FigureSpec` — screen and
+export agree by both being right rather than by sharing a type.
 
 TIC and BPC now exist on screen, with a retention-time viewport a user zooms and
 pans. That closes the second half of the sentence above and makes the first half
@@ -158,14 +180,17 @@ describe is `ViewerInteractionState.committedDomain`** — `null` for the whole
 run, otherwise a finite forward interval inside it. It is deliberately not the
 gesture in progress, so an export taken mid-drag cannot describe a range the user
 never settled on, and it is deliberately not the SVG's coordinates, the visible
-ticks or anything a pointer holds. Nothing consumes it yet. See
+ticks or anything a pointer holds. The chromatogram export consumes it, and so
+does the linked figure — where it decides one more thing, because a selected scan
+outside that range is a refusal rather than a widening. See
 [ADR 0032](adr/0032-viewer-interaction-and-viewport-state.md) and
 [ADR 0033](adr/0033-visible-linked-tic-bpc-viewer.md).
 
 The screen chromatogram is not drawn from a `PlotSpec`. It reads the same
 scientific model the rest of the viewer does and draws with the repository's own
-SVG, exactly as the stick spectrum does; the linked figure that would need a
-shared specification is FIG-006, and it is not built. What the two already agree
+SVG, exactly as the stick spectrum does. The *exported* linked figure is built
+from a `FigureSpec` like every other export, so FIG-006 did not need the screen
+renderer to consume one either. What the two already agree
 on is the posture that matters — an unreported unit stays unreported, a reduction
 is disclosed rather than presented as the data, and a value below zero is drawn
 below zero.
