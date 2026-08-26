@@ -16,15 +16,28 @@
  * - a **data** export carries both measured columns whatever is on screen,
  *   because hiding a trace is a choice about a plot rather than a decision to
  *   leave measured science out of a file.
+ *
+ * The linked section at the bottom is a third surface over the same two
+ * sources. It exports one figure of two ordered panels -- this chromatogram
+ * above, the complete selected spectrum below -- and it lives here rather than
+ * beside the spectrum because the range and the traces it needs are the ones
+ * chosen here. It offers no data document: a combined table would have to
+ * interleave two different measurements or drop the link.
  */
 
-import type { ChromatogramExportFormat, ChromatogramRangeScope, FigureTheme } from "./contracts";
+import type {
+  ChromatogramExportFormat,
+  ChromatogramRangeScope,
+  FigureTheme,
+  LinkedFigureFormat,
+} from "./contracts";
 import { FigureSettingsFields } from "./FigureSettingsFields";
 import { formatCount } from "./format";
 import type {
   ChromatogramExportState,
   FigureSettingsDraft,
   FigureSettingsField,
+  LinkedFigureExportState,
   TraceVisibility,
 } from "./usePreviewWorkspace";
 import type { RetentionTimeDomain } from "./viewer/scanModel";
@@ -55,6 +68,22 @@ const DATA_FORMATS: readonly {
 }[] = [
   { format: "csv", label: "Export CSV…" },
   { format: "tsv", label: "Export TSV…" },
+];
+
+/**
+ * The linked figure's two drawn outputs.
+ *
+ * Drawings only, and the absence is the point rather than an omission: there is
+ * no honest combined table of a chromatogram and a spectrum, so the linked
+ * surface offers none and the two single-source exports keep theirs.
+ */
+const LINKED_FIGURE_FORMATS: readonly {
+  readonly format: LinkedFigureFormat;
+  readonly label: string;
+  readonly recordsDpi: boolean;
+}[] = [
+  { format: "svg", label: "Export linked SVG…", recordsDpi: false },
+  { format: "png", label: "Export linked PNG…", recordsDpi: true },
 ];
 
 export interface ChromatogramExportPanelProps {
@@ -91,6 +120,19 @@ export interface ChromatogramExportPanelProps {
   readonly pngDpiProblem: string | null;
   readonly onFigureSetting: (field: FigureSettingsField, value: string) => void;
   readonly onFigureTheme: (theme: FigureTheme) => void;
+  /** What the linked two-panel surface is doing, and what it last did. */
+  readonly linkedExportState: LinkedFigureExportState;
+  /**
+   * Why a linked figure cannot be exported right now, or `null` when it can.
+   *
+   * Shown rather than only acted on. A closed control that says nothing is a
+   * control the reader has to guess about, and every one of these sentences
+   * names something they can change.
+   */
+  readonly linkedUnavailable: string | null;
+  readonly onExportLinked: (format: LinkedFigureFormat) => void;
+  readonly onCopyLinkedPlot: () => void;
+  readonly onDismissLinked: () => void;
 }
 
 export function ChromatogramExportPanel({
@@ -108,12 +150,24 @@ export function ChromatogramExportPanel({
   pngDpiProblem,
   onFigureSetting,
   onFigureTheme,
+  linkedExportState,
+  linkedUnavailable,
+  onExportLinked,
+  onCopyLinkedPlot,
+  onDismissLinked,
 }: ChromatogramExportPanelProps) {
   // What this surface is doing *to the run it is showing*, which is what its
   // labels are allowed to say. An operation that outlived the preview it was
   // begun on still holds the lane -- so the controls below stay closed -- but
   // it is no longer this run being written, and no label here says it is.
   const running = exportState.status === "running" && exportState.namesVisibleRun;
+  // The same rule for the linked surface, and it is about the *pair*: selecting
+  // another scan is as much a change of what is being exported as opening
+  // another run is. The lane stays held either way -- Rust is still writing --
+  // so the actions below stay closed while the label stops claiming this pair
+  // is the one being written.
+  const linkedRunning =
+    linkedExportState.status === "running" && linkedExportState.namesVisiblePair;
   // A figure nothing can be drawn from is not offered. The data formats stay
   // live: a width nobody could draw at says nothing about a list of numbers.
   //
@@ -238,11 +292,190 @@ export function ChromatogramExportPanel({
         A live region rather than a dialog. An export finishes while the user is
         looking at the run, and interrupting them to say so would be a worse
         interruption than the file being saved was.
+
+        Named, because the linked section below has one of its own: two status
+        regions in one surface that both announce "Saved ..." and neither of
+        which says what it is about leave a reader unable to tell which export
+        finished.
       */}
-      <div aria-live="polite" className="spectrum-export-status" role="status">
+      <div
+        aria-label="Chromatogram export status"
+        aria-live="polite"
+        className="spectrum-export-status"
+        role="status"
+      >
         <ChromatogramExportResult onDismiss={onDismiss} state={exportState} />
       </div>
+      <LinkedFigureSection
+        linkedRunning={linkedRunning}
+        onCopyLinkedPlot={onCopyLinkedPlot}
+        onDismissLinked={onDismissLinked}
+        onExportLinked={onExportLinked}
+        pngDpiProblem={pngDpiProblem}
+        scientificExportBusy={scientificExportBusy}
+        state={linkedExportState}
+        unavailable={linkedUnavailable}
+      />
     </div>
+  );
+}
+
+/** What every identifier in the linked section is named after. */
+const LINKED_PREFIX = "chromatogram-linked";
+
+/** Where the linked section says why its actions are closed. */
+const LINKED_UNAVAILABLE_ID = `${LINKED_PREFIX}-unavailable`;
+
+/**
+ * The linked two-panel figure, as one compact section of this surface.
+ *
+ * Three actions and one sentence about each thing that would refuse them. The
+ * section is always rendered while the export surface is open, including when
+ * nothing can be exported: a control that disappears when it stops working
+ * teaches nobody why, and this one has a reason to give.
+ *
+ * Availability is asked in the same order the workspace answers it, and one
+ * extra rule lives only here -- a resolution no PNG could record closes the
+ * raster and nothing else, because an SVG has no pixels to give a physical size
+ * to and a clipboard image carries no resolution at all.
+ */
+function LinkedFigureSection({
+  state,
+  linkedRunning,
+  unavailable,
+  scientificExportBusy,
+  pngDpiProblem,
+  onExportLinked,
+  onCopyLinkedPlot,
+  onDismissLinked,
+}: {
+  readonly state: LinkedFigureExportState;
+  /** Whether a running linked operation still names the pair on screen. */
+  readonly linkedRunning: boolean;
+  readonly unavailable: string | null;
+  readonly scientificExportBusy: boolean;
+  readonly pngDpiProblem: string | null;
+  readonly onExportLinked: (format: LinkedFigureFormat) => void;
+  readonly onCopyLinkedPlot: () => void;
+  readonly onDismissLinked: () => void;
+}) {
+  // The shared lane first, then this surface's own reasons. Both are asked
+  // again in Rust, which is the boundary that decides; this is what keeps an
+  // action that is already known to be refused from being offered.
+  const blocked = scientificExportBusy || unavailable !== null;
+  const rasterBlocked = blocked || pngDpiProblem !== null;
+  // Named for a screen reader only where there is something to name, so a
+  // usable section does not point at an element that is not there.
+  const describedBy = unavailable === null ? undefined : LINKED_UNAVAILABLE_ID;
+
+  return (
+    <fieldset className="linked-figure-actions" id={`${LINKED_PREFIX}-section`}>
+      <legend>Linked chromatogram + spectrum</legend>
+      <p className="chromatogram-export-note">
+        One figure of two panels: this chromatogram over the range above, marked at the selected
+        scan, and that scan&rsquo;s complete spectrum below it. The spectrum is always the whole
+        source, whichever range the chromatogram covers.
+      </p>
+      {unavailable === null ? null : (
+        <p className="chromatogram-export-note" id={LINKED_UNAVAILABLE_ID}>
+          {unavailable}
+        </p>
+      )}
+      <div className="spectrum-export-actions">
+        {LINKED_FIGURE_FORMATS.map(({ format, label, recordsDpi }) => (
+          <button
+            aria-describedby={describedBy}
+            className="secondary-button"
+            disabled={recordsDpi ? rasterBlocked : blocked}
+            key={format}
+            onClick={() => {
+              onExportLinked(format);
+            }}
+            type="button"
+          >
+            {linkedRunning && state.status === "running" && state.operation === format
+              ? `Exporting linked ${format.toUpperCase()}…`
+              : label}
+          </button>
+        ))}
+        <button
+          aria-describedby={describedBy}
+          className="secondary-button"
+          // A clipboard image carries no physical resolution, so an unusable
+          // one leaves this action live -- the same rule the chromatogram's own
+          // Copy plot follows.
+          disabled={blocked}
+          onClick={onCopyLinkedPlot}
+          type="button"
+        >
+          {linkedRunning && state.status === "running" && state.operation === "copy"
+            ? "Copying linked plot…"
+            : "Copy linked plot"}
+        </button>
+      </div>
+      <div
+        aria-label="Linked figure export status"
+        aria-live="polite"
+        className="spectrum-export-status linked-figure-status"
+        role="status"
+      >
+        <LinkedFigureResult onDismiss={onDismissLinked} state={state} />
+      </div>
+    </fieldset>
+  );
+}
+
+/** What one finished linked export says about itself. */
+function LinkedFigureResult({
+  state,
+  onDismiss,
+}: {
+  readonly state: LinkedFigureExportState;
+  readonly onDismiss: () => void;
+}) {
+  if (state.status === "idle" || state.status === "running") {
+    return null;
+  }
+  if (state.status === "cancelled") {
+    return (
+      <p className="spectrum-export-message">
+        Linked export cancelled. Nothing was saved. <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
+      </p>
+    );
+  }
+  if (state.status === "failed") {
+    return (
+      <p className="spectrum-export-message">
+        {state.error.summary}{" "}
+        {/* Both halves, exactly as the two single-source surfaces do. The
+            detail is where a failure puts the part the user has to act on --
+            above all that the export could not remove the temporary file it
+            left in their folder. */}
+        {state.error.detail === null ? null : (
+          <span className="notice-detail">{state.error.detail}</span>
+        )}
+        <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
+      </p>
+    );
+  }
+  if (state.status === "copied") {
+    return (
+      <p className="spectrum-export-message">
+        Copied the linked figure at {state.figure.width}×{state.figure.height} in the{" "}
+        {state.figure.theme} theme, marking spectrum {formatCount(state.selectedIndex)} in a run of{" "}
+        {formatCount(state.sourceScanCount)} scans. <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
+      </p>
+    );
+  }
+  // The index rather than the retention time, because an index names one scan
+  // and a retention time may be shared by several. The time is beside it as the
+  // coordinate the marker was drawn at, which is what it is.
+  return (
+    <p className="spectrum-export-message">
+      Saved {state.fileName}, marking spectrum {formatCount(state.selectedIndex)} at retention time{" "}
+      {state.selectedRetentionTime} in a run of {formatCount(state.sourceScanCount)} scans.{" "}
+      <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
+    </p>
   );
 }
 
@@ -261,7 +494,7 @@ function ChromatogramExportResult({
     return (
       <p className="spectrum-export-message">
         Export cancelled. Nothing was saved.{" "}
-        <DismissButton onDismiss={onDismiss} />
+        <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
       </p>
     );
   }
@@ -279,7 +512,7 @@ function ChromatogramExportResult({
         {state.error.detail === null ? null : (
           <span className="notice-detail">{state.error.detail}</span>
         )}
-        <DismissButton onDismiss={onDismiss} />
+        <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
       </p>
     );
   }
@@ -288,7 +521,7 @@ function ChromatogramExportResult({
       <p className="spectrum-export-message">
         Copied the chromatogram at {state.figure.width}×{state.figure.height} in the{" "}
         {state.figure.theme} theme, from a run of {formatCount(state.sourceScanCount)} scans.{" "}
-        <DismissButton onDismiss={onDismiss} />
+        <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
       </p>
     );
   }
@@ -303,14 +536,28 @@ function ChromatogramExportResult({
         )} scans`;
   return (
     <p className="spectrum-export-message">
-      Saved {state.fileName} {scans}. <DismissButton onDismiss={onDismiss} />
+      Saved {state.fileName} {scans}. <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
     </p>
   );
 }
 
-function DismissButton({ onDismiss }: { readonly onDismiss: () => void }) {
+function DismissButton({
+  onDismiss,
+  label,
+}: {
+  readonly onDismiss: () => void;
+  /**
+   * What this control is called where more than one of them can be on screen.
+   *
+   * The word alone is enough beside a single message. It stops being enough in
+   * a surface holding two, which is what the linked section makes possible: a
+   * reader listing the controls hears "Dismiss" twice and cannot tell which
+   * result each one clears.
+   */
+  readonly label?: string;
+}) {
   return (
-    <button className="link-button" onClick={onDismiss} type="button">
+    <button aria-label={label} className="link-button" onClick={onDismiss} type="button">
       Dismiss
     </button>
   );

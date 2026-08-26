@@ -109,9 +109,17 @@ function radio(name: string): HTMLInputElement {
   return within(panel()).getByRole("radio", { name }) as HTMLInputElement;
 }
 
-/** What this panel's live region currently says. */
+/**
+ * What this panel's own live region currently says.
+ *
+ * Named rather than "the one status in the panel": the linked section at the
+ * bottom of this surface has a live region of its own, and a query that could
+ * reach either would report the wrong export's words.
+ */
 function exportStatus(): string {
-  return within(panel()).getByRole("status").textContent ?? "";
+  return (
+    within(panel()).getByRole("status", { name: "Chromatogram export status" }).textContent ?? ""
+  );
 }
 
 /** Where a retention time falls in client pixels, for the range on screen. */

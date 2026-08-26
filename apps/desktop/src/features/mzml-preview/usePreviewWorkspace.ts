@@ -3117,6 +3117,31 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   }, []);
 
   /**
+   * Where the scan whose spectrum is loaded sits, as the visible table reports
+   * it, or `null` when there is no such row.
+   *
+   * **Guidance, never authority.** This number decides one sentence on screen
+   * and nothing else: it is not sent, it does not position the marker, and it
+   * does not decide whether the export is allowed. Rust reads the *retained*
+   * row for both of those, refuses a selected scan outside the range with its
+   * own typed refusal, and would refuse this export even if every number here
+   * were wrong.
+   *
+   * Read from the same table the viewer draws and keyed by the *loaded*
+   * spectrum's index rather than by the committed selection, so a selection
+   * that has moved on to a scan still being read cannot make this sentence
+   * about a different scan than the one an export would bind.
+   */
+  const selectedScanRetentionTime = useMemo((): number | null => {
+    if (spectrum.status !== "loaded") {
+      return null;
+    }
+    const loaded = spectrum.spectrum.index;
+    const row = previewRows.find((candidate) => candidate.index === loaded);
+    return row === undefined ? null : row.retentionTime.value;
+  }, [previewRows, spectrum]);
+
+  /**
    * Why a linked figure cannot be exported right now, or `null` when it can.
    *
    * Ordered by what a user would fix first, and each sentence names the thing
@@ -3124,10 +3149,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * that matters; this exists so an action that is known to be refused is not
    * offered as though it might work.
    *
-   * The selected-scan containment rule is deliberately *not* computed here.
-   * Which scan the retained table holds at which retention time is Rust's fact,
-   * and this side does not have it -- so the guidance below says only what this
-   * side can see, and the refusal that names it comes back typed.
+   * The order is: what there is nothing to link, then what is not on screen to
+   * draw, then what the chosen range excludes, then how the figure was asked to
+   * be drawn. A reader fixes the first of those before the ones below it can
+   * even be asked.
    */
   const linkedFigureUnavailable = useMemo((): string | null => {
     if (chromatogramExportToken === null) {
@@ -3140,7 +3165,23 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       return "Select a scan and wait for its spectrum to load.";
     }
     if (!chromatogramTraces.tic && !chromatogramTraces.bpc) {
-      return "Show at least one chromatogram trace.";
+      return "Show at least one chromatogram trace to create a linked figure.";
+    }
+    // Said here because a reader can act on it -- choose Full run, or bring the
+    // scan back into view -- and being told only after a save dialog would have
+    // opened is being told too late. Rust decides it again against the retained
+    // row, and its typed refusal is what actually closes the export.
+    if (
+      chromatogramRangeScope === "current" &&
+      chromatogramCommittedDomain !== null &&
+      selectedScanRetentionTime !== null &&
+      (selectedScanRetentionTime < chromatogramCommittedDomain.low ||
+        selectedScanRetentionTime > chromatogramCommittedDomain.high)
+    ) {
+      return (
+        "The selected scan is outside the current chromatogram range. Choose Full run or move " +
+        "the current range to include the selected scan."
+      );
     }
     if (renderSettingsProblem !== null) {
       return renderSettingsProblem;
@@ -3150,11 +3191,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }
     return null;
   }, [
+    chromatogramCommittedDomain,
     chromatogramExportToken,
+    chromatogramRangeScope,
     chromatogramTraces,
     exportedSpectrumToken,
     renderSettingsProblem,
     resolvedRenderSettings,
+    selectedScanRetentionTime,
     spectrum.status,
   ]);
 
