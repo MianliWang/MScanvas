@@ -233,6 +233,13 @@ document out: `svg::render` for the vector, the same rasterizer and PNG encoder
 for the raster, and the same rasterizer again for the clipboard. No screenshot,
 no DOM, and no pixels cross back into the webview.
 
+A pair the *contract* refuses — a spectrum whose m/z array is not ordered, which
+mzML does not require and nothing here sorts — is refused as a pair, with its own
+answer rather than either panel's. The boundary knows the figure could not be
+built and does not know which half refused it, and answering with the
+chromatogram's would send a reader to change a range or a trace toggle that had
+nothing to do with it.
+
 A copy commits the lane immediately and has no reservation, because there is no
 destination to choose and nothing to come back from. A save is two phases —
 `begin` issues the reservation, `save` claims it and shows the dialog — and
@@ -267,11 +274,22 @@ resolution no PNG could record closes the linked PNG alone, because an SVG has n
 pixels to give a physical size to and a clipboard image carries none at all.
 
 The section shows **one sentence at a time** — what it draws when it can be used,
-why not when it cannot. Measured at 1366×768, the section costs the open surface
-about 96px and two stacked paragraphs cost enough more to push the plot out of
-the window entirely. A reader who cannot act needs the reason; a reader who can
-needs the description; neither is served by being shown the other's underneath
-their own.
+why not when it cannot. A reader who cannot act needs the reason; a reader who
+can needs the description; neither is served by being shown the other's
+underneath their own.
+
+Measured, in the state where the three actions are live, as the height the open
+export surface gains:
+
+| | 1366×768 | 960×640 | 1920×1080 |
+| --- | ---: | ---: | ---: |
+| one sentence | **116px** | 116px | 96px |
+| two stacked paragraphs | 163px | 163px | 122px |
+
+Below 1920 the description wraps to a second line, which is why the two narrower
+viewports cost the same and the widest costs less. At 1366×768 the difference
+decides whether the plot's top edge is still inside the 614px viewer column with
+the surface open.
 
 Even so the plot ends up below its panel's fold, which is the trade ADR 0034
 measured and accepted when the export surface got its own scroll owner. That is
@@ -298,7 +316,7 @@ otherwise hear "Dismiss" twice with nothing to tell them apart.
 
 ## Evidence
 
-**Rust: 1,261 tests**, up from 1,220. The pair matrix — different owners, a row
+**Rust: 1,262 tests**, up from 1,220. The pair matrix — different owners, a row
 whose identity does not reconcile, a spectrum beyond the retained table,
 duplicate retention times paired by identity, and a marker taken from the matched
 row rather than from the spectrum's own reading of the same quantity. The range
@@ -316,7 +334,7 @@ handle in either panel.
 before `spectrum_panel` and `chromatogram_panel` were factored out, and are
 byte-identical after it.
 
-**Frontend: 1,046 tests**, up from 1,007. The rendered matrix covers the section
+**Frontend: 1,050 tests**, up from 1,007. The rendered matrix covers the section
 present, no spectrum, a spectrum loading, a spectrum ready, TIC alone, BPC alone,
 both, neither, Full, a current range holding the scan, a current range excluding
 it, 259 and 260, an unusable width, an unusable resolution, all three surfaces
@@ -334,7 +352,8 @@ names; the three views in their own bands with nothing painted over the scan
 table; the plot still reachable and still operable. No console error, warning,
 unhandled rejection or uncaught exception.
 
-**Real-Tauri QA: 11 cases**, one skipped. The marker's coordinate is a number
+**Real-Tauri QA: 12 cases**, eleven executed and one skipped where the session
+has no usable clipboard. The marker's coordinate is a number
 only Rust has — the document is given six rows running to 0.0625 and no retention
 time for the scan it selects, Rust's run begins at 0.10, and the accepted and
 refused ranges differ exactly there. Both stale tokens, a current range excluding

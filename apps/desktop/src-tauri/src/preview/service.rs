@@ -89,10 +89,11 @@ use super::dto::{
     SpectrumExportOutcomeDto, chromatogram_export_refused, chromatogram_export_stale,
     chromatogram_no_visible_trace, chromatogram_range_outside_source, figure_clipboard_unavailable,
     figure_font_unavailable, figure_not_rasterizable, figure_settings_refused,
-    linked_figure_source_mismatch, linked_figure_stale, linked_figure_too_short,
-    linked_selection_outside_range, scientific_export_in_progress, spectrum_destination_exists,
-    spectrum_destination_misnamed, spectrum_destination_unusable, spectrum_export_in_progress,
-    spectrum_export_refused, spectrum_export_stale, spectrum_not_finalized, spectrum_not_written,
+    linked_figure_not_drawable, linked_figure_source_mismatch, linked_figure_stale,
+    linked_figure_too_short, linked_selection_outside_range, scientific_export_in_progress,
+    spectrum_destination_exists, spectrum_destination_misnamed, spectrum_destination_unusable,
+    spectrum_export_in_progress, spectrum_export_refused, spectrum_export_stale,
+    spectrum_not_finalized, spectrum_not_written,
 };
 use super::dto::{
     ConversionDiagnosticsExportDto, ConversionDiagnosticsReservationDto,
@@ -2931,7 +2932,7 @@ impl PreviewService {
             traces,
             settings,
         )
-        .map_err(|_| chromatogram_export_refused())?;
+        .map_err(|_| linked_figure_not_drawable())?;
         let raster = raster_of(&figure, settings).map_err(Self::figure_failure)?;
         let (width, height) = (raster.width(), raster.height());
         let image = tauri::image::Image::new_owned(raster.into_rgba(), width, height);
@@ -2976,7 +2977,7 @@ impl PreviewService {
             claimed.traces,
             claimed.settings,
         )
-        .map_err(|_| chromatogram_export_refused())
+        .map_err(|_| linked_figure_not_drawable())
     }
 
     /// What a chromatogram figure export was drawn as.

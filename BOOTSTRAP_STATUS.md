@@ -4714,13 +4714,13 @@ only and the two single-source exports keep their own data documents.
 
 ### What the rendered evidence establishes
 
-**Rust: 1,261 tests**, up from 1,220. **Frontend: 1,046 tests**, up from 1,007.
+**Rust: 1,262 tests**, up from 1,220. **Frontend: 1,050 tests**, up from 1,007.
 **Browser QA: 126 cases** across all six spec files at 1366×768, 960×640 and
 1920×1080 — every one of the eight export actions inside everything that clips,
 inside the viewport, and the thing `elementFromPoint` hands a click to; a real
 click dispatching the operation it names; the three views in their own bands; the
 plot still reachable and still operable; no console error, warning, unhandled
-rejection or uncaught exception. **Real-Tauri QA: 11 cases**, one skipped.
+rejection or uncaught exception. **Real-Tauri QA: 12 cases**, eleven executed and one skipped.
 **Fifteen mutations**, applied one at a time and restored byte-for-byte.
 
 The sharpest of the rendered claims is one arithmetic coincidence: the document
@@ -4735,18 +4735,29 @@ does not hold and never sent.
 
 ### Layout, measured rather than assumed
 
-The linked section costs the open export surface about 96px at every viewport.
-Two stacked paragraphs — what it draws, and why it cannot be used — cost enough
-more than that to push the plot out of the window entirely at 1366×768, where the
-viewer column is 614px and the surface starts at 189px. So the section shows one
-sentence at a time: the reason while it is closed, the description once it opens.
-A reader who cannot act needs the first; a reader who can needs the second.
+The linked section shows one sentence at a time — the reason while it cannot be
+used, the description once it can. A reader who cannot act needs the first; a
+reader who can needs the second, and neither is served by being shown the other's
+underneath their own.
 
-Even at 384px the surface leaves the plot below its panel's own fold, which is
-the trade M4.3 measured and accepted when the surface got its own scroll owner.
-That is asserted rather than assumed: at all three viewports the plot is revealed
-by the product's own scroll owner, hit-testable at the centre of the part
-actually painted, and still zooms on a real wheel over it.
+The measurement is the height the open export surface gains, taken in the state
+where the three actions are live:
+
+| | 1366×768 | 960×640 | 1920×1080 |
+| --- | ---: | ---: | ---: |
+| one sentence | 116px | 116px | 96px |
+| two stacked paragraphs | 163px | 163px | 122px |
+
+Below 1920 the description wraps to a second line, which is why the two narrower
+viewports cost the same and the widest costs less. At 1366×768 the viewer column
+is 614px and the surface starts at 189px, so the difference decides whether the
+plot's top edge is still inside the column with the surface open.
+
+Either way the surface leaves the plot below its panel's own fold, which is the
+trade M4.3 measured and accepted when the surface got its own scroll owner. That
+is asserted rather than assumed: at all three viewports the plot is revealed by
+the product's own scroll owner, hit-testable at the centre of the part actually
+painted, and still zooms on a real wheel over it.
 
 ### Two things the measuring turned up
 

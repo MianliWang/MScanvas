@@ -22965,3 +22965,78 @@ fn a_claimed_linked_export_writes_the_pair_it_began_on() {
         "the scan the export began on, not the one on screen now",
     );
 }
+
+/// A pair the contract refuses is refused as a *pair*.
+///
+/// Found in review. Both linked writers mapped every `SpecError` to the
+/// chromatogram's refusal, which sends a reader to change a range or a trace
+/// toggle that had nothing to do with it -- and in practice the reachable case
+/// is the other panel's, because a chromatogram this session installed has
+/// already been proved drawable.
+///
+/// Reachable without a race: mzML does not require an ordered m/z array and
+/// nothing here sorts one, so a scan whose points descend is refused by the
+/// contract when it is drawn. The same spectrum exported on its own still
+/// answers with the spectrum's own refusal, which is the point -- each surface
+/// names what it knows.
+#[test]
+fn a_linked_figure_the_contract_refuses_is_refused_as_a_pair() {
+    let file = TestFile::new("linked-unspecifiable");
+    let mut responses = open_responses();
+    // Descending m/z, which the figure contract will not accept as a series.
+    responses.push(Response::File(selected_spectrum_output(
+        0,
+        &[(500.0, 1_000.0), (100.0, 9_000.0)],
+    )));
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let LinkedSession {
+        chromatogram,
+        spectrum,
+        ..
+    } = linked_ready(&file, &service);
+    let folder = file.path.parent().expect("a folder");
+
+    // Nothing refuses it before a destination is chosen: the pair is sound, and
+    // only drawing it is not.
+    let reservation = service
+        .begin_linked_figure_export(
+            &chromatogram,
+            &spectrum,
+            "svg",
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        )
+        .expect("the pair is one scan of one run");
+    let claimed = service
+        .claim_linked_figure_export(&reservation)
+        .expect("its dialog");
+
+    assert_eq!(
+        service
+            .write_linked_figure_export(&claimed, &folder.join("linked.svg"))
+            .expect_err("a spectrum the contract will not draw is not a figure")
+            .kind,
+        "linked_figure_not_drawable",
+    );
+    // Nothing was written under that name.
+    assert!(!folder.join("linked.svg").exists());
+
+    // The chromatogram on its own is still perfectly drawable, which is why
+    // blaming it would have been wrong.
+    assert_eq!(
+        chromatogram_export_refusal(&service, &chromatogram),
+        None,
+        "the run this session holds is one it can draw",
+    );
+    // And the spectrum on its own names itself.
+    assert_eq!(
+        service
+            .begin_spectrum_export(&spectrum, "svg", &default_figure_settings())
+            .and_then(|reservation| service.claim_spectrum_export(&reservation))
+            .and_then(|claimed| service.write_spectrum_export(&claimed, &folder.join("one.svg")))
+            .expect_err("the same reading is refused the same way")
+            .kind,
+        "spectrum_export_refused",
+    );
+}

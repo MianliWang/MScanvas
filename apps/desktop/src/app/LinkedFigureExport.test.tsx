@@ -414,6 +414,37 @@ describe("the linked chromatogram and spectrum section", () => {
     expect(preview.linkedFigureRequests[0]?.settings.heightPx).toBe(260);
   });
 
+  it("announces the reason as it appears, rather than leaving it to be hunted for", async () => {
+    /*
+     * Found in review. The sentence *appears* while the reader is somewhere
+     * else -- typing in the Height field, choosing a range scope -- and closes
+     * three controls as it does. Without a live region nothing is spoken, and a
+     * disabled control cannot be tabbed to, so its `aria-describedby` is not a
+     * way to find the sentence either. The two figure-setting problems on this
+     * same surface are live regions for exactly this reason.
+     */
+    const preview = api();
+    await openTheViewer(preview);
+    await selectAScan();
+    openExport();
+    expect(linkedReason()).toBeNull();
+
+    fireEvent.change(within(panel()).getByRole("textbox", { name: /^Height/u }), {
+      target: { value: "259" },
+    });
+
+    const reason = document.querySelector("#chromatogram-linked-unavailable");
+    expect(reason?.textContent).toBe("A two-panel linked figure needs a height of at least 260.");
+    // Its own, rather than an ancestor's: the section's only other live region
+    // holds the result, which is empty here.
+    expect(reason?.getAttribute("aria-live")).toBe("polite");
+    expect(linkedButton("Export linked SVG…").disabled).toBe(true);
+
+    // And a height the figure settings themselves accept, so this is the linked
+    // rule speaking rather than the shared one.
+    expect(within(panel()).queryByText(/Height must be a whole number/u)).toBeNull();
+  });
+
   it("closes every linked action when the width is not a size at all", async () => {
     const preview = api();
     await openTheViewer(preview);

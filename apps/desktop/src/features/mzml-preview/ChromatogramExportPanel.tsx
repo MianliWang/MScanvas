@@ -384,12 +384,15 @@ function LinkedFigureSection({
       {/*
         One sentence, and which one depends on whether the reader can act.
 
-        Measured, at 1366x768: this section costs the open surface about 145px,
-        and two stacked paragraphs cost enough of it to push the plot below the
-        fold -- the viewer column is 614px there and the surface starts at 189px.
-        The three panels' floors were measured for M4.3 and the export surface's
-        own scroll owner was accepted on that arithmetic, so a third section has
-        to fit inside it rather than spend it.
+        Measured, in the state where the three actions are live: this section
+        costs the open surface 116px at 1366x768 and at 960x640, and 96px at
+        1920x1080 where the sentence fits on one line. Two stacked paragraphs
+        cost 163px, 163px and 122px for the same states -- and at 1366x768 the
+        difference decides whether the plot's top edge is still inside the
+        614px viewer column when the surface is open. The three panels' floors
+        were measured for M4.3 and the export surface's own scroll owner was
+        accepted on that arithmetic, so a third section has to fit inside it
+        rather than spend it.
 
         Which sentence to drop is not a coin toss. A reader who cannot use this
         yet needs to know what to change; a reader who can needs to know what
@@ -403,7 +406,17 @@ function LinkedFigureSection({
           the range.
         </p>
       ) : (
-        <p className="chromatogram-export-note" id={LINKED_UNAVAILABLE_ID}>
+        // A live region, for the reason the two figure-setting problems on this
+        // same surface are: this sentence *appears* while the reader is
+        // somewhere else -- typing a height, choosing a range scope -- and
+        // closes three controls as it does. A correction nobody is told about
+        // has to be hunted for, and a disabled control cannot be tabbed to, so
+        // its `aria-describedby` is not a way to find one either.
+        <p
+          aria-live="polite"
+          className="chromatogram-export-note"
+          id={LINKED_UNAVAILABLE_ID}
+        >
           {unavailable}
         </p>
       )}
