@@ -170,9 +170,13 @@ rule forbids without qualification: *large scientific arrays must not be copied
 repeatedly through React state* ([`AGENTS.md`](../../../AGENTS.md)). That is not
 an implementation of this feature but a different and much worse one.
 
-### XIC linked selection — REQUIRED_FOR_M5, with no new authority
+### XIC linked selection — REQUIRED_FOR_M5 where XIC is admitted, with no new authority
 
-There is one selection authority and it stays one. `Selection` in
+Classified together with XIC and gated the same way: this exists only if there is
+an XIC to link, so on `XIC_SOURCE_REFUSED` it is `NOT_APPLICABLE` rather than
+outstanding.
+
+Where there is one, there is one selection authority and it stays one. `Selection` in
 `interactionState.ts` holds an index, a monotonic `revision` the reducer assigns
 and a retention time; `consumeSelection` is the bookmark every linked view keeps
 into it. `TicPoint` already carries a `SpectrumIdentity` with the spectrum
@@ -180,8 +184,8 @@ index, so an XIC point can name a scan through the existing commit path without
 a second scan-selection authority being created.
 
 An XIC's x axis is retention time — the same axis, over the same run, as the
-chromatogram beside it. It therefore consumes `ViewerInteractionState` rather
-than owning a second one.
+chromatogram beside it. It would therefore consume `ViewerInteractionState`
+rather than own a second one.
 
 ### Viewer selection-availability affordance consistency — REQUIRED_FOR_M5
 
@@ -197,11 +201,13 @@ unavailable — and neither surface says so. ADR 0033 recorded this deferral wit
 its reason.
 
 It is required for M5 rather than deferred to M7 for a reason the audit
-establishes rather than assumes: **M5 adds more selectable and more
-lane-dependent surfaces.** An XIC that can be clicked, and a spectrum viewport
-whose export shares the one scientific export lane, both multiply a state in
-which a control looks actionable and commits nothing. Adding surfaces on top of
-an unstated rule is what makes the rule expensive to state later.
+establishes rather than assumes: **M5 adds more lane-dependent surfaces.** The
+selected spectrum's range export joins the one scientific export lane, which
+multiplies the state in which a control looks actionable and commits nothing —
+and that happens on both XIC branches, which is why this criterion is
+unconditional. Where XIC is admitted it adds a third click surface on top, making
+the same rule cover more. Adding surfaces to an unstated rule is what makes the
+rule expensive to state later.
 
 ### Multi-layer comparison (VIEW-008) — DEFER, and not to M7
 
@@ -274,12 +280,22 @@ it is not automatically an M6 one either.
 
 ## What M5 is, stated as a boundary
 
-M5 completes the scientific mzML viewing workflow. Concretely, at M5's exit a
-reader can: see a run's shape over retention time and zoom into it; see one
-scan's spectrum **and zoom into that**; export either over the whole source or
-over the range they chose; extract one ion's chromatogram from a real backend
-source and select a scan on it; and never be offered a selection the session
-cannot perform.
+M5 completes the scientific mzML viewing workflow **as far as its evidence gates
+allow**, and records what they refuse.
+
+Unconditionally, at M5's exit a reader can: see a run's shape over retention time
+and zoom into it; see one scan's spectrum **and zoom into that**; export either
+over the whole source or over the range they chose; and never be offered a
+selection the session cannot perform.
+
+Conditionally — on `XIC_SOURCE_ADMITTED` — a reader can also extract one ion's
+chromatogram from a proved backend source and select a scan on it. On
+`XIC_SOURCE_REFUSED` that capability is not delivered, its refusal and the
+measurement behind it are recorded, and VIEW-007 is reassigned to a named owner
+and re-entry gate. **`M5 COMPLETE` does not by itself mean XIC exists**; it means
+every viewer capability that could honestly be admitted under M5's evidence gates
+was delivered, and every one that could not was recorded rather than
+approximated.
 
 It is not a redesign, it is not persistence, and it is not analysis.
 
@@ -287,6 +303,22 @@ It is not a redesign, it is not persistence, and it is not analysis.
 
 Nine slices. Each names one authority, and the dependency order is the order in
 which one authority becomes readable by the next.
+
+**The graph has two branches, because M5.4 has two valid outcomes.** M5.4 is an
+evidence gate, and a gate that may only open is not one. Both branches reach
+M5.8; neither is an implementation failure.
+
+| Outcome | Graph |
+| --- | --- |
+| `XIC_SOURCE_ADMITTED` | M5.0 → M5.1 → M5.2 → M5.3 → **M5.4 → M5.5 → M5.6** → M5.7 → M5.8 |
+| `XIC_SOURCE_REFUSED` | M5.0 → M5.1 → M5.2 → M5.3 → **M5.4** → M5.7 → M5.8 |
+
+On the refusal branch M5.5 and M5.6 are `NOT_APPLICABLE` rather than skipped or
+outstanding, M5.7 runs against the viewer's existing selection surfaces, and
+M5.8 records the refusal, its evidence and where XIC goes next. Every slice
+below whose existence depends on the outcome says so on its own **Condition**
+line, so the branch is read from the slices rather than inferred from this
+table.
 
 ### M5.0 — orientation and route lock
 
@@ -306,14 +338,18 @@ no unimplemented viewer feature is described as implemented.
 established for retention time: one committed range, one transient gesture with
 an epoch, total and deterministic arithmetic, and no React, DOM or timers.
 **Owning authority.** A viewport contract in
-`apps/desktop/src/features/mzml-preview/viewer/`.
+`apps/desktop/src/features/mzml-preview/viewer/`, and the boundary that tells it
+which m/z domain the spectrum has.
 **User-visible result.** None. The model arrives before the surface, for the
 reason ADR 0032 exists.
 **Major evidence.** Unit tests over the contract, and the full-domain
-constraint stated below, tested rather than assumed.
+constraint stated below, tested rather than assumed — including for a spectrum
+whose transferred arrays are truncated.
 **Hard non-goals.** No second scan-selection authority. No new state layer in
 `ViewerInteractionState` that a chromatogram consumer can read by accident. No
-export change. No Rust change.
+export change. **No Rust parsing, source-retention or scientific-export
+behaviour change beyond the bounded projection of the already-retained complete
+source m/z domain that the viewport authority contract requires.**
 **Predecessor.** M5.0.
 **Exit.** The m/z viewport answers, for any input, with a finite forward
 interval inside the spectrum's own domain, and a `Current` scope has something
@@ -330,10 +366,35 @@ chromatogram is that Rust answers such a range with `RangeRefusal::OutsideSource
 rather than clamping it — which is exactly the defect `clampDomain`'s own comment
 records for retention time, where the viewer's clamping could produce a range
 Rust would refuse. **The m/z viewport's
-full domain must be the one the export source has.** Additionally, the
-transferred arrays are bounded at `MAX_SPECTRUM_POINTS` and a spectrum above it
-arrives as a prefix marked `truncated`; a viewport whose full domain came from a
-prefix would describe a spectrum the file does not contain.
+full domain must be the one the export source has.**
+
+That invariant is what forces the narrowed non-goal above. The transferred
+arrays are bounded at `MAX_SPECTRUM_POINTS` and a spectrum over it arrives as a
+prefix marked `truncated`, so for that spectrum the complete first and last
+ordered points exist **only** in the `SelectedSpectrumResult` Rust retained. A
+frontend-only slice could not establish its own authority there: it would have
+either to take a domain from a prefix, describing a spectrum the file does not
+contain, or to take `mzLow`/`mzHigh`, which the export renderer documents its
+refusal of. So M5.1 may include a strictly bounded contract projection, and the
+route requires it to have this shape:
+
+- **Rust remains the source authority.** The endpoints come from the complete
+  retained selected-spectrum snapshot, computed the same way the export
+  renderer's own domain is.
+- **React receives a bounded domain pair — two numbers.** Not the retained
+  spectrum, and above all not a widened transfer bound: recovering endpoints is
+  never a reason to send more of the arrays.
+- **A new field, not a reused one.** `SelectedSpectrum` already carries
+  `mzLow`/`mzHigh`, and those are the backend's *separately reported* pair —
+  a second reading of the same spectrum, which `domain_of` refuses precisely
+  because the two can disagree. Overloading them would make the viewport and the
+  export renderer silently describe different things again.
+- **React infers the source domain from nothing else.** Not the truncated
+  arrays, not SVG geometry, not axis ticks, not DOM state, not rendered viewport
+  state, and not pointer coordinates.
+
+M5.0 implements none of this. What is fixed here is the contract the future
+slice owes, and the boundary it may cross to meet it.
 
 ### M5.2 — the visible spectrum viewport
 
@@ -360,18 +421,54 @@ the committed m/z viewport as well as the full source.
 never against the transferred arrays or the screen's reduced sticks.
 **User-visible result.** A range chooser on the selected-spectrum surface,
 matching the chromatogram's.
-**Major evidence.** The figure/data disagreement M4.3 established, restated for
-this axis and tested: a figure declares a visible window over a complete source
-series, a data document contains **points**, and a window between two points is
-a figure with a line through it and a table with no rows. A range the retained
-spectrum does not have is refused rather than clamped.
+**Major evidence.** A range the retained spectrum does not have is refused rather
+than clamped; the window is resolved against the retained snapshot; and the
+figure/data behaviour follows the **representation**, tested per representation
+rather than as one rule. See the constraint below.
 **Hard non-goals.** No second export lane — the one scientific export lane
 serves this too. No linked data document. No change to the linked two-panel
-figure's rule that the lower panel is always the complete spectrum.
+figure's rule that the lower panel is always the complete spectrum. **No
+interpolated boundary value for a discrete spectrum**, under any range.
 **Predecessor.** M5.1 and M5.2.
 **Exit.** A selected spectrum exports over Full or Current in all five formats,
-from the retained source, and `Current` reads the committed viewport and nothing
-in flight.
+from the retained source, `Current` reads the committed viewport and nothing in
+flight, and the window's figure/data behaviour matches the representation the
+source admitted.
+
+One constraint this audit fixes rather than leaving to the slice, because the
+obvious reading of M4.3 is wrong here.
+
+M4.3's rule is that a figure draws the segment crossing a window edge while a
+data document contains scans, so a window between two samples is a figure with a
+line through it and a table with no rows. **That rule belongs to a chromatogram,
+which is a polyline**, and carrying it to the m/z axis would require exactly what
+this repository already refuses. `crates/plot-spec/src/svg.rs` filters discrete
+marks rather than clipping them, and states why: *a stick outside the window is a
+measurement outside the window, and inventing one at the boundary would draw
+intensity at an m/z nobody measured*.
+
+So the behaviour follows the representation, and only one branch is reachable
+today:
+
+- **`Unreported`, and any centroid or other discrete-marker representation.**
+  The figure draws only genuinely reported peaks whose m/z falls inside the
+  admitted window. No boundary intensity is interpolated, and no line is drawn
+  through an m/z that was never measured. A window containing no reported peak
+  is a **figure and a data document that are both empty**, and both are correct
+  answers about the sample. This is the branch the product is in: the boundary
+  emits no profile/centroid marker, so `spectrum_panel` maps the one state it
+  can receive to `SpectrumRepresentation::Unreported`.
+- **A representation authoritatively established as continuous profile
+  samples.** Only such a representation may admit continuous clipping with an
+  interpolated boundary value, because only there does the source assert a value
+  between its own samples. Nothing in this product establishes one today, so
+  **this must not be written as a universal M5.3 requirement** and must not be
+  reached by assuming a representation the file did not report.
+
+The invariant underneath both branches, and the one M5.3 is accountable to:
+**figure filtering follows the admitted spectrum representation; a data document
+never invents a source measurement.** CSV and TSV contain reported source points
+and nothing else, at any range, under any representation.
 
 ### M5.4 — XIC source and capability evidence
 
@@ -391,13 +488,20 @@ read from the pinned commit rather than inferred.
 **Hard non-goals.** No production XIC. No product semantics chosen because a
 library supports them. No frontend work.
 **Predecessor.** M5.0. Independent of M5.1–M5.3, so it may run alongside them.
-**Exit.** Either a named query with a named aggregation, a named ordering, a
-named completeness bound and a capability requirement that can gate it — or a
-recorded refusal saying an acceptable source was not established, in which case
-XIC leaves M5 by the rule below rather than being approximated.
+**Exit.** One of two recorded outcomes, and the outcome selects the branch.
+`XIC_SOURCE_ADMITTED`: a named query with a named aggregation, a named ordering,
+a named completeness bound and a capability requirement that can gate it.
+`XIC_SOURCE_REFUSED`: a recorded refusal saying an acceptable source was not
+established, with the measurement that refused it. On refusal XIC leaves M5 by
+the rule below — **it is never approximated**, and the audit's refusals stand:
+no base-peak-window substitute, no reconstruction from the incomplete frontend
+arrays, and no one-backend-process-per-spectrum workaround over the measured
+36,319-spectrum acquisition.
 
 ### M5.5 — the XIC model and runtime
 
+**Condition.** `XIC_SOURCE_ADMITTED` only. On `XIC_SOURCE_REFUSED` this slice is
+`NOT_APPLICABLE` and is never attempted from an unproved source.
 **Objective.** The typed operation, its capability gate, its parser, its DTO and
 its service path.
 **Owning authority.** Rust: `PreviewOperation`, `require_preview_operation`, the
@@ -414,6 +518,8 @@ backend cannot serve one says so before a process is launched.
 
 ### M5.6 — the visible XIC, and linked selection
 
+**Condition.** `XIC_SOURCE_ADMITTED` only. On `XIC_SOURCE_REFUSED` this slice is
+`NOT_APPLICABLE`.
 **Objective.** Make the XIC reachable, and make a scan chosen on it the same
 selection every other view already follows.
 **Owning authority.** The existing `ViewerInteractionState`. The XIC consumes
@@ -428,9 +534,19 @@ loaded table does not contain refused rather than marked; rendered QA at the
 three viewport targets; keyboard equivalence for the input and the trace.
 **Hard non-goals.** No second scan-selection authority. No multi-XIC overlay. No
 normalization, smoothing, baseline correction or peak picking. No claim about
-the m/z unit the file did not report. **No XIC export**: none of the exit
-criteria asks for one, M4 owns the export lane, and a fourth surface on it is a
-decision of its own rather than a consequence of the trace existing.
+the m/z unit the file did not report. **No XIC export.** Concretely: no XIC SVG
+export, no XIC PNG export, no XIC CSV or TSV export, and no statement anywhere
+that such an artifact exists. None of the exit criteria asks for one, M4 owns the
+export lane, and a fourth surface on it is a decision of its own rather than a
+consequence of the trace existing. Everything an adopted decision has to say is
+carried by the visible trace contract instead.
+
+**Where a reusable XIC export goes.** M9. An XIC is a derived analytical
+quantity rather than a second view of something the file contains, and M9 is
+where derived analytical results and their reusable form are owned, on top of
+M8's artifact identity. That is a routing decision this ADR makes and a future
+independently authorised route amendment may revisit; **it may not be pulled
+into M5**, and no M5 slice owns it.
 **Predecessor.** M5.5.
 **Exit.** VIEW-007's acceptance holds — a typed m/z and window produce a trace
 whose settings and unit posture are explicit — and the viewer still has exactly
@@ -440,8 +556,9 @@ one selected scan.
 
 **Objective.** Decide once how every click surface in the viewer communicates
 that a selection cannot be performed right now, and apply it to all of them.
-**Owning authority.** One availability rule, read by the chromatogram, the scan
-table and the XIC together.
+**Owning authority.** One availability rule, read by every viewer click surface
+that exists when this slice runs — the chromatogram and the scan table always,
+and the XIC as well on `XIC_SOURCE_ADMITTED`.
 **User-visible result.** A click surface that cannot commit says so, in terms of
 what the reader can change, without taking away the hover, zoom and pan that
 need no backend.
@@ -451,22 +568,32 @@ the backend-free interactions proved still live in each; accessible naming and
 live-region behaviour matching the principles M5.0 froze.
 **Hard non-goals.** No restyling beyond what the message requires. No change to
 the lane rule itself. No new disabled state on an action that does work.
-**Predecessor.** M5.6, so the rule is applied to the complete surface set at
-once rather than to a set that then grows.
+**Predecessor.** *Conditional.* On `XIC_SOURCE_ADMITTED`, M5.6 — so the rule is
+applied to the complete surface set at once rather than to a set that then
+grows. On `XIC_SOURCE_REFUSED`, M5.3, because the surface set is then already
+complete at the chromatogram and the scan table and there is nothing further to
+wait for. **M5.6 is not an unconditional predecessor**: making it one would make
+the milestone unreachable on the branch M5.4 is allowed to take.
 **Exit.** No viewer surface accepts a click that commits nothing without saying
-why, and no surface that can act has been closed by this slice.
+why, and no surface that can act has been closed by this slice. XIC-specific
+availability behaviour is part of this exit **only** where XIC was admitted and
+implemented.
 
 ### M5.8 — Viewer Completion closure and handoff
 
 **Objective.** Prove the exit criteria, record what M5 did not do and hand the
-named readiness to M6 and M7.
+named readiness to M6 and M7 — and, on `XIC_SOURCE_REFUSED`, record the refusal,
+the measurement that produced it, and the future owner and re-entry gate XIC is
+reassigned to.
 **Owning authority.** Documentation and the full local gate set.
 **User-visible result.** None.
 **Major evidence.** The exit criteria below, each answered with a citation.
 **Hard non-goals.** No new capability.
-**Predecessor.** M5.3 and M5.7.
-**Exit.** Every item in the exit criteria is answered yes with evidence or
-deferred with a named owner and reason.
+**Predecessor.** M5.3 and M5.7. Reachable on both branches, because neither of
+those is conditional.
+**Exit.** Every item in the exit criteria is answered yes with evidence, closed
+as `NOT_APPLICABLE` under a recorded evidence refusal, or deferred with a named
+owner and reason. No item is left silent.
 
 ## M5 exit criteria
 
@@ -476,8 +603,8 @@ M5 is complete when, and only when:
 |---|---|---|
 | 1 | The selected spectrum has a committed m/z viewport that zooms, pans and resets by wheel, drag, keyboard and button, reads no backend, and offers each control exactly when pressing it would change what is drawn | **Yes** |
 | 2 | The selected spectrum exports over the full source or the committed m/z range, as SVG, PNG, `Copy plot`, CSV and TSV, from the retained spectrum, with a range the source does not have refused rather than clamped | **Yes** |
-| 3 | An XIC is produced from a backend source proved by a live measured run, with its query, aggregation, MS-level applicability, window and unit posture stated where the reader can see them | **Yes**, conditionally — see the rule below |
-| 4 | A scan selected on the XIC is the one selection every other view follows, through the existing commit revision | **Yes**, if 3 ships |
+| 3 | An XIC is produced from a backend source proved by a live measured run, with its query, aggregation, MS-level applicability, window and unit posture carried by the visible trace where the reader can see them | **Only on `XIC_SOURCE_ADMITTED`** — see the rule below |
+| 4 | A scan selected on the XIC is the one selection every other view follows, through the existing commit revision | **Only on `XIC_SOURCE_ADMITTED`** |
 | 5 | No viewer click surface accepts a click that commits nothing without saying why, and every backend-free interaction stays available while it says so | **Yes** |
 | 6 | Multi-layer comparison | **No** — M8 for layer identity and provenance, M9 for comparison semantics |
 | 7 | A bounded preview cache | **No** — M7, and only on a measurement that shows a need |
@@ -488,12 +615,29 @@ viewer feature is described as implemented anywhere in the repository; every M5
 control satisfies the frozen principles below at all three responsive targets;
 and the local gate set passes unchanged.
 
-**The rule for criterion 3.** M5.4 may conclude that no acceptable XIC source
-was established. If it does, XIC leaves M5 with that refusal recorded, VIEW-007
-is reassigned with its blocking evidence named, and criteria 3 and 4 are struck
-together — because criterion 4 exists only to keep a shipped XIC inside the one
-selection authority. **What may not happen is XIC shipping from a source the
-evidence did not establish.** A viewer that draws a trace nobody can defend is
+**No criterion requires an XIC export, and none may.** M5 writes no XIC SVG, PNG,
+CSV or TSV, claims no such artifact, and assigns a future reusable XIC export to
+M9. Criterion 3 is satisfied by what the **visible trace** carries, which is why
+it is worded that way.
+
+**The rule for criteria 3 and 4.** M5.4 has two legitimate outcomes, and the
+milestone means something different but equally complete under each.
+
+**`XIC_SOURCE_ADMITTED`.** M5.4 establishes an acceptable scientific and runtime
+source. M5.5 and M5.6 are then required, criteria 3 and 4 both apply, M5's exit
+includes a visible XIC, and that XIC participates in the existing linked
+scan-selection authority rather than a second one.
+
+**`XIC_SOURCE_REFUSED`.** M5.4 cannot establish one. Then the refusal evidence is
+preserved; **no approximation is substituted**; M5.5 and M5.6 are
+`NOT_APPLICABLE`; criteria 3 and 4 are closed **explicitly as evidence-gated and
+not applicable** rather than passed over in silence; VIEW-007 is reassigned to a
+named future owner with the re-entry gate that would let it be reconsidered; and
+M5 may still become COMPLETE once every remaining required Viewer Completion
+criterion is met. In that outcome `M5 COMPLETE` **does not mean XIC exists.**
+
+What may not happen under either outcome is XIC shipping from a source the
+evidence did not establish. A viewer that draws a trace nobody can defend is
 worse than a viewer that does not draw it.
 
 ## Product decisions this route surfaces rather than guesses
@@ -502,6 +646,18 @@ Recorded as `USER_DECISION_REQUIRED`. None of them is settled by the
 authoritative documents or the code, and each changes what gets built. M5.4
 supplies the measurement several of them should be answered against; M5.5 cannot
 start until they are answered.
+
+**Where an adopted answer has to appear, and where it may not.** M5 builds no
+XIC export — no SVG, no PNG, no CSV, no TSV — so an adopted decision is carried
+by the **visible XIC trace contract** and by what the runtime exposes beside it,
+never by an exported artifact. Concretely, a shipped XIC must truthfully carry,
+where the reader can see it: the exact m/z window it was taken over; the unit and
+tolerance posture that window is expressed in; the MS-level scope; the
+aggregation performed inside the window; the identity of the backend query that
+produced it; the value-axis posture; and any other adopted decision needed to
+read the trace for what it is. Each recommendation below is written against that
+contract, and none of them may be read as a requirement on a document M5 does
+not write.
 
 ### XIC-D1 — how the reader expresses the m/z window, and in what unit
 
@@ -531,11 +687,10 @@ result the document must then state, and does so against values whose unit the
 file never reported.
 
 **Recommended default, if one is wanted.** (b) — a centre and an absolute
-half-width, stated in the figure and the data document as an absolute m/z window
-with no unit name, matching the unit posture the chromatogram already keeps. It
-is the smallest honest thing the evidenced source can serve. ppm can be added
-later without changing what has already been written down; the reverse is not
-true.
+half-width, carried by the visible trace as an absolute m/z window with no unit
+name, matching the unit posture the chromatogram already keeps. It is the
+smallest honest thing the evidenced source can serve. ppm can be added later
+without changing what the trace has already claimed; the reverse is not true.
 
 ### XIC-D2 — which MS levels an XIC covers
 
@@ -562,8 +717,8 @@ the two traces describing one scan set and can produce a scientifically odd
 sum. (c) costs a control and a stated default.
 
 **Recommended default, if one is wanted.** (c) defaulting to (a), with the level
-named beside the trace and written into every export. It is the only option
-under which the document says which scans it summed.
+named beside the trace itself. It is the only option under which the reader can
+tell which scans were summed without being told separately.
 
 ### XIC-D3 — what is aggregated inside the window
 
@@ -586,9 +741,10 @@ recorded as a later slice.
 not derivable from a summed result. (a) and (c) are the same build and differ
 only in what is written down.
 
-**Recommended default.** (c). Ship the aggregation the evidence proves, name it
-in the trace's caption and in every export exactly as the chromatogram names its
-own derived origin, and record the maximum as unbuilt rather than implying it.
+**Recommended default.** (c). Ship the aggregation the evidence proves and name
+it in the trace's own caption, exactly as the chromatogram names its derived
+origin where it is drawn, and record the maximum as unbuilt rather than implying
+it.
 
 ### XIC-D4 — which query is the source
 
@@ -810,9 +966,12 @@ repaired by this documentation-only slice.
 ## Consequences
 
 - The next milestone finishes the viewer instead of hardening an unfinished one.
-- XIC gains an evidence gate in front of it, and an explicit refusal path, so
-  the one scientific capability M5 could most easily fake cannot be faked
-  quietly.
+- XIC gains an evidence gate in front of it, and the gate is a real branch: the
+  slice graph, the boundary statement and the exit criteria all reach closure on
+  either outcome, so the one scientific capability M5 could most easily fake
+  cannot be faked quietly — and refusing it does not strand the milestone.
+- `M5 COMPLETE` is defined by what the evidence admitted rather than by a fixed
+  feature list, and says which of the two it means.
 - Five product decisions that would otherwise have been made by whoever wrote
   the code are visible before the code exists.
 - Multi-layer comparison stops being described as a near-term viewer feature and

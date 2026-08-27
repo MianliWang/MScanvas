@@ -603,7 +603,7 @@ Screenshot, PNG/SVG, current/full range, independent theme, CSV/TSV, linked two-
 
 ### M5 — Viewer Completion
 
-Spectrum viewport, selected-spectrum current-range export, XIC behind a live evidence gate with its linked selection, and one rule for how a viewer click surface says a selection cannot be performed. See [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md).
+Spectrum viewport, selected-spectrum current-range export, and one rule for how a viewer click surface says a selection cannot be performed. XIC sits behind a live evidence gate with two valid outcomes — a visible trace inside the existing linked selection, or a recorded refusal and a reassignment — and M5 builds no XIC export either way. See [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md).
 
 ### M6 — Conversion Completion
 
@@ -619,7 +619,7 @@ Durable project/artifact/run lineage and first useful QC reports, including the 
 
 ### M9 — First analysis recipes
 
-Isolated worker and one or two reviewed, typed recipes backed by mature packages; multi-layer comparison semantics on top of M8's layer identity.
+Isolated worker and one or two reviewed, typed recipes backed by mature packages; multi-layer comparison semantics on top of M8's layer identity; a reusable XIC export, which M5 deliberately does not build.
 
 ### M10 — Automation
 

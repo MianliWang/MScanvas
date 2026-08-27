@@ -893,7 +893,8 @@ unavailability, while preserving backend-free hover, zoom and pan.
 Completion — the same milestone number under a different name, as its own slice
 rather than part of a hardening pass — because M5 adds selectable surfaces and
 the rule is cheaper to state before the set grows than after. The scope above is
-unchanged, and gains the XIC's click surface.
+unchanged, and gains the XIC's click surface where M5's evidence gate admits an
+XIC.
 
 ## What R1 does not implement
 

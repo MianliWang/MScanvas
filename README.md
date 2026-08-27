@@ -218,8 +218,16 @@ Analysis is deferred rather than prohibited. MSCanvas should reuse mature algori
 real answer and is not finished: the selected spectrum has no viewport, so it
 neither zooms nor exports over a range; there is no extracted-ion chromatogram;
 and a click on the plot or a scan row while the backend is busy commits nothing
-without saying so. M5 closes those before conversion is widened (M6) and before
-the interface is consolidated and redesigned (M7).
+without saying so. M5 closes the viewport, the range export and the click
+affordance before conversion is widened (M6) and before the interface is
+consolidated and redesigned (M7).
+
+The extracted-ion chromatogram sits behind an evidence gate rather than a
+promise: no m/z-windowed backend query has ever been run here, so M5 first proves
+a source exists. If it does, M5 delivers a visible XIC inside the viewer's one
+linked selection — a trace, not an exported file. If it does not, M5 records the
+refusal and the measurement behind it and reassigns the feature, rather than
+approximating it from data that cannot produce one.
 
 Multi-layer comparison, a bounded preview cache and vendor-format direct preview
 are deferred past M5 with named owners rather than left in the near-term list.

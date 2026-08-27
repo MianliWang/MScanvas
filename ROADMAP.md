@@ -218,23 +218,37 @@ five product decisions it surfaces are in
   signature already declares an `mz=<mzLow>[,<mzHigh>]` window and the installed
   help declared a `sic` query, but neither has ever been run as an XIC and
   `sic` has never been captured here at all.
-- **M5.5 — the XIC model and runtime.** The typed operation, its capability
-  gate, its parser and its service path. Rust only.
-- **M5.6 — the visible XIC, and linked selection.** A typed m/z window produces
-  a trace over the same retention-time axis, and a scan chosen on it is the one
-  selection every other view already follows. No second selection authority.
+- **M5.5 — the XIC model and runtime.** *Only on `XIC_SOURCE_ADMITTED`.* The
+  typed operation, its capability gate, its parser and its service path. Rust
+  only.
+- **M5.6 — the visible XIC, and linked selection.** *Only on
+  `XIC_SOURCE_ADMITTED`.* A typed m/z window produces a trace over the same
+  retention-time axis, and a scan chosen on it is the one selection every other
+  view already follows. No second selection authority, and no XIC export.
 - **M5.7 — selection-availability affordance consistency.** One rule for how
   every viewer click surface says a selection cannot be performed right now,
   applied to all of them at once. Deferred from Viewer Closure R1 with a
-  recorded reason; required here because M5 adds more selectable surfaces.
+  recorded reason; required here because M5 adds more selectable surfaces. Its
+  predecessor is conditional — M5.6 where XIC ships, M5.3 where it does not — so
+  the refusal branch still reaches closure.
 - **M5.8 — Viewer Completion closure and handoff.**
 
 M5 is complete when the spectrum has a committed viewport, the selected spectrum
-exports over that range, an XIC is produced from an evidenced backend source and
-participates in the one linked selection, and no viewer click surface accepts a
-click that commits nothing without saying why. **XIC is conditional on M5.4:** if
-no acceptable source is established, XIC leaves M5 with that refusal recorded
-rather than being approximated from data that cannot produce one.
+exports over that range, no viewer click surface accepts a click that commits
+nothing without saying why, and M5.4's outcome has been carried through.
+
+**XIC is conditional on M5.4, and both outcomes complete the milestone.** On
+`XIC_SOURCE_ADMITTED` an XIC is produced from the evidenced source, participates
+in the one linked selection, and its criteria apply. On `XIC_SOURCE_REFUSED`
+M5.5 and M5.6 are `NOT_APPLICABLE`, the refusal and its measurement are recorded,
+those criteria are closed explicitly as evidence-gated rather than passed over,
+and VIEW-007 is reassigned to a named owner and re-entry gate. In that outcome
+`M5 COMPLETE` does **not** mean XIC exists — it means every viewer capability
+that could honestly be admitted was delivered and the rest was recorded rather
+than approximated from data that cannot produce it.
+
+M5 also builds **no XIC export** — no SVG, no PNG, no CSV, no TSV, and no claim
+that one exists. A future reusable XIC export belongs to M9.
 
 Explicitly **not** M5 exit criteria: multi-layer comparison, a bounded preview
 cache, and vendor-format direct preview. Each is deferred below with its owner.
@@ -291,6 +305,11 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 - Isolated worker contract and one or two reviewed recipes backed by mature
   packages.
 - Recipe mode first; no generic workflow canvas until real needs justify it.
+- **A reusable XIC export**, if M5 admitted an XIC. M5 builds the visible trace
+  and no exported artifact; an XIC is a derived analytical quantity rather than a
+  second view of something the file contains, so its reusable form belongs with
+  the milestone that owns derived analytical results, on top of M8's artifact
+  identity. See [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md).
 - **Multi-layer comparison (VIEW-008)** belongs here for its semantics, on top of
   M8's layer identity. Deferred from M5 with a recorded dependency audit: the
   application holds one preview by contract — Rust's open ticket states that

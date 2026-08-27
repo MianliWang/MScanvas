@@ -146,10 +146,14 @@ notice: the plot and every table row stay clickable while the selected-spectrum
 lane is blocked — a running conversion, an installation check, a backend
 resolved unavailable — and neither surface says so.
 
-Spectrum zoom and pan, XIC and that unavailability rule all belong to M5 —
-Viewer Completion — whose route is fixed by
-[ADR 0037](../architecture/adr/0037-viewer-completion-route.md). Multi-layer
-comparison is deferred past it, with named owners for the contracts it needs.
+Spectrum zoom and pan and that unavailability rule belong to M5 — Viewer
+Completion — whose route is fixed by
+[ADR 0037](../architecture/adr/0037-viewer-completion-route.md). XIC belongs to
+M5 too, but behind an evidence gate with two valid outcomes: a visible trace
+inside this same linked selection where a backend source is proved, or a recorded
+refusal and a reassignment where it is not. Either way M5 writes no XIC export.
+Multi-layer comparison is deferred past M5, with named owners for the contracts
+it needs.
 See also
 [ADR 0032](../architecture/adr/0032-viewer-interaction-and-viewport-state.md) and
 [ADR 0033](../architecture/adr/0033-visible-linked-tic-bpc-viewer.md).

@@ -4836,8 +4836,8 @@ Nine known gaps, each classified from what the code does.
 | --- | --- | --- |
 | Spectrum zoom/pan/reset | **M5** | `StickSpectrum.tsx` is a pure function of the transferred arrays and holds no state; `ViewerInteractionState` carries exactly one domain, and it is a `RetentionTimeDomain`. There is no m/z viewport anywhere. |
 | Selected-spectrum current-range export | **M5**, after the viewport | `spectrum_panel` builds one series at `DataScope::FullSource` and never calls `with_visible_domain`; `RangeRequest` exists for the chromatogram alone. A range chooser on that surface has nothing to refer to until a committed m/z viewport exists. |
-| XIC (VIEW-007) | **M5**, behind an evidence gate | `PreviewOperation::Tic` exists, is capability-gated and is parsed — and is never issued. Its required signature already declares `mz=<mzLow>[,<mzHigh>]`, and the M0 spike recorded a `sic` query in the installed help. Neither has ever been run as an XIC, and `sic` has no signature, parser or measurement here at all. |
-| XIC linked selection | **M5**, with no new authority | One `Selection` with one monotonic revision, consumed through `consumeSelection`. `TicPoint` already carries a `SpectrumIdentity`, so an XIC point names a scan through the existing commit path. |
+| XIC (VIEW-007) | **M5**, behind an evidence gate with two valid outcomes | `PreviewOperation::Tic` exists, is capability-gated and is parsed — and is never issued. Its required signature already declares `mz=<mzLow>[,<mzHigh>]`, and the M0 spike recorded a `sic` query in the installed help. Neither has ever been run as an XIC, and `sic` has no signature, parser or measurement here at all. |
+| XIC linked selection | **M5** where XIC is admitted, with no new authority | One `Selection` with one monotonic revision, consumed through `consumeSelection`. `TicPoint` already carries a `SpectrumIdentity`, so an XIC point names a scan through the existing commit path. |
 | Selection-availability affordance | **M5** | `spectrumSelectionAvailable` reaches `canSelectPreviousScan` and `canSelectNextScan` and nothing else; `PreviewWorkspace.tsx` passes a bare `onSelect` to both the plot and the table. M5 adds more selectable surfaces, so the rule is settled before the set grows. |
 | Multi-layer comparison (VIEW-008) | **Deferred — M8 then M9** | The application holds one preview by contract, in both layers: the frontend `PreviewState` holds one `Preview`, and Rust's open ticket states there is only one chromatogram the user is looking at and only one that may be exported. `FigureSpec` has style roles for quantities and no identity for a source. Two runs' intensities need a normalization this product has not admitted. A selected scan *of a layer* is a wider type than the one every linked view consumes. |
 | Touch gestures | **Deferred — M7** | `.chromatogram-svg { touch-action: none }` is static rather than a per-event claim. Not required for any M5 capability's correctness: every M5 control is reachable by pointer and by keyboard. |
@@ -4859,8 +4859,13 @@ and the range form the backend's grammar declares — never issued or measured
 here — refuses itself on size, because one operation's output is bounded at 8 MiB
 and refused whole above it while a run's complete binary at the requested
 precision is orders of magnitude past that. **M5.4 is a dedicated evidence slice**, and it has an explicit
-refusal path: if no acceptable source is established, XIC leaves M5 with that
-recorded rather than being approximated.
+refusal path rather than an assumed outcome. On `XIC_SOURCE_ADMITTED` M5.5 and
+M5.6 run and M5 exits with a visible XIC inside the one linked selection. On
+`XIC_SOURCE_REFUSED` they are `NOT_APPLICABLE`, M5.7 runs against the existing
+surfaces, the refusal and its measurement are recorded, VIEW-007 is reassigned to
+a named owner and re-entry gate, and the milestone still closes. In that outcome
+**`M5 COMPLETE` does not mean XIC exists.** What may not happen under either
+outcome is XIC shipping from a source the evidence did not establish.
 
 **A second scan-selection authority.** An XIC's x axis is retention time, over
 the same run, so it consumes `ViewerInteractionState` rather than owning a
@@ -4868,6 +4873,19 @@ second one.
 
 **A current-range scope with nothing behind it.** The selected-spectrum range
 export comes after the viewport, not beside it.
+
+**A chromatogram's clipping rule on a stick spectrum.** M4.3's boundary segment
+belongs to a polyline. `crates/plot-spec/src/svg.rs` filters discrete marks
+instead, and says why — *inventing one at the boundary would draw intensity at an
+m/z nobody measured* — so for the `Unreported` representation this product
+actually receives, a window holding no reported peak is a figure and a data
+document that are **both** empty. Only a representation authoritatively
+established as continuous profile samples could admit an interpolated boundary,
+and M5.3 must not require one universally.
+
+**An XIC export.** M5 builds the visible trace and no artifact: no XIC SVG, PNG,
+CSV or TSV, and no claim that one exists. Every adopted XIC decision is carried
+by the visible trace contract instead. A reusable XIC export belongs to M9.
 
 **A viewport whose domain the export source does not have.** The screen and the
 export renderer disagree about a spectrum's m/z domain on purpose today —
@@ -4884,7 +4902,9 @@ Recorded as `USER_DECISION_REQUIRED` in ADR 0037, each with its options, its
 consequences and a recommended default where the evidence supports one: how the
 reader expresses the m/z window and in what unit; which MS levels an XIC covers;
 what is aggregated inside the window; which backend query is the source; and
-where the XIC is drawn and against which value axis.
+where the XIC is drawn and against which value axis. An adopted answer is carried
+by the **visible trace contract** — M5 writes no XIC document for it to appear
+in.
 
 The unit question is the sharpest of them. The backend takes an **absolute**
 window, and this product reports no unit for a spectrum's values at all —
@@ -4915,8 +4935,9 @@ non-reconciling-row linked cases are proved at the Rust boundary only; and
 
 The last of those is the one M5 must act on rather than merely record. **M5.4
 requires a live measured run**, so an M5 executing on a machine with no real
-ProteoWizard installation cannot complete the XIC criterion and must stop at that
-slice rather than substitute a fixture for a measurement.
+ProteoWizard installation cannot reach an `XIC_SOURCE_ADMITTED` outcome at all,
+and must stop at that slice rather than substitute a fixture for a measurement or
+record a refusal it did not measure.
 
 ### Four M4.4 confirmation findings, inherited rather than closed
 

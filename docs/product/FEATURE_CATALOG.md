@@ -62,7 +62,7 @@ table remains the target, including the unsupported portions called out below:
 | VIEW-004 | Scan table | P0 | Virtualized rows with scan, RT, MS level and precursor context. |
 | VIEW-005 | Linked selection | P0 | **Implemented across the chromatogram, the loaded scan table and the selected-spectrum panel.** Selection synchronizes chromatogram marker, table row, spectrum and inspector in both directions. |
 | VIEW-006 | Keyboard scan navigation | P0 | **Implemented.** Previous/next and table navigation work without pointer-only access. |
-| VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. **M5, behind an evidence gate.** |
+| VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. **M5, behind an evidence gate with two valid outcomes: a visible trace, or a recorded refusal and a reassignment. No XIC export in M5.** |
 | VIEW-008 | Multi-layer comparison | P2 | Visibility, style and provenance remain inspectable per layer. **Deferred: M8 for layer identity, M9 for comparison semantics.** |
 
 Implementation notes for the three viewer features Viewer Closure closed follow.
@@ -117,7 +117,12 @@ Where each of those is owned, and why, is fixed by
   never been captured. An XIC cannot be derived in the interface instead. The
   loaded table's per-scan base peak m/z is a summary, not a spectrum: filtering
   scans by it returns zero for every scan carrying signal in the window under a
-  taller peak elsewhere, which is where an analyst is most often looking.
+  taller peak elsewhere, which is where an analyst is most often looking. The
+  gate has two valid outcomes, and M5 completes under either: a visible trace
+  whose window, unit posture, MS-level scope, aggregation and source query it
+  carries where they can be read, or a recorded refusal with the measurement
+  behind it and a named owner and re-entry gate. **M5 writes no XIC figure or
+  data document**; a reusable XIC export belongs to M9.
 - **VIEW-008** is deferred past M5 on a dependency audit, not on priority alone.
   It needs several runs loaded at once where the application holds exactly one
   by contract, a layer identity `FigureSpec` has no concept of, a normalization
