@@ -490,10 +490,12 @@ represent it truthfully.
 
 ### M5.3 — selected-spectrum `Current range` export
 
-**Objective.** SVG, PNG, `Copy plot`, CSV and TSV for the selected spectrum over
-the committed m/z viewport as well as the full source — **wherever a committed
-viewport exists**, and an honest absence of the `Current` scope where one does
-not.
+**Objective.** For a selected spectrum the figure contract admits: SVG, PNG,
+`Copy plot`, CSV and TSV, over the committed m/z viewport as well as the full
+source. For one it refuses: the existing typed refusal stands for the three
+figure formats, CSV and TSV keep working over the full source, and there is an
+honest absence of the `Current` scope. **Which formats a spectrum supports is a
+property of that spectrum, not of this slice.**
 **Owning authority.** Rust. The range is resolved against the retained spectrum,
 never against the transferred arrays or the screen's reduced sticks.
 **User-visible result.** A range chooser on the selected-spectrum surface,
@@ -510,9 +512,17 @@ interpolated boundary value for a discrete spectrum**, under any range.
 **Exit.** Two paths, and both are proved.
 
 **Where M5.1 admitted a domain.** A selected spectrum exports over Full or
-Current in all five formats, from the retained source; `Current` reads the
-committed viewport and nothing in flight; and the window's figure/data behaviour
-matches the representation the source admitted.
+Current from the retained source, in **every format that spectrum already
+supports** — all five where the figure contract admits it, and the two data
+formats where it does not; `Current` reads the committed viewport and nothing in
+flight; and the window's figure/data behaviour matches the representation the
+source admitted.
+
+Figure admissibility and domain admissibility are asked of the same contract and
+usually answer together — an unordered array refuses both — but they are not the
+same question, and this slice does not assume one from the other. M5.3 adds no
+format to a spectrum and takes none away: it adds a **range** to the formats the
+product already offers it.
 
 **Where M5.1 refused one.** There is **no `Current` scope** — not a synthesised
 range, not a sorted source, not `[min, max]`, not a silent fall back to Full, and
@@ -704,7 +714,7 @@ M5 is complete when, and only when:
 | # | Criterion | Required for M5? |
 |---|---|---|
 | 1 | Where the scientific source/domain contract admits a domain, the selected spectrum has a committed m/z viewport that zooms, pans and resets by wheel, drag, keyboard and button, reads no backend, and offers each control exactly when pressing it would change what is drawn — and where that contract refuses one, the viewport is explicitly unavailable and no substitute domain is inferred | **Yes**, both paths |
-| 2 | The selected spectrum exports over the full source in all five formats from the retained spectrum; and over the committed m/z range **where a viewport exists**, with a range the source does not have refused rather than clamped. Where no viewport exists there is no `Current` scope, and the full-source export the product already offers is unchanged | **Yes**, both paths |
+| 2 | The selected spectrum exports over the full source in **every format that spectrum already supports** — all five where the figure contract admits it, CSV and TSV where it refuses it, with the existing typed refusal preserved for the three figure formats — and over the committed m/z range **where a viewport exists**, with a range the source does not have refused rather than clamped. Where no viewport exists there is no `Current` scope | **Yes**, both paths |
 | 3 | An XIC is produced from a backend source proved by a live measured run, with its query, aggregation, MS-level applicability, window and unit posture carried by the visible trace where the reader can see them | **Only on `XIC_SOURCE_ADMITTED`** — see the rule below |
 | 4 | A scan selected on the XIC is the one selection every other view follows, through the existing commit revision | **Only on `XIC_SOURCE_ADMITTED`** |
 | 5 | No viewer click surface accepts a click that commits nothing without saying why, and every backend-free interaction stays available while it says so | **Yes** |
@@ -717,12 +727,15 @@ viewer feature is described as implemented anywhere in the repository; every M5
 control satisfies the frozen principles below at all three responsive targets;
 and the local gate set passes unchanged.
 
-**No criterion assumes every spectrum is renderable.** A valid mzML spectrum may
-carry an m/z sequence the ordered-series contract does not admit. That spectrum is
-not corrupt: it is selectable, it is drawn by the panel as before, and its
-full-source CSV and TSV still write. What it does not get is a viewport, a
-`Current` scope, or a figure the existing contract already refuses — and M5
-delivers those refusals rather than sorting the source to avoid them. **Valid
+**No criterion assumes every spectrum is renderable, and none requires M5 to make
+one renderable.** A valid mzML spectrum may carry an m/z sequence the
+ordered-series contract does not admit. That spectrum is not corrupt: it is
+selectable, it is drawn by the panel as before, and its full-source CSV and TSV
+still write. What it does not get is a viewport, a `Current` scope, or a figure —
+and the figure it does not get is the **existing** typed refusal, not
+functionality M5 is expected to fabricate. M5 delivers those refusals rather than
+sorting the source to avoid them, and criterion 2 asks each spectrum only for the
+formats it already supports. **Valid
 source data, figure admissibility, viewport-domain admissibility, full-source
 export and current-range export are five different questions**, and no criterion
 above answers more than one of them.

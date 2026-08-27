@@ -215,12 +215,14 @@ five product decisions it surfaces are in
   selected spectrum zooms, pans and resets by wheel, drag, keyboard and button,
   reading no backend. Where one is refused, the panel says so and no control
   pretends to act.
-- **M5.3 — selected-spectrum `Current range` export.** All five formats over the
-  full source, and over the committed m/z range wherever a viewport exists,
-  resolved in Rust against the retained spectrum. Where none exists there is no
-  `Current` scope — never a synthesised range, a sorted source or a full-source
-  export labelled as a current one — and that spectrum's existing full-source
-  CSV and TSV are unchanged.
+- **M5.3 — selected-spectrum `Current range` export.** Every format that
+  spectrum already supports — all five where the figure contract admits it, CSV
+  and TSV where it refuses it — over the full source, and over the committed m/z
+  range wherever a viewport exists, resolved in Rust against the retained
+  spectrum. Where none exists there is no `Current` scope — never a synthesised
+  range, a sorted source or a full-source export labelled as a current one. This
+  slice adds a **range** to what a spectrum already exports; it never adds a
+  format, and never requires M5 to build a figure the existing contract refuses.
 - **M5.4 — XIC source and capability evidence.** A live measured run deciding
   whether an acceptable XIC source exists and which query it is. `tic`'s
   signature already declares an `mz=<mzLow>[,<mzHigh>]` window and the installed
