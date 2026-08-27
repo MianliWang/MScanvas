@@ -165,9 +165,10 @@ operation's output is bounded at `MAX_PREVIEW_TEXT_BYTES`, 8 MiB, and **refused
 whole rather than interpreted in part** above it, while a whole run's binary at
 the precision of 8 this product requests is orders of magnitude past that.
 
-Either shape also puts the extraction in the webview, over arrays
-`apps/desktop/AGENTS.md` keeps out of it. That is not an implementation of this
-feature but a different and much worse one.
+Either shape also puts the extraction in the webview, which the repository's own
+rule forbids without qualification: *large scientific arrays must not be copied
+repeatedly through React state* ([`AGENTS.md`](../../../AGENTS.md)). That is not
+an implementation of this feature but a different and much worse one.
 
 ### XIC linked selection — REQUIRED_FOR_M5, with no new authority
 
