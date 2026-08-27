@@ -141,7 +141,16 @@ The run and the scan chosen in it can also be exported *together*, as one figure
 of two ordered panels linked by a marker at that scan.
 
 Still missing from the acquisition view: XIC, spectrum zoom and pan, and
-multi-layer comparison. See
+multi-layer comparison. One more thing is missing that is easier to meet than to
+notice: the plot and every table row stay clickable while the selected-spectrum
+lane is blocked — a running conversion, an installation check, a backend
+resolved unavailable — and neither surface says so.
+
+Spectrum zoom and pan, XIC and that unavailability rule all belong to M5 —
+Viewer Completion — whose route is fixed by
+[ADR 0037](../architecture/adr/0037-viewer-completion-route.md). Multi-layer
+comparison is deferred past it, with named owners for the contracts it needs.
+See also
 [ADR 0032](../architecture/adr/0032-viewer-interaction-and-viewport-state.md) and
 [ADR 0033](../architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
 
@@ -306,7 +315,9 @@ The chromatogram exports as SVG, PNG, `Copy plot`, CSV and TSV, over the full
 run or the range the viewer has committed to, and that range is
 `ViewerInteractionState.committedDomain` rather than a gesture in progress. A
 *selected spectrum* still exports its full source only: there is no range
-chooser on that surface.
+chooser on that surface, and there is nothing for one to read — the spectrum has
+no committed viewport of its own. Both are M5, in that order; see
+[ADR 0037](../architecture/adr/0037-viewer-completion-route.md).
 
 The same surface offers the two of them **linked**: one figure of two ordered
 panels, the chromatogram above with a marker at the selected scan and that scan's

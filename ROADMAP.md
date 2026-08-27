@@ -194,37 +194,112 @@ Still outside it, and unchanged:
 - Current-range export of a *selected spectrum*.
 - XIC, spectrum zoom/pan, and multi-layer comparison.
 
-## M5 — Public beta hardening
+## M5 — Viewer Completion
 
-- Windows installer/signing plan, accessibility pass, crash/error diagnostics and public fixtures.
-- Saved settings, layout persistence and beta feedback instrumentation that remains local-first.
+**The next milestone. Not started.** M4 finished the export lane; the viewing
+workflow it exports from is still missing capabilities a reader meets in normal
+use. M5 completes it before conversion is widened and before the product is
+redesigned.
+
+The route, its exit criteria, the live gap audit it was decided from and the
+five product decisions it surfaces are in
+[ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md). In summary:
+
+- **M5.0 — orientation and route lock.** This slice. Documentation only.
+- **M5.1 — the spectrum viewport authority.** A committed m/z viewport with the
+  properties ADR 0032 established for retention time. No surface yet.
+- **M5.2 — the visible spectrum viewport.** The selected spectrum zooms, pans
+  and resets by wheel, drag, keyboard and button, reading no backend.
+- **M5.3 — selected-spectrum `Current range` export.** All five formats over the
+  committed m/z range as well as the full source, resolved in Rust against the
+  retained spectrum.
+- **M5.4 — XIC source and capability evidence.** A live measured run deciding
+  whether an acceptable XIC source exists and which query it is. `tic`'s
+  signature already declares an `mz=<mzLow>[,<mzHigh>]` window and the installed
+  help declared a `sic` query, but neither has ever been run as an XIC and
+  `sic` has never been captured here at all.
+- **M5.5 — the XIC model and runtime.** The typed operation, its capability
+  gate, its parser and its service path. Rust only.
+- **M5.6 — the visible XIC, and linked selection.** A typed m/z window produces
+  a trace over the same retention-time axis, and a scan chosen on it is the one
+  selection every other view already follows. No second selection authority.
+- **M5.7 — selection-availability affordance consistency.** One rule for how
+  every viewer click surface says a selection cannot be performed right now,
+  applied to all of them at once. Deferred from Viewer Closure R1 with a
+  recorded reason; required here because M5 adds more selectable surfaces.
+- **M5.8 — Viewer Completion closure and handoff.**
+
+M5 is complete when the spectrum has a committed viewport, the selected spectrum
+exports over that range, an XIC is produced from an evidenced backend source and
+participates in the one linked selection, and no viewer click surface accepts a
+click that commits nothing without saying why. **XIC is conditional on M5.4:** if
+no acceptable source is established, XIC leaves M5 with that refusal recorded
+rather than being approximated from data that cannot produce one.
+
+Explicitly **not** M5 exit criteria: multi-layer comparison, a bounded preview
+cache, and vendor-format direct preview. Each is deferred below with its owner.
+
+## M6 — Conversion Completion
+
+- Widen the typed conversion settings the interface can actually express:
+  CNV-002's mzXML gate, CNV-004 to CNV-007's processing and compression choices,
+  and CNV-003's output-location choices.
+- Queue and output work beyond the current bounds: more than sixteen items,
+  per-item cancellation, and further evidenced vendor families.
+- **Vendor-format direct preview**, behind its own evidence slice. Deferred from
+  M5 with a recorded reason: `open_preview` refuses a non-mzML row today, and
+  conversion support is not direct-preview support — the conversion evidence
+  proves `msconvert` writes a correct mzML, and says nothing about whether
+  `msaccess` can answer preview queries against a vendor acquisition. It is not
+  automatically an M6 exit criterion either.
+
+## M7 — UI/UX and public product hardening
+
+- Consolidation and redesign of the surfaces M5 and M6 complete, owning the
+  principles M5.0 froze rather than inheriting drift across them.
+- Windows installer/signing plan, accessibility pass, crash/error diagnostics and
+  public fixtures.
+- Saved settings, layout persistence and beta feedback instrumentation that
+  remains local-first.
 - **Touch gestures over the chromatogram.** The plot declares
   `touch-action: none`, so a touch drag over it scrolls nothing, and unlike a
   wheel that is a static declaration rather than a claim made per event. Closing
   it means deciding what a touch drag over a chromatogram means — a pan, a
   scroll, or a selection — which is product semantics rather than adapter
   wiring. Recorded by Viewer Closure R1.2, which closed the wheel and left this
-  as it found it. See
+  as it found it. Not required for any M5 capability's correctness: every M5
+  control is reachable by pointer and by keyboard. See
   [ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
-- **Viewer selection-availability affordance consistency.** Deferred from Viewer
-  Closure R1 with a recorded reason. The scan table's rows and the
-  chromatogram's plot are both clickable throughout, and a click on either
-  commits nothing while the selected-spectrum lane is blocked — a running
-  conversion, an installation check, a backend resolved unavailable — without
-  either surface saying so. Decide consistently how both communicate temporary
-  unavailability, while preserving the hover, zoom and pan that need no backend.
-  See [ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
+- **A bounded preview cache, if a measurement shows one is needed.** There is
+  none today and that is a recorded position: selections stay direct and
+  uncached, and the M0 spike measured 24 deterministic indices over three passes
+  on a 36,319-spectrum file at p50 `164 ms`, p95 `186`–`194 ms`, max `199 ms`
+  with no degradation. Nothing in M5 argues for one — a spectrum viewport reads
+  nothing, and an XIC is one backend operation per XIC rather than one per scan.
 
-## M6 — Artifact and QC foundation
+## M8 — Artifact, run and QC foundation
 
 - Project/artifact/run persistence and lineage.
 - First reusable QC summaries and report surfaces.
+- **Layer identity and provenance**, which multi-layer comparison needs and
+  which no current contract provides: `FigureSpec` carries semantic style roles
+  for quantities, not identities for sources, and `SeriesSpec` deliberately
+  carries no part of a path, handle or display name.
 
-## M7 — First analysis recipes
+## M9 — First analysis recipes
 
-- Isolated worker contract and one or two reviewed recipes backed by mature packages.
+- Isolated worker contract and one or two reviewed recipes backed by mature
+  packages.
 - Recipe mode first; no generic workflow canvas until real needs justify it.
+- **Multi-layer comparison (VIEW-008)** belongs here for its semantics, on top of
+  M8's layer identity. Deferred from M5 with a recorded dependency audit: the
+  application holds one preview by contract — Rust's open ticket states that
+  there is only one chromatogram the user is looking at and only one that may be
+  exported — two runs' intensities are not comparable without a normalization
+  this product has not admitted, and a selected scan *of a layer* is a different
+  type from the one selected scan every linked view consumes. See
+  [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md).
 
-## M8 — Automation
+## M10 — Automation
 
 - Stable CLI and schemas, then repo/user skills, then a narrow local MCP adapter.

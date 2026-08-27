@@ -212,6 +212,21 @@ yet. See [What works today](#what-works-today).
 
 Analysis is deferred rather than prohibited. MSCanvas should reuse mature algorithms from OpenMS/pyOpenMS, matchms and other reviewed packages instead of reimplementing them.
 
+## What is next
+
+**M5 — Viewer Completion.** The viewing workflow above is the product's first
+real answer and is not finished: the selected spectrum has no viewport, so it
+neither zooms nor exports over a range; there is no extracted-ion chromatogram;
+and a click on the plot or a scan row while the backend is busy commits nothing
+without saying so. M5 closes those before conversion is widened (M6) and before
+the interface is consolidated and redesigned (M7).
+
+Multi-layer comparison, a bounded preview cache and vendor-format direct preview
+are deferred past M5 with named owners rather than left in the near-term list.
+The route, its exit criteria and the live audit behind them are in
+[ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md); the milestone
+sequence is in [`ROADMAP.md`](ROADMAP.md).
+
 ## Repository status
 
 The repository contains:
