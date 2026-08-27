@@ -355,11 +355,14 @@ no unimplemented viewer feature is described as implemented.
 ### M5.1 — the spectrum viewport authority
 
 **Objective.** A committed m/z viewport with the same properties ADR 0032
-established for retention time: one committed range, one transient gesture with
-an epoch, total and deterministic arithmetic, and no React, DOM or timers.
+established for retention time — one committed range, one transient gesture with
+an epoch, total and deterministic arithmetic, and no React, DOM or timers — over
+the spectra that have a domain, and an explicit refusal for those that do not.
+The arithmetic's totality is over any *range* asked of an admitted domain; it
+never means every spectrum has one.
 **Owning authority.** A viewport contract in
-`apps/desktop/src/features/mzml-preview/viewer/`, and the boundary that tells it
-which m/z domain the spectrum has.
+`apps/desktop/src/features/mzml-preview/viewer/`, and the boundary that answers
+**whether** a spectrum has an authoritative m/z domain and, where it does, which.
 **User-visible result.** None. The model arrives before the surface, for the
 reason ADR 0032 exists.
 **Major evidence.** Unit tests over the contract, and the full-domain
