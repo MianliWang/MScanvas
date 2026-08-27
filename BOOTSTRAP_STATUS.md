@@ -4852,9 +4852,13 @@ and not one. Selecting the scans whose base peak falls in a window, at their
 base peak intensity, returns zero for every scan that carries signal in the
 window under a taller peak elsewhere, which is where an analyst is most often
 looking. An XIC needs intensity as a function of m/z inside each scan, and no
-per-scan summary is that; the only other frontend route is `SpectrumByIndex`,
-one spectrum per call — 36,319 backend processes for the measured representative
-acquisition. **M5.4 is a dedicated evidence slice**, and it has an explicit
+per-scan summary is that. The only route short of a new operation is the
+`binary` query: this repository's typed `SpectrumByIndex` asks for one index, so
+that is 36,319 backend processes for the measured representative acquisition,
+and the range form the backend's grammar declares — never issued or measured
+here — refuses itself on size, because one operation's output is bounded at 8 MiB
+and refused whole above it while a run's complete binary at the requested
+precision is orders of magnitude past that. **M5.4 is a dedicated evidence slice**, and it has an explicit
 refusal path: if no acceptable source is established, XIC leaves M5 with that
 recorded rather than being approximated.
 

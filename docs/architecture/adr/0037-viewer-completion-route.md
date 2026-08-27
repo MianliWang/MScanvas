@@ -154,10 +154,20 @@ somewhere else. It would be at its most wrong exactly where an analyst is
 looking — a co-eluting ion that is never the base peak. An XIC needs intensity
 *as a function of m/z* inside each scan, and no per-scan summary is that.
 
-**Not derived by re-reading the run.** The only frontend route to real
-m/z-resolved data is `SpectrumByIndex`, one spectrum per call — 36,319 backend
-processes for the measured representative acquisition. That is not an
-implementation of this feature but a different and much worse one.
+**Not derived by re-reading the run.** The only route to real m/z-resolved data
+short of a new operation is the `binary` query. This repository's typed
+`SpectrumByIndex` asks for one index, so extracting an ion that way is 36,319
+backend processes for the measured representative acquisition. The backend's
+declared grammar does carry a range form —
+`index=<spectrumIndexLow>[,<spectrumIndexHigh>]` — which nothing here has ever
+issued or measured, and it refuses itself on size rather than on effort: one
+operation's output is bounded at `MAX_PREVIEW_TEXT_BYTES`, 8 MiB, and **refused
+whole rather than interpreted in part** above it, while a whole run's binary at
+the precision of 8 this product requests is orders of magnitude past that.
+
+Either shape also puts the extraction in the webview, over arrays
+`apps/desktop/AGENTS.md` keeps out of it. That is not an implementation of this
+feature but a different and much worse one.
 
 ### XIC linked selection — REQUIRED_FOR_M5, with no new authority
 
@@ -417,7 +427,9 @@ loaded table does not contain refused rather than marked; rendered QA at the
 three viewport targets; keyboard equivalence for the input and the trace.
 **Hard non-goals.** No second scan-selection authority. No multi-XIC overlay. No
 normalization, smoothing, baseline correction or peak picking. No claim about
-the m/z unit the file did not report.
+the m/z unit the file did not report. **No XIC export**: none of the exit
+criteria asks for one, M4 owns the export lane, and a fourth surface on it is a
+decision of its own rather than a consequence of the trace existing.
 **Predecessor.** M5.5.
 **Exit.** VIEW-007's acceptance holds — a typed m/z and window produce a trace
 whose settings and unit posture are explicit — and the viewer still has exactly
@@ -611,8 +623,10 @@ is measurable and severe: a chromatogram's total ion current sums every ion in
 every scan, and an XIC sums one narrow window, so on a shared linear intensity
 axis the XIC is drawn as a flat line on the baseline for most real acquisitions.
 `PanelSpec` carries its own value domain and `FigureSpec` has carried a
-`Vec<PanelSpec>` since ADR 0028, so both shapes are expressible; M4.4's
-two-panel minimum height of 260 shows the layout cost of the second.
+`Vec<PanelSpec>` since ADR 0028, so both shapes are expressible in a figure. On
+screen the question is a measurement, and this ADR does not have it: what M4.4
+measured is the height its *export surface* gained, not the height a third plot
+would take from the viewer column.
 
 **Options.** (a) one panel, shared value axis; (b) one panel, second value axis;
 (c) its own panel below the chromatogram, sharing the retention-time axis and the
