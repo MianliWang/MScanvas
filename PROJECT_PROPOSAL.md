@@ -603,7 +603,7 @@ Screenshot, PNG/SVG, current/full range, independent theme, CSV/TSV, linked two-
 
 ### M5 — Viewer Completion
 
-Spectrum viewport, selected-spectrum current-range export, and one rule for how a viewer click surface says a selection cannot be performed. XIC sits behind a live evidence gate with two valid outcomes — a visible trace inside the existing linked selection, or a recorded refusal and a reassignment — and M5 builds no XIC export either way. See [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md).
+Spectrum viewport and selected-spectrum current-range export, delivered wherever the scientific figure contract admits an m/z domain and explicitly refused where it does not rather than sorting the measurement; and one rule for how a viewer click surface says a selection cannot be performed. XIC sits behind a live evidence gate with two valid outcomes — a visible trace inside the existing linked selection, or a recorded refusal and a reassignment — and M5 builds no XIC export either way. See [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md).
 
 ### M6 — Conversion Completion
 

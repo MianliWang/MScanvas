@@ -207,12 +207,20 @@ five product decisions it surfaces are in
 
 - **M5.0 — orientation and route lock.** This slice. Documentation only.
 - **M5.1 — the spectrum viewport authority.** A committed m/z viewport with the
-  properties ADR 0032 established for retention time. No surface yet.
-- **M5.2 — the visible spectrum viewport.** The selected spectrum zooms, pans
-  and resets by wheel, drag, keyboard and button, reading no backend.
+  properties ADR 0032 established for retention time, over the domain the
+  scientific figure contract admits — and an explicit refusal where it admits
+  none, because mzML permits an m/z sequence that contract will not accept and
+  nothing here sorts one. No surface yet.
+- **M5.2 — the visible spectrum viewport.** Where a domain is admitted, the
+  selected spectrum zooms, pans and resets by wheel, drag, keyboard and button,
+  reading no backend. Where one is refused, the panel says so and no control
+  pretends to act.
 - **M5.3 — selected-spectrum `Current range` export.** All five formats over the
-  committed m/z range as well as the full source, resolved in Rust against the
-  retained spectrum.
+  full source, and over the committed m/z range wherever a viewport exists,
+  resolved in Rust against the retained spectrum. Where none exists there is no
+  `Current` scope — never a synthesised range, a sorted source or a full-source
+  export labelled as a current one — and that spectrum's existing full-source
+  CSV and TSV are unchanged.
 - **M5.4 — XIC source and capability evidence.** A live measured run deciding
   whether an acceptable XIC source exists and which query it is. `tic`'s
   signature already declares an `mz=<mzLow>[,<mzHigh>]` window and the installed
@@ -233,9 +241,17 @@ five product decisions it surfaces are in
   the refusal branch still reaches closure.
 - **M5.8 — Viewer Completion closure and handoff.**
 
-M5 is complete when the spectrum has a committed viewport, the selected spectrum
-exports over that range, no viewer click surface accepts a click that commits
-nothing without saying why, and M5.4's outcome has been carried through.
+M5 is complete when the selected spectrum has a committed viewport wherever the
+scientific contract admits one and an honest refusal wherever it does not, the
+spectrum exports over the full source and over that range wherever it exists, no
+viewer click surface accepts a click that commits nothing without saying why, and
+M5.4's outcome has been carried through.
+
+**A valid scientific source need not be renderable.** Where the existing figure
+and domain contract cannot admit a viewport without changing the source, MSCanvas
+refuses the viewport rather than sorting, reordering or normalising the
+measurement to manufacture one. Such a spectrum stays selectable and stays
+exportable as full-source data.
 
 **XIC is conditional on M5.4, and both outcomes complete the milestone.** On
 `XIC_SOURCE_ADMITTED` an XIC is produced from the evidenced source, participates

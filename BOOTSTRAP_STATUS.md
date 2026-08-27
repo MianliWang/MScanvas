@@ -4834,8 +4834,8 @@ Nine known gaps, each classified from what the code does.
 
 | Gap | Classification | The evidence |
 | --- | --- | --- |
-| Spectrum zoom/pan/reset | **M5** | `StickSpectrum.tsx` is a pure function of the transferred arrays and holds no state; `ViewerInteractionState` carries exactly one domain, and it is a `RetentionTimeDomain`. There is no m/z viewport anywhere. |
-| Selected-spectrum current-range export | **M5**, after the viewport | `spectrum_panel` builds one series at `DataScope::FullSource` and never calls `with_visible_domain`; `RangeRequest` exists for the chromatogram alone. A range chooser on that surface has nothing to refer to until a committed m/z viewport exists. |
+| Spectrum zoom/pan/reset | **M5**, where a domain is admissible | `StickSpectrum.tsx` is a pure function of the transferred arrays and holds no state; `ViewerInteractionState` carries exactly one domain, and it is a `RetentionTimeDomain`. There is no m/z viewport anywhere. Required does not mean universal: `SeriesSpec::new` answers a non-ascending m/z array with `SpecError::SourceNotOrdered`, which mzML permits and nothing here sorts, so that spectrum gets an explicit refusal rather than an invented domain. |
+| Selected-spectrum current-range export | **M5**, after the viewport and only where one exists | `spectrum_panel` builds one series at `DataScope::FullSource` and never calls `with_visible_domain`; `RangeRequest` exists for the chromatogram alone. A range chooser on that surface has nothing to refer to until a committed m/z viewport exists — and for a spectrum with no admissible domain there is no `Current` scope at all, while its full-source CSV and TSV are unchanged. |
 | XIC (VIEW-007) | **M5**, behind an evidence gate with two valid outcomes | `PreviewOperation::Tic` exists, is capability-gated and is parsed — and is never issued. Its required signature already declares `mz=<mzLow>[,<mzHigh>]`, and the M0 spike recorded a `sic` query in the installed help. Neither has ever been run as an XIC, and `sic` has no signature, parser or measurement here at all. |
 | XIC linked selection | **M5** where XIC is admitted, with no new authority | One `Selection` with one monotonic revision, consumed through `consumeSelection`. `TicPoint` already carries a `SpectrumIdentity`, so an XIC point names a scan through the existing commit path. |
 | Selection-availability affordance | **M5** | `spectrumSelectionAvailable` reaches `canSelectPreviousScan` and `canSelectNextScan` and nothing else; `PreviewWorkspace.tsx` passes a bare `onSelect` to both the plot and the table. M5 adds more selectable surfaces, so the rule is settled before the set grows. |
@@ -4872,7 +4872,19 @@ the same run, so it consumes `ViewerInteractionState` rather than owning a
 second one.
 
 **A current-range scope with nothing behind it.** The selected-spectrum range
-export comes after the viewport, not beside it.
+export comes after the viewport, not beside it — and only where a viewport exists.
+
+**A viewport bought by sorting the measurement.** mzML does not require an ordered
+m/z array and nothing here sorts one: `SeriesSpec::new` refuses a non-ascending
+`x` as `SpecError::SourceNotOrdered`, `Domain::new` refuses the inverted pair its
+first and last would make, and the existing figure refusal is already recorded in
+`preview/dto.rs` with CSV/TSV named as the route out. **A valid scientific source
+need not be renderable.** Where the contract cannot admit a domain without
+changing the source, M5 refuses the viewport and the `Current` scope rather than
+reordering, min/maxing or interpolating the measurement to manufacture one. Valid
+source data, figure admissibility, viewport-domain admissibility, full-source
+export and current-range export are five different questions, and M5 answers them
+separately.
 
 **A chromatogram's clipping rule on a stick spectrum.** M4.3's boundary segment
 belongs to a polyline. `crates/plot-spec/src/svg.rs` filters discrete marks
@@ -4890,11 +4902,13 @@ by the visible trace contract instead. A reusable XIC export belongs to M9.
 **A viewport whose domain the export source does not have.** The screen and the
 export renderer disagree about a spectrum's m/z domain on purpose today —
 `StickSpectrum` widens the drawn domain to cover the reported `mzLow`/`mzHigh`
-*and* the transferred points, while `domain_of` takes the first and last of the
-ordered points and documents why it refuses the reported pair. A viewport over
-the wider one could commit a range Rust then refuses as `OutsideSource`, which is
-the defect class `clampDomain`'s own comment records for retention time. ADR 0037
-fixes the constraint rather than leaving it to the slice.
+*and* the transferred points, while `domain_of` takes the first and last of a
+series the figure contract has **already admitted as ordered**, and documents why
+it refuses the reported pair. A viewport over the wider one could commit a range
+Rust then refuses as `OutsideSource`, which is the defect class `clampDomain`'s
+own comment records for retention time. ADR 0037 fixes the constraint rather than
+leaving it to the slice — and states what happens where no series is admitted at
+all, which is the paragraph above.
 
 ### Five product decisions, surfaced instead of guessed
 

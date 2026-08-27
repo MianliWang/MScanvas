@@ -63,7 +63,7 @@ A future-milestone number in one of them resolves through this table:
 
 Read from the implementation. Every row cites what was inspected.
 
-### Spectrum zoom, pan and reset — REQUIRED_FOR_M5
+### Spectrum zoom, pan and reset — REQUIRED_FOR_M5, where a domain is admissible
 
 [`StickSpectrum.tsx`](../../../apps/desktop/src/features/mzml-preview/StickSpectrum.tsx)
 is a pure function of the transferred `mz` and `intensity` arrays and the
@@ -79,7 +79,14 @@ panel has a fully specified one. That is the largest remaining gap in the
 viewing workflow, and it is the one every other M5 capability is measured
 against.
 
-### Selected-spectrum `Current range` export — REQUIRED_FOR_M5, and dependent
+**Required does not mean universal.** A viewport needs an authoritative finite
+forward m/z domain, and the scientific contract cannot always establish one:
+`SeriesSpec::new` answers a non-ascending `x` with `SpecError::SourceNotOrdered`,
+which mzML permits and nothing here sorts. That spectrum is valid source data and
+has no viewport, and M5 delivers the refusal rather than a domain it had to
+invent. See M5.1.
+
+### Selected-spectrum `Current range` export — REQUIRED_FOR_M5, and doubly dependent
 
 `spectrum_panel` in
 [`export.rs`](../../../apps/desktop/src-tauri/src/preview/export.rs) builds one
@@ -101,6 +108,13 @@ equivalent, so there is nothing for a range chooser on that surface to mean.
 This is why the route puts the viewport first. Inventing a `Current` scope for
 the spectrum before a committed m/z viewport exists would mean inventing what
 "current" refers to, which is the mistake ADR 0032 was written after.
+
+And it depends on the viewport twice over: on the viewport being **built**, which
+is M5.1 and M5.2, and on one being **available for this spectrum**, which the
+scientific contract decides per spectrum. Where no domain is admissible there is
+no committed viewport, so there is no `Current` scope — while the full-source
+CSV and TSV that spectrum already exports are untouched, because a data document
+is one record per retained source point in source order and needs no ordering.
 
 ### XIC (VIEW-007) — REQUIRED_FOR_M5, behind an evidence gate
 
@@ -284,9 +298,15 @@ M5 completes the scientific mzML viewing workflow **as far as its evidence gates
 allow**, and records what they refuse.
 
 Unconditionally, at M5's exit a reader can: see a run's shape over retention time
-and zoom into it; see one scan's spectrum **and zoom into that**; export either
-over the whole source or over the range they chose; and never be offered a
-selection the session cannot perform.
+and zoom into it; see one scan's spectrum, and zoom into that **wherever the
+scientific contract can establish an m/z domain over it without altering the
+source**; export the spectrum over the whole source, and over the range they
+chose wherever that viewport exists; and never be offered a selection — or a
+viewport, or a range — the session cannot honestly perform.
+
+A spectrum whose m/z sequence the ordered-series contract does not admit is
+valid source data with no viewport and no `Current` scope. M5 says so rather
+than sorting it.
 
 Conditionally — on `XIC_SOURCE_ADMITTED` — a reader can also extract one ion's
 chromatogram from a proved backend source and select a scan on it. On
@@ -343,23 +363,33 @@ which m/z domain the spectrum has.
 **User-visible result.** None. The model arrives before the surface, for the
 reason ADR 0032 exists.
 **Major evidence.** Unit tests over the contract, and the full-domain
-constraint stated below, tested rather than assumed — including for a spectrum
-whose transferred arrays are truncated.
+constraint stated below, tested rather than assumed — on **both** of its paths:
+a spectrum whose source domain the scientific contract admits, including one
+whose transferred arrays are truncated, and a spectrum whose source domain that
+contract refuses.
 **Hard non-goals.** No second scan-selection authority. No new state layer in
 `ViewerInteractionState` that a chromatogram consumer can read by accident. No
 export change. **No Rust parsing, source-retention or scientific-export
 behaviour change beyond the bounded projection of the already-retained complete
 source m/z domain that the viewport authority contract requires.**
 **Predecessor.** M5.0.
-**Exit.** The m/z viewport answers, for any input, with a finite forward
-interval inside the spectrum's own domain, and a `Current` scope has something
-unambiguous to refer to.
+**Exit.** A conditional invariant, and both halves are proved:
+
+> For every spectrum whose scientific source/domain contract admits a viewport
+> domain, M5.1 exposes **exactly that authoritative domain**. For every spectrum
+> whose contract refuses one, viewport-domain availability is **explicitly
+> refused**, and no substitute domain is inferred.
+
+Where a domain is admitted, a `Current` scope has something unambiguous to refer
+to. Where it is refused, there is no `Current` scope to refer to anything — and
+that is the answer, not a gap.
 
 One constraint this audit fixes rather than leaving to the slice. The screen and
 the export renderer currently disagree about a spectrum's m/z domain on purpose:
 `StickSpectrum` widens the drawn domain to cover the reported `mzLow`/`mzHigh`
 *and* the transferred points, while `domain_of` in `export.rs` takes the first
-and last of the ordered points and documents why it refuses the reported pair.
+and last of the series the figure contract has **already admitted as ordered**,
+and documents why it refuses the reported pair.
 A viewport built over the screen's wider domain could commit a range the export
 renderer's source does not have, and the rule M5.3 inherits from the
 chromatogram is that Rust answers such a range with `RangeRefusal::OutsideSource`
@@ -368,55 +398,99 @@ records for retention time, where the viewer's clamping could produce a range
 Rust would refuse. **The m/z viewport's
 full domain must be the one the export source has.**
 
-That invariant is what forces the narrowed non-goal above. The transferred
-arrays are bounded at `MAX_SPECTRUM_POINTS` and a spectrum over it arrives as a
-prefix marked `truncated`, so for that spectrum the complete first and last
-ordered points exist **only** in the `SelectedSpectrumResult` Rust retained. A
-frontend-only slice could not establish its own authority there: it would have
-either to take a domain from a prefix, describing a spectrum the file does not
-contain, or to take `mzLow`/`mzHigh`, which the export renderer documents its
-refusal of. So M5.1 may include a strictly bounded contract projection, and the
-route requires it to have this shape:
+That invariant is what forces the narrowed non-goal above, and it has a second
+consequence the route states rather than discovers: **a valid selected spectrum
+does not imply an available viewport domain.**
 
-- **Rust remains the source authority.** The endpoints come from the complete
-  retained selected-spectrum snapshot, computed the same way the export
-  renderer's own domain is.
-- **React receives a bounded domain pair — two numbers.** Not the retained
-  spectrum, and above all not a widened transfer bound: recovering endpoints is
-  never a reason to send more of the arrays.
+**Two distinct questions, and they must not collapse into one.** Whether the
+spectrum is valid source data is one; whether the scientific contract can
+establish an authoritative finite forward m/z domain over it **without altering
+the source** is another. mzML does not require an ordered m/z array and nothing
+here sorts one, so the second question genuinely has a `no` answer for data the
+first question calls perfectly good. `SeriesSpec::new` answers it: a non-ascending
+`x` is `SpecError::SourceNotOrdered`, and `Domain::new` refuses an inverted pair
+as `SpecError::DomainInverted`, so there is no first/last to take. That spectrum
+is not corrupt — its CSV and TSV still write, one record per retained source
+point in source order — and the figure this product cannot draw for it is the
+existing recorded refusal rather than something M5 introduces.
+
+So the projection is a projection of **availability**, never a fabrication of a
+domain. The route requires this shape:
+
+- **Rust remains the source authority, and evaluates admissibility.** It reads
+  the complete retained selected-spectrum snapshot through the **same
+  admissibility and domain contract that governs the scientific figure** — not a
+  second, laxer reading invented for the viewport.
+- **Where that contract establishes a domain, Rust projects it.** A bounded pair
+  — two numbers — from the complete retained snapshot. Not the retained spectrum,
+  and above all not a widened transfer bound: recovering endpoints is never a
+  reason to send more of the arrays.
+- **Where that contract refuses, React receives an explicit refused state**
+  rather than invented endpoints. A tagged or optional availability is the
+  natural shape; M5.1 owns the semantics and the authority, and the field's name
+  and exact type belong to the slice that writes it.
 - **A new field, not a reused one.** `SelectedSpectrum` already carries
   `mzLow`/`mzHigh`, and those are the backend's *separately reported* pair —
   a second reading of the same spectrum, which `domain_of` refuses precisely
   because the two can disagree. Overloading them would make the viewport and the
-  export renderer silently describe different things again.
-- **React infers the source domain from nothing else.** Not the truncated
-  arrays, not SVG geometry, not axis ticks, not DOM state, not rendered viewport
-  state, and not pointer coordinates.
+  export renderer silently describe different things again, and would leave
+  nowhere to say `refused`.
+- **A truncated but otherwise admissible spectrum still gets its domain from the
+  complete retained Rust snapshot**, never from the transferred prefix.
+- **A refused spectrum does not obtain a domain by any other route.** Not by
+  sorting or reordering the `(m/z, intensity)` observations; not by taking
+  `[min(m/z), max(m/z)]`; not by using first and last where that produces an
+  inverted domain; and not from the transferred arrays, SVG geometry, axis
+  ticks, DOM state, rendered viewport state or pointer coordinates.
+
+**Nothing is sorted, reordered, normalised, interpolated or otherwise
+transformed to manufacture a viewport.** Where the existing scientific contract
+cannot admit a domain without changing the source, MSCanvas refuses the viewport
+rather than changing the science.
 
 M5.0 implements none of this. What is fixed here is the contract the future
 slice owes, and the boundary it may cross to meet it.
 
 ### M5.2 — the visible spectrum viewport
 
-**Objective.** Make the spectrum viewport reachable: wheel, drag, keyboard and
-visible buttons, over the selected-spectrum panel.
-**Owning authority.** The spectrum panel's own adapter, consuming M5.1.
-**User-visible result.** The selected spectrum zooms, pans and resets.
-**Major evidence.** Rendered interaction QA at 1920×1080, 1366×768 and 960×640;
-keyboard equivalence for every pointer action; wheel ownership decided by the
-same rule ADR 0033's R1.2 established — a wheel is claimed only where applying
-it would change the effective rendered domain.
+**Objective.** Make the spectrum viewport reachable where there is one: wheel,
+drag, keyboard and visible buttons, over the selected-spectrum panel — and make
+its absence honest where there is not.
+**Owning authority.** The spectrum panel's own adapter, consuming M5.1 —
+**including M5.1's availability answer**, which this slice reads rather than
+second-guesses.
+**User-visible result.** For a spectrum whose domain is admitted, the selected
+spectrum zooms, pans and resets. For one whose domain is refused, the panel says
+the viewport is unavailable, in the posture the frozen principles require of any
+unavailability, and the spectrum itself is still shown and still selected.
+**Major evidence.** Rendered interaction QA at 1920×1080, 1366×768 and 960×640
+**for both availability states**; keyboard equivalence for every pointer action;
+wheel ownership decided by the same rule ADR 0033's R1.2 established — a wheel is
+claimed only where applying it would change the effective rendered domain, which
+over a refused spectrum is nowhere, so the page keeps its wheel.
 **Hard non-goals.** No backend read on any viewport change. No touch semantics.
-No restyling of the panel beyond the controls this slice adds. No change to
-what the spectrum's caption claims about its reduction.
+No restyling of the panel beyond the controls this slice adds. No change to what
+the spectrum's caption claims about its reduction. **No local-only viewport
+authority**: where M5.1 refuses a domain, this slice does not derive one from the
+transferred arrays or from the drawing to keep its controls working, and no
+control pretends to operate.
 **Predecessor.** M5.1.
-**Exit.** Every viewport control on the spectrum panel is available exactly when
-pressing it would change what is drawn, and no control reads the backend.
+**Exit.** Where a domain is admitted, every viewport control on the spectrum
+panel is available exactly when pressing it would change what is drawn, and no
+control reads the backend. Where a domain is refused, no viewport control claims
+to act, the reason is stated where the reader meets it, the spectrum stays
+selected, and the rest of the viewer — the chromatogram, the scan table, scan
+navigation and the spectrum's own full-source data export — stays usable.
+
+M5.0 does not design that unavailable state; it requires the route to be able to
+represent it truthfully.
 
 ### M5.3 — selected-spectrum `Current range` export
 
 **Objective.** SVG, PNG, `Copy plot`, CSV and TSV for the selected spectrum over
-the committed m/z viewport as well as the full source.
+the committed m/z viewport as well as the full source — **wherever a committed
+viewport exists**, and an honest absence of the `Current` scope where one does
+not.
 **Owning authority.** Rust. The range is resolved against the retained spectrum,
 never against the transferred arrays or the screen's reduced sticks.
 **User-visible result.** A range chooser on the selected-spectrum surface,
@@ -430,10 +504,22 @@ serves this too. No linked data document. No change to the linked two-panel
 figure's rule that the lower panel is always the complete spectrum. **No
 interpolated boundary value for a discrete spectrum**, under any range.
 **Predecessor.** M5.1 and M5.2.
-**Exit.** A selected spectrum exports over Full or Current in all five formats,
-from the retained source, `Current` reads the committed viewport and nothing in
-flight, and the window's figure/data behaviour matches the representation the
-source admitted.
+**Exit.** Two paths, and both are proved.
+
+**Where M5.1 admitted a domain.** A selected spectrum exports over Full or
+Current in all five formats, from the retained source; `Current` reads the
+committed viewport and nothing in flight; and the window's figure/data behaviour
+matches the representation the source admitted.
+
+**Where M5.1 refused one.** There is **no `Current` scope** — not a synthesised
+range, not a sorted source, not `[min, max]`, not a silent fall back to Full, and
+never a full-source export labelled as a current range. Whatever full-source
+export the product already truthfully offers for that spectrum stays exactly as
+it is: its CSV and TSV write, because a data document is one record per retained
+source point in source order and needs no ordering at all, and its figure
+availability stays governed by the existing figure contract rather than by
+anything this slice adds. A range control that has no viewport to read is not
+offered, and no second range authority is created to give it one.
 
 One constraint this audit fixes rather than leaving to the slice, because the
 obvious reading of M4.3 is wrong here.
@@ -469,6 +555,19 @@ The invariant underneath both branches, and the one M5.3 is accountable to:
 **figure filtering follows the admitted spectrum representation; a data document
 never invents a source measurement.** CSV and TSV contain reported source points
 and nothing else, at any range, under any representation.
+
+**Five capabilities, and they are not one boolean.** This slice is where they
+would most easily be confused, so the route separates them:
+
+1. whether the spectrum is **valid source data**;
+2. whether the figure contract can **admit it as a figure**;
+3. whether an authoritative **viewport domain** can be established over it
+   without altering it;
+4. what **full-source export** it supports;
+5. what **current-range export** it supports.
+
+A descending m/z array answers those *yes, no, no, CSV and TSV write, and none* —
+five answers, not one. No document in this route may collapse them.
 
 ### M5.4 — XIC source and capability evidence
 
@@ -601,8 +700,8 @@ M5 is complete when, and only when:
 
 | # | Criterion | Required for M5? |
 |---|---|---|
-| 1 | The selected spectrum has a committed m/z viewport that zooms, pans and resets by wheel, drag, keyboard and button, reads no backend, and offers each control exactly when pressing it would change what is drawn | **Yes** |
-| 2 | The selected spectrum exports over the full source or the committed m/z range, as SVG, PNG, `Copy plot`, CSV and TSV, from the retained spectrum, with a range the source does not have refused rather than clamped | **Yes** |
+| 1 | Where the scientific source/domain contract admits a domain, the selected spectrum has a committed m/z viewport that zooms, pans and resets by wheel, drag, keyboard and button, reads no backend, and offers each control exactly when pressing it would change what is drawn — and where that contract refuses one, the viewport is explicitly unavailable and no substitute domain is inferred | **Yes**, both paths |
+| 2 | The selected spectrum exports over the full source in all five formats from the retained spectrum; and over the committed m/z range **where a viewport exists**, with a range the source does not have refused rather than clamped. Where no viewport exists there is no `Current` scope, and the full-source export the product already offers is unchanged | **Yes**, both paths |
 | 3 | An XIC is produced from a backend source proved by a live measured run, with its query, aggregation, MS-level applicability, window and unit posture carried by the visible trace where the reader can see them | **Only on `XIC_SOURCE_ADMITTED`** — see the rule below |
 | 4 | A scan selected on the XIC is the one selection every other view follows, through the existing commit revision | **Only on `XIC_SOURCE_ADMITTED`** |
 | 5 | No viewer click surface accepts a click that commits nothing without saying why, and every backend-free interaction stays available while it says so | **Yes** |
@@ -614,6 +713,16 @@ Three further conditions apply to the milestone as a whole: no unimplemented
 viewer feature is described as implemented anywhere in the repository; every M5
 control satisfies the frozen principles below at all three responsive targets;
 and the local gate set passes unchanged.
+
+**No criterion assumes every spectrum is renderable.** A valid mzML spectrum may
+carry an m/z sequence the ordered-series contract does not admit. That spectrum is
+not corrupt: it is selectable, it is drawn by the panel as before, and its
+full-source CSV and TSV still write. What it does not get is a viewport, a
+`Current` scope, or a figure the existing contract already refuses — and M5
+delivers those refusals rather than sorting the source to avoid them. **Valid
+source data, figure admissibility, viewport-domain admissibility, full-source
+export and current-range export are five different questions**, and no criterion
+above answers more than one of them.
 
 **No criterion requires an XIC export, and none may.** M5 writes no XIC SVG, PNG,
 CSV or TSV, claims no such artifact, and assigns a future reusable XIC export to
@@ -972,6 +1081,11 @@ repaired by this documentation-only slice.
   cannot be faked quietly — and refusing it does not strand the milestone.
 - `M5 COMPLETE` is defined by what the evidence admitted rather than by a fixed
   feature list, and says which of the two it means.
+- A valid scientific source need not be renderable. Where the existing figure and
+  domain contract cannot admit a viewport without changing the source, MSCanvas
+  refuses the viewport rather than changing the science — and the route says that
+  in the slices rather than leaving it to whoever meets the first descending m/z
+  array.
 - Five product decisions that would otherwise have been made by whoever wrote
   the code are visible before the code exists.
 - Multi-layer comparison stops being described as a near-term viewer feature and

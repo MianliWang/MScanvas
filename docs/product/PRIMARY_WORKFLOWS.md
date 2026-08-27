@@ -320,7 +320,11 @@ run or the range the viewer has committed to, and that range is
 `ViewerInteractionState.committedDomain` rather than a gesture in progress. A
 *selected spectrum* still exports its full source only: there is no range
 chooser on that surface, and there is nothing for one to read — the spectrum has
-no committed viewport of its own. Both are M5, in that order; see
+no committed viewport of its own. Both are M5, in that order, and both apply per
+spectrum: a viewport needs an m/z domain the scientific contract can establish
+without altering the source, and mzML permits an array it will not accept. Such a
+spectrum keeps its full-source CSV and TSV and is refused a viewport and a
+current range rather than sorted. See
 [ADR 0037](../architecture/adr/0037-viewer-completion-route.md).
 
 The same surface offers the two of them **linked**: one figure of two ordered

@@ -110,7 +110,12 @@ Where each of those is owned, and why, is fixed by
   are M5, in that order. The second depends on the first: the chromatogram's
   `Current range` reads `ViewerInteractionState.committedDomain`, and the
   selected spectrum has no equivalent committed viewport for a range chooser on
-  its surface to refer to.
+  its surface to refer to. Both are delivered **per spectrum**, not universally:
+  a viewport needs an authoritative finite forward m/z domain, `SeriesSpec::new`
+  answers a non-ascending array with `SpecError::SourceNotOrdered`, and mzML
+  permits exactly that. Such a spectrum is valid source data — its full-source
+  CSV and TSV write — and M5 gives it an explicit refusal rather than a sorted
+  copy of the measurement.
 - **VIEW-007** is M5 behind an evidence gate. The backend's `tic` query already
   declares an `mz=<mzLow>[,<mzHigh>]` window and the installed help declared a
   `sic` query, but no m/z-windowed query has ever been run here and `sic` has

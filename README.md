@@ -222,6 +222,13 @@ without saying so. M5 closes the viewport, the range export and the click
 affordance before conversion is widened (M6) and before the interface is
 consolidated and redesigned (M7).
 
+The viewport is delivered wherever the scientific figure contract can establish
+an m/z domain without altering the measurement. mzML permits an m/z sequence that
+contract will not accept, and MSCanvas does not sort one to make a viewport
+possible: such a spectrum stays selectable, still draws, still exports as
+full-source CSV and TSV, and is told plainly that it has no viewport and no
+current range.
+
 The extracted-ion chromatogram sits behind an evidence gate rather than a
 promise: no m/z-windowed backend query has ever been run here, so M5 first proves
 a source exists. If it does, M5 delivers a visible XIC inside the viewer's one
