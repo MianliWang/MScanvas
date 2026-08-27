@@ -206,15 +206,21 @@ five product decisions it surfaces are in
 [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md). In summary:
 
 - **M5.0 — orientation and route lock.** This slice. Documentation only.
-- **M5.1 — the spectrum viewport authority.** A committed m/z viewport with the
-  properties ADR 0032 established for retention time, over the domain the
-  scientific figure contract admits — and an explicit refusal where it admits
-  none, because mzML permits an m/z sequence that contract will not accept and
-  nothing here sorts one. No surface yet.
+- **M5.1 — the spectrum viewport authority, and the screen-projection
+  foundation.** A committed m/z viewport with the properties ADR 0032
+  established for retention time, over the domain the scientific figure contract
+  admits — and an explicit refusal where it admits none, because mzML permits an
+  m/z sequence that contract will not accept and nothing here sorts one. Plus the
+  contract by which a viewport obtains something to draw: a bounded,
+  viewport-scoped projection of the complete spectrum Rust retains, because
+  `MAX_SPECTRUM_POINTS` bounds one transfer and a prefix must never be presented
+  as the whole source. No surface yet.
 - **M5.2 — the visible spectrum viewport.** Where a domain is admitted, the
   selected spectrum zooms, pans and resets by wheel, drag, keyboard and button,
-  reading no backend. Where one is refused, the panel says so and no control
-  pretends to act.
+  and a committed viewport draws the retained source across its whole domain —
+  including past the transferred prefix — without re-reading the acquisition or
+  launching ProteoWizard. Where a domain is refused, the panel says so and no
+  control pretends to act.
 - **M5.3 — selected-spectrum `Current range` export.** Every format that
   spectrum already supports — all five where the figure contract admits it, CSV
   and TSV where it refuses it — over the full source, and over the committed m/z
@@ -254,6 +260,12 @@ and domain contract cannot admit a viewport without changing the source, MSCanva
 refuses the viewport rather than sorting, reordering or normalising the
 measurement to manufacture one. Such a spectrum stays selectable and stays
 exportable as full-source data.
+
+**And the screen is a drawing, never the science.** The complete spectrum Rust
+retains stays the scientific source; a viewport receives a bounded projection of
+it for the committed domain, refreshed as that domain changes; and scientific
+export is always taken from the retained source rather than from what the screen
+was given.
 
 **XIC is conditional on M5.4, and both outcomes complete the milestone.** On
 `XIC_SOURCE_ADMITTED` an XIC is produced from the evidenced source, participates

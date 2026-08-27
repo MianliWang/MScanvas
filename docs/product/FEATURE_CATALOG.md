@@ -115,7 +115,10 @@ Where each of those is owned, and why, is fixed by
   answers a non-ascending array with `SpecError::SourceNotOrdered`, and mzML
   permits exactly that. Such a spectrum is valid source data — its full-source
   CSV and TSV write — and M5 gives it an explicit refusal rather than a sorted
-  copy of the measurement.
+  copy of the measurement. Where a viewport *is* admitted, what it draws is a
+  bounded projection of the complete spectrum Rust retains rather than the
+  bounded arrays one transfer carries, so zooming into a large spectrum shows the
+  source rather than the end of the prefix.
 - **VIEW-007** is M5 behind an evidence gate. The backend's `tic` query already
   declares an `mz=<mzLow>[,<mzHigh>]` window and the installed help declared a
   `sic` query, but no m/z-windowed query has ever been run here and `sic` has

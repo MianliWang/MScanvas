@@ -4874,6 +4874,19 @@ second one.
 **A current-range scope with nothing behind it.** The selected-spectrum range
 export comes after the viewport, not beside it — and only where a viewport exists.
 
+**A prefix presented as the whole source.** `MAX_SPECTRUM_POINTS` bounds one
+transfer, so a large spectrum reaches the webview as a prefix marked `truncated`.
+A viewport whose domain spans the complete source while its data stops at that
+prefix would pan into blank space over peaks Rust is holding and the export
+writes. **A bound on transfer is not permission to present a prefix as the whole
+source.** So M5.1 owns a bounded, viewport-scoped **screen projection** of the
+complete retained snapshot: reset draws a bounded overview of the whole admitted
+domain, zooming re-projects the source rather than re-zooming the overview, and a
+viewport change asks Rust to project a snapshot it already holds rather than
+re-reading the acquisition or launching ProteoWizard. The projection is a
+drawing — it may reduce, it selects real observations, it invents nothing, and
+**scientific export never derives from it.**
+
 **A viewport bought by sorting the measurement.** mzML does not require an ordered
 m/z array and nothing here sorts one: `SeriesSpec::new` refuses a non-ascending
 `x` as `SpecError::SourceNotOrdered`, `Domain::new` refuses the inverted pair its
