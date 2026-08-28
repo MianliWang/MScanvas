@@ -17,10 +17,40 @@ export const READOUT = "#chromatogram-readout";
 export const RANGE = ".chromatogram-range";
 export const AXIS_CAPTION = ".chromatogram-axis-caption";
 
+/**
+ * The selected spectrum's m/z viewport, as M5.2 made it reachable.
+ *
+ * Named here beside the chromatogram's rather than in the one spec that drives
+ * them, for the reason this file exists at all: these are the interface, and a
+ * spec that spelled a selector out again would be testing its own copy of it.
+ *
+ * `SPECTRUM_SURFACE` is deliberately not the drawing. The pointer adapters live
+ * on the wrapper because the plot itself is replaced whenever the viewport is
+ * refused, admitted or given a new spectrum; the wheel listener is on the
+ * drawing, which is why the two are separate constants rather than one.
+ */
+export const SPECTRUM_PLOT = "svg.spectrum-plot";
+export const SPECTRUM_SURFACE = "div.spectrum-viewport-plot";
+export const SPECTRUM_ACTIONS = ".spectrum-viewport-actions";
+export const SPECTRUM_RANGE = "#spectrum-viewport-range";
+export const SPECTRUM_STATUS = "#spectrum-viewport-status";
+
 /** The plot's own viewBox, which its drawing area is a fraction of. */
 const PLOT_VIEWBOX_WIDTH = 1_000;
 const PADDING_LEFT = 64;
 const PADDING_RIGHT = 12;
+
+/**
+ * The spectrum plot's own viewBox and padding, from `StickSpectrum.tsx`.
+ *
+ * The element scales to its container and sets `preserveAspectRatio="none"`, so
+ * the only way from a client x to a fraction of the drawn band is through these
+ * three numbers -- which is exactly why the component exports them to its
+ * adapter rather than letting it guess.
+ */
+const SPECTRUM_VIEWBOX_WIDTH = 1_000;
+const SPECTRUM_PADDING_LEFT = 8;
+const SPECTRUM_PADDING_RIGHT = 8;
 
 /** `buildRows` places scan n at n × 0.0125, and the seeded run below matches. */
 export const RT_STEP = 0.0125;
@@ -83,15 +113,26 @@ export async function seedARunOf(rowCount: number): Promise<void> {
  * at a plot that a 640px-tall window has scrolled out of view is a WebDriver
  * error rather than a finding.
  */
-export async function openTheViewer(
-  options: {
-    readonly width?: number;
-    readonly height?: number;
-    readonly scans?: number;
-  } = {},
-): Promise<void> {
+export interface OpenViewerOptions {
+  readonly width?: number;
+  readonly height?: number;
+  readonly scans?: number;
+  /**
+   * The answer table to install, where the default one is not the subject.
+   *
+   * `ipcTable()` takes options of its own -- a refused viewport, a retained
+   * source that outruns its transfer -- and a suite about those needs the table
+   * built with them *before* the document loads, because the boundary is a
+   * preload script. So the opener takes the table rather than the options: a
+   * caller that wants a different backend passes `ipcTable({ … })` and this
+   * function stays the one place a session is started.
+   */
+  readonly answers?: Record<string, unknown>;
+}
+
+export async function openTheViewer(options: OpenViewerOptions = {}): Promise<void> {
   await browser.setWindowSize(options.width ?? 1_366, options.height ?? 768);
-  await installIpcBoundary(ipcTable());
+  await installIpcBoundary(options.answers ?? ipcTable());
   await browser.url("/");
   const row = `li.dataset-row[data-handle="${MZML_ROW.handle}"]`;
   await browser.$(row).waitForDisplayed();
@@ -109,14 +150,20 @@ export async function openTheViewer(
   await browser.$(CHROMATOGRAM).scrollIntoView({ block: "nearest" });
 }
 
-/** The plot's own rectangle, which every pointer gesture is aimed at. */
-export async function plotBox(): Promise<Box> {
+/**
+ * The plot's own rectangle, which every pointer gesture is aimed at.
+ *
+ * Takes a selector so the same measurement serves both plots. The chromatogram
+ * remains the default, because every caller written before there was a second
+ * plot means that one.
+ */
+export async function plotBox(selector: string = PLOT): Promise<Box> {
   return browser.execute((css: string) => {
     const rect = document.querySelector(css)?.getBoundingClientRect();
     return rect === undefined
       ? { left: 0, top: 0, width: 0, height: 0 }
       : { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
-  }, PLOT) as Promise<Box>;
+  }, selector) as Promise<Box>;
 }
 
 /**
@@ -135,7 +182,7 @@ export async function plotBox(): Promise<Box> {
  * Answers the *visible* part of the plot afterwards, which is what a caller
  * wanting to put a pointer on it needs. See [[visiblePlotBox]].
  */
-export async function revealThePlot(): Promise<Box> {
+export async function revealThePlot(selector: string = PLOT): Promise<Box> {
   await browser.execute((css: string) => {
     const plot = document.querySelector(css);
     if (plot === null) {
@@ -157,8 +204,8 @@ export async function revealThePlot(): Promise<Box> {
         plot.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop;
       node.scrollTop = Math.max(0, offset - node.clientHeight / 2);
     }
-  }, PLOT);
-  return visiblePlotBox();
+  }, selector);
+  return visiblePlotBox(selector);
 }
 
 /**
@@ -176,7 +223,7 @@ export async function revealThePlot(): Promise<Box> {
  * means the plot is not visible at all, which is a real failure rather than a
  * measurement to work around.
  */
-export async function visiblePlotBox(): Promise<Box> {
+export async function visiblePlotBox(selector: string = PLOT): Promise<Box> {
   return browser.execute((css: string) => {
     const plot = document.querySelector(css);
     if (plot === null) {
@@ -208,7 +255,7 @@ export async function visiblePlotBox(): Promise<Box> {
       width: Math.max(0, right - left),
       height: Math.max(0, bottom - top),
     };
-  }, PLOT) as Promise<Box>;
+  }, selector) as Promise<Box>;
 }
 
 /** Where a fraction of the drawn width falls, in page pixels. */
@@ -282,4 +329,108 @@ export function viewerReads(calls: readonly { readonly command: string }[]): num
 /** Clicks the plot at a page position, as a press and a release. */
 export async function clickThePlotAt(x: number, y: number): Promise<void> {
   await browser.action("pointer").move({ x, y }).down().up().perform();
+}
+
+/**
+ * Commits one scan from the table, so the spectrum panel has a spectrum in it.
+ *
+ * Dispatched rather than driven, for the geometry reason the reveal cases in
+ * `viewer-r1-linked-viewer` measure: WebDriver scrolls an element it thinks is
+ * out of view to its container's *top edge* before clicking it, which in this
+ * table is underneath the sticky column header -- so the click is intercepted by
+ * the header and the failure says nothing about the application. What this
+ * helper is for is having a spectrum, not proving how a row is chosen; that is
+ * the linked viewer's own question and is asked there.
+ *
+ * Waits on the viewport's own range line rather than on the drawing. A refused
+ * spectrum draws its points and says there is no range to navigate, and a
+ * spectrum whose drawing failed draws nothing at all -- both are states this
+ * helper's callers exist to measure, so neither may be waited past.
+ */
+export async function selectTheSpectrum(position = 0): Promise<void> {
+  await browser.execute((row: number) => {
+    document
+      .querySelector(`div.spectrum-table-row[data-row-position="${String(row)}"]`)
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }, position);
+  await browser.$(SPECTRUM_PLOT).waitForExist({ timeout: 60_000 });
+  await browser.waitUntil(
+    async () =>
+      browser.execute(
+        (css: string) => (document.querySelector(css)?.textContent ?? "").length > 0,
+        SPECTRUM_RANGE,
+      ),
+    { timeout: 60_000, timeoutMsg: "the selected spectrum never reported an m/z range" },
+  );
+}
+
+/** A window, a preview, a viewer and one selected spectrum, in that order. */
+export async function openTheSpectrum(options: OpenViewerOptions = {}): Promise<void> {
+  await openTheViewer(options);
+  await selectTheSpectrum();
+}
+
+/**
+ * Scrolls the application's own owners until the spectrum plot is on screen.
+ *
+ * The spectrum panel is the third of three in a column that scrolls, and it
+ * scrolls inside itself as well, so at every window this suite measures the plot
+ * starts below the fold. Through the product's scroll owners rather than the
+ * driver's, for the reason [[revealThePlot]] gives: a plot only WebDriver can
+ * reveal is not one a user can reach.
+ */
+export async function revealTheSpectrum(): Promise<Box> {
+  return revealThePlot(SPECTRUM_PLOT);
+}
+
+/** Where a fraction of the spectrum plot's drawn band falls, in page pixels. */
+export async function spectrumPointAt(
+  fraction: number,
+): Promise<{ readonly x: number; readonly y: number }> {
+  const box = await plotBox(SPECTRUM_PLOT);
+  // The vertical coordinate comes from the *visible* part, because a driver
+  // asked to move to a point the panel has scrolled away refuses. The
+  // horizontal one comes from the layout box, because that is the mapping the
+  // adapter itself uses and nothing clips this plot sideways.
+  const visible = await visiblePlotBox(SPECTRUM_PLOT);
+  const left = box.left + (SPECTRUM_PADDING_LEFT / SPECTRUM_VIEWBOX_WIDTH) * box.width;
+  const drawn =
+    ((SPECTRUM_VIEWBOX_WIDTH - SPECTRUM_PADDING_LEFT - SPECTRUM_PADDING_RIGHT) /
+      SPECTRUM_VIEWBOX_WIDTH) *
+    box.width;
+  return {
+    x: Math.round(left + fraction * drawn),
+    y: Math.round(visible.top + visible.height / 2),
+  };
+}
+
+/** What the viewport says is on screen, verbatim. */
+export async function spectrumRangeCaption(): Promise<string> {
+  return (await browser.$(SPECTRUM_RANGE).getText()).trim();
+}
+
+/** What the viewport says it is doing, which is empty while a drawing stands. */
+export async function spectrumStatus(): Promise<string> {
+  return (await browser.$(SPECTRUM_STATUS).getText()).trim();
+}
+
+/** The m/z range on screen, as numbers, at the caption's own four decimals. */
+export async function spectrumDomain(): Promise<{ readonly low: number; readonly high: number }> {
+  const caption = await spectrumRangeCaption();
+  const [, low, high] = /Showing m\/z ([\d.]+) to ([\d.]+)/u.exec(caption) ?? [];
+  return { low: Number(low), high: Number(high) };
+}
+
+export async function spectrumSpan(): Promise<number> {
+  const domain = await spectrumDomain();
+  return domain.high - domain.low;
+}
+
+/** How many drawings of the retained spectrum this session has asked Rust for. */
+export function spectrumProjections(
+  calls: readonly { readonly command: string; readonly args: Record<string, unknown> }[],
+): readonly { readonly low: number; readonly high: number }[] {
+  return calls
+    .filter((call) => call.command === "project_selected_spectrum")
+    .map((call) => ({ low: Number(call.args["low"]), high: Number(call.args["high"]) }));
 }
