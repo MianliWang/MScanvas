@@ -70,7 +70,7 @@ use super::chromatogram::{
 };
 use super::dialog::SaveDialogFacts;
 use super::figure::{FigureRenderSettings, PngDpi, RasterFailure, encode_png, rasterize};
-use super::projection::{self, ProjectionRefusal, ScreenProjection};
+use super::projection::ProjectionRefusal;
 use super::selection::DatasetId;
 
 /// The version this file's schema answers to.
@@ -958,13 +958,18 @@ impl ScientificExportSlots {
             .cloned()
     }
 
-    /// Draws one committed m/z window of the retained spectrum this token names.
+    /// Hands back the retained spectrum this token names, for a viewport to draw.
     ///
     /// The viewport's reader of the same snapshot the export lane reads, and
-    /// deliberately **not** a second source: it resolves the token the same way,
-    /// refuses a stale one the same way, and reads the complete arrays this
-    /// session already holds. It launches nothing, opens nothing and reads no
-    /// file -- moving a viewport is not re-acquiring a spectrum.
+    /// deliberately **not** a second source: it resolves the token the same way
+    /// and refuses a stale one the same way.
+    ///
+    /// It hands back the snapshot rather than the drawing, and that is the whole
+    /// point of its shape. A snapshot is an `Arc` handle -- cloning one is a
+    /// refcount bump, never a copy of the arrays -- so the caller can let go of
+    /// this lock and then do the projection's own work, which walks the complete
+    /// spectrum. Reducing hundreds of thousands of points while holding the
+    /// slot would stall every export operation for the length of a pan.
     ///
     /// It also does not touch the export lane. A projection is a drawing, so it
     /// neither reserves the lane nor waits for one that is busy: a reader may
@@ -972,19 +977,13 @@ impl ScientificExportSlots {
     ///
     /// # Errors
     ///
-    /// Refuses a token this session no longer holds, a spectrum with no
-    /// viewport domain, and a window the retained source does not have.
-    pub(super) fn project_spectrum(
+    /// Refuses a token this session no longer holds.
+    pub(super) fn retained_spectrum_for(
         &self,
         token: &str,
-        low: f64,
-        high: f64,
-    ) -> Result<ScreenProjection, SpectrumProjectionRefusal> {
-        let snapshot = self
-            .spectrum_for(token)
-            .map_err(|_| SpectrumProjectionRefusal::Stale)?;
-        projection::project(snapshot.spectrum(), low, high)
-            .map_err(SpectrumProjectionRefusal::Source)
+    ) -> Result<SpectrumSnapshot, SpectrumProjectionRefusal> {
+        self.spectrum_for(token)
+            .map_err(|_| SpectrumProjectionRefusal::Stale)
     }
 
     /// Reads back the retained chromatogram this token names.

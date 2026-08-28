@@ -94,7 +94,13 @@ describe("selecting a spectrum", () => {
   it("clears to nothing when no spectrum is selected", () => {
     const state = run(selectA(), { type: "spectrum-cleared" });
 
-    expect(state).toEqual({ status: "none" });
+    expect(state.status).toBe("none");
+    expect(renderedMzDomain(state)).toBeNull();
+    expect(projectionWindow(state)).toBeNull();
+    // The counters carry through: clearing is not a reason to start issuing
+    // numbers an outstanding answer could still match.
+    expect(state.nextEpoch).toBeGreaterThanOrEqual(1);
+    expect(state.nextGeneration).toBeGreaterThanOrEqual(1);
     expect(spectrumViewportReducer(state, { type: "spectrum-cleared" })).toBe(state);
   });
 });
@@ -175,9 +181,67 @@ describe("a different spectrum is a different viewport context", () => {
     expect(run(next, { type: "gesture-settled", epoch: epoch ?? 0 })).toBe(next);
   });
 
+  it("cannot let the previous spectrum's answer satisfy this one's request", () => {
+    // The collision a per-spectrum counter would create: A asks, B is selected,
+    // B asks, and A's late answer arrives carrying the number B's request would
+    // have had. Both counters are monotonic across the session precisely so
+    // that number cannot be issued twice.
+    const askedForA = run(selectA(), { type: "projection-requested" });
+    const bAsked = run(
+      askedForA,
+      { type: "spectrum-selected", spectrumToken: "b", domain: admitted(10, 20) },
+      { type: "projection-requested" },
+    );
+
+    const late = run(bAsked, {
+      type: "projection-succeeded",
+      generation: 1,
+      projection: drawing(100, 500),
+    });
+
+    expect(late).toBe(bAsked);
+    expect(ready(bAsked).projection.status).toBe("loading");
+    // And the same for a late failure, which must not be surfaced as B's.
+    expect(run(bAsked, { type: "projection-failed", generation: 1, retryable: true })).toBe(
+      bAsked,
+    );
+  });
+
+  it("cannot let the previous spectrum's gesture settle into this one", () => {
+    const dragging = run(selectA(), { type: "gesture-started", domain: mzDomain(200, 300) });
+    const staleEpoch = activeMzGestureEpoch(dragging) ?? 0;
+    const bDragging = run(
+      dragging,
+      { type: "spectrum-selected", spectrumToken: "b", domain: admitted(10, 20) },
+      { type: "gesture-started", domain: mzDomain(12, 18) },
+    );
+
+    expect(activeMzGestureEpoch(bDragging)).not.toBe(staleEpoch);
+    expect(run(bDragging, { type: "gesture-settled", epoch: staleEpoch })).toBe(bDragging);
+  });
+
+  it("keeps the counters monotonic through a cleared selection", () => {
+    const askedForA = run(selectA(), { type: "projection-requested" });
+    const cleared = run(askedForA, { type: "spectrum-cleared" });
+    const bAsked = run(
+      cleared,
+      { type: "spectrum-selected", spectrumToken: "b", domain: admitted(10, 20) },
+      { type: "projection-requested" },
+    );
+
+    expect(
+      run(bAsked, {
+        type: "projection-succeeded",
+        generation: 1,
+        projection: drawing(100, 500),
+      }),
+    ).toBe(bAsked);
+  });
+
   it("supersedes a projection that was outstanding for the previous spectrum", () => {
     const loading = run(selectA(), { type: "projection-requested" });
-    const generation = ready(loading).projection.status === "loading" ? 1 : 0;
+    const outstanding = ready(loading).projection;
+    const generation = outstanding.status === "loading" ? outstanding.generation : 0;
 
     const next = run(loading, {
       type: "spectrum-selected",

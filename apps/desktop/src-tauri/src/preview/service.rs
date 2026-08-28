@@ -2187,10 +2187,18 @@ impl PreviewService {
         low: f64,
         high: f64,
     ) -> Result<SpectrumProjectionDto, PreviewErrorDto> {
-        let projection = self
+        // The slot is held only long enough to resolve the token. A snapshot is
+        // an `Arc` handle, so taking one costs a refcount bump -- and the work
+        // below walks the complete spectrum, which must not happen while every
+        // export operation waits behind it.
+        let snapshot = self
             .spectrum_export_slot()
-            .project_spectrum(token, low, high)
+            .retained_spectrum_for(token)
             .map_err(Self::projection_refusal)?;
+        let projection =
+            projection::project(snapshot.spectrum(), low, high).map_err(|refusal| {
+                Self::projection_refusal(SpectrumProjectionRefusal::Source(refusal))
+            })?;
         Ok(SpectrumProjectionDto {
             low: projection.window().low(),
             high: projection.window().high(),

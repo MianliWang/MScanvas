@@ -189,14 +189,36 @@ export type MzProjectionState =
  * the scientific contract cannot establish a domain over this spectrum without
  * altering it. The spectrum is still selected and still exportable as data.
  */
+/**
+ * The two counters, and why they live on every state rather than on `ready`.
+ *
+ * **They are monotonic across the session, never per spectrum.** A gesture epoch
+ * and a projection generation exist to tell a late answer from a current one,
+ * and restarting them when the selection changes is precisely how a late answer
+ * about spectrum A comes to match a request issued for spectrum B — after which
+ * A's data is drawn under B's axes, which is the defect this whole contract
+ * exists to prevent.
+ *
+ * `interactionState.ts` learned the same thing about its own two counters and
+ * carries them across a preview change for the same reason. This carries them
+ * across a spectrum change, including through `none` and `refused`, so there is
+ * no state in which the sequence restarts.
+ */
+interface ViewportCounters {
+  /** The epoch the next gesture will be given. Never reused. */
+  readonly nextEpoch: number;
+  /** The generation the next projection request will be given. Never reused. */
+  readonly nextGeneration: number;
+}
+
 export type SpectrumViewportState =
-  | { readonly status: "none" }
-  | {
+  | ({ readonly status: "none" } & ViewportCounters)
+  | ({
       readonly status: "refused";
       readonly spectrumToken: string;
       readonly reason: SpectrumViewportDomain & { readonly state: "refused" };
-    }
-  | {
+    } & ViewportCounters)
+  | ({
       readonly status: "ready";
       /** Which retained spectrum this viewport belongs to. */
       readonly spectrumToken: string;
@@ -205,11 +227,13 @@ export type SpectrumViewportState =
       readonly committed: MzDomain | null;
       readonly gesture: MzGesture | null;
       readonly projection: MzProjectionState;
-      readonly nextEpoch: number;
-      readonly nextGeneration: number;
-    };
+    } & ViewportCounters);
 
-export const initialSpectrumViewportState: SpectrumViewportState = { status: "none" };
+export const initialSpectrumViewportState: SpectrumViewportState = {
+  status: "none",
+  nextEpoch: 1,
+  nextGeneration: 1,
+};
 
 export type SpectrumViewportEvent =
   /**
@@ -262,7 +286,16 @@ export function spectrumViewportReducer(
       return selectSpectrum(state, event.spectrumToken, event.domain);
 
     case "spectrum-cleared":
-      return state.status === "none" ? state : initialSpectrumViewportState;
+      return state.status === "none"
+        ? state
+        : {
+            status: "none",
+            // Carried, not restarted: an answer outstanding for the spectrum
+            // just cleared must not match a request issued after the next one
+            // is selected.
+            nextEpoch: state.nextEpoch,
+            nextGeneration: state.nextGeneration,
+          };
 
     default:
       break;
@@ -383,8 +416,12 @@ function selectSpectrum(
   if (state.status !== "none" && state.spectrumToken === spectrumToken) {
     return state;
   }
+  // Both counters carry across, and that is what makes a late answer about the
+  // previous spectrum unmatchable here: its generation was issued before this
+  // spectrum's first request and can never equal one issued after it.
+  const { nextEpoch, nextGeneration } = state;
   if (domain.state === "refused") {
-    return { status: "refused", spectrumToken, reason: domain };
+    return { status: "refused", spectrumToken, reason: domain, nextEpoch, nextGeneration };
   }
   return {
     status: "ready",
@@ -394,11 +431,8 @@ function selectSpectrum(
     committed: null,
     gesture: null,
     projection: { status: "idle" },
-    // Both counters start fresh with the spectrum: an outstanding request for
-    // the previous one can never match a generation issued for this one, so a
-    // late answer about another spectrum cannot become this one's drawing.
-    nextEpoch: 1,
-    nextGeneration: 1,
+    nextEpoch,
+    nextGeneration,
   };
 }
 
