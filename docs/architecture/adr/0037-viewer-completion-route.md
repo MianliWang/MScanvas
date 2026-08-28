@@ -961,26 +961,115 @@ installation, whether an acceptable XIC source exists and which query it is.
 **Owning authority.** A spike document under `docs/spikes/`, and the capability
 contract in `crates/proteowizard`.
 **User-visible result.** None.
-**Major evidence.** Complete help from the installed build captured for both
-`tic` and `sic`, including `sic`'s exact signature, which this repository has
-never held; `tic mz=<low>,<high>` executed on a representative acquisition and
-on the pinned synthetic fixture; the output's shape, ordering, completeness
-against `MAX_PREVIEW_TEXT_BYTES`, behaviour for a window containing no signal,
-and whether its scan identities reconcile with the spectrum table's; the
-aggregation the pinned ProteoWizard source actually performs inside the window,
-read from the pinned commit rather than inferred.
+**Major evidence.** A **candidate pipeline**, not two queries treated
+differently:
+
+```text
+discover live candidate -> read its exact installed signature
+  -> classify: applicable, or excluded by that signature
+  -> measure every still-applicable candidate
+  -> compare the scientific and runtime evidence
+  -> admit one source, or record an evidence-complete refusal
+```
+
+Concretely: complete help captured from the installed build for both `tic` and
+`sic`, including `sic`'s exact signature, which this repository has never held;
+each candidate then classified as below; and **every candidate still classified
+applicable measured to one standard** — `tic mz=<low>,<high>` and any applicable
+`sic` form alike — on a representative acquisition and on the pinned synthetic
+fixture. For each measured candidate: the invocation and accepted parameter form;
+m/z-window semantics; output shape and schema; retention-time values and
+ordering; whether its scan identities reconcile with the spectrum table's;
+MS-level behaviour; the aggregation actually performed, read from the pinned
+ProteoWizard commit rather than inferred; behaviour for a window containing no
+signal; duplicate-retention-time behaviour where relevant; completeness against
+`MAX_PREVIEW_TEXT_BYTES`; malformed and error behaviour; and repeatability
+sufficient for the use the route intends.
+
+An exit code of 0 is not evidence of correctness — the M0 spike already recorded
+that `msaccess` exits 0 for an unavailable spectrum and for unsupported input —
+semantics are never inferred from the name `sic`, and no output is reinterpreted
+to make it fit the product.
 **Hard non-goals.** No production XIC. No product semantics chosen because a
 library supports them. No frontend work.
 **Predecessor.** M5.0. Independent of M5.1–M5.3, so it may run alongside them.
 **Exit.** One of two recorded outcomes, and the outcome selects the branch.
 `XIC_SOURCE_ADMITTED`: a named query with a named aggregation, a named ordering,
 a named completeness bound and a capability requirement that can gate it.
-`XIC_SOURCE_REFUSED`: a recorded refusal saying an acceptable source was not
-established, with the measurement that refused it. On refusal XIC leaves M5 by
-the rule below — **it is never approximated**, and the audit's refusals stand:
-no base-peak-window substitute, no reconstruction from the incomplete frontend
-arrays, and no one-backend-process-per-spectrum workaround over the measured
-36,319-spectrum acquisition.
+`XIC_SOURCE_REFUSED`: an **evidence-complete** refusal, which means all six of:
+`tic mz=` received the required measured investigation; every candidate the live
+installed backend surfaced was classified; every candidate still plausibly
+applicable was measured to that same standard; every unmeasured candidate carries
+an explicit signature-based exclusion; no pseudo-XIC or approximation was
+substituted; and the record says what was measured, what was excluded and why.
+**No candidate may be left between "signature captured" and "milestone
+capability refused".** On refusal XIC leaves M5 by the rule below — **it is never
+approximated**, and the audit's refusals stand: no base-peak-window substitute,
+no reconstruction from the incomplete frontend arrays, and no
+one-backend-process-per-spectrum workaround over the measured 36,319-spectrum
+acquisition.
+
+#### Closing a candidate: measured, or excluded by its own signature
+
+The defect this repairs let `tic mz=` be measured, `sic`'s signature merely
+captured, and a refusal recorded — leaving a query whose name means *selected ion
+chromatogram* untested while VIEW-007 was deferred. **The rule:**
+
+> `XIC_SOURCE_REFUSED` may be recorded only once every live candidate that
+> remains plausibly capable according to its installed signature has either been
+> measured to the required scientific and runtime standard, or been excluded by
+> evidence showing that its signature alone proves it cannot satisfy the
+> contract.
+
+This is not *execute everything help prints*. It is conditional on the signature
+still being plausibly applicable, and it applies to `sic` exactly as to any
+candidate a later audit turns up.
+
+**`SIC_CANDIDATE_APPLICABLE`** — the installed signature still plausibly
+describes a query that could answer the XIC contract. It must then be executed
+and measured before a refusal is permitted, at the standard above.
+
+**`SIC_CANDIDATE_EXCLUDED_BY_SIGNATURE`** — the signature itself settles it. The
+record must state the exact installed signature observed, the XIC requirement the
+candidate would have to satisfy, the feature or limitation in that signature
+making it inapplicable, and why execution could not change that conclusion. The
+kind of thing that can count, only where the signature actually supports it: the
+required m/z-window input cannot be expressed; the query plainly describes a
+different quantity; the required scan or MS-level scope cannot be represented;
+the required result identity cannot be produced. **None of that may be
+invented**, and an ambiguous signature is `SIC_CANDIDATE_APPLICABLE` and gets
+measured.
+
+**What is never an exclusion.** That MSCanvas has no `sic` parser; that this
+repository holds no signature constant for it; that `PreviewOperation::Tic` does
+not expose it; that no production route invokes it. Those are facts about this
+application, not evidence about the installed backend's capability. *Not
+implemented here*, *not parsed here* and *not yet measured* are none of them
+*not supported there*.
+
+**Five states, kept apart** so a later re-evaluation against another build can
+read the record: candidate absent from the installed backend; present but
+excluded by signature; present and plausible but not yet measured; measured and
+rejected; measured and admitted. They do not collapse into one `unsupported`
+bucket.
+
+**A conclusion belongs to the build that produced it.** Absence of `sic` in one
+build does not generalise to all builds, success in one does not generalise
+either, and signature semantics do not carry across builds without evidence.
+M5.4 records the provider identity the repository's existing ProteoWizard
+evidence conventions already use rather than inventing a parallel version model.
+
+**And measurement does not oblige admission.** A measured `sic` may still be
+rejected; admission needs evidence supporting a contract M5.5 can implement
+without approximation. If neither `tic mz=` nor any remaining applicable
+candidate satisfies it, refusal is the right answer. What changed is only **how
+much evidence a refusal must close**, never that refusal is available.
+
+**And "not measured" is not an answer at all.** Where the execution environment
+lacks the real ProteoWizard installation or the representative source an
+applicable candidate needs, M5.4 records neither outcome: it reports an evidence
+blocker and stops. Fixtures can prove parsing and deterministic behaviour later;
+they cannot stand in for a live capability measurement.
 
 ### M5.5 — the XIC model and runtime
 
@@ -1329,6 +1418,13 @@ spike and nothing else: no signature, no output shape, no ordering, no
 aggregation, no measurement. This is an evidence question first and a product
 decision only if M5.4 finds both usable.
 
+**M5.4 is what makes option (b) answerable.** Its candidate pipeline classifies
+`sic` from its installed signature and **measures it wherever that signature
+leaves it plausibly applicable**, so the output evidence this decision asks for
+is evidence the route actually collects. Nothing here presumes either outcome:
+`sic` may prove better, may prove unusable, or may be excluded by its signature
+before it is ever run.
+
 **Options.** (a) `tic` with `mz=`, reusing the existing parser and gate; (b)
 `sic`, if its signature and output prove to describe an XIC more directly; (c)
 neither, if the measurement refuses both.
@@ -1340,7 +1436,9 @@ exit criterion 3.
 
 **Recommended default.** Do not choose before M5.4. If both prove usable, prefer
 (a) for the reason the repository already applies elsewhere: the narrower change
-against proved code.
+against proved code. **This stays `USER_DECISION_REQUIRED`** — the repair to
+M5.4's evidence gate settles how a candidate is closed, not which candidate
+wins.
 
 ### XIC-D5 — where the XIC is drawn, and against which value axis
 
