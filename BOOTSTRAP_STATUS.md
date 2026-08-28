@@ -5204,28 +5204,37 @@ wording is untouched.
 
 ### What the evidence establishes
 
-**Frontend: 1,259 tests**, up from 1,093. **Rust: 1,303, unchanged** — no Rust
+**Frontend: 1,267 tests**, up from 1,093. **Rust: 1,303, unchanged** -- no Rust
 file was edited, which is the claim this slice most wanted to be able to make.
-**Rendered browser QA: 162 tests across seven spec files**, 36 of them this
+**Rendered browser QA: 165 tests across seven spec files**, 39 of them this
 slice's, covering both availability states at 1920x1080, 1366x768 and 960x640.
+**Real-Tauri QA: 46 tests across seven spec files**, nine of them this slice's,
+with `project_selected_spectrum` left live against the real process.
 
-**Thirteen mutations**, applied one at a time and restored byte-for-byte with the
-hash checked after each. Twelve failed the check aimed at them: a wheel always
+**Eighteen mutations**, applied one at a time and restored byte-for-byte with the
+hash checked after each. Seventeen failed the check aimed at them: a wheel always
 claimed and a wheel never claimed; a control offered where the reducer would
 render nothing new; the previous drawing kept under a newly committed range; a
 drawing asked for on every pointer frame; a stale drawing accepted; a refused
 viewport taking a domain from the transferred arrays; a gesture's range drawn as
 though committed; the drawing's own points deciding the range it is drawn over; a
 pan accumulated from frame deltas; a second pointer taking the press from the
-first; and a press keeping its window across a spectrum change. The thirteenth,
-recording a failure message the contract refused, survived and is recorded as an
-**equivalent mutant**: the message is read back by the contract's own generation,
-so a stale one could not reach the screen even if it were stored.
+first; a press keeping its window across a spectrum change; both limits removed
+so the candidate is the raw arithmetic again, and the narrow limit put back the
+way that stops one step short; the caption reading Rust's reduction flag; a
+failed range captioned as one still on its way; and an empty plot claiming every
+intensity is the same. The eighteenth, recording a failure message the contract
+refused, survived and is recorded as an **equivalent mutant**: the message is
+read back by the contract's own generation, so a stale one could not reach the
+screen even if it were stored.
 
-**Two real defects were found by that evidence rather than by review**, and both
-are repaired above: the full-range rounding that left `Zoom out` enabled and
-swallowed the wheel, and a press held across a spectrum change starting a gesture
-on the new spectrum at the old one's range.
+**Four real defects were found by evidence rather than by reading**, and all are
+repaired above: the full-range rounding that left `Zoom out` enabled and
+swallowed the wheel; a press held across a spectrum change starting a gesture on
+the new spectrum at the old one's range; a caption claiming every observation was
+drawn when this plot's own 900-column reduction had just dropped some; and a
+failed range captioned as a drawing still on its way, which for a non-retryable
+refusal never went away.
 
 ### Not built, and by design
 

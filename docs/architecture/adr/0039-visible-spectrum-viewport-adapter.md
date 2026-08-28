@@ -262,37 +262,45 @@ from a spectrum click would each be new product semantics.
 
 ## Evidence
 
-**Frontend tests: 1,259**, up from 1,093. One hundred and sixty-six over the new
-surface, in three suites. The planner's 88 hold one rule across six viewport
-states and every wheel input the arithmetic can and cannot read. The component's
-67 assert, of every wheel and every key, the two facts that are not the same
-failure — whether the domain moved, and whether the browser event was claimed —
-and cover the drag's slop threshold, its single epoch, its computation from the
-press origin, its settle, its cancel, a secondary pointer that replaces nothing,
-a wheel arriving mid-drag that is neither claimed nor scheduled, a press held
-across a spectrum change that moves nothing, every asynchronous state including
-the successful empty window and the proof that it reads as none of loading,
-failure or refusal, and a committed window whose old drawing is gone rather than
-shown beneath it. The binding's 11 are about the wiring a single-spectrum test
-cannot see: stale success, stale failure, two commits before the first answer, a
-selection that changes while a request is outstanding, a refused spectrum that
-asks for nothing, a redelivery that asks again for nothing, and an export that a
-committed window leaves alone.
+**Frontend tests: 1,267**, up from 1,093. One hundred and seventy over the new
+surface, in three suites, plus four over the drawing itself. The planner's 90
+hold one rule across six viewport states and every wheel input the arithmetic can
+and cannot read, and two of them are the limits above, over the domains measured
+to round the wrong way. The component's 67 assert, of every wheel and every key,
+the two facts that are not the same failure — whether the domain moved, and
+whether the browser event was claimed — and cover the drag's slop threshold, its
+single epoch, its computation from the press origin *against the clamp*, its
+settle, its cancel, a secondary pointer that replaces nothing, a wheel arriving
+mid-drag that is neither claimed nor scheduled, a press held across a spectrum
+change that moves nothing, every asynchronous state including the successful
+empty window and the proof that it reads as none of loading, failure or refusal,
+and a committed window whose old drawing is gone rather than shown beneath it.
+The binding's 13 are about the wiring a single-spectrum test cannot see: stale
+success, stale failure, two commits before the first answer, a selection that
+changes while a request is outstanding, a refused spectrum that asks for nothing,
+a redelivery that asks again for nothing, one bounded drawing kept however far
+the reader pans, a window asked for from Rust's domain rather than from the
+arrays this document holds, and an export that a committed window leaves alone.
 
-**Thirteen mutations**, applied one at a time and restored byte-for-byte, with
-the hash checked after each. Twelve failed the check aimed at them: a wheel
+**Eighteen mutations**, applied one at a time and restored byte-for-byte, with
+the hash checked after each. Seventeen failed the check aimed at them: a wheel
 always claimed and a wheel never claimed; a control offered where the reducer
 would render nothing new; the previous drawing kept under a newly committed
 range; a drawing asked for on every pointer frame; a stale drawing accepted; a
 refused viewport taking a domain from the transferred arrays; a gesture's range
 drawn as though committed; the drawing's own points deciding the range it is
 drawn over; a pan accumulated from frame deltas; a second pointer taking the
-press from the first; and a press keeping its window across a spectrum change.
-The thirteenth — recording a failure's message the contract refused — survived
-and is reported as an **equivalent mutant**: the message is read back by the
-contract's own generation, so a stale one could not be shown even if it were
-stored, and the guard beside it keeps the stored value truthful rather than the
-screen.
+press from the first; a press keeping its window across a spectrum change; both
+limits removed so the candidate is the raw arithmetic again, and the narrow limit
+put back the way that stops one step short; the caption reading Rust's reduction
+flag; a failed range captioned as one still on its way; and an empty plot
+claiming every intensity is the same.
+
+The eighteenth — recording a failure's message the contract refused — survived
+and is reported as an **equivalent mutant** rather than a coverage gap: the
+message is read back by the contract's own generation, so a stale one could not
+be shown even if it were stored, and the guard beside it keeps the stored value
+truthful rather than the screen.
 
 **Rust tests: 1,303, unchanged.** No Rust file was edited. That is the claim this
 slice most wanted to be able to make.
