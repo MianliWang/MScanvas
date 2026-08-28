@@ -310,9 +310,12 @@ describe("the m/z viewport against the real projection boundary", () => {
       expect(await rangeCaption()).toBe(
         `Showing m/z ${SEEDED_MZ_LOW.toFixed(4)} to ${(2_000).toFixed(4)} (full range)`,
       );
-      // Nothing is drawn beneath it, and no retry is offered for a refusal that
-      // asking again cannot change.
-      expect(await drawingCaption()).toContain("Nothing is drawn here yet");
+      // Nothing is drawn beneath it, and the caption says the range *failed*
+      // rather than that its drawing is still on its way -- which for a refusal
+      // asking again cannot change would be a sentence that never went away.
+      expect(await drawingCaption()).toContain("This range could not be drawn.");
+      expect(await drawingCaption()).not.toContain("Waiting for the drawing");
+      // And no retry is offered for it.
       expect(
         await browser.execute(() =>
           [...document.querySelectorAll("button")].some(
@@ -363,7 +366,7 @@ describe("the m/z viewport against the real projection boundary", () => {
           ),
         ),
       ).toBe(true);
-      expect(await drawingCaption()).toContain("Nothing is drawn here yet");
+      expect(await drawingCaption()).toContain("This range could not be drawn.");
     });
   });
 
