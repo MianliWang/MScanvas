@@ -39,6 +39,7 @@ import type {
   ExportedFigure,
   FigureSettings,
   SpectrumCopyOutcome,
+  SpectrumProjection,
   SpectrumExportOutcome,
   SpectrumRow,
   WorkspaceAddOutcome,
@@ -306,6 +307,15 @@ export function buildSpectrum(index: number, pointCount: number): SelectedSpectr
     // another is exercising two different tokens rather than one that happens
     // to work for both.
     exportToken: `token-${index}`,
+    // The domain Rust would admit for these points: the first and last of the
+    // ordered array, which is what the export renderer's own domain is. Derived
+    // here rather than fixed, so a fixture cannot describe a viewport its
+    // spectrum does not span.
+    viewportDomain: {
+      state: "admitted",
+      low: mz[0] ?? 0,
+      high: mz[pointCount - 1] ?? 0,
+    },
     scanNumber: index + 1,
     identifiers: [`controllerType=0 controllerNumber=1 scan=${index + 1}`],
     msLevel: 2,
@@ -485,6 +495,13 @@ export interface SpectrumCopyRequest {
   readonly settings: FigureSettings;
 }
 
+/** One screen projection, as it reached the boundary. */
+export interface SpectrumProjectionRequest {
+  readonly exportToken: string;
+  readonly low: number;
+  readonly high: number;
+}
+
 /** One chromatogram export the fake was asked for. */
 export interface ChromatogramExportRequest {
   readonly exportToken: string;
@@ -591,6 +608,17 @@ export interface FakePreviewApiOptions {
     exportToken: string,
     settings: FigureSettings,
   ) => Promise<SpectrumCopyOutcome>;
+  /**
+   * What a screen projection answers with.
+   *
+   * Defaults to a two-point drawing of exactly the window asked for. A test
+   * about an empty window, a reduction or a refusal supplies its own.
+   */
+  readonly spectrumProjection?: (
+    exportToken: string,
+    low: number,
+    high: number,
+  ) => Promise<SpectrumProjection>;
   /**
    * What a chromatogram export answers with.
    *
@@ -748,6 +776,8 @@ export interface FakePreviewApi extends PreviewApi {
   readonly spectrumExportRequests: SpectrumExportRequest[];
   /** Every `Copy plot` this fake was asked for, in order. */
   readonly spectrumCopyRequests: SpectrumCopyRequest[];
+  /** Every screen projection this fake was asked for, in order. */
+  readonly spectrumProjectionRequests: SpectrumProjectionRequest[];
   /** Every chromatogram export this fake was asked for, in order. */
   readonly chromatogramExportRequests: ChromatogramExportRequest[];
   /** Every chromatogram `Copy plot` this fake was asked for, in order. */
@@ -1004,6 +1034,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   const diagnosticsExportRequests: string[] = [];
   const spectrumExportRequests: SpectrumExportRequest[] = [];
   const spectrumCopyRequests: SpectrumCopyRequest[] = [];
+  const spectrumProjectionRequests: SpectrumProjectionRequest[] = [];
   const chromatogramExportRequests: ChromatogramExportRequest[] = [];
   const chromatogramCopyRequests: ChromatogramCopyRequest[] = [];
   const linkedFigureRequests: LinkedFigureRequest[] = [];
@@ -1194,6 +1225,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   const fake: FakePreviewApi = {
     spectrumExportRequests,
     spectrumCopyRequests,
+    spectrumProjectionRequests,
     chromatogramExportRequests,
     chromatogramCopyRequests,
     linkedFigureRequests,
@@ -1514,6 +1546,24 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         status: "copied",
         figure: fakeCopiedFigure(settings),
         pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+      };
+    },
+    // Modelled as Rust behaves: the window is drawn from the complete spectrum
+    // Rust retained, so a window past the end of the transferred prefix still
+    // carries points. Nothing here reduces -- a fake that reduced would be
+    // asserting the real rule rather than exercising the caller.
+    projectSelectedSpectrum: async (exportToken, low, high) => {
+      spectrumProjectionRequests.push({ exportToken, low, high });
+      if (options.spectrumProjection !== undefined) {
+        return options.spectrumProjection(exportToken, low, high);
+      }
+      return {
+        low,
+        high,
+        mz: [low, high],
+        intensity: [1, 2],
+        sourcePoints: 2,
+        reduced: false,
       };
     },
     // Modelled as Rust behaves: the token names the run Rust retained, the

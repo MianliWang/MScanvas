@@ -70,6 +70,7 @@ use super::chromatogram::{
 };
 use super::dialog::SaveDialogFacts;
 use super::figure::{FigureRenderSettings, PngDpi, RasterFailure, encode_png, rasterize};
+use super::projection::{self, ProjectionRefusal, ScreenProjection};
 use super::selection::DatasetId;
 
 /// The version this file's schema answers to.
@@ -189,16 +190,39 @@ impl SpectrumExportFormat {
     }
 }
 
+/// Why a viewport could not be given a drawing.
+///
+/// Two layers, kept apart because they are answered by different owners and
+/// mean different things to a reader. `Stale` is this session's lifecycle
+/// saying the spectrum that was asked about is not the one it holds any more --
+/// select it again. `Source` is the scientific contract's own verdict about the
+/// spectrum and the window, which selecting again would not change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SpectrumProjectionRefusal {
+    /// The named spectrum is not what this session retains.
+    Stale,
+    /// The spectrum or the window itself was refused.
+    Source(ProjectionRefusal),
+}
+
 /// One session-scoped name for one retained spectrum.
 ///
 /// Opaque on purpose. It is a counter, it names nothing outside this session,
 /// and it is meaningless to anything that did not receive it from this slot --
-/// so a webview holding one has been told which spectrum it may export and
-/// nothing whatever about where that spectrum came from.
+/// so a webview holding one has been told which spectrum this session retains
+/// and nothing whatever about where that spectrum came from.
+///
+/// **One identity, two readers.** The scientific export lane resolves it to
+/// write a file, and the viewport resolves it to project a window of the same
+/// retained spectrum onto a screen. Both are readings of one snapshot rather
+/// than two sources, which is why this is named for what it identifies instead
+/// of for the first thing that consumed it. The wire field is still
+/// `exportToken`: renaming it would churn every command that already carries
+/// one without making anything truer, and what it names has not changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct SpectrumExportToken(u64);
+pub(super) struct RetainedSpectrumToken(u64);
 
-impl SpectrumExportToken {
+impl RetainedSpectrumToken {
     /// The form that crosses to the webview.
     ///
     /// A string rather than a number, because a JSON number is an `f64` on the
@@ -223,7 +247,7 @@ impl SpectrumExportToken {
 /// the moment a newer selection arrives.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct SpectrumSnapshot {
-    token: SpectrumExportToken,
+    token: RetainedSpectrumToken,
     /// Which dataset this spectrum was read from.
     ///
     /// The minimum needed to answer one question: when rows are removed, is
@@ -236,7 +260,7 @@ pub(super) struct SpectrumSnapshot {
 }
 
 impl SpectrumSnapshot {
-    pub(super) const fn token(&self) -> SpectrumExportToken {
+    pub(super) const fn token(&self) -> RetainedSpectrumToken {
         self.token
     }
 
@@ -674,7 +698,7 @@ impl ScientificExportSlots {
         owner: DatasetId,
         spectrum: SelectedSpectrumResult,
     ) -> SpectrumSnapshot {
-        let token = SpectrumExportToken(self.issue_token());
+        let token = RetainedSpectrumToken(self.issue_token());
         let snapshot = SpectrumSnapshot {
             token,
             owner,
@@ -808,7 +832,7 @@ impl ScientificExportSlots {
     /// Read before a spectrum read begins so the revocation afterwards can tell
     /// "the read I am revoking for is still the current one" from "something
     /// newer arrived while I was waiting".
-    pub(super) fn current_token(&self) -> Option<SpectrumExportToken> {
+    pub(super) fn current_token(&self) -> Option<RetainedSpectrumToken> {
         self.spectrum.as_ref().map(|snapshot| snapshot.token)
     }
 
@@ -823,7 +847,7 @@ impl ScientificExportSlots {
     /// would fail, as stale, for a reason nothing on screen explains.
     ///
     /// Answers whether it dropped anything.
-    pub(super) fn forget_if_current(&mut self, expected: Option<SpectrumExportToken>) -> bool {
+    pub(super) fn forget_if_current(&mut self, expected: Option<RetainedSpectrumToken>) -> bool {
         let Some(expected) = expected else {
             return false;
         };
@@ -926,12 +950,41 @@ impl ScientificExportSlots {
     /// session no longer has, and the honest answer is that it is gone rather
     /// than a file of whatever is current now.
     fn spectrum_for(&self, token: &str) -> Result<SpectrumSnapshot, BeginExportRefusal> {
-        let requested = SpectrumExportToken::from_wire(token).ok_or(BeginExportRefusal::Stale)?;
+        let requested = RetainedSpectrumToken::from_wire(token).ok_or(BeginExportRefusal::Stale)?;
         self.spectrum
             .as_ref()
             .filter(|snapshot| snapshot.token == requested)
             .ok_or(BeginExportRefusal::Stale)
             .cloned()
+    }
+
+    /// Draws one committed m/z window of the retained spectrum this token names.
+    ///
+    /// The viewport's reader of the same snapshot the export lane reads, and
+    /// deliberately **not** a second source: it resolves the token the same way,
+    /// refuses a stale one the same way, and reads the complete arrays this
+    /// session already holds. It launches nothing, opens nothing and reads no
+    /// file -- moving a viewport is not re-acquiring a spectrum.
+    ///
+    /// It also does not touch the export lane. A projection is a drawing, so it
+    /// neither reserves the lane nor waits for one that is busy: a reader may
+    /// pan a spectrum while a file of it is being written.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a token this session no longer holds, a spectrum with no
+    /// viewport domain, and a window the retained source does not have.
+    pub(super) fn project_spectrum(
+        &self,
+        token: &str,
+        low: f64,
+        high: f64,
+    ) -> Result<ScreenProjection, SpectrumProjectionRefusal> {
+        let snapshot = self
+            .spectrum_for(token)
+            .map_err(|_| SpectrumProjectionRefusal::Stale)?;
+        projection::project(snapshot.spectrum(), low, high)
+            .map_err(SpectrumProjectionRefusal::Source)
     }
 
     /// Reads back the retained chromatogram this token names.

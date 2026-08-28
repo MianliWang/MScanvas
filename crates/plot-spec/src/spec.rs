@@ -672,6 +672,37 @@ pub struct SeriesSpec {
     y: Vec<f64>,
 }
 
+/// The coordinate rules every measurement series obeys, over borrowed slices.
+///
+/// Factored out of [`SeriesSpec::new`]'s own validation, and called by it, so
+/// there is exactly one answer to "may this source be drawn". A caller that
+/// only needs to *ask* the question -- the spectrum viewport, deciding whether
+/// an authoritative m/z domain exists for a retained spectrum -- reaches the
+/// same verdict without copying the arrays to find out, and cannot drift into a
+/// second, more permissive reading of the same rule.
+///
+/// The rules, unchanged and in the order the constructor has always applied
+/// them: the two axes are the same length; every coordinate is finite; and the
+/// domain axis is non-decreasing. Negative `y` is accepted and preserved --
+/// intensity after baseline subtraction is legitimately negative.
+///
+/// # Errors
+///
+/// [`SpecError::AxisLengthMismatch`], [`SpecError::NotFinite`] or
+/// [`SpecError::SourceNotOrdered`], exactly as the constructor answers them.
+pub fn validate_measurement_coordinates(x: &[f64], y: &[f64]) -> Result<(), SpecError> {
+    if x.len() != y.len() {
+        return Err(SpecError::AxisLengthMismatch);
+    }
+    if x.iter().chain(y.iter()).any(|value| !value.is_finite()) {
+        return Err(SpecError::NotFinite);
+    }
+    if x.windows(2).any(|pair| pair[0] > pair[1]) {
+        return Err(SpecError::SourceNotOrdered);
+    }
+    Ok(())
+}
+
 impl SeriesSpec {
     #[must_use]
     pub const fn id(&self) -> &Label {
@@ -719,20 +750,7 @@ impl SeriesSpec {
 
     fn validate(&self) -> Result<(), SpecError> {
         self.id.validate()?;
-        if self.x.len() != self.y.len() {
-            return Err(SpecError::AxisLengthMismatch);
-        }
-        if self
-            .x
-            .iter()
-            .chain(self.y.iter())
-            .any(|value| !value.is_finite())
-        {
-            return Err(SpecError::NotFinite);
-        }
-        if self.x.windows(2).any(|pair| pair[0] > pair[1]) {
-            return Err(SpecError::SourceNotOrdered);
-        }
+        validate_measurement_coordinates(&self.x, &self.y)?;
         // Strictly smaller, which is what the error has always been called. A
         // reduction that removed nothing is a `FullSource` series wearing the
         // other label, and the figure says so in words: "reduced to 5" from 5

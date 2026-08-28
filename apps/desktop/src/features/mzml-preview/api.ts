@@ -20,6 +20,7 @@ import type {
   SpectrumExportFormat,
   FigureSettings,
   SpectrumCopyOutcome,
+  SpectrumProjection,
   SpectrumExportOutcome,
   WorkspaceAddResult,
   WorkspaceConversionUpdate,
@@ -247,6 +248,32 @@ export interface PreviewApi {
   ): Promise<SpectrumCopyOutcome>;
 
   /**
+   * Draws one committed m/z window of the selected spectrum.
+   *
+   * The viewport's read of the same retained spectrum the export commands name,
+   * and the answer to a question this side cannot settle for itself: `mz` and
+   * `intensity` in the selected-spectrum payload are bounded for transfer, so a
+   * window beyond that prefix has to be drawn from the complete arrays Rust
+   * kept. Panning past the end of what was transferred must show the source
+   * rather than blank space.
+   *
+   * What comes back is a **bounded screen projection** -- real measurements,
+   * possibly fewer of them than the window holds, never an invented one -- and
+   * it is never what a scientific export is taken from.
+   *
+   * Launches no process and re-reads no acquisition: moving a viewport is not
+   * re-acquiring a spectrum. It takes no export lane either, so a reader may
+   * pan while a file is being written. A token from an earlier selection is
+   * refused rather than answered with whichever spectrum is loaded now, and a
+   * window this spectrum does not have is refused rather than clamped.
+   */
+  projectSelectedSpectrum(
+    exportToken: string,
+    low: number,
+    high: number,
+  ): Promise<SpectrumProjection>;
+
+  /**
    * Exports the loaded run's chromatogram as one figure or one data document.
    *
    * Takes the opaque token the preview carried, the range to cover and the
@@ -404,6 +431,8 @@ export const tauriPreviewApi: PreviewApi = {
     ),
   copySelectedSpectrumPlot: (exportToken, settings) =>
     invoke<SpectrumCopyOutcome>("copy_selected_spectrum_plot", { exportToken, settings }),
+  projectSelectedSpectrum: (exportToken, low, high) =>
+    invoke<SpectrumProjection>("project_selected_spectrum", { exportToken, low, high }),
   exportChromatogram: (exportToken, format, range, traces, settings) =>
     invoke<string>("begin_chromatogram_export", {
       exportToken,

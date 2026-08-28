@@ -207,14 +207,16 @@ five product decisions it surfaces are in
 
 - **M5.0 — orientation and route lock.** This slice. Documentation only.
 - **M5.1 — the spectrum viewport authority, and the screen-projection
-  foundation.** A committed m/z viewport with the properties ADR 0032
+  foundation.** **Closed.** A committed m/z viewport with the properties ADR 0032
   established for retention time, over the domain the scientific figure contract
   admits — and an explicit refusal where it admits none, because mzML permits an
   m/z sequence that contract will not accept and nothing here sorts one. Plus the
   contract by which a viewport obtains something to draw: a bounded,
   viewport-scoped projection of the complete spectrum Rust retains, because
   `MAX_SPECTRUM_POINTS` bounds one transfer and a prefix must never be presented
-  as the whole source. No surface yet.
+  as the whole source. No surface yet — and none added: M5.1 is the model, the
+  Rust authority and the bounded projection, with every visible control left to
+  M5.2. See [ADR 0038](docs/architecture/adr/0038-spectrum-viewport-authority-and-screen-projection.md).
 - **M5.2 — the visible spectrum viewport.** Where a domain is admitted, the
   selected spectrum zooms, pans and resets by wheel, drag, keyboard and button,
   and a committed viewport draws the retained source across its whole domain —

@@ -193,6 +193,8 @@ function harness(
     getRoster: () => Promise.resolve(empty),
     copySelectedSpectrumPlot: () =>
       Promise.reject(new Error("this test never copies a plot")),
+    projectSelectedSpectrum: () =>
+      Promise.reject(new Error("this test never projects a spectrum")),
     exportChromatogram: () =>
       Promise.reject(new Error("this test never exports a chromatogram")),
     copyChromatogramPlot: () =>
