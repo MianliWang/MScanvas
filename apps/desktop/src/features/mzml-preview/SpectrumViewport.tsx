@@ -76,8 +76,8 @@ const RANGE_ID = "spectrum-viewport-range";
 const REFUSED: Record<SpectrumDomainRefusal, string> = {
   sourceNotOrdered:
     "This spectrum's m/z values do not increase from one point to the next, and nothing here " +
-    "sorts them: a sorted copy would be a different measurement. The points below are drawn in " +
-    "the order the file reports them.",
+    "sorts them: a sorted copy would be a different measurement. The points are drawn in the " +
+    "order the file reports them.",
   notFinite:
     "This spectrum reports an m/z or an intensity that cannot be placed on an axis, so there is " +
     "no range to navigate.",
@@ -217,14 +217,16 @@ export function SpectrumViewport({
   );
 
   /**
-   * Where a client x falls across the drawn area, as a fraction of it.
+   * The band the spectrum is actually drawn in, in client pixels.
    *
-   * The one mapping from a screen coordinate into the plot, so a wheel's anchor
-   * and a drag's displacement cannot come to disagree about where the pointer
-   * is. `null` when there is nothing measurable on screen, which each caller
-   * answers in its own terms.
+   * The one place the plot's viewBox and its padding become screen coordinates,
+   * and the reason it exists rather than the two callers each doing it: a
+   * wheel's anchor and a drag's displacement are the same measurement asked
+   * twice, and two copies of this arithmetic would agree only until one of them
+   * was edited. `null` when there is nothing measurable on screen -- no element,
+   * or a box with no width -- which each caller answers in its own terms.
    */
-  const plotFractionAt = useCallback((clientX: number): number | null => {
+  const drawnBand = useCallback((): { readonly left: number; readonly width: number } | null => {
     const element = plotRef.current;
     if (element === null) {
       return null;
@@ -233,9 +235,21 @@ export function SpectrumViewport({
     if (box.width === 0) {
       return null;
     }
-    const viewBoxX = ((clientX - box.left) / box.width) * SPECTRUM_PLOT_VIEWBOX_WIDTH;
-    return clamp01((viewBoxX - SPECTRUM_PLOT_PADDING_LEFT) / SPECTRUM_PLOT_DRAWN_WIDTH);
+    const scale = box.width / SPECTRUM_PLOT_VIEWBOX_WIDTH;
+    return {
+      left: box.left + SPECTRUM_PLOT_PADDING_LEFT * scale,
+      width: SPECTRUM_PLOT_DRAWN_WIDTH * scale,
+    };
   }, []);
+
+  /** Where a client x falls across that band, as a fraction of it. */
+  const plotFractionAt = useCallback(
+    (clientX: number): number | null => {
+      const band = drawnBand();
+      return band === null ? null : clamp01((clientX - band.left) / band.width);
+    },
+    [drawnBand],
+  );
 
   /**
    * The wheel, attached by hand because React's own listener is passive.
@@ -355,12 +369,9 @@ export function SpectrumViewport({
     if (active.epoch === null && Math.abs(moved) < DRAG_SLOP) {
       return;
     }
-    const element = plotRef.current;
-    const box = element?.getBoundingClientRect();
-    const drawnWidth =
-      box === undefined
-        ? 0
-        : (SPECTRUM_PLOT_DRAWN_WIDTH / SPECTRUM_PLOT_VIEWBOX_WIDTH) * box.width;
+    // The same band the wheel anchors against, measured once and read twice.
+    const band = drawnBand();
+    const drawnWidth = band?.width ?? 0;
     const current = readState();
     // The spectrum this press was begun on, still selected. Not cleared here:
     // the record is what stops a second pointer taking the plot, and a press
@@ -610,11 +621,25 @@ function drawnPoints(state: SpectrumViewportState & { readonly status: "ready" }
   return state.projection.status === "ready" ? state.projection.projection : EMPTY_POINTS;
 }
 
-/** What the plot is drawing, in the terms the caption is allowed to use. */
+/**
+ * What the plot is drawing, in the terms the caption is allowed to use.
+ *
+ * The reducer's four projection states do not map onto four drawings, and the
+ * one distinction that has to survive the collapse is **why** there is nothing
+ * under the axes. `idle` and `loading` are a drawing on its way; `failed` is
+ * not, and captioning it as one leaves a refusal describing itself as an
+ * outstanding request -- for as long as it is on screen, since a non-retryable
+ * failure never resolves into anything else.
+ */
 function drawingFor(state: SpectrumViewportState & { readonly status: "ready" }): SpectrumDrawing {
   const shown = renderedMzDomain(state) ?? state.full;
   if (state.projection.status !== "ready") {
-    return { kind: "viewport-pending", low: shown.low, high: shown.high };
+    return {
+      kind: "viewport-blank",
+      low: shown.low,
+      high: shown.high,
+      reason: state.projection.status === "failed" ? "failed" : "pending",
+    };
   }
   if (state.gesture !== null) {
     return { kind: "viewport-transient", low: shown.low, high: shown.high };

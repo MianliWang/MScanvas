@@ -2782,17 +2782,21 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   /**
    * Whether a spectrum is being read right now.
    *
-   * A read in progress has replaced nothing yet, and treating it as an absence
-   * would make ADR 0038's redelivery branch **unreachable**: every selection
-   * passes through `loading`, so a viewport cleared there means the contract
-   * never sees the same token twice in a row and always starts a new context.
-   * The visible consequence is a spectrum re-read for any reason asking Rust
-   * for a drawing it already has.
+   * A read in progress has replaced nothing yet. Clearing there and selecting
+   * again a moment later is a round trip through `none` on every selection, for
+   * a viewport nobody can see -- the panel is drawing its own loading state, not
+   * a plot -- and it publishes two states where the contract needs one.
    *
-   * Nothing is on screen to be stale meanwhile -- the panel is drawing its own
-   * loading state, not a plot -- and a drawing still outstanding for the
-   * previous spectrum stays answerable to the previous spectrum, which is what
-   * the monotonic generation is for.
+   * It is **not** what makes ADR 0038's redelivery branch reachable, and an
+   * earlier version of this comment said it was. Rust mints a fresh retained
+   * token on every read, so a re-read of the same scan arrives with a different
+   * `exportToken` and starts a new context whether or not the viewport was
+   * cleared on the way. That branch is exercised by the contract's own suite,
+   * which is where a rule about token identity belongs.
+   *
+   * A drawing still outstanding for the previous spectrum stays answerable to
+   * the previous spectrum meanwhile, which is what the monotonic generation is
+   * for.
    */
   const viewportReading = spectrum.status === "loading";
   // A layout effect, for the reason the chromatogram's own adoption is one. The

@@ -40,9 +40,17 @@ const BASELINE_Y = PLOT_HEIGHT - 34;
  *
  * The same 900 `MAX_PROJECTION_COLUMNS` Rust reduces a screen projection to, and
  * that is not a coincidence: both numbers answer "how many columns does this
- * drawing have". A projection therefore arrives already at this granularity and
- * passing it through here changes nothing, which is what makes one reduction
- * rule serve a transferred prefix and a retained-source window alike.
+ * drawing have", which is what lets one reduction rule serve a transferred
+ * prefix and a retained-source window alike.
+ *
+ * **It does not follow that a projection passes through here untouched**, and
+ * believing it did is what let this component's caption claim every observation
+ * was drawn when they were not. Rust's budget is `MAX_PROJECTION_POINTS`, which
+ * is 1,800 -- two per column, one per sign -- and a window whose observations
+ * fit that budget comes back *exact*, at source granularity. A window holding
+ * 1,200 same-sign observations therefore arrives unreduced and is collapsed
+ * here, into at most 900 sticks. So this reduction is a second one, and the
+ * caption asks how many sticks it produced rather than what Rust reported.
  */
 const MAX_COLUMNS = 900;
 
@@ -68,14 +76,24 @@ export type SpectrumDrawing =
       readonly reportedMzHigh: number;
     }
   /**
-   * A committed window whose drawing has not arrived.
+   * A range with no drawing under it, and why there is none.
    *
-   * The axis is the committed one and **no points are drawn**, which is the
-   * whole point of the state existing: the previous projection answered a
-   * different window, and leaving it under these axes is how a reader comes to
-   * see one range's data beneath another range's numbers.
+   * **No points are drawn**, which is the whole point of the state existing: the
+   * previous projection answered a different window, and leaving it under these
+   * axes is how a reader comes to see one range's data beneath another range's
+   * numbers.
+   *
+   * The reason is carried because the two are not the same thing to a reader. A
+   * drawing that has not arrived is on its way; one that failed is not, and
+   * captioning a failure as "waiting" leaves a non-retryable refusal describing
+   * itself as an outstanding request for as long as it is on screen.
    */
-  | { readonly kind: "viewport-pending"; readonly low: number; readonly high: number }
+  | {
+      readonly kind: "viewport-blank";
+      readonly low: number;
+      readonly high: number;
+      readonly reason: "pending" | "failed";
+    }
   /**
    * A gesture in progress, drawn from the projection already in hand.
    *
@@ -396,10 +414,19 @@ function describeDrawing(reduction: Reduction, drawing: SpectrumDrawing): string
       ? `Drawn as ${drawn} from ${String(reduction.drawnFrom)} points, keeping the greatest non-negative and the deepest negative value in each column, so a peak spread over several points can appear as one stick.`
       : `Drawn as ${drawn}, one per point.`;
   }
-  if (drawing.kind === "viewport-pending") {
-    // No claim about points at all, because none are drawn. What was drawn
-    // before answered a different range and is not shown beneath these numbers.
-    return `Waiting for the drawing of m/z ${formatMz(drawing.low)} to ${formatMz(drawing.high)}. Nothing is drawn here yet.`;
+  if (drawing.kind === "viewport-blank") {
+    /*
+     * No claim about points, and none about a window either.
+     *
+     * "This range" is the range beneath the caption, which is the only one this
+     * component can speak for. Naming the window a request is outstanding for
+     * would be naming a different range whenever a gesture is in flight -- the
+     * axis follows the pointer while the request does not -- and the status
+     * region beside the plot is where that window is already said.
+     */
+    return drawing.reason === "failed"
+      ? "This range could not be drawn. Nothing is drawn here."
+      : "Waiting for the drawing of this range. Nothing is drawn here yet.";
   }
   if (drawing.kind === "viewport-transient") {
     // Said plainly rather than hidden, because it is the one moment the picture
@@ -412,7 +439,24 @@ function describeDrawing(reduction: Reduction, drawing: SpectrumDrawing): string
       ? "1 observation"
       : `${formatCount(drawing.sourcePoints)} observations`;
   const opening = `Drawn as ${drawn} of the ${observations} this spectrum has between m/z ${formatMz(drawing.low)} and ${formatMz(drawing.high)}.`;
-  return drawing.reduced
+  /*
+   * Whether anything was collapsed, decided by what this drawing did rather
+   * than by who did it.
+   *
+   * Reading Rust's `reduced` flag was wrong, and reachably so. That flag says
+   * whether *Rust* drew fewer points than the window measured, and Rust's budget
+   * is 1,800 points while this plot has 900 columns -- so a window holding 1,200
+   * same-sign observations comes back exact, `reduced` false, and is then
+   * collapsed here. The caption said "Drawn as 900 sticks of the 1,200
+   * observations ... Every one of them is drawn", which contradicts its own
+   * first sentence and is read out as the plot's description.
+   *
+   * Sticks against observations answers the question the sentence actually
+   * asks, and it answers it for both reductions at once: fewer sticks than
+   * observations means some observation is not individually drawn, whichever
+   * side of the boundary dropped it.
+   */
+  return reduction.sticks.length < drawing.sourcePoints
     ? `${opening} More were measured here than this drawing has columns, so each column keeps the greatest non-negative and the deepest negative value in it and a peak spread over several points can appear as one stick.`
     : `${opening} Every one of them is drawn.`;
 }
@@ -465,6 +509,8 @@ export function StickSpectrum({
   );
 
   const flat = reduction.intensityHigh === reduction.intensityLow;
+  /** Whether this plot has anything on it, which several sentences depend on. */
+  const nothingDrawn = reduction.sticks.length === 0;
 
   return (
     <figure className="spectrum-figure">
@@ -498,9 +544,21 @@ export function StickSpectrum({
         >
           {formatMz(reduction.domainHigh)}
         </text>
-        <text className="axis-label" x={PLOT_PADDING_LEFT} y={PLOT_PADDING_TOP - 2}>
-          {flat ? "every intensity is the same" : formatIntensity(reduction.intensityHigh)}
-        </text>
+        {/*
+          The value axis, and only where there are values.
+
+          With nothing drawn the extent is zero to zero, so `flat` is true and
+          this label used to read "every intensity is the same" -- a statement
+          about measurements, over a plot holding none, shown identically while a
+          drawing was outstanding, after one had failed, and for a window that
+          truthfully holds no measured point. An empty plot says nothing about
+          intensity, which is what it knows.
+        */}
+        {nothingDrawn ? null : (
+          <text className="axis-label" x={PLOT_PADDING_LEFT} y={PLOT_PADDING_TOP - 2}>
+            {flat ? "every intensity is the same" : formatIntensity(reduction.intensityHigh)}
+          </text>
+        )}
         {reduction.intensityLow < 0 ? (
           <text className="axis-label" x={PLOT_PADDING_LEFT} y={BASELINE_Y + 10}>
             {formatIntensity(reduction.intensityLow)}
@@ -509,7 +567,9 @@ export function StickSpectrum({
       </svg>
       <figcaption className="spectrum-caption">
         {describeDrawing(reduction, drawing)}
-        {" Horizontal axis: m/z. Vertical axis: intensity, scaled to the point furthest from zero."}
+        {nothingDrawn
+          ? " Horizontal axis: m/z."
+          : " Horizontal axis: m/z. Vertical axis: intensity, scaled to the point furthest from zero."}
         {reduction.negativeCount > 0
           ? ` ${reduction.negativeCount} of the points ${reduction.negativeCount === 1 ? "carries" : "carry"} negative intensity.${describeNegativeDrawing(reduction)}`
           : ""}

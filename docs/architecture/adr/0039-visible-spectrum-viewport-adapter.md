@@ -41,11 +41,13 @@ The reducer therefore lives in `usePreviewWorkspace`, beside the one
 **The cost is real and is accepted.** `SelectedSpectrumPanel` is memoised, and
 until now no interaction state reached its props at all; now its own viewport
 does, so a drag over the spectrum plot re-renders the panel per frame. The memo
-still earns its keep — a conversion poll, a roster reply, a figure setting and
-above all the *chromatogram's* hover still do not reach it — and a frame of the
-interaction the reader is currently performing on this panel is a much cheaper
-thing than a late answer landing under the wrong axes. The comment on that memo
-now says so rather than continuing to claim what stopped being true.
+still earns its keep — a conversion poll, a roster reply and above all the
+*chromatogram's* hover still do not reach it — and a frame of the interaction
+the reader is currently performing on this panel is a much cheaper thing than a
+late answer landing under the wrong axes. The comment on that memo now says so
+rather than continuing to claim what stopped being true. (A figure setting was
+never among the things it kept out: `figureSettings` has always been one of this
+panel's props.)
 
 ## `idle` is the whole request rule
 
@@ -188,9 +190,12 @@ thousand million million. `isFullMzDomain` compares edges, so the reducer did no
 recognise that as the whole spectrum: it committed a *subrange*, the caption
 stopped saying full range, `Reset m/z range` lit up, `Zoom out m/z` offered to do
 it again, and the wheel was cancelled for it — so the column underneath stopped
-scrolling for an event nothing could see. Measured over plausible m/z domains and
-every anchor, **17% of them behaved this way**, and the same happened at the
-narrowest window in the inward direction for anchors away from the centre.
+scrolling for an event nothing could see.
+
+Measured over 121 plausible m/z domains: **nine of them at the centre anchor a
+button uses, and twenty-one — about one in six — at some anchor a wheel can land
+on.** The same rounding reaches the narrowest window from the other direction,
+where it moves a window that has no width left to give.
 
 The retention-time planner answers this by projecting a gesture through its
 settle, and that turns out to change no verdict at all: `committedForm` can
@@ -203,11 +208,20 @@ that round above.
 So the repair is upstream of the rounding, and states as limits what
 `clampMzDomain` already enforces: a zoom asking for at least the whole spectrum
 **is** the whole spectrum, and one asking for no more than the narrowest window
-that spectrum allows has no width left to give. Neither is an epsilon. The cost
-is that repeated zooming now stops within about 15% of the theoretical floor
-rather than exactly on it, which is a limit no reader can perceive at a
-ten-thousand-fold zoom, and the floor itself is still reachable by a committed
-range.
+that spectrum allows **is** that window, built where it already sits. Neither is
+an epsilon.
+
+The second of those was got wrong once on the way, in the direction nobody
+notices. Refusing the last step outright is also inert at the floor, and it left
+`Zoom in m/z` disabled while the contract would still have narrowed the window --
+by up to 40% of its width -- which is the availability rule broken by a control
+saying there is nothing to do when there is. Holding the low edge instead reaches
+the floor *and* rests there: the width becomes the floor exactly, and the window
+is built by a computation that reproduces itself, so asking again returns the
+same answer rather than drifting a unit in the last place per notch. What that
+costs is the last step of a ten-thousand-fold zoom shrinking toward the window's
+left edge instead of toward the cursor -- at most two-thirds of the floor, which
+is 0.0067% of the spectrum.
 
 **The retention-time planner shares the arithmetic and is not repaired here.**
 `viewportAction.ts` is ADR 0033's, its rendered evidence is the chromatogram's,
@@ -283,11 +297,13 @@ screen.
 **Rust tests: 1,303, unchanged.** No Rust file was edited. That is the claim this
 slice most wanted to be able to make.
 
-**Rendered browser QA: 162 tests across seven spec files**, 36 of them this
-slice's. They cover both availability states at 1920×1080, 1366×768 and 960×640,
-drive real wheel, pointer and keyboard input, assert `defaultPrevented` and the
-rendered range as separate facts, read the projection call ledger to prove a drag
-asks for nothing until it settles, and carry the truncated-source proof: a
+**Rendered browser QA** covers both availability states at 1920×1080, 1366×768
+and 960×640 — the admitted one for its controls, its drawing area and their not
+overlapping; the refused one for the reason it states, which is a paragraph
+rather than a row of buttons and is the thing a narrow window clips first. It
+drives real wheel, pointer and keyboard input, asserts `defaultPrevented` and the
+rendered range as separate facts, reads the projection call ledger to prove a
+drag asks for nothing until it settles, and carries the truncated-source proof: a
 retained domain of 300–900 whose transferred prefix ends at 302.5, navigated past
 it, drawing observations that could only have come from Rust.
 

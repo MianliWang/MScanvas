@@ -1592,12 +1592,24 @@ button:disabled {
   line-height: 1.4;
 }
 
-/* Silent, and therefore costing no layout. Collapsed by a rule rather than by
-   not rendering the element, because a live region has to be mounted before it
-   has anything to say -- one that arrives together with its text is the shape
-   assistive technology routinely misses. */
+/* Silent, and still there.
+
+   Not `display: none`, which is what the sibling export status does and what
+   this rule used to do. `display: none` takes an element out of the
+   accessibility tree as well as out of the layout, so a region collapsed that
+   way arrives together with its first sentence -- the shape assistive
+   technology routinely misses, and the very thing the region is mounted early
+   to avoid. Clipped instead: out of the picture, still in the tree, and already
+   being watched when it has something to say.
+
+   An empty paragraph lays out no line box, so this costs the one flex gap its
+   parent puts between children and nothing else. */
 .spectrum-viewport-status:empty {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  overflow: hidden;
 }
 
 .spectrum-figure {

@@ -1161,6 +1161,48 @@ describe("the visible m/z viewport", () => {
         expect(await browser.$(SPECTRUM_STATUS).isExisting()).toBe(true);
         expect(await unexpectedConsole()).toEqual([]);
       });
+
+      it(`says why there is no range, without clipping it, at ${viewport.name}`, async () => {
+        /*
+         * The other availability state, at every window this milestone is
+         * measured at. ADR 0037 asks for both, and the refused one is where a
+         * small window is most likely to cost something: the reason is a
+         * paragraph rather than a row of buttons, this panel is a scroll
+         * container inside another one, and a sentence clipped sideways is a
+         * reader told nothing at all about why the plot will not move.
+         */
+        await openTheSpectrum({
+          answers: ipcTable({ refusedViewport: true }),
+          width: viewport.width,
+          height: viewport.height,
+        });
+        await revealTheSpectrum();
+
+        const panel = await boxOf(SPECTRUM);
+        const status = await boxOf(SPECTRUM_STATUS);
+        expect(status.width).toBeGreaterThan(0);
+        expect(status.height).toBeGreaterThan(0);
+        expect(status.left).toBeGreaterThanOrEqual(panel.left - 0.5);
+        expect(status.right).toBeLessThanOrEqual(panel.right + 0.5);
+        expect(await spectrumStatus()).toContain("cannot be navigated");
+
+        // The spectrum is still drawn, over its own points, and the controls are
+        // still there to be seen as closed rather than missing.
+        const plot = await boxOf(SPECTRUM_PLOT);
+        expect(plot.width).toBeGreaterThan(panel.width * 0.6);
+        expect(plot.left).toBeGreaterThanOrEqual(panel.left - 0.5);
+        expect(plot.right).toBeLessThanOrEqual(panel.right + 0.5);
+        for (const control of CONTROLS) {
+          const button = await boxOfButton(control);
+          expect(button.width).toBeGreaterThan(0);
+          expect(button.left).toBeGreaterThanOrEqual(panel.left - 0.5);
+          expect(button.right).toBeLessThanOrEqual(panel.right + 0.5);
+        }
+
+        const overflow = await horizontalOverflow();
+        expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth + 1);
+        expect(await unexpectedConsole()).toEqual([]);
+      });
     }
   });
 

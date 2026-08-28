@@ -108,7 +108,7 @@ describe("what a spectrum viewport is bound to", () => {
       expect(api.spectrumProjectionRequests).toHaveLength(1);
     });
     // The full domain Rust admitted, sent with the token that names the
-    // retained spectrum. Nothing here was derived from the transferred arrays.
+    // retained spectrum.
     expect(api.spectrumProjectionRequests[0]).toEqual({
       exportToken: "token-2",
       low: 300,
@@ -117,6 +117,57 @@ describe("what a spectrum viewport is bound to", () => {
     expect(renderedMzDomain(rendered.result.current.spectrumViewport)).toEqual({
       low: 300,
       high: 305.5,
+    });
+  });
+
+  it("asks for the range Rust reported, not the one its arrays happen to span", async () => {
+    /*
+     * The fixture every other case uses derives `viewportDomain`, `mzLow`/`mzHigh`
+     * and the `mz` array's extent from the same numbers, so all three answers
+     * agree and none of them is being tested. Here they are pulled apart: the
+     * arrays stop at 305.5, the backend's reported pair says something else
+     * again, and Rust's domain runs to 900.
+     *
+     * That is the shape of a truncated spectrum, and the window asked for has to
+     * be Rust's. Anything derived from what this document holds -- the arrays,
+     * the reported pair, the drawing -- would ask for a range that stops where
+     * the transfer did, and would draw blank space over peaks this session is
+     * holding.
+     */
+    const { api, rendered } = await openTheWorkspace({
+      spectrum: (index) =>
+        Promise.resolve({
+          outcome: "spectrum" as const,
+          spectrum: {
+            ...buildSpectrum(index, 12),
+            truncated: true,
+            pointCount: 900_000,
+            mzLow: 111,
+            mzHigh: 222,
+            viewportDomain: { state: "admitted", low: 300, high: 900 },
+          } satisfies SelectedSpectrum,
+        }),
+    });
+    await selectAndSettle(rendered, 2);
+    await waitFor(() => {
+      expect(api.spectrumProjectionRequests).toHaveLength(1);
+    });
+
+    expect(api.spectrumProjectionRequests[0]).toEqual({
+      exportToken: "token-2",
+      low: 300,
+      high: 900,
+    });
+    // None of the three numbers this document holds is what was asked for.
+    const spectrum =
+      rendered.result.current.spectrum.status === "loaded"
+        ? rendered.result.current.spectrum.spectrum
+        : null;
+    expect(spectrum?.mz[spectrum.mz.length - 1]).toBe(305.5);
+    expect(spectrum?.mzHigh).toBe(222);
+    expect(renderedMzDomain(rendered.result.current.spectrumViewport)).toEqual({
+      low: 300,
+      high: 900,
     });
   });
 

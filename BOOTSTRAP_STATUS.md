@@ -5168,15 +5168,22 @@ spectrum of m/z 110.3 to 500 it produces a low of 110.30000000000001, whose span
 is smaller than the source's by one part in ten thousand million million.
 `isFullMzDomain` compares edges, so the reducer commits that as a *subrange* --
 leaving `Zoom out` still offering to do it again and the wheel still claimed for
-it. Measured over 121 plausible m/z domains, **nine** behaved this way.
+it. Measured over 121 plausible m/z domains: **nine at the centre anchor a button
+uses, and twenty-one -- about one in six -- at some anchor a wheel can land on.**
 
 Projecting the gesture through its settle, which is what the retention-time
-planner does, removes this only for runs whose clamp happens to land back on the
-source exactly. So the answer here is upstream of the rounding: a zoom asking
-for at least the whole spectrum **is** the whole spectrum, and one asking for no
-more than the narrowest window from a window already that narrow is the window
-it started from. Both are limits `clampMzDomain` already enforces, stated
-exactly instead of arrived at by subtraction.
+planner does, turns out to change no verdict at all -- `committedForm` answers
+`null` only where the window already equals the source by value, which is where
+the unsettled comparison already said unchanged. So the answer here is upstream
+of the rounding: a zoom asking for at least the whole spectrum **is** the whole
+spectrum, and one asking for no more than the narrowest window that spectrum has
+**is** that window, built where it already sits. Both are limits `clampMzDomain`
+already enforces, stated exactly instead of arrived at by subtraction.
+
+The narrow limit was got wrong once on the way, and the review round caught it:
+refusing the last step is also inert at the floor, but it left `Zoom in` disabled
+while the contract would still have narrowed the window, which is the same
+availability rule broken in the direction nobody notices.
 
 **The retention-time axis has the same arithmetic and is not fixed here.** That
 is `viewportAction.ts`'s and ADR 0033's, its evidence is the chromatogram's, and

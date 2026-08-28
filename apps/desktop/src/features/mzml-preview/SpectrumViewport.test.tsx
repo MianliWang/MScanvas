@@ -41,7 +41,9 @@ import {
 } from "./StickSpectrum";
 import type { SpectrumViewportEvent, SpectrumViewportState } from "./viewer/spectrumViewport";
 import { mzDomain, renderedMzDomain } from "./viewer/spectrumViewport";
+import type { SpectrumViewportAction } from "./viewer/spectrumViewportAction";
 import {
+  applySpectrumViewportAction,
   MZ_PAN_STEP,
   VISIBLE_SPECTRUM_VIEWPORT_ACTIONS,
 } from "./viewer/spectrumViewportAction";
@@ -462,13 +464,35 @@ describe("what each m/z control would do", () => {
       for (const label of CONTROLS) {
         const before = state();
         if (control(label).disabled) {
-          // A disabled button is refused by the DOM, and the operation behind it
-          // refuses it too. Dispatched by hand so the refusal being tested is the
-          // adapter's rather than the browser's alone.
+          /*
+           * Two refusals, and only one of them is the adapter's.
+           *
+           * React does not call `onClick` for a `disabled` button whatever
+           * dispatched the event, so clicking one -- by hand or otherwise --
+           * tests the browser and nothing else. The adapter's own guard is the
+           * one that matters, because the press re-plans from live state rather
+           * than trusting the `disabled` a render computed; so it is asked
+           * directly, the way the button's handler asks it.
+           */
           act(() => {
             control(label).dispatchEvent(new MouseEvent("click", { bubbles: true }));
           });
-          expect(state(), `${label} while closed`).toBe(before);
+          expect(state(), `${label} while closed, clicked`).toBe(before);
+
+          const action = VISIBLE_SPECTRUM_VIEWPORT_ACTIONS.find(
+            (entry) => entry.label === label,
+          )?.action;
+          expect(action, `${label} is a known action`).toBeDefined();
+          let dispatched = true;
+          act(() => {
+            dispatched = applySpectrumViewportAction(
+              state(),
+              (event) => dispatchNow(event),
+              action as SpectrumViewportAction,
+            );
+          });
+          expect(dispatched, `${label} while closed, applied`).toBe(false);
+          expect(state(), `${label} while closed, after applying`).toBe(before);
           continue;
         }
         const shownBefore = shown();
@@ -1002,22 +1026,41 @@ describe("panning the spectrum with a press", () => {
   });
 
   it("pans from where the press began rather than from the previous frame", () => {
-    // Two routes to the same displacement land on the same window, so a long
-    // drag accumulates no drift and a frame the browser coalesced away costs
-    // nothing.
+    /*
+     * Two routes to the same displacement land on the same window, so a long
+     * drag accumulates no drift and a frame the browser coalesced away costs
+     * nothing.
+     *
+     * **The drag has to reach the edge for this to mean anything.** Panning is a
+     * translation, so away from the edges origin-based and previous-frame-based
+     * panning are the same arithmetic and any fixture in the middle of the
+     * spectrum passes either way. Against the edge they part company: the
+     * clamped window stops moving while the pointer keeps going, so a
+     * frame-based pan measures its next step from a window the pointer has
+     * already left and lands short as soon as the drag turns back.
+     */
     renderViewport();
     commitSubrange();
 
+    // Out to the edge and part of the way back, in one move.
     pressPointer(CENTRE_X);
+    movePointer(CENTRE_X + 1_500);
+    const atTheEdge = ready().gesture?.domain;
     movePointer(CENTRE_X + 40);
     releasePointer(CENTRE_X + 40);
     const direct = ready().committed;
     expect(direct).not.toBeNull();
+    // The excursion really did reach the edge, or this proves nothing.
+    expect(atTheEdge?.low).toBeCloseTo(FULL.low, 9);
+    expect(direct?.low).not.toBeCloseTo(FULL.low, 6);
 
+    // The same journey in three frames. From the origin this is the same
+    // window; from the previous frame it is not.
     send({ type: "viewport-reset" });
     commitSubrange();
     pressPointer(CENTRE_X, 2);
-    movePointer(CENTRE_X + 20, 2);
+    movePointer(CENTRE_X + 300, 2);
+    movePointer(CENTRE_X + 1_500, 2);
     movePointer(CENTRE_X + 40, 2);
     releasePointer(CENTRE_X + 40, 2);
 
@@ -1174,9 +1217,10 @@ describe("what the plot draws, and what it says it is drawing", () => {
     expect(statusText()).toMatch(
       /Drawing m\/z 220\.0000 to 260\.0000 from the retained spectrum\. Nothing is drawn here until it arrives\./u,
     );
-    expect(captionText()).toMatch(
-      /Waiting for the drawing of m\/z 220\.0000 to 260\.0000\. Nothing is drawn here yet\./u,
-    );
+    // The caption speaks for the range beneath it and does not name a window:
+    // the status region above already named the one being drawn, and during a
+    // gesture the two are different ranges.
+    expect(captionText()).toMatch(/Waiting for the drawing of this range\. Nothing is drawn here yet\./u);
   });
 
   it("draws nothing for an answer to a window the viewport has already left", () => {
@@ -1349,20 +1393,33 @@ describe("what the plot draws, and what it says it is drawing", () => {
     drawProjection(DRAWN);
     send({ type: "viewport-step", domain: mzDomain(200, 300) });
     drawProjection({ ...DRAWN, low: 200, high: 300 });
+    const before = state().nextGeneration;
 
     pressPointer(clientXFor(0.7));
     for (const fraction of [0.66, 0.6, 0.52, 0.44, 0.3]) {
       movePointer(clientXFor(fraction));
     }
 
+    /*
+     * Asserted on the generation counter, not on a callback.
+     *
+     * `projection-requested` is the only event that spends a generation, so a
+     * counter that has not moved is a proof that nothing was asked for -- by any
+     * route, including one this component does not have today. The retry
+     * callback is checked beside it because it is the component's one declared
+     * way to reach the boundary, but on its own it would be an assertion about a
+     * function no pointer path calls.
+     */
+    expect(state().nextGeneration, "during the drag").toBe(before);
     expect(onRetryProjection).not.toHaveBeenCalled();
     // And the gesture really did happen, so this is not a statement about a
     // press that did nothing.
     expect(rangeText()).not.toContain("200.0000 to 300.0000");
 
     releasePointer(clientXFor(0.3));
-    // Still nothing: asking for the committed window is the workspace's to do,
-    // through the state the settle left behind.
+    // Still nothing: the settle commits a window, and asking Rust to draw it is
+    // the workspace's to do from the state the settle left behind.
+    expect(state().nextGeneration, "after the settle").toBe(before);
     expect(onRetryProjection).not.toHaveBeenCalled();
   });
 

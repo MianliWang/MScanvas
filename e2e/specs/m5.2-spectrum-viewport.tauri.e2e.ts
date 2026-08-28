@@ -228,6 +228,7 @@ describe("the m/z viewport against the real projection boundary", () => {
       const box = await revealThePlot();
       const y = Math.round(box.top + box.height / 2);
       const from = Math.round(box.left + box.width * 0.6);
+      const beforeThePress = await rangeCaption();
 
       // Left down, moved in two stages, and deliberately not released: what is
       // being asserted is what happens *during* a gesture.
@@ -241,8 +242,11 @@ describe("the m/z viewport against the real projection boundary", () => {
 
       expect(await projectionRequests()).toHaveLength(before);
       // And the range on screen has moved, so this is a real pan rather than a
-      // gesture that did nothing.
+      // gesture that did nothing. Compared with the range before the press:
+      // `#spectrum-viewport-range` always renders *something* for a selected
+      // spectrum, so asserting it is non-empty would assert nothing at all.
       const during = await rangeCaption();
+      expect(during).not.toBe(beforeThePress);
 
       await browser.action("pointer").up().perform();
       await browser.waitUntil(
@@ -253,7 +257,6 @@ describe("the m/z viewport against the real projection boundary", () => {
         },
       );
       await waitForADrawing();
-      expect(during).not.toBe("");
     });
 
     it("keeps the full-source export a token and a format, with no range", async () => {

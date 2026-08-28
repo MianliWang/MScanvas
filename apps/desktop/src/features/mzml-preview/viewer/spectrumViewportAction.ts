@@ -95,16 +95,21 @@ const UNCHANGED: RenderedMzTransition = { changed: false, nextDomain: null };
  * cannot come to answer it slightly differently. A pure projection: the reducer
  * is asked what the event does, and nothing is kept.
  *
- * **A gesture is projected through its settle**, exactly as the retention-time
- * planner does and for the same measured reason. A gesture's rendered domain is
- * the clamped range it holds; a settled one is put through the normalisation
- * every committed viewport gets, where a range covering the whole spectrum
- * becomes the spectrum. Those differ, because canonical clamping recovers a low
- * edge as `full.high - span` and that subtraction rounds -- so a wheel turned
- * outward at full range would produce a "change" no screen could show, and the
- * panel would claim the event for it. Asking what the gesture *settles* to
- * gives the spectrum back exactly, and with it the honest answer: turning the
- * wheel there moves nothing.
+ * **A gesture is projected through its settle**, so that what is compared is
+ * what a reader would be left looking at rather than a transient the reducer has
+ * not finished with. A gesture's rendered domain is the clamped range it holds;
+ * a settled one is put through the normalisation every committed viewport gets,
+ * where a range covering the whole spectrum becomes the spectrum.
+ *
+ * **On this axis that projection changes no verdict, and saying otherwise was
+ * wrong.** The retention-time planner introduced it to keep an outward wheel at
+ * full range unclaimed, and it cannot do that here: `committedForm` answers
+ * `null` only where the clamped window already equals the source *by value*,
+ * which is precisely where the unsettled comparison already said "unchanged".
+ * What actually keeps that wheel unclaimed is `zoomedTo` below, which stops the
+ * candidate rounding off the limit in the first place. The settle is kept
+ * because it is the honest question to ask of a gesture -- not because it is
+ * load-bearing.
  *
  * Events that are not gestures settle nothing and take the same path unchanged.
  */
@@ -163,29 +168,27 @@ const UNAVAILABLE: SpectrumViewportActionPlan = {
  * it as the whole spectrum -- it commits it as a subrange, the caption stops
  * saying full range, `Reset m/z range` lights up, `Zoom out m/z` offers to do it
  * again, and the wheel is claimed for it so the panel underneath stops
- * scrolling. Measured over plausible m/z domains and every anchor, **17% of
- * them behave this way**; the same happens at the narrowest window in the
- * inward direction, for anchors away from the centre.
+ * scrolling.
+ *
+ * Measured over 121 plausible m/z domains: **nine of them at the centre anchor
+ * a button uses, and twenty-one -- about one in six -- at some anchor a wheel
+ * can land on.** The same rounding reaches the narrowest window from the other
+ * direction, where it moves a window that has no width left to give.
  *
  * `clampMzDomain` rescues the rest by holding the low edge to the source, which
- * catches the half of the cases that round *below* `full.low` and none of the
- * half that round above. And projecting the gesture through its settle -- which
- * is how the retention-time planner answers this -- turns out to change no
- * verdict at all: `committedForm` can answer `null` only where the clamped
- * window already equals the source by value, which is exactly where the
- * unsettled comparison already said "unchanged".
+ * catches the cases that round *below* `full.low` and none that round above. And
+ * projecting the gesture through its settle -- which is how the retention-time
+ * planner answers this -- turns out to change no verdict at all: `committedForm`
+ * can answer `null` only where the clamped window already equals the source by
+ * value, which is exactly where the unsettled comparison already said
+ * "unchanged".
  *
- * So the answer is upstream of the rounding. **A zoom is a change of width**,
- * and the two cases where the width cannot change are stated rather than
- * arrived at by subtraction:
- *
- * - asking for at least the whole spectrum **is** the whole spectrum, exactly,
- *   which is the value the reducer normalises to `null`;
- * - asking for a width the window already has moves nothing, because a zoom
- *   that cannot resize must not pan.
- *
- * Neither is an epsilon and neither is a second viewport rule: both are limits
- * `clampMzDomain` already enforces, said exactly.
+ * So the answer is upstream of the rounding, and it is to say the two limits
+ * exactly rather than arrive at them by subtraction: asking for at least the
+ * whole spectrum **is** the whole spectrum, and asking for no more than the
+ * narrowest window this spectrum has **is** that window, built where it already
+ * sits. Neither is an epsilon and neither is a second viewport rule: both are
+ * the limits `clampMzDomain` enforces, said in values a reader can compare.
  *
  * The retention-time planner shares this arithmetic and therefore this hole.
  * Repairing it there is a change to a shipped surface with its own rendered
@@ -206,7 +209,37 @@ function zoomedTo(visible: MzDomain, full: MzDomain, factor: number, anchor: num
   if (next >= fullSpan) {
     return mzDomain(full.low, full.high);
   }
-  if (next <= smallest || next === span) {
+  if (next <= smallest) {
+    /*
+     * The narrowest window this spectrum has, kept where it already is.
+     *
+     * Two things have to be true here at once, and an earlier attempt bought the
+     * second by giving up the first. **The floor has to be reachable**: refusing
+     * this step outright left `Zoom in m/z` disabled while the contract would
+     * still have narrowed the window -- by up to 40% of its width -- which is
+     * the availability rule broken in the direction nobody notices, a control
+     * saying there is nothing to do when there is. **And the floor has to be a
+     * resting place**: a window already there must not be moved by asking again,
+     * or every further notch of the wheel pans a plot the reader is trying to
+     * zoom.
+     *
+     * Holding the low edge is what makes both true. The width becomes the floor,
+     * so this step is a real change and is offered; and the window is built from
+     * `visible.low` by a computation that reproduces itself exactly, so asking
+     * again from its own answer returns that answer rather than drifting one
+     * unit in the last place per notch. Anchoring cannot also survive: it would
+     * make the result depend on a width that is only the floor to within a
+     * rounding, which is the drift written back in.
+     *
+     * What that costs is the *last* step of a ten-thousand-fold zoom shrinking
+     * toward the window's left edge instead of toward the cursor -- at most
+     * two-thirds of the floor, which is 0.0067% of the spectrum.
+     */
+    const furthest = Math.max(full.low, full.high - smallest);
+    const low = Math.min(Math.max(visible.low, full.low), furthest);
+    return mzDomain(low, Math.min(full.high, low + smallest));
+  }
+  if (next === span) {
     return visible;
   }
   return zoomMzDomain(visible, full, factor, anchor);

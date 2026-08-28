@@ -15,11 +15,23 @@
  * asks one question -- **would taking this change what is on screen** -- and
  * reads the answers off.
  *
- * The invariant is asserted independently of the planner's own reply: each case
- * builds the action's event from canonical arithmetic, runs the reducer, and
- * compares rendered domains itself. A planner that decided from the action's
- * name, or from a boundary it had been told to look for, would part company with
- * that immediately.
+ * The invariant is asserted against a transcription rather than against the
+ * planner's own reply: each case builds the action's event from `spectrumViewport.ts`'s
+ * arithmetic and the product's shared step, runs the reducer, and compares
+ * rendered domains itself. A planner that decided from the action's name, that
+ * anchored a button somewhere other than the centre, that used a step of its
+ * own, or that reported the range it asked for rather than the one committed,
+ * parts company with that immediately.
+ *
+ * **Where that transcription stops being independent is stated rather than
+ * implied.** The two limits -- a zoom asking for at least the whole spectrum,
+ * and one asking for no more than the narrowest window the spectrum has -- are
+ * spelled out in both, so for those two cases this suite is checking that the
+ * planner agrees with a copy of itself. They are covered instead by the two
+ * tests that name them directly, over domains measured to round the wrong way,
+ * and by the mutations that remove each limit in turn. Everything between the
+ * limits, which is every ordinary zoom, is `zoomMzDomain` unchanged and is
+ * genuinely checked here.
  *
  * Pure throughout: no React, no DOM, no timers. What an adapter does with a plan
  * belongs to `SpectrumViewport.test.tsx`; whether the plan is honest belongs
@@ -330,7 +342,7 @@ describe("what an m/z viewport control would do", () => {
     expect(planSpectrumViewportAction(state, "zoom-out").available).toBe(false);
   });
 
-  it("stops zooming in where the spectrum runs out of width to give", () => {
+  it("stops zooming in at the width the spectrum's own floor names", () => {
     // Not because the planner looked for a boundary, but because the next zoom
     // would be asking for a width at or below the narrowest window this
     // spectrum allows -- and there is nothing there to show.
@@ -345,6 +357,101 @@ describe("what an m/z viewport control would do", () => {
     expect(width(shown) * ZOOM_STEP_FACTOR).toBeLessThanOrEqual(smallest);
     // And the way back is open, so this is a floor rather than a trap.
     expect(planSpectrumViewportAction(state, "zoom-out").available).toBe(true);
+  });
+
+  /**
+   * The domains whose edges do not survive being recovered from a centre.
+   *
+   * Not contrived: ordinary reported m/z endpoints, chosen by measuring 121
+   * plausible pairs and keeping the ones where the arithmetic rounds the wrong
+   * way. Nine of those 121 do it at the centre anchor a button uses; twenty-one
+   * do it at some anchor a wheel can land on. The rest are unremarkable, which
+   * is why a suite built only from round numbers cannot see any of this.
+   */
+  const ROUNDS_BADLY: readonly (readonly [number, number])[] = [
+    [110.3, 500],
+    [110.3, 600.25],
+    [133.7, 1200.75],
+    [133.7, 1500.05],
+    [133.7, 1650.9],
+    [133.7, 1800.4],
+    [133.7, 2000],
+    [120.08, 1500.05],
+    [204.9, 2500.125],
+  ];
+
+  it("gives the whole spectrum back when a zoom out asks for more than it has", () => {
+    /*
+     * The measured defect, pinned at the value it produced.
+     *
+     * `zoomMzDomain` at full range recovers the low edge from the held centre,
+     * and for these domains that subtraction lands one unit in the last place
+     * *above* `full.low` -- which `clampMzDomain` does not pull back, because it
+     * only holds the edge from below. The window is then a subrange by value, so
+     * `isFullMzDomain` says no, and everything downstream follows: `Zoom out
+     * m/z` stays enabled at full range and the wheel is cancelled for a change
+     * no screen can show, so the panel underneath stops scrolling.
+     *
+     * Asserted against the raw arithmetic as well as the planner, so this fails
+     * if the repair is removed *and* documents why it cannot be removed.
+     */
+    for (const [low, high] of ROUNDS_BADLY) {
+      const full = mzDomain(low, high);
+      const label = `${String(low)}..${String(high)}`;
+      const raw = zoomMzDomain(full, full, 1 / ZOOM_STEP_FACTOR, 0.5);
+      // The arithmetic really does drift here; if it stopped, this fixture has
+      // stopped being the case this test is about.
+      expect(raw.low !== full.low || raw.high !== full.high, `${label} still drifts`).toBe(true);
+
+      const state = selected(admitted(low, high));
+      expect(planSpectrumViewportAction(state, "zoom-out").available, `button ${label}`).toBe(false);
+      for (const anchor of [0, 0.25, 0.5, 0.75, 1]) {
+        expect(
+          planMzWheelGesture(state, { deltaY: 100, deltaMode: 0 }, anchor).handled,
+          `wheel ${label} @${String(anchor)}`,
+        ).toBe(false);
+      }
+      // And zooming in from full range is still offered, so the repair closed a
+      // claim rather than the control.
+      expect(planSpectrumViewportAction(state, "zoom-in").available, `in ${label}`).toBe(true);
+    }
+  });
+
+  it("keeps zooming in until the spectrum's own floor, then stops exactly there", () => {
+    /*
+     * The other limit, and the direction an over-correction breaks. Refusing the
+     * last step outright would leave `Zoom in m/z` disabled while the contract
+     * would still narrow the window -- a control saying there is nothing to do
+     * when there is, which is the availability rule broken quietly.
+     *
+     * So the floor has to be *reached*: the width the zooming stops at is the
+     * one `minimumMzSpan` names, not something up to two-thirds wider.
+     */
+    for (const [low, high] of ROUNDS_BADLY) {
+      const full = mzDomain(low, high);
+      const label = `${String(low)}..${String(high)}`;
+      let state = selected(admitted(low, high));
+      for (let step = 0; step < 500; step += 1) {
+        const plan = planSpectrumViewportAction(state, "zoom-in");
+        if (plan.event === null) {
+          break;
+        }
+        state = spectrumViewportReducer(state, plan.event);
+      }
+      const shown = renderedMzDomain(state) as MzDomain;
+      const smallest = minimumMzSpan(full);
+      // At the floor, to the precision two doubles can express an interval of
+      // this width -- not one zoom step short of it.
+      expect(width(shown) / smallest, `width ${label}`).toBeCloseTo(1, 9);
+      expect(planSpectrumViewportAction(state, "zoom-in").available, `in ${label}`).toBe(false);
+      expect(planSpectrumViewportAction(state, "zoom-out").available, `out ${label}`).toBe(true);
+      for (const anchor of [0, 0.25, 0.5, 0.75, 1]) {
+        expect(
+          planMzWheelGesture(state, { deltaY: -100, deltaMode: 0 }, anchor).handled,
+          `wheel ${label} @${String(anchor)}`,
+        ).toBe(false);
+      }
+    }
   });
 
   it("leaves an inward wheel at that floor to the browser, at every anchor", () => {

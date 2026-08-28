@@ -975,7 +975,12 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>): string {
     case "loading":
       return `Loading spectrum ${formatCount(spectrum.index)}.`;
     case "loaded":
-      return `Spectrum ${formatCount(spectrum.spectrum.index)} rendered with ${formatCount(spectrum.spectrum.pointCount)} points.`;
+      // "Loaded", not "rendered". Since M5.2 an admitted spectrum draws nothing
+      // until Rust answers a projection for its range, so at the moment this
+      // fires there is no drawing -- and a beat later the panel's own region
+      // says so. Two live regions in one window contradicting each other about
+      // the same spectrum is worse than either of them saying less.
+      return `Spectrum ${formatCount(spectrum.spectrum.index)} loaded, ${formatCount(spectrum.spectrum.pointCount)} points.`;
     case "unavailable":
       return `This run has no spectrum at index ${formatCount(spectrum.requestedIndex)}.`;
     case "failed":
