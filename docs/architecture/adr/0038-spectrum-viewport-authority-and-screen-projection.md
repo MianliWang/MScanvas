@@ -176,7 +176,7 @@ consume the committed window — M5.3.
 
 ## Evidence
 
-**Rust: 1,293 tests**, up from 1,262. Twenty over the projection module — domain
+**Rust: 1,303 tests**, up from 1,262. Twenty-three over the projection module — domain
 admission and refusal, window refusal rather than clamping, exact and reduced
 drawings, extrema and both signs preserved, determinism, and a window past any
 transfer prefix. Eleven through the whole service — the DTO's domain, an
@@ -201,10 +201,12 @@ large first. The retained-source property is therefore proved over spectra built
 directly, and a service test pins the reachability itself so a later reader does
 not have to rediscover it.
 
-**Nine mutations**, applied one at a time and restored byte-for-byte: the
+**Eleven mutations**, applied one at a time and restored byte-for-byte: the
 frontend prefix used as the source domain; an outside-source window clamped
 instead of refused; a reduction emitting a value the source did not measure; an
 unordered spectrum admitted anyway; a stale token answered; a selection change
 inheriting the previous window; a stale projection answer accepted; the counters
-restarted per spectrum; and the value-domain half of the drawability predicate
-bypassed. Each failed the check aimed at it.
+restarted per spectrum; the value-domain half of the drawability predicate
+bypassed; and drawability re-settled inside the projection path, by two separate
+routes — one caught by the counting test, one by the repository guard. Each
+failed the check aimed at it.

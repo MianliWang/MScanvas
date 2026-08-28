@@ -122,15 +122,52 @@ impl DomainRefusal {
     }
 }
 
-/// The m/z domain the scientific figure would draw this spectrum over.
+/// Counts how often a spectrum's drawability has been settled, for the tests.
 ///
-/// The one place the question is answered. It reads the complete retained
-/// source -- never a transferred prefix, never the separately reported
-/// `mz_low`/`mz_high` pair, which is a second reading of the same spectrum that
-/// the export renderer already documents its refusal of -- and it borrows the
-/// arrays rather than copying them, because asking whether a spectrum is
-/// drawable should not cost a duplicate of it.
-pub(super) fn viewport_domain(spectrum: &SelectedSpectrumResult) -> ViewportDomain {
+/// Compiled out of every shipped build. It exists because "settled once per
+/// retained snapshot" is a property of *how often* work happens, which no type
+/// can state and no assertion about a result can observe.
+///
+/// **Per thread**, deliberately. Settling is synchronous on whichever thread
+/// asked, and the test harness runs cases in parallel -- so a process-wide
+/// counter would have every case reading everyone else's work, which is a
+/// flaky test rather than a measurement. A thread-local one gives each case
+/// exactly its own count.
+#[cfg(test)]
+pub(in crate::preview) mod settlement {
+    use std::cell::Cell;
+
+    thread_local! {
+        static COUNT: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// How many times this thread has settled a spectrum's drawability.
+    pub(in crate::preview) fn observed() -> usize {
+        COUNT.with(Cell::get)
+    }
+
+    pub(in crate::preview) fn record() {
+        COUNT.with(|count| count.set(count.get() + 1));
+    }
+}
+
+/// Settles whether this spectrum is drawable, and over what.
+///
+/// **Called once per retained snapshot, when that snapshot is installed**, and
+/// the answer is carried with it from then on. Drawability is a property of the
+/// immutable source rather than of any one request about it, so re-establishing
+/// it per projection would walk both complete arrays to rediscover a fact this
+/// session already has -- which is what made a narrow zoom of a large spectrum
+/// cost as much as the whole of it.
+///
+/// The one place in this module that asks the scientific predicate. It reads the
+/// complete retained source -- never a transferred prefix, never the separately
+/// reported `mz_low`/`mz_high` pair, which is a second reading of the same
+/// spectrum that the export renderer documents its refusal of -- and it borrows
+/// the arrays rather than copying them.
+pub(super) fn settle_viewport_domain(spectrum: &SelectedSpectrumResult) -> ViewportDomain {
+    #[cfg(test)]
+    settlement::record();
     // The whole drawability question, through the one predicate `spectrum_panel`
     // asks -- **both** axes, not the coordinates alone. A viewport navigates m/z,
     // but a spectrum whose intensity axis the figure cannot establish is a
@@ -210,18 +247,35 @@ impl ScreenProjection {
 
 /// Draws one committed window of one retained spectrum.
 ///
+/// Takes the **settled** verdict rather than the spectrum alone, which is the
+/// whole shape of this repair: the source-level question was answered when the
+/// snapshot was retained, so a projection spends its time on the window it was
+/// asked for instead of rediscovering that the spectrum is drawable.
+///
+/// The cost is therefore a binary search for the window's bounds plus the work
+/// the window's own observations require -- exact copy under the budget, one
+/// pass to reduce over it. A full-domain projection still touches every
+/// observation, because it is drawing every observation; what no longer happens
+/// is a *narrow* window paying for the whole source.
+///
 /// # Errors
 ///
-/// Refuses a spectrum with no viewport domain, a window that is not a finite
-/// forward interval, and a window reaching outside the source's own domain.
+/// Refuses a spectrum whose settled verdict is a refusal, a window that is not
+/// a finite forward interval, and a window reaching outside the source's own
+/// domain.
 pub(super) fn project(
     spectrum: &SelectedSpectrumResult,
+    settled: ViewportDomain,
     low: f64,
     high: f64,
 ) -> Result<ScreenProjection, ProjectionRefusal> {
-    let source = match viewport_domain(spectrum) {
+    let source = match settled {
         ViewportDomain::Admitted(domain) => domain,
         ViewportDomain::Refused(refusal) => {
+            // Answered from the verdict the snapshot carries. Re-reading the
+            // arrays could not produce a different answer -- the source has not
+            // changed and cannot, so the same immutable spectrum always gets
+            // the same verdict.
             return Err(ProjectionRefusal::NoViewportDomain(refusal));
         }
     };

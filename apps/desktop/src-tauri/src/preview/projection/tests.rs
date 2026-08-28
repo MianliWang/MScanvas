@@ -7,7 +7,7 @@ use mscanvas_plot_spec::spec::{
 use super::super::dto::MAX_SPECTRUM_POINTS;
 use super::{
     DomainRefusal, MAX_PROJECTION_COLUMNS, MAX_PROJECTION_POINTS, ProjectionRefusal,
-    ViewportDomain, project, viewport_domain,
+    ViewportDomain, project, settle_viewport_domain,
 };
 
 fn spectrum(points: &[(f64, f64)]) -> SelectedSpectrumResult {
@@ -34,7 +34,7 @@ fn ascending(count: usize) -> SelectedSpectrumResult {
 }
 
 fn admitted(spectrum: &SelectedSpectrumResult) -> (f64, f64) {
-    match viewport_domain(spectrum) {
+    match settle_viewport_domain(spectrum) {
         ViewportDomain::Admitted(domain) => (domain.low(), domain.high()),
         ViewportDomain::Refused(refusal) => panic!("expected an admitted domain: {refusal:?}"),
     }
@@ -66,7 +66,7 @@ fn a_descending_m_z_array_is_refused_rather_than_sorted() {
     let spectrum = spectrum(&[(500.0, 1000.0), (100.0, 9000.0)]);
 
     assert_eq!(
-        viewport_domain(&spectrum),
+        settle_viewport_domain(&spectrum),
         ViewportDomain::Refused(DomainRefusal::SourceNotOrdered),
     );
     // And the source is untouched by having been asked.
@@ -84,7 +84,7 @@ fn a_value_range_the_figure_cannot_draw_refuses_the_viewport() {
     let spectrum = spectrum(&[(100.0, -f64::MAX), (200.0, f64::MAX)]);
 
     assert_eq!(
-        viewport_domain(&spectrum),
+        settle_viewport_domain(&spectrum),
         ViewportDomain::Refused(DomainRefusal::ValueDomainUnusable),
         "the intensity axis is why, and the refusal says so",
     );
@@ -112,7 +112,7 @@ fn a_spectrum_the_figure_will_not_draw_is_projected_not_at_all() {
     let spectrum = spectrum(&[(100.0, -f64::MAX), (200.0, f64::MAX)]);
 
     assert_eq!(
-        project(&spectrum, 100.0, 200.0),
+        project(&spectrum, settle_viewport_domain(&spectrum), 100.0, 200.0),
         Err(ProjectionRefusal::NoViewportDomain(
             DomainRefusal::ValueDomainUnusable
         )),
@@ -145,7 +145,12 @@ fn a_window_the_source_does_not_have_is_refused_rather_than_clamped() {
         (low - 5.0, high + 5.0, "outside on both sides"),
     ] {
         assert_eq!(
-            project(&spectrum, asked_low, asked_high),
+            project(
+                &spectrum,
+                settle_viewport_domain(&spectrum),
+                asked_low,
+                asked_high
+            ),
             Err(ProjectionRefusal::WindowOutsideSource),
             "{what}",
         );
@@ -157,11 +162,16 @@ fn a_window_that_is_not_an_interval_is_refused() {
     let spectrum = ascending(8);
 
     assert_eq!(
-        project(&spectrum, 110.0, 105.0),
+        project(&spectrum, settle_viewport_domain(&spectrum), 110.0, 105.0),
         Err(ProjectionRefusal::WindowUnusable),
     );
     assert_eq!(
-        project(&spectrum, f64::NAN, 105.0),
+        project(
+            &spectrum,
+            settle_viewport_domain(&spectrum),
+            f64::NAN,
+            105.0
+        ),
         Err(ProjectionRefusal::WindowUnusable),
     );
 }
@@ -171,7 +181,7 @@ fn a_spectrum_with_no_viewport_domain_projects_nothing() {
     let spectrum = spectrum(&[(500.0, 1.0), (100.0, 2.0)]);
 
     assert_eq!(
-        project(&spectrum, 100.0, 500.0),
+        project(&spectrum, settle_viewport_domain(&spectrum), 100.0, 500.0),
         Err(ProjectionRefusal::NoViewportDomain(
             DomainRefusal::SourceNotOrdered
         )),
@@ -188,7 +198,8 @@ fn a_window_inside_the_budget_is_drawn_exactly() {
         (500.0, 5.0),
     ]);
 
-    let projection = project(&spectrum, 200.0, 400.0).expect("a window inside the source");
+    let projection = project(&spectrum, settle_viewport_domain(&spectrum), 200.0, 400.0)
+        .expect("a window inside the source");
 
     assert_eq!(projection.mz(), &[200.0, 300.0, 400.0]);
     assert_eq!(projection.intensity(), &[2.0, 3.0, 4.0]);
@@ -201,7 +212,8 @@ fn a_window_inside_the_budget_is_drawn_exactly() {
 fn both_window_edges_are_inside_the_window() {
     let spectrum = spectrum(&[(10.0, 1.0), (20.0, 2.0), (30.0, 3.0)]);
 
-    let projection = project(&spectrum, 10.0, 30.0).expect("the whole source");
+    let projection = project(&spectrum, settle_viewport_domain(&spectrum), 10.0, 30.0)
+        .expect("the whole source");
 
     assert_eq!(projection.mz(), &[10.0, 20.0, 30.0]);
 }
@@ -212,7 +224,8 @@ fn a_window_holding_no_reported_point_is_a_successful_empty_projection() {
     // value between two of its own measurements.
     let spectrum = spectrum(&[(100.0, 1.0), (500.0, 2.0)]);
 
-    let projection = project(&spectrum, 200.0, 300.0).expect("a window of the source");
+    let projection = project(&spectrum, settle_viewport_domain(&spectrum), 200.0, 300.0)
+        .expect("a window of the source");
 
     assert!(projection.is_empty());
     assert!(projection.mz().is_empty());
@@ -226,7 +239,8 @@ fn a_window_over_the_budget_is_reduced_within_the_bound() {
     let spectrum = ascending(MAX_PROJECTION_POINTS * 4);
     let (low, high) = admitted(&spectrum);
 
-    let projection = project(&spectrum, low, high).expect("the whole source");
+    let projection =
+        project(&spectrum, settle_viewport_domain(&spectrum), low, high).expect("the whole source");
 
     assert!(
         projection.mz().len() <= MAX_PROJECTION_POINTS,
@@ -249,7 +263,8 @@ fn every_reduced_point_is_a_point_the_source_measured() {
         .zip(spectrum.intensity_values().iter().copied())
         .collect();
 
-    let projection = project(&spectrum, low, high).expect("the whole source");
+    let projection =
+        project(&spectrum, settle_viewport_domain(&spectrum), low, high).expect("the whole source");
 
     assert!(projection.reduced());
     for pair in projection
@@ -286,7 +301,8 @@ fn a_reduction_keeps_the_tallest_peak_rather_than_a_neighbour() {
     let spectrum = spectrum(&points);
     let (low, high) = admitted(&spectrum);
 
-    let projection = project(&spectrum, low, high).expect("the whole source");
+    let projection =
+        project(&spectrum, settle_viewport_domain(&spectrum), low, high).expect("the whole source");
 
     let drawn: Vec<(f64, f64)> = projection
         .mz()
@@ -320,7 +336,8 @@ fn a_reduction_keeps_measured_signal_of_both_signs() {
     let spectrum = spectrum(&points);
     let (low, high) = admitted(&spectrum);
 
-    let projection = project(&spectrum, low, high).expect("the whole source");
+    let projection =
+        project(&spectrum, settle_viewport_domain(&spectrum), low, high).expect("the whole source");
 
     assert!(
         projection.intensity().iter().any(|value| *value > 0.0),
@@ -337,7 +354,8 @@ fn a_reduction_is_ordered_by_measured_m_z() {
     let spectrum = ascending(MAX_PROJECTION_POINTS * 3);
     let (low, high) = admitted(&spectrum);
 
-    let projection = project(&spectrum, low, high).expect("the whole source");
+    let projection =
+        project(&spectrum, settle_viewport_domain(&spectrum), low, high).expect("the whole source");
 
     assert!(
         projection.mz().windows(2).all(|pair| pair[0] <= pair[1]),
@@ -350,8 +368,10 @@ fn a_projection_is_deterministic() {
     let spectrum = ascending(MAX_PROJECTION_POINTS * 5);
     let (low, high) = admitted(&spectrum);
 
-    let first = project(&spectrum, low, high).expect("the whole source");
-    let second = project(&spectrum, low, high).expect("the whole source");
+    let first =
+        project(&spectrum, settle_viewport_domain(&spectrum), low, high).expect("the whole source");
+    let second =
+        project(&spectrum, settle_viewport_domain(&spectrum), low, high).expect("the whole source");
 
     assert_eq!(first, second);
 }
@@ -363,10 +383,17 @@ fn zooming_in_reveals_detail_the_overview_had_to_drop() {
     // overview.
     let spectrum = ascending(MAX_PROJECTION_POINTS * 8);
     let (low, high) = admitted(&spectrum);
-    let overview = project(&spectrum, low, high).expect("the whole source");
+    let overview =
+        project(&spectrum, settle_viewport_domain(&spectrum), low, high).expect("the whole source");
 
     let narrow_high = low + (high - low) / 100.0;
-    let zoomed = project(&spectrum, low, narrow_high).expect("a narrower window");
+    let zoomed = project(
+        &spectrum,
+        settle_viewport_domain(&spectrum),
+        low,
+        narrow_high,
+    )
+    .expect("a narrower window");
 
     let overview_inside = overview
         .mz()
@@ -405,7 +432,13 @@ fn a_window_past_any_transfer_prefix_draws_the_retained_source() {
     let past_prefix = 100.0 + MAX_SPECTRUM_POINTS as f64;
     assert!(past_prefix > low && past_prefix <= high);
 
-    let projection = project(&spectrum, past_prefix, high).expect("a window the source has");
+    let projection = project(
+        &spectrum,
+        settle_viewport_domain(&spectrum),
+        past_prefix,
+        high,
+    )
+    .expect("a window the source has");
 
     assert!(
         !projection.is_empty(),
@@ -433,8 +466,20 @@ fn the_column_bound_is_the_only_thing_that_grows_with_a_larger_source() {
 
     let (small_low, small_high) = admitted(&small);
     let (large_low, large_high) = admitted(&large);
-    let small = project(&small, small_low, small_high).expect("the whole source");
-    let large = project(&large, large_low, large_high).expect("the whole source");
+    let small = project(
+        &small,
+        settle_viewport_domain(&small),
+        small_low,
+        small_high,
+    )
+    .expect("the whole source");
+    let large = project(
+        &large,
+        settle_viewport_domain(&large),
+        large_low,
+        large_high,
+    )
+    .expect("the whole source");
 
     assert!(small.mz().len() <= MAX_PROJECTION_POINTS);
     assert!(large.mz().len() <= MAX_PROJECTION_POINTS);

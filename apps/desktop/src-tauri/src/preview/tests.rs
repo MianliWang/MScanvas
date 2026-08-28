@@ -23469,3 +23469,204 @@ fn a_projection_leaves_the_scientific_export_exactly_as_it_was() {
         "a committed viewport changed what a full-source export writes",
     );
 }
+
+// ------------------------------- drawability is settled once per snapshot
+
+/// How many times this thread has settled a spectrum's drawability.
+///
+/// Per thread, so a case counts only its own work however many others run
+/// beside it. Read as a *delta* around the operation under test, because that
+/// is the property: how many settlements one sequence adds, not what number
+/// the counter happens to hold.
+fn settlements() -> usize {
+    super::projection::settlement::observed()
+}
+
+#[test]
+fn retaining_one_spectrum_settles_its_drawability_exactly_once() {
+    let file = TestFile::new("settle-once");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let before = settlements();
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+    let after_install = settlements();
+
+    assert_eq!(
+        after_install - before,
+        1,
+        "retaining a spectrum settles its drawability once",
+    );
+    // And the panel's own answer came from that settlement rather than a second
+    // one of its own.
+    assert_eq!(
+        spectrum.viewport_domain,
+        SpectrumViewportDomainDto::Admitted {
+            low: 100.5,
+            high: 200.25
+        },
+    );
+}
+
+#[test]
+fn projections_over_one_snapshot_settle_nothing_further() {
+    // The repair this test exists for: a narrow window used to walk both
+    // complete arrays to rediscover a fact the snapshot already had, so a deep
+    // zoom of a large spectrum cost as much as the whole of it.
+    let file = TestFile::new("settle-reused");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    let after_install = settlements();
+    for window in [
+        (100.5, 200.25),
+        (100.5, 150.0),
+        (150.0, 200.25),
+        (120.0, 130.0),
+    ] {
+        service
+            .project_selected_spectrum(&spectrum.export_token, window.0, window.1)
+            .expect("a window of the retained spectrum");
+    }
+    // A refused window and a stale token take the same path and settle nothing
+    // either.
+    assert!(
+        service
+            .project_selected_spectrum(&spectrum.export_token, 50.0, 200.25)
+            .is_err()
+    );
+    assert!(
+        service
+            .project_selected_spectrum("999999", 100.5, 200.25)
+            .is_err()
+    );
+
+    assert_eq!(
+        settlements(),
+        after_install,
+        "a projection re-established the source verdict",
+    );
+}
+
+#[test]
+fn a_refused_spectrum_answers_every_projection_from_its_settled_verdict() {
+    // A refusal is a property of the source too, so it is carried rather than
+    // rediscovered. Re-reading the arrays could not produce a different answer.
+    let file = TestFile::new("settle-refused");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
+        selected_spectrum_output(0, &[(500.0, 1_000.0), (100.0, 9_000.0)]),
+    )])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    let after_install = settlements();
+    for _ in 0..4 {
+        assert_eq!(
+            service
+                .project_selected_spectrum(&spectrum.export_token, 100.0, 500.0)
+                .expect_err("no viewport, so no drawing")
+                .kind,
+            "spectrum_projection_no_domain",
+        );
+    }
+
+    assert_eq!(
+        settlements(),
+        after_install,
+        "a refused source was re-validated by a projection",
+    );
+}
+
+#[test]
+fn a_value_domain_refusal_is_carried_by_the_snapshot_too() {
+    let file = TestFile::new("settle-value-domain");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
+        selected_spectrum_output(0, &[(100.0, -f64::MAX), (200.0, f64::MAX)]),
+    )])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    assert_eq!(
+        spectrum.viewport_domain,
+        SpectrumViewportDomainDto::Refused {
+            reason: SpectrumDomainRefusalDto::ValueDomainUnusable
+        },
+    );
+    let after_install = settlements();
+    for _ in 0..3 {
+        assert_eq!(
+            service
+                .project_selected_spectrum(&spectrum.export_token, 100.0, 200.0)
+                .expect_err("no viewport")
+                .kind,
+            "spectrum_projection_no_domain",
+        );
+    }
+
+    assert_eq!(settlements(), after_install);
+}
+
+#[test]
+fn selecting_another_spectrum_settles_that_one_and_leaves_the_first_behind() {
+    // The verdict has the snapshot's lifetime: a replacement gets its own,
+    // computed once, and the replaced one goes with the spectrum it described.
+    let file = TestFile::new("settle-lifecycle");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
+        one_spectrum(),
+        Response::File(selected_spectrum_output(1, &[(300.0, 5.0), (400.0, 6.0)])),
+    ])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let first = loaded_spectrum(&service, &selected.handle, 0);
+
+    let before_second = settlements();
+    let second = loaded_spectrum(&service, &selected.handle, 1);
+    assert_eq!(
+        settlements() - before_second,
+        1,
+        "the replacement settles once, on its own arrays",
+    );
+
+    assert_eq!(
+        second.viewport_domain,
+        SpectrumViewportDomainDto::Admitted {
+            low: 300.0,
+            high: 400.0
+        },
+    );
+    // The first snapshot is gone, and so is the verdict that described it.
+    assert_eq!(
+        service
+            .project_selected_spectrum(&first.export_token, 100.5, 200.25)
+            .expect_err("the first spectrum is no longer retained")
+            .kind,
+        "spectrum_projection_stale",
+    );
+}
+
+#[test]
+fn revoking_the_source_takes_its_settled_verdict_with_it() {
+    let file = TestFile::new("settle-revoked");
+    let another = file.sibling("another.mzML");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    service
+        .accept_file(&another)
+        .expect("the new file is chosen");
+
+    let after_revocation = settlements();
+    assert_eq!(
+        service
+            .project_selected_spectrum(&spectrum.export_token, 100.5, 200.25)
+            .expect_err("the retained spectrum was revoked")
+            .kind,
+        "spectrum_projection_stale",
+    );
+    assert_eq!(
+        settlements(),
+        after_revocation,
+        "a revoked source was re-validated",
+    );
+}

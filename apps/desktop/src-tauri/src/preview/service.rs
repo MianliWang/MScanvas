@@ -2195,10 +2195,13 @@ impl PreviewService {
             .spectrum_export_slot()
             .retained_spectrum_for(token)
             .map_err(Self::projection_refusal)?;
+        // The verdict the snapshot has carried since it was retained, not a
+        // fresh walk of the arrays to rediscover it.
         let projection =
-            projection::project(snapshot.spectrum(), low, high).map_err(|refusal| {
-                Self::projection_refusal(SpectrumProjectionRefusal::Source(refusal))
-            })?;
+            projection::project(snapshot.spectrum(), snapshot.viewport_domain(), low, high)
+                .map_err(|refusal| {
+                    Self::projection_refusal(SpectrumProjectionRefusal::Source(refusal))
+                })?;
         Ok(SpectrumProjectionDto {
             low: projection.window().low(),
             high: projection.window().high(),
@@ -5992,6 +5995,10 @@ impl PreviewService {
                         snapshot.spectrum(),
                         &redactor,
                         snapshot.token().as_wire(),
+                        // The verdict this snapshot settled when it was
+                        // retained, so the panel and every later projection
+                        // over it read one answer.
+                        snapshot.viewport_domain(),
                     );
                     match projected {
                         Ok(spectrum) => Ok(SelectedSpectrumOutcomeDto::Spectrum {
@@ -6560,6 +6567,7 @@ fn selected_spectrum_dto(
     spectrum: &SelectedSpectrumResult,
     redactor: &Redactor,
     export_token: String,
+    viewport_domain: projection::ViewportDomain,
 ) -> Result<SelectedSpectrumDto, PreviewErrorDto> {
     let point_count = spectrum.mz_values().len();
     let truncated = point_count > MAX_SPECTRUM_POINTS;
@@ -6612,9 +6620,9 @@ fn selected_spectrum_dto(
         value_units_known: false,
         truncated,
         export_token,
-        // Rust's answer, from the complete retained source rather than the
-        // possibly shortened arrays above it.
-        viewport_domain: viewport_domain_dto(projection::viewport_domain(spectrum)),
+        // The verdict settled when this spectrum was retained, from the
+        // complete source rather than the possibly shortened arrays above it.
+        viewport_domain: viewport_domain_dto(viewport_domain),
     })
 }
 

@@ -70,7 +70,7 @@ use super::chromatogram::{
 };
 use super::dialog::SaveDialogFacts;
 use super::figure::{FigureRenderSettings, PngDpi, RasterFailure, encode_png, rasterize};
-use super::projection::ProjectionRefusal;
+use super::projection::{self, ProjectionRefusal, ViewportDomain};
 use super::selection::DatasetId;
 
 /// The version this file's schema answers to.
@@ -257,6 +257,20 @@ pub(super) struct SpectrumSnapshot {
     /// webview, and never written down.
     owner: DatasetId,
     spectrum: Arc<SelectedSpectrumResult>,
+    /// Whether this spectrum is drawable, settled once when it was retained.
+    ///
+    /// Drawability is a property of the source rather than of any one request
+    /// about it, and this source is immutable behind the `Arc` beside it -- so
+    /// the verdict is established at installation and carried, rather than
+    /// re-established by every reader. It cannot go stale independently: it
+    /// lives and dies with the exact snapshot it describes, and a replaced or
+    /// revoked spectrum takes its verdict with it. There is no second
+    /// invalidation lifecycle because there is no second thing to invalidate.
+    ///
+    /// `Copy`, and small: two intervals or a refusal. Nothing about a *window*
+    /// is cached here -- a viewport still draws from the complete source every
+    /// time, so zooming in still reveals observations an overview had to drop.
+    viewport_domain: ViewportDomain,
 }
 
 impl SpectrumSnapshot {
@@ -266,6 +280,11 @@ impl SpectrumSnapshot {
 
     pub(super) fn spectrum(&self) -> &SelectedSpectrumResult {
         &self.spectrum
+    }
+
+    /// The drawability verdict settled when this spectrum was retained.
+    pub(super) const fn viewport_domain(&self) -> ViewportDomain {
+        self.viewport_domain
     }
 
     /// How many points the exported document will carry.
@@ -699,10 +718,16 @@ impl ScientificExportSlots {
         spectrum: SelectedSpectrumResult,
     ) -> SpectrumSnapshot {
         let token = RetainedSpectrumToken(self.issue_token());
+        // Settled here, once, while the complete reading is in hand. Every
+        // later reader of this snapshot -- the panel's own domain answer and
+        // every viewport projection over it -- takes this result rather than
+        // walking the arrays again to reach it.
+        let viewport_domain = projection::settle_viewport_domain(&spectrum);
         let snapshot = SpectrumSnapshot {
             token,
             owner,
             spectrum: Arc::new(spectrum),
+            viewport_domain,
         };
         self.spectrum = Some(snapshot.clone());
         snapshot
