@@ -394,6 +394,64 @@ describe("what the viewport never touches", () => {
     ]);
   });
 
+  it("holds one bounded drawing at a time, however many ranges are committed", async () => {
+    /*
+     * The structural half of "the screen is not the science". A viewport that
+     * accumulated what it had been shown -- a cache keyed by window, or arrays
+     * appended to -- would end a session of ordinary panning holding the
+     * complete spectrum in the document, which is the thing `MAX_SPECTRUM_POINTS`
+     * and the bounded projection exist to prevent. There is one slot, it holds
+     * the drawing that answers the range on screen, and the one before it is
+     * gone rather than kept.
+     */
+    const drawn: number[] = [];
+    const { api, rendered } = await openTheWorkspace({
+      spectrumProjection: (_token, low, high) => {
+        drawn.push(low);
+        return Promise.resolve(drawing(low, high, 40));
+      },
+    });
+    await selectAndSettle(rendered, 2);
+    await waitFor(() => {
+      expect(api.spectrumProjectionRequests).toHaveLength(1);
+    });
+
+    for (const [low, high] of [
+      [301, 304],
+      [302, 303],
+      [300.5, 305],
+    ] as const) {
+      act(() => {
+        rendered.result.current.dispatchSpectrumViewportEvent({
+          type: "viewport-step",
+          domain: mzDomain(low, high),
+        });
+      });
+      await waitFor(() => {
+        const state = rendered.result.current.spectrumViewport;
+        expect(state.status === "ready" ? state.projection.status : null).toBe("ready");
+      });
+    }
+
+    expect(drawn).toEqual([300, 301, 302, 300.5]);
+    const state = rendered.result.current.spectrumViewport;
+    const projection =
+      state.status === "ready" && state.projection.status === "ready"
+        ? state.projection.projection
+        : null;
+    // One drawing, of the last range asked for, at the size Rust answered with.
+    // Not four, and not 160 points.
+    expect(projection?.low).toBe(300.5);
+    expect(projection?.mz).toHaveLength(40);
+    expect(projection?.intensity).toHaveLength(40);
+    // And the spectrum's own transferred arrays are untouched by any of it.
+    const spectrum =
+      rendered.result.current.spectrum.status === "loaded"
+        ? rendered.result.current.spectrum.spectrum
+        : null;
+    expect(spectrum?.mz).toHaveLength(12);
+  });
+
   it("clears the viewport when the preview it belonged to is replaced", async () => {
     const second = { ...selectedFile, handle: "file-2", fileName: "second.mzML" };
     const { api, rendered } = await openTheWorkspace({
