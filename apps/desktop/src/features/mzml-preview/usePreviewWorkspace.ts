@@ -2795,7 +2795,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * the monotonic generation is for.
    */
   const viewportReading = spectrum.status === "loading";
-  useEffect(() => {
+  // A layout effect, for the reason the chromatogram's own adoption is one. The
+  // panel renders the newly loaded spectrum's summary from `spectrum`, and its
+  // plot from this viewport; between the commit that loads one and the effect
+  // that tells the viewport about it, those two name different spectra. Run
+  // after paint, that frame is on screen -- the previous spectrum's drawing,
+  // under the previous spectrum's range, beneath the new one's caption. Run
+  // before it, nobody ever sees it.
+  useLayoutEffect(() => {
     if (viewportReading) {
       return;
     }
