@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { SpectrumProjection, SpectrumViewportDomain } from "../contracts";
-import type { SpectrumViewportEvent, SpectrumViewportState } from "./spectrumViewport";
+import type { RetentionTimeDomain } from "./scanModel";
+import type {
+  MzDomain,
+  SpectrumViewportEvent,
+  SpectrumViewportState,
+} from "./spectrumViewport";
 import {
   activeMzGestureEpoch,
   clampMzDomain,
@@ -569,6 +574,60 @@ describe("the m/z arithmetic", () => {
     const panned = panMzDomain(window, full, 1);
 
     expect(panned.high - panned.low).toBeCloseTo(80, 9);
+    expect(panned.high).toBeLessThanOrEqual(full.high);
+  });
+});
+
+/**
+ * Compiler assertions, not runtime ones.
+ *
+ * Each `@ts-expect-error` passes only while the line beneath it really is
+ * rejected, and **fails typecheck as unused** the moment it starts compiling —
+ * so weakening the brand back into something a plain pair satisfies cannot pass
+ * silently. `pnpm lint` and `pnpm typecheck` are both `tsc -b` over `src`, where
+ * this file lives, so both of them see these.
+ *
+ * They exist because the brand they guard was previously optional, and an
+ * optional property is satisfied vacuously by every value: the module claimed
+ * exactly this separation and enforced none of it. A claim about the type system
+ * belongs in the type system.
+ */
+describe("the m/z axis brand", () => {
+  it("refuses a retention-time domain where an m/z range is required", () => {
+    const retentionTime: RetentionTimeDomain = { low: 100, high: 500 };
+
+    // @ts-expect-error a retention-time range is not an m/z range
+    const substituted: MzDomain = retentionTime;
+    // @ts-expect-error nor may one reach m/z arithmetic as the window
+    clampMzDomain(retentionTime, mzDomain(100, 500));
+    // @ts-expect-error nor as the source domain that window is held inside
+    clampMzDomain(mzDomain(100, 500), retentionTime);
+
+    // The numbers were never the problem. The same pair, refused by type alone.
+    expect([substituted.low, substituted.high]).toEqual([100, 500]);
+  });
+
+  it("refuses a plain interval that never passed the construction boundary", () => {
+    const structural = { low: 100, high: 500 };
+
+    // @ts-expect-error an interval becomes an m/z range only through `mzDomain`
+    const invalid: MzDomain = structural;
+    // @ts-expect-error and a literal is no more measured in m/z than a variable
+    zoomMzDomain({ low: 200, high: 300 }, mzDomain(100, 500), 0.5, 0.5);
+
+    expect(invalid.high - invalid.low).toBe(400);
+  });
+
+  it("accepts what the construction boundary builds, and its arithmetic", () => {
+    const full: MzDomain = mzDomain(100, 500);
+    const stepped: MzDomain = clampMzDomain(mzDomain(200, 300), full);
+    const zoomed: MzDomain = zoomMzDomain(stepped, full, 0.5, 0.5);
+    const panned: MzDomain = panMzDomain(zoomed, full, 0.25);
+
+    // Every helper answers in the branded type, so a window stays on the axis it
+    // was measured on for as long as it is navigated.
+    expect(isFullMzDomain(panned, full)).toBe(false);
+    expect(panned.low).toBeGreaterThanOrEqual(full.low);
     expect(panned.high).toBeLessThanOrEqual(full.high);
   });
 });

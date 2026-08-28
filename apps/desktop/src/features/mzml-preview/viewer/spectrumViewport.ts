@@ -13,9 +13,11 @@
  * axis of a different source, and merging them would make the one thing neither
  * can afford — a range read for the wrong axis — a plain field access away.
  *
- * So they share arithmetic *shape* and no state. `MzDomain` is nominally
- * distinct from `RetentionTimeDomain`: both are closed intervals, and the type
- * system refuses to let one stand in for the other.
+ * So they share arithmetic *shape* and no state. `MzDomain` carries a brand a
+ * plain interval does not have, so a `RetentionTimeDomain` — or any other
+ * `{ low, high }` — cannot be passed where this module wants an m/z range. The
+ * compiler enforces that, and the type guards in `spectrumViewport.test.ts`
+ * fail if it ever stops doing so.
  *
  * ## Two authorities, and a spectrum may have neither
  *
@@ -40,22 +42,49 @@
 import type { SpectrumProjection, SpectrumViewportDomain } from "../contracts";
 
 /**
+ * The m/z axis, as a key nothing outside this module can write.
+ *
+ * Module-private and `declare`d: it exists for the compiler and never at
+ * runtime, so nothing is imported, allocated, serialised or compared. Being
+ * unexported is what makes it a boundary rather than a convention: a caller
+ * cannot name it, so a caller cannot satisfy it.
+ */
+declare const mzAxis: unique symbol;
+
+/**
  * A closed interval on the m/z axis.
  *
- * Structurally a pair of numbers and nominally its own type. The brand costs
- * nothing at runtime and makes `clampMzDomain(retentionTimeDomain, …)` a
- * compile error, which is the whole reason the two viewports are separate.
+ * Structurally a pair of numbers, and nominally its own type because the brand
+ * is **required**. An optional marker was not a boundary at all: TypeScript is
+ * structural, every value satisfies an optional property vacuously, and a
+ * `RetentionTimeDomain` is exactly `{ low, high }` — so the substitution this
+ * type exists to prevent compiled cleanly. The separation was documented rather
+ * than enforced, which is the defect this replaces.
+ *
+ * Required, the brand makes `clampMzDomain(retentionTimeDomain, …)` the compile
+ * error it always claimed to be, and leaves `mzDomain` as the only way a pair of
+ * numbers becomes an m/z range. The brand carries no scientific meaning and no
+ * runtime state: it records which axis these numbers were measured on, and
+ * nothing else.
  */
 export interface MzDomain {
   readonly low: number;
   readonly high: number;
-  /** Present only in the type system; no value ever carries it. */
-  readonly __axis?: "mz";
+  /** The brand. Present in the type system only; no value ever carries it. */
+  readonly [mzAxis]: true;
 }
 
-/** Builds a domain from two numbers, once they are known to be an interval. */
+/**
+ * Builds a domain from two numbers, once they are known to be an interval.
+ *
+ * The one place a pair becomes m/z-typed, and the module's only assertion. The
+ * brand is erased, so the value returned is exactly the object written here;
+ * what the assertion adds is the claim about *which axis these numbers came
+ * from*, which is a claim this module's callers — all of them working in m/z —
+ * are the ones in a position to make.
+ */
 export function mzDomain(low: number, high: number): MzDomain {
-  return { low, high };
+  return { low, high } as MzDomain;
 }
 
 /**

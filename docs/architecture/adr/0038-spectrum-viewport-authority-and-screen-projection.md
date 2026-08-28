@@ -133,6 +133,33 @@ scan, one commit revision every linked view consumes — and merging the axes wo
 put a range read for the wrong one a field access away. `MzDomain` is nominally
 distinct from `RetentionTimeDomain`, so the substitution does not compile.
 
+**And nominal here means a required brand**, which is the correction the final
+confirmation forced. The first attempt marked the axis with an *optional*
+property, and TypeScript is structural: every value satisfies an optional
+property vacuously, a `RetentionTimeDomain` is exactly `{ low, high }`, and the
+substitution this type exists to prevent compiled cleanly. The claim was true of
+the documentation and false of the code.
+
+The brand is now a required property whose key is a module-private
+`unique symbol` — unexported, so a caller cannot name it and therefore cannot
+satisfy it, and `declare`d, so it never exists at runtime. Neither a
+`RetentionTimeDomain` nor any other `{ low, high }` is an `MzDomain`; `mzDomain`
+is the one construction boundary and holds the module's only assertion; and the
+brand records which axis a pair of numbers was measured on, carrying no
+scientific meaning and no runtime state. Nothing crosses the IPC boundary to say
+so: this is a frontend type-system fact, and the Rust DTOs are unchanged.
+
+The guarantee is checked rather than asserted. Five `@ts-expect-error` guards
+name the substitutions that must not compile, and TypeScript verifies both
+directions at once — they pass only while the errors are real, and fail as
+*unused directives* the moment the brand stops separating the axes. `pnpm lint`
+and `pnpm typecheck` are both `tsc -b` over `src`, so both see them.
+
+The guarantee is one-directional by authorization: an RT range cannot enter m/z
+arithmetic. `RetentionTimeDomain` is left unbranded, so an `MzDomain` still
+satisfies it structurally. Branding it too is a change to M4's contract, not
+M5.1's, and this slice does not make it.
+
 A committed selection change to a different spectrum **starts a new context**:
 the previous absolute m/z window is not preserved, not intersected and not
 clamped in. Two spectra do not share one m/z navigation state merely by
@@ -184,7 +211,7 @@ unordered spectrum refused and left alone while its CSV still writes, a stale
 token refused, an empty window, a bounded drawing, no backend operation, no
 export lane, and a full-source export unchanged across a projection.
 
-**Frontend: 1,090 tests**, up from 1,051. Thirty-nine over the pure viewport:
+**Frontend: 1,093 tests**, up from 1,051. Thirty-nine over the pure viewport:
 selection migration across overlapping and disjoint domains, admitted↔refused in
 both directions, redelivery that does not reset, gesture epochs and stale
 settles, the projection lifecycle including empty success, retryable and
@@ -201,12 +228,13 @@ large first. The retained-source property is therefore proved over spectra built
 directly, and a service test pins the reachability itself so a later reader does
 not have to rediscover it.
 
-**Eleven mutations**, applied one at a time and restored byte-for-byte: the
+**Twelve mutations**, applied one at a time and restored byte-for-byte: the
 frontend prefix used as the source domain; an outside-source window clamped
 instead of refused; a reduction emitting a value the source did not measure; an
 unordered spectrum admitted anyway; a stale token answered; a selection change
 inheriting the previous window; a stale projection answer accepted; the counters
 restarted per spectrum; the value-domain half of the drawability predicate
 bypassed; and drawability re-settled inside the projection path, by two separate
-routes — one caught by the counting test, one by the repository guard. Each
-failed the check aimed at it.
+routes — one caught by the counting test, one by the repository guard; and the
+axis brand made optional again, which fails typecheck as five unused
+`@ts-expect-error` directives. Each failed the check aimed at it.
