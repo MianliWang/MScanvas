@@ -14,12 +14,16 @@ import { StickSpectrum } from "./StickSpectrum";
 function renderSpectrum(mz: readonly number[], intensity: readonly number[]): void {
   render(
     <StickSpectrum
+      drawing={{
+        kind: "transfer",
+        reportedMzHigh: Math.max(...mz),
+        reportedMzLow: Math.min(...mz),
+      }}
       intensity={intensity}
       labelledBy="caption-under-test"
       mz={mz}
       representationKnown
-      reportedMzHigh={Math.max(...mz)}
-      reportedMzLow={Math.min(...mz)}
+      surface={{ kind: "static" }}
     />,
   );
 }

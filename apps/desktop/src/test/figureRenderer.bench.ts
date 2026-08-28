@@ -132,10 +132,14 @@ function renderScene(scene: Scene): string {
     createElement(StickSpectrum, {
       mz: scene.mz,
       intensity: scene.intensity,
-      reportedMzLow: scene.mz[0] ?? 0,
-      reportedMzHigh: scene.mz[scene.mz.length - 1] ?? 1,
+      drawing: {
+        kind: "transfer",
+        reportedMzLow: scene.mz[0] ?? 0,
+        reportedMzHigh: scene.mz[scene.mz.length - 1] ?? 1,
+      },
       representationKnown: false,
       labelledBy: "bench-heading",
+      surface: { kind: "static" },
     }),
   );
 }

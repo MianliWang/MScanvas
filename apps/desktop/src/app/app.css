@@ -1510,6 +1510,96 @@ button:disabled {
   line-height: 1.5;
 }
 
+/* The selected spectrum's m/z viewport: a control group, the drawing it acts
+   on, what range is on screen, and what the drawing is doing.
+
+   A column rather than a row, because the plot below the controls is the thing
+   they act on and a reader should meet them in that order. Its own gaps rather
+   than the body's 10px, so the four parts read as one surface instead of as
+   four siblings of the facts list further down. */
+.spectrum-viewport {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The same pill the chromatogram's range controls sit in, because they are the
+   same kind of thing: a small group of viewport actions over a plot. Matching
+   it exactly is the point -- `--radius-lg` and `--color-border` are the toolbar
+   chrome, while the flat 6px and `--color-border-subtle` below belong to the
+   figure settings, and using the settings chrome here would read as a different
+   kind of control. A `fieldset` has a UA border and margin of its own, so both
+   are stated rather than inherited. */
+.spectrum-viewport-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 2px 8px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+/* The element the pointer gestures are attached to, and deliberately not the
+   drawing itself: the plot is replaced whenever the viewport is refused,
+   admitted or given a new spectrum, and a listener bound to a node that has
+   been replaced is a listener on nothing. This wrapper outlives all of it.
+
+   `pan-y` rather than `none`. The viewer column scrolls vertically and this
+   panel scrolls inside it, so taking every touch would take away the only way
+   to reach the rest of the spectrum on a touch screen. Horizontal travel is
+   the viewport's -- that is the axis it navigates -- and vertical travel stays
+   the browser's. A vertical drag therefore arrives here as a pointer cancel,
+   which abandons the gesture rather than committing it. */
+.spectrum-viewport-plot {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  touch-action: pan-y;
+  cursor: crosshair;
+}
+
+/* The drawing is a tab stop only where there is a viewport to move, so the
+   focus ring belongs to the same rule. The chromatogram's treatment, because a
+   reader who has learned what a focused plot looks like should not have to
+   learn it twice. */
+.spectrum-plot:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* What range is on screen. Not a live region: it changes on every frame of a
+   drag, and a region announcing each of them would be noise rather than
+   feedback. It is half of the plot's accessible description instead. */
+.spectrum-viewport-range {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+/* What the viewport is doing, when that is not simply "showing you a drawing".
+   Both the visible account and the announced one, which is why there is exactly
+   one of it: a hidden twin carrying the same sentence is read twice by anyone
+   traversing the panel. */
+.spectrum-viewport-status {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Silent, and therefore costing no layout. Collapsed by a rule rather than by
+   not rendering the element, because a live region has to be mounted before it
+   has anything to say -- one that arrives together with its text is the shape
+   assistive technology routinely misses. */
+.spectrum-viewport-status:empty {
+  display: none;
+}
+
 .spectrum-figure {
   display: flex;
   /* Not `0`. The plot carries its own minimum height, and a parent allowed to
