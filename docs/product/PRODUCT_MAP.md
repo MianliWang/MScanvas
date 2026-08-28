@@ -24,7 +24,7 @@ MSCanvas is a local-first mass-spectrometry workbench that makes acquisition bro
 | Layer | Purpose | Early status |
 |---|---|---|
 | Data foundation | Projects, datasets, artifacts, runs, linked selection, cache | Required from M1 |
-| Viewer / converter / figures | TIC/BPC, spectrum, scan table, conversion, queue, export | Primary product through M5 |
+| Viewer / converter / figures | TIC/BPC, spectrum, scan table, conversion, queue, export | Primary product through M7 |
 | Modular analysis | QC, signal, features, spectra, statistics, recipes | Deferred; architecture allowed |
 | Automation | CLI, skills, MCP, workflow integrations | Deferred until contracts stabilize |
 

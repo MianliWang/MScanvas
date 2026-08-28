@@ -334,7 +334,7 @@ handle in either panel.
 before `spectrum_panel` and `chromatogram_panel` were factored out, and are
 byte-identical after it.
 
-**Frontend: 1,050 tests**, up from 1,007. The rendered matrix covers the section
+**Frontend: 1,051 tests**, up from 1,007. The rendered matrix covers the section
 present, no spectrum, a spectrum loading, a spectrum ready, TIC alone, BPC alone,
 both, neither, Full, a current range holding the scan, a current range excluding
 it, 259 and 260, an unusable width, an unusable resolution, all three surfaces

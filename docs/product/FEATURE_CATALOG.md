@@ -62,8 +62,8 @@ table remains the target, including the unsupported portions called out below:
 | VIEW-004 | Scan table | P0 | Virtualized rows with scan, RT, MS level and precursor context. |
 | VIEW-005 | Linked selection | P0 | **Implemented across the chromatogram, the loaded scan table and the selected-spectrum panel.** Selection synchronizes chromatogram marker, table row, spectrum and inspector in both directions. |
 | VIEW-006 | Keyboard scan navigation | P0 | **Implemented.** Previous/next and table navigation work without pointer-only access. |
-| VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. |
-| VIEW-008 | Multi-layer comparison | P2 | Visibility, style and provenance remain inspectable per layer. |
+| VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. **M5, behind an evidence gate with two valid outcomes: a visible trace, or a recorded refusal and a reassignment. No XIC export in M5.** |
+| VIEW-008 | Multi-layer comparison | P2 | Visibility, style and provenance remain inspectable per layer. **Deferred: M8 for layer identity, M9 for comparison semantics.** |
 
 Implementation notes for the three viewer features Viewer Closure closed follow.
 The acceptance table remains the target, including the parts called out below.
@@ -102,6 +102,44 @@ Still unimplemented across the viewer: XIC (VIEW-007), spectrum zoom and pan,
 multi-layer comparison (VIEW-008), and current-range export of a selected
 spectrum. The chromatogram exports over the full run or the current range, alone
 or linked with the selected scan; see FIG-001 through FIG-006.
+
+Where each of those is owned, and why, is fixed by
+[ADR 0037](../architecture/adr/0037-viewer-completion-route.md):
+
+- **Spectrum zoom and pan** and **current-range export of a selected spectrum**
+  are M5, in that order. The second depends on the first: the chromatogram's
+  `Current range` reads `ViewerInteractionState.committedDomain`, and the
+  selected spectrum has no equivalent committed viewport for a range chooser on
+  its surface to refer to. Both are delivered **per spectrum**, not universally:
+  a viewport needs an authoritative finite forward m/z domain, `SeriesSpec::new`
+  answers a non-ascending array with `SpecError::SourceNotOrdered`, and mzML
+  permits exactly that. Such a spectrum is valid source data — its full-source
+  CSV and TSV write — and M5 gives it an explicit refusal rather than a sorted
+  copy of the measurement. Where a viewport *is* admitted, what it draws is a
+  bounded projection of the complete spectrum Rust retains rather than the
+  bounded arrays one transfer carries, so zooming into a large spectrum shows the
+  source rather than the end of the prefix.
+- **VIEW-007** is M5 behind an evidence gate. The backend's `tic` query already
+  declares an `mz=<mzLow>[,<mzHigh>]` window and the installed help declared a
+  `sic` query, but no m/z-windowed query has ever been run here and `sic` has
+  never been captured. An XIC cannot be derived in the interface instead. The
+  loaded table's per-scan base peak m/z is a summary, not a spectrum: filtering
+  scans by it returns zero for every scan carrying signal in the window under a
+  taller peak elsewhere, which is where an analyst is most often looking. The
+  gate has two valid outcomes, and M5 completes under either: a visible trace
+  whose window, unit posture, MS-level scope, aggregation and source query it
+  carries where they can be read, or a recorded refusal with the measurement
+  behind it and a named owner and re-entry gate. **M5 writes no XIC figure or
+  data document**; a reusable XIC export belongs to M9.
+- **VIEW-008** is deferred past M5 on a dependency audit, not on priority alone.
+  It needs several runs loaded at once where the application holds exactly one
+  by contract, a layer identity `FigureSpec` has no concept of, a normalization
+  this product has not admitted, and a selection type wider than the one
+  selected scan every linked view consumes.
+- **Telling a click surface that a selection is unavailable** is M5 as well. The
+  chromatogram's plot and every scan-table row stay clickable while the
+  selected-spectrum lane is blocked, and neither says so; M5 adds more
+  selectable surfaces, so the rule is settled before the set grows.
 
 ## Conversion
 

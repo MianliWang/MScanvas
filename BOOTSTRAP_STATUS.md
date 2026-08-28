@@ -4714,7 +4714,7 @@ only and the two single-source exports keep their own data documents.
 
 ### What the rendered evidence establishes
 
-**Rust: 1,262 tests**, up from 1,220. **Frontend: 1,050 tests**, up from 1,007.
+**Rust: 1,262 tests**, up from 1,220. **Frontend: 1,051 tests**, up from 1,007.
 **Browser QA: 126 cases** across all six spec files at 1366×768, 960×640 and
 1920×1080 — every one of the eight export actions inside everything that clips,
 inside the viewport, and the thing `elementFromPoint` hands a click to; a real
@@ -4809,3 +4809,192 @@ Not on this list any more, because this milestone is what built it: the linked
 two-panel figure of the chromatogram and the selected scan, as SVG, PNG and
 `Copy plot`, over the full run or the current range. See
 [ADR 0036](docs/architecture/adr/0036-linked-chromatogram-spectrum-figure.md).
+
+## M5.0 — Viewer Completion route lock, 2026-08-27
+
+Documentation only. No Rust behaviour, no React behaviour, no backend operation,
+no reducer, no export, no dependency and no lockfile changed with this slice.
+
+M4 closed at `b77e5e8` with the linked two-panel figure. The sequence that
+followed it in `ROADMAP.md` was written before the viewer existed and sent the
+project from figure export straight to public-beta hardening and then to an
+artifact model — hardening and persisting a scientific viewing workflow that was
+still missing several of its own capabilities. This slice replaces that sequence
+with the product priority, and fixes the exact route for M5. See
+[ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md).
+
+**M5 Viewer Completion, M6 Conversion Completion, M7 UI/UX and public product
+hardening, M8 artifact/run/QC foundation, M9 first analysis recipes, M10
+automation.** M0 to M4 are unchanged in meaning and stay closed. The former M5
+to M8 had not started; their content moves rather than being discarded.
+
+### The audit was taken from the implementation, not the roadmap
+
+Nine known gaps, each classified from what the code does.
+
+| Gap | Classification | The evidence |
+| --- | --- | --- |
+| Spectrum zoom/pan/reset | **M5**, where a domain is admissible | `StickSpectrum.tsx` is a pure function of the transferred arrays and holds no state; `ViewerInteractionState` carries exactly one domain, and it is a `RetentionTimeDomain`. There is no m/z viewport anywhere. Required does not mean universal: `SeriesSpec::new` answers a non-ascending m/z array with `SpecError::SourceNotOrdered`, which mzML permits and nothing here sorts, so that spectrum gets an explicit refusal rather than an invented domain. |
+| Selected-spectrum current-range export | **M5**, after the viewport and only where one exists | `spectrum_panel` builds one series at `DataScope::FullSource` and never calls `with_visible_domain`; `RangeRequest` exists for the chromatogram alone. A range chooser on that surface has nothing to refer to until a committed m/z viewport exists — and for a spectrum with no admissible domain there is no `Current` scope at all, while its full-source CSV and TSV are unchanged. |
+| XIC (VIEW-007) | **M5**, behind an evidence gate with two valid outcomes | `PreviewOperation::Tic` exists, is capability-gated and is parsed — and is never issued. Its required signature already declares `mz=<mzLow>[,<mzHigh>]`, and the M0 spike recorded a `sic` query in the installed help. Neither has ever been run as an XIC, and `sic` has no signature, parser or measurement here at all. |
+| XIC linked selection | **M5** where XIC is admitted, with no new authority | One `Selection` with one monotonic revision, consumed through `consumeSelection`. `TicPoint` already carries a `SpectrumIdentity`, so an XIC point names a scan through the existing commit path. |
+| Selection-availability affordance | **M5** | `spectrumSelectionAvailable` reaches `canSelectPreviousScan` and `canSelectNextScan` and nothing else; `PreviewWorkspace.tsx` passes a bare `onSelect` to both the plot and the table. M5 adds more selectable surfaces, so the rule is settled before the set grows. |
+| Multi-layer comparison (VIEW-008) | **Deferred — M8 then M9** | The application holds one preview by contract, in both layers: the frontend `PreviewState` holds one `Preview`, and Rust's open ticket states there is only one chromatogram the user is looking at and only one that may be exported. `FigureSpec` has style roles for quantities and no identity for a source. Two runs' intensities need a normalization this product has not admitted. A selected scan *of a layer* is a wider type than the one every linked view consumes. |
+| Touch gestures | **Deferred — M7** | `.chromatogram-svg { touch-action: none }` is static rather than a per-event claim. Not required for any M5 capability's correctness: every M5 control is reachable by pointer and by keyboard. |
+| Bounded preview cache | **Deferred — M7, and only on a measurement** | There is none, recorded as a position rather than an omission. The M0 spike measured 24 deterministic indices over three passes on a 36,319-spectrum file at p50 `164 ms`, p95 `186`–`194 ms`, max `199 ms`, with no degradation by index position or repetition. Nothing in M5 argues for one: a spectrum viewport reads nothing, and an XIC is one backend operation per XIC rather than one per scan. |
+| Vendor direct preview | **Deferred — M6, behind its own evidence slice** | `open_preview` refuses a non-previewable row with `dataset_not_previewable()`. Conversion support is not direct-preview support: the conversion evidence proves `msconvert` writes a correct mzML and says nothing about whether `msaccess` can answer preview queries against a vendor acquisition. |
+
+### What the route refuses to invent
+
+**A pseudo-XIC.** `SpectrumRow` carries a base peak m/z, a base peak intensity,
+a total ion current and a precursor m/z per scan — enough to *look* like an XIC
+and not one. Selecting the scans whose base peak falls in a window, at their
+base peak intensity, returns zero for every scan that carries signal in the
+window under a taller peak elsewhere, which is where an analyst is most often
+looking. An XIC needs intensity as a function of m/z inside each scan, and no
+per-scan summary is that. The only route short of a new operation is the
+`binary` query: this repository's typed `SpectrumByIndex` asks for one index, so
+that is 36,319 backend processes for the measured representative acquisition,
+and the range form the backend's grammar declares — never issued or measured
+here — refuses itself on size, because one operation's output is bounded at 8 MiB
+and refused whole above it while a run's complete binary at the requested
+precision is orders of magnitude past that. **M5.4 is a dedicated evidence slice**, and it has an explicit
+refusal path rather than an assumed outcome. On `XIC_SOURCE_ADMITTED` M5.5 and
+M5.6 run and M5 exits with a visible XIC inside the one linked selection. On
+`XIC_SOURCE_REFUSED` they are `NOT_APPLICABLE`, M5.7 runs against the existing
+surfaces, the refusal and its measurement are recorded, VIEW-007 is reassigned to
+a named owner and re-entry gate, and the milestone still closes. In that outcome
+**`M5 COMPLETE` does not mean XIC exists.** What may not happen under either
+outcome is XIC shipping from a source the evidence did not establish.
+
+**A second scan-selection authority.** An XIC's x axis is retention time, over
+the same run, so it consumes `ViewerInteractionState` rather than owning a
+second one.
+
+**A current-range scope with nothing behind it.** The selected-spectrum range
+export comes after the viewport, not beside it — and only where a viewport exists.
+
+**A prefix presented as the whole source.** `MAX_SPECTRUM_POINTS` bounds one
+transfer, so a large spectrum reaches the webview as a prefix marked `truncated`.
+A viewport whose domain spans the complete source while its data stops at that
+prefix would pan into blank space over peaks Rust is holding and the export
+writes. **A bound on transfer is not permission to present a prefix as the whole
+source.** So M5.1 owns a bounded, viewport-scoped **screen projection** of the
+complete retained snapshot: reset draws a bounded overview of the whole admitted
+domain, zooming re-projects the source rather than re-zooming the overview, and a
+viewport change asks Rust to project a snapshot it already holds rather than
+re-reading the acquisition or launching ProteoWizard. The projection is a
+drawing — it may reduce, it selects real observations, it invents nothing, and
+**scientific export never derives from it.**
+
+**A viewport bought by sorting the measurement.** mzML does not require an ordered
+m/z array and nothing here sorts one: `SeriesSpec::new` refuses a non-ascending
+`x` as `SpecError::SourceNotOrdered`, `Domain::new` refuses the inverted pair its
+first and last would make, and the existing figure refusal is already recorded in
+`preview/dto.rs` with CSV/TSV named as the route out. **A valid scientific source
+need not be renderable.** Where the contract cannot admit a domain without
+changing the source, M5 refuses the viewport and the `Current` scope rather than
+reordering, min/maxing or interpolating the measurement to manufacture one. Valid
+source data, figure admissibility, viewport-domain admissibility, full-source
+export and current-range export are five different questions, and M5 answers them
+separately.
+
+**A chromatogram's clipping rule on a stick spectrum.** M4.3's boundary segment
+belongs to a polyline. `crates/plot-spec/src/svg.rs` filters discrete marks
+instead, and says why — *inventing one at the boundary would draw intensity at an
+m/z nobody measured* — so for the `Unreported` representation this product
+actually receives, a window holding no reported peak is a figure and a data
+document that are **both** empty. Only a representation authoritatively
+established as continuous profile samples could admit an interpolated boundary,
+and M5.3 must not require one universally.
+
+**An XIC export.** M5 builds the visible trace and no artifact: no XIC SVG, PNG,
+CSV or TSV, and no claim that one exists. Every adopted XIC decision is carried
+by the visible trace contract instead. A reusable XIC export belongs to M9.
+
+**A viewport whose domain the export source does not have.** The screen and the
+export renderer disagree about a spectrum's m/z domain on purpose today —
+`StickSpectrum` widens the drawn domain to cover the reported `mzLow`/`mzHigh`
+*and* the transferred points, while `domain_of` takes the first and last of a
+series the figure contract has **already admitted as ordered**, and documents why
+it refuses the reported pair. A viewport over the wider one could commit a range
+Rust then refuses as `OutsideSource`, which is the defect class `clampDomain`'s
+own comment records for retention time. ADR 0037 fixes the constraint rather than
+leaving it to the slice — and states what happens where no series is admitted at
+all, which is the paragraph above.
+
+### Five product decisions, surfaced instead of guessed
+
+Recorded as `USER_DECISION_REQUIRED` in ADR 0037, each with its options, its
+consequences and a recommended default where the evidence supports one: how the
+reader expresses the m/z window and in what unit; which MS levels an XIC covers;
+what is aggregated inside the window; which backend query is the source; and
+where the XIC is drawn and against which value axis. An adopted answer is carried
+by the **visible trace contract** — M5 writes no XIC document for it to appear
+in.
+
+The unit question is the sharpest of them. The backend takes an **absolute**
+window, and this product reports no unit for a spectrum's values at all —
+`SelectedSpectrumResult.value_units` is `UnitState::NotEmitted` and the panel
+renders "Value units: Not reported" — so a ppm tolerance would be a conversion
+MSCanvas performs, against values whose unit the file never reported.
+
+### UI/UX principles frozen, and nothing redesigned
+
+Eight principles are frozen in ADR 0037 so the controls M5 adds do not grow
+inconsistently before M7 consolidates them: action hierarchy, disabled and
+unavailable posture, loading/busy/result posture, viewer panel ownership,
+keyboard equivalence, accessible naming and live-region rules, the responsive
+evidence targets 1920×1080 / 1366×768 / 960×640, and the accepted scroll
+ownership. Nothing is restyled, no design-system dependency is introduced, the
+component architecture is untouched, and the workspace and conversion surfaces
+are not entered.
+
+### Carried forward from M4, truthfully
+
+M4 is complete and is not reopened. Its environment residuals stand as recorded:
+the native save dialog is not automated inside the automated WebView2 session on
+this machine and its boundary rules are proved in Rust instead; `Copy plot`'s
+finished outcome is not proved on the real WebView because this Windows
+session's clipboard cannot be opened by any process; different-owner and
+non-reconciling-row linked cases are proved at the Rust boundary only; and
+**live ProteoWizard evidence was NOT RUN for M4.4**.
+
+The last of those is the one M5 must act on rather than merely record. **M5.4
+requires a live measured run**, so an M5 executing on a machine with no real
+ProteoWizard installation cannot reach an `XIC_SOURCE_ADMITTED` outcome at all,
+and must stop at that slice rather than substitute a fixture for a measurement or
+record a refusal it did not measure.
+
+### Four M4.4 confirmation findings, inherited rather than closed
+
+M4.4's final confirmation review recorded four findings. They did not block M4
+completion, **none has been repaired**, and each is carried here as explicit
+debt. This slice changes no production code and repairs none of them; what it
+does is give each an owning M5 slice. All four were re-confirmed against
+`b77e5e8` while the route was written.
+
+| # | Finding | Owner |
+| --- | --- | --- |
+| P3-1 | `_validate_linked_pair_has_one_constructor` asks `functions_naming` which functions call `LinkedPair::new`, and that helper recognises a definition only at exactly four spaces of indentation. `mod linked_pair` is at column zero, so its methods sit at eight — a wrapper added inside the module would not be seen as its own function. **No current production bypass**: the private fields still make a struct literal a compile error elsewhere, `LinkedPair::new` is still `pub(super)`, and the cross-file direct-reader rules are unchanged. The debt is a repository rule weaker than it reads. | **M5.3**, the first slice to change `preview/export.rs`; M5.8 as backstop |
+| P3-2 | The first comment above the linked section in `ChromatogramExportPanel.tsx` still describes the `42ba0a2`-era single-element live region. `8efdd59` replaced that shape with two elements, which the comment immediately below describes correctly; the two now disagree about the code they sit on. | **M5.7** |
+| P3-3 | When the linked section cannot be used, the refusal sentence is in the accessibility tree twice — once as the visible paragraph the three buttons point `aria-describedby` at, once as the hidden `aria-live` region's content. `visually-hidden` removes an element from the page, not from the tree. **This is not the announcement defect `42ba0a2` and `8efdd59` closed, and must not be described as fixed.** | **M5.7** |
+| P3-4 | In `usePreviewWorkspace.ts` the block documenting `scientificExportBusy` is separated from it by the `useState<LinkedFigureExportState>` declaration M4.4 introduced. Third instance of one insertion mistake: `42ba0a2` moved two stranded comments, `8efdd59` corrected one of those moves, and neither found this. | **M5.3** |
+
+None of the four is a reason to reopen M4.
+
+### One factual correction
+
+M4.4's frontend test count is **1,051**, measured on `b77e5e8` — 43 files, 1,051
+tests. The M4.4 section above and ADR 0036 said 1,050, which was the count before
+the closure round `8efdd59` added one, and both are corrected in place. Rust is
+1,262, which was already right. Nothing else about M4.4's evidence changes and no
+milestone claim moves.
+
+### Validation
+
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`
+(1,262 passing), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
+`pnpm test` (1,051 passing), `pnpm build` and `git diff --check`. The product
+baseline is unchanged because no product code was touched.

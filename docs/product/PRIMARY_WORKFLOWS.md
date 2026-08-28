@@ -141,7 +141,20 @@ The run and the scan chosen in it can also be exported *together*, as one figure
 of two ordered panels linked by a marker at that scan.
 
 Still missing from the acquisition view: XIC, spectrum zoom and pan, and
-multi-layer comparison. See
+multi-layer comparison. One more thing is missing that is easier to meet than to
+notice: the plot and every table row stay clickable while the selected-spectrum
+lane is blocked — a running conversion, an installation check, a backend
+resolved unavailable — and neither surface says so.
+
+Spectrum zoom and pan and that unavailability rule belong to M5 — Viewer
+Completion — whose route is fixed by
+[ADR 0037](../architecture/adr/0037-viewer-completion-route.md). XIC belongs to
+M5 too, but behind an evidence gate with two valid outcomes: a visible trace
+inside this same linked selection where a backend source is proved, or a recorded
+refusal and a reassignment where it is not. Either way M5 writes no XIC export.
+Multi-layer comparison is deferred past M5, with named owners for the contracts
+it needs.
+See also
 [ADR 0032](../architecture/adr/0032-viewer-interaction-and-viewport-state.md) and
 [ADR 0033](../architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
 
@@ -306,7 +319,13 @@ The chromatogram exports as SVG, PNG, `Copy plot`, CSV and TSV, over the full
 run or the range the viewer has committed to, and that range is
 `ViewerInteractionState.committedDomain` rather than a gesture in progress. A
 *selected spectrum* still exports its full source only: there is no range
-chooser on that surface.
+chooser on that surface, and there is nothing for one to read — the spectrum has
+no committed viewport of its own. Both are M5, in that order, and both apply per
+spectrum: a viewport needs an m/z domain the scientific contract can establish
+without altering the source, and mzML permits an array it will not accept. Such a
+spectrum keeps its full-source CSV and TSV and is refused a viewport and a
+current range rather than sorted. See
+[ADR 0037](../architecture/adr/0037-viewer-completion-route.md).
 
 The same surface offers the two of them **linked**: one figure of two ordered
 panels, the chromatogram above with a marker at the selected scan and that scan's

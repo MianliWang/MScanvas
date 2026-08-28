@@ -601,19 +601,27 @@ Typed mzML settings, queue, cancellation, retry, failure isolation and transacti
 
 Screenshot, PNG/SVG, current/full range, independent theme, CSV/TSV, linked two-panel figure.
 
-### M5 — Public beta hardening
+### M5 — Viewer Completion
 
-Windows packaging/signing plan, accessibility, diagnostics, lawful fixtures and layout/settings persistence.
+Spectrum viewport and selected-spectrum current-range export, delivered wherever the scientific figure contract admits an m/z domain and explicitly refused where it does not rather than sorting the measurement; and one rule for how a viewer click surface says a selection cannot be performed. XIC sits behind a live evidence gate with two valid outcomes — a visible trace inside the existing linked selection, or a recorded refusal and a reassignment — and M5 builds no XIC export either way. See [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md).
 
-### M6 — Artifact and QC foundation
+### M6 — Conversion Completion
 
-Durable project/artifact/run lineage and first useful QC reports.
+Conversion settings the interface can express, queue and output work beyond the current bounds, and vendor-format direct preview behind its own evidence slice.
 
-### M7 — First analysis recipes
+### M7 — UI/UX and public product hardening
 
-Isolated worker and one or two reviewed, typed recipes backed by mature packages.
+Consolidation and redesign of the completed surfaces; Windows packaging/signing plan, accessibility, diagnostics, lawful fixtures and layout/settings persistence; touch semantics; a preview cache only where a measurement shows one is needed.
 
-### M8 — Automation
+### M8 — Artifact, run and QC foundation
+
+Durable project/artifact/run lineage and first useful QC reports, including the layer identity and provenance multi-layer comparison needs.
+
+### M9 — First analysis recipes
+
+Isolated worker and one or two reviewed, typed recipes backed by mature packages; multi-layer comparison semantics on top of M8's layer identity; a reusable XIC export, which M5 deliberately does not build.
+
+### M10 — Automation
 
 Stable CLI and schemas, then skills and a narrow local MCP adapter.
 

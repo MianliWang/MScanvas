@@ -212,6 +212,36 @@ yet. See [What works today](#what-works-today).
 
 Analysis is deferred rather than prohibited. MSCanvas should reuse mature algorithms from OpenMS/pyOpenMS, matchms and other reviewed packages instead of reimplementing them.
 
+## What is next
+
+**M5 — Viewer Completion.** The viewing workflow above is the product's first
+real answer and is not finished: the selected spectrum has no viewport, so it
+neither zooms nor exports over a range; there is no extracted-ion chromatogram;
+and a click on the plot or a scan row while the backend is busy commits nothing
+without saying so. M5 closes the viewport, the range export and the click
+affordance before conversion is widened (M6) and before the interface is
+consolidated and redesigned (M7).
+
+The viewport is delivered wherever the scientific figure contract can establish
+an m/z domain without altering the measurement. mzML permits an m/z sequence that
+contract will not accept, and MSCanvas does not sort one to make a viewport
+possible: such a spectrum stays selectable, still draws, still exports as
+full-source CSV and TSV, and is told plainly that it has no viewport and no
+current range.
+
+The extracted-ion chromatogram sits behind an evidence gate rather than a
+promise: no m/z-windowed backend query has ever been run here, so M5 first proves
+a source exists. If it does, M5 delivers a visible XIC inside the viewer's one
+linked selection — a trace, not an exported file. If it does not, M5 records the
+refusal and the measurement behind it and reassigns the feature, rather than
+approximating it from data that cannot produce one.
+
+Multi-layer comparison, a bounded preview cache and vendor-format direct preview
+are deferred past M5 with named owners rather than left in the near-term list.
+The route, its exit criteria and the live audit behind them are in
+[ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md); the milestone
+sequence is in [`ROADMAP.md`](ROADMAP.md).
+
 ## Repository status
 
 The repository contains:

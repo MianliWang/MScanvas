@@ -888,6 +888,14 @@ if it is pulled forward. **Scope:** decide consistently how the table-row and
 chromatogram click surfaces communicate temporary selected-spectrum
 unavailability, while preserving backend-free hover, zoom and pan.
 
+*Reassigned, and pulled forward as this section anticipated.*
+[ADR 0037](0037-viewer-completion-route.md) makes it **M5.7** of Viewer
+Completion — the same milestone number under a different name, as its own slice
+rather than part of a hardening pass — because M5 adds selectable surfaces and
+the rule is cheaper to state before the set grows than after. The scope above is
+unchanged, and gains the XIC's click surface where M5's evidence gate admits an
+XIC.
+
 ## What R1 does not implement
 
 Chromatogram CSV/TSV or SVG/PNG export; current-range export of anything; the
