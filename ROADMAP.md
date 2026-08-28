@@ -217,12 +217,16 @@ five product decisions it surfaces are in
   as the whole source. No surface yet — and none added: M5.1 is the model, the
   Rust authority and the bounded projection, with every visible control left to
   M5.2. See [ADR 0038](docs/architecture/adr/0038-spectrum-viewport-authority-and-screen-projection.md).
-- **M5.2 — the visible spectrum viewport.** Where a domain is admitted, the
-  selected spectrum zooms, pans and resets by wheel, drag, keyboard and button,
-  and a committed viewport draws the retained source across its whole domain —
-  including past the transferred prefix — without re-reading the acquisition or
-  launching ProteoWizard. Where a domain is refused, the panel says so and no
-  control pretends to act.
+- **M5.2 — the visible spectrum viewport.** **Closed.** Where a domain is
+  admitted, the selected spectrum zooms, pans and resets by wheel, drag,
+  keyboard and button, and a committed viewport draws the retained source across
+  its whole domain — including past the transferred prefix — without re-reading
+  the acquisition or launching ProteoWizard. Where a domain is refused, the
+  panel says so, the spectrum stays selected and drawn, and no control pretends
+  to act. An adapter over M5.1 and nothing more: no Rust file changed, no
+  command was added, and the two sentences that described the drawing as the
+  transferred prefix were corrected because a viewport made them false. See
+  [ADR 0039](docs/architecture/adr/0039-visible-spectrum-viewport-adapter.md).
 - **M5.3 — selected-spectrum `Current range` export.** Every format that
   spectrum already supports — all five where the figure contract admits it, CSV
   and TSV where it refuses it — over the full source, and over the committed m/z

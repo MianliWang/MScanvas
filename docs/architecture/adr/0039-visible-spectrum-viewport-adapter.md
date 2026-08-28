@@ -1,0 +1,296 @@
+# ADR 0039 — The visible spectrum viewport is an adapter, and the drawing is never ahead of the axes
+
+Status: accepted
+Date: 2026-08-28
+Related: [0032](0032-viewer-interaction-and-viewport-state.md),
+[0033](0033-visible-linked-tic-bpc-viewer.md),
+[0037](0037-viewer-completion-route.md),
+[0038](0038-spectrum-viewport-authority-and-screen-projection.md)
+
+## What this ADR is
+
+M5.2, the slice that makes the m/z viewport [ADR 0038](0038-spectrum-viewport-authority-and-screen-projection.md)
+built reachable. That ADR remains the semantic authority and this one does not
+restate it: what is recorded here is the handful of **adapter** decisions the
+visible surface forced, each of which had a plausible alternative that is wrong
+for a reason worth writing down.
+
+Nothing scientific changed. No Rust file was touched, no command was added, no
+export behaviour moved, and `MAX_SPECTRUM_POINTS` was not raised. M5.1's
+`project_selected_spectrum` turned out to be sufficient, which is the outcome a
+published boundary is supposed to have.
+
+## Where the reducer lives, and why it is not in the plot
+
+The obvious home for a viewport is the component that draws it. That is wrong
+here, and the reason is the one thing M5.1 was most emphatic about.
+
+The gesture epoch and the projection generation are **monotonic across the
+session, never per spectrum** — because their whole job is to tell a late answer
+about the spectrum just replaced from a current one about the spectrum now
+selected. A reducer created when a component mounts restarts them when that
+component mounts. And the selected-spectrum panel unmounts its plot on every
+selection: a spectrum load passes through `loading`, which draws no plot at all.
+So a component-local reducer would restart both counters at *exactly* the moment
+a request for the previous spectrum is still outstanding, which is the race
+written out in full.
+
+The reducer therefore lives in `usePreviewWorkspace`, beside the one
+`ViewerInteractionState` and for the same reason, and the panel receives it.
+
+**The cost is real and is accepted.** `SelectedSpectrumPanel` is memoised, and
+until now no interaction state reached its props at all; now its own viewport
+does, so a drag over the spectrum plot re-renders the panel per frame. The memo
+still earns its keep — a conversion poll, a roster reply, a figure setting and
+above all the *chromatogram's* hover still do not reach it — and a frame of the
+interaction the reader is currently performing on this panel is a much cheaper
+thing than a late answer landing under the wrong axes. The comment on that memo
+now says so rather than continuing to claim what stopped being true.
+
+## `idle` is the whole request rule
+
+There is no list of places that must remember to ask Rust for a drawing.
+
+`idle` is the contract's own word for *this viewport has a window and no drawing
+that answers it*, and M5.1 arranged for exactly the transitions that change the
+committed window — a selection, a settle, a step, a reset — to leave it there.
+So one effect asks whenever the state is `ready` and the projection is `idle`,
+and that is the entire policy: a transition that changes the committed window
+gets a request, and one that does not, does not. A gesture leaves the projection
+alone, so a drag makes no requests at all until it settles.
+
+Retry is the same call. Same spectrum, same committed window, same retained
+source, new generation — so a retry and a first request cannot come to ask
+different questions, and there is no second code path to keep in step.
+
+## The failure's sentence is a lookup, not a second opinion
+
+`projection-failed` carries retryability and not a message, which is right: the
+contract is about which request an answer belongs to, not about what to say
+about it. But something has to say it.
+
+The wording is therefore kept beside **the generation it arrived for**, and read
+back only while the reducer says that generation is the failure it is currently
+in. That is a lookup keyed by the contract's own identifier rather than a second
+frontend record of which failure is current — which is the thing ADR 0038
+forbids, because a second race guard is a thing that can disagree.
+
+Retryability is read as `failure.retryable === true` rather than for truthiness.
+`isPreviewError` accepts an object carrying only a kind and a summary, so the
+field can arrive undefined, and a failure this side cannot classify is not given
+a retry button that might do nothing.
+
+## The drawing is never ahead of the axes, and the surface still holds still
+
+M5.1's rule is that a previous drawing stops being current for a newly committed
+window. The naive rendering of that is to replace the plot with a loading
+placeholder — and doing so takes the focusable element out of the document in
+the middle of an interaction, so a keyboard user who has just pressed `+` loses
+focus, and a wheel listener bound to that node is left bound to nothing.
+
+So the plot is **always** rendered for an admitted viewport, over the range on
+screen, and what changes is whether it has any sticks in it. A committed window
+whose drawing has not arrived draws its axes and nothing else, and says so. The
+result satisfies the rule more strictly than a placeholder would — no points are
+shown under axes they do not answer — while leaving the surface, its focus and
+its listener exactly where they were.
+
+Four drawing states are named in the type rather than inferred, so the caption
+cannot claim something the picture does not support: the transferred prefix, a
+committed window's drawing, a committed window with no drawing yet, and a
+gesture in progress being stretched from the drawing already in hand. Only the
+last two are new, and both exist because a caption that said *"drawn as 0 sticks
+of 0 observations"* while a request was outstanding would be a false statement
+about the spectrum.
+
+## Ownership extends from the wheel to the keyboard
+
+ADR 0033's R1.2 rule — *a wheel is claimed only where applying it would change
+the effective rendered domain* — is applied here unchanged. What is new is that
+the same rule now governs keys.
+
+The chromatogram calls `preventDefault()` for any key it recognises, including
+one that does nothing at the edge of the run. That was defensible when the plot
+was the only thing under the pointer; on a panel that scrolls inside a column
+that scrolls, a key that changes nothing and is swallowed anyway is the keyboard
+form of the wheel defect this repository already fixed once. So a viewport key
+is claimed only when the transition it names was productive, and at a boundary
+it falls through to the surface it sits in. The chromatogram is left alone: that
+is its slice's decision to revisit, not this one's.
+
+## `touch-action: pan-y`, deliberately not `none`
+
+The chromatogram takes every touch. Copying that here would have removed the
+only way to scroll the selected-spectrum panel on a touch screen, because this
+panel is a scroll container inside another one and its content is routinely
+taller than its box.
+
+The axis this viewport navigates is horizontal, so horizontal travel is claimed
+and vertical travel stays the browser's. A vertical drag then arrives as a
+pointer cancel, which the contract already answers by abandoning the gesture
+rather than committing it. No touch or pinch semantics are added; this is the
+narrowest declaration that lets a horizontal drag exist without taking anything
+away.
+
+## Two surfaces offering the same verb
+
+`Zoom in` was already a button in this window. A second one would have made
+`getByRole("button", { name: "Zoom in" })` ambiguous — which the existing
+chromatogram tests do unscoped — but the test breakage is the symptom rather
+than the problem. A reader being read the interface rather than looking at it
+would meet two controls with one name and no way to tell which plot each moves.
+
+So the labels name their axis: `Zoom in m/z`, `Zoom out m/z`, `Reset m/z range`.
+The visible text *is* the accessible name; nothing is overridden with an
+`aria-label` that a sighted user could not read back.
+
+## One element says it, and says it once
+
+The status line is visible text **and** the live region, in one element carrying
+one string, empty while a current drawing is on screen. The alternative shape —
+a visible paragraph plus a hidden `aria-live` twin carrying the same sentence —
+is exactly the inherited M4.4 P3-3 debt, where `visually-hidden`'s `clip-path`
+removes an element from the page but not from the accessibility tree and a
+reader traversing the panel meets the sentence twice. ADR 0037 binds this slice
+to satisfy the live-region rules *without adding another instance of it*.
+
+It uses `aria-live="polite"` without `role="status"`, which is this
+application's own shape for a region that is also its own visible text. The role
+would additionally have made it the second thing in the panel answering to
+`status`, beside the export result.
+
+The range line beside it is deliberately **not** a live region: it changes on
+every frame of a drag, and a region announcing each of them would be noise. It
+is half of the plot's accessible description instead, which is the same decision
+the chromatogram's readout records.
+
+## Two sentences that quietly became false
+
+A truncated spectrum used to be described by a notice saying *only the drawing is
+limited to the first N points*, and by an accessible summary saying *the drawing
+covers the first N of those points*. Both were true of a panel with no viewport.
+
+Where a viewport is admitted, neither is: every committed range is drawn from the
+complete spectrum Rust retained, and the transferred prefix has stopped being
+what the drawing is taken from. Leaving those sentences in place would have made
+the panel's own words the thing contradicting the milestone — a reader panning
+past m/z 302.5 would be told the drawing stops there while looking at points
+beyond it. Both now branch on whether this spectrum has a viewport, and the
+no-viewport wording is untouched.
+
+## Two defects the evidence found, and neither was visible to review
+
+**Zooming out at full range did not always land back on the full range.** A zoom
+holds a point and scales both edges away from it, and recovering an edge from a
+centre rounds — so for a spectrum of m/z 110.3 to 500 it produced a low of
+110.30000000000001, whose span is smaller than the source's by one part in ten
+thousand million million. `isFullMzDomain` compares edges, so the reducer did not
+recognise that as the whole spectrum: it committed a *subrange*, the caption
+stopped saying full range, `Reset m/z range` lit up, `Zoom out m/z` offered to do
+it again, and the wheel was cancelled for it — so the column underneath stopped
+scrolling for an event nothing could see. Measured over plausible m/z domains and
+every anchor, **17% of them behaved this way**, and the same happened at the
+narrowest window in the inward direction for anchors away from the centre.
+
+The retention-time planner answers this by projecting a gesture through its
+settle, and that turns out to change no verdict at all: `committedForm` can
+answer `null` only where the clamped window already equals the source by value,
+which is exactly where the unsettled comparison already said unchanged. What
+rescues the well-behaved domains is `clampMzDomain` holding the low edge to the
+source, which catches the half that round *below* `full.low` and none of the half
+that round above.
+
+So the repair is upstream of the rounding, and states as limits what
+`clampMzDomain` already enforces: a zoom asking for at least the whole spectrum
+**is** the whole spectrum, and one asking for no more than the narrowest window
+that spectrum allows has no width left to give. Neither is an epsilon. The cost
+is that repeated zooming now stops within about 15% of the theoretical floor
+rather than exactly on it, which is a limit no reader can perceive at a
+ten-thousand-fold zoom, and the floor itself is still reachable by a committed
+range.
+
+**The retention-time planner shares the arithmetic and is not repaired here.**
+`viewportAction.ts` is ADR 0033's, its rendered evidence is the chromatogram's,
+and folding a change to a shipped surface into this slice would be changing
+something M5.2 has no evidence for. Recorded as P3 for whichever slice next owns
+that planner.
+
+**A press outlived the spectrum it began on.** `pointerdown` remembers the window
+on screen; the selection can then move — from the table, the chromatogram, or
+Previous and Next — while the button is still down. A gesture already started is
+safe by its epoch, because the new context never issued it. A press that has not
+started one carries no epoch to be refused by, and its remembered window belongs
+to the *previous* spectrum: the first move after the change started a gesture on
+the new spectrum at a range taken from the old one's, clamped in and offered as
+though someone had navigated there. That is precisely the continuity
+`selectSpectrum` documents that it refuses to invent, leaking through the
+adapter's own record rather than through the reducer. The press now records which
+spectrum it began on and moves nothing once that is no longer the selected one.
+
+Both were found by evidence rather than by reading: the first by measuring the
+planner across many domains and anchors, the second by an independent reading of
+the adapter's press record against what the contract promises. Both are pinned by
+tests that fail when the repair is removed.
+
+## What is deliberately not offered
+
+A spectrum with **no points** keeps the empty state it already had and gains no
+viewport surface. Its domain is admitted and zero wide, so every control would
+be inert and every drawing empty; three disabled buttons beside a sentence that
+has already said there is nothing here is not saying it better. The zero-width
+case the availability rule still owes is reachable — and tested — through a
+spectrum whose points share one m/z.
+
+A **press that selects nothing.** The spectrum plot is not the chromatogram's
+scan-selection surface, and the gesture adapter being useful prior art is not a
+reason to inherit its click semantics. Peak, ion, annotation and scan selection
+from a spectrum click would each be new product semantics.
+
+## Evidence
+
+**Frontend tests: 1,259**, up from 1,093. One hundred and sixty-six over the new
+surface, in three suites. The planner's 88 hold one rule across six viewport
+states and every wheel input the arithmetic can and cannot read. The component's
+67 assert, of every wheel and every key, the two facts that are not the same
+failure — whether the domain moved, and whether the browser event was claimed —
+and cover the drag's slop threshold, its single epoch, its computation from the
+press origin, its settle, its cancel, a secondary pointer that replaces nothing,
+a wheel arriving mid-drag that is neither claimed nor scheduled, a press held
+across a spectrum change that moves nothing, every asynchronous state including
+the successful empty window and the proof that it reads as none of loading,
+failure or refusal, and a committed window whose old drawing is gone rather than
+shown beneath it. The binding's 11 are about the wiring a single-spectrum test
+cannot see: stale success, stale failure, two commits before the first answer, a
+selection that changes while a request is outstanding, a refused spectrum that
+asks for nothing, a redelivery that asks again for nothing, and an export that a
+committed window leaves alone.
+
+**Thirteen mutations**, applied one at a time and restored byte-for-byte, with
+the hash checked after each. Twelve failed the check aimed at them: a wheel
+always claimed and a wheel never claimed; a control offered where the reducer
+would render nothing new; the previous drawing kept under a newly committed
+range; a drawing asked for on every pointer frame; a stale drawing accepted; a
+refused viewport taking a domain from the transferred arrays; a gesture's range
+drawn as though committed; the drawing's own points deciding the range it is
+drawn over; a pan accumulated from frame deltas; a second pointer taking the
+press from the first; and a press keeping its window across a spectrum change.
+The thirteenth — recording a failure's message the contract refused — survived
+and is reported as an **equivalent mutant**: the message is read back by the
+contract's own generation, so a stale one could not be shown even if it were
+stored, and the guard beside it keeps the stored value truthful rather than the
+screen.
+
+**Rust tests: 1,303, unchanged.** No Rust file was edited. That is the claim this
+slice most wanted to be able to make.
+
+**Rendered browser QA: 162 tests across seven spec files**, 36 of them this
+slice's. They cover both availability states at 1920×1080, 1366×768 and 960×640,
+drive real wheel, pointer and keyboard input, assert `defaultPrevented` and the
+rendered range as separate facts, read the projection call ledger to prove a drag
+asks for nothing until it settles, and carry the truncated-source proof: a
+retained domain of 300–900 whose transferred prefix ends at 302.5, navigated past
+it, drawing observations that could only have come from Rust.
+
+**Real-Tauri QA** keeps `project_selected_spectrum` live against the real
+process, so the domain, the drawing and the refusals are the ones the shipped
+boundary produces.

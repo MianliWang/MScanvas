@@ -5105,3 +5105,134 @@ M5.3. The four inherited M4.4 P3s remain unresolved, owned by M5.3 and M5.7.
 --all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
 `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
 `pnpm build` and `git diff --check`, each run directly and each exiting zero.
+
+## M5.2 — the visible spectrum viewport, 2026-08-28
+
+M5.1's viewport made reachable, and nothing more. Wheel, drag, keyboard and
+three buttons over the selected-spectrum panel; every asynchronous state the
+projection can be in, said in words that tell it from every other one; and an
+honest absence where the figure contract cannot give a spectrum an m/z domain.
+See [ADR 0039](docs/architecture/adr/0039-visible-spectrum-viewport-adapter.md).
+
+**No Rust file changed and no command was added.** M5.1's published boundary was
+sufficient, which is the outcome a published boundary is supposed to have.
+
+### The reducer is the session's, not the panel's
+
+ADR 0038's gesture epoch and projection generation are monotonic across the
+session, never per spectrum, because their whole job is to tell a late answer
+about the spectrum just replaced from a current one about the spectrum now
+selected. A reducer created when a component mounts restarts them when that
+component mounts -- and this panel unmounts its plot on every selection, since a
+spectrum load passes through `loading`. So the instance lives in
+`usePreviewWorkspace`, beside the one `ViewerInteractionState`.
+
+The cost is stated rather than hidden: the selected-spectrum panel now
+re-renders per frame during a drag over its own plot, where before no
+interaction state reached it at all. The memo still keeps the chromatogram's
+hover out, which is what it was for.
+
+### `idle` is the whole request rule
+
+There is no list of places that must remember to ask Rust for a drawing. `idle`
+is the contract's own word for *this viewport has a window and no drawing that
+answers it*, and exactly the transitions that change the committed window leave
+it there. One effect asks whenever the state is `ready` and the projection is
+`idle`. A gesture leaves the projection alone, so a drag asks for nothing until
+it settles. Retry is the same call with a new generation.
+
+### The drawing is never ahead of the axes
+
+A committed window whose drawing has not arrived draws its axes and **no
+points**, and says so. The alternative -- swapping the plot for a placeholder --
+takes the focusable element out of the document mid-interaction and leaves the
+wheel listener bound to a node no longer in it. Four drawing states are named in
+the type rather than inferred, so a caption cannot claim something the picture
+does not support.
+
+### One rule for every input
+
+ADR 0033's R1.2 wheel rule is applied unchanged, and now governs keys as well: a
+viewport key is claimed only where the transition it names was productive, so at
+a boundary it falls through to the panel that scrolls. `touch-action: pan-y`
+rather than `none`, because this panel is a scroll container inside another one
+and taking every touch would remove the only way to reach the rest of it; a
+vertical drag arrives as a pointer cancel, which the contract already abandons.
+
+### A real defect found, in this slice's own arithmetic
+
+**Zooming out at full range does not always land back on the full range.** The
+zoom holds an anchor and scales both edges away from it, and recovering the
+edges of a range from its centre does not round back to where it started: for a
+spectrum of m/z 110.3 to 500 it produces a low of 110.30000000000001, whose span
+is smaller than the source's by one part in ten thousand million million.
+`isFullMzDomain` compares edges, so the reducer commits that as a *subrange* --
+leaving `Zoom out` still offering to do it again and the wheel still claimed for
+it. Measured over 121 plausible m/z domains, **nine** behaved this way.
+
+Projecting the gesture through its settle, which is what the retention-time
+planner does, removes this only for runs whose clamp happens to land back on the
+source exactly. So the answer here is upstream of the rounding: a zoom asking
+for at least the whole spectrum **is** the whole spectrum, and one asking for no
+more than the narrowest window from a window already that narrow is the window
+it started from. Both are limits `clampMzDomain` already enforces, stated
+exactly instead of arrived at by subtraction.
+
+**The retention-time axis has the same arithmetic and is not fixed here.** That
+is `viewportAction.ts`'s and ADR 0033's, its evidence is the chromatogram's, and
+folding it into this slice would change a shipped surface M5.2 has no rendered
+evidence for. Recorded as P3 for whichever slice next owns that planner.
+
+### Two sentences that quietly became false
+
+A truncated spectrum was described by a notice saying *only the drawing is
+limited to the first N points*, and by an accessible summary saying *the drawing
+covers the first N of those points*. Both were true of a panel with no viewport
+and neither is true where one exists, because every committed range is drawn
+from the complete spectrum Rust retained. Leaving them would have made the
+panel's own words contradict the milestone for the reader most affected by it --
+someone panning past the end of the prefix while being told the drawing stops
+there. Both now branch on whether the spectrum has a viewport; the no-viewport
+wording is untouched.
+
+### What the evidence establishes
+
+**Frontend: 1,259 tests**, up from 1,093. **Rust: 1,303, unchanged** — no Rust
+file was edited, which is the claim this slice most wanted to be able to make.
+**Rendered browser QA: 162 tests across seven spec files**, 36 of them this
+slice's, covering both availability states at 1920x1080, 1366x768 and 960x640.
+
+**Thirteen mutations**, applied one at a time and restored byte-for-byte with the
+hash checked after each. Twelve failed the check aimed at them: a wheel always
+claimed and a wheel never claimed; a control offered where the reducer would
+render nothing new; the previous drawing kept under a newly committed range; a
+drawing asked for on every pointer frame; a stale drawing accepted; a refused
+viewport taking a domain from the transferred arrays; a gesture's range drawn as
+though committed; the drawing's own points deciding the range it is drawn over; a
+pan accumulated from frame deltas; a second pointer taking the press from the
+first; and a press keeping its window across a spectrum change. The thirteenth,
+recording a failure message the contract refused, survived and is recorded as an
+**equivalent mutant**: the message is read back by the contract's own generation,
+so a stale one could not reach the screen even if it were stored.
+
+**Two real defects were found by that evidence rather than by review**, and both
+are repaired above: the full-range rounding that left `Zoom out` enabled and
+swallowed the wheel, and a press held across a spectrum change starting a gesture
+on the new spectrum at the old one's range.
+
+### Not built, and by design
+
+The selected spectrum's `Current`-range export is **M5.3, and no part of it was
+started**: no range chooser, no scope, no command, and no path from a screen
+projection to a document. The four inherited M4.4 P3s remain unresolved, owned
+by M5.3 and M5.7, and M5.1's `projection.rs` rustdoc P3 is carried unchanged --
+this slice did not edit that scientific boundary at all.
+
+### Validation
+
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build` and `git diff --check`, each run directly and each exiting zero,
+plus `pnpm e2e:typecheck`, `pnpm e2e:browser`, `pnpm e2e:build` and
+`pnpm e2e:tauri`.
