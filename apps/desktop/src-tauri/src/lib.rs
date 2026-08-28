@@ -390,6 +390,30 @@ async fn begin_workspace_conversion_diagnostics_export(
     .await?
 }
 
+/// Draws one committed m/z window of the selected spectrum for the viewport.
+///
+/// The viewport's read of the same retained spectrum the export lane names, and
+/// the answer to a question the webview cannot settle for itself: `mz` and
+/// `intensity` in the selected-spectrum payload are bounded for transfer, so a
+/// window beyond that prefix has to be drawn from the complete arrays Rust
+/// retained. What comes back is a **bounded screen projection** -- real
+/// measurements, possibly fewer of them than the window holds, never an
+/// invented one -- and it is never what a scientific export is taken from.
+///
+/// Launches no process, re-reads no acquisition and takes no export lane.
+/// Moving a viewport is not re-acquiring a spectrum.
+#[tauri::command]
+async fn project_selected_spectrum(
+    export_token: String,
+    low: f64,
+    high: f64,
+    service: State<'_, SharedService>,
+) -> Result<preview::dto::SpectrumProjectionDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.project_selected_spectrum(&export_token, low, high))
+        .await?
+}
+
 /// Shows the native save dialog for one exact reservation and writes the file.
 ///
 /// The webview names no path: it returns only the opaque reservation Rust
@@ -1156,6 +1180,7 @@ pub fn run() {
             begin_workspace_conversion_diagnostics_export,
             save_workspace_conversion_diagnostics,
             begin_selected_spectrum_export,
+            project_selected_spectrum,
             save_selected_spectrum_export,
             begin_chromatogram_export,
             begin_linked_figure_export,

@@ -672,6 +672,133 @@ pub struct SeriesSpec {
     y: Vec<f64>,
 }
 
+/// The coordinate rules every measurement series obeys, over borrowed slices.
+///
+/// Factored out of [`SeriesSpec::new`]'s own validation, and called by it, so
+/// there is exactly one answer to "may this source be drawn". A caller that
+/// only needs to *ask* the question -- the spectrum viewport, deciding whether
+/// an authoritative m/z domain exists for a retained spectrum -- reaches the
+/// same verdict without copying the arrays to find out, and cannot drift into a
+/// second, more permissive reading of the same rule.
+///
+/// The rules, unchanged and in the order the constructor has always applied
+/// them: the two axes are the same length; every coordinate is finite; and the
+/// domain axis is non-decreasing. Negative `y` is accepted and preserved --
+/// intensity after baseline subtraction is legitimately negative.
+///
+/// # Errors
+///
+/// [`SpecError::AxisLengthMismatch`], [`SpecError::NotFinite`] or
+/// [`SpecError::SourceNotOrdered`], exactly as the constructor answers them.
+pub fn validate_measurement_coordinates(x: &[f64], y: &[f64]) -> Result<(), SpecError> {
+    if x.len() != y.len() {
+        return Err(SpecError::AxisLengthMismatch);
+    }
+    if x.iter().chain(y.iter()).any(|value| !value.is_finite()) {
+        return Err(SpecError::NotFinite);
+    }
+    if x.windows(2).any(|pair| pair[0] > pair[1]) {
+        return Err(SpecError::SourceNotOrdered);
+    }
+    Ok(())
+}
+
+/// The two domains a measured series is drawn against, once it is drawable.
+///
+/// Returned together because they are established together: a caller that has
+/// one has been told the series is admissible, and a caller that wants to know
+/// *whether* it is admissible does not have to guess which half to check.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeasurementDomains {
+    domain: Domain,
+    value_domain: Domain,
+}
+
+impl MeasurementDomains {
+    /// The domain axis the series spans.
+    #[must_use]
+    pub const fn domain(self) -> Domain {
+        self.domain
+    }
+
+    /// The value axis it is drawn against, always including zero.
+    #[must_use]
+    pub const fn value_domain(self) -> Domain {
+        self.value_domain
+    }
+}
+
+/// Which part of the drawability question a measured series failed.
+///
+/// Named rather than flattened into one error because the two axes fail for
+/// different reasons and a reader deserves to be told which. A caller that only
+/// needs a `SpecError` -- the figure builder, which has always answered in that
+/// vocabulary -- converts with [`MeasurementRefusal::into_spec_error`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeasurementRefusal {
+    /// The coordinates themselves are not a series.
+    Coordinates(SpecError),
+    /// The domain axis does not form a usable interval.
+    Domain(SpecError),
+    /// The value axis does not form a usable interval.
+    ValueDomain(SpecError),
+}
+
+impl MeasurementRefusal {
+    /// The refusal in the vocabulary the figure contract answers in.
+    #[must_use]
+    pub const fn into_spec_error(self) -> SpecError {
+        match self {
+            Self::Coordinates(error) | Self::Domain(error) | Self::ValueDomain(error) => error,
+        }
+    }
+}
+
+/// Whether a measured series can be drawn at all, and against what.
+///
+/// **The single drawability predicate**, over borrowed slices. Coordinate
+/// validity alone is not drawability: a series of perfectly finite values can
+/// still have a span no renderer can divide by -- `f64::MAX - (-f64::MAX)` is
+/// infinity -- and a figure that accepted it would produce `NaN` coordinates.
+/// Both axes are therefore established here, and a caller that wants only to
+/// *ask* the question does so without copying the arrays.
+///
+/// It exists because two callers need one answer. The spectrum figure builds
+/// the panel from these domains; the spectrum viewport decides from the same
+/// call whether a viewport may exist at all. Any second, more permissive reading
+/// of "drawable" is how a screen and an exported figure come to describe
+/// different scenes, so there is not one.
+///
+/// The domain axis is taken from the ends of the series, which the ordering rule
+/// above has just established are its extremes. An empty series has nothing to
+/// take a range from and gets the one domain that claims nothing, a single value
+/// at zero. The value axis is folded from zero rather than from the first
+/// sample, so the zero line is always inside it and a stick has somewhere to
+/// rise from.
+///
+/// # Errors
+///
+/// [`MeasurementRefusal`], saying which of the three questions failed.
+pub fn measurement_domains(x: &[f64], y: &[f64]) -> Result<MeasurementDomains, MeasurementRefusal> {
+    validate_measurement_coordinates(x, y).map_err(MeasurementRefusal::Coordinates)?;
+    let domain = match (x.first(), x.last()) {
+        (Some(low), Some(high)) => Domain::new(*low, *high),
+        _ => Domain::new(0.0, 0.0),
+    }
+    .map_err(MeasurementRefusal::Domain)?;
+    let mut low = 0.0_f64;
+    let mut high = 0.0_f64;
+    for value in y {
+        low = low.min(*value);
+        high = high.max(*value);
+    }
+    let value_domain = Domain::new(low, high).map_err(MeasurementRefusal::ValueDomain)?;
+    Ok(MeasurementDomains {
+        domain,
+        value_domain,
+    })
+}
+
 impl SeriesSpec {
     #[must_use]
     pub const fn id(&self) -> &Label {
@@ -719,20 +846,7 @@ impl SeriesSpec {
 
     fn validate(&self) -> Result<(), SpecError> {
         self.id.validate()?;
-        if self.x.len() != self.y.len() {
-            return Err(SpecError::AxisLengthMismatch);
-        }
-        if self
-            .x
-            .iter()
-            .chain(self.y.iter())
-            .any(|value| !value.is_finite())
-        {
-            return Err(SpecError::NotFinite);
-        }
-        if self.x.windows(2).any(|pair| pair[0] > pair[1]) {
-            return Err(SpecError::SourceNotOrdered);
-        }
+        validate_measurement_coordinates(&self.x, &self.y)?;
         // Strictly smaller, which is what the error has always been called. A
         // reduction that removed nothing is a `FullSource` series wearing the
         // other label, and the figure says so in words: "reduced to 5" from 5

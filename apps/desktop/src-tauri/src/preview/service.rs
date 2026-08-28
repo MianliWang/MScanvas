@@ -109,14 +109,18 @@ use super::dto::{
 };
 use super::dto::{MAX_WORKSPACE_DATASETS, backend_quarantined, conversion_not_stoppable};
 use super::dto::{
+    SpectrumDomainRefusalDto, SpectrumProjectionDto, SpectrumViewportDomainDto,
+    spectrum_projection_no_domain, spectrum_projection_stale, spectrum_projection_window_refused,
+};
+use super::dto::{
     WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto, adoption_in_progress,
     adoption_superseded, outputs_not_adoptable,
 };
 use super::export::{
     BeginExportRefusal, ClaimedChromatogramExport, ClaimedLinkedFigureExport,
     ClaimedSpectrumExport, FigureFailure, LinkedTokens, PreviewOpenTicket, ScientificExportSlots,
-    SpectrumExportFormat, data_document, figure_raster, png_document, png_of, raster_of,
-    svg_document,
+    SpectrumExportFormat, SpectrumProjectionRefusal, data_document, figure_raster, png_document,
+    png_of, raster_of, svg_document,
 };
 use super::figure::{
     FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
@@ -128,6 +132,7 @@ use super::operation::{
     item_output_topology, item_state_of,
 };
 use super::operation::{ItemOutputTopology, SetStopFacts};
+use super::projection::{self, ProjectionRefusal};
 use super::selection::DatasetSourceKind;
 use super::selection::{
     AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
@@ -2163,6 +2168,65 @@ impl PreviewService {
             .begin(token, format, settings, dpi)
             .map(|reservation| reservation.as_wire())
             .map_err(Self::spectrum_refusal)
+    }
+
+    /// Draws one committed m/z window of the retained spectrum a token names.
+    ///
+    /// The viewport's read of the same retained snapshot the export lane reads.
+    /// It launches no process, re-reads no acquisition and takes no export
+    /// lane: moving a viewport is not re-acquiring a spectrum, and a reader may
+    /// pan while a file is being written.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a token this session no longer holds, a spectrum with no
+    /// viewport domain, and a window the retained source does not have.
+    pub fn project_selected_spectrum(
+        &self,
+        token: &str,
+        low: f64,
+        high: f64,
+    ) -> Result<SpectrumProjectionDto, PreviewErrorDto> {
+        // The slot is held only long enough to resolve the token. A snapshot is
+        // an `Arc` handle, so taking one costs a refcount bump -- and the work
+        // below walks the complete spectrum, which must not happen while every
+        // export operation waits behind it.
+        let snapshot = self
+            .spectrum_export_slot()
+            .retained_spectrum_for(token)
+            .map_err(Self::projection_refusal)?;
+        // The verdict the snapshot has carried since it was retained, not a
+        // fresh walk of the arrays to rediscover it.
+        let projection =
+            projection::project(snapshot.spectrum(), snapshot.viewport_domain(), low, high)
+                .map_err(|refusal| {
+                    Self::projection_refusal(SpectrumProjectionRefusal::Source(refusal))
+                })?;
+        Ok(SpectrumProjectionDto {
+            low: projection.window().low(),
+            high: projection.window().high(),
+            mz: projection.mz().to_vec(),
+            intensity: projection.intensity().to_vec(),
+            source_points: projection.source_points(),
+            reduced: projection.reduced(),
+        })
+    }
+
+    /// How a projection refusal reads for the viewport surface.
+    ///
+    /// Exhaustive with no wildcard arm, so a refusal added to either layer has
+    /// to be answered here rather than falling into a default that happens to
+    /// compile.
+    fn projection_refusal(refusal: SpectrumProjectionRefusal) -> PreviewErrorDto {
+        match refusal {
+            SpectrumProjectionRefusal::Stale => spectrum_projection_stale(),
+            SpectrumProjectionRefusal::Source(ProjectionRefusal::NoViewportDomain(_)) => {
+                spectrum_projection_no_domain()
+            }
+            SpectrumProjectionRefusal::Source(
+                ProjectionRefusal::WindowUnusable | ProjectionRefusal::WindowOutsideSource,
+            ) => spectrum_projection_window_refused(),
+        }
     }
 
     /// How a lane refusal reads for the selected-spectrum surface.
@@ -5931,6 +5995,10 @@ impl PreviewService {
                         snapshot.spectrum(),
                         &redactor,
                         snapshot.token().as_wire(),
+                        // The verdict this snapshot settled when it was
+                        // retained, so the panel and every later projection
+                        // over it read one answer.
+                        snapshot.viewport_domain(),
                     );
                     match projected {
                         Ok(spectrum) => Ok(SelectedSpectrumOutcomeDto::Spectrum {
@@ -6499,6 +6567,7 @@ fn selected_spectrum_dto(
     spectrum: &SelectedSpectrumResult,
     redactor: &Redactor,
     export_token: String,
+    viewport_domain: projection::ViewportDomain,
 ) -> Result<SelectedSpectrumDto, PreviewErrorDto> {
     let point_count = spectrum.mz_values().len();
     let truncated = point_count > MAX_SPECTRUM_POINTS;
@@ -6551,7 +6620,37 @@ fn selected_spectrum_dto(
         value_units_known: false,
         truncated,
         export_token,
+        // The verdict settled when this spectrum was retained, from the
+        // complete source rather than the possibly shortened arrays above it.
+        viewport_domain: viewport_domain_dto(viewport_domain),
     })
+}
+
+/// How a viewport-domain verdict reads on the wire.
+fn viewport_domain_dto(domain: projection::ViewportDomain) -> SpectrumViewportDomainDto {
+    match domain {
+        projection::ViewportDomain::Admitted(domain) => SpectrumViewportDomainDto::Admitted {
+            low: domain.low(),
+            high: domain.high(),
+        },
+        projection::ViewportDomain::Refused(reason) => SpectrumViewportDomainDto::Refused {
+            reason: match reason {
+                projection::DomainRefusal::SourceNotOrdered => {
+                    SpectrumDomainRefusalDto::SourceNotOrdered
+                }
+                projection::DomainRefusal::NotFinite => SpectrumDomainRefusalDto::NotFinite,
+                projection::DomainRefusal::AxisLengthMismatch => {
+                    SpectrumDomainRefusalDto::AxisLengthMismatch
+                }
+                projection::DomainRefusal::DomainUnusable => {
+                    SpectrumDomainRefusalDto::DomainUnusable
+                }
+                projection::DomainRefusal::ValueDomainUnusable => {
+                    SpectrumDomainRefusalDto::ValueDomainUnusable
+                }
+            },
+        },
+    }
 }
 
 /// Every way the safe writer can fail, said in the export's vocabulary.

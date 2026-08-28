@@ -497,6 +497,52 @@ pub fn spectrum_export_stale() -> PreviewErrorDto {
     )
 }
 
+/// The spectrum a viewport asked to draw is not the one this session holds.
+///
+/// Retryable, and the recovery is the same as the export lane's: the spectrum on
+/// screen has its own token. A projection is never answered from whichever
+/// spectrum happens to be current now.
+#[must_use]
+pub fn spectrum_projection_stale() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "spectrum_projection_stale",
+        "That spectrum is no longer the one MSCanvas has loaded, so nothing was drawn. \
+         Select the spectrum again.",
+        true,
+    )
+}
+
+/// A viewport asked to draw a spectrum that has no m/z domain.
+///
+/// Not retryable: it is a fact about this spectrum rather than about the
+/// moment, and asking again produces the same verdict. The source is unharmed
+/// and still exports as data.
+#[must_use]
+pub fn spectrum_projection_no_domain() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "spectrum_projection_no_domain",
+        "This spectrum has no m/z range MSCanvas can navigate without changing the \
+         measurement, so it has no viewport. Its data can still be exported as CSV or TSV.",
+        false,
+    )
+}
+
+/// A viewport asked for a window the retained spectrum does not have.
+///
+/// Refused rather than clamped to the nearest window that would fit, for the
+/// reason the chromatogram's range gives: answering with a different window
+/// answers a question nobody asked. Not retryable as asked -- the recovery is a
+/// window this spectrum has, which resetting the viewport always is.
+#[must_use]
+pub fn spectrum_projection_window_refused() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "spectrum_projection_window_refused",
+        "That m/z range is not one this spectrum has, so nothing was drawn. Reset the \
+         range to see the whole spectrum.",
+        false,
+    )
+}
+
 /// Another scientific export of this session has not finished.
 ///
 /// One lane for the selected spectrum and the chromatogram together, so two
@@ -1938,15 +1984,95 @@ pub struct SelectedSpectrumDto {
     /// The backend emitted no unit for the arrays, so no unit is displayed.
     pub value_units_known: bool,
     pub truncated: bool,
-    /// Which retained spectrum an export of this panel would write.
+    /// Which retained spectrum this panel's operations name.
     ///
     /// Opaque and session-scoped. It names the complete result Rust kept, not
     /// the possibly shortened arrays beside it, which is the whole point: the
-    /// webview can ask for that spectrum to be exported without being able to
-    /// supply -- or even see -- the data the file will contain. A token from an
-    /// earlier selection names a spectrum this session no longer holds and is
-    /// refused rather than silently answered with whatever is current.
+    /// webview can ask for that spectrum to be exported -- or for one window of
+    /// it to be drawn -- without being able to supply, or even see, the data the
+    /// answer will contain. A token from an earlier selection names a spectrum
+    /// this session no longer holds and is refused rather than silently
+    /// answered with whatever is current.
+    ///
+    /// **One identity, two readers.** The scientific export lane and the
+    /// viewport's screen projection both resolve this same token against the
+    /// same retained snapshot; there is no second source and no second
+    /// identity. The field keeps its name because what it names has not
+    /// changed, and renaming it would churn every command that carries one
+    /// without making anything truer.
     pub export_token: String,
+    /// Whether this spectrum has an m/z domain a viewport may navigate.
+    ///
+    /// Rust's answer, from the complete retained source and the same
+    /// admissibility the scientific figure uses. Deliberately not derivable
+    /// here: `mz`/`intensity` are bounded for transfer, `mz_low`/`mz_high` are
+    /// the backend's separately reported pair which the export renderer refuses
+    /// as a domain, and neither can settle the question for a spectrum whose
+    /// arrays arrived truncated.
+    ///
+    /// A refusal is a fact about drawability, never about the source: a
+    /// spectrum with no viewport domain is still valid data and still exports
+    /// as CSV and TSV.
+    pub viewport_domain: SpectrumViewportDomainDto,
+}
+
+/// Whether a viewport domain could be established, and what it is.
+///
+/// Tagged rather than a nullable pair, so "refused" is a state the webview must
+/// handle rather than a sentinel it could mistake for a range.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum SpectrumViewportDomainDto {
+    /// The scientific contract established this domain over the complete
+    /// retained source. Finite and forward; `low == high` for a spectrum of one
+    /// point, and for one of none.
+    #[serde(rename_all = "camelCase")]
+    Admitted { low: f64, high: f64 },
+    /// No domain could be established without altering the source.
+    #[serde(rename_all = "camelCase")]
+    Refused { reason: SpectrumDomainRefusalDto },
+}
+
+/// Why no viewport domain exists for a spectrum.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SpectrumDomainRefusalDto {
+    /// The m/z array is not non-decreasing. mzML permits this; nothing sorts it.
+    SourceNotOrdered,
+    /// A coordinate cannot be placed on an axis.
+    NotFinite,
+    /// The two arrays disagree about how many points there are.
+    AxisLengthMismatch,
+    /// The m/z endpoints do not form an interval the contract accepts.
+    DomainUnusable,
+    /// The intensity axis does not form an interval the contract accepts.
+    ///
+    /// Coordinate validity alone is not drawability: finite values can still
+    /// span a width no renderer can divide by. Named apart so this is never
+    /// reported as unordered or non-finite data.
+    ValueDomainUnusable,
+}
+
+/// One bounded drawing of one committed m/z window.
+///
+/// A screen representation and nothing more. Every value came out of the
+/// complete retained source, `source_points` says how many observations the
+/// window actually holds, and `reduced` says whether fewer are drawn than were
+/// measured -- so a reader can see both numbers rather than take the drawing
+/// for the measurement. No scientific export is ever taken from one.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SpectrumProjectionDto {
+    /// The window this drawing answers, echoed back so a late result can be
+    /// told from the one the viewport is now committed to.
+    pub low: f64,
+    pub high: f64,
+    pub mz: Vec<f64>,
+    pub intensity: Vec<f64>,
+    /// How many source observations the window holds. Zero is a real answer.
+    pub source_points: usize,
+    /// Whether fewer points are drawn than the window measured.
+    pub reduced: bool,
 }
 
 /// What one selected-spectrum export did.

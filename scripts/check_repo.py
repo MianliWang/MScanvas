@@ -764,6 +764,10 @@ def validate_every_raster_entry_point_asks_the_budget(errors: list[str]) -> None
             )
 
 
+# One column-zero Rust function definition, for the free-function scan below.
+FREE_FN_RE = re.compile(r"(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?fn (\w+)")
+
+
 def functions_naming(content: str, needle: str) -> set[str]:
     """Every function in one Rust file whose body mentions `needle`.
 
@@ -1003,6 +1007,81 @@ def _validate_linked_pair_has_one_constructor(content: str, errors: list[str]) -
 
 
 
+def validate_drawability_is_settled_in_one_place(errors: list[str]) -> None:
+    """A projection reuses the source verdict rather than re-establishing it.
+
+    Drawability is a property of the immutable retained spectrum, so it is
+    settled once when that spectrum is retained and carried with it. A viewport
+    projection then costs a search for the window plus the window's own points.
+    Re-asking the scientific predicate inside the projection path puts the whole
+    source back into every request, which is the defect this pins closed: a
+    narrow zoom of a large spectrum used to cost as much as the whole of it.
+
+    A counting test proves the *number* of settlements per retained snapshot.
+    What that test cannot see is a projection reaching past the seam to call the
+    predicate itself, so which functions may call it is checked here -- the same
+    thing `validate_the_linked_pair_is_bound_in_one_operation` does for a
+    constructor no compiler can restrict further.
+
+    Two callers, and they differ in kind. `settle_viewport_domain` is the
+    settlement point, reached once per retained snapshot. `spectrum_panel`
+    settles for the figure it is building, which is a one-shot export rather
+    than an interactive path, so paying there is paying once for one document.
+    """
+    projection = (ROOT / "apps/desktop/src-tauri/src/preview/projection.rs").read_text(
+        encoding="utf-8"
+    )
+    export = (ROOT / "apps/desktop/src-tauri/src/preview/export.rs").read_text(
+        encoding="utf-8"
+    )
+
+    for module, source, expected in (
+        ("projection.rs", projection, {"settle_viewport_domain"}),
+        ("export.rs", export, {"spectrum_panel"}),
+    ):
+        callers = _free_functions_naming(source, "measurement_domains(")
+        if callers != expected:
+            fail(
+                f"preview/{module}: the functions calling `measurement_domains` are "
+                f"{sorted(callers)}, not {sorted(expected)}. Drawability is settled once "
+                "for a retained spectrum and carried with it; a projection that asks "
+                "again puts the whole source back into every window",
+                errors,
+            )
+
+    body = projection.split("\npub(super) fn project(", 1)
+    if len(body) == 2:
+        window = body[1].split("\n}\n", 1)[0]
+        if "measurement_domains" in window or "settle_viewport_domain" in window:
+            fail(
+                "preview/projection.rs: `project` settles the source verdict itself. It "
+                "takes the settled verdict as an argument precisely so a window's cost "
+                "does not include rediscovering that the spectrum is drawable",
+                errors,
+            )
+
+
+def _free_functions_naming(content: str, needle: str) -> set[str]:
+    """Every column-zero `fn` in one file whose body mentions `needle`.
+
+    `functions_naming` above recognises a definition at exactly four spaces,
+    which is what an `impl` method looks like. The two functions this rule is
+    about are free functions at column zero, so they get their own scan rather
+    than a loosened shared one that would change what the other rules see.
+    """
+    owners: set[str] = set()
+    current: str | None = None
+    for line in content.split("\n"):
+        defined = FREE_FN_RE.match(line)
+        if defined:
+            current = defined.group(1)
+        elif line.startswith("}"):
+            current = None
+        elif current is not None and needle in line:
+            owners.add(current)
+    return owners
+
+
 # What the newest status section may not deny, by the subject it is about.
 #
 # One entry per milestone whose own section could contradict itself. The key is
@@ -1095,6 +1174,7 @@ def main() -> int:
         validate_the_chromatogram_authority_has_one_installation_path(errors)
         validate_the_linked_pair_is_bound_in_one_operation(errors)
         validate_the_current_status_section_has_one_answer(errors)
+        validate_drawability_is_settled_in_one_place(errors)
 
     if errors:
         print("Repository validation failed:")

@@ -48,6 +48,13 @@ mod export;
 mod figure;
 mod installation;
 mod operation;
+/// What a spectrum viewport may know about a retained spectrum: whether it has
+/// an m/z domain at all, and what one committed window of it looks like drawn.
+///
+/// Private to this module. The webview receives a bounded screen projection of
+/// the complete spectrum Rust retained -- never the complete arrays, never a
+/// path -- and no scientific export is ever taken from one. See ADR 0037.
+mod projection;
 pub mod selection;
 pub mod service;
 

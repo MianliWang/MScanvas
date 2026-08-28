@@ -4998,3 +4998,110 @@ milestone claim moves.
 (1,262 passing), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
 `pnpm test` (1,051 passing), `pnpm build` and `git diff --check`. The product
 baseline is unchanged because no product code was touched.
+
+## M5.1 — the spectrum viewport authority and screen-projection foundation, 2026-08-28
+
+The first production slice of Viewer Completion, and deliberately invisible. No
+zoom, pan or reset control, no wheel or drag, no loading or error surface: M5.1
+proves the state machine and the source boundary M5.2 will stand on. See
+[ADR 0038](docs/architecture/adr/0038-spectrum-viewport-authority-and-screen-projection.md).
+
+### Two questions Rust answers, and the webview does not
+
+**Does this spectrum have a viewport?** It needs an authoritative finite forward
+m/z domain, and the figure contract cannot always establish one — mzML does not
+require an ordered m/z array and nothing here sorts one.
+
+**What does one window look like?** The complete spectrum Rust retains is the
+scientific source, and `MAX_SPECTRUM_POINTS` bounds what one transfer carries, so
+a viewport spanning the whole source while its data stopped at that prefix would
+draw blank space over peaks this session is holding.
+
+Neither is answerable in the webview: the arrays arrive bounded, and
+`mzLow`/`mzHigh` are the separately reported pair `domain_of` documents its
+refusal of. Both answers come from Rust, over the snapshot the export lane
+already retains.
+
+### One admissibility rule, shared rather than reimplemented
+
+`SeriesSpec::new`'s coordinate validation is factored into
+`validate_measurement_coordinates`, which the constructor itself calls and the
+viewport calls on borrowed slices — same rules, same order, same errors, no copy
+of the spectrum to ask the question. So the domain a viewport navigates *is* the
+domain the figure draws over, and a second more permissive reader does not exist
+to drift from it.
+
+**A refusal is about drawability, never about the source.** An unordered
+spectrum stays selected, is drawn by the panel as before, and still exports as
+CSV and TSV. Nothing is sorted, reordered, normalised or interpolated.
+
+### One identity, two readers
+
+The viewport resolves the **same** retained-spectrum token the export lane does:
+no second cache, no second scientific source, no second lifetime. Staleness and
+revocation come free from `spectrum_for`. `SpectrumExportToken` is renamed
+`RetainedSpectrumToken` to say what it identifies rather than which consumer came
+first; the wire field stays `exportToken`, because what it names has not changed.
+A projection takes **no export lane** — a reader may pan while a file is written.
+
+### The bounded projection
+
+`retained snapshot → committed window → bounded projection → React`. A window
+outside the source is **refused rather than clamped**. Under
+`MAX_PROJECTION_POINTS` the drawing is exact; over it, a deterministic reduction
+keeps each column's greatest non-negative and deepest negative **measured**
+observation at the m/z the source measured it — `StickSpectrum`'s posture, both
+signs, no invented value. The bound is 900 columns × 2 = **1,800 points**, named
+rather than implied, and `MAX_SPECTRUM_POINTS` is **not** raised to avoid it.
+
+**Empty is success**; **partial is refused** — a bounded reduction is complete
+screen coverage, so a projection is a complete drawing, an explicit empty one, or
+a typed failure.
+
+### The screen is never the science
+
+There is no `screen projection → export` path: `ScreenProjection` exists only as
+the return of `project_spectrum` and no document writer sees it. Committing a
+viewport leaves a full-source export byte-for-byte identical, and that is tested
+rather than asserted.
+
+### A different spectrum is a different viewport context
+
+The pure model is separate from `ViewerInteractionState`, and `MzDomain` is
+nominally distinct from `RetentionTimeDomain` so the substitution does not
+compile. A committed selection change starts a new context: the previous
+absolute window is not preserved, not intersected, not clamped in. Redelivery of
+the same token resets nothing. A stale success **and** a stale failure are both
+no-ops by identity, so correctness never rests on a callback being cancelled in
+time.
+
+### What the evidence establishes
+
+**Rust: 1,293 tests**, up from 1,262. **Frontend: 1,087 tests**, up from 1,051.
+
+**One measured finding, recorded rather than assumed.** `MAX_SPECTRUM_POINTS`
+truncation is **not reachable through the text parser** — one formatted point is
+about twenty-five bytes, so `MAX_PREVIEW_TEXT_BYTES` refuses a spectrum that
+large first. The retained-source property is proved over spectra built directly,
+and a service test pins the reachability so a later reader need not rediscover
+it.
+
+**Seven mutations**, applied one at a time and restored byte-for-byte: the
+frontend prefix used as the source domain; an outside-source window clamped
+rather than refused; a reduction emitting a value the source did not measure; an
+unordered spectrum admitted anyway; a stale token answered; a selection change
+inheriting the previous window; and a stale projection answer accepted. Each
+failed the check aimed at it.
+
+### Not built, and by design
+
+Every visible control, the loading and error surfaces, and the gesture adapters
+are M5.2. The `Current`-range export that will consume the committed window is
+M5.3. The four inherited M4.4 P3s remain unresolved, owned by M5.3 and M5.7.
+
+### Validation
+
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build` and `git diff --check`, each run directly and each exiting zero.

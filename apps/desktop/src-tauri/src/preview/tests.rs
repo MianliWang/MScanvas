@@ -44,11 +44,13 @@ use super::dto::{
     ConversionQueueTerminalReasonDto, DatasetSourceKindDto, ValidationModeDto,
     WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
 };
+use super::dto::{MAX_SPECTRUM_POINTS, SpectrumDomainRefusalDto, SpectrumViewportDomainDto};
 use super::installation::InstallationIdentity;
 use super::operation::{
     AdmittedDestination, CancellationFacts, ClaimedOutputName, ConversionQueue, ConversionSlot,
     ItemOutcome, ItemState, QueueItem, StopAccepted, TerminalReason, folded_output_name,
 };
+use super::projection::MAX_PROJECTION_POINTS;
 /// The share-mode probe that answers whether a file is still held open. It
 /// lives beside the flags the lease is opened with, because that is what makes
 /// its answer exact rather than a guess.
@@ -3589,6 +3591,12 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // the dialog, so a document that never received the reservation can
             // never open one.
             "begin_selected_spectrum_export",
+            // The viewport's read of the same retained spectrum those two
+            // export commands name. One phase, because there is no destination
+            // to choose and nothing to come back from: it answers with a
+            // bounded drawing of one m/z window. It takes no export lane, so a
+            // reader may pan a spectrum while a file of it is being written.
+            "project_selected_spectrum",
             "save_selected_spectrum_export",
             // The chromatogram export, in the same two-phase shape. The first
             // command binds which run, how much of it and which traces -- all of
@@ -23091,4 +23099,574 @@ fn a_linked_figure_the_contract_refuses_is_refused_as_a_pair() {
         "spectrum_export_refused",
     );
     assert!(!folder.join("one.svg").exists());
+}
+
+// ------------------------------- the spectrum viewport's domain and projection
+
+/// Loads one spectrum and hands back its DTO, for the viewport's own tests.
+fn loaded_spectrum(
+    service: &PreviewService,
+    handle: &str,
+    index: u64,
+) -> super::dto::SelectedSpectrumDto {
+    let outcome = service
+        .load_spectrum(handle, index)
+        .expect("the spectrum loads");
+    let SelectedSpectrumOutcomeDto::Spectrum { spectrum } = outcome else {
+        panic!("a present spectrum is not the unavailable outcome");
+    };
+    *spectrum
+}
+
+/// A spectrum of `count` ascending points, as the backend would emit one.
+fn ascending_spectrum(count: usize) -> Response {
+    let points: Vec<(f64, f64)> = (0..count)
+        .map(|step| {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "test sizes are far below the f64 integer bound"
+            )]
+            let offset = step as f64;
+            (100.0 + offset, 1.0 + offset)
+        })
+        .collect();
+    Response::File(selected_spectrum_output(0, &points))
+}
+
+#[test]
+fn a_spectrum_the_figure_admits_carries_the_domain_its_own_points_span() {
+    let file = TestFile::new("viewport-domain");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    assert_eq!(
+        spectrum.viewport_domain,
+        SpectrumViewportDomainDto::Admitted {
+            low: 100.5,
+            high: 200.25
+        },
+    );
+}
+
+#[test]
+fn an_unordered_spectrum_is_refused_a_viewport_and_left_alone() {
+    // mzML permits a descending m/z array and nothing here sorts one. The
+    // figure contract refuses the series, so the viewport refuses it too.
+    let file = TestFile::new("viewport-unordered");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
+        selected_spectrum_output(0, &[(500.0, 1_000.0), (100.0, 9_000.0)]),
+    )])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    assert_eq!(
+        spectrum.viewport_domain,
+        SpectrumViewportDomainDto::Refused {
+            reason: SpectrumDomainRefusalDto::SourceNotOrdered
+        },
+    );
+    // The source is unharmed: the arrays are exactly what the backend emitted,
+    // in the order it emitted them.
+    assert_eq!(spectrum.mz, vec![500.0, 100.0]);
+    // And it still exports as data, which is the recorded route out.
+    let folder = file.path.parent().expect("a folder");
+    assert_eq!(
+        spectrum_saved_as(
+            &service,
+            &spectrum.export_token,
+            "csv",
+            &folder.join("scan.csv")
+        ),
+        None,
+        "a data document needs no ordered array",
+    );
+    // Asking to draw it is refused rather than answered with a sorted copy.
+    assert_eq!(
+        service
+            .project_selected_spectrum(&spectrum.export_token, 100.0, 500.0)
+            .expect_err("no viewport, so no drawing")
+            .kind,
+        "spectrum_projection_no_domain",
+    );
+}
+
+#[test]
+fn a_spectrum_the_figure_cannot_draw_is_refused_a_viewport_and_still_exports() {
+    // Coordinate validity alone is not drawability: every value below is finite
+    // and the m/z array is ordered, but the intensity axis spans
+    // `f64::MAX - (-f64::MAX)`, which the figure contract refuses. The viewport
+    // refuses it for the same reason, and says which axis.
+    let file = TestFile::new("viewport-value-domain");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
+        selected_spectrum_output(0, &[(100.0, -f64::MAX), (200.0, f64::MAX)]),
+    )])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    assert_eq!(
+        spectrum.viewport_domain,
+        SpectrumViewportDomainDto::Refused {
+            reason: SpectrumDomainRefusalDto::ValueDomainUnusable
+        },
+    );
+    // The figure this refusal is about is refused by the export lane too, which
+    // is the equivalence the shared predicate exists to keep.
+    let folder = file.path.parent().expect("a folder");
+    assert!(
+        spectrum_saved_as(
+            &service,
+            &spectrum.export_token,
+            "svg",
+            &folder.join("one.svg")
+        )
+        .is_some(),
+        "the figure contract refuses this spectrum",
+    );
+    // And the source is neither mutated nor reclassified: its data still writes.
+    assert_eq!(
+        spectrum_saved_as(
+            &service,
+            &spectrum.export_token,
+            "csv",
+            &folder.join("scan.csv")
+        ),
+        None,
+        "a data document needs no drawable value range",
+    );
+    assert_eq!(spectrum.intensity, vec![-f64::MAX, f64::MAX]);
+    assert_eq!(
+        service
+            .project_selected_spectrum(&spectrum.export_token, 100.0, 200.0)
+            .expect_err("no viewport, so no drawing")
+            .kind,
+        "spectrum_projection_no_domain",
+    );
+}
+
+#[test]
+fn the_transfer_bound_is_unreachable_because_the_text_bound_refuses_first() {
+    // Recorded rather than assumed. `MAX_SPECTRUM_POINTS` bounds the arrays a
+    // selected spectrum transfers, but a spectrum large enough to reach it does
+    // not survive `MAX_PREVIEW_TEXT_BYTES`: one formatted point is about
+    // twenty-five bytes, so eight mebibytes runs out first. A truncated
+    // selected spectrum is therefore not reachable through this parser today.
+    //
+    // Which is why the retained-source property the viewport depends on is
+    // proved in `projection::tests`, over spectra built directly rather than
+    // parsed -- see `a_window_past_any_transfer_prefix_draws_the_retained_source`.
+    let count = MAX_SPECTRUM_POINTS + 5_000;
+    let file = TestFile::new("viewport-transfer-bound");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![ascending_spectrum(
+        count,
+    )])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let error = service
+        .load_spectrum(&selected.handle, 0)
+        .expect_err("the text bound refuses before the transfer bound applies");
+
+    assert_eq!(error.kind, "incomplete_parser_input");
+}
+
+#[test]
+fn a_window_of_a_large_spectrum_draws_points_no_prefix_would_reach() {
+    // The largest spectrum this parser admits is still far larger than one
+    // screen, so a window in its tail is a window whose points a naive
+    // head-of-the-array drawing would never contain.
+    let count = 150_000;
+    let file = TestFile::new("viewport-tail-window");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![ascending_spectrum(
+        count,
+    )])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "test sizes are far below the f64 integer bound"
+    )]
+    let high = 100.0 + (count - 1) as f64;
+    let low = high - 10.0;
+
+    let projection = service
+        .project_selected_spectrum(&spectrum.export_token, low, high)
+        .expect("a window the source has");
+
+    assert!(!projection.mz.is_empty(), "the tail window drew nothing");
+    assert!(
+        projection.mz.iter().all(|value| *value >= low),
+        "the drawing reached outside the window",
+    );
+    assert_eq!(projection.source_points, 11);
+}
+
+#[test]
+fn a_projection_launches_no_backend_operation() {
+    // The fake answers from a queue. Draining it and then projecting proves the
+    // projection reads the retained snapshot rather than the acquisition: a
+    // backend call would find no response and fail.
+    let file = TestFile::new("viewport-no-reread");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    for _ in 0..8 {
+        service
+            .project_selected_spectrum(&spectrum.export_token, 100.5, 200.25)
+            .expect("a window of the retained spectrum");
+    }
+
+    // And the queue really is empty: another spectrum read has nothing to
+    // answer with, so the projections above consumed no backend response.
+    assert!(
+        service.load_spectrum(&selected.handle, 0).is_err(),
+        "the response queue was not empty, so the proof above is vacuous",
+    );
+}
+
+#[test]
+fn a_projection_takes_no_scientific_export_lane() {
+    // A drawing is not an export. A reader may pan while a file is written.
+    let file = TestFile::new("viewport-lane");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    service
+        .begin_spectrum_export(&spectrum.export_token, "svg", &default_figure_settings())
+        .expect("the lane is free");
+
+    service
+        .project_selected_spectrum(&spectrum.export_token, 100.5, 200.25)
+        .expect("a drawing does not wait for a file");
+}
+
+#[test]
+fn a_stale_spectrum_token_is_refused_a_drawing() {
+    let file = TestFile::new("viewport-stale");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
+        one_spectrum(),
+        Response::File(selected_spectrum_output(1, &[(300.0, 5.0), (400.0, 6.0)])),
+    ])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let first = loaded_spectrum(&service, &selected.handle, 0);
+
+    let second = loaded_spectrum(&service, &selected.handle, 1);
+
+    assert_eq!(
+        service
+            .project_selected_spectrum(&first.export_token, 100.5, 200.25)
+            .expect_err("the first spectrum is no longer retained")
+            .kind,
+        "spectrum_projection_stale",
+    );
+    service
+        .project_selected_spectrum(&second.export_token, 300.0, 400.0)
+        .expect("the spectrum now loaded is the one that draws");
+}
+
+#[test]
+fn a_window_outside_the_retained_source_is_refused_rather_than_clamped() {
+    let file = TestFile::new("viewport-outside");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    assert_eq!(
+        service
+            .project_selected_spectrum(&spectrum.export_token, 50.0, 200.25)
+            .expect_err("a window this spectrum does not have")
+            .kind,
+        "spectrum_projection_window_refused",
+    );
+}
+
+#[test]
+fn a_window_holding_nothing_is_a_successful_empty_drawing() {
+    let file = TestFile::new("viewport-empty-window");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
+        selected_spectrum_output(0, &[(100.0, 1.0), (500.0, 2.0)]),
+    )])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    let projection = service
+        .project_selected_spectrum(&spectrum.export_token, 200.0, 300.0)
+        .expect("an empty window is a successful answer");
+
+    assert!(projection.mz.is_empty());
+    assert!(projection.intensity.is_empty());
+    assert_eq!(projection.source_points, 0);
+    assert!(!projection.reduced);
+}
+
+#[test]
+fn a_drawing_is_bounded_however_large_the_spectrum_is() {
+    let count = 150_000;
+    let file = TestFile::new("viewport-bounded");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![ascending_spectrum(
+        count,
+    )])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+    let SpectrumViewportDomainDto::Admitted { low, high } = spectrum.viewport_domain else {
+        panic!("an ordered spectrum has a domain");
+    };
+
+    let projection = service
+        .project_selected_spectrum(&spectrum.export_token, low, high)
+        .expect("the whole source");
+
+    assert!(
+        projection.mz.len() <= MAX_PROJECTION_POINTS,
+        "drew {} points",
+        projection.mz.len(),
+    );
+    assert_eq!(projection.source_points, count);
+    assert!(projection.reduced);
+}
+
+#[test]
+fn a_projection_leaves_the_scientific_export_exactly_as_it_was() {
+    // The sibling-projection rule: a drawing changes nothing a file is made of.
+    let file = TestFile::new("viewport-export-unchanged");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+    let folder = file.path.parent().expect("a folder");
+
+    assert_eq!(
+        spectrum_saved_as(
+            &service,
+            &spectrum.export_token,
+            "csv",
+            &folder.join("before.csv")
+        ),
+        None,
+    );
+    let before = std::fs::read(folder.join("before.csv")).expect("the first document");
+
+    service
+        .project_selected_spectrum(&spectrum.export_token, 100.5, 150.0)
+        .expect("a narrow window is drawn");
+
+    assert_eq!(
+        spectrum_saved_as(
+            &service,
+            &spectrum.export_token,
+            "csv",
+            &folder.join("after.csv")
+        ),
+        None,
+    );
+    let after = std::fs::read(folder.join("after.csv")).expect("the second document");
+    assert_eq!(
+        before, after,
+        "a committed viewport changed what a full-source export writes",
+    );
+}
+
+// ------------------------------- drawability is settled once per snapshot
+
+/// How many times this thread has settled a spectrum's drawability.
+///
+/// Per thread, so a case counts only its own work however many others run
+/// beside it. Read as a *delta* around the operation under test, because that
+/// is the property: how many settlements one sequence adds, not what number
+/// the counter happens to hold.
+fn settlements() -> usize {
+    super::projection::settlement::observed()
+}
+
+#[test]
+fn retaining_one_spectrum_settles_its_drawability_exactly_once() {
+    let file = TestFile::new("settle-once");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let before = settlements();
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+    let after_install = settlements();
+
+    assert_eq!(
+        after_install - before,
+        1,
+        "retaining a spectrum settles its drawability once",
+    );
+    // And the panel's own answer came from that settlement rather than a second
+    // one of its own.
+    assert_eq!(
+        spectrum.viewport_domain,
+        SpectrumViewportDomainDto::Admitted {
+            low: 100.5,
+            high: 200.25
+        },
+    );
+}
+
+#[test]
+fn projections_over_one_snapshot_settle_nothing_further() {
+    // The repair this test exists for: a narrow window used to walk both
+    // complete arrays to rediscover a fact the snapshot already had, so a deep
+    // zoom of a large spectrum cost as much as the whole of it.
+    let file = TestFile::new("settle-reused");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    let after_install = settlements();
+    for window in [
+        (100.5, 200.25),
+        (100.5, 150.0),
+        (150.0, 200.25),
+        (120.0, 130.0),
+    ] {
+        service
+            .project_selected_spectrum(&spectrum.export_token, window.0, window.1)
+            .expect("a window of the retained spectrum");
+    }
+    // A refused window and a stale token take the same path and settle nothing
+    // either.
+    assert!(
+        service
+            .project_selected_spectrum(&spectrum.export_token, 50.0, 200.25)
+            .is_err()
+    );
+    assert!(
+        service
+            .project_selected_spectrum("999999", 100.5, 200.25)
+            .is_err()
+    );
+
+    assert_eq!(
+        settlements(),
+        after_install,
+        "a projection re-established the source verdict",
+    );
+}
+
+#[test]
+fn a_refused_spectrum_answers_every_projection_from_its_settled_verdict() {
+    // A refusal is a property of the source too, so it is carried rather than
+    // rediscovered. Re-reading the arrays could not produce a different answer.
+    let file = TestFile::new("settle-refused");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
+        selected_spectrum_output(0, &[(500.0, 1_000.0), (100.0, 9_000.0)]),
+    )])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    let after_install = settlements();
+    for _ in 0..4 {
+        assert_eq!(
+            service
+                .project_selected_spectrum(&spectrum.export_token, 100.0, 500.0)
+                .expect_err("no viewport, so no drawing")
+                .kind,
+            "spectrum_projection_no_domain",
+        );
+    }
+
+    assert_eq!(
+        settlements(),
+        after_install,
+        "a refused source was re-validated by a projection",
+    );
+}
+
+#[test]
+fn a_value_domain_refusal_is_carried_by_the_snapshot_too() {
+    let file = TestFile::new("settle-value-domain");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
+        selected_spectrum_output(0, &[(100.0, -f64::MAX), (200.0, f64::MAX)]),
+    )])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    assert_eq!(
+        spectrum.viewport_domain,
+        SpectrumViewportDomainDto::Refused {
+            reason: SpectrumDomainRefusalDto::ValueDomainUnusable
+        },
+    );
+    let after_install = settlements();
+    for _ in 0..3 {
+        assert_eq!(
+            service
+                .project_selected_spectrum(&spectrum.export_token, 100.0, 200.0)
+                .expect_err("no viewport")
+                .kind,
+            "spectrum_projection_no_domain",
+        );
+    }
+
+    assert_eq!(settlements(), after_install);
+}
+
+#[test]
+fn selecting_another_spectrum_settles_that_one_and_leaves_the_first_behind() {
+    // The verdict has the snapshot's lifetime: a replacement gets its own,
+    // computed once, and the replaced one goes with the spectrum it described.
+    let file = TestFile::new("settle-lifecycle");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
+        one_spectrum(),
+        Response::File(selected_spectrum_output(1, &[(300.0, 5.0), (400.0, 6.0)])),
+    ])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let first = loaded_spectrum(&service, &selected.handle, 0);
+
+    let before_second = settlements();
+    let second = loaded_spectrum(&service, &selected.handle, 1);
+    assert_eq!(
+        settlements() - before_second,
+        1,
+        "the replacement settles once, on its own arrays",
+    );
+
+    assert_eq!(
+        second.viewport_domain,
+        SpectrumViewportDomainDto::Admitted {
+            low: 300.0,
+            high: 400.0
+        },
+    );
+    // The first snapshot is gone, and so is the verdict that described it.
+    assert_eq!(
+        service
+            .project_selected_spectrum(&first.export_token, 100.5, 200.25)
+            .expect_err("the first spectrum is no longer retained")
+            .kind,
+        "spectrum_projection_stale",
+    );
+}
+
+#[test]
+fn revoking_the_source_takes_its_settled_verdict_with_it() {
+    let file = TestFile::new("settle-revoked");
+    let another = file.sibling("another.mzML");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    service
+        .accept_file(&another)
+        .expect("the new file is chosen");
+
+    let after_revocation = settlements();
+    assert_eq!(
+        service
+            .project_selected_spectrum(&spectrum.export_token, 100.5, 200.25)
+            .expect_err("the retained spectrum was revoked")
+            .kind,
+        "spectrum_projection_stale",
+    );
+    assert_eq!(
+        settlements(),
+        after_revocation,
+        "a revoked source was re-validated",
+    );
 }

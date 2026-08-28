@@ -56,9 +56,9 @@
 use std::sync::Arc;
 
 use mscanvas_plot_spec::spec::{
-    AxisSpec, Caption, DataScope, Domain, FigureSpec, Label, MIN_FIGURE_CHROME_HEIGHT,
-    MIN_PANEL_HEIGHT, PanelSpec, PlotKind, SeriesSpec, SpecError, SpectrumRepresentation,
-    StyleRole, UnitState,
+    AxisSpec, Caption, DataScope, FigureSpec, Label, MIN_FIGURE_CHROME_HEIGHT, MIN_PANEL_HEIGHT,
+    MeasurementRefusal, PanelSpec, PlotKind, SeriesSpec, SpecError, SpectrumRepresentation,
+    StyleRole, UnitState, measurement_domains,
 };
 use mscanvas_proteowizard::{
     SelectedSpectrumResult, SpectrumRepresentationState, UnitState as SourceUnitState,
@@ -70,6 +70,7 @@ use super::chromatogram::{
 };
 use super::dialog::SaveDialogFacts;
 use super::figure::{FigureRenderSettings, PngDpi, RasterFailure, encode_png, rasterize};
+use super::projection::{self, ProjectionRefusal, ViewportDomain};
 use super::selection::DatasetId;
 
 /// The version this file's schema answers to.
@@ -189,16 +190,39 @@ impl SpectrumExportFormat {
     }
 }
 
+/// Why a viewport could not be given a drawing.
+///
+/// Two layers, kept apart because they are answered by different owners and
+/// mean different things to a reader. `Stale` is this session's lifecycle
+/// saying the spectrum that was asked about is not the one it holds any more --
+/// select it again. `Source` is the scientific contract's own verdict about the
+/// spectrum and the window, which selecting again would not change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SpectrumProjectionRefusal {
+    /// The named spectrum is not what this session retains.
+    Stale,
+    /// The spectrum or the window itself was refused.
+    Source(ProjectionRefusal),
+}
+
 /// One session-scoped name for one retained spectrum.
 ///
 /// Opaque on purpose. It is a counter, it names nothing outside this session,
 /// and it is meaningless to anything that did not receive it from this slot --
-/// so a webview holding one has been told which spectrum it may export and
-/// nothing whatever about where that spectrum came from.
+/// so a webview holding one has been told which spectrum this session retains
+/// and nothing whatever about where that spectrum came from.
+///
+/// **One identity, two readers.** The scientific export lane resolves it to
+/// write a file, and the viewport resolves it to project a window of the same
+/// retained spectrum onto a screen. Both are readings of one snapshot rather
+/// than two sources, which is why this is named for what it identifies instead
+/// of for the first thing that consumed it. The wire field is still
+/// `exportToken`: renaming it would churn every command that already carries
+/// one without making anything truer, and what it names has not changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct SpectrumExportToken(u64);
+pub(super) struct RetainedSpectrumToken(u64);
 
-impl SpectrumExportToken {
+impl RetainedSpectrumToken {
     /// The form that crosses to the webview.
     ///
     /// A string rather than a number, because a JSON number is an `f64` on the
@@ -223,7 +247,7 @@ impl SpectrumExportToken {
 /// the moment a newer selection arrives.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct SpectrumSnapshot {
-    token: SpectrumExportToken,
+    token: RetainedSpectrumToken,
     /// Which dataset this spectrum was read from.
     ///
     /// The minimum needed to answer one question: when rows are removed, is
@@ -233,15 +257,34 @@ pub(super) struct SpectrumSnapshot {
     /// webview, and never written down.
     owner: DatasetId,
     spectrum: Arc<SelectedSpectrumResult>,
+    /// Whether this spectrum is drawable, settled once when it was retained.
+    ///
+    /// Drawability is a property of the source rather than of any one request
+    /// about it, and this source is immutable behind the `Arc` beside it -- so
+    /// the verdict is established at installation and carried, rather than
+    /// re-established by every reader. It cannot go stale independently: it
+    /// lives and dies with the exact snapshot it describes, and a replaced or
+    /// revoked spectrum takes its verdict with it. There is no second
+    /// invalidation lifecycle because there is no second thing to invalidate.
+    ///
+    /// `Copy`, and small: two intervals or a refusal. Nothing about a *window*
+    /// is cached here -- a viewport still draws from the complete source every
+    /// time, so zooming in still reveals observations an overview had to drop.
+    viewport_domain: ViewportDomain,
 }
 
 impl SpectrumSnapshot {
-    pub(super) const fn token(&self) -> SpectrumExportToken {
+    pub(super) const fn token(&self) -> RetainedSpectrumToken {
         self.token
     }
 
     pub(super) fn spectrum(&self) -> &SelectedSpectrumResult {
         &self.spectrum
+    }
+
+    /// The drawability verdict settled when this spectrum was retained.
+    pub(super) const fn viewport_domain(&self) -> ViewportDomain {
+        self.viewport_domain
     }
 
     /// How many points the exported document will carry.
@@ -674,11 +717,17 @@ impl ScientificExportSlots {
         owner: DatasetId,
         spectrum: SelectedSpectrumResult,
     ) -> SpectrumSnapshot {
-        let token = SpectrumExportToken(self.issue_token());
+        let token = RetainedSpectrumToken(self.issue_token());
+        // Settled here, once, while the complete reading is in hand. Every
+        // later reader of this snapshot -- the panel's own domain answer and
+        // every viewport projection over it -- takes this result rather than
+        // walking the arrays again to reach it.
+        let viewport_domain = projection::settle_viewport_domain(&spectrum);
         let snapshot = SpectrumSnapshot {
             token,
             owner,
             spectrum: Arc::new(spectrum),
+            viewport_domain,
         };
         self.spectrum = Some(snapshot.clone());
         snapshot
@@ -808,7 +857,7 @@ impl ScientificExportSlots {
     /// Read before a spectrum read begins so the revocation afterwards can tell
     /// "the read I am revoking for is still the current one" from "something
     /// newer arrived while I was waiting".
-    pub(super) fn current_token(&self) -> Option<SpectrumExportToken> {
+    pub(super) fn current_token(&self) -> Option<RetainedSpectrumToken> {
         self.spectrum.as_ref().map(|snapshot| snapshot.token)
     }
 
@@ -823,7 +872,7 @@ impl ScientificExportSlots {
     /// would fail, as stale, for a reason nothing on screen explains.
     ///
     /// Answers whether it dropped anything.
-    pub(super) fn forget_if_current(&mut self, expected: Option<SpectrumExportToken>) -> bool {
+    pub(super) fn forget_if_current(&mut self, expected: Option<RetainedSpectrumToken>) -> bool {
         let Some(expected) = expected else {
             return false;
         };
@@ -926,12 +975,40 @@ impl ScientificExportSlots {
     /// session no longer has, and the honest answer is that it is gone rather
     /// than a file of whatever is current now.
     fn spectrum_for(&self, token: &str) -> Result<SpectrumSnapshot, BeginExportRefusal> {
-        let requested = SpectrumExportToken::from_wire(token).ok_or(BeginExportRefusal::Stale)?;
+        let requested = RetainedSpectrumToken::from_wire(token).ok_or(BeginExportRefusal::Stale)?;
         self.spectrum
             .as_ref()
             .filter(|snapshot| snapshot.token == requested)
             .ok_or(BeginExportRefusal::Stale)
             .cloned()
+    }
+
+    /// Hands back the retained spectrum this token names, for a viewport to draw.
+    ///
+    /// The viewport's reader of the same snapshot the export lane reads, and
+    /// deliberately **not** a second source: it resolves the token the same way
+    /// and refuses a stale one the same way.
+    ///
+    /// It hands back the snapshot rather than the drawing, and that is the whole
+    /// point of its shape. A snapshot is an `Arc` handle -- cloning one is a
+    /// refcount bump, never a copy of the arrays -- so the caller can let go of
+    /// this lock and then do the projection's own work, which walks the complete
+    /// spectrum. Reducing hundreds of thousands of points while holding the
+    /// slot would stall every export operation for the length of a pan.
+    ///
+    /// It also does not touch the export lane. A projection is a drawing, so it
+    /// neither reserves the lane nor waits for one that is busy: a reader may
+    /// pan a spectrum while a file of it is being written.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a token this session no longer holds.
+    pub(super) fn retained_spectrum_for(
+        &self,
+        token: &str,
+    ) -> Result<SpectrumSnapshot, SpectrumProjectionRefusal> {
+        self.spectrum_for(token)
+            .map_err(|_| SpectrumProjectionRefusal::Stale)
     }
 
     /// Reads back the retained chromatogram this token names.
@@ -1425,6 +1502,13 @@ pub(super) fn spectrum_panel(spectrum: &SelectedSpectrumResult) -> Result<PanelS
         SourceUnitState::NotEmitted => UnitState::Unreported,
     };
 
+    // Asked of the borrowed arrays, before either is copied, and asked through
+    // the one predicate the spectrum viewport also asks. A second reading of
+    // "drawable" here is how a screen and an exported figure come to describe
+    // different scenes; there is not one.
+    let domains = measurement_domains(spectrum.mz_values(), spectrum.intensity_values())
+        .map_err(MeasurementRefusal::into_spec_error)?;
+
     let series = SeriesSpec::new(
         // A stable semantic name for what this series is, and not an identity
         // of the file it came from. No part of a path, a workspace handle or a
@@ -1444,51 +1528,12 @@ pub(super) fn spectrum_panel(spectrum: &SelectedSpectrumResult) -> Result<PanelS
         // in the case this build cannot reach yet.
         AxisSpec::new(Label::new("m/z")?, unit.clone()),
         AxisSpec::new(Label::new("Intensity")?, unit),
-        domain_of(series.x())?,
-        value_domain_of(series.y())?,
+        domains.domain(),
+        domains.value_domain(),
         vec![series],
     )?;
 
     Ok(panel)
-}
-
-/// The domain the exported spectrum covers.
-///
-/// Derived from the points themselves rather than from the backend's separately
-/// reported low and high. Those are a second reading of the same spectrum, and
-/// where the two disagree the points are what the figure draws -- so taking the
-/// reported pair would produce a figure whose axis and whose marks describe
-/// different things, or a refusal for a disagreement the reader cannot see.
-///
-/// An empty spectrum has no points to derive anything from, and gets the one
-/// domain that claims nothing: a single value at zero. The description already
-/// states in words that the series carries no points, so the axis is not where
-/// a reader learns that.
-fn domain_of(values: &[f64]) -> Result<Domain, SpecError> {
-    match (values.first(), values.last()) {
-        // Ordered by the contract, so the ends are the extremes.
-        (Some(low), Some(high)) => Domain::new(*low, *high),
-        _ => Domain::new(0.0, 0.0),
-    }
-}
-
-/// The value range the exported spectrum is drawn against.
-///
-/// Always includes zero. An unreported representation is drawn as marks from
-/// the zero line -- only established profile data may be joined -- and the
-/// contract refuses such a panel whose range excludes zero, because a mark's
-/// length would then encode its distance from the range end rather than its
-/// magnitude. Negative intensity is preserved rather than clamped: baseline
-/// subtraction produces it legitimately, and dropping it would erase measured
-/// signal on the way to a file.
-fn value_domain_of(values: &[f64]) -> Result<Domain, SpecError> {
-    let mut low = 0.0_f64;
-    let mut high = 0.0_f64;
-    for value in values {
-        low = low.min(*value);
-        high = high.max(*value);
-    }
-    Domain::new(low, high)
 }
 
 /// Renders one selected spectrum as the SVG document a user receives.

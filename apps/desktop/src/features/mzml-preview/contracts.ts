@@ -368,6 +368,65 @@ export interface Precursor {
   readonly intensity: number;
 }
 
+/**
+ * Whether a viewport domain could be established for a spectrum, and what it is.
+ *
+ * Tagged rather than a nullable pair, so a refusal is a state this side has to
+ * handle rather than a sentinel it could mistake for a range.
+ */
+export type SpectrumViewportDomain =
+  | { readonly state: "admitted"; readonly low: number; readonly high: number }
+  | { readonly state: "refused"; readonly reason: SpectrumDomainRefusal };
+
+/** Why a spectrum has no viewport domain. */
+export type SpectrumDomainRefusal =
+  /** The m/z array is not non-decreasing. mzML permits this; nothing sorts it. */
+  | "sourceNotOrdered"
+  /** A coordinate cannot be placed on an axis. */
+  | "notFinite"
+  /** The two arrays disagree about how many points there are. */
+  | "axisLengthMismatch"
+  /** The m/z endpoints do not form an interval the contract accepts. */
+  | "domainUnusable"
+  /**
+   * The intensity axis does not form an interval the contract accepts.
+   *
+   * Coordinate validity alone is not drawability: finite values can still span
+   * a width no renderer can divide by. Named apart so this is never reported as
+   * unordered or non-finite data.
+   */
+  | "valueDomainUnusable";
+
+/**
+ * One bounded drawing of one committed m/z window.
+ *
+ * A screen representation and nothing more. Every value came out of the
+ * complete spectrum Rust retained, `sourcePoints` says how many observations
+ * the window actually holds, and `reduced` says whether fewer are drawn than
+ * were measured -- so a reader can see both numbers rather than take the
+ * drawing for the measurement.
+ *
+ * **Never an export source.** Scientific export is a sibling projection of the
+ * same retained spectrum, taken from the complete arrays in Rust. Nothing in
+ * this type may reach a file.
+ */
+export interface SpectrumProjection {
+  /**
+   * The window this drawing answers, echoed back.
+   *
+   * Not decoration: it is how a late answer is told from the window the
+   * viewport is committed to now.
+   */
+  readonly low: number;
+  readonly high: number;
+  readonly mz: readonly number[];
+  readonly intensity: readonly number[];
+  /** How many source observations the window holds. Zero is a real answer. */
+  readonly sourcePoints: number;
+  /** Whether fewer points are drawn than the window measured. */
+  readonly reduced: boolean;
+}
+
 export interface SelectedSpectrum {
   readonly index: number;
   readonly scanNumber: number | null;
@@ -391,6 +450,20 @@ export interface SelectedSpectrum {
   /** No array unit was emitted, so none may be displayed. */
   readonly valueUnitsKnown: boolean;
   readonly truncated: boolean;
+  /**
+   * Whether this spectrum has an m/z domain a viewport may navigate.
+   *
+   * Rust's answer, taken from the complete spectrum it retained and decided by
+   * the same admissibility the scientific figure uses. This side cannot work it
+   * out for itself and must not try: `mz` and `intensity` are bounded for
+   * transfer, `mzLow`/`mzHigh` are the backend's separately reported pair which
+   * the export renderer refuses as a domain, and neither settles the question
+   * for a spectrum whose arrays arrived truncated.
+   *
+   * A refusal is a fact about drawability rather than about the source. Such a
+   * spectrum is still valid data and still exports as CSV and TSV.
+   */
+  readonly viewportDomain: SpectrumViewportDomain;
   /**
    * Which retained spectrum an export of this panel would write.
    *
