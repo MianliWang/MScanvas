@@ -326,6 +326,53 @@ approximated.
 
 It is not a redesign, it is not persistence, and it is not analysis.
 
+## The M5 async-surface rule
+
+M5 introduces user-visible surfaces that wait for an answer, and three review
+findings arrived as one defect: **each was specified on its success path and
+little else.** `apps/desktop/AGENTS.md` already requires every async surface to
+have loading, empty, success, partial and error states; what was missing was the
+route saying which questions a slice must answer before it may close.
+
+So the rule is stated once, here, and each slice that introduces such a surface
+answers it rather than restating it. **A slice introducing an asynchronous
+user-visible surface cannot close by proving only the happy path.**
+
+1. **Request identity.** What source, owner, parameters and revision does the
+   request describe?
+2. **Input validity.** What is rejected before launch, with what reason? Invalid
+   input never silently becomes a different request.
+3. **Loading.** What is rendered while a request is pending, and which controls
+   stay usable?
+4. **Success with data.** Which exact request does the result describe, and how
+   is it bound to its source and parameters?
+5. **Successful empty result.** Where the source contract permits it, empty is a
+   valid scientific outcome and must not look like loading or failure.
+6. **Partial result.** Either explicitly admitted and typed with truthful
+   coverage semantics, or explicitly impossible. Never folded into success.
+7. **Typed failure.** Capability, parser, service and projection failures are
+   distinguishable from an empty scientific result, and retryability is explicit.
+8. **Retry.** Which exact request is retried, and while what remains current?
+9. **Supersession.** Which newer source, selection, viewport or query makes an
+   outstanding request obsolete?
+10. **Stale response.** A stale answer never overwrites newer authority, and is
+    discarded rather than surfaced as a current error.
+11. **Old result visibility.** Old scientific or screen data is never displayed
+    under a newer source, viewport, query, label or axis in a way that reads as
+    current.
+12. **Recovery.** The transitions after retry, reset, source change and selection
+    change are defined.
+13. **Accessibility.** Loading, empty, failure and recovery carry truthful
+    accessible names and status behaviour, without duplicate announcements.
+14. **Rendered evidence.** The user-visible states are exercised at 1920×1080,
+    1366×768 and 960×640, with keyboard behaviour where the surface is
+    interactive.
+
+M5 introduces exactly two such surfaces: the **spectrum screen projection**
+(M5.1/M5.2) and the **XIC query** (M5.5/M5.6). Each answers all fourteen below.
+Neither may become a substitute scientific authority: the complete retained Rust
+spectrum stays the source, and these are projections and results drawn from it.
+
 ## The M5 route
 
 Nine slices. Each names one authority, and the dependency order is the order in
@@ -547,13 +594,122 @@ appears on zooming in. Repeatedly zooming into an already-reduced overview is th
 thing this forbids: the complete retained spectrum is the source of every screen
 projection, at every zoom level.
 
+#### A different spectrum is a different viewport context
+
+Discarding an outstanding projection settles the *result*. It does not settle the
+**range authority**, and leaving that unsaid is how a viewport zoomed on one scan
+survives onto another that does not have that range — after which the interface
+offers `Current` for a domain the new source lacks and Rust answers
+`RangeRefusal::OutsideSource`, or a viewport simply cannot be drawn.
+
+**The decision: a committed selection change to a different spectrum identity
+starts a new spectrum viewport context.** The previous spectrum's absolute m/z
+viewport is not preserved, not intersected with the new spectrum, and not clamped
+into it and called continuity. Two spectra do not share one authoritative m/z
+navigation state merely because they occupy the same panel.
+
+**The new spectrum has an admitted domain.** The old spectrum's transient gesture
+is superseded; every outstanding projection request it owns is superseded; its
+viewport and projection stop being current UI authority; the new spectrum's
+authoritative **full admitted source domain** becomes its committed reset
+viewport; the projection request for that domain enters loading; and the bounded
+full-domain projection is requested from the retained snapshot. **The old
+projection is never drawn beneath the new spectrum's axes.**
+
+**The new spectrum has a refused domain.** The old transient gesture and
+outstanding projection work are superseded, the old committed viewport stops
+being authority, and the new spectrum enters the explicit viewport-refused state:
+no domain is manufactured, no `Current` scope is exposed, and whatever
+source-data capability that spectrum truthfully has is preserved.
+
+**The same spectrum identity is not a reset.** Re-rendering or re-delivering the
+same current result changes nothing. Implementations may use the owner, revision
+and token machinery this project already has; M5.0 freezes the semantics rather
+than the field names.
+
+The transitions M5.1 and M5.2 must prove: admitted A to admitted B with
+overlapping domains; admitted A to admitted B with **disjoint** domains; admitted
+to refused; refused to admitted; a projection outstanding for A when B is
+selected; a transient gesture active on A when B is selected; and a stale A
+projection arriving after B became current. **No case may retain A's viewport
+authority for B.**
+
+#### The projection request has a whole lifecycle
+
+The projection is an async surface, so it answers the rule above.
+
+**Identity.** A request is bound tightly enough that its answer can only become
+current for the exact state it describes — the dataset or source owner, the
+selected spectrum's identity or token, the committed viewport revision or domain,
+and a request generation where one is needed. The invariant, not the
+serialisation: *a result for an older spectrum or an older committed viewport
+cannot become the drawing for a newer one.*
+
+**Loading.** When a commit requires a new projection, the surface enters an
+explicit loading state. The previous projection is **not** rendered under the new
+committed axes, missing data is **not** drawn as an empty spectrum, and the
+committed viewport is **not** rolled back because a drawing is pending — the
+committed domain remains the authority, and the screen says its drawing is being
+produced. Unrelated navigation, scan selection and Previous/Next included, stays
+usable unless another authority independently forbids it.
+
+**Success.** A still-current result is displayed; it covers the committed
+viewport, reduces or contains actual source observations, invents nothing, and is
+not export authority.
+
+**Empty.** A committed viewport may truthfully contain no reported observation.
+That is a successful empty result, distinguishable from loading, from projection
+failure and from viewport refusal — and for a discrete spectrum nothing is
+interpolated to avoid an empty view.
+
+**Partial: refused.** A bounded reduction is complete *screen coverage* of the
+requested domain, not a partial scientific result, so no new completeness
+semantics are invented for display. A projection is therefore a complete bounded
+screen representation, an explicit empty result, or a typed failure. **If truthful
+coverage of the requested domain cannot be produced within the admitted bound,
+the request fails explicitly rather than returning an undisclosed partial
+drawing.**
+
+**Typed failure.** At minimum distinguishable: a retained spectrum or token no
+longer current or revoked; a superseded request; an inconsistent internal
+viewport request; and a service failure for the still-current request. A
+superseded request is **not** a current user error. When a still-current request
+fails, the committed viewport domain is retained, an explicit error state is
+rendered for that domain, the old projection is not drawn under the new axes,
+`Retry` appears only where the failure is retryable, `Reset` is preserved where
+reset is meaningful recovery, there is no silent fall back to Full, and no empty
+data is fabricated. **The scientific source is not reclassified as invalid
+because a drawing failed.**
+
+**Retry.** Repeats the exact failed request for the still-current spectrum,
+committed viewport and source ownership; a changed selection or viewport
+invalidates it. It creates a new generation and re-enters loading, and it
+re-runs no ProteoWizard, re-reads no acquisition, changes no scientific source
+authority and moves no viewport.
+
+**Supersession.** A different spectrum selected, a viewport committed again, a
+preview or source replaced or revoked, or a dataset removed or cleared where
+ownership requires revocation. A superseded response — success **or** failure —
+is discarded: it replaces no current data, surfaces no stale error, and restores
+no old viewport.
+
+**And a failed drawing does not redefine the science.** `Current` scientific
+export is defined by the current retained source, the committed viewport domain
+and the export lane — never by whether a screen projection succeeded. So the
+route may keep `Current` export available while the projection for that same
+range is in error, provided the interface makes the projection error explicit, so
+a reader never mistakes a failed drawing for empty science. **Scientific export
+correctness is not coupled to screen-projection completeness.**
+
 M5.0 implements none of this. What is fixed here is the contract the future
 slice owes, and the boundary it may cross to meet it. **M5.1 is therefore no
 longer "project two endpoint numbers"**: it owns the admitted/refused domain
 state, the authoritative complete domain where admissible, the bounded projection
 of screen data from the retained source, projection request and result ownership,
 bounded IPC semantics, stale and revoked selection behaviour, no acquisition
-re-read, and no export from a screen projection.
+re-read, and no export from a screen projection — plus the selection-to-viewport
+migration above and the projection request's whole lifecycle. **M5.1 proves that
+state machine before M5.2 builds visible gestures on it.**
 
 ### M5.2 — the visible spectrum viewport
 
@@ -626,6 +782,25 @@ may never overwrite a newer viewport, a newer selected spectrum, or a newer
 dataset or open state. What it must not do is become a second spectrum truth: one
 retained source, one viewport authority, one drawing derived from them.
 
+#### The states M5.2 must render and test
+
+Ready; a transient gesture; committed-projection loading; a successful non-empty
+projection; a successful **empty** projection; a retryable error; a non-retryable
+or refused state where applicable; reset recovery; a stale or superseded result
+rejected; and the selection-migration cases M5.1 froze. Rendered at 1920×1080,
+1366×768 and 960×640, with keyboard equivalence where a control exists, under the
+accessible naming and live-region rules the frozen principles set — and **without
+adding a duplicate-announcement debt while satisfying them**, since this
+repository already carries one as inherited M4.4 debt.
+
+Two proofs are named because they are the ones an implementation would otherwise
+skip:
+
+- **panning or zooming into a source region beyond the original frontend prefix
+  surfaces the observations Rust retained, rather than false blank space**;
+- **an old projection is never drawn beneath a newer committed domain or a newly
+  selected spectrum.**
+
 M5.0 does not design the unavailable state or the projection's shape; it requires
 the route to be able to represent both truthfully.
 
@@ -688,10 +863,14 @@ collapse of it.
 | Zoomed committed viewport | narrowed | **re-projected from the source**, not re-zoomed from the overview | — | — |
 | Panned beyond the transferred prefix | unchanged | the retained source's own observations | — | — |
 | Committed window holding no reported peak | yes | nothing to draw there | — | empty figure **and** empty data document |
-| Selection changes with a projection outstanding | follows the new selection | stale answer discarded | — | — |
-| Viewport changes twice with an older request outstanding | newest committed domain | stale answer discarded | — | — |
+| Selection changes with a projection outstanding | **reset to the new spectrum's full admitted domain** | old request superseded; stale answer discarded; old drawing never shown under the new axes | — | — |
+| Selection changes to a domain-refused spectrum | **cleared; explicit refusal** | no projection manufactured | that spectrum's own | **none** |
+| Viewport changes twice with an older request outstanding | newest committed domain | both stale answers discarded | — | — |
+| Projection pending for the committed domain | unchanged, still authority | explicit loading; **not** the previous drawing, **not** an empty spectrum | unchanged | still available on its own conditions |
+| Projection fails while still current | retained | typed error for that domain; `Retry` where retryable; `Reset` preserved | unchanged | **still available** — a failed drawing is not empty science |
+| Projection returns nothing for the domain | unchanged | successful **empty**, distinct from loading, failure and refusal | unchanged | empty figure and empty data document |
 
-Five capabilities, nine states, one rule each. No wording in this route may
+Five capabilities, thirteen states, one rule each. No wording in this route may
 answer them with a single flag.
 
 **Where M5.1 refused one.** There is **no `Current` scope** — not a synthesised
@@ -748,7 +927,12 @@ worst. The composition is fixed:
 committed viewport domain + complete retained Rust spectrum -> scientific export
 ```
 
-and never `bounded screen projection -> scientific export`. Concretely: a
+and never `bounded screen projection -> scientific export`. The consequence worth
+stating: a screen projection that is **loading or in error changes nothing**
+about whether `Current` export is available, because export reads the retained
+source and the committed domain rather than the drawing. Where both are true at
+once, the interface makes the projection's error explicit so a reader never
+mistakes a failed drawing for empty science. Concretely: a
 `Current` CSV or TSV contains the real source records inside the committed
 domain; a `Current` figure is built from the complete retained source restricted
 to that domain; figure behaviour follows the admitted representation; a discrete
@@ -813,8 +997,18 @@ rather than in part, matching `parse_spectrum_table`'s rule; unit posture matche
 what the boundary establishes and no more.
 **Hard non-goals.** No frontend. No second selection authority. No cache.
 **Predecessor.** M5.4, and the decisions it forces (below) being answered.
-**Exit.** An XIC can be requested and typed end to end in Rust, and a build whose
-backend cannot serve one says so before a process is launched.
+**Exit.** An XIC can be requested and typed end to end in Rust; a build whose
+backend cannot serve one says so before a process is launched; and the **typed
+request, result and failure vocabulary** the visible surface needs exists —
+including whether the admitted source can produce a partial or truncated result
+at all. M5.5 owns those semantics; M5.6 owns their presentation.
+
+**The partial question is answered here, not improvised later.** M5.4 and M5.5
+must establish whether the chosen source can return a partial or truncated XIC.
+If partial is scientifically meaningful and reachable, it carries typed coverage
+and completeness facts that M5.6 discloses; otherwise partial output is
+**refused** rather than displayed as complete success. Nothing about partial
+semantics is invented in M5.0.
 
 ### M5.6 — the visible XIC, and linked selection
 
@@ -829,9 +1023,12 @@ retention-time axis, its settings are stated beside it, and clicking it selects
 a scan that the chromatogram marker, the table row and the spectrum panel all
 follow.
 **Major evidence.** One commit revision consumed by every view including the new
-one; a selection committed on the XIC reaching the other three; a scan the
-loaded table does not contain refused rather than marked; rendered QA at the
-three viewport targets; keyboard equivalence for the input and the trace.
+one; a selection committed on the XIC reaching the other three; a scan the loaded
+table does not contain refused rather than marked; keyboard equivalence for the
+input and the trace; and **rendered evidence for every state below** at 1920×1080,
+1366×768 and 960×640 — an invalid draft, loading, a successful trace, a
+successful empty result, a retryable error, a retry, a superseded request, and
+linked selection unavailable where no current selectable trace exists.
 **Hard non-goals.** No second scan-selection authority. No multi-XIC overlay. No
 normalization, smoothing, baseline correction or peak picking. No claim about
 the m/z unit the file did not report. **No XIC export.** Concretely: no XIC SVG
@@ -849,8 +1046,68 @@ independently authorised route amendment may revisit; **it may not be pulled
 into M5**, and no M5 slice owns it.
 **Predecessor.** M5.5.
 **Exit.** VIEW-007's acceptance holds — a typed m/z and window produce a trace
-whose settings and unit posture are explicit — and the viewer still has exactly
-one selected scan.
+whose settings and unit posture are explicit — the viewer still has exactly one
+selected scan, and **every state of the request lifecycle below is reachable,
+truthful and rendered.**
+
+#### The XIC request lifecycle
+
+A spinner is not the repair. This is the second async surface M5 introduces, so
+it answers the same fourteen questions, and the answers are frozen here while
+their *scientific* parameters stay open: the five `USER_DECISION_REQUIRED` items
+are **not** decided here, and whatever is eventually admitted becomes the input
+this contract validates and displays.
+
+**Draft, then commit.** The reader edits request parameters as a **draft**, and
+editing is not scientific query authority. Before submission the draft is
+validated against whichever D1–D5 answers were admitted: an invalid draft is
+shown as invalid where the reader is, launches **no** backend request, and
+**never silently alters the currently committed successful trace**. A valid
+explicit submission snapshots the exact parameters and makes that request
+current. M5.0 fixes none of the control's shape or labels.
+
+**Loading.** A submitted request enters an explicit loading state bound to that
+exact request and the current dataset and preview authority. The **old trace is
+not presented under the new request's window, MS-level or aggregation labels** —
+M5 keeps no result history, so the simple and honest route is not to show the
+previous trace as current while a new request loads — and pending work is never
+rendered as *no signal*.
+
+**Success.** The trace is rendered together with enough visible contract to read
+it truthfully — the window, unit and tolerance posture, MS-level scope,
+aggregation and source-query identity the frozen posture already requires. Linked
+scan selection reuses the existing authority; **no XIC-specific selected-scan
+authority is created.**
+
+**Empty.** A scientifically valid query that returns no signal is an explicit
+empty result, distinguishable visually and accessibly from invalid input, from
+loading, from capability failure and from parser or service failure. **No
+zero-valued signal is fabricated** unless the admitted source contract itself
+defines zeros.
+
+**Partial.** Per M5.5: either typed and disclosed, or refused. Never shown as
+complete success.
+
+**Typed failure and recovery.** The route covers the failures the admitted source
+and runtime can actually produce — capability, parser, backend or service
+execution, and stale or revoked source ownership. A still-current failure shows a
+typed error posture rather than empty scientific data, offers `Retry` only where
+retry is meaningful, **preserves the exact failed request parameters** for it, and
+silently changes no window, MS level, aggregation or source query. A retry
+repeats that same committed request while its owner is still current; if the
+source or the parameters changed, the old retry is superseded.
+
+**Supersession.** A dataset or preview change, a removed or revoked source, or a
+newer committed request obsoletes a pending one. Stale success **and** stale
+failure are discarded: neither replaces the current trace or state, and neither
+surfaces stale messaging as though it described the current request.
+
+**Selection availability.** Only a **current successful trace with selectable
+points** may take part in linked scan selection. During invalid input, loading, an
+empty result, a failure or a superseded state, the XIC surface does not pretend a
+scan point can be selected. That behaviour is an input to M5.7's
+selection-availability audit, and the chromatogram's and scan table's existing
+selection authority is unchanged.
 
 ### M5.7 — selection-availability affordance consistency
 
@@ -858,7 +1115,9 @@ one selected scan.
 that a selection cannot be performed right now, and apply it to all of them.
 **Owning authority.** One availability rule, read by every viewer click surface
 that exists when this slice runs — the chromatogram and the scan table always,
-and the XIC as well on `XIC_SOURCE_ADMITTED`.
+and the XIC as well on `XIC_SOURCE_ADMITTED`, where its own lifecycle already
+says a point is selectable only on a current successful trace. This slice
+reconciles that with the lane rule rather than restating either.
 **User-visible result.** A click surface that cannot commit says so, in terms of
 what the reader can change, without taking away the hover, zoom and pan that
 need no backend.
