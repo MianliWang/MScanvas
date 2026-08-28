@@ -2043,8 +2043,14 @@ pub enum SpectrumDomainRefusalDto {
     NotFinite,
     /// The two arrays disagree about how many points there are.
     AxisLengthMismatch,
-    /// The endpoints do not form a domain the contract accepts.
+    /// The m/z endpoints do not form an interval the contract accepts.
     DomainUnusable,
+    /// The intensity axis does not form an interval the contract accepts.
+    ///
+    /// Coordinate validity alone is not drawability: finite values can still
+    /// span a width no renderer can divide by. Named apart so this is never
+    /// reported as unordered or non-finite data.
+    ValueDomainUnusable,
 }
 
 /// One bounded drawing of one committed m/z window.

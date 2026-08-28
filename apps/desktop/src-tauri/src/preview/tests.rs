@@ -23194,6 +23194,60 @@ fn an_unordered_spectrum_is_refused_a_viewport_and_left_alone() {
 }
 
 #[test]
+fn a_spectrum_the_figure_cannot_draw_is_refused_a_viewport_and_still_exports() {
+    // Coordinate validity alone is not drawability: every value below is finite
+    // and the m/z array is ordered, but the intensity axis spans
+    // `f64::MAX - (-f64::MAX)`, which the figure contract refuses. The viewport
+    // refuses it for the same reason, and says which axis.
+    let file = TestFile::new("viewport-value-domain");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
+        selected_spectrum_output(0, &[(100.0, -f64::MAX), (200.0, f64::MAX)]),
+    )])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    assert_eq!(
+        spectrum.viewport_domain,
+        SpectrumViewportDomainDto::Refused {
+            reason: SpectrumDomainRefusalDto::ValueDomainUnusable
+        },
+    );
+    // The figure this refusal is about is refused by the export lane too, which
+    // is the equivalence the shared predicate exists to keep.
+    let folder = file.path.parent().expect("a folder");
+    assert!(
+        spectrum_saved_as(
+            &service,
+            &spectrum.export_token,
+            "svg",
+            &folder.join("one.svg")
+        )
+        .is_some(),
+        "the figure contract refuses this spectrum",
+    );
+    // And the source is neither mutated nor reclassified: its data still writes.
+    assert_eq!(
+        spectrum_saved_as(
+            &service,
+            &spectrum.export_token,
+            "csv",
+            &folder.join("scan.csv")
+        ),
+        None,
+        "a data document needs no drawable value range",
+    );
+    assert_eq!(spectrum.intensity, vec![-f64::MAX, f64::MAX]);
+    assert_eq!(
+        service
+            .project_selected_spectrum(&spectrum.export_token, 100.0, 200.0)
+            .expect_err("no viewport, so no drawing")
+            .kind,
+        "spectrum_projection_no_domain",
+    );
+}
+
+#[test]
 fn the_transfer_bound_is_unreachable_because_the_text_bound_refuses_first() {
     // Recorded rather than assumed. `MAX_SPECTRUM_POINTS` bounds the arrays a
     // selected spectrum transfers, but a spectrum large enough to reach it does

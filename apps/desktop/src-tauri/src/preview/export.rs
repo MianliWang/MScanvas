@@ -56,9 +56,9 @@
 use std::sync::Arc;
 
 use mscanvas_plot_spec::spec::{
-    AxisSpec, Caption, DataScope, Domain, FigureSpec, Label, MIN_FIGURE_CHROME_HEIGHT,
-    MIN_PANEL_HEIGHT, PanelSpec, PlotKind, SeriesSpec, SpecError, SpectrumRepresentation,
-    StyleRole, UnitState,
+    AxisSpec, Caption, DataScope, FigureSpec, Label, MIN_FIGURE_CHROME_HEIGHT, MIN_PANEL_HEIGHT,
+    MeasurementRefusal, PanelSpec, PlotKind, SeriesSpec, SpecError, SpectrumRepresentation,
+    StyleRole, UnitState, measurement_domains,
 };
 use mscanvas_proteowizard::{
     SelectedSpectrumResult, SpectrumRepresentationState, UnitState as SourceUnitState,
@@ -1477,6 +1477,13 @@ pub(super) fn spectrum_panel(spectrum: &SelectedSpectrumResult) -> Result<PanelS
         SourceUnitState::NotEmitted => UnitState::Unreported,
     };
 
+    // Asked of the borrowed arrays, before either is copied, and asked through
+    // the one predicate the spectrum viewport also asks. A second reading of
+    // "drawable" here is how a screen and an exported figure come to describe
+    // different scenes; there is not one.
+    let domains = measurement_domains(spectrum.mz_values(), spectrum.intensity_values())
+        .map_err(MeasurementRefusal::into_spec_error)?;
+
     let series = SeriesSpec::new(
         // A stable semantic name for what this series is, and not an identity
         // of the file it came from. No part of a path, a workspace handle or a
@@ -1496,51 +1503,12 @@ pub(super) fn spectrum_panel(spectrum: &SelectedSpectrumResult) -> Result<PanelS
         // in the case this build cannot reach yet.
         AxisSpec::new(Label::new("m/z")?, unit.clone()),
         AxisSpec::new(Label::new("Intensity")?, unit),
-        domain_of(series.x())?,
-        value_domain_of(series.y())?,
+        domains.domain(),
+        domains.value_domain(),
         vec![series],
     )?;
 
     Ok(panel)
-}
-
-/// The domain the exported spectrum covers.
-///
-/// Derived from the points themselves rather than from the backend's separately
-/// reported low and high. Those are a second reading of the same spectrum, and
-/// where the two disagree the points are what the figure draws -- so taking the
-/// reported pair would produce a figure whose axis and whose marks describe
-/// different things, or a refusal for a disagreement the reader cannot see.
-///
-/// An empty spectrum has no points to derive anything from, and gets the one
-/// domain that claims nothing: a single value at zero. The description already
-/// states in words that the series carries no points, so the axis is not where
-/// a reader learns that.
-fn domain_of(values: &[f64]) -> Result<Domain, SpecError> {
-    match (values.first(), values.last()) {
-        // Ordered by the contract, so the ends are the extremes.
-        (Some(low), Some(high)) => Domain::new(*low, *high),
-        _ => Domain::new(0.0, 0.0),
-    }
-}
-
-/// The value range the exported spectrum is drawn against.
-///
-/// Always includes zero. An unreported representation is drawn as marks from
-/// the zero line -- only established profile data may be joined -- and the
-/// contract refuses such a panel whose range excludes zero, because a mark's
-/// length would then encode its distance from the range end rather than its
-/// magnitude. Negative intensity is preserved rather than clamped: baseline
-/// subtraction produces it legitimately, and dropping it would erase measured
-/// signal on the way to a file.
-fn value_domain_of(values: &[f64]) -> Result<Domain, SpecError> {
-    let mut low = 0.0_f64;
-    let mut high = 0.0_f64;
-    for value in values {
-        low = low.min(*value);
-        high = high.max(*value);
-    }
-    Domain::new(low, high)
 }
 
 /// Renders one selected spectrum as the SVG document a user receives.

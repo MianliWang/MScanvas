@@ -6637,6 +6637,9 @@ fn viewport_domain_dto(domain: projection::ViewportDomain) -> SpectrumViewportDo
                 projection::DomainRefusal::DomainUnusable => {
                     SpectrumDomainRefusalDto::DomainUnusable
                 }
+                projection::DomainRefusal::ValueDomainUnusable => {
+                    SpectrumDomainRefusalDto::ValueDomainUnusable
+                }
             },
         },
     }

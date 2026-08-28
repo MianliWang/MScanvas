@@ -32,8 +32,8 @@ carries — so a viewport spanning the whole source while its data stops at that
 prefix would draw blank space over peaks this session is holding.
 
 Neither is answerable in the webview. `mz` and `intensity` arrive bounded,
-`mzLow`/`mzHigh` are the backend's separately reported pair which `domain_of`
-documents its refusal of, and neither settles the question for a truncated
+`mzLow`/`mzHigh` are the backend's separately reported pair which the figure's
+own domain rule refuses, and neither settles the question for a truncated
 spectrum. So both answers come from Rust, over the snapshot the export lane
 already retains.
 
@@ -43,15 +43,28 @@ The domain a viewport navigates **is** the domain the figure would draw over. A
 second, more permissive reader for the viewport is how a screen and an export
 renderer come to describe different things, so there is not one:
 `SeriesSpec::new`'s coordinate validation is factored into
-`validate_measurement_coordinates`, which the constructor itself calls and the
-viewport calls on borrowed slices. Same rules, same order, same errors — asking
-whether a spectrum is drawable now costs no copy of it.
+`validate_measurement_coordinates`, which the constructor itself calls, and both
+sides reach it through one predicate over borrowed slices — same rules, same
+order, same errors, and asking whether a spectrum is drawable costs no copy of
+it.
+
+**Coordinate validity alone is not drawability**, which is the correction Round 2
+forced. A spectrum whose every value is finite can still span `-f64::MAX` to
+`f64::MAX`, whose width is infinity — and a renderer dividing by it writes `NaN`,
+which is why `Domain` refuses such a span. So the shared primitive is
+`measurement_domains`, which settles the coordinates *and* both axes in one call
+and is the only drawability predicate either side asks: `spectrum_panel` builds
+its panel from the domains it returns, and `viewport_domain` admits a viewport
+exactly when it succeeds. The two cannot answer differently, because they are one
+call.
 
 `viewport_domain` therefore answers `Admitted(Domain)` exactly where
 `spectrum_panel` would accept the series, and `Refused(DomainRefusal)` with the
-contract's own verdict otherwise. An empty spectrum admits the domain that
-claims nothing, a single value at zero — the same answer `domain_of` gives the
-exported figure, so the two never disagree.
+contract's own verdict otherwise — naming *which* question failed, so an
+intensity axis the figure will not draw is never reported as unordered or
+non-finite m/z. An empty spectrum admits the domain that claims nothing, a
+single value at zero — the same answer the exported figure gets, because it is
+the same call.
 
 **A refusal is a fact about drawability, never about the source.** Such a
 spectrum stays selected, is drawn by the panel as before, and still exports as
@@ -134,8 +147,26 @@ the previous drawing stops being current for the new axes rather than being
 shown beneath them; a stale success **and** a stale failure are both no-ops by
 identity, so correctness never rests on a callback being cancelled in time; and a
 still-current failure keeps the committed window while carrying its own
-retryability. Both counters restart with the spectrum, so an answer for the
-previous one can never match a generation issued for this one.
+retryability.
+
+**The two counters never restart.** A gesture epoch and a projection generation
+are monotonic across the session: neither restarts when a different spectrum is
+selected, neither restarts on `spectrum-cleared`, and a value issued for one
+spectrum is never issued again for the next. They live on every state variant
+rather than on `ready` alone, so there is no state in which the sequence begins
+again.
+
+Restarting them is not merely untidy, it is the race. If spectrum A still has a
+request outstanding when B is selected and asks, a per-spectrum counter gives
+both requests the same number — and A's late answer then satisfies B's, putting
+A's data under B's axes. `interactionState.ts` recorded exactly this about its
+own two counters and carries them across a preview change for the same reason.
+
+**Which leaves two facts that are compatible and both explicit.** The viewport
+*context* resets when the selected spectrum changes — a new full domain, no
+committed window, no gesture, no drawing. The event *identifiers* do not, because
+their whole job is to tell a late answer about the old context from a current one
+about the new.
 
 ## What M5.1 deliberately leaves
 
@@ -153,12 +184,15 @@ unordered spectrum refused and left alone while its CSV still writes, a stale
 token refused, an empty window, a bounded drawing, no backend operation, no
 export lane, and a full-source export unchanged across a projection.
 
-**Frontend: 1,087 tests**, up from 1,051. Thirty-six over the pure viewport:
+**Frontend: 1,090 tests**, up from 1,051. Thirty-nine over the pure viewport:
 selection migration across overlapping and disjoint domains, admitted↔refused in
 both directions, redelivery that does not reset, gesture epochs and stale
 settles, the projection lifecycle including empty success, retryable and
 non-retryable failure, retry as a new generation, stale success and stale
-failure, two commits before the first answer, and the m/z arithmetic's totality.
+failure, two commits before the first answer, a late answer *and* a late failure
+for one spectrum while the next has a request outstanding, a stale gesture settle
+across a selection, the same across a cleared selection, and the m/z
+arithmetic's totality.
 
 **One measured finding, recorded rather than assumed.** `MAX_SPECTRUM_POINTS`
 truncation is **not reachable through the text parser**: one formatted point is
@@ -167,9 +201,10 @@ large first. The retained-source property is therefore proved over spectra built
 directly, and a service test pins the reachability itself so a later reader does
 not have to rediscover it.
 
-**Seven mutations**, applied one at a time and restored byte-for-byte: the
+**Nine mutations**, applied one at a time and restored byte-for-byte: the
 frontend prefix used as the source domain; an outside-source window clamped
 instead of refused; a reduction emitting a value the source did not measure; an
 unordered spectrum admitted anyway; a stale token answered; a selection change
-inheriting the previous window; and a stale projection answer accepted. Each
-failed the check aimed at it.
+inheriting the previous window; a stale projection answer accepted; the counters
+restarted per spectrum; and the value-domain half of the drawability predicate
+bypassed. Each failed the check aimed at it.

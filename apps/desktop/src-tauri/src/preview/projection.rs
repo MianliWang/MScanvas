@@ -34,7 +34,7 @@
 //! viewport is exactly how the screen and the export renderer came to describe
 //! different things before.
 
-use mscanvas_plot_spec::spec::{Domain, SpecError, validate_measurement_coordinates};
+use mscanvas_plot_spec::spec::{Domain, MeasurementRefusal, SpecError, measurement_domains};
 
 use mscanvas_proteowizard::SelectedSpectrumResult;
 
@@ -82,23 +82,42 @@ pub(super) enum DomainRefusal {
     NotFinite,
     /// The two arrays disagree about how many points the spectrum has.
     AxisLengthMismatch,
-    /// The endpoints do not form a domain the contract accepts.
+    /// The m/z endpoints do not form an interval the contract accepts.
     DomainUnusable,
+    /// The **intensity** axis does not form an interval the contract accepts.
+    ///
+    /// Coordinate validity alone is not drawability. A spectrum whose every
+    /// value is finite can still span `-f64::MAX` to `f64::MAX`, whose width is
+    /// infinity -- and a renderer dividing by that width writes `NaN`
+    /// coordinates, which is why `Domain` refuses it. The figure contract
+    /// refuses such a spectrum, so the viewport refuses it too.
+    ///
+    /// Named apart from the three above so this case is never reported as
+    /// unordered m/z or non-finite data, which would send a reader to look for
+    /// something that is not wrong. Nothing is rescaled or normalised to make
+    /// the figure admissible.
+    ValueDomainUnusable,
 }
 
 impl DomainRefusal {
-    /// The refusal a figure error maps to.
+    /// The refusal one stage of the shared drawability predicate maps to.
     ///
-    /// Exhaustive over what the shared validator and `Domain::new` can answer
-    /// for this input, with everything else folded into the domain refusal
-    /// rather than silently admitted: a verdict this module cannot name is
-    /// still a verdict that no domain was established.
-    fn from_spec_error(error: SpecError) -> Self {
-        match error {
-            SpecError::SourceNotOrdered => Self::SourceNotOrdered,
-            SpecError::NotFinite => Self::NotFinite,
-            SpecError::AxisLengthMismatch => Self::AxisLengthMismatch,
-            _ => Self::DomainUnusable,
+    /// Exhaustive over the stages, so the reason names the question that
+    /// failed rather than the first one that looks close. Everything the
+    /// coordinate stage can answer other than the three it is enumerated for is
+    /// folded into `DomainUnusable`: a verdict this module cannot name is still
+    /// a verdict that no domain was established.
+    fn from_refusal(refusal: MeasurementRefusal) -> Self {
+        match refusal {
+            MeasurementRefusal::Coordinates(SpecError::SourceNotOrdered) => Self::SourceNotOrdered,
+            MeasurementRefusal::Coordinates(SpecError::NotFinite) => Self::NotFinite,
+            MeasurementRefusal::Coordinates(SpecError::AxisLengthMismatch) => {
+                Self::AxisLengthMismatch
+            }
+            MeasurementRefusal::Coordinates(_) | MeasurementRefusal::Domain(_) => {
+                Self::DomainUnusable
+            }
+            MeasurementRefusal::ValueDomain(_) => Self::ValueDomainUnusable,
         }
     }
 }
@@ -112,21 +131,14 @@ impl DomainRefusal {
 /// arrays rather than copying them, because asking whether a spectrum is
 /// drawable should not cost a duplicate of it.
 pub(super) fn viewport_domain(spectrum: &SelectedSpectrumResult) -> ViewportDomain {
-    let mz = spectrum.mz_values();
-    if let Err(error) = validate_measurement_coordinates(mz, spectrum.intensity_values()) {
-        return ViewportDomain::Refused(DomainRefusal::from_spec_error(error));
-    }
-    // The ends of an admitted series are its extremes, which is what the
-    // validator above has just established. An empty spectrum has no points to
-    // take a range from and gets the one domain that claims nothing -- the same
-    // answer `domain_of` gives the exported figure, so the two agree there too.
-    let domain = match (mz.first(), mz.last()) {
-        (Some(low), Some(high)) => Domain::new(*low, *high),
-        _ => Domain::new(0.0, 0.0),
-    };
-    match domain {
-        Ok(domain) => ViewportDomain::Admitted(domain),
-        Err(error) => ViewportDomain::Refused(DomainRefusal::from_spec_error(error)),
+    // The whole drawability question, through the one predicate `spectrum_panel`
+    // asks -- **both** axes, not the coordinates alone. A viewport navigates m/z,
+    // but a spectrum whose intensity axis the figure cannot establish is a
+    // spectrum the figure will not draw, and admitting a viewport for it would
+    // make the screen claim a scene the exported figure refuses.
+    match measurement_domains(spectrum.mz_values(), spectrum.intensity_values()) {
+        Ok(domains) => ViewportDomain::Admitted(domains.domain()),
+        Err(refusal) => ViewportDomain::Refused(DomainRefusal::from_refusal(refusal)),
     }
 }
 

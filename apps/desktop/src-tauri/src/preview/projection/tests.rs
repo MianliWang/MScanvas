@@ -1,5 +1,9 @@
 use mscanvas_proteowizard::SelectedSpectrumResult;
 
+use mscanvas_plot_spec::spec::{
+    MeasurementRefusal, SpecError, measurement_domains, validate_measurement_coordinates,
+};
+
 use super::super::dto::MAX_SPECTRUM_POINTS;
 use super::{
     DomainRefusal, MAX_PROJECTION_COLUMNS, MAX_PROJECTION_POINTS, ProjectionRefusal,
@@ -67,6 +71,55 @@ fn a_descending_m_z_array_is_refused_rather_than_sorted() {
     );
     // And the source is untouched by having been asked.
     assert_eq!(spectrum.mz_values(), &[500.0, 100.0]);
+}
+
+#[test]
+fn a_value_range_the_figure_cannot_draw_refuses_the_viewport() {
+    // Coordinate validity alone is not drawability. Every value here is finite
+    // and the m/z array is ordered, so the coordinate rules pass -- but the
+    // intensity axis spans `f64::MAX - (-f64::MAX)`, which is infinity, and a
+    // renderer dividing by it writes `NaN`. The figure contract refuses such a
+    // spectrum, so the viewport refuses it too rather than claiming a scene the
+    // exported figure will not draw.
+    let spectrum = spectrum(&[(100.0, -f64::MAX), (200.0, f64::MAX)]);
+
+    assert_eq!(
+        viewport_domain(&spectrum),
+        ViewportDomain::Refused(DomainRefusal::ValueDomainUnusable),
+        "the intensity axis is why, and the refusal says so",
+    );
+}
+
+#[test]
+fn the_shared_predicate_is_what_refuses_that_value_range() {
+    // Asserted against the predicate itself, so the viewport's verdict and the
+    // figure's are demonstrably the same call rather than two that agree today.
+    let mz = [100.0, 200.0];
+    let intensity = [-f64::MAX, f64::MAX];
+
+    assert_eq!(
+        measurement_domains(&mz, &intensity),
+        Err(MeasurementRefusal::ValueDomain(
+            SpecError::DomainSpanNotFinite
+        )),
+    );
+    // And the coordinates themselves are beyond reproach.
+    assert!(validate_measurement_coordinates(&mz, &intensity).is_ok());
+}
+
+#[test]
+fn a_spectrum_the_figure_will_not_draw_is_projected_not_at_all() {
+    let spectrum = spectrum(&[(100.0, -f64::MAX), (200.0, f64::MAX)]);
+
+    assert_eq!(
+        project(&spectrum, 100.0, 200.0),
+        Err(ProjectionRefusal::NoViewportDomain(
+            DomainRefusal::ValueDomainUnusable
+        )),
+    );
+    // The source is untouched by having been asked.
+    assert_eq!(spectrum.mz_values(), &[100.0, 200.0]);
+    assert_eq!(spectrum.intensity_values(), &[-f64::MAX, f64::MAX]);
 }
 
 #[test]
