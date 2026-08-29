@@ -168,25 +168,45 @@ See [ADR 0036](adr/0036-linked-chromatogram-spectrum-figure.md).
 
 ## Still open
 
-FIG-001 through FIG-006 cover the selected spectrum, the chromatogram over the
-whole run or the range the viewer has committed to, and the linked two-panel
-figure of the two. FIG-007 and FIG-008 are unimplemented. There is no
-current-range export of a selected spectrum, no XIC, no saved specification and no
-composer, and the screen renderer still does not consume `FigureSpec` — screen and
-export agree by both being right rather than by sharing a type.
+FIG-001 through FIG-006 cover the selected spectrum, the chromatogram, and the
+linked two-panel figure of the two — the first two over their full source or the
+range their own viewer has committed to. FIG-007 and FIG-008 are unimplemented.
+There is no XIC, no saved specification and no composer, and the screen renderer
+still does not consume `FigureSpec` — screen and export agree by both being right
+rather than by sharing a type.
 
-TIC and BPC now exist on screen, with a retention-time viewport a user zooms and
-pans. That closes the second half of the sentence above and makes the first half
-answerable rather than hypothetical: **the range a current-range export would
-describe is `ViewerInteractionState.committedDomain`** — `null` for the whole
-run, otherwise a finite forward interval inside it. It is deliberately not the
-gesture in progress, so an export taken mid-drag cannot describe a range the user
-never settled on, and it is deliberately not the SVG's coordinates, the visible
-ticks or anything a pointer holds. The chromatogram export consumes it, and so
-does the linked figure — where it decides one more thing, because a selected scan
-outside that range is a refusal rather than a widening. See
-[ADR 0032](adr/0032-viewer-interaction-and-viewport-state.md) and
-[ADR 0033](adr/0033-visible-linked-tic-bpc-viewer.md).
+## Two ranges, on two axes, and they are not one range
+
+A current-range export reads a **committed** viewport: never the gesture in
+progress, so an export taken mid-drag cannot describe a range the user never
+settled on, and never the SVG's coordinates, the visible ticks or anything a
+pointer holds. That much is common to both.
+
+What is not common is *which* viewport, and the distinction is load-bearing
+rather than tidy:
+
+| | range authority | consumed by |
+| --- | --- | --- |
+| Retention time | `ViewerInteractionState.committedDomain` | the chromatogram export, and the linked figure |
+| m/z | the selected spectrum's own committed viewport, resolved in Rust against the retained spectrum | the selected-spectrum export |
+
+They are separate state, separate types and separate reducers. `MzDomain` carries
+a brand a plain `{ low, high }` does not, so a retention-time range cannot be
+passed where an m/z one is wanted; Rust keeps `SpectrumRangeDto` and
+`ChromatogramRangeDto` apart for the same reason. A single shared range would put
+the one mistake neither axis can afford — a window read for the wrong one — a
+field access away.
+
+The linked figure takes the **chromatogram's** range and only that. Its lower
+panel is the complete selected spectrum whatever that spectrum's own export scope
+is set to, which `spectrum_panel`'s signature enforces by having no range
+parameter at all. The chromatogram's range decides one more thing there, because
+a selected scan outside it is a refusal rather than a widening.
+
+See [ADR 0032](adr/0032-viewer-interaction-and-viewport-state.md),
+[ADR 0033](adr/0033-visible-linked-tic-bpc-viewer.md),
+[ADR 0038](adr/0038-spectrum-viewport-authority-and-screen-projection.md) and
+[ADR 0040](adr/0040-spectrum-range-export.md).
 
 The screen chromatogram is not drawn from a `PlotSpec`. It reads the same
 scientific model the rest of the viewer does and draws with the repository's own
