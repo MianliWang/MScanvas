@@ -615,6 +615,25 @@ pub fn chromatogram_export_refused() -> PreviewErrorDto {
     )
 }
 
+/// The requested m/z range is not a range at all.
+///
+/// Non-finite, inverted, half present, or a scope word this boundary does not
+/// know. Kept apart from the containment refusal below because they are
+/// different mistakes: one is a window this spectrum does not have, and this one
+/// is not a window. Reporting a NaN bound as "not inside the spectrum" would
+/// send a reader to look at a range they never successfully stated.
+///
+/// Unreachable through the shipped interface, which builds its request from a
+/// committed domain. It is the answer to a forged or a replayed one.
+#[must_use]
+pub fn spectrum_range_unusable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "spectrum_range_unusable",
+        "That is not an m/z range MSCanvas can export over, so nothing was exported.",
+        true,
+    )
+}
+
 /// The requested m/z range is not one this spectrum covers.
 ///
 /// Refused rather than clamped, for the reason the chromatogram's own range

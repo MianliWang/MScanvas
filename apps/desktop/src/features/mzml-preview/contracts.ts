@@ -554,6 +554,20 @@ export interface ExportedSpectrumRange {
 export type SpectrumRangeScope = "full" | "current";
 
 /**
+ * Whether a selected spectrum has a range to export over, and if not, why.
+ *
+ * Two absences, kept apart because only one of them is a refusal. A spectrum
+ * with no peaks has an admitted domain that is zero wide — there is nothing to
+ * navigate, which is why no viewport is published for it, and nothing about the
+ * figure contract declined anything. A spectrum whose m/z the contract cannot
+ * accept without altering it is the one that was refused.
+ *
+ * Reporting the two identically would make the interface state a verdict Rust
+ * never reached.
+ */
+export type SpectrumRangeAvailability = "available" | "noPeaks" | "noViewport";
+
+/**
  * One spectrum range request, as this side sends it.
  *
  * Its own type rather than {@link ChromatogramRange}. The two carry the same

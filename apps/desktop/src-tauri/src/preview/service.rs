@@ -94,7 +94,7 @@ use super::dto::{
     scientific_export_in_progress, spectrum_destination_exists, spectrum_destination_misnamed,
     spectrum_destination_unusable, spectrum_export_in_progress, spectrum_export_refused,
     spectrum_export_stale, spectrum_not_finalized, spectrum_not_written,
-    spectrum_range_outside_source, spectrum_range_unavailable,
+    spectrum_range_outside_source, spectrum_range_unavailable, spectrum_range_unusable,
 };
 use super::dto::{
     ConversionDiagnosticsExportDto, ConversionDiagnosticsReservationDto,
@@ -2142,7 +2142,7 @@ impl PreviewService {
         // *has* the window is the next question, and it is asked where the
         // source is known.
         let request = SpectrumRangeRequest::from_wire(&range.scope, range.low, range.high)
-            .ok_or_else(spectrum_range_outside_source)?;
+            .ok_or_else(spectrum_range_unusable)?;
         // Read before the reservation, so an export that could not have been
         // rendered is refused before a dialog is offered for it. The settings
         // are then held by the reservation rather than read again at write
@@ -2468,7 +2468,7 @@ impl PreviewService {
         let settings = Self::render_settings(settings)?;
         Self::raster_budget(settings)?;
         let request = SpectrumRangeRequest::from_wire(&range.scope, range.low, range.high)
-            .ok_or_else(spectrum_range_outside_source)?;
+            .ok_or_else(spectrum_range_unusable)?;
         // The range is resolved with the claim, in one critical section, so the
         // image that reaches the clipboard and the range the confirmation names
         // are the same decision rather than two readings a gesture could fall

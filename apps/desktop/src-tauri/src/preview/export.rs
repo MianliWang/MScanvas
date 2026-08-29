@@ -1780,7 +1780,7 @@ fn spectrum_caption(spectrum: &SelectedSpectrumResult, range: ResolvedSpectrumRa
              {UNREPORTED}; m/z and intensity units {UNREPORTED}.",
             window.low(),
             window.high(),
-            points_within(spectrum, window).count(),
+            within(spectrum, window).0.len(),
         ),
     }
 }
@@ -1793,16 +1793,20 @@ fn spectrum_caption(spectrum: &SelectedSpectrumResult, range: ResolvedSpectrumRa
 /// measurements the range holds. Nothing is interpolated at an edge and nothing
 /// is sorted: an admitted source is already non-decreasing, and preserving the
 /// order the source has is the rule rather than producing one.
-fn points_within(
-    spectrum: &SelectedSpectrumResult,
-    window: Domain,
-) -> impl Iterator<Item = (f64, f64)> + '_ {
-    spectrum
-        .mz_values()
-        .iter()
-        .copied()
-        .zip(spectrum.intensity_values().iter().copied())
-        .filter(move |(at, _)| *at >= window.low() && *at <= window.high())
+///
+/// **Two borrowed slices, found by binary search**, for the reason
+/// `projection::project` gives about the same arrays. A `Current` range only
+/// resolves where the viewport domain was admitted, and that verdict *is* the
+/// statement that the m/z array is non-decreasing -- so the window is one
+/// contiguous run, and locating it costs a search rather than a walk of a
+/// spectrum that may hold hundreds of thousands of points. Slices rather than
+/// an iterator because every caller wants the count as well as the values, and
+/// a count taken by consuming an iterator is a second pass over the same run.
+fn within(spectrum: &SelectedSpectrumResult, window: Domain) -> (&[f64], &[f64]) {
+    let mz = spectrum.mz_values();
+    let start = mz.partition_point(|value| *value < window.low());
+    let end = mz.partition_point(|value| *value <= window.high());
+    (&mz[start..end], &spectrum.intensity_values()[start..end])
 }
 
 /// The panel one export draws, over the range it was resolved for.
@@ -1862,9 +1866,9 @@ fn ranged_spectrum_panel(
 /// empty window rather than a fabricated one.
 fn visible_value_extent(spectrum: &SelectedSpectrumResult, window: Domain) -> (f64, f64) {
     let (mut low, mut high) = (0.0_f64, 0.0_f64);
-    for (_, value) in points_within(spectrum, window) {
-        low = low.min(value);
-        high = high.max(value);
+    for value in within(spectrum, window).1 {
+        low = low.min(*value);
+        high = high.max(*value);
     }
     (low, high)
 }
@@ -2101,21 +2105,22 @@ pub(super) fn data_document(
     };
 
     let source_points = spectrum.mz_values().len();
-    // Collected once, because both the preamble's exported count and the
-    // records below are the same answer to the same question. Counting one way
-    // for the header and iterating another way for the rows is how a document
-    // comes to state a number its own table contradicts.
-    let records: Vec<(f64, f64)> = match range.domain() {
-        None => spectrum
-            .mz_values()
-            .iter()
-            .copied()
-            .zip(spectrum.intensity_values().iter().copied())
-            .collect(),
-        Some(window) => points_within(spectrum, window).collect(),
+    // Borrowed, never copied. The records this document writes are a run of the
+    // retained arrays -- the whole of them at full source, one searched window
+    // for a range -- so nothing here allocates a second copy of a measurement
+    // that may hold hundreds of thousands of points.
+    //
+    // Taken once, because the preamble's exported count and the records below
+    // are the same answer to the same question. Counting one way for the header
+    // and iterating another way for the rows is how a document comes to state a
+    // number its own table contradicts.
+    let (mz, intensity) = match range.domain() {
+        None => (spectrum.mz_values(), spectrum.intensity_values()),
+        Some(window) => within(spectrum, window),
     };
+    let exported_points = mz.len();
 
-    let mut document = String::with_capacity(96 + records.len() * 24);
+    let mut document = String::with_capacity(96 + exported_points * 24);
     let index = spectrum.identity().index().to_string();
     let preamble: Vec<(&str, String)> = match range.domain() {
         None => vec![
@@ -2139,7 +2144,7 @@ pub(super) fn data_document(
             ("spectrum_index", index),
             ("range_scope", range.scope().stable_id().to_owned()),
             ("source_point_count", source_points.to_string()),
-            ("exported_point_count", records.len().to_string()),
+            ("exported_point_count", exported_points.to_string()),
             ("range_low", window.low().to_string()),
             ("range_high", window.high().to_string()),
             ("representation", representation.to_owned()),
@@ -2160,7 +2165,11 @@ pub(super) fn data_document(
     // One record per retained source point, in source order. Never sorted: an
     // admitted source is already non-decreasing, and what this preserves is the
     // order the source has rather than an order this loop imposes.
-    for (at, value) in records {
+    //
+    // Zipped rather than indexed, because the contract already refuses arrays of
+    // different lengths and a loop over one length would decide what to do about
+    // the other.
+    for (at, value) in mz.iter().zip(intensity.iter()) {
         document.push_str(&at.to_string());
         document.push(delimiter);
         document.push_str(&value.to_string());
@@ -2181,7 +2190,7 @@ pub(super) fn exported_point_count(
 ) -> usize {
     match range.domain() {
         None => spectrum.mz_values().len(),
-        Some(window) => points_within(spectrum, window).count(),
+        Some(window) => within(spectrum, window).0.len(),
     }
 }
 

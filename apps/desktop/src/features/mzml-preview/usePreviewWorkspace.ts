@@ -29,6 +29,7 @@ import type {
   SelectedSpectrum,
   SpectrumExportFormat,
   SpectrumRange,
+  SpectrumRangeAvailability,
   SpectrumRangeScope,
   SpectrumRow,
   WorkspaceDropRejectionReason,
@@ -814,14 +815,13 @@ export interface PreviewWorkspace {
   readonly spectrumRangeScope: SpectrumRangeScope;
   readonly setSpectrumRangeScope: (scope: SpectrumRangeScope) => void;
   /**
-   * Whether this spectrum has an m/z viewport a current range could come from.
+   * Whether this spectrum has an m/z range to export over, and if not, why.
    *
-   * `false` is not a failure and not a broken export: it is the figure
-   * contract's verdict that no domain can be established over this source
-   * without altering it. The full-source exports are unaffected, and the range
-   * choice is simply not offered.
+   * Not a boolean, because "no peaks to take a range of" and "the figure
+   * contract refuses this source a domain" are different facts and only the
+   * second is a refusal. The full-source exports are available whichever it is.
    */
-  readonly spectrumRangeAvailable: boolean;
+  readonly spectrumRangeAvailability: SpectrumRangeAvailability;
   /**
    * The committed m/z window, or `null` where none is committed.
    *
@@ -2917,13 +2917,31 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    */
   const [spectrumRangeScope, setSpectrumRangeScope] = useState<SpectrumRangeScope>("full");
   /**
-   * Whether this spectrum has an m/z viewport to take a current range from.
+   * Whether this spectrum has an m/z range to export over, and if not, why.
    *
-   * Rust's verdict, forwarded through the reducer rather than re-derived. A
-   * spectrum with none is not a spectrum with a broken range: it exports its
-   * full source exactly as it always did, and the choice simply is not offered.
+   * Three answers rather than a boolean, because the two absences are not the
+   * same fact and a surface that reported them identically would state one of
+   * them falsely.
+   *
+   * - `available` — Rust admitted a domain and the viewport is navigating it.
+   * - `noPeaks` — the spectrum loaded with zero points. Its domain *is*
+   *   admitted, zero wide, and this document deliberately publishes no viewport
+   *   for it: there is nothing to navigate and nothing to draw. Saying the
+   *   contract refused it would be saying something Rust did not say.
+   * - `noViewport` — the figure contract could not establish a domain over this
+   *   source without altering it. That is a refusal, and it is the only one of
+   *   the three that is.
+   *
+   * None of them is a fact about whether the source is valid: the full-source
+   * exports are available in all three.
    */
-  const spectrumRangeAvailable = spectrumViewportState.status === "ready";
+  const spectrumRangeAvailability: SpectrumRangeAvailability =
+    spectrumViewportState.status === "ready"
+      ? "available"
+      : spectrum.status === "loaded" && spectrum.spectrum.pointCount === 0
+        ? "noPeaks"
+        : "noViewport";
+  const spectrumRangeAvailable = spectrumRangeAvailability === "available";
   /**
    * The scope an export actually uses, which is `full` wherever there is no
    * viewport to read.
@@ -3772,7 +3790,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     chromatogramRangeScope,
     spectrumRangeScope: effectiveSpectrumRangeScope,
     setSpectrumRangeScope,
-    spectrumRangeAvailable,
+    spectrumRangeAvailability,
     spectrumCommittedDomain,
     linkedFigureExport,
     linkedFigureUnavailable,

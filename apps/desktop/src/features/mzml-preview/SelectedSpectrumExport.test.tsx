@@ -97,7 +97,7 @@ const NO_VIEWPORT = {
   // which is the state M5.3 must leave exactly as it found it.
   rangeScope: "full",
   onRangeScope: () => undefined,
-  rangeAvailable: false,
+  rangeAvailability: "noViewport",
   committedDomain: null,
 } as const;
 
@@ -587,7 +587,7 @@ describe("the selected spectrum's range chooser", () => {
         onRangeScope={onRangeScope}
         onRetry={() => undefined}
         pngDpiProblem={null}
-        rangeAvailable
+        rangeAvailability="available"
         rangeScope={rangeScope}
         renderSettingsProblem={null}
         scientificExportBusy={false}
@@ -664,6 +664,51 @@ describe("the selected spectrum's range chooser", () => {
     }
   });
 
+  it("says a spectrum with no peaks has no range, without calling it a refusal", () => {
+    // Two absences, and only one of them is a verdict. An empty spectrum's
+    // domain *is* admitted -- zero wide -- so no viewport is published for it
+    // and there is nothing to take a range of. Reporting that as the figure
+    // contract having refused the source would state something Rust never said.
+    render(
+      <SelectedSpectrumPanel
+        {...NO_VIEWPORT}
+        committedDomain={null}
+        exportState={{ status: "idle" }}
+        figureSettings={DEFAULT_DRAFT}
+        onCopyPlot={() => undefined}
+        onDismissExport={() => undefined}
+        onExport={() => undefined}
+        onFigureSetting={() => undefined}
+        onFigureTheme={() => undefined}
+        onRangeScope={() => undefined}
+        onRetry={() => undefined}
+        pngDpiProblem={null}
+        rangeAvailability="noPeaks"
+        rangeScope="full"
+        renderSettingsProblem={null}
+        scientificExportBusy={false}
+        state={loaded({ pointCount: 0, mz: [], intensity: [] })}
+      />,
+    );
+
+    expect(screen.getByText(/This spectrum has no peaks, so there is no range/u)).toBeInTheDocument();
+    expect(screen.queryByText(/no m\/z viewport/u)).toBeNull();
+    expect(screen.queryByRole("radio", { name: "Current range" })).toBeNull();
+    // And its full-source data exports are exactly as available as ever.
+    for (const label of ["Export CSV…", "Export TSV…"]) {
+      expect(screen.getByRole("button", { name: label })).toBeEnabled();
+    }
+  });
+
+  it("calls a refused viewport a refusal, and says which absence it is", () => {
+    renderPanel(loaded());
+
+    expect(
+      screen.getByText(/This spectrum has no m\/z viewport, so there is no current range/u),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/no peaks/u)).toBeNull();
+  });
+
   it("keeps the choice open while the one export lane is busy", () => {
     // A scope is a decision about the *next* export rather than a claim on the
     // lane. Closing it would leave a reader unable to prepare while a file is
@@ -682,7 +727,7 @@ describe("the selected spectrum's range chooser", () => {
         onRangeScope={() => undefined}
         onRetry={() => undefined}
         pngDpiProblem={null}
-        rangeAvailable
+        rangeAvailability="available"
         rangeScope="current"
         renderSettingsProblem={null}
         scientificExportBusy
@@ -808,7 +853,7 @@ describe("what a finished range export is allowed to claim", () => {
         onRangeScope={() => undefined}
         onRetry={() => undefined}
         pngDpiProblem={null}
-        rangeAvailable
+        rangeAvailability="available"
         rangeScope="current"
         renderSettingsProblem={null}
         scientificExportBusy={false}
@@ -831,7 +876,7 @@ describe("what a finished range export is allowed to claim", () => {
         onRangeScope={() => undefined}
         onRetry={() => undefined}
         pngDpiProblem={null}
-        rangeAvailable
+        rangeAvailability="available"
         rangeScope="current"
         renderSettingsProblem={null}
         scientificExportBusy={false}

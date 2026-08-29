@@ -726,7 +726,7 @@ export function PreviewWorkspace() {
               onRetry={workspace.retrySpectrum}
               onRetryProjection={workspace.retrySpectrumProjection}
               pngDpiProblem={workspace.pngDpiProblem}
-              rangeAvailable={workspace.spectrumRangeAvailable}
+              rangeAvailability={workspace.spectrumRangeAvailability}
               rangeScope={workspace.spectrumRangeScope}
               projectionError={workspace.spectrumProjectionError}
               readViewport={workspace.readSpectrumViewport}

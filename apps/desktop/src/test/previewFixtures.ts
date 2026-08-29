@@ -72,6 +72,18 @@ export const FAKE_COMPLETE_SPECTRUM_POINTS = 1_000_000;
 export const FAKE_CURRENT_RANGE_POINTS = 2_500;
 
 /**
+ * The m/z domain the fake says Rust retained for the selected spectrum.
+ *
+ * What a current-range request with nothing committed resolves to, because that
+ * is what the real resolver does: it answers from the retained domain rather
+ * than echoing the absent pair back. Deliberately unlike the transferred
+ * arrays' own span, so a test cannot accidentally assert one while meaning the
+ * other.
+ */
+export const FAKE_RETAINED_MZ_LOW = 100;
+export const FAKE_RETAINED_MZ_HIGH = 1_800.5;
+
+/**
  * The range facts Rust would report for one resolved request.
  *
  * Modelled as Rust resolves them rather than echoed: a `current` request with no
@@ -81,14 +93,28 @@ export const FAKE_CURRENT_RANGE_POINTS = 2_500;
  * exactly the behaviour the real resolver is forbidden.
  */
 function fakeExportedRange(range: SpectrumRange): ExportedSpectrumRange {
-  if (range.scope === "full" || range.low === null || range.high === null) {
+  if (range.scope === "full") {
     return {
-      rangeScope: range.scope,
-      // A current request with nothing committed still has no bounds this side
-      // can state: Rust answers it from the domain it retained, which these
-      // fixtures deliberately do not hold.
+      rangeScope: "full",
+      // A full export has no window, so it reports none. The pair is absent
+      // rather than filled with the spectrum's own bounds, exactly as Rust
+      // answers it.
       rangeLow: null,
       rangeHigh: null,
+      sourcePointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+      exportedPointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+    };
+  }
+  if (range.low === null || range.high === null) {
+    // A current request with nothing committed. **Rust never answers this with
+    // a null pair**: it resolves the window from the retained domain, so the
+    // outcome always names one. A fake that echoed the null back would model a
+    // shape `ResolvedSpectrumRange::Current` cannot produce, and would leave
+    // the sentence a whole-domain range export writes untested.
+    return {
+      rangeScope: "current",
+      rangeLow: FAKE_RETAINED_MZ_LOW,
+      rangeHigh: FAKE_RETAINED_MZ_HIGH,
       sourcePointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
       exportedPointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
     };

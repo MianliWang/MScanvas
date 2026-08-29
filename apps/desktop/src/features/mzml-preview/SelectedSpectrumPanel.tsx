@@ -8,6 +8,7 @@ import type {
   PreviewError,
   SelectedSpectrum,
   SpectrumExportFormat,
+  SpectrumRangeAvailability,
   SpectrumRangeScope,
 } from "./contracts";
 import { FigureSettingsFields } from "./FigureSettingsFields";
@@ -116,13 +117,14 @@ export interface SelectedSpectrumPanelProps {
   readonly rangeScope: SpectrumRangeScope;
   readonly onRangeScope: (scope: SpectrumRangeScope) => void;
   /**
-   * Whether this spectrum has an m/z viewport a current range could come from.
+   * Whether this spectrum has a range to export over, and if not, why.
    *
-   * `false` hides the choice rather than offering an inert one. It is the
-   * figure contract's verdict about drawability and never a fact about the
-   * source: the full-source exports below are exactly as available as ever.
+   * Anything but `available` hides the choice rather than offering an inert
+   * one, and the sentence in its place says which of the two absences it is.
+   * Neither is a fact about the source: the full-source exports below are
+   * exactly as available as ever.
    */
-  readonly rangeAvailable: boolean;
+  readonly rangeAvailability: SpectrumRangeAvailability;
   /**
    * The window a current-range export would cover, as the viewport committed it.
    *
@@ -170,7 +172,7 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel({
   scientificExportBusy,
   rangeScope,
   onRangeScope,
-  rangeAvailable,
+  rangeAvailability,
   committedDomain,
   onExport,
   onCopyPlot,
@@ -207,7 +209,7 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel({
             onFigureTheme={onFigureTheme}
             onRangeScope={onRangeScope}
             pngDpiProblem={pngDpiProblem}
-            rangeAvailable={rangeAvailable}
+            rangeAvailability={rangeAvailability}
             rangeScope={rangeScope}
             renderSettingsProblem={renderSettingsProblem}
             scientificExportBusy={scientificExportBusy}
@@ -232,7 +234,7 @@ function SpectrumExportActions({
   scientificExportBusy,
   rangeScope,
   onRangeScope,
-  rangeAvailable,
+  rangeAvailability,
   committedDomain,
   onExport,
   onCopyPlot,
@@ -247,7 +249,7 @@ function SpectrumExportActions({
   readonly scientificExportBusy: boolean;
   readonly rangeScope: SpectrumRangeScope;
   readonly onRangeScope: (scope: SpectrumRangeScope) => void;
-  readonly rangeAvailable: boolean;
+  readonly rangeAvailability: SpectrumRangeAvailability;
   readonly committedDomain: MzDomain | null;
   readonly onExport: (format: SpectrumExportFormat) => void;
   readonly onCopyPlot: () => void;
@@ -291,7 +293,7 @@ function SpectrumExportActions({
       */}
       <fieldset className="spectrum-export-range">
         <legend>Range</legend>
-        {rangeAvailable ? (
+        {rangeAvailability === "available" ? (
           <>
             <div
               aria-labelledby="spectrum-range-label"
@@ -320,14 +322,20 @@ function SpectrumExportActions({
           </>
         ) : (
           /*
-            A viewport refusal, said as what it is. The three figure formats
-            keep whatever availability the figure contract gives them and the
-            two data formats are untouched: a spectrum with no drawable domain
-            is still valid source data, and its CSV and TSV still write.
+            The absence, said as which one it is. A spectrum with no peaks has
+            an admitted domain that is zero wide and simply has no range to
+            take; a spectrum the figure contract refuses was refused. Reporting
+            the first as the second would state a verdict Rust never reached.
+
+            Either way the three figure formats keep whatever availability the
+            figure contract gives them and the two data formats are untouched: a
+            spectrum with no drawable domain is still valid source data, and its
+            CSV and TSV still write.
           */
           <p className="chromatogram-export-note">
-            This spectrum has no m/z viewport, so there is no current range to
-            export. Exports cover the full spectrum.
+            {rangeAvailability === "noPeaks"
+              ? "This spectrum has no peaks, so there is no range to take of it. Exports cover the full spectrum."
+              : "This spectrum has no m/z viewport, so there is no current range to export. Exports cover the full spectrum."}
           </p>
         )}
       </fieldset>

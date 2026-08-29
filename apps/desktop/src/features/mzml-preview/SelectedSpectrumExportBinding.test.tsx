@@ -24,6 +24,8 @@ import { mzDomain } from "./viewer/spectrumViewport";
 import {
   FAKE_COMPLETE_SPECTRUM_POINTS,
   FAKE_FIGURE_SETTINGS,
+  FAKE_RETAINED_MZ_HIGH,
+  FAKE_RETAINED_MZ_LOW,
   buildSpectrum,
   fakeExportedFigure,
   createFakePreviewApi,
@@ -706,7 +708,7 @@ describe("the selected spectrum's export range", () => {
     { settle = true }: { readonly settle?: boolean } = {},
   ): Promise<void> {
     await waitFor(() => {
-      expect(result.current.spectrumRangeAvailable).toBe(true);
+      expect(result.current.spectrumRangeAvailability).toBe("available");
     });
     if (settle) {
       await waitFor(() => {
@@ -777,6 +779,57 @@ describe("the selected spectrum's export range", () => {
       low: null,
       high: null,
     });
+  });
+
+  it("reports the resolved domain when a whole-spectrum range is exported", async () => {
+    // A current request with nothing committed carries a null pair, and Rust
+    // answers it from the retained domain -- so the outcome always names one.
+    // The sentence a reader gets is therefore the full "N of M, m/z X to Y"
+    // one, not a range with no bounds in it.
+    const { api, result } = await loadedWorkspace();
+    await admitViewport(result);
+    act(() => {
+      result.current.setSpectrumRangeScope("current");
+    });
+    act(() => {
+      result.current.exportSpectrum("csv");
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("saved");
+    });
+
+    expect(api.spectrumExportRequests[0]?.range).toEqual({
+      scope: "current",
+      low: null,
+      high: null,
+    });
+    const outcome = result.current.spectrumExport;
+    if (outcome.status !== "saved") {
+      throw new Error("the export resolved to something other than a saved file");
+    }
+    expect(outcome.rangeScope).toBe("current");
+    // Resolved, never echoed back as the null it was asked with.
+    expect(outcome.rangeLow).toBe(FAKE_RETAINED_MZ_LOW);
+    expect(outcome.rangeHigh).toBe(FAKE_RETAINED_MZ_HIGH);
+    expect(outcome.exportedPointCount).toBe(outcome.sourcePointCount);
+  });
+
+  it("distinguishes a spectrum with no peaks from one with no viewport", async () => {
+    const { result } = await loadedWorkspace({
+      spectrum: (index) =>
+        Promise.resolve({
+          outcome: "spectrum",
+          spectrum: { ...buildSpectrum(index, 0), pointCount: 0, mz: [], intensity: [] },
+        }),
+    });
+
+    // An empty spectrum's domain is admitted and zero wide, so this document
+    // publishes no viewport for it -- and that is not the figure contract
+    // refusing anything.
+    await waitFor(() => {
+      expect(result.current.spectrumRangeAvailability).toBe("noPeaks");
+    });
+    expect(result.current.spectrumRangeScope).toBe("full");
   });
 
   it("exports the last committed window while a gesture is still moving", async () => {
@@ -875,7 +928,7 @@ describe("the selected spectrum's export range", () => {
     await admitViewport(result, { settle: false });
 
     // Loading.
-    expect(result.current.spectrumRangeAvailable).toBe(true);
+    expect(result.current.spectrumRangeAvailability).toBe("available");
     act(() => {
       result.current.setSpectrumRangeScope("current");
     });
@@ -886,7 +939,7 @@ describe("the selected spectrum's export range", () => {
       failProjection();
       await Promise.resolve();
     });
-    expect(result.current.spectrumRangeAvailable).toBe(true);
+    expect(result.current.spectrumRangeAvailability).toBe("available");
     expect(result.current.spectrumRangeScope).toBe("current");
 
     act(() => {
@@ -915,7 +968,7 @@ describe("the selected spectrum's export range", () => {
       expect(result.current.spectrumViewport.status).toBe("refused");
     });
 
-    expect(result.current.spectrumRangeAvailable).toBe(false);
+    expect(result.current.spectrumRangeAvailability).toBe("noViewport");
     expect(result.current.spectrumRangeScope).toBe("full");
     // And the full-source export is exactly as available as ever: a viewport
     // refusal is a fact about drawability, never about the source.
@@ -944,7 +997,7 @@ describe("the selected spectrum's export range", () => {
       });
     });
 
-    expect(result.current.spectrumRangeAvailable).toBe(false);
+    expect(result.current.spectrumRangeAvailability).toBe("noViewport");
     expect(result.current.spectrumRangeScope).toBe("full");
   });
 
@@ -970,7 +1023,7 @@ describe("the selected spectrum's export range", () => {
     });
 
     // A choice the reader had no way to see they still had is not a choice.
-    expect(result.current.spectrumRangeAvailable).toBe(true);
+    expect(result.current.spectrumRangeAvailability).toBe("available");
     expect(result.current.spectrumRangeScope).toBe("full");
   });
 

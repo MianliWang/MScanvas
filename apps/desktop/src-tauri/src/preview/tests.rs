@@ -24156,7 +24156,10 @@ fn a_malformed_range_never_reaches_the_retained_spectrum() {
                 )
                 .expect_err("not a range this boundary accepts")
                 .kind,
-            "spectrum_range_outside_source",
+            // Its own refusal, kept apart from the containment one. A NaN bound
+            // reported as "not inside the spectrum" would send a reader to look
+            // at a range they never successfully stated.
+            "spectrum_range_unusable",
         );
     }
 }
