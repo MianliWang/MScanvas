@@ -1004,6 +1004,84 @@ def _validate_linked_pair_has_one_constructor(content: str, errors: list[str]) -
             "operation that proves it is one scan is a pair nothing proved"
         )
 
+    _validate_linked_pair_module_adds_no_route(body, errors)
+
+
+# Every method `mod linked_pair` is known to declare.
+#
+# A closed list rather than a shape, because the whole question this rule asks is
+# *which* functions exist: a construction route added here is exactly a function
+# that was not here before, and a rule that accepted any shape could not say so.
+# Adding an ordinary accessor means adding its name below, which is a visible
+# decision rather than a silent one.
+LINKED_PAIR_METHODS = {
+    "new",
+    "chromatogram",
+    "spectrum",
+    "selected_index",
+    "selected_retention_time",
+    "range",
+    "into_parts",
+}
+
+
+def _validate_linked_pair_module_adds_no_route(body: str, errors: list[str]) -> None:
+    """No second way to make a pair is hidden inside `mod linked_pair` itself.
+
+    The check above reads the whole file through `functions_naming`, which
+    recognises a definition at exactly four spaces. `mod linked_pair` sits at
+    column zero, so its `impl` block is at four and every method inside it is at
+    eight -- and a wrapper added *there* was therefore not seen as its own
+    function at all, leaving `builders` describing a file that had gained a
+    route. M4.4 recorded that blind spot; this closes it, for this rule only.
+
+    Two things are pinned, because inside this module there are two ways in.
+    `LinkedPair::new` is one, and it is checked by name. The other is a struct
+    literal, which is a compile error *everywhere else* precisely because the
+    fields are private to this module -- so here, and only here, it is legal.
+    Both are held to the one function that may perform them.
+    """
+    declared = set(re.findall(r"\bfn (\w+)\s*\(", body))
+    if declared != LINKED_PAIR_METHODS:
+        added = sorted(declared - LINKED_PAIR_METHODS)
+        removed = sorted(LINKED_PAIR_METHODS - declared)
+        errors.append(
+            f"preview/export.rs: `mod linked_pair` declares {sorted(declared)}, not "
+            f"{sorted(LINKED_PAIR_METHODS)} (added: {added}; removed: {removed}). Every "
+            "function in this module can reach the private fields, so a new one is a new "
+            "way to make a pair until it is read and listed in LINKED_PAIR_METHODS"
+        )
+
+    # The constructor, called from inside the module it is defined in. Its own
+    # definition is `fn new(`, which neither spelling matches.
+    for call in ("LinkedPair::new(", "Self::new("):
+        if call in body:
+            errors.append(
+                f"preview/export.rs: `mod linked_pair` calls `{call.rstrip('(')}` inside "
+                "itself. The one authorized caller is the operation that proves the two "
+                "sources are one scan, and it is outside this module"
+            )
+
+    # The struct literal, which the private fields make legal here and nowhere
+    # else. Exactly one, and it is the one `new` performs.
+    #
+    # Counted as `Self {` rather than as `LinkedPair {`, which is the mistake the
+    # rule this replaced made in the other direction: the type's own name appears
+    # in its declaration and in its `impl` header, and neither of those builds
+    # anything. `Self {` inside this module is a construction and nothing else --
+    # there is one type here for `Self` to mean.
+    #
+    # Except after `->`, where it is the return type of a function that has not
+    # built anything yet. Excluded rather than subtracted, so a second
+    # constructor is counted whether or not it happens to return `Self`.
+    literals = len(re.findall(r"(?<!-> )\bSelf \{", body))
+    if literals != 1:
+        errors.append(
+            f"preview/export.rs: `mod linked_pair` builds {literals} `Self` struct "
+            "literals, not 1. The private fields make a literal legal inside this module "
+            "and a compile error outside it, so every one of them here is a constructor"
+        )
+
 
 
 
