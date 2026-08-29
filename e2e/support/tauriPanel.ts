@@ -57,6 +57,22 @@ export const SEEDED_TOKEN = "1";
  */
 export const SEEDED_CHROMATOGRAM_TOKEN = "2";
 
+/**
+ * The m/z range Rust's seeded snapshot actually spans.
+ *
+ * `e2e_seed` writes 64 points from 100 at a step of 12.5, so the domain the
+ * production contract admits over it runs to 887.5. Stated here because the
+ * panel's own payload is answered from the table above: a viewport told it
+ * spans something else would ask the real command for a window the real
+ * spectrum does not have, and be refused -- which is the right answer to a
+ * question the fixture should not have asked.
+ */
+export const SEEDED_MZ_LOW = 100;
+export const SEEDED_MZ_HIGH = 887.5;
+
+/** The m/z of the seeded spectrum's one measured negative in the first octave. */
+export const SEEDED_NEGATIVE_MZ = 137.5;
+
 export interface IpcCall {
   readonly command: string;
   readonly args: Record<string, unknown>;
@@ -86,6 +102,16 @@ export async function loadWith(table: Record<string, unknown>): Promise<void> {
 export function tauriTable(options: {
   readonly real?: readonly string[];
   readonly extra?: Record<string, unknown>;
+  /**
+   * What the panel is told its m/z domain is.
+   *
+   * Defaults to the range Rust's seeded snapshot really spans, so a viewport
+   * over it navigates the spectrum the production command will be asked about.
+   * A suite proving that an outside-source window is *refused* rather than
+   * clamped widens this deliberately -- which is the only way to make the
+   * frontend ask for a window its own clamping would otherwise never produce.
+   */
+  readonly viewportDomain?: { readonly state: "admitted"; readonly low: number; readonly high: number };
 } = {}): Record<string, unknown> {
   const base = ipcTable();
   const table = {
@@ -100,7 +126,19 @@ export function tauriTable(options: {
     },
     load_selected_spectrum: {
       outcome: "spectrum",
-      spectrum: { ...spectrumWithPeaks(), exportToken: SEEDED_TOKEN },
+      spectrum: {
+        ...spectrumWithPeaks(),
+        exportToken: SEEDED_TOKEN,
+        // The domain the seeded snapshot really has. The arrays beside it are
+        // still the fixture's six points, and that difference is not an
+        // oversight: it is the shape M5.2 has to survive, where what this
+        // document holds and what Rust retains are not the same thing.
+        viewportDomain: options.viewportDomain ?? {
+          state: "admitted",
+          low: SEEDED_MZ_LOW,
+          high: SEEDED_MZ_HIGH,
+        },
+      },
     },
     ...(options.extra ?? {}),
   } as Record<string, unknown>;

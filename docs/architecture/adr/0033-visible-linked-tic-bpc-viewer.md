@@ -1,11 +1,21 @@
 # ADR 0033 — The visible linked TIC/BPC viewer
 
-Status: accepted
+Status: accepted, with one rule superseded by
+[0039](0039-visible-spectrum-viewport-adapter.md)
 Date: 2026-08-23
 Related: [0032](0032-viewer-interaction-and-viewport-state.md),
 [0003](0003-msaccess-preview-spike.md),
 [0028](0028-figure-renderer-and-semantic-specification.md),
-[0030](0030-png-copy-plot-and-figure-settings.md)
+[0030](0030-png-copy-plot-and-figure-settings.md),
+[0039](0039-visible-spectrum-viewport-adapter.md)
+
+> **Superseded in one respect.** This ADR records that `ctrlKey` is given no
+> meaning and that a Ctrl-modified wheel zooms the run like any other wheel.
+> That is no longer what the product does. ADR 0039 replaces it with a
+> cross-axis input-ownership rule on evidence about the host rather than about
+> hardware: WebView2 reserves Ctrl-modified zoom input for its own zoom
+> controls, so neither plot claims it. Everything else here still stands, and
+> the section below is annotated in place rather than rewritten.
 
 ## What this ADR is, and what it is not
 
@@ -171,8 +181,11 @@ it. So the marker is derived from the scan's own retention time at draw time,
 every time, and a test pins its position across a viewport change.
 
 **Wheel.** The event's own `deltaY` and `deltaMode` are read -- nothing else about
-it, `ctrlKey` included -- and normalized to a zoom factor by `wheelInput.ts`. An
-event that cannot be read at all is left alone before anything is measured.
+it -- and normalized to a zoom factor by `wheelInput.ts`. An event that cannot be
+read at all is left alone before anything is measured. (This sentence originally
+said "`ctrlKey` included". ADR 0039 superseded that: a Ctrl-modified wheel is now
+released to the host before anything is read at all. Everything else in this
+paragraph is unchanged.)
 Otherwise it is planned before it is claimed: `planWheelGesture` asks
 `zoomDomain` for the candidate range about the pointer and then asks the reducer
 what that gesture would leave on screen once it settles; if that is the range
@@ -651,7 +664,20 @@ allowed to borrow from each other, and both directions are tested:
 
 Every boundary in the ownership table above is unchanged.
 
-### `ctrlKey` is not given a meaning
+### `ctrlKey` is not given a meaning — **superseded by [ADR 0039](0039-visible-spectrum-viewport-adapter.md)**
+
+> **What this section decided, and what replaced it.** The reasoning below is
+> still correct as far as it goes, and ADR 0039 did not reverse it: MSCanvas
+> still makes no inference about hardware from a modifier key, and pinch
+> semantics are still deferred. What changed is that the question turned out to
+> have a different owner. WebView2 enables its zoom controls by default and
+> names Ctrl+Plus, Ctrl+Minus and Ctrl+mouse wheel as the inputs they use, and
+> this application disables none of them — so a Ctrl-modified wheel is not an
+> ambiguous device signal a viewer may as well treat as ordinary. It is an input
+> class the shell already reserves. Both viewers now release it, and the last
+> sentence of this section — "Ctrl-wheel over the plot is a zoom of the run, like
+> any other wheel" — is **no longer true of the product**. The test that pinned
+> it has been replaced by tests that pin the opposite.
 
 Some web zoom implementations accelerate wheel input when `ctrlKey` is set, on
 the theory that the browser synthesises it for a trackpad pinch. This viewer

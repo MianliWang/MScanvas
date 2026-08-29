@@ -234,6 +234,7 @@ function wheel(options: {
   readonly deltaMode?: number;
   readonly clientX?: number;
   readonly ctrlKey?: boolean;
+  readonly shiftKey?: boolean;
 }): WheelEvent {
   const event = new WheelEvent("wheel", {
     bubbles: true,
@@ -242,6 +243,37 @@ function wheel(options: {
     ctrlKey: options.ctrlKey ?? false,
     deltaMode: options.deltaMode ?? 0,
     deltaY: options.deltaY,
+    shiftKey: options.shiftKey ?? false,
+  });
+  act(() => {
+    plot().dispatchEvent(event);
+  });
+  return event;
+}
+
+/**
+ * Sends one real cancelable key press to the plot.
+ *
+ * Built by hand rather than through `fireEvent.keyDown`, for the reason the
+ * wheel is: `defaultPrevented` is half of what a modified key has to say, and
+ * `fireEvent` answers with a boolean. Every modifier is named on every call
+ * site's behalf so that a case which forgets one cannot pass by accident.
+ */
+function key(options: {
+  readonly key: string;
+  readonly ctrlKey?: boolean;
+  readonly metaKey?: boolean;
+  readonly altKey?: boolean;
+  readonly shiftKey?: boolean;
+}): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    altKey: options.altKey ?? false,
+    bubbles: true,
+    cancelable: true,
+    ctrlKey: options.ctrlKey ?? false,
+    key: options.key,
+    metaKey: options.metaKey ?? false,
+    shiftKey: options.shiftKey ?? false,
   });
   act(() => {
     plot().dispatchEvent(event);
@@ -1359,6 +1391,173 @@ describe("who owns a wheel", () => {
 });
 
 /*
+ * Input the window owns, which this plot may not take.
+ *
+ * `who owns a wheel` above asks whether an input is *productive* -- whether
+ * putting it through the contract would move the axis. This asks the question
+ * that comes before it: whether the input was this viewer's to plan at all.
+ *
+ * The answer used to be yes for everything that reached the plot, and ADR 0033
+ * recorded a deliberate decision behind half of that -- `ctrlKey` is given no
+ * meaning, because reading it as a trackpad pinch is a guess about hardware.
+ * That reasoning still stands, and nothing below classifies a device. What
+ * supersedes it is evidence about the *host*: WebView2 enables its zoom controls
+ * by default and drives them with Ctrl+wheel, Ctrl+Plus and Ctrl+Minus, and this
+ * application disables neither. The modifier is not an ambiguous device signal.
+ * It names an owner.
+ *
+ * Both halves are asserted throughout, because they are different failures. A
+ * range that did not move is the product's behaviour; an event that was not
+ * cancelled is the capability the window keeps.
+ */
+describe("input the host owns", () => {
+  /** A delta large enough to be productive in either direction. */
+  const NOTCH = 240;
+
+  /** A window with room in every direction, so no case is refused at an edge. */
+  const ROOMY = { low: 0.1, high: 0.3 };
+
+  /** Every key either plot maps, including the duplicate spellings. */
+  const VIEWPORT_KEYS = ["+", "=", "-", "_", "ArrowLeft", "ArrowRight", "Home", "0"];
+
+  const HOST_MODIFIERS: readonly {
+    readonly label: string;
+    readonly modifiers: {
+      readonly ctrlKey?: boolean;
+      readonly metaKey?: boolean;
+      readonly altKey?: boolean;
+    };
+  }[] = [
+    { label: "ctrl", modifiers: { ctrlKey: true } },
+    { label: "meta", modifiers: { metaKey: true } },
+    { label: "alt", modifiers: { altKey: true } },
+  ];
+
+  it("releases a ctrl wheel and claims the identical wheel without it", () => {
+    /*
+     * The same delta, the same plot, the same anchor, in the same render. The
+     * only difference between the two halves is whose event it is.
+     */
+    renderChromatogram();
+    const before = state();
+
+    const released = wheel({ deltaY: -NOTCH, ctrlKey: true });
+
+    expect(released.defaultPrevented).toBe(false);
+    // And nothing was half-taken: no gesture, no epoch, and no settle waiting to
+    // commit a range later from an input this viewer said was not its own.
+    expect(state()).toBe(before);
+    expect(state().gesture).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(state()).toBe(before);
+
+    const claimed = wheel({ deltaY: -NOTCH });
+
+    expect(claimed.defaultPrevented).toBe(true);
+    expect(state().gesture).not.toBeNull();
+  });
+
+  it("releases a ctrl wheel from a subrange, where both directions are productive", () => {
+    /*
+     * At full range an outward wheel is released too, for an unrelated reason:
+     * there is nothing wider to show. From a subrange both directions move the
+     * axis, so a release here can only be about the modifier -- which is what
+     * separates this rule from the boundary rule above it.
+     */
+    renderChromatogram();
+    send({ type: "viewport-step", domain: ROOMY });
+    const before = state();
+
+    for (const deltaY of [-NOTCH, NOTCH]) {
+      const event = wheel({ deltaY, ctrlKey: true });
+
+      expect(event.defaultPrevented, String(deltaY)).toBe(false);
+      expect(state(), String(deltaY)).toBe(before);
+    }
+    expect(state().gesture).toBeNull();
+  });
+
+  it("releases every viewport key under ctrl, meta and alt", () => {
+    renderChromatogram();
+    plot().focus();
+
+    for (const name of VIEWPORT_KEYS) {
+      for (const { label, modifiers } of HOST_MODIFIERS) {
+        // Restored before each press, so every key is judged from a window with
+        // somewhere to go and no release can be a boundary in disguise.
+        send({ type: "viewport-step", domain: ROOMY });
+        const before = state();
+
+        const event = key({ key: name, ...modifiers });
+
+        expect(event.defaultPrevented, `${label}+${name}`).toBe(false);
+        expect(state(), `${label}+${name}`).toBe(before);
+      }
+    }
+  });
+
+  it("still claims every unmodified viewport key", () => {
+    // The other half of the same rule, and the one a careless guard breaks.
+    renderChromatogram();
+    plot().focus();
+
+    for (const name of VIEWPORT_KEYS) {
+      send({ type: "viewport-step", domain: ROOMY });
+      const before = state();
+
+      const event = key({ key: name });
+
+      expect(event.defaultPrevented, name).toBe(true);
+      expect(state(), name).not.toBe(before);
+    }
+  });
+
+  it("still zooms on a shift-produced plus", () => {
+    /*
+     * Not an exotic case: on common layouts `+` *is* Shift+`=`, so this is how
+     * the ordinary shortcut arrives. A guard that rejected Shift would take the
+     * zoom away and protect no accelerator.
+     */
+    renderChromatogram();
+    plot().focus();
+    const full = shown();
+
+    const event = key({ key: "+", shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(shown().high - shown().low).toBeLessThan(full.high - full.low);
+  });
+
+  it("releases a plus that carries ctrl as well as shift", () => {
+    // Shift is not a licence. Ctrl is present, so the press is the host's.
+    renderChromatogram();
+    plot().focus();
+    const before = state();
+
+    const event = key({ key: "+", ctrlKey: true, shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(state()).toBe(before);
+  });
+
+  it("leaves a key it does not map alone, modified or not", () => {
+    // The guard is about ownership, not about swallowing more. Tab and Escape
+    // were never this plot's and still are not.
+    renderChromatogram();
+    plot().focus();
+    const before = state();
+
+    for (const name of ["Tab", "Escape", "a"]) {
+      expect(key({ key: name }).defaultPrevented, name).toBe(false);
+      expect(key({ key: name, ctrlKey: true }).defaultPrevented, `ctrl+${name}`).toBe(false);
+    }
+    expect(state()).toBe(before);
+  });
+});
+
+/*
  * How far the wheel zooms, at the adapter that reads the event.
  *
  * The planner's own tests pin the arithmetic. What only the component can say is
@@ -1506,25 +1705,26 @@ describe("how far the wheel zooms", () => {
     expect(state()).toBe(before);
   });
 
-  it("reads the same request whether or not ctrl is held", () => {
+  it("reads the same magnitude whether or not shift is held", () => {
     /*
-     * Some web zoom libraries accelerate wheel input under ctrl, on the theory
-     * that it means a trackpad pinch. This viewer assigns the modifier no
-     * meaning: that inference is a guess about hardware, and pinch semantics
-     * need their own evidence and their own product decision.
+     * What the superseded ctrl case above used to assert, asked of the modifier
+     * that still has no owner. Ctrl now names one -- see `input the host owns`
+     * below -- and this keeps the original point standing where it is still
+     * true: magnitude is read from the two numbers the event carries, and a
+     * modifier does not accelerate or attenuate it.
      */
     renderChromatogram();
     const plain = wheel({ deltaY: -100 });
-    const withoutCtrl = shown();
+    const withoutShift = shown();
 
     cleanup();
     renderChromatogram();
-    const held = wheel({ deltaY: -100, ctrlKey: true });
-    const withCtrl = shown();
+    const held = wheel({ deltaY: -100, shiftKey: true });
+    const withShift = shown();
 
     expect(plain.defaultPrevented).toBe(true);
     expect(held.defaultPrevented).toBe(true);
-    expect(withCtrl).toEqual(withoutCtrl);
+    expect(withShift).toEqual(withoutShift);
   });
 
   it("still refuses an outward delta of any size at full range", () => {

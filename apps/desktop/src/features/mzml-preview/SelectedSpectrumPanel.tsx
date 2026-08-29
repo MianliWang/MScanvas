@@ -4,18 +4,23 @@ import type {
   CopiedFigure,
   ExportedFigure,
   FigureTheme,
+  PreviewError,
   SelectedSpectrum,
   SpectrumExportFormat,
 } from "./contracts";
 import { FigureSettingsFields } from "./FigureSettingsFields";
 import { formatCount, formatIntensity, formatMz, formatRetentionTime } from "./format";
-import { StickSpectrum } from "./StickSpectrum";
+import { SpectrumViewport } from "./SpectrumViewport";
 import type {
   FigureSettingsDraft,
   FigureSettingsField,
   SpectrumExportState,
   SpectrumState,
 } from "./usePreviewWorkspace";
+import type {
+  SpectrumViewportEvent,
+  SpectrumViewportState,
+} from "./viewer/spectrumViewport";
 
 /**
  * The figure formats, then the data formats, in the order they are offered.
@@ -53,6 +58,21 @@ const FIGURE_PREFIX = "spectrum";
 export interface SelectedSpectrumPanelProps {
   readonly state: SpectrumState;
   readonly onRetry: () => void;
+  /**
+   * The one m/z viewport authority, for the spectrum this panel is showing.
+   *
+   * Held by the workspace rather than by this panel, and that is deliberate:
+   * ADR 0038's gesture epoch and projection generation are monotonic across the
+   * *session*, and a reducer that lived and died with a component would restart
+   * them every time a different spectrum was selected -- which is precisely the
+   * race those counters exist to remove.
+   */
+  readonly viewport: SpectrumViewportState;
+  readonly dispatchViewport: (event: SpectrumViewportEvent) => SpectrumViewportState;
+  readonly readViewport: () => SpectrumViewportState;
+  /** The message behind the current projection failure, where there is one. */
+  readonly projectionError: PreviewError | null;
+  readonly onRetryProjection: () => void;
   readonly exportState: SpectrumExportState;
   /**
    * Whether the session's one scientific export lane is occupied.
@@ -82,12 +102,26 @@ export interface SelectedSpectrumPanelProps {
  *
  * Memoized because the viewer above it publishes a new interaction state
  * whenever the pointer crosses from one scan to another, which at a full-run
- * zoom is most pointer frames. None of that reaches these props, and this is
- * what makes "does not reach" mean "does not re-render".
+ * zoom is most pointer frames. **The chromatogram's** interaction state still
+ * does not reach these props, and that is what the memo is for.
+ *
+ * What does reach them, since M5.2, is this panel's own m/z viewport -- and a
+ * drag over the spectrum plot therefore re-renders this panel per frame. That
+ * is the honest trade: the alternative is a reducer living inside the plot,
+ * whose gesture epochs and projection generations would restart every time a
+ * different spectrum was selected, which ADR 0038 identifies as the race those
+ * counters exist to prevent. A frame of the interaction the reader is
+ * performing on this panel is a much cheaper thing than a late answer for one
+ * spectrum landing under another's axes.
  */
 export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel({
   state,
   onRetry,
+  viewport,
+  dispatchViewport,
+  readViewport,
+  projectionError,
+  onRetryProjection,
   exportState,
   scientificExportBusy,
   onExport,
@@ -128,7 +162,15 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel({
           />
         ) : null}
       </header>
-      <div className="spectrum-body">{renderBody(state, onRetry)}</div>
+      <div className="spectrum-body">
+        {renderBody(state, onRetry, {
+          viewport,
+          dispatchViewport,
+          readViewport,
+          projectionError,
+          onRetryProjection,
+        })}
+      </div>
     </section>
   );
 })
@@ -334,7 +376,21 @@ function describe(state: SpectrumState): string {
   }
 }
 
-function renderBody(state: SpectrumState, onRetry: () => void) {
+/**
+ * Everything the viewport surface needs, carried as one value.
+ *
+ * Grouped rather than passed as five parameters through two functions, so a new
+ * one cannot be added to the panel and forgotten on the way down.
+ */
+interface ViewportBinding {
+  readonly viewport: SpectrumViewportState;
+  readonly dispatchViewport: (event: SpectrumViewportEvent) => SpectrumViewportState;
+  readonly readViewport: () => SpectrumViewportState;
+  readonly projectionError: PreviewError | null;
+  readonly onRetryProjection: () => void;
+}
+
+function renderBody(state: SpectrumState, onRetry: () => void, binding: ViewportBinding) {
   switch (state.status) {
     case "none":
       return (
@@ -381,18 +437,24 @@ function renderBody(state: SpectrumState, onRetry: () => void) {
       );
 
     case "loaded":
-      return <SpectrumDetail spectrum={state.spectrum} />;
+      return <SpectrumDetail binding={binding} spectrum={state.spectrum} />;
   }
 }
 
-function SpectrumDetail({ spectrum }: { readonly spectrum: SelectedSpectrum }) {
+function SpectrumDetail({
+  spectrum,
+  binding,
+}: {
+  readonly spectrum: SelectedSpectrum;
+  readonly binding: ViewportBinding;
+}) {
   const empty = spectrum.pointCount === 0;
   const summaryId = "selected-spectrum-summary";
 
   return (
     <>
       <p className="spectrum-summary" id={summaryId}>
-        {buildAccessibleSummary(spectrum)}
+        {buildAccessibleSummary(spectrum, binding.viewport.status === "ready")}
       </p>
 
       {empty ? (
@@ -404,21 +466,47 @@ function SpectrumDetail({ spectrum }: { readonly spectrum: SelectedSpectrum }) {
           </span>
         </div>
       ) : (
-        <StickSpectrum
+        /*
+          A spectrum with points always has a plot, and since M5.2 the plot is a
+          viewport surface -- which decides for itself whether there is a range
+          to navigate. A spectrum with *no* points keeps the empty state above
+          rather than gaining three disabled controls beside a sentence that has
+          already said there is nothing here: its domain is admitted and zero
+          wide, so every control would be inert and every drawing would be
+          empty, and saying so twice is not saying it better.
+        */
+        <SpectrumViewport
+          dispatch={binding.dispatchViewport}
           intensity={spectrum.intensity}
           labelledBy={summaryId}
           mz={spectrum.mz}
-          representationKnown={spectrum.representationKnown}
+          onRetryProjection={binding.onRetryProjection}
+          projectionError={binding.projectionError}
+          readState={binding.readViewport}
           reportedMzHigh={spectrum.mzHigh}
           reportedMzLow={spectrum.mzLow}
+          representationKnown={spectrum.representationKnown}
+          state={binding.viewport}
         />
       )}
 
       {spectrum.truncated ? (
         <p className="notice notice-warning" role="note">
-          This spectrum has more points than one transfer carries. Only the drawing is limited to
-          the first {formatCount(spectrum.mz.length)} points; the point count, m/z range and base
-          peak below are the backend's own values for the whole spectrum.
+          {/*
+            What the transfer bound still costs, said differently depending on
+            whether this spectrum has a viewport -- because the sentence that was
+            true before M5.2 is now false where one exists.
+
+            With a viewport, the drawing is no longer the transferred prefix at
+            all: every committed range is drawn from the complete spectrum Rust
+            retained, so panning past the end of what was transferred shows the
+            source rather than blank space. The bound still applies to the arrays
+            this document holds, which is what the exports and the facts below do
+            not read.
+          */}
+          {binding.viewport.status === "ready"
+            ? `This spectrum has more points than one transfer carries, so only the first ${formatCount(spectrum.mz.length)} of them reached this window. The drawing is not limited to them: each m/z range is drawn from the complete spectrum MSCanvas retained, and so are the point count, m/z range and base peak below.`
+            : `This spectrum has more points than one transfer carries. Only the drawing is limited to the first ${formatCount(spectrum.mz.length)} points; the point count, m/z range and base peak below are the backend's own values for the whole spectrum.`}
         </p>
       ) : null}
 
@@ -518,14 +606,23 @@ function SpectrumDetail({ spectrum }: { readonly spectrum: SelectedSpectrum }) {
  * The peak comes from the backend's own whole-spectrum value, not from the
  * transferred array. A spectrum above the transfer bound arrives as a prefix,
  * and the tallest point in a prefix is not the tallest point in the spectrum.
+ *
+ * What the *drawing* covers depends on whether this spectrum has a viewport,
+ * and getting that wrong is the M5.2 defect in miniature. Without one the
+ * drawing really is the transferred prefix and says so. With one it is a
+ * bounded drawing of one m/z range of the complete spectrum Rust retained, and
+ * the old sentence -- "the drawing covers the first N of those points" --
+ * would be describing a limit that no longer applies to it.
  */
-function buildAccessibleSummary(spectrum: SelectedSpectrum): string {
+function buildAccessibleSummary(spectrum: SelectedSpectrum, hasViewport: boolean): string {
   const opening = `Spectrum ${formatCount(spectrum.index)}, MS${spectrum.msLevel}, ${formatCount(spectrum.pointCount)} ${spectrum.pointCount === 1 ? "point" : "points"}.`;
   if (spectrum.pointCount === 0) {
     return `${opening} This spectrum contains no peaks, so it has no m/z range and no most intense peak.`;
   }
   const truncation = spectrum.truncated
-    ? ` The drawing covers the first ${formatCount(spectrum.mz.length)} of those points.`
+    ? hasViewport
+      ? ` Only the first ${formatCount(spectrum.mz.length)} of those points were transferred to this window, but the drawing is taken from the complete spectrum, one m/z range at a time.`
+      : ` The drawing covers the first ${formatCount(spectrum.mz.length)} of those points.`
     : "";
   const representation = spectrum.representationKnown
     ? ""

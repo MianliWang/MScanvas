@@ -1155,6 +1155,98 @@ def validate_the_current_status_section_has_one_answer(errors: list[str]) -> Non
                     "one; correct the current section rather than the historical ones"
                 )
 
+# The documents that describe the product as it stands, rather than as it was.
+#
+# Named individually rather than globbed, because the distinction this rule
+# rests on is not one a path pattern can make: an ADR records what was true when
+# it was accepted and `BOOTSTRAP_STATUS.md` is a log of the same kind, and both
+# are supposed to go on saying a capability was absent then, because it was.
+CURRENT_STATUS_DOCUMENTS: tuple[str, ...] = (
+    "ROADMAP.md",
+    "docs/product/FEATURE_CATALOG.md",
+    "docs/product/PRIMARY_WORKFLOWS.md",
+    "README.md",
+)
+
+# The sentences a shipped capability makes false, and the openings that make a
+# sentence a claim about what is missing.
+#
+# Matched inside those lists only. A status page has to be able to *name* a
+# capability in order to say it was delivered, so a bare mention proves nothing;
+# what is checked is the capability appearing in a paragraph that begins by
+# saying what the product does not do.
+SHIPPED_CAPABILITIES: tuple[tuple[str, str], ...] = (
+    ("spectrum zoom and pan", "M5.2 made the selected spectrum's m/z range zoom, pan and reset"),
+    ("spectrum zoom/pan", "M5.2 made the selected spectrum's m/z range zoom, pan and reset"),
+)
+
+MISSING_LIST_OPENINGS: tuple[str, ...] = (
+    "still unimplemented across the viewer:",
+    "still missing from the acquisition view:",
+    "not implemented yet:",
+)
+
+
+def validate_current_status_documents_describe_the_shipped_product(
+    errors: list[str],
+) -> None:
+    """A capability that ships is not still listed among what the product lacks.
+
+    This is the one class of document that goes wrong silently. Nothing fails to
+    compile when a milestone lands and a summary describing it as future is left
+    alone, and the reader who is hurt by it is the one planning the next slice
+    from exactly those sections. M5.2 hit it: the roadmap closed the slice in one
+    section while calling M5 "not started" a few lines above, and
+    `FEATURE_CATALOG.md` still listed spectrum zoom and pan among what the viewer
+    does not do.
+
+    Two rules, and both are narrow on purpose. A shipped capability may not
+    appear inside a paragraph that begins by naming what is missing. And the
+    milestone's own summary may not call itself unstarted while its slices are
+    recorded complete -- checked against the roadmap's M5 section, which is where
+    that contradiction was.
+
+    Nothing here reads prose for tone, and nothing pins a snapshot of it.
+    """
+    for name in CURRENT_STATUS_DOCUMENTS:
+        source = ROOT / name
+        if not source.is_file():
+            continue
+        text = source.read_text(encoding="utf-8").lower()
+        for opening in MISSING_LIST_OPENINGS:
+            at = text.find(opening)
+            if at == -1:
+                continue
+            end = text.find("\n\n", at)
+            listed = text[at:] if end == -1 else text[at:end]
+            for capability, why in SHIPPED_CAPABILITIES:
+                if capability in listed:
+                    fail(
+                        f"{name}: {opening!r} still lists {capability!r}, which is "
+                        f"implemented -- {why}. A reader planning the next slice from "
+                        "this section would treat finished behaviour as outstanding",
+                        errors,
+                    )
+
+    roadmap = ROOT / "ROADMAP.md"
+    if not roadmap.is_file():
+        return
+    text = roadmap.read_text(encoding="utf-8")
+    heading = "## M5 — Viewer Completion"
+    at = text.find(heading)
+    if at == -1:
+        return
+    end = text.find("\n## ", at + len(heading))
+    section = text[at:] if end == -1 else text[at:end]
+    if "Not started" in section and "M5.2 — **complete**" in section:
+        fail(
+            "ROADMAP.md: the M5 section records M5.2 as complete and also calls the "
+            "milestone not started. A status document that answers the same question "
+            "both ways cannot be the basis for the next slice",
+            errors,
+        )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_required(errors)
@@ -1175,6 +1267,7 @@ def main() -> int:
         validate_the_linked_pair_is_bound_in_one_operation(errors)
         validate_the_current_status_section_has_one_answer(errors)
         validate_drawability_is_settled_in_one_place(errors)
+        validate_current_status_documents_describe_the_shipped_product(errors)
 
     if errors:
         print("Repository validation failed:")

@@ -113,6 +113,72 @@ async function wheelClaim(clientX: number, deltaY: number): Promise<boolean> {
   ) as Promise<boolean>;
 }
 
+/** One cancelable wheel carrying a modifier, and whether the viewer took it. */
+async function modifiedWheelClaim(
+  clientX: number,
+  deltaY: number,
+  ctrlKey: boolean,
+): Promise<boolean> {
+  return browser.execute(
+    (css: string, x: number, delta: number, held: boolean) => {
+      const event = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        ctrlKey: held,
+        deltaY: delta,
+      });
+      document.querySelector(css)?.dispatchEvent(event);
+      return event.defaultPrevented;
+    },
+    PLOT,
+    clientX,
+    deltaY,
+    ctrlKey,
+  ) as Promise<boolean>;
+}
+
+/** One key press carrying modifiers, and whether the viewer took it. */
+async function modifiedKeyClaim(
+  key: string,
+  modifiers: {
+    readonly ctrlKey?: boolean;
+    readonly metaKey?: boolean;
+    readonly altKey?: boolean;
+    readonly shiftKey?: boolean;
+  } = {},
+): Promise<boolean> {
+  return browser.execute(
+    (
+      css: string,
+      sent: string,
+      held: { ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean },
+    ) => {
+      const plot = document.querySelector<SVGSVGElement>(css);
+      plot?.focus();
+      const event = new KeyboardEvent("keydown", {
+        altKey: held.altKey,
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: held.ctrlKey,
+        key: sent,
+        metaKey: held.metaKey,
+        shiftKey: held.shiftKey,
+      });
+      plot?.dispatchEvent(event);
+      return event.defaultPrevented;
+    },
+    PLOT,
+    key,
+    {
+      altKey: modifiers.altKey ?? false,
+      ctrlKey: modifiers.ctrlKey ?? false,
+      metaKey: modifiers.metaKey ?? false,
+      shiftKey: modifiers.shiftKey ?? false,
+    },
+  ) as Promise<boolean>;
+}
+
 /**
  * Takes the pointer off the plot, so the readout reports the selection again.
  *
@@ -317,6 +383,59 @@ describe("the linked viewer on the real Tauri WebView", () => {
       timeout: 30_000,
       timeoutMsg: "a claimed wheel changed nothing in WebView2",
     });
+  });
+
+  it("leaves ctrl-modified input to the WebView that ships around it", async () => {
+    /*
+     * The ownership rule in the shell it is about.
+     *
+     * WebView2 enables its zoom controls by default and drives them with
+     * Ctrl+wheel, Ctrl+Plus and Ctrl+Minus, and this application disables
+     * neither -- verified against `tauri.conf.json`, which sets no zoom or
+     * accelerator option, and against the Rust window setup, which applies none.
+     * So the plot must not take those inputs.
+     *
+     * **The limitation, stated rather than glossed.** These are dispatched
+     * events, and a dispatched event is not a user gesture: no engine performs
+     * its native zoom for one, however the listener answers. So what is proved
+     * here is that *MSCanvas does not claim the input* and the retention-time
+     * range does not move -- which is what leaves WebView2's documented path
+     * available. It is not proved, and is not claimed, that the WebView zoomed.
+     */
+    await backToFullRange();
+    // From a subrange, so both wheel directions and every key would otherwise be
+    // productive and no release can be a boundary in disguise.
+    const at = await pointAt(0.5);
+    expect(await wheelClaim(at.x, -240)).toBe(true);
+    await browser.waitUntil(async () => !(await rangeCaption()).includes("full range"), {
+      timeout: 30_000,
+      timeoutMsg: "the run never left full range",
+    });
+    const subrange = await rangeCaption();
+
+    for (const deltaY of [-240, 240]) {
+      expect(await modifiedWheelClaim(at.x, deltaY, true)).toBe(false);
+    }
+    for (const key of ["+", "=", "-", "_", "ArrowLeft", "ArrowRight", "Home", "0"]) {
+      for (const held of ["ctrlKey", "metaKey", "altKey"] as const) {
+        expect({ key, held, claimed: await modifiedKeyClaim(key, { [held]: true }) }).toEqual({
+          key,
+          held,
+          claimed: false,
+        });
+      }
+    }
+
+    expect(await rangeCaption()).toBe(subrange);
+
+    // And the unmodified shortcut still works in the same shell, including the
+    // shift-produced plus that is how `+` actually arrives.
+    expect(await modifiedKeyClaim("+", { shiftKey: true })).toBe(true);
+    await browser.waitUntil(async () => (await rangeCaption()) !== subrange, {
+      timeout: 30_000,
+      timeoutMsg: "a shift-produced plus did not zoom",
+    });
+    await backToFullRange();
   });
 
   it("reads how far the wheel turned, not merely which way", async () => {

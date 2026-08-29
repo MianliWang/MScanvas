@@ -581,6 +581,19 @@ describe("mzML preview workspace", () => {
           spectrum: { ...spectrum, intensity: [500, -900, 200, -100] },
         });
       },
+      // The drawing is the viewport's, so the negatives have to survive the
+      // round trip through the projection rather than through the transferred
+      // arrays. Rust answers the full-domain window with the measurements it
+      // retained; both signs are among them.
+      spectrumProjection: (_token, low, high) =>
+        Promise.resolve({
+          low,
+          high,
+          mz: [300, 300.5, 301, 301.5],
+          intensity: [500, -900, 200, -100],
+          sourcePoints: 4,
+          reduced: false,
+        }),
     });
     await openTheFile(api);
     await screen.findByRole("grid", { name: "Spectra" });
@@ -588,20 +601,41 @@ describe("mzML preview workspace", () => {
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
     await findSpectrumPlot();
 
+    // Awaited, because the drawing is the viewport's and arrives when Rust
+    // answers. The plot itself is on screen before that, saying it is waiting
+    // -- which is the state that must never be mistaken for a spectrum with no
+    // negative signal in it.
+    //
+    // All four points are drawn; none is dropped for being below zero.
+    await screen.findByText(
+      /Drawn as 4 sticks of the 4 observations this spectrum has between m\/z 300\.0000 and 301\.5000\. Every one of them is drawn\./,
+    );
     expect(
       screen.getByText(
         /2 of the points carry negative intensity\. The deepest negative in each column is drawn below the zero line\./,
       ),
     ).toBeVisible();
-    // All four points are drawn; none is dropped for being below zero.
-    expect(screen.getByText(/Drawn as 4 sticks, one per point\./)).toBeVisible();
     // The furthest-from-zero value sets the scale and is labelled.
     expect(screen.getByText("-900.00")).toBeInTheDocument();
     expect(screen.queryByText("no intensity above zero")).not.toBeInTheDocument();
   });
 
   it("loads and draws the spectrum for the row the user selects", async () => {
-    const api = createFakePreviewApi();
+    const api = createFakePreviewApi({
+      // The window Rust is asked for is this spectrum's whole domain, and what
+      // it answers with is what gets drawn. Answering with the spectrum's own
+      // points is what makes the caption below a statement about the
+      // measurement rather than about the fake.
+      spectrumProjection: (_token, low, high) =>
+        Promise.resolve({
+          low,
+          high,
+          mz: buildSpectrum(2, 12).mz,
+          intensity: buildSpectrum(2, 12).intensity,
+          sourcePoints: 12,
+          reduced: false,
+        }),
+    });
     await openTheFile(api);
     await screen.findByRole("grid", { name: "Spectra" });
 
@@ -610,8 +644,17 @@ describe("mzML preview workspace", () => {
     expect(await findSpectrumPlot()).toHaveAccessibleName(
       "Spectrum 2, MS2, 12 points. m/z ranges from 300.0000 to 305.5000. The most intense peak reported for this spectrum is 507.00 at m/z 305.5000. This file does not report whether these are profile samples or centroided peaks.",
     );
-    expect(screen.getByText(/Drawn as 12 sticks, one per point\./)).toBeVisible();
+    // The drawing names the window it answers and how many observations the
+    // retained spectrum holds there -- which is the number a reader needs, and
+    // is not the length of the array this document received.
+    await screen.findByText(
+      /Drawn as 12 sticks of the 12 observations this spectrum has between m\/z 300\.0000 and 305\.5000\./,
+    );
     expect(api.requestedSpectra).toEqual([2]);
+    // One drawing for one committed window, asked for the whole domain.
+    expect(api.spectrumProjectionRequests).toEqual([
+      { exportToken: "token-2", low: 300, high: 305.5 },
+    ]);
   });
 
   it("renders a spectrum with no peaks as a spectrum, not as a missing result", async () => {
@@ -660,13 +703,21 @@ describe("mzML preview workspace", () => {
 
     const plot = await findSpectrumPlot();
     expect(plot).toHaveAccessibleName(/most intense peak reported for this spectrum is 4\.200e\+6/);
-    expect(plot).toHaveAccessibleName(/The drawing covers the first 8 of those points\./);
+    // What the drawing covers, now that this spectrum has a viewport. The
+    // sentence this replaces -- "the drawing covers the first 8 of those
+    // points" -- described the transferred prefix, and since M5.2 the drawing
+    // is not taken from it: each committed range is drawn from the complete
+    // spectrum Rust retained.
+    expect(plot).toHaveAccessibleName(
+      /Only the first 8 of those points were transferred to this window, but the drawing is taken from the complete spectrum, one m\/z range at a time\./,
+    );
     // The tallest point in the prefix is never presented as the spectrum's.
     expect(plot).not.toHaveAccessibleName(/359\.00/);
-    // The notice limits itself to the drawing, so it cannot contradict the
-    // whole-spectrum facts stated beside it.
+    // The notice says what the transfer bound still costs -- which is not the
+    // drawing any more -- so it cannot contradict the whole-spectrum facts
+    // stated beside it.
     expect(screen.getByRole("note")).toHaveTextContent(
-      "Only the drawing is limited to the first 8 points; the point count, m/z range and base peak below are the backend's own values for the whole spectrum.",
+      "This spectrum has more points than one transfer carries, so only the first 8 of them reached this window. The drawing is not limited to them: each m/z range is drawn from the complete spectrum MSCanvas retained, and so are the point count, m/z range and base peak below.",
     );
   });
 

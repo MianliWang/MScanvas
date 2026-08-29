@@ -62,6 +62,120 @@ export function spectrumWithoutPeaks() {
 }
 
 /**
+ * The m/z range the mocked spectrum's viewport opens at.
+ *
+ * `buildSpectrum` places six points from 300 at a step of 0.5, and admits the
+ * domain they span. Stated here because a rendered test that recomputed it
+ * would be testing its own arithmetic.
+ */
+export const SPECTRUM_MZ_LOW = 300;
+export const SPECTRUM_MZ_HIGH = 302.5;
+
+/**
+ * The m/z range a *truncated* mocked spectrum spans.
+ *
+ * Far wider than the points that reach the document, which is the whole point
+ * of it: `TRUNCATED_MZ_HIGH` is where the retained source ends and
+ * `SPECTRUM_MZ_HIGH` is where the transferred prefix does. A viewport moved
+ * between those two numbers is asking for a region this document has never
+ * held, and what it draws there can only have come from Rust.
+ */
+export const TRUNCATED_MZ_LOW = 300;
+export const TRUNCATED_MZ_HIGH = 900;
+
+/** How many points the mocked backend says the truncated spectrum really has. */
+export const TRUNCATED_POINT_COUNT = 900_000;
+
+/**
+ * A spectrum whose retained source runs far past what was transferred.
+ *
+ * The arrays are the same six points; everything the backend reports about the
+ * whole spectrum is not. That is the shape M5.2 exists to get right: the domain
+ * is Rust's answer about the complete spectrum, and the arrays are a bounded
+ * prefix that must never be used to contradict it.
+ */
+export function truncatedSpectrum() {
+  const spectrum = spectrumWithPeaks();
+  return {
+    ...spectrum,
+    truncated: true,
+    pointCount: TRUNCATED_POINT_COUNT,
+    mzLow: TRUNCATED_MZ_LOW,
+    mzHigh: TRUNCATED_MZ_HIGH,
+    basePeakMz: 812.5,
+    basePeakIntensity: 4_200_000,
+    viewportDomain: { state: "admitted", low: TRUNCATED_MZ_LOW, high: TRUNCATED_MZ_HIGH },
+  };
+}
+
+/** The single m/z every point of the inert spectrum below reports. */
+export const SPECTRUM_SINGLE_MZ = 301.25;
+
+/**
+ * A spectrum whose points all report one m/z: admitted, ready, and inert.
+ *
+ * The figure contract admits the domain -- it is a real range over real points,
+ * and calling it refused would be a lie about the data -- but it has no width.
+ * There is no subrange to zoom into, no superrange to zoom out to and nowhere to
+ * pan, so every viewport action is unavailable while the spectrum stays `ready`
+ * and is drawn normally.
+ *
+ * The case exists to hold apart two things that look alike from outside: a
+ * viewport that is *admitted* and one that is *actionable*.
+ */
+export function spectrumAtOneMz() {
+  const spectrum = spectrumWithPeaks();
+  return {
+    ...spectrum,
+    mz: spectrum.mz.map(() => SPECTRUM_SINGLE_MZ),
+    mzLow: SPECTRUM_SINGLE_MZ,
+    mzHigh: SPECTRUM_SINGLE_MZ,
+    basePeakMz: SPECTRUM_SINGLE_MZ,
+    viewportDomain: { state: "admitted", low: SPECTRUM_SINGLE_MZ, high: SPECTRUM_SINGLE_MZ },
+  };
+}
+
+/** The drawing that answers the one window that spectrum has. */
+export function singleMzProjection() {
+  const spectrum = spectrumAtOneMz();
+  return {
+    low: SPECTRUM_SINGLE_MZ,
+    high: SPECTRUM_SINGLE_MZ,
+    mz: spectrum.mz,
+    intensity: spectrum.intensity,
+    sourcePoints: spectrum.mz.length,
+    reduced: false,
+  };
+}
+
+/** A spectrum the figure contract cannot establish an m/z domain over. */
+export function spectrumWithoutViewport() {
+  return {
+    ...spectrumWithPeaks(),
+    viewportDomain: { state: "refused", reason: "sourceNotOrdered" },
+  };
+}
+
+/**
+ * The drawing the mocked backend answers a full-domain viewport with.
+ *
+ * The spectrum's own six points, so what the plot shows is what the fixture
+ * says the spectrum holds. A test about an empty window, a reduction or a
+ * refusal replaces this answer through `setInvokeResult`.
+ */
+export function fullSpectrumProjection() {
+  const spectrum = spectrumWithPeaks();
+  return {
+    low: SPECTRUM_MZ_LOW,
+    high: SPECTRUM_MZ_HIGH,
+    mz: spectrum.mz,
+    intensity: spectrum.intensity,
+    sourcePoints: spectrum.mz.length,
+    reduced: false,
+  };
+}
+
+/**
  * Every command the frontend may invoke during this run, and what it answers.
  *
  * Deliberately total over what the application reaches for on mount. The mock
@@ -69,8 +183,24 @@ export function spectrumWithoutPeaks() {
  * a command this table does not know about is a surface the QA run has not
  * accounted for, and silently answering it would hide that.
  */
-export function ipcTable(options: { readonly emptySpectrum?: boolean } = {}) {
-  const spectrum = options.emptySpectrum === true ? spectrumWithoutPeaks() : spectrumWithPeaks();
+export function ipcTable(
+  options: {
+    readonly emptySpectrum?: boolean;
+    readonly refusedViewport?: boolean;
+    readonly truncatedSource?: boolean;
+    readonly oneMzViewport?: boolean;
+  } = {},
+) {
+  const spectrum =
+    options.emptySpectrum === true
+      ? spectrumWithoutPeaks()
+      : options.refusedViewport === true
+        ? spectrumWithoutViewport()
+        : options.truncatedSource === true
+          ? truncatedSpectrum()
+          : options.oneMzViewport === true
+            ? spectrumAtOneMz()
+            : spectrumWithPeaks();
   return {
     inspect_backend: availableBackend,
     get_workspace_roster: {
@@ -86,6 +216,18 @@ export function ipcTable(options: { readonly emptySpectrum?: boolean } = {}) {
     },
     open_mzml_preview: buildPreview(6),
     load_selected_spectrum: { outcome: "spectrum", spectrum },
+    // The m/z viewport's read of the same retained spectrum. Answered here
+    // because the boundary rejects an unmocked command, and every selection of
+    // a spectrum with an admitted domain asks for the drawing of its full
+    // range -- so a run without this answer would fail as an unhandled
+    // rejection rather than as the thing it is.
+    //
+    // One answer for every window, which is what a static table can be. A test
+    // about a particular window replaces it through `setInvokeResult`, and what
+    // window was *asked for* is read from the call ledger rather than from what
+    // came back.
+    project_selected_spectrum:
+      options.oneMzViewport === true ? singleMzProjection() : fullSpectrumProjection(),
     // The two halves of one export. The reservation is opaque and the outcome
     // is replaced per test through `setInvokeResult`.
     begin_selected_spectrum_export: "reservation-1",

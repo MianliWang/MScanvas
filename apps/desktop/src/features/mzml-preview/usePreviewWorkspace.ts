@@ -57,6 +57,9 @@ import type { ViewerEvent, ViewerInteractionState } from "./viewer/interactionSt
 import { buildPreviewScanModel } from "./viewer/previewScanModel";
 import type { RetentionTimeDomain, ScanModel, TraceKind } from "./viewer/scanModel";
 import { adjacentScan } from "./viewer/scanModel";
+import type { SpectrumViewportEvent, SpectrumViewportState } from "./viewer/spectrumViewport";
+import { projectionWindow } from "./viewer/spectrumViewport";
+import { useSpectrumViewport } from "./viewer/useSpectrumViewport";
 import { useViewerInteraction } from "./viewer/useViewerInteraction";
 
 /**
@@ -544,6 +547,47 @@ export interface PreviewWorkspace {
    * reader rather than a second authority.
    */
   readonly readViewerInteraction: () => ViewerInteractionState;
+  /**
+   * The selected spectrum's m/z viewport, or the fact that it has none.
+   *
+   * ADR 0038 owns every rule inside it. What lives here is the single instance
+   * of it, held for the session rather than for a component: its gesture epoch
+   * and its projection generation are monotonic across every spectrum this
+   * session selects, and a reducer that lived and died with a panel would
+   * restart them exactly when a late answer for the previous spectrum is still
+   * outstanding.
+   */
+  readonly spectrumViewport: SpectrumViewportState;
+  /**
+   * Applies one viewport event, and answers with the state it produced.
+   *
+   * The answer is what a wheel or a drag adapter reads its reducer-assigned
+   * epoch out of, and what the projection request reads its generation out of.
+   * No caller allocates either.
+   */
+  readonly dispatchSpectrumViewportEvent: (
+    event: SpectrumViewportEvent,
+  ) => SpectrumViewportState;
+  /** The viewport state as it stands right now, for a native listener. */
+  readonly readSpectrumViewport: () => SpectrumViewportState;
+  /**
+   * The message behind the projection failure the reducer accepted.
+   *
+   * Resolved against that failure's own generation, so this is the sentence
+   * belonging to the failure the contract is currently in -- a display detail
+   * attached to the authority rather than a second record of which failure is
+   * current.
+   */
+  readonly spectrumProjectionError: PreviewError | null;
+  /**
+   * Asks Rust again for the drawing of the window already committed.
+   *
+   * The same spectrum, the same window, the same retained source; a new
+   * generation, and nothing about the viewport moves. Also how the first
+   * drawing of every committed window is obtained, so a retry and a commit
+   * cannot come to ask different questions.
+   */
+  readonly retrySpectrumProjection: () => void;
   /**
    * The scan the session has selected, projected from the interaction state.
    *
@@ -2606,6 +2650,219 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     );
   }, [exportedSpectrumToken]);
 
+  /**
+   * The session's one m/z viewport, and the drawing it asks Rust for.
+   *
+   * Held here rather than inside the panel for the reason ADR 0038 gives about
+   * its two counters: they are monotonic across the *session*, never per
+   * spectrum, because that is what lets a late answer about the spectrum just
+   * replaced be told from a current one about the spectrum now selected. A
+   * reducer created when a panel mounted would restart them at exactly the
+   * moment a request for the previous spectrum is still outstanding.
+   *
+   * Nothing here decides anything about the viewport. The reducer decides every
+   * transition; this holds the instance, dispatches the two events that do not
+   * come from a browser gesture -- which spectrum is selected, and what Rust
+   * answered -- and owns the one call that crosses the boundary.
+   */
+  const spectrumViewport = useSpectrumViewport();
+  const { dispatch: dispatchSpectrumViewport, current: readSpectrumViewport } = spectrumViewport;
+  const spectrumViewportState = spectrumViewport.state;
+  /**
+   * The sentence behind the failure the reducer accepted, and its generation.
+   *
+   * `projection-failed` carries retryability and not a message, because the
+   * contract is about which request an answer belongs to rather than about what
+   * to say about it. The wording still has to come from somewhere, so it is kept
+   * here beside the generation it arrived for -- and read back only while the
+   * reducer says that generation is the failure it is in. That is a lookup by
+   * the contract's own key, not a second opinion about which failure is current.
+   */
+  const [spectrumProjectionFailure, setSpectrumProjectionFailure] = useState<{
+    readonly generation: number;
+    readonly error: PreviewError;
+  } | null>(null);
+
+  /**
+   * Asks Rust to draw the committed window, and applies what comes back.
+   *
+   * The **committed** window, from `projectionWindow`, and never the gesture's:
+   * a range still being dragged is a drawing rather than a decision, and asking
+   * per pointer frame would make a screen refresh a stream of requests.
+   *
+   * The generation is read out of the state the dispatch returned rather than
+   * mirrored here. An adapter counting for itself could tag an answer with a
+   * number the reducer never issued, which is the race the generation exists to
+   * remove -- and the reason `useSpectrumViewport` answers synchronously at all.
+   *
+   * Both answers are dispatched unconditionally and the reducer decides whether
+   * they still mean anything. There is deliberately no second check on this
+   * side: a stale success and a stale failure are no-ops *by identity* in the
+   * contract, and a guard here could only come to disagree with it.
+   *
+   * This is also the retry. Same spectrum, same window, same retained source,
+   * new generation -- so a retry and a first request cannot ask different
+   * questions.
+   */
+  const requestSpectrumProjection = useCallback(() => {
+    const before = readSpectrumViewport();
+    const window = projectionWindow(before);
+    if (before.status !== "ready" || window === null) {
+      // No viewport to draw. A refused spectrum asks Rust for nothing at all.
+      return;
+    }
+    const token = before.spectrumToken;
+    const started = dispatchSpectrumViewport({ type: "projection-requested" });
+    if (started.status !== "ready" || started.projection.status !== "loading") {
+      return;
+    }
+    const { generation } = started.projection;
+    void api
+      .projectSelectedSpectrum(token, window.low, window.high)
+      .then((projection) => {
+        if (!mounted.current) {
+          return;
+        }
+        dispatchSpectrumViewport({ type: "projection-succeeded", generation, projection });
+      })
+      .catch((cause: unknown) => {
+        if (!mounted.current) {
+          return;
+        }
+        const failure = toPreviewError(cause);
+        // `isPreviewError` accepts an object carrying only a kind and a summary,
+        // so retryability can arrive undefined. Asked explicitly rather than for
+        // truthiness: a failure this side cannot classify is not given a retry
+        // button that might do nothing.
+        const applied = dispatchSpectrumViewport({
+          type: "projection-failed",
+          generation,
+          retryable: failure.retryable === true,
+        });
+        // Recorded only where the contract accepted the failure. A stale one
+        // changed nothing, and its message must not appear beside a window it
+        // does not describe.
+        //
+        // The reader below is what makes that true on screen: it looks the
+        // message up by the generation the contract says it is currently
+        // failing at, so a stale message could not be shown even if it were
+        // stored. This keeps the stored value itself truthful -- a record of a
+        // failure the contract refused is a record of something that did not
+        // happen -- and the two together are why removing either one alone
+        // changes nothing observable.
+        if (
+          applied.status === "ready" &&
+          applied.projection.status === "failed" &&
+          applied.projection.generation === generation
+        ) {
+          setSpectrumProjectionFailure({ generation, error: failure });
+        }
+        // Deliberately *not* routed into the backend recheck a failed spectrum
+        // load takes. A window this spectrum does not have, or a token this
+        // session has replaced, says nothing about the installation -- and
+        // discarding backend-derived state over a drawing would make moving a
+        // viewport a reason to re-probe ProteoWizard.
+      });
+  }, [api, dispatchSpectrumViewport, readSpectrumViewport]);
+
+  /**
+   * Which spectrum the viewport is for, and what Rust said about its domain.
+   *
+   * A spectrum with no points is deliberately not one: its domain is admitted
+   * and zero wide, the panel already says it has no peaks, and there is neither
+   * a range to navigate nor a drawing worth asking for. Every other loaded
+   * spectrum publishes its own token and Rust's own verdict, and nothing here
+   * derives a domain from the transferred arrays -- `mz`, `mzLow` and `mzHigh`
+   * cannot settle drawability and this side must not pretend they can.
+   */
+  const viewportSpectrum =
+    spectrum.status === "loaded" && spectrum.spectrum.pointCount > 0 ? spectrum.spectrum : null;
+  const viewportSpectrumToken = viewportSpectrum?.exportToken ?? null;
+  const viewportSpectrumDomain = viewportSpectrum?.viewportDomain ?? null;
+  /**
+   * Whether a spectrum is being read right now.
+   *
+   * A read in progress has replaced nothing yet. Clearing there and selecting
+   * again a moment later is a round trip through `none` on every selection, for
+   * a viewport nobody can see -- the panel is drawing its own loading state, not
+   * a plot -- and it publishes two states where the contract needs one.
+   *
+   * It is **not** what makes ADR 0038's redelivery branch reachable, and an
+   * earlier version of this comment said it was. Rust mints a fresh retained
+   * token on every read, so a re-read of the same scan arrives with a different
+   * `exportToken` and starts a new context whether or not the viewport was
+   * cleared on the way. That branch is exercised by the contract's own suite,
+   * which is where a rule about token identity belongs.
+   *
+   * A drawing still outstanding for the previous spectrum stays answerable to
+   * the previous spectrum meanwhile, which is what the monotonic generation is
+   * for.
+   */
+  const viewportReading = spectrum.status === "loading";
+  // A layout effect, for the reason the chromatogram's own adoption is one. The
+  // panel renders the newly loaded spectrum's summary from `spectrum`, and its
+  // plot from this viewport; between the commit that loads one and the effect
+  // that tells the viewport about it, those two name different spectra. Run
+  // after paint, that frame is on screen -- the previous spectrum's drawing,
+  // under the previous spectrum's range, beneath the new one's caption. Run
+  // before it, nobody ever sees it.
+  useLayoutEffect(() => {
+    if (viewportReading) {
+      return;
+    }
+    if (viewportSpectrumToken === null || viewportSpectrumDomain === null) {
+      // Cleared rather than left standing. The two counters carry across, which
+      // is what stops an answer outstanding for the spectrum just cleared from
+      // matching a request issued after the next one is selected.
+      dispatchSpectrumViewport({ type: "spectrum-cleared" });
+      return;
+    }
+    // The same token arriving again is a redelivery of what is already current
+    // and resets nothing; a different one is a different spectrum and therefore
+    // a different viewport context. Both are the reducer's decision.
+    dispatchSpectrumViewport({
+      type: "spectrum-selected",
+      spectrumToken: viewportSpectrumToken,
+      domain: viewportSpectrumDomain,
+    });
+  }, [
+    dispatchSpectrumViewport,
+    viewportReading,
+    viewportSpectrumDomain,
+    viewportSpectrumToken,
+  ]);
+
+  /**
+   * Every committed window gets exactly one request, and gets it here.
+   *
+   * `idle` is the contract's own word for "this viewport has a window and no
+   * drawing that answers it" -- which is the state a selection, a commit and a
+   * reset all leave behind, and the only one. So there is no list of call sites
+   * that have to remember to ask: a transition that changes the committed window
+   * asks, and one that does not, does not.
+   */
+  useEffect(() => {
+    if (
+      spectrumViewportState.status !== "ready" ||
+      spectrumViewportState.projection.status !== "idle"
+    ) {
+      return;
+    }
+    requestSpectrumProjection();
+  }, [requestSpectrumProjection, spectrumViewportState]);
+
+  /**
+   * The failure's message, where the reducer says that failure is the current
+   * one. Looked up by the contract's generation rather than trusted.
+   */
+  const spectrumProjectionError =
+    spectrumViewportState.status === "ready" &&
+    spectrumViewportState.projection.status === "failed" &&
+    spectrumProjectionFailure !== null &&
+    spectrumProjectionFailure.generation === spectrumViewportState.projection.generation
+      ? spectrumProjectionFailure.error
+      : null;
+
   const dismissSpectrumExport = useCallback(() => {
     setSpectrumExport({ status: "idle" });
   }, []);
@@ -3372,6 +3629,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     dismissChromatogramExport,
     dispatchViewerEvent,
     readViewerInteraction,
+    spectrumViewport: spectrumViewportState,
+    dispatchSpectrumViewportEvent: dispatchSpectrumViewport,
+    readSpectrumViewport,
+    spectrumProjectionError,
+    retrySpectrumProjection: requestSpectrumProjection,
     selectedIndex,
     measurements,
     backendBusy,

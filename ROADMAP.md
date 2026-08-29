@@ -188,18 +188,33 @@ of 260 is the contract's own arithmetic rather than a number written down beside
 it. The one scientific export lane now serves three surfaces. See
 [ADR 0036](docs/architecture/adr/0036-linked-chromatogram-spectrum-figure.md).
 
-Still outside it, and unchanged:
+What M4 left outside it:
 
-- A saved `FigureSpec` (FIG-007) and a figure composer (FIG-008).
-- Current-range export of a *selected spectrum*.
-- XIC, spectrum zoom/pan, and multi-layer comparison.
+- A saved `FigureSpec` (FIG-007) and a figure composer (FIG-008). Still outside.
+- Current-range export of a *selected spectrum*. Still outside; it is M5.3.
+- XIC and multi-layer comparison. Still outside.
+- Spectrum zoom/pan. **Delivered since, by M5.2**, for a spectrum whose m/z
+  domain the scientific figure contract admits.
 
 ## M5 — Viewer Completion
 
-**The next milestone. Not started.** M4 finished the export lane; the viewing
-workflow it exports from is still missing capabilities a reader meets in normal
-use. M5 completes it before conversion is widened and before the product is
-redesigned.
+**In progress.** M4 finished the export lane; the viewing workflow it exports
+from was missing capabilities a reader meets in normal use. M5 completes it
+before conversion is widened and before the product is redesigned.
+
+- M5.0 — **complete** (route lock, documentation only).
+- M5.1 — **complete** (the m/z viewport authority and the bounded projection).
+- M5.2 — **complete** (the visible spectrum viewport).
+- M5.3 — **next, not started** (selected-spectrum `Current range` export).
+- M5.4 through M5.8 — not started.
+
+**Zoom, pan and reset reach a spectrum whose domain is admitted, and only
+those.** A spectrum the figure contract cannot give an authoritative finite
+forward m/z domain — mzML permits an m/z array the ordered-series contract
+refuses, and nothing here sorts one — keeps an explicit refusal instead. It
+stays selected, stays drawn over its own points, and still exports as full-source
+CSV and TSV. "The selected spectrum zooms" is true per spectrum, never
+universally.
 
 The route, its exit criteria, the live gap audit it was decided from and the
 five product decisions it surfaces are in
@@ -217,12 +232,16 @@ five product decisions it surfaces are in
   as the whole source. No surface yet — and none added: M5.1 is the model, the
   Rust authority and the bounded projection, with every visible control left to
   M5.2. See [ADR 0038](docs/architecture/adr/0038-spectrum-viewport-authority-and-screen-projection.md).
-- **M5.2 — the visible spectrum viewport.** Where a domain is admitted, the
-  selected spectrum zooms, pans and resets by wheel, drag, keyboard and button,
-  and a committed viewport draws the retained source across its whole domain —
-  including past the transferred prefix — without re-reading the acquisition or
-  launching ProteoWizard. Where a domain is refused, the panel says so and no
-  control pretends to act.
+- **M5.2 — the visible spectrum viewport.** **Closed.** Where a domain is
+  admitted, the selected spectrum zooms, pans and resets by wheel, drag,
+  keyboard and button, and a committed viewport draws the retained source across
+  its whole domain — including past the transferred prefix — without re-reading
+  the acquisition or launching ProteoWizard. Where a domain is refused, the
+  panel says so, the spectrum stays selected and drawn, and no control pretends
+  to act. An adapter over M5.1 and nothing more: no Rust file changed, no
+  command was added, and the two sentences that described the drawing as the
+  transferred prefix were corrected because a viewport made them false. See
+  [ADR 0039](docs/architecture/adr/0039-visible-spectrum-viewport-adapter.md).
 - **M5.3 — selected-spectrum `Current range` export.** Every format that
   spectrum already supports — all five where the figure contract admits it, CSV
   and TSV where it refuses it — over the full source, and over the committed m/z

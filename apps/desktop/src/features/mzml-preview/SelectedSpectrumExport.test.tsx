@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SelectedSpectrum } from "./contracts";
 import { SelectedSpectrumPanel } from "./SelectedSpectrumPanel";
+import { initialSpectrumViewportState } from "./viewer/spectrumViewport";
 import type {
   FigureSettingsDraft,
   SpectrumExportState,
@@ -54,6 +55,7 @@ function renderPanel(
   const onFigureTheme = vi.fn();
   render(
     <SelectedSpectrumPanel
+      {...NO_VIEWPORT}
       exportState={exportState}
       figureSettings={draft}
       onCopyPlot={onCopyPlot}
@@ -70,6 +72,22 @@ function renderPanel(
   );
   return { onExport, onDismiss, onCopyPlot, onFigureSetting, onFigureTheme };
 }
+
+/**
+ * The m/z viewport props, held at the state that has no viewport.
+ *
+ * This suite is about what a spectrum exports, and an export reads the retained
+ * source through a token rather than anything a viewport knows. Keeping the
+ * viewport at `none` here is therefore not a convenience: it is the assertion
+ * that every export result below is reached without one.
+ */
+const NO_VIEWPORT = {
+  viewport: initialSpectrumViewportState,
+  dispatchViewport: () => initialSpectrumViewportState,
+  readViewport: () => initialSpectrumViewportState,
+  projectionError: null,
+  onRetryProjection: () => undefined,
+} as const;
 
 function loaded(overrides: Partial<SelectedSpectrum> = {}): SpectrumState {
   return { status: "loaded", spectrum: { ...buildSpectrum(3, 4), ...overrides } };
@@ -98,6 +116,7 @@ describe("selected spectrum export affordance", () => {
     ]) {
       const { unmount } = render(
         <SelectedSpectrumPanel
+          {...NO_VIEWPORT}
           exportState={{ status: "idle" }}
           figureSettings={DEFAULT_DRAFT}
           onCopyPlot={() => undefined}
