@@ -615,6 +615,46 @@ pub fn chromatogram_export_refused() -> PreviewErrorDto {
     )
 }
 
+/// The requested m/z range is not one this spectrum covers.
+///
+/// Refused rather than clamped, for the reason the chromatogram's own range
+/// already gives: a window outside the source is a request about a different
+/// measurement, and quietly exporting the nearest one this spectrum does have
+/// would answer a question nobody asked -- in a file that would look like the
+/// answer to the one they did.
+///
+/// Its own sentence rather than the chromatogram's. Both refuse the same shape
+/// of mistake on different axes, and telling a reader their *retention-time*
+/// range is wrong when they chose an m/z window would send them to look at the
+/// wrong control.
+#[must_use]
+pub fn spectrum_range_outside_source() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "spectrum_range_outside_source",
+        "That m/z range is not inside the spectrum MSCanvas has loaded, so nothing was exported.",
+        true,
+    )
+}
+
+/// A current range was asked for on a spectrum that has no m/z viewport.
+///
+/// The interface does not offer the choice for such a spectrum, so this is a
+/// request that outlived the state it was made in. Answered as its own refusal
+/// rather than as a full-source export: a complete spectrum written under a
+/// current-range name would be a file that misstates what it holds.
+///
+/// Retryable, and the recovery is the honest one: the full source still
+/// exports, because a data document needs no domain to write.
+#[must_use]
+pub fn spectrum_range_unavailable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "spectrum_range_unavailable",
+        "This spectrum has no m/z viewport, so it has no current range to export. Export the full \
+         spectrum instead.",
+        true,
+    )
+}
+
 /// The specification refused the spectrum, so no figure was drawn.
 ///
 /// Not retryable: the same reading will be refused the same way. It is a fact
@@ -2075,12 +2115,40 @@ pub struct SpectrumProjectionDto {
     pub reduced: bool,
 }
 
+/// How much of a spectrum one export covers.
+///
+/// `scope` is `full` or `current`. The two numbers are the committed m/z
+/// viewport for a current-range request that has one, and are absent both for a
+/// full-source request and for a current-range request whose viewport has
+/// committed nothing narrower than the whole spectrum -- a real state, and one
+/// Rust resolves rather than the interface inventing a range to fill it.
+///
+/// Nothing here is a viewport authority. It is a request, checked against the
+/// spectrum this session retains before any of it is believed -- and refused,
+/// never clamped, where the retained source does not have it.
+///
+/// Its own type rather than [`ChromatogramRangeDto`]. The two carry the same
+/// three fields about two different axes, and one shape shared between them
+/// would make handing a retention-time range to an m/z export a thing that
+/// compiles.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SpectrumRangeDto {
+    pub scope: String,
+    pub low: Option<f64>,
+    pub high: Option<f64>,
+}
+
 /// What one selected-spectrum export did.
 ///
 /// Cancelling is one of the outcomes rather than an error: the user was offered
 /// a save dialog and closed it, nothing was created, and the spectrum on screen
 /// is exactly as it was.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+///
+/// The range is the one that was resolved when the export **began**, so a
+/// viewport that moved while the dialog was open cannot make this sentence
+/// describe a different file.
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum SpectrumExportOutcomeDto {
     #[serde(rename_all = "camelCase")]
@@ -2094,13 +2162,31 @@ pub enum SpectrumExportOutcomeDto {
         /// What the figure was rendered as, for the formats that are figures.
         /// `None` for the data documents, which no figure setting reaches.
         figure: Option<ExportedFigureDto>,
-        /// How many source points the document carries.
+        /// `full` or `current`, as asked for rather than as it resolved. A
+        /// current-range export of a viewport that committed nothing writes the
+        /// whole spectrum and is still a current-range export.
+        range_scope: String,
+        /// The exact m/z range the export was taken over, for a current range.
+        ///
+        /// `None` for a full-source export, which has no window: the two are
+        /// carried as an absent pair rather than as the source's own bounds,
+        /// because a full export is not a window that happens to be wide.
+        range_low: Option<f64>,
+        range_high: Option<f64>,
+        /// How many points the retained spectrum holds.
         ///
         /// The complete count. A reader comparing it against the panel's own
         /// `point_count` is comparing two readings of the same spectrum, and a
         /// truncated transfer cannot make them disagree, because this one did
         /// not come from the transfer.
-        point_count: usize,
+        source_point_count: usize,
+        /// How many of them this export covers.
+        ///
+        /// Equal to `source_point_count` for a full export. Smaller -- possibly
+        /// zero -- for a range, and zero is a successful export rather than a
+        /// failure. Named apart from the count above so a confirmation cannot
+        /// state one number and mean the other.
+        exported_point_count: usize,
     },
 }
 
@@ -2288,7 +2374,11 @@ pub struct CopiedFigureDto {
 }
 
 /// A copy-to-clipboard either put an image on the clipboard or it did not.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+///
+/// It names the range it copied for the same reason a save does: the clipboard
+/// holds one image, the viewport may have moved since, and "copied the current
+/// range" is a sentence that stops being true while it is being read.
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum SpectrumCopyOutcomeDto {
     #[serde(rename_all = "camelCase")]
@@ -2296,8 +2386,16 @@ pub enum SpectrumCopyOutcomeDto {
         /// What was copied, so the interface can say it in the same words the
         /// figure settings use.
         figure: CopiedFigureDto,
-        /// How many source points the copied figure was drawn from.
-        point_count: usize,
+        /// `full` or `current`, as asked for rather than as it resolved.
+        range_scope: String,
+        /// The exact m/z range copied, for a current range. `None` for a
+        /// full-source copy, which has no window.
+        range_low: Option<f64>,
+        range_high: Option<f64>,
+        /// How many points the retained spectrum holds.
+        source_point_count: usize,
+        /// How many of them the copied figure draws.
+        exported_point_count: usize,
     },
 }
 

@@ -35,7 +35,7 @@ use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, ChromatogramRangeDto, ChromatogramTracesDto,
     DropIngestionResultDto, DropScanLimitDto, FigureSettingsDto, LinkedFigureExportOutcomeDto,
     MAX_CONVERSION_QUEUE_ITEMS, MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto,
-    SelectedSpectrumOutcomeDto, SpectrumExportOutcomeDto, WorkspaceAddOutcomeDto,
+    SelectedSpectrumOutcomeDto, SpectrumExportOutcomeDto, SpectrumRangeDto, WorkspaceAddOutcomeDto,
     WorkspaceDropUpdateDto, WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto,
 };
 use super::dto::{
@@ -20622,6 +20622,41 @@ fn a_real_sciex_acquisition_runs_through_the_visible_workflow() {
 // what the retention was about.
 // ---------------------------------------------------------------------------
 
+/// The range every pre-existing selected-spectrum export test asks for.
+///
+/// Full source, which is what these tests were written against and what they
+/// still assert: M5.3 added a range to the formats a spectrum already had and
+/// changed none of them.
+fn full_spectrum_range() -> SpectrumRangeDto {
+    SpectrumRangeDto {
+        scope: "full".to_owned(),
+        low: None,
+        high: None,
+    }
+}
+
+/// One committed m/z window, as the interface would send it.
+fn current_spectrum_range(low: f64, high: f64) -> SpectrumRangeDto {
+    SpectrumRangeDto {
+        scope: "current".to_owned(),
+        low: Some(low),
+        high: Some(high),
+    }
+}
+
+/// A current-range request from a viewport that has committed nothing narrower.
+///
+/// Not a missing answer and not a full-source request: it is the viewport
+/// saying the current range *is* the whole admitted domain, which Rust resolves
+/// from the snapshot.
+fn current_whole_spectrum_range() -> SpectrumRangeDto {
+    SpectrumRangeDto {
+        scope: "current".to_owned(),
+        low: None,
+        high: None,
+    }
+}
+
 /// The figure settings a panel starts with, which is what these tests export at.
 fn default_figure_settings() -> FigureSettingsDto {
     FigureSettingsDto {
@@ -20680,7 +20715,8 @@ fn begin_and_release(
     format: &str,
     settings: &FigureSettingsDto,
 ) -> Result<(), PreviewErrorDto> {
-    let reservation = service.begin_spectrum_export(token, format, settings)?;
+    let reservation =
+        service.begin_spectrum_export(token, format, &full_spectrum_range(), settings)?;
     service.cancel_spectrum_export(&reservation);
     Ok(())
 }
@@ -20701,7 +20737,7 @@ fn a_resolution_no_png_could_record_stops_the_png_and_nothing_else() {
     }
 
     let refusal = service
-        .begin_spectrum_export(&token, "png", &unusable)
+        .begin_spectrum_export(&token, "png", &full_spectrum_range(), &unusable)
         .expect_err("50 DPI is below what this boundary records");
     assert_eq!(refusal.kind, "figure_settings_refused");
     assert!(
@@ -20723,7 +20759,12 @@ fn every_conventional_resolution_is_accepted_and_the_two_just_outside_are_not() 
     }
     for dpi in [71, 1_201] {
         let refusal = service
-            .begin_spectrum_export(&token, "png", &figure_settings(1_200, 640, dpi))
+            .begin_spectrum_export(
+                &token,
+                "png",
+                &full_spectrum_range(),
+                &figure_settings(1_200, 640, dpi),
+            )
             .unwrap_err();
         assert_eq!(refusal.kind, "figure_settings_refused", "{dpi} DPI");
     }
@@ -20742,7 +20783,7 @@ fn a_figure_too_large_to_hold_as_pixels_is_still_a_vector_document() {
         .expect("the largest vector figure is a vector document");
 
     let refusal = service
-        .begin_spectrum_export(&token, "png", &enormous)
+        .begin_spectrum_export(&token, "png", &full_spectrum_range(), &enormous)
         .expect_err("400 megapixels is not an image this machine should attempt");
     assert_eq!(refusal.kind, "figure_settings_refused");
     assert!(
@@ -20766,7 +20807,12 @@ fn the_raster_budget_boundary_is_the_stated_one() {
         .expect("32,000,000 pixels exactly is inside the budget");
 
     let refusal = service
-        .begin_spectrum_export(&token, "png", &figure_settings(8_000, 4_001, 300))
+        .begin_spectrum_export(
+            &token,
+            "png",
+            &full_spectrum_range(),
+            &figure_settings(8_000, 4_001, 300),
+        )
         .expect_err("one row past the ceiling is past it");
     assert_eq!(refusal.kind, "figure_settings_refused");
     assert!(refusal.summary.contains("32 million pixels"));
@@ -20783,7 +20829,7 @@ fn a_png_wrong_in_both_ways_is_refused_over_the_resolution_first() {
 
     let both_wrong = figure_settings(20_000, 20_000, 50);
     let refusal = service
-        .begin_spectrum_export(&token, "png", &both_wrong)
+        .begin_spectrum_export(&token, "png", &full_spectrum_range(), &both_wrong)
         .expect_err("neither the resolution nor the size can be honoured");
     assert!(
         refusal.summary.contains("between 72 and 1200"),
@@ -20793,7 +20839,7 @@ fn a_png_wrong_in_both_ways_is_refused_over_the_resolution_first() {
 
     let size_still_wrong = figure_settings(20_000, 20_000, 300);
     let refusal = service
-        .begin_spectrum_export(&token, "png", &size_still_wrong)
+        .begin_spectrum_export(&token, "png", &full_spectrum_range(), &size_still_wrong)
         .expect_err("the size was not fixed by fixing the resolution");
     assert!(
         refusal.summary.contains("32 million pixels"),
@@ -20812,7 +20858,12 @@ fn a_saved_png_reports_the_resolution_it_recorded_and_an_svg_reports_none() {
     let folder = file.path.parent().expect("a folder");
 
     let reservation = service
-        .begin_spectrum_export(&token, "png", &figure_settings(400, 300, 600))
+        .begin_spectrum_export(
+            &token,
+            "png",
+            &full_spectrum_range(),
+            &figure_settings(400, 300, 600),
+        )
         .expect("the export begins");
     let claimed = service
         .claim_spectrum_export(&reservation)
@@ -20829,7 +20880,12 @@ fn a_saved_png_reports_the_resolution_it_recorded_and_an_svg_reports_none() {
     assert_eq!(figure.dpi, Some(600));
 
     let reservation = service
-        .begin_spectrum_export(&token, "svg", &figure_settings(400, 300, 600))
+        .begin_spectrum_export(
+            &token,
+            "svg",
+            &full_spectrum_range(),
+            &figure_settings(400, 300, 600),
+        )
         .expect("the export begins");
     let claimed = service
         .claim_spectrum_export(&reservation)
@@ -20873,7 +20929,12 @@ fn a_spectrum_that_turns_out_unavailable_revokes_the_retained_one() {
         "the arrays are released once nothing names them"
     );
     let refusal = service
-        .begin_spectrum_export(&token, "svg", &default_figure_settings())
+        .begin_spectrum_export(
+            &token,
+            "svg",
+            &full_spectrum_range(),
+            &default_figure_settings(),
+        )
         .expect_err("the old token names a spectrum this session no longer has");
     assert_eq!(refusal.kind, "spectrum_export_stale");
 }
@@ -20902,7 +20963,12 @@ fn a_spectrum_whose_read_fails_revokes_the_retained_one() {
     assert!(retained.upgrade().is_none());
     assert_eq!(
         service
-            .begin_spectrum_export(&token, "csv", &default_figure_settings())
+            .begin_spectrum_export(
+                &token,
+                "csv",
+                &full_spectrum_range(),
+                &default_figure_settings()
+            )
             .expect_err("stale")
             .kind,
         "spectrum_export_stale"
@@ -20926,7 +20992,12 @@ fn removing_the_previews_own_dataset_revokes_the_retained_spectrum() {
     assert!(retained.upgrade().is_none());
     assert_eq!(
         service
-            .begin_spectrum_export(&token, "svg", &default_figure_settings())
+            .begin_spectrum_export(
+                &token,
+                "svg",
+                &full_spectrum_range(),
+                &default_figure_settings()
+            )
             .expect_err("stale")
             .kind,
         "spectrum_export_stale"
@@ -20958,7 +21029,12 @@ fn removing_an_unrelated_dataset_leaves_the_retained_spectrum() {
         "the spectrum on screen is untouched by a removal elsewhere"
     );
     service
-        .begin_spectrum_export(&token, "svg", &default_figure_settings())
+        .begin_spectrum_export(
+            &token,
+            "svg",
+            &full_spectrum_range(),
+            &default_figure_settings(),
+        )
         .expect("the spectrum on screen is still exportable");
 }
 
@@ -20977,7 +21053,12 @@ fn clearing_the_list_revokes_the_retained_spectrum() {
     assert!(retained.upgrade().is_none());
     assert_eq!(
         service
-            .begin_spectrum_export(&token, "tsv", &default_figure_settings())
+            .begin_spectrum_export(
+                &token,
+                "tsv",
+                &full_spectrum_range(),
+                &default_figure_settings()
+            )
             .expect_err("stale")
             .kind,
         "spectrum_export_stale"
@@ -21005,7 +21086,12 @@ fn opening_a_preview_revokes_whatever_the_last_one_left() {
     assert!(retained.upgrade().is_none());
     assert_eq!(
         service
-            .begin_spectrum_export(&token, "svg", &default_figure_settings())
+            .begin_spectrum_export(
+                &token,
+                "svg",
+                &full_spectrum_range(),
+                &default_figure_settings()
+            )
             .expect_err("stale")
             .kind,
         "spectrum_export_stale"
@@ -21030,7 +21116,12 @@ fn reading_the_roster_does_not_revoke_the_retained_spectrum() {
 
     assert!(service.retained_spectrum_weak().is_some());
     service
-        .begin_spectrum_export(&token, "svg", &default_figure_settings())
+        .begin_spectrum_export(
+            &token,
+            "svg",
+            &full_spectrum_range(),
+            &default_figure_settings(),
+        )
         .expect("the spectrum a user is reading stays exportable");
 }
 
@@ -21045,7 +21136,12 @@ fn a_claimed_export_finishes_after_the_spectrum_it_names_is_revoked() {
     let token = loaded_export_token(&service, &selected.handle, 0);
 
     let reservation = service
-        .begin_spectrum_export(&token, "svg", &default_figure_settings())
+        .begin_spectrum_export(
+            &token,
+            "svg",
+            &full_spectrum_range(),
+            &default_figure_settings(),
+        )
         .expect("the export begins");
     let claimed = service
         .claim_spectrum_export(&reservation)
@@ -21060,7 +21156,12 @@ fn a_claimed_export_finishes_after_the_spectrum_it_names_is_revoked() {
     );
     assert_eq!(
         service
-            .begin_spectrum_export(&token, "svg", &default_figure_settings())
+            .begin_spectrum_export(
+                &token,
+                "svg",
+                &full_spectrum_range(),
+                &default_figure_settings()
+            )
             .expect_err("a new export is refused")
             .kind,
         "spectrum_export_stale"
@@ -21096,13 +21197,23 @@ fn a_later_spectrum_installs_one_snapshot_and_keeps_no_history() {
     );
     assert_eq!(
         service
-            .begin_spectrum_export(&first, "svg", &default_figure_settings())
+            .begin_spectrum_export(
+                &first,
+                "svg",
+                &full_spectrum_range(),
+                &default_figure_settings()
+            )
             .expect_err("stale")
             .kind,
         "spectrum_export_stale"
     );
     service
-        .begin_spectrum_export(&second, "svg", &default_figure_settings())
+        .begin_spectrum_export(
+            &second,
+            "svg",
+            &full_spectrum_range(),
+            &default_figure_settings(),
+        )
         .expect("the spectrum now on screen is the exportable one");
 }
 
@@ -21128,7 +21239,12 @@ fn choosing_another_file_through_the_picker_revokes_the_retained_spectrum() {
     assert!(retained.upgrade().is_none());
     assert_eq!(
         service
-            .begin_spectrum_export(&token, "svg", &default_figure_settings())
+            .begin_spectrum_export(
+                &token,
+                "svg",
+                &full_spectrum_range(),
+                &default_figure_settings()
+            )
             .expect_err("stale")
             .kind,
         "spectrum_export_stale"
@@ -21145,7 +21261,12 @@ fn spectrum_saved_as(
     destination: &Path,
 ) -> Option<PreviewErrorDto> {
     let reservation = service
-        .begin_spectrum_export(token, format, &default_figure_settings())
+        .begin_spectrum_export(
+            token,
+            format,
+            &full_spectrum_range(),
+            &default_figure_settings(),
+        )
         .expect("the export begins");
     let claimed = service
         .claim_spectrum_export(&reservation)
@@ -21510,13 +21631,13 @@ fn the_selected_spectrum_export_answers_the_same_way_it_always_did() {
 
     for format in ["csv", "tsv"] {
         let reservation = service
-            .begin_spectrum_export(&token, format, &oversize)
+            .begin_spectrum_export(&token, format, &full_spectrum_range(), &oversize)
             .expect("a data document has no figure settings here either");
         service.cancel_spectrum_export(&reservation);
     }
     assert_eq!(
         service
-            .begin_spectrum_export(&token, "svg", &oversize)
+            .begin_spectrum_export(&token, "svg", &full_spectrum_range(), &oversize)
             .expect_err("a figure still answers for its size")
             .kind,
         "figure_settings_refused",
@@ -22576,7 +22697,12 @@ fn a_spectrum_of_another_run_is_not_a_scan_of_this_chromatogram() {
     // about either token.
     assert_eq!(chromatogram_export_refusal(&service, &visible), None);
     let reservation = service
-        .begin_spectrum_export(&spectrum, "svg", &default_figure_settings())
+        .begin_spectrum_export(
+            &spectrum,
+            "svg",
+            &full_spectrum_range(),
+            &default_figure_settings(),
+        )
         .expect("the spectrum this session holds is still exportable");
     service.cancel_spectrum_export(&reservation);
 }
@@ -22900,7 +23026,12 @@ fn a_linked_export_in_progress_closes_every_other_scientific_export() {
 
     assert_eq!(
         service
-            .begin_spectrum_export(&spectrum, "csv", &default_figure_settings())
+            .begin_spectrum_export(
+                &spectrum,
+                "csv",
+                &full_spectrum_range(),
+                &default_figure_settings()
+            )
             .expect_err("one lane")
             .kind,
         "spectrum_export_in_progress",
@@ -23091,7 +23222,12 @@ fn a_linked_figure_the_contract_refuses_is_refused_as_a_pair() {
     // refused by the same panel for the same reason.
     assert_eq!(
         service
-            .begin_spectrum_export(&spectrum, "svg", &default_figure_settings())
+            .begin_spectrum_export(
+                &spectrum,
+                "svg",
+                &full_spectrum_range(),
+                &default_figure_settings()
+            )
             .and_then(|reservation| service.claim_spectrum_export(&reservation))
             .and_then(|claimed| service.write_spectrum_export(&claimed, &folder.join("one.svg")))
             .expect_err("the same reading is refused the same way")
@@ -23337,7 +23473,12 @@ fn a_projection_takes_no_scientific_export_lane() {
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
 
     service
-        .begin_spectrum_export(&spectrum.export_token, "svg", &default_figure_settings())
+        .begin_spectrum_export(
+            &spectrum.export_token,
+            "svg",
+            &full_spectrum_range(),
+            &default_figure_settings(),
+        )
         .expect("the lane is free");
 
     service
@@ -23668,5 +23809,666 @@ fn revoking_the_source_takes_its_settled_verdict_with_it() {
         settlements(),
         after_revocation,
         "a revoked source was re-validated",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// M5.3 -- a selected spectrum exports over its full source or one committed
+// m/z range.
+//
+// The service tests here are about the boundary rather than the builders: which
+// requests it accepts, which it refuses and in whose words, what the outcome
+// says, and what it does *not* do -- no second lane, no backend operation, and
+// no reading of anything a screen was given.
+// ---------------------------------------------------------------------------
+
+/// A spectrum whose observations straddle the windows these tests commit to.
+fn ranged_spectrum_response(index: u64) -> Response {
+    Response::File(selected_spectrum_output(
+        index,
+        &[
+            (100.0, 5.0),
+            (110.0, 20.0),
+            (120.0, 9_000_000.0),
+            (130.0, 8.0),
+            (140.0, 3.0),
+        ],
+    ))
+}
+
+/// One loaded ranged spectrum and the service that holds it.
+fn a_ranged_spectrum(name: &str) -> (TestFile, PreviewService, super::dto::SelectedSpectrumDto) {
+    let file = TestFile::new(name);
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
+        ranged_spectrum_response(0),
+    ])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+    (file, service, spectrum)
+}
+
+/// Runs one selected-spectrum export end to end and answers what it wrote.
+fn export_spectrum_range(
+    service: &PreviewService,
+    token: &str,
+    format: &str,
+    range: &SpectrumRangeDto,
+    destination: &std::path::Path,
+) -> SpectrumExportOutcomeDto {
+    let reservation = service
+        .begin_spectrum_export(token, format, range, &default_figure_settings())
+        .expect("the export begins");
+    let claimed = service
+        .claim_spectrum_export(&reservation)
+        .expect("the reservation is claimable");
+    service
+        .write_spectrum_export(&claimed, destination)
+        .expect("the file is written")
+}
+
+#[test]
+fn a_current_range_data_export_writes_schema_two_over_the_committed_window() {
+    let (file, service, spectrum) = a_ranged_spectrum("m53-current-csv");
+    let destination = file.directory.join("range.csv");
+
+    let outcome = export_spectrum_range(
+        &service,
+        &spectrum.export_token,
+        "csv",
+        &current_spectrum_range(110.0, 130.0),
+        &destination,
+    );
+
+    let SpectrumExportOutcomeDto::Saved {
+        format,
+        file_name,
+        figure,
+        range_scope,
+        range_low,
+        range_high,
+        source_point_count,
+        exported_point_count,
+    } = outcome
+    else {
+        panic!("the export saved");
+    };
+    assert_eq!(format, "csv");
+    assert_eq!(file_name, "range.csv");
+    assert_eq!(figure, None, "no figure setting reaches a data document");
+    assert_eq!(range_scope, "current");
+    assert_eq!(range_low, Some(110.0));
+    assert_eq!(range_high, Some(130.0));
+    assert_eq!(
+        source_point_count, 5,
+        "the complete retained count, and not what the transfer carried"
+    );
+    assert_eq!(exported_point_count, 3);
+
+    let document = fs::read_to_string(&destination).expect("the file exists");
+    assert!(document.contains("#schema_version,2\n"), "{document}");
+    assert!(document.contains("#range_scope,current\n"), "{document}");
+    assert!(document.contains("#source_point_count,5\n"), "{document}");
+    assert!(document.contains("#exported_point_count,3\n"), "{document}");
+    assert!(document.contains("#range_low,110\n"), "{document}");
+    assert!(document.contains("#range_high,130\n"), "{document}");
+    assert!(
+        document.ends_with("110,20\n120,9000000\n130,8\n"),
+        "exactly the measured observations inside the window: {document}"
+    );
+}
+
+#[test]
+fn a_full_source_data_export_is_still_schema_one() {
+    let (file, service, spectrum) = a_ranged_spectrum("m53-full-csv");
+    let destination = file.directory.join("full.csv");
+
+    let outcome = export_spectrum_range(
+        &service,
+        &spectrum.export_token,
+        "csv",
+        &full_spectrum_range(),
+        &destination,
+    );
+
+    let SpectrumExportOutcomeDto::Saved {
+        file_name,
+        range_scope,
+        range_low,
+        range_high,
+        source_point_count,
+        exported_point_count,
+        ..
+    } = outcome
+    else {
+        panic!("the export saved");
+    };
+    assert_eq!(file_name, "full.csv");
+    assert_eq!(range_scope, "full");
+    assert_eq!(
+        (range_low, range_high),
+        (None, None),
+        "a full-source export has no window, rather than one that happens to be wide"
+    );
+    assert_eq!(source_point_count, 5);
+    assert_eq!(
+        exported_point_count, 5,
+        "a full export covers every retained point"
+    );
+
+    let document = fs::read_to_string(&destination).expect("the file exists");
+    assert!(document.contains("#schema_version,1\n"), "{document}");
+    assert!(document.contains("#point_count,5\n"), "{document}");
+    assert!(
+        !document.contains("#range_scope"),
+        "version 1 gains no field: {document}"
+    );
+}
+
+#[test]
+fn a_current_range_export_suggests_a_scope_disambiguated_name() {
+    let (_file, service, spectrum) = a_ranged_spectrum("m53-name");
+    for (format, expected) in [
+        ("svg", "mscanvas-spectrum-0-current.svg"),
+        ("png", "mscanvas-spectrum-0-current.png"),
+        ("csv", "mscanvas-spectrum-0-current.csv"),
+        ("tsv", "mscanvas-spectrum-0-current.tsv"),
+    ] {
+        let reservation = service
+            .begin_spectrum_export(
+                &spectrum.export_token,
+                format,
+                &current_spectrum_range(110.0, 130.0),
+                &default_figure_settings(),
+            )
+            .expect("the export begins");
+        let claimed = service
+            .claim_spectrum_export(&reservation)
+            .expect("claimable");
+        assert_eq!(claimed.suggested_file_name(), expected);
+        service.cancel_spectrum_export(&reservation);
+    }
+    // And the full-source names are exactly what they were.
+    let reservation = service
+        .begin_spectrum_export(
+            &spectrum.export_token,
+            "csv",
+            &full_spectrum_range(),
+            &default_figure_settings(),
+        )
+        .expect("the export begins");
+    let claimed = service
+        .claim_spectrum_export(&reservation)
+        .expect("claimable");
+    assert_eq!(claimed.suggested_file_name(), "mscanvas-spectrum-0.csv");
+    service.cancel_spectrum_export(&reservation);
+}
+
+#[test]
+fn a_current_range_with_nothing_committed_covers_the_whole_admitted_domain() {
+    let (file, service, spectrum) = a_ranged_spectrum("m53-current-whole");
+    let destination = file.directory.join("whole.csv");
+
+    let outcome = export_spectrum_range(
+        &service,
+        &spectrum.export_token,
+        "csv",
+        &current_whole_spectrum_range(),
+        &destination,
+    );
+
+    let SpectrumExportOutcomeDto::Saved {
+        range_scope,
+        range_low,
+        range_high,
+        exported_point_count,
+        ..
+    } = outcome
+    else {
+        panic!("the export saved");
+    };
+    assert_eq!(
+        range_scope, "current",
+        "the user chose a current range and the document says so"
+    );
+    assert_eq!(
+        (range_low, range_high),
+        (Some(100.0), Some(140.0)),
+        "resolved from the retained domain rather than invented as a subrange"
+    );
+    assert_eq!(exported_point_count, 5);
+    let document = fs::read_to_string(&destination).expect("the file exists");
+    assert!(document.contains("#schema_version,2\n"), "{document}");
+}
+
+#[test]
+fn an_empty_current_range_is_a_successful_export_in_every_format() {
+    let (file, service, spectrum) = a_ranged_spectrum("m53-empty-range");
+    for format in ["csv", "tsv", "svg"] {
+        let destination = file.directory.join(format!("empty.{format}"));
+        let outcome = export_spectrum_range(
+            &service,
+            &spectrum.export_token,
+            format,
+            &current_spectrum_range(121.0, 129.0),
+            &destination,
+        );
+        let SpectrumExportOutcomeDto::Saved {
+            exported_point_count,
+            source_point_count,
+            range_low,
+            range_high,
+            ..
+        } = outcome
+        else {
+            panic!("the export saved");
+        };
+        assert_eq!(
+            exported_point_count, 0,
+            "a window with no reported peak is a scientific result"
+        );
+        assert_eq!(source_point_count, 5);
+        assert_eq!((range_low, range_high), (Some(121.0), Some(129.0)));
+        assert!(destination.is_file(), "the {format} file was written");
+    }
+    let csv = fs::read_to_string(file.directory.join("empty.csv")).expect("the file exists");
+    assert!(
+        csv.ends_with("mz,intensity\n"),
+        "the header, and no invented record after it: {csv}"
+    );
+}
+
+#[test]
+fn a_current_range_outside_the_spectrum_is_refused_in_m_over_z_words() {
+    let (_file, service, spectrum) = a_ranged_spectrum("m53-outside");
+    let refusal = service
+        .begin_spectrum_export(
+            &spectrum.export_token,
+            "csv",
+            &current_spectrum_range(90.0, 130.0),
+            &default_figure_settings(),
+        )
+        .expect_err("a window this spectrum does not have");
+    assert_eq!(refusal.kind, "spectrum_range_outside_source");
+    assert!(
+        refusal.summary.contains("m/z"),
+        "an m/z refusal names the axis the reader chose: {}",
+        refusal.summary
+    );
+    assert!(
+        !refusal.summary.contains("retention"),
+        "and never sends them to the chromatogram's control: {}",
+        refusal.summary
+    );
+    // Nothing was clamped: the full source still exports, and so does a range
+    // the spectrum really has.
+    assert!(
+        service
+            .begin_spectrum_export(
+                &spectrum.export_token,
+                "csv",
+                &full_spectrum_range(),
+                &default_figure_settings()
+            )
+            .is_ok(),
+        "a refused range left the one lane free"
+    );
+}
+
+#[test]
+fn a_malformed_range_never_reaches_the_retained_spectrum() {
+    let (_file, service, spectrum) = a_ranged_spectrum("m53-malformed");
+    for range in [
+        // Inverted, non-finite, half present, and a full request carrying a
+        // window it has no use for.
+        SpectrumRangeDto {
+            scope: "current".to_owned(),
+            low: Some(130.0),
+            high: Some(110.0),
+        },
+        SpectrumRangeDto {
+            scope: "current".to_owned(),
+            low: Some(f64::NAN),
+            high: Some(130.0),
+        },
+        SpectrumRangeDto {
+            scope: "current".to_owned(),
+            low: Some(110.0),
+            high: None,
+        },
+        SpectrumRangeDto {
+            scope: "full".to_owned(),
+            low: Some(110.0),
+            high: Some(130.0),
+        },
+        SpectrumRangeDto {
+            scope: "visible".to_owned(),
+            low: None,
+            high: None,
+        },
+    ] {
+        assert_eq!(
+            service
+                .begin_spectrum_export(
+                    &spectrum.export_token,
+                    "csv",
+                    &range,
+                    &default_figure_settings()
+                )
+                .expect_err("not a range this boundary accepts")
+                .kind,
+            "spectrum_range_outside_source",
+        );
+    }
+}
+
+#[test]
+fn a_domain_refused_spectrum_offers_no_current_range_and_keeps_its_data_exports() {
+    // Descending m/z: legal mzML, refused by the figure contract, and valid
+    // source data throughout.
+    let file = TestFile::new("m53-refused-viewport");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
+        selected_spectrum_output(0, &[(500.0, 1_000.0), (100.0, 9_000.0)]),
+    )])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+    assert_eq!(
+        spectrum.viewport_domain,
+        SpectrumViewportDomainDto::Refused {
+            reason: SpectrumDomainRefusalDto::SourceNotOrdered
+        },
+    );
+
+    for range in [
+        current_whole_spectrum_range(),
+        current_spectrum_range(100.0, 500.0),
+    ] {
+        let refusal = service
+            .begin_spectrum_export(
+                &spectrum.export_token,
+                "csv",
+                &range,
+                &default_figure_settings(),
+            )
+            .expect_err("this spectrum has no current range");
+        assert_eq!(refusal.kind, "spectrum_range_unavailable");
+        assert!(
+            refusal.summary.contains("full spectrum"),
+            "the recovery is named: {}",
+            refusal.summary
+        );
+    }
+
+    // And the two data formats still write the whole source, in source order.
+    for (format, delimiter) in [("csv", ','), ("tsv", '\t')] {
+        let destination = file.directory.join(format!("refused.{format}"));
+        let outcome = export_spectrum_range(
+            &service,
+            &spectrum.export_token,
+            format,
+            &full_spectrum_range(),
+            &destination,
+        );
+        let SpectrumExportOutcomeDto::Saved {
+            exported_point_count,
+            range_scope,
+            ..
+        } = outcome
+        else {
+            panic!("the export saved");
+        };
+        assert_eq!(exported_point_count, 2);
+        assert_eq!(range_scope, "full");
+        let document = fs::read_to_string(&destination).expect("the file exists");
+        assert!(
+            document.ends_with(&format!("500{delimiter}1000\n100{delimiter}9000\n")),
+            "source order, which is not m/z order and is not made into one: {document}"
+        );
+    }
+
+    // The existing figure refusal is preserved, and is its own refusal.
+    let reservation = service
+        .begin_spectrum_export(
+            &spectrum.export_token,
+            "svg",
+            &full_spectrum_range(),
+            &default_figure_settings(),
+        )
+        .expect("the figure refusal is the renderer's, not the lane's");
+    let claimed = service
+        .claim_spectrum_export(&reservation)
+        .expect("claimable");
+    assert_eq!(
+        service
+            .write_spectrum_export(&claimed, &file.directory.join("refused.svg"))
+            .expect_err("an unordered series is not a figure")
+            .kind,
+        "spectrum_export_refused",
+    );
+}
+
+#[test]
+fn a_current_range_export_reads_no_projection_and_runs_no_backend_operation() {
+    // One response, already consumed by the load. A second read of the
+    // acquisition would exhaust the provider and fail; none happens.
+    let (file, service, spectrum) = a_ranged_spectrum("m53-no-reread");
+    let before = settlements();
+
+    // The screen's drawing is unavailable for this window -- and that changes
+    // nothing about the export, which reads the retained source and the
+    // committed range rather than the drawing.
+    assert_eq!(
+        service
+            .project_selected_spectrum(&spectrum.export_token, 90.0, 130.0)
+            .expect_err("the screen cannot draw a window outside the source")
+            .kind,
+        "spectrum_projection_window_refused",
+    );
+
+    let destination = file.directory.join("no-reread.csv");
+    let outcome = export_spectrum_range(
+        &service,
+        &spectrum.export_token,
+        "csv",
+        &current_spectrum_range(110.0, 130.0),
+        &destination,
+    );
+    let SpectrumExportOutcomeDto::Saved {
+        exported_point_count,
+        ..
+    } = outcome
+    else {
+        panic!("the export saved");
+    };
+    assert_eq!(exported_point_count, 3);
+    assert_eq!(
+        settlements(),
+        before,
+        "drawability was settled when the spectrum was retained, not by an export",
+    );
+
+    // And the viewport is still usable afterwards: an export is not a read of
+    // the acquisition, so nothing about the session moved.
+    let projection = service
+        .project_selected_spectrum(&spectrum.export_token, 110.0, 130.0)
+        .expect("the screen still draws");
+    assert_eq!(projection.source_points, 3);
+}
+
+#[test]
+fn a_failing_screen_projection_does_not_close_the_current_range_export() {
+    let (file, service, spectrum) = a_ranged_spectrum("m53-projection-independent");
+
+    // Every way the screen can fail to have a drawing for a window, one after
+    // another. None of them is a fact about the science.
+    assert_eq!(
+        service
+            .project_selected_spectrum(&spectrum.export_token, f64::NAN, 130.0)
+            .expect_err("not a window")
+            .kind,
+        "spectrum_projection_window_refused",
+    );
+    assert_eq!(
+        service
+            .project_selected_spectrum("999999", 110.0, 130.0)
+            .expect_err("a token this session does not hold")
+            .kind,
+        "spectrum_projection_stale",
+    );
+
+    let destination = file.directory.join("still-exports.csv");
+    let outcome = export_spectrum_range(
+        &service,
+        &spectrum.export_token,
+        "csv",
+        &current_spectrum_range(110.0, 130.0),
+        &destination,
+    );
+    let SpectrumExportOutcomeDto::Saved {
+        exported_point_count,
+        range_low,
+        range_high,
+        ..
+    } = outcome
+    else {
+        panic!("the export saved");
+    };
+    assert_eq!(exported_point_count, 3);
+    assert_eq!((range_low, range_high), (Some(110.0), Some(130.0)));
+}
+
+#[test]
+fn a_range_export_and_a_chromatogram_export_share_the_one_scientific_lane() {
+    let file = TestFile::new("m53-one-lane");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
+        ranged_spectrum_response(0),
+    ])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    let reservation = service
+        .begin_spectrum_export(
+            &spectrum.export_token,
+            "csv",
+            &current_spectrum_range(110.0, 130.0),
+            &default_figure_settings(),
+        )
+        .expect("the range export begins");
+    // Claiming is what opens a dialog, and what nothing may supersede. A newer
+    // begin over an *unclaimed* reservation still replaces it, which is ADR
+    // 0034's existing semantic and is not widened by adding a range.
+    service
+        .claim_spectrum_export(&reservation)
+        .expect("its dialog");
+
+    // The same surface over either scope: one lane, whatever range is chosen.
+    for range in [full_spectrum_range(), current_spectrum_range(110.0, 130.0)] {
+        assert_eq!(
+            service
+                .begin_spectrum_export(
+                    &spectrum.export_token,
+                    "svg",
+                    &range,
+                    &default_figure_settings()
+                )
+                .expect_err("one lane")
+                .kind,
+            "spectrum_export_in_progress",
+        );
+    }
+
+    service.cancel_spectrum_export(&reservation);
+    assert!(
+        service
+            .begin_spectrum_export(
+                &spectrum.export_token,
+                "svg",
+                &current_spectrum_range(110.0, 130.0),
+                &default_figure_settings()
+            )
+            .is_ok(),
+        "the lane is free once the range export is cancelled"
+    );
+}
+
+/// The beyond-transfer-prefix property has its home where it is reachable.
+///
+/// A spectrum large enough to truncate one transfer does not survive
+/// `MAX_PREVIEW_TEXT_BYTES`, which
+/// `the_transfer_bound_is_unreachable_because_the_text_bound_refuses_first`
+/// already records. So the range export's own beyond-prefix proof is in
+/// `export::tests`, over a spectrum built directly rather than parsed -- see
+/// `a_range_beyond_the_transfer_prefix_exports_retained_observations`. This
+/// pins the reason the service suite does not carry a second copy of it.
+#[test]
+fn the_range_export_beyond_prefix_proof_lives_where_the_source_can_be_built() {
+    let count = MAX_SPECTRUM_POINTS + 500;
+    let file = TestFile::new("m53-beyond-prefix-reachability");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![ascending_spectrum(
+        count,
+    )])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    assert_eq!(
+        service
+            .load_spectrum(&selected.handle, 0)
+            .expect_err("the text bound refuses such a spectrum first")
+            .kind,
+        "incomplete_parser_input",
+    );
+}
+
+#[test]
+fn a_claimed_range_export_writes_its_begin_time_range_after_the_selection_moves() {
+    let file = TestFile::new("m53-begin-time-range");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
+        ranged_spectrum_response(0),
+        Response::File(selected_spectrum_output(1, &[(700.0, 1.0), (800.0, 2.0)])),
+    ])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+
+    let reservation = service
+        .begin_spectrum_export(
+            &spectrum.export_token,
+            "csv",
+            &current_spectrum_range(110.0, 130.0),
+            &default_figure_settings(),
+        )
+        .expect("the export begins");
+    let claimed = service
+        .claim_spectrum_export(&reservation)
+        .expect("claimable");
+
+    // The user is in the save dialog. Another spectrum is selected, with a
+    // different domain entirely.
+    let replacement = loaded_spectrum(&service, &selected.handle, 1);
+    assert_ne!(replacement.export_token, spectrum.export_token);
+
+    let destination = file.directory.join("begin-time.csv");
+    let outcome = service
+        .write_spectrum_export(&claimed, &destination)
+        .expect("the claimed export still writes what it claimed");
+    let SpectrumExportOutcomeDto::Saved {
+        range_low,
+        range_high,
+        source_point_count,
+        exported_point_count,
+        ..
+    } = outcome
+    else {
+        panic!("the export saved");
+    };
+    assert_eq!(
+        (range_low, range_high),
+        (Some(110.0), Some(130.0)),
+        "the range decided at BEGIN, not one re-read afterwards"
+    );
+    assert_eq!(source_point_count, 5);
+    assert_eq!(exported_point_count, 3);
+
+    let document = fs::read_to_string(&destination).expect("the file exists");
+    assert!(document.contains("#spectrum_index,0\n"), "{document}");
+    assert!(
+        document.ends_with("110,20\n120,9000000\n130,8\n"),
+        "{document}"
     );
 }

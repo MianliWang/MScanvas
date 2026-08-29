@@ -486,10 +486,18 @@ async fn save_workspace_conversion_diagnostics(
 /// Binds one selected-spectrum export and reserves the right to choose a file.
 ///
 /// The webview names the spectrum by the opaque token it received with that
-/// spectrum's panel, and the format by one of three fixed words. It supplies no
-/// path, no arrays and no dataset handle: which measurement this writes was
-/// decided when Rust interpreted it, and a token from an earlier selection is
-/// refused rather than answered with whatever spectrum is current now.
+/// spectrum's panel, the format by one of four fixed words, and how much of the
+/// spectrum by a scope and the m/z window its viewport has committed to. It
+/// supplies no path, no arrays and no dataset handle: which measurement this
+/// writes was decided when Rust interpreted it, and a token from an earlier
+/// selection is refused rather than answered with whatever spectrum is current
+/// now.
+///
+/// The range is a **request**. Rust resolves it against the retained snapshot,
+/// refuses a window that spectrum does not have rather than clamping it, and
+/// fixes the answer here -- so a viewport that moves while the picker is open
+/// changes nothing about the file being written. No screen projection reaches
+/// this path: a drawing is not the science.
 ///
 /// Deliberately separate from choosing a destination, for the reason the
 /// diagnostics export gives: a webview can reload between any two IPC fetches,
@@ -502,12 +510,15 @@ async fn save_workspace_conversion_diagnostics(
 async fn begin_selected_spectrum_export(
     export_token: String,
     format: String,
+    range: preview::dto::SpectrumRangeDto,
     settings: preview::dto::FigureSettingsDto,
     service: State<'_, SharedService>,
 ) -> Result<String, PreviewErrorDto> {
     let service = Arc::clone(&service);
-    off_the_async_runtime(move || service.begin_spectrum_export(&export_token, &format, &settings))
-        .await?
+    off_the_async_runtime(move || {
+        service.begin_spectrum_export(&export_token, &format, &range, &settings)
+    })
+    .await?
 }
 
 /// Shows the native save dialog for one exact reservation and writes the file.
@@ -526,6 +537,7 @@ async fn begin_selected_spectrum_export(
 #[tauri::command]
 async fn copy_selected_spectrum_plot(
     export_token: String,
+    range: preview::dto::SpectrumRangeDto,
     settings: preview::dto::FigureSettingsDto,
     app: tauri::AppHandle,
     service: State<'_, SharedService>,
@@ -533,8 +545,10 @@ async fn copy_selected_spectrum_plot(
     let service = Arc::clone(&service);
     // Rasterizing a large figure is real work, and the clipboard write is a
     // platform call. Neither belongs on an async worker.
-    off_the_async_runtime(move || service.copy_spectrum_plot(&app, &export_token, &settings))
-        .await?
+    off_the_async_runtime(move || {
+        service.copy_spectrum_plot(&app, &export_token, &range, &settings)
+    })
+    .await?
 }
 
 /// Shows the native save dialog for one exact reservation and writes the file.
