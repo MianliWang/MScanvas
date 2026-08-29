@@ -1190,6 +1190,93 @@ STATUS_SUBJECTS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+def validate_a_spectrum_range_is_resolved_in_one_place(errors: list[str]) -> None:
+    """A range comes from the retained snapshot, and a drawing cannot become one.
+
+    Three facts, and each is a different way M5.3 could have gone wrong.
+
+    **The export module cannot see a screen projection.** `ScreenProjection` is
+    the bounded drawing a viewport receives, and substituting it for the science
+    is the one mistake a range export makes easiest -- the two are arrays of the
+    same shape about the same spectrum. `preview/export.rs` writes every
+    scientific document and does not name the type at all, so the substitution
+    is not something to remember not to do.
+
+    **One resolver, reached from two places.** `SpectrumSnapshot::resolve` is
+    where a requested range is agreed to against the retained source, and the
+    only functions that may reach it are the two that bind an export: one for a
+    save and one for a copy. A third caller would be a second place a window
+    could be agreed to differently -- and the reason to check it here rather than
+    in a test is that a test can only see the answers, never how many places
+    produced them.
+
+    **The panel builder takes no range.** ADR 0036's rule that the linked
+    figure's lower panel is the complete selected spectrum is preserved by
+    `spectrum_panel`'s signature: there is nothing for a range chooser to pass
+    it. A parameter added here would make that rule a convention again.
+    """
+    whole = (ROOT / "apps/desktop/src-tauri/src/preview/export.rs").read_text(
+        encoding="utf-8"
+    )
+    # Production only. A test may resolve a range for itself -- that is what a
+    # test of a resolver does -- and counting those would make this rule about
+    # how the suite is written rather than about who may agree a window.
+    export = whole.split("\n#[cfg(test)]\nmod tests {", 1)[0]
+
+    if "ScreenProjection" in export:
+        fail(
+            "preview/export.rs names `ScreenProjection`. That type is the bounded drawing "
+            "a viewport receives, and this module writes scientific documents -- a range "
+            "export reads the complete retained source and the committed window, never "
+            "the arrays a screen was given",
+            errors,
+        )
+
+    # Method-level rather than free-function: both binders are methods of the
+    # export slot, so this is the four-space scan rather than the column-zero one.
+    resolvers = functions_naming(export, ".resolve(request)")
+    # The five binders, on both axes. A spectrum's two reach
+    # `SpectrumSnapshot::resolve`; the chromatogram's three reach its own
+    # source's, which is a different type over a different axis -- and the fact
+    # that one scan cannot be told from the other by this needle is exactly why
+    # the two spectrum binders are also required by name below.
+    expected = {
+        "begin",
+        "begin_copy",
+        "begin_chromatogram",
+        "begin_chromatogram_copy",
+        "begin_linked_figure",
+        "linked_pair",
+    }
+    unexpected = resolvers - expected
+    if unexpected:
+        fail(
+            f"preview/export.rs: {sorted(unexpected)} resolve a range. A window is agreed "
+            "to against the retained source where an export is bound, and a second place "
+            "to agree one is a second answer to what a document covers",
+            errors,
+        )
+    for required in ("begin", "begin_copy"):
+        if required not in resolvers:
+            fail(
+                f"preview/export.rs::{required} no longer resolves its range. Resolving "
+                "anywhere but at BEGIN would let a viewport that moved while a dialog was "
+                "open change what is written",
+                errors,
+            )
+
+    if not re.search(
+        r"\npub\(super\) fn spectrum_panel\(spectrum: &SelectedSpectrumResult\)", export
+    ):
+        fail(
+            "preview/export.rs: `spectrum_panel` no longer takes exactly one spectrum and "
+            "nothing else. It is the panel the linked two-panel figure's lower half is "
+            "built from, and ADR 0036 says that half is the complete selected spectrum -- "
+            "a range parameter here is how a spectrum's own export scope would reach it",
+            errors,
+        )
+
+
 def validate_the_current_status_section_has_one_answer(errors: list[str]) -> None:
     """The newest status section does not deny what it just described.
 
@@ -1345,6 +1432,7 @@ def main() -> int:
         validate_the_linked_pair_is_bound_in_one_operation(errors)
         validate_the_current_status_section_has_one_answer(errors)
         validate_drawability_is_settled_in_one_place(errors)
+        validate_a_spectrum_range_is_resolved_in_one_place(errors)
         validate_current_status_documents_describe_the_shipped_product(errors)
 
     if errors:

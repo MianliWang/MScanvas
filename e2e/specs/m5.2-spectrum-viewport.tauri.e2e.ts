@@ -17,8 +17,8 @@
  * - a token this session no longer holds is refused as stale;
  * - moving a viewport launches no process and re-reads no acquisition;
  * - a drag asks for nothing until it settles;
- * - and the full-source export still sends a token and a format and no range,
- *   which is what "the screen never becomes the science" looks like from here.
+ * - and a full-source export still carries no window, which is what "the screen
+ *   never becomes the science" looks like from here.
  *
  * **One honest limitation, stated rather than worked around.** The panel's own
  * payload is still answered from the table, because reading a spectrum for real
@@ -325,7 +325,7 @@ describe("the m/z viewport against the real projection boundary", () => {
       await waitForADrawing();
     });
 
-    it("keeps the full-source export a token and a format, with no range", async () => {
+    it("leaves a full-source export carrying no window", async () => {
       await waitForADrawing();
       await pressButton("Zoom in m/z");
       await waitForADrawing();
@@ -345,9 +345,16 @@ describe("the m/z viewport against the real projection boundary", () => {
       const begun = (await ipcCalls()).find(
         (call) => call.command === "begin_selected_spectrum_export",
       );
-      // A committed viewport changed nothing about what an export asks for.
-      // There is no range in this payload, and M5.3 is where one would appear.
-      expect(Object.keys(begun?.args ?? {}).sort()).toEqual(["exportToken", "format", "settings"]);
+      // M5.3 added the range this payload now carries, and the point of this
+      // case survives it: the scope is `full`, so the committed viewport
+      // reached the request as nothing at all.
+      expect(Object.keys(begun?.args ?? {}).sort()).toEqual([
+        "exportToken",
+        "format",
+        "range",
+        "settings",
+      ]);
+      expect(begun?.args["range"]).toEqual({ scope: "full", low: null, high: null });
       expect(begun?.args["exportToken"]).toBe(SEEDED_TOKEN);
     });
   });

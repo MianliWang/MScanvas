@@ -311,7 +311,11 @@ describe("M4.1 selected-spectrum export, rendered", () => {
           // and theme and no physical resolution.
           figure:
             lower === "svg" ? { width: 1_200, height: 640, dpi: null, theme: "light" } : null,
-          pointCount: COMPLETE_POINT_COUNT,
+          rangeScope: "full",
+          rangeLow: null,
+          rangeHigh: null,
+          sourcePointCount: COMPLETE_POINT_COUNT,
+          exportedPointCount: COMPLETE_POINT_COUNT,
         });
 
         // The token the panel actually received, read from the rendered
