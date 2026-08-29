@@ -61,6 +61,8 @@ import type {
 } from "./spectrumViewportAction";
 import {
   applySpectrumViewportAction,
+  EVERY_SPECTRUM_VIEWPORT_ACTION,
+  hasProductiveSpectrumViewportAction,
   MZ_PAN_STEP,
   planMzWheelGesture,
   planRenderedMzTransition,
@@ -660,6 +662,112 @@ describe("what an m/z viewport control would do", () => {
  * Rust for the drawing again -- would be the defect the buttons were repaired
  * for, moved somewhere nobody looks.
  */
+describe("whether a viewport can do anything at all", () => {
+  /*
+   * The question a keyboard affordance is decided by.
+   *
+   * An **admitted** viewport is not automatically an **actionable** one, and
+   * conflating the two put an inert tab stop on a spectrum whose points all
+   * report a single m/z: `ready`, truthfully drawn, and with nowhere to go.
+   *
+   * The predicate is deliberately "any action is productive" rather than any of
+   * the plausible shortcuts, and the cases below are chosen to fail each
+   * shortcut in turn: one where only zooming in can act, one where zooming in is
+   * the one thing that cannot, and the zero-width case itself.
+   */
+
+  it("agrees with the action set it is built from, for every state below", () => {
+    // The property, stated once: this is exactly `some(available)` and is not
+    // allowed to become a second opinion about viewport limits.
+    const states = [
+      selected(),
+      committedAt(200, 300),
+      committedAt(FULL.low, FULL.low + minimumMzSpan(FULL)),
+      selected(admitted(250, 250)),
+      selected(REFUSED),
+      initialSpectrumViewportState,
+    ];
+
+    for (const state of states) {
+      const expected = EVERY_ACTION.some(
+        (action) => planSpectrumViewportAction(state, action).available,
+      );
+
+      expect(hasProductiveSpectrumViewportAction(state)).toBe(expected);
+    }
+  });
+
+  it("covers every action the type has, checked by the compiler and again here", () => {
+    // The exported list is derived from a `Record` keyed by the action union, so
+    // a sixth action fails the build rather than being silently left out. This
+    // pins the same thing at runtime, against the list the tests use.
+    expect([...EVERY_SPECTRUM_VIEWPORT_ACTION].sort()).toEqual([...EVERY_ACTION].sort());
+  });
+
+  it("says no for a spectrum whose whole domain is one m/z", () => {
+    const state = selected(admitted(250, 250));
+
+    for (const action of EVERY_ACTION) {
+      expect(planSpectrumViewportAction(state, action).available, action).toBe(false);
+    }
+    expect(hasProductiveSpectrumViewportAction(state)).toBe(false);
+  });
+
+  it("says yes at the whole spectrum, where only zooming in can act", () => {
+    // Four of five unavailable. A predicate reading "every action" would be
+    // wrong here, and this is the ordinary state every spectrum opens in.
+    const state = selected();
+
+    expect(planSpectrumViewportAction(state, "zoom-in").available).toBe(true);
+    for (const action of ["zoom-out", "pan-left", "pan-right", "reset"] as const) {
+      expect(planSpectrumViewportAction(state, action).available, action).toBe(false);
+    }
+    expect(hasProductiveSpectrumViewportAction(state)).toBe(true);
+  });
+
+  it("says yes at the narrowest window, where zooming in is the one thing that cannot", () => {
+    // The mirror image, so the predicate cannot be "zoom in decides it".
+    const state = committedAt(FULL.low, FULL.low + minimumMzSpan(FULL));
+
+    expect(planSpectrumViewportAction(state, "zoom-in").available).toBe(false);
+    expect(planSpectrumViewportAction(state, "zoom-out").available).toBe(true);
+    expect(hasProductiveSpectrumViewportAction(state)).toBe(true);
+  });
+
+  it("says no where there is no viewport to act on", () => {
+    expect(hasProductiveSpectrumViewportAction(selected(REFUSED))).toBe(false);
+    expect(hasProductiveSpectrumViewportAction(initialSpectrumViewportState)).toBe(false);
+  });
+
+  it("says yes for every admitted domain that has any width at all", () => {
+    /*
+     * Why `full.low !== full.high` is not used as the predicate, measured rather
+     * than argued. Across widths spanning eighteen orders of magnitude, and from
+     * three different committed windows each, some action is always productive
+     * -- so the two agree today, which is exactly why a test cannot tell them
+     * apart and why the planner is asked instead. What keeps them from drifting
+     * is that a change to the minimum span, the action set or the boundary
+     * normalisation moves this answer and would not move the shortcut.
+     */
+    for (const width of [1e-9, 1e-4, 0.04, 1, 400, 5_000, 1e9]) {
+      const low = 100;
+      const full = mzDomain(low, low + width);
+      const windows = [
+        selected(admitted(full.low, full.high)),
+        committedAt(full.low, full.low + minimumMzSpan(full)),
+        run(selected(admitted(full.low, full.high)), {
+          type: "viewport-step",
+          domain: mzDomain(full.low, full.low + width / 2),
+        }),
+      ];
+
+      for (const state of windows) {
+        expect(hasProductiveSpectrumViewportAction(state), String(width)).toBe(true);
+      }
+    }
+  });
+});
+
 describe("where a pan may go", () => {
   const cases: readonly {
     readonly name: string;

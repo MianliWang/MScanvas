@@ -28,6 +28,7 @@ import type {
 } from "./viewer/spectrumViewportAction";
 import {
   applySpectrumViewportAction,
+  hasProductiveSpectrumViewportAction,
   pannedTo,
   planMzWheelGesture,
   planRenderedMzTransition,
@@ -661,6 +662,11 @@ export function SpectrumViewport({
               plotRef: attachPlot,
               describedBy: `${RANGE_ID} ${STATUS_ID}`,
               onKeyDown: handleKeyDown,
+              // From the planner that governs every other consumer of this
+              // question, over the whole action set rather than the three with
+              // buttons. A viewport that is admitted and inert is described but
+              // not a tab stop.
+              focusable: hasProductiveSpectrumViewportAction(state),
             }}
           />
         </div>

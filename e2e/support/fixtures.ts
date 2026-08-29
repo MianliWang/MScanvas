@@ -108,6 +108,46 @@ export function truncatedSpectrum() {
   };
 }
 
+/** The single m/z every point of the inert spectrum below reports. */
+export const SPECTRUM_SINGLE_MZ = 301.25;
+
+/**
+ * A spectrum whose points all report one m/z: admitted, ready, and inert.
+ *
+ * The figure contract admits the domain -- it is a real range over real points,
+ * and calling it refused would be a lie about the data -- but it has no width.
+ * There is no subrange to zoom into, no superrange to zoom out to and nowhere to
+ * pan, so every viewport action is unavailable while the spectrum stays `ready`
+ * and is drawn normally.
+ *
+ * The case exists to hold apart two things that look alike from outside: a
+ * viewport that is *admitted* and one that is *actionable*.
+ */
+export function spectrumAtOneMz() {
+  const spectrum = spectrumWithPeaks();
+  return {
+    ...spectrum,
+    mz: spectrum.mz.map(() => SPECTRUM_SINGLE_MZ),
+    mzLow: SPECTRUM_SINGLE_MZ,
+    mzHigh: SPECTRUM_SINGLE_MZ,
+    basePeakMz: SPECTRUM_SINGLE_MZ,
+    viewportDomain: { state: "admitted", low: SPECTRUM_SINGLE_MZ, high: SPECTRUM_SINGLE_MZ },
+  };
+}
+
+/** The drawing that answers the one window that spectrum has. */
+export function singleMzProjection() {
+  const spectrum = spectrumAtOneMz();
+  return {
+    low: SPECTRUM_SINGLE_MZ,
+    high: SPECTRUM_SINGLE_MZ,
+    mz: spectrum.mz,
+    intensity: spectrum.intensity,
+    sourcePoints: spectrum.mz.length,
+    reduced: false,
+  };
+}
+
 /** A spectrum the figure contract cannot establish an m/z domain over. */
 export function spectrumWithoutViewport() {
   return {
@@ -148,6 +188,7 @@ export function ipcTable(
     readonly emptySpectrum?: boolean;
     readonly refusedViewport?: boolean;
     readonly truncatedSource?: boolean;
+    readonly oneMzViewport?: boolean;
   } = {},
 ) {
   const spectrum =
@@ -157,7 +198,9 @@ export function ipcTable(
         ? spectrumWithoutViewport()
         : options.truncatedSource === true
           ? truncatedSpectrum()
-          : spectrumWithPeaks();
+          : options.oneMzViewport === true
+            ? spectrumAtOneMz()
+            : spectrumWithPeaks();
   return {
     inspect_backend: availableBackend,
     get_workspace_roster: {
@@ -183,7 +226,8 @@ export function ipcTable(
     // about a particular window replaces it through `setInvokeResult`, and what
     // window was *asked for* is read from the call ledger rather than from what
     // came back.
-    project_selected_spectrum: fullSpectrumProjection(),
+    project_selected_spectrum:
+      options.oneMzViewport === true ? singleMzProjection() : fullSpectrumProjection(),
     // The two halves of one export. The reservation is opaque and the outcome
     // is replaced per test through `setInvokeResult`.
     begin_selected_spectrum_export: "reservation-1",

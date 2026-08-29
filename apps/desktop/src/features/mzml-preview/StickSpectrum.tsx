@@ -170,6 +170,18 @@ export type SpectrumSurface =
       /** The element saying what this viewport is doing right now. */
       readonly describedBy: string;
       readonly onKeyDown: KeyboardEventHandler<SVGSVGElement>;
+      /**
+       * Whether any viewport action would change what this spectrum shows.
+       *
+       * Separate from `kind`, because a viewport can be admitted and still have
+       * nothing to do: a spectrum whose points all report one m/z is `ready`,
+       * truthfully drawn, and inert. It has a description worth reading and no
+       * keyboard operation to perform, and those are different facts.
+       *
+       * The caller answers this from the M5.2 planner. Nothing here recomputes
+       * a viewport limit.
+       */
+      readonly focusable: boolean;
     };
 
 export interface StickSpectrumProps {
@@ -564,17 +576,27 @@ export function StickSpectrum({
   return (
     <figure className="spectrum-figure">
       <svg
+        // Described wherever there is a viewport, whether or not it can be
+        // moved. What the range is and what the drawing is doing are true of an
+        // inert viewport too, and are exactly what a reader who cannot act on it
+        // still needs.
         aria-describedby={surface.kind === "interactive" ? surface.describedBy : undefined}
         aria-labelledby={labelledBy}
         className="plot spectrum-plot"
-        onKeyDown={surface.kind === "interactive" ? surface.onKeyDown : undefined}
+        // Focusable exactly where there is something to do, and the keyboard
+        // exposed only there with it. A tab stop that reaches a picture nothing
+        // can be done to spends a keyboard user's time to tell them nothing --
+        // which is what this did for a spectrum whose whole domain is one m/z,
+        // because it asked whether a viewport existed rather than whether it
+        // could move.
+        onKeyDown={surface.kind === "interactive" && surface.focusable ? surface.onKeyDown : undefined}
         preserveAspectRatio="none"
+        // Attached wherever there is a viewport. The wheel listener lives on
+        // this node and must go on answering an inert spectrum's wheel by
+        // declining it, rather than never hearing it.
         ref={surface.kind === "interactive" ? surface.plotRef : undefined}
         role="img"
-        // Focusable exactly where there is something to do. A tab stop that
-        // reaches a picture nothing can be done to spends a keyboard user's
-        // time to tell them nothing.
-        tabIndex={surface.kind === "interactive" ? 0 : undefined}
+        tabIndex={surface.kind === "interactive" && surface.focusable ? 0 : undefined}
         viewBox={`0 0 ${PLOT_WIDTH} ${PLOT_HEIGHT}`}
       >
         <defs>

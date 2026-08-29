@@ -494,6 +494,100 @@ describe("the m/z viewport against the real projection boundary", () => {
     });
   });
 
+  describe("a viewport that is admitted and cannot move", () => {
+    /*
+     * The inert case, in the shell that ships.
+     *
+     * A spectrum whose points all report one m/z has a real domain and a real
+     * drawing, so it stays `ready` and must not be described as unnavigable.
+     * Every viewport action is nevertheless unavailable, and what is asserted
+     * here is that the real WebView2 keyboard order agrees: the drawing is not a
+     * tab stop, and attempting to navigate it costs nothing.
+     *
+     * **The limitation, stated rather than glossed.** This case answers
+     * `project_selected_spectrum` from the table instead of leaving it real.
+     * Rust's seeded snapshot spans a real range, so asking the production
+     * command for a zero-width window outside it would be the *window refusal*
+     * test -- which this suite already has, above -- rather than a test of the
+     * focus posture. Everything else here is the shipped composition: the real
+     * bundle, the real WebView2, the real Tauri IPC boundary and the real
+     * keyboard. The claim is about focus and about what is asked of Rust, and
+     * both are measured; it is not a claim about the real projection of a
+     * zero-width window.
+     */
+    const ONE_MZ = 301.25;
+
+    it("keeps the drawing out of the real WebView tab order, and asks for nothing", async () => {
+      await loadWith(
+        tauriTable({
+          viewportDomain: { state: "admitted", low: ONE_MZ, high: ONE_MZ },
+          extra: {
+            project_selected_spectrum: {
+              low: ONE_MZ,
+              high: ONE_MZ,
+              mz: [ONE_MZ, ONE_MZ, ONE_MZ],
+              intensity: [10, 90, 30],
+              sourcePoints: 3,
+              reduced: false,
+            },
+          },
+        }),
+      );
+      await selectFirstSpectrum();
+      await revealThePlot();
+      await waitForADrawing();
+
+      // Admitted, not refused: the panel says the range it has.
+      expect(await rangeCaption()).toContain("301.2500");
+      expect(await statusText()).not.toContain("cannot be navigated");
+
+      // Not a sequential focus target, by the attribute and by the traversal.
+      expect(
+        await browser.execute(
+          (css: string) => document.querySelector(css)?.getAttribute("tabindex"),
+          PLOT,
+        ),
+      ).toBeNull();
+      await browser.execute(() => {
+        (document.activeElement as HTMLElement | null)?.blur();
+        document.body.focus();
+      });
+      const trail: string[] = [];
+      for (let step = 0; step < 20; step += 1) {
+        await browser.keys(["Tab"]);
+        trail.push(
+          await browser.execute(() => {
+            const active = document.activeElement;
+            return active === null
+              ? "none"
+              : `${active.tagName.toLowerCase()}.${(active.getAttribute("class") ?? "").trim()}`;
+          }),
+        );
+      }
+      expect(trail.some((stop) => stop.includes("spectrum-plot"))).toBe(false);
+      expect(trail.some((stop) => stop.startsWith("button"))).toBe(true);
+
+      // And attempted navigation asked for nothing: the one drawing this
+      // spectrum's single window needed, and not one more.
+      const asked = (await projectionRequests()).length;
+      for (const key of ["+", "-", "ArrowLeft", "ArrowRight", "Home"]) {
+        await browser.execute(
+          (css: string, sent: string) => {
+            const plot = document.querySelector<SVGSVGElement>(css);
+            plot?.focus();
+            plot?.dispatchEvent(
+              new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: sent }),
+            );
+          },
+          PLOT,
+          key,
+        );
+      }
+      expect(await projectionRequests()).toHaveLength(asked);
+      expect(await rangeCaption()).toContain("301.2500");
+    });
+  });
+
   describe("input the host owns", () => {
     /*
      * The cross-axis ownership rule, in the shell it is about.

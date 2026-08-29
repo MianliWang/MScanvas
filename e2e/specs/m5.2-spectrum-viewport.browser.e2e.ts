@@ -267,6 +267,39 @@ async function keyTheSpectrum(key: string): Promise<boolean> {
   ) as Promise<boolean>;
 }
 
+/**
+ * Walks the sequential focus order with real Tab presses and reports where it went.
+ *
+ * Reading `tabindex` would only say what the attribute is. This says what the
+ * browser does with it, which is the actual claim: that a keyboard user moving
+ * through this panel is never parked on a picture nothing can be done to.
+ *
+ * Focus is started from the document body so the walk begins somewhere neutral,
+ * and each stop is described by tag plus class so an SVG plot is unmistakable in
+ * the trail.
+ */
+async function tabTrail(steps: number): Promise<string[]> {
+  await browser.execute(() => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    document.body.focus();
+  });
+  const trail: string[] = [];
+  for (let step = 0; step < steps; step += 1) {
+    await browser.keys(["Tab"]);
+    trail.push(
+      await browser.execute(() => {
+        const active = document.activeElement;
+        if (active === null) {
+          return "none";
+        }
+        const classes = (active.getAttribute("class") ?? "").trim().split(/\s+/u).join(".");
+        return classes === "" ? active.tagName.toLowerCase() : `${active.tagName.toLowerCase()}.${classes}`;
+      }),
+    );
+  }
+  return trail;
+}
+
 /** Which of the three controls would do something, by their own `disabled`. */
 async function controlStates(): Promise<Record<string, boolean>> {
   return browser.execute((labels: readonly string[]) => {
@@ -1231,6 +1264,85 @@ describe("the visible m/z viewport", () => {
 
       // The spectrum was read once, and no drawing of it was ever asked for.
       expect(await projectionsAskedFor()).toEqual([]);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+  });
+
+  describe("a spectrum whose m/z range is admitted but cannot move", () => {
+    /*
+     * Every point reporting one m/z.
+     *
+     * Admitted rather than refused: the domain is real and the drawing is
+     * truthful, so the panel must not say the range cannot be navigated. But it
+     * has no width, so all five viewport actions are inert -- and the question
+     * this block exists to answer is whether a keyboard user is still parked on
+     * the drawing on the way past it.
+     *
+     * Asked with real Tab presses rather than by reading an attribute, because
+     * the attribute is the mechanism and the traversal is the claim.
+     */
+    const ONE_MZ_TABLE = () => ipcTable({ oneMzViewport: true });
+
+    for (const size of VIEWPORTS) {
+      it(`draws it, offers nothing, and is skipped by Tab at ${size.name}`, async () => {
+        await openTheSpectrum({ answers: ONE_MZ_TABLE(), width: size.width, height: size.height });
+        await waitForTheDrawing();
+
+        // Drawn, and described as the range it really has -- not as a refusal.
+        expect((await whatIsDrawn()).sticks).toBeGreaterThan(0);
+        expect(await spectrumRangeCaption()).toContain("301.2500");
+        expect(await spectrumRangeCaption()).not.toContain("No m/z range");
+        expect(await spectrumStatus()).not.toContain("cannot be navigated");
+
+        expect(await controlStates()).toEqual({
+          "Zoom in m/z": false,
+          "Zoom out m/z": false,
+          "Reset m/z range": false,
+        });
+
+        // The claim, by traversal: twenty Tab presses never land on the plot.
+        const trail = await tabTrail(20);
+        expect(trail.some((stop) => stop.includes("spectrum-plot"))).toBe(false);
+        // And the walk did reach real controls, so it is not passing because
+        // nothing at all is focusable.
+        expect(trail.some((stop) => stop.startsWith("button"))).toBe(true);
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+    }
+
+    it("changes nothing and asks Rust for nothing when navigation is attempted", async () => {
+      await openTheSpectrum({ answers: ONE_MZ_TABLE() });
+      await waitForTheDrawing();
+      const before = await spectrumRangeCaption();
+      const asked = (await projectionsAskedFor()).length;
+      await revealTheSpectrum();
+      const at = await spectrumPointAt(0.5);
+
+      for (const key of ["+", "-", "ArrowLeft", "ArrowRight", "Home", "0"]) {
+        expect({ key, claimed: await keyTheSpectrum(key) }).toEqual({ key, claimed: false });
+      }
+      for (const deltaY of [IN, OUT]) {
+        expect(await wheelClaim(at.x, deltaY)).toBe(false);
+      }
+
+      expect(await spectrumRangeCaption()).toBe(before);
+      // The one drawing this spectrum's single window needed, and not one more.
+      expect(await projectionsAskedFor()).toHaveLength(asked);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("still reaches the plot by Tab where the range can move", async () => {
+      /*
+       * The other half of the same rule, in the same browser and the same walk.
+       * Without this the block above would pass just as well against a panel
+       * that had removed the tab stop from every spectrum.
+       */
+      await openTheSpectrum();
+      await waitForTheDrawing();
+
+      const trail = await tabTrail(20);
+
+      expect(trail.some((stop) => stop.includes("spectrum-plot"))).toBe(true);
       expect(await unexpectedConsole()).toEqual([]);
     });
   });

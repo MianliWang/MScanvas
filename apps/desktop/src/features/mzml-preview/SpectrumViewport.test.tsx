@@ -45,7 +45,10 @@ import { mzDomain, renderedMzDomain } from "./viewer/spectrumViewport";
 import type { SpectrumViewportAction } from "./viewer/spectrumViewportAction";
 import {
   applySpectrumViewportAction,
+  EVERY_SPECTRUM_VIEWPORT_ACTION,
+  hasProductiveSpectrumViewportAction,
   MZ_PAN_STEP,
+  planSpectrumViewportAction,
   VISIBLE_SPECTRUM_VIEWPORT_ACTIONS,
 } from "./viewer/spectrumViewportAction";
 import type { SpectrumViewportController } from "./viewer/useSpectrumViewport";
@@ -1860,6 +1863,196 @@ describe("a spectrum with no m/z range to navigate", () => {
     for (const label of CONTROLS) {
       expect(control(label), label).toBeDisabled();
     }
+  });
+});
+
+describe("a viewport that is admitted and has nothing to do", () => {
+  /*
+   * A spectrum whose points all report one m/z.
+   *
+   * The figure contract admits it, so it is `ready`: the domain is real, the
+   * range is real, the points are real, and the drawing is truthful. Calling it
+   * refused would be a lie about the data. What it does not have is anywhere to
+   * go -- no subrange to zoom into, no superrange to zoom out to, and nothing to
+   * pan across -- so every one of the five viewport actions is inert.
+   *
+   * The panel already said that in every way but one. Three buttons were
+   * disabled, the wheel was released, the keys were released, and a drag started
+   * no gesture. The drawing was still a tab stop, because focusability asked
+   * whether a viewport existed rather than whether it could move. Those two
+   * questions have the same answer for a refused spectrum and a different one
+   * here, and the reader who pays for the difference is the one being read the
+   * interface rather than looking at it.
+   */
+
+  it("stays ready, and says which single m/z its points report", () => {
+    // Not refused, not empty, not a failure. The science is untouched by the
+    // repair: what changed is a tab stop, not a classification.
+    renderViewport({ domain: FLAT });
+
+    expect(state().status).toBe("ready");
+    expect(rangeText()).toBe("Showing m/z 250.0000 to 250.0000 (full range)");
+    expect(statusText()).not.toMatch(/cannot be navigated/u);
+  });
+
+  it("offers no viewport action at all, by the planner's own answer", () => {
+    renderViewport({ domain: FLAT });
+
+    for (const action of EVERY_SPECTRUM_VIEWPORT_ACTION) {
+      expect(planSpectrumViewportAction(state(), action).available, action).toBe(false);
+    }
+    expect(hasProductiveSpectrumViewportAction(state())).toBe(false);
+    for (const label of CONTROLS) {
+      expect(control(label), label).toBeDisabled();
+    }
+  });
+
+  it("leaves the drawing out of the tab order while keeping its description", () => {
+    /*
+     * Both halves. Removing the tab stop must not remove what a reader who
+     * cannot act on the plot still needs: what range is on screen and what the
+     * drawing is doing are true of an inert viewport too.
+     */
+    renderViewport({ domain: FLAT });
+
+    expect(plot()).not.toHaveAttribute("tabindex");
+    expect(plot()).toHaveAttribute(
+      "aria-describedby",
+      "spectrum-viewport-range spectrum-viewport-status",
+    );
+    expect(plot()).toHaveAttribute("role", "img");
+    // And no fake enabled control was invented to give the keyboard something
+    // to land on: the buttons are still honestly disabled.
+    for (const label of CONTROLS) {
+      expect(control(label), label).toBeDisabled();
+    }
+  });
+
+  it("changes nothing and claims nothing for any viewport key", () => {
+    renderViewport({ domain: FLAT });
+    const before = live();
+
+    for (const name of ["+", "=", "-", "_", "ArrowLeft", "ArrowRight", "Home", "0"]) {
+      const event = key(name);
+
+      expect(event.defaultPrevented, name).toBe(false);
+      expect(live(), name).toBe(before);
+    }
+  });
+
+  it("claims no wheel in either direction, and schedules no settle", () => {
+    renderViewport({ domain: FLAT });
+    const before = live();
+
+    for (const deltaY of [IN, OUT]) {
+      const event = wheel({ deltaY });
+
+      expect(event.defaultPrevented, String(deltaY)).toBe(false);
+      expect(live(), String(deltaY)).toBe(before);
+    }
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(live()).toBe(before);
+  });
+
+  it("starts no gesture for a drag, and spends no generation on any of it", () => {
+    /*
+     * The whole point of "inert" is that attempted navigation costs nothing --
+     * no gesture, no epoch, and above all no generation, because a generation is
+     * a request to Rust to draw a window. Read as identity: a state object that
+     * never changed spent nothing.
+     */
+    renderViewport({ domain: FLAT });
+    const before = ready();
+
+    pressPointer(CENTRE_X);
+    movePointer(CENTRE_X + 120);
+    movePointer(CENTRE_X - 120);
+    releasePointer(CENTRE_X - 120);
+    wheel({ deltaY: IN });
+    key("+");
+
+    expect(live()).toBe(before);
+    expect(ready().gesture).toBeNull();
+    expect(ready().nextEpoch).toBe(before.nextEpoch);
+    expect(ready().nextGeneration).toBe(before.nextGeneration);
+    expect(ready().projection.status).toBe("idle");
+  });
+
+  it("still draws the points the spectrum reports", () => {
+    /*
+     * Nothing to zoom is not nothing to see. The drawing arrives the ordinary
+     * way -- axes first, points when the projection answers -- which is the rule
+     * every admitted viewport follows and which this one is not excused from.
+     */
+    renderViewport({ domain: FLAT });
+    expect(sticks()).toBeNull();
+
+    drawProjection({
+      low: 250,
+      high: 250,
+      mz: [250],
+      intensity: [70],
+      sourcePoints: 1,
+      reduced: false,
+    });
+
+    expect(sticks()).not.toBeNull();
+    // And drawing it did not make it navigable, or a tab stop.
+    expect(hasProductiveSpectrumViewportAction(state())).toBe(false);
+    expect(plot()).not.toHaveAttribute("tabindex");
+  });
+});
+
+describe("a viewport that can still do something is still reachable", () => {
+  /*
+   * The other half of the rule, and the half a careless repair breaks. The
+   * question is whether **any** action is productive -- not whether all of them
+   * are, and not whether the domain happens to have width.
+   *
+   * Both cases below are ordinary non-zero-width spectra where most of the five
+   * actions are unavailable. A predicate reading "every action available" would
+   * take the keyboard away from both; one reading "zoom in is available" would
+   * take it away from the second.
+   */
+
+  it("keeps the tab stop at the whole spectrum, where only zooming in can act", () => {
+    renderViewport();
+
+    expect(planSpectrumViewportAction(state(), "zoom-in").available).toBe(true);
+    for (const action of ["zoom-out", "pan-left", "pan-right", "reset"] as const) {
+      expect(planSpectrumViewportAction(state(), action).available, action).toBe(false);
+    }
+
+    expect(hasProductiveSpectrumViewportAction(state())).toBe(true);
+    expect(plot()).toHaveAttribute("tabindex", "0");
+  });
+
+  it("keeps the tab stop at the narrowest window, where zooming in cannot act", () => {
+    // The mirror image, so the predicate cannot be "zoom in decides it".
+    renderViewport();
+    commitNarrowest();
+
+    expect(planSpectrumViewportAction(state(), "zoom-in").available).toBe(false);
+    expect(planSpectrumViewportAction(state(), "zoom-out").available).toBe(true);
+
+    expect(hasProductiveSpectrumViewportAction(state())).toBe(true);
+    expect(plot()).toHaveAttribute("tabindex", "0");
+  });
+
+  it("still zooms from the keyboard where the plot is reachable", () => {
+    // The affordance and the action, asserted together: a focusable plot whose
+    // keys did nothing would be the same defect wearing the other mask.
+    renderViewport();
+    plot().focus();
+    const before = shown();
+
+    const event = key("+");
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(shown().high - shown().low).toBeLessThan(before.high - before.low);
+    expect(plot()).toHaveAttribute("tabindex", "0");
   });
 });
 

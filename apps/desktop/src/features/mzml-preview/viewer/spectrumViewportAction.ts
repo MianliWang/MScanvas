@@ -365,6 +365,62 @@ export function planSpectrumViewportAction(
   return { available: true, nextDomain: transition.nextDomain, event };
 }
 
+/**
+ * Every local viewport action, with the union checked rather than trusted.
+ *
+ * A `Record` keyed by the action type, so adding a sixth action to
+ * `SpectrumViewportAction` fails the build here instead of quietly leaving that
+ * action out of the question below. A hand-written array would have compiled and
+ * been wrong -- which is exactly how the answer this feeds went wrong once
+ * already.
+ *
+ * The value is `true` and carries nothing: this is a set spelled in a shape
+ * TypeScript will exhaustively check.
+ */
+const SPECTRUM_VIEWPORT_ACTION_SET: Readonly<Record<SpectrumViewportAction, true>> = {
+  "zoom-in": true,
+  "zoom-out": true,
+  "pan-left": true,
+  "pan-right": true,
+  reset: true,
+};
+
+/** The same set as a list, for asking each one the same question. */
+export const EVERY_SPECTRUM_VIEWPORT_ACTION = Object.keys(
+  SPECTRUM_VIEWPORT_ACTION_SET,
+) as readonly SpectrumViewportAction[];
+
+/**
+ * Whether any local viewport action would change what this spectrum shows.
+ *
+ * **An admitted viewport is not automatically an actionable one.** A spectrum
+ * whose points all report the same m/z has a real domain, a real range, real
+ * points and a truthful drawing -- it is `ready`, and calling it refused would be
+ * a lie about the data. It simply has no subrange to zoom into, no superrange to
+ * zoom out to, and nowhere to pan. Every one of the five actions is inert, and
+ * the panel already says so: three disabled buttons, an unclaimed wheel, an
+ * unclaimed key, and a drag that starts no gesture.
+ *
+ * What it did not say was the thing a keyboard user finds out by arriving: the
+ * drawing was still a tab stop. `StickSpectrum` made focusability follow
+ * *"there is a viewport here"* when the rule it wrote for itself, three lines
+ * above, was *"there is something to do here"*. For a refused spectrum those two
+ * agree. For a zero-width one they do not, and the reader who pays for the
+ * difference is the one being read the interface rather than looking at it.
+ *
+ * So the question is asked of the planner that already governs every other
+ * consumer of it, over the whole action set rather than the three that have
+ * buttons. Deriving it any other way -- `full.low === full.high`, a copy of the
+ * buttons' `disabled`, the number of points in a projection -- would be a second
+ * set of viewport limits, and the next change to the minimum span, the action
+ * set or the boundary normalisation would silently pull the two apart again.
+ */
+export function hasProductiveSpectrumViewportAction(state: SpectrumViewportState): boolean {
+  return EVERY_SPECTRUM_VIEWPORT_ACTION.some(
+    (action) => planSpectrumViewportAction(state, action).available,
+  );
+}
+
 export interface MzWheelPlan {
   /**
    * Whether the panel claims this wheel event.

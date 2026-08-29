@@ -5204,15 +5204,17 @@ wording is untouched.
 
 ### What the evidence establishes
 
-**Frontend: 1,296 tests**, up from 1,093. **Rust: 1,303, unchanged** -- no Rust
+**Frontend: 1,313 tests**, up from 1,093. **Rust: 1,303, unchanged** -- no Rust
 file was edited, which is the claim this slice most wanted to be able to make.
-**Rendered browser QA: 173 tests across seven spec files**, 43 of them this
-slice's, covering both availability states at 1920x1080, 1366x768 and 960x640.
-**Real-Tauri QA: 48 tests across seven spec files**, with
-`project_selected_spectrum` left live against the real process.
+**Rendered browser QA: 178 tests across seven spec files**, covering every
+availability state -- admitted and actionable, admitted and inert, and refused --
+at 1920x1080, 1366x768 and 960x640, with the keyboard order walked by real Tab
+presses rather than read off an attribute. **Real-Tauri QA: 49 tests across
+seven spec files**, with `project_selected_spectrum` left live against the real
+process wherever the case is about the boundary rather than about the shell.
 
-**Thirty mutations**, applied one at a time and restored byte-for-byte with the
-hash checked after each. Twenty-seven failed the check aimed at them: a wheel
+**Thirty-seven mutations**, applied one at a time and restored byte-for-byte with
+the hash checked after each. Thirty-two failed the check aimed at them: a wheel
 always claimed and a wheel never claimed; a control offered where the reducer would
 render nothing new; the previous drawing kept under a newly committed range; a
 drawing asked for on every pointer frame; a stale drawing accepted; a refused
@@ -5223,23 +5225,39 @@ first; a press keeping its window across a spectrum change; both limits removed
 so the candidate is the raw arithmetic again, and the narrow limit put back the
 way that stops one step short; the caption reading Rust's reduction flag; a
 failed range captioned as one still on its way; and an empty plot claiming every
-intensity is the same. Then the closure round's seven -- the caption's reason,
-pan saturation removed per direction for every consumer, per-frame React
-publication, a
-transient transform surviving a render, and two status documents put back the
-way they contradicted the slice -- and this round's five: each of the four
-modifier guards removed in turn, and `shiftKey` added to the shared predicate,
-which is the mistake that would silently disable the ordinary `+`.
+intensity is the same.
 
-Three survived and are recorded as **equivalent mutants** rather than as
-coverage this slice lacks: recording a failure message the contract refused,
-since the message is read back by the contract's own generation and a stale one
-could not reach the screen even if it were stored; and `pannedTo`'s two internal
-branches, whose resting guard and edge-landing construction each close the flush
-case on their own, measured over 400,000 random windows.
+Then the closure round's seven: the caption's reason, pan saturation removed per
+direction for each of its two consumers, per-frame React publication, and a
+transient transform surviving a render, plus two status documents put back the
+way they contradicted the slice. Then the cross-axis round's five: each of the
+four modifier guards removed in turn, and `shiftKey` added to the shared
+predicate, which is the mistake that would silently disable the ordinary `+`.
+Then this round's three: the old focusability rule restored, and focusability
+decided by one action and by every action instead of by any.
 
-**Ten real defects were found by evidence rather than by reading**, and all are
-repaired above. Four in the first round: the full-range rounding that left `Zoom out` enabled and
+**Five survived, and each is an equivalent mutant rather than coverage this
+slice lacks** -- three of them provably so:
+
+- recording a failure message the contract refused, since the message is read
+  back by the contract's own generation and a stale one could not reach the
+  screen even if it were stored;
+- `pannedTo`'s two internal branches, whose resting guard and edge-landing
+  construction each close the flush case on their own, measured over 400,000
+  random windows;
+- exposing the keyboard handler on an inert surface, which is unobservable by
+  construction: the surface is non-focusable exactly where no action is
+  productive, and the handler claims and dispatches nothing exactly there. It is
+  kept as the explicit form of the rule rather than as behaviour;
+- deciding focusability from `full.low !== full.high`, which agrees with the
+  planner for every reachable state because zooming in is productive for any
+  domain with width -- measured across widths from 1e-9 to 1e9 and three
+  committed windows each. What keeps the two from drifting apart is asking the
+  planner, and making the action set a `Record` the compiler checks, rather than
+  a test that cannot yet tell them apart.
+
+**Eleven real defects were found by evidence rather than by reading**, and all
+are repaired above. Four in the first round: the full-range rounding that left `Zoom out` enabled and
 swallowed the wheel; a press held across a spectrum change starting a gesture on
 the new spectrum at the old one's range; a caption claiming every observation was
 drawn when this plot's own 900-column reduction had just dropped some; and a
@@ -5258,9 +5276,22 @@ status page that goes stale is the one kind of document nothing else notices.
 
 And two in the third, both on the shared surface described below: a
 Ctrl-modified wheel claimed as viewport zoom, and Ctrl/Meta/Alt-modified
-accelerators claimed
-as viewport navigation -- on *both* plots, which is why the repair reaches the
-chromatogram.
+accelerators claimed as viewport navigation -- on *both* plots, which is why the
+repair reaches the chromatogram.
+
+And one in the fourth, which the panel had already got right everywhere else. A
+spectrum whose points all report one m/z is admitted, `ready` and truthfully
+drawn, and every viewport action over it is inert: three disabled buttons, an
+unclaimed wheel, an unclaimed key, a drag that starts no gesture. The drawing was
+still a tab stop, because focusability asked whether a viewport *existed* rather
+than whether it could *move* -- two questions with the same answer for a refused
+spectrum and a different one here. **An admitted viewport is not automatically an
+actionable one.** Focusability now comes from `hasProductiveSpectrumViewportAction`,
+which asks the same M5.2 planner that already governs button availability, key
+claiming, wheel claiming and whether a drag begins, over the whole action set
+rather than the three with buttons. The description stays: what range is on
+screen and what the drawing is doing are still true of an inert viewport, and are
+exactly what a reader who cannot act on it still needs.
 
 ### The rule that turned out not to be about m/z
 
