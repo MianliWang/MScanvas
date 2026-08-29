@@ -7,6 +7,10 @@ Related: [0032](0032-viewer-interaction-and-viewport-state.md),
 [0037](0037-viewer-completion-route.md),
 [0038](0038-spectrum-viewport-authority-and-screen-projection.md)
 
+Supersedes one rule of [ADR 0033](0033-visible-linked-tic-bpc-viewer.md): its
+`ctrlKey` is not given a meaning section, replaced by
+[the cross-axis ownership rule below](#a-modified-input-is-the-hosts-and-that-is-a-cross-axis-rule).
+
 ## What this ADR is
 
 M5.2, the slice that makes the m/z viewport [ADR 0038](0038-spectrum-viewport-authority-and-screen-projection.md)
@@ -155,8 +159,100 @@ was the only thing under the pointer; on a panel that scrolls inside a column
 that scrolls, a key that changes nothing and is swallowed anyway is the keyboard
 form of the wheel defect this repository already fixed once. So a viewport key
 is claimed only when the transition it names was productive, and at a boundary
-it falls through to the surface it sits in. The chromatogram is left alone: that
-is its slice's decision to revisit, not this one's.
+it falls through to the surface it sits in. The chromatogram keeps its own
+answer to *that* question: it still claims any key it recognises, productive or
+not, and revisiting it is its slice's decision rather than this one's.
+
+A second, different ownership question turned out to span both plots, and the
+section after next records it. The two are worth keeping apart: *productivity*
+is about this product's semantics and is answered per axis; *whose input this
+is* is not about semantics at all, and is answered once.
+
+## A modified input is the host's, and that is a cross-axis rule
+
+Review found that both plots claimed inputs the window around them already owns.
+A Ctrl+wheel over either plot zoomed its axis and cancelled the event; Ctrl+0
+with either plot focused reset a scientific range and swallowed the accelerator.
+Neither adapter was wrong about *what the input would do*. Both were wrong about
+*whether it was theirs*.
+
+### Why this supersedes a decision that was correct when it was made
+
+[ADR 0033](0033-visible-linked-tic-bpc-viewer.md) decided that `ctrlKey` would be
+given no meaning, because reading it as a trackpad pinch is a guess about
+hardware from a modifier key. **That reasoning is not reversed here.** Nothing in
+this repository classifies a device, no pinch semantics were added, and touch
+remains deferred. MSCanvas still cannot tell a physical Ctrl+mouse wheel from a
+precision touchpad pinch that Chromium represents as one, and it does not try.
+
+What changed is evidence about the *host* rather than about hardware. WebView2
+enables its zoom controls by default — `IsZoomControlEnabled` — and names
+Ctrl+Plus, Ctrl+Minus and Ctrl+mouse wheel as the inputs those controls use.
+This repository disables none of that: `tauri.conf.json` sets no zoom or
+accelerator option and the Rust window setup applies none, both verified before
+the rule was written rather than assumed.
+
+So the question is not *what device produced this event*, which a viewer cannot
+answer, but *is this input already spoken for*, which it can:
+
+> A Ctrl-modified wheel and a Ctrl-, Meta- or Alt-modified key are the host's.
+> A scientific viewport does not claim them.
+
+The old rule and the new one disagree about exactly one thing, and only one
+sentence of ADR 0033 is withdrawn: *Ctrl-wheel over the plot is a zoom of the
+run, like any other wheel.* Its test is replaced by tests that pin the opposite,
+on both axes.
+
+### Released before anything is read
+
+For a modified wheel the guard is the first statement in the listener, ahead of
+the pointer-anchor calculation, the delta normalization, the plan, the
+`preventDefault()`, the dispatch, the epoch and the settle timer. That ordering
+is asserted rather than described: a component test reads the plot's
+`getBoundingClientRect` spy and finds a released wheel cost the panel no layout
+at all. For a modified key the guard is the first statement in the handler, so
+no transition is planned and nothing is cancelled.
+
+A released input must not be half-taken. The evidence asks for both halves every
+time -- the reducer's own state unchanged **by identity**, and
+`defaultPrevented` false -- because a surface that moved nothing but cancelled
+the event would still have taken the accelerator away.
+
+### Shift is not on the list, and that is load-bearing
+
+On common layouts `+` is produced by holding Shift, so a guard that rejected
+Shift would disable the ordinary zoom shortcut while protecting no accelerator
+at all. Ctrl, Meta and Alt are what turn a character into an application or
+browser accelerator; Shift is how one of this product's own shortcuts arrives.
+Ctrl+Shift+`+` is still released, because Ctrl is there. Both suites pin the
+Shift-produced `+` and the Ctrl+Shift form beside each other, and a mutation
+that adds `shiftKey` to the predicate is killed by them.
+
+Shift-, Alt- and Meta-modified *wheels* are given no meaning, because none has a
+published WebView zoom meaning and inventing one would be the same guess this
+rule exists to avoid, in the other direction. ADR 0033's point survives there
+intact, and a test now pins it against Shift rather than against Ctrl.
+
+### One predicate, still two authorities
+
+`viewer/hostInputOwnership.ts` holds the policy for both plots, and sharing it
+does not make the axes one authority any more than sharing `wheelInput.ts` does:
+it decides nothing about a range, knows no domain, and has no axis in it. Two
+copies would be two places for the policy to drift, and the drift would be
+invisible -- the two plots would simply come to disagree about which keystrokes
+the window still owns. The reducers, the state machines and the
+`RetentionTimeDomain` / `MzDomain` brands stay exactly as separate as they were.
+
+### What the rendered evidence can and cannot say
+
+The browser and real-WebView2 suites both drive these inputs and read
+`defaultPrevented` off the real DOM. What they establish is that **MSCanvas does
+not claim the event**, which is what leaves the host's documented accelerator
+path available. What they do not establish is that the WebView then zoomed: a
+dispatched event is not a user gesture and no engine performs its native zoom
+for one, however the listener answers. Proving that would need OS-level input
+synthesis, which was not added for this. The specs say so in place rather than
+letting a green check imply more than it measured.
 
 ## `touch-action: pan-y`, deliberately not `none`
 

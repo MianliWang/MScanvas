@@ -5204,16 +5204,16 @@ wording is untouched.
 
 ### What the evidence establishes
 
-**Frontend: 1,275 tests**, up from 1,093. **Rust: 1,303, unchanged** -- no Rust
+**Frontend: 1,296 tests**, up from 1,093. **Rust: 1,303, unchanged** -- no Rust
 file was edited, which is the claim this slice most wanted to be able to make.
-**Rendered browser QA: 165 tests across seven spec files**, 39 of them this
+**Rendered browser QA: 173 tests across seven spec files**, 43 of them this
 slice's, covering both availability states at 1920x1080, 1366x768 and 960x640.
-**Real-Tauri QA: 46 tests across seven spec files**, nine of them this slice's,
-with `project_selected_spectrum` left live against the real process.
+**Real-Tauri QA: 48 tests across seven spec files**, with
+`project_selected_spectrum` left live against the real process.
 
-**Eighteen mutations**, applied one at a time and restored byte-for-byte with the
-hash checked after each. Seventeen failed the check aimed at them: a wheel always
-claimed and a wheel never claimed; a control offered where the reducer would
+**Thirty mutations**, applied one at a time and restored byte-for-byte with the
+hash checked after each. Twenty-seven failed the check aimed at them: a wheel
+always claimed and a wheel never claimed; a control offered where the reducer would
 render nothing new; the previous drawing kept under a newly committed range; a
 drawing asked for on every pointer frame; a stale drawing accepted; a refused
 viewport taking a domain from the transferred arrays; a gesture's range drawn as
@@ -5223,12 +5223,22 @@ first; a press keeping its window across a spectrum change; both limits removed
 so the candidate is the raw arithmetic again, and the narrow limit put back the
 way that stops one step short; the caption reading Rust's reduction flag; a
 failed range captioned as one still on its way; and an empty plot claiming every
-intensity is the same. The eighteenth, recording a failure message the contract
-refused, survived and is recorded as an **equivalent mutant**: the message is
-read back by the contract's own generation, so a stale one could not reach the
-screen even if it were stored.
+intensity is the same. Then the closure round's seven -- the caption's reason,
+pan saturation removed per direction for every consumer, per-frame React
+publication, a
+transient transform surviving a render, and two status documents put back the
+way they contradicted the slice -- and this round's five: each of the four
+modifier guards removed in turn, and `shiftKey` added to the shared predicate,
+which is the mistake that would silently disable the ordinary `+`.
 
-**Eight real defects were found by evidence rather than by reading**, and all are
+Three survived and are recorded as **equivalent mutants** rather than as
+coverage this slice lacks: recording a failure message the contract refused,
+since the message is read back by the contract's own generation and a stale one
+could not reach the screen even if it were stored; and `pannedTo`'s two internal
+branches, whose resting guard and edge-landing construction each close the flush
+case on their own, measured over 400,000 random windows.
+
+**Ten real defects were found by evidence rather than by reading**, and all are
 repaired above. Four in the first round: the full-range rounding that left `Zoom out` enabled and
 swallowed the wheel; a press held across a spectrum change starting a gesture on
 the new spectrum at the old one's range; a caption claiming every observation was
@@ -5245,6 +5255,56 @@ panel's whole reduction on the pointer-frame path; and four current status
 documents still describing spectrum zoom and pan as something the product does
 not do. The last of those now has a repository guard of its own, because a
 status page that goes stale is the one kind of document nothing else notices.
+
+And two in the third, both on the shared surface described below: a
+Ctrl-modified wheel claimed as viewport zoom, and Ctrl/Meta/Alt-modified
+accelerators claimed
+as viewport navigation -- on *both* plots, which is why the repair reaches the
+chromatogram.
+
+### The rule that turned out not to be about m/z
+
+A third round found that **both plots claimed inputs the window already owns**.
+Ctrl+wheel over either one zoomed its axis and cancelled the event; Ctrl+0 with
+either one focused reset a scientific range and swallowed the accelerator.
+Neither adapter was wrong about what the input would do; both were wrong about
+whose it was. So this is a shared viewer defect, and the chromatogram is
+repaired here beside the spectrum -- two plots that disagree about which
+keystrokes the window still owns is exactly the drift nobody notices.
+
+It supersedes a decision that was correct when it was made. ADR 0033 gave
+`ctrlKey` no meaning because reading it as a trackpad pinch is a guess about
+hardware, and **that reasoning is not reversed**: nothing classifies a device,
+no pinch semantics were added, touch stays deferred. What changed is evidence
+about the *host*. WebView2 enables its zoom controls by default and names
+Ctrl+Plus, Ctrl+Minus and Ctrl+mouse wheel as the inputs they use, and this
+repository disables none of it -- checked against `tauri.conf.json` and the Rust
+window setup rather than assumed. The question is not what device sent the
+event, which a viewer cannot answer, but whether the input is already spoken
+for, which it can: a Ctrl-modified wheel, and a Ctrl-, Meta- or Alt-modified
+key, are the host's.
+
+Shift is deliberately not on that list. On common layouts `+` *is* Shift+`=`, so
+rejecting Shift would disable the ordinary zoom shortcut while protecting no
+accelerator; Ctrl+Shift+`+` is still released, because Ctrl is there. Modified
+*wheels* other than Ctrl keep ADR 0033's original answer, and its test now pins
+that against Shift rather than against Ctrl.
+
+`viewer/hostInputOwnership.ts` holds the policy for both plots. Sharing it makes
+them no more one authority than sharing `wheelInput.ts` does -- it decides
+nothing about a range and has no axis in it -- and the reducers, state machines
+and domain brands stay exactly as separate as they were. What is *not* shared:
+the chromatogram still claims any key it recognises whether or not the
+transition is productive. That is its slice's question, and this one did not
+answer it.
+
+**What the rendered evidence can and cannot say.** Both suites drive these
+inputs and read `defaultPrevented` off the real DOM, which establishes that
+MSCanvas does not claim the event and so leaves the host's documented
+accelerator path available. Neither establishes that the WebView then zoomed: a
+dispatched event is not a user gesture, and no OS-level input synthesis was
+added for this. The specs say so in place rather than letting a green check
+imply more than it measured.
 
 ### Not built, and by design
 
