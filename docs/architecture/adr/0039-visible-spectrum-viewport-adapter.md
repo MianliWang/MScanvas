@@ -105,6 +105,44 @@ last two are new, and both exist because a caption that said *"drawn as 0 sticks
 of 0 observations"* while a request was outstanding would be a false statement
 about the spectrum.
 
+## A pointer frame is applied, and not published
+
+`apps/desktop/AGENTS.md` says to keep pointer-move and cursor-frame data out of
+React state, and a drag is a stream of them. The first version of this adapter
+published every one: `gesture-moved` reached `setState`, the workspace and the
+panel re-rendered, and the plot's reduction ran again — once per browser pointer
+frame, for a change one number wide.
+
+So the transport now separates two things that had been one. Every event is
+**applied**: the reducer decides all of them and the held ref is always current,
+which is what an adapter reading a reducer-assigned epoch depends on. Only a
+transition the rendered surface has to know about is **published**. A gesture
+starting is — a gesture now exists, an epoch was allocated, and the caption
+becomes a transient one. A gesture settling or being cancelled is. What is not
+is the gesture *moving*.
+
+The predicate is a property of the two states rather than a second opinion about
+the contract's events: `gesture-moved` is the one transition that rebuilds the
+gesture and carries every other field through by reference, so two states
+identical everywhere but the gesture's own range *are* a frame. Nothing has to
+know which event was dispatched.
+
+**Which leaves the drawing to move itself.** Taking frames off the render path
+must not turn a drag into "nothing happens until you let go", so the adapter
+transforms the sticks layer directly: a pan is a translate and a wheel zoom a
+scale about the pointer, both exact, both one attribute, and neither a second
+pass over the projection. The axis numbers and the range line are written beside
+it, because a drawing that moves under numbers that do not is worse than one
+that does not move.
+
+Two consequences are deliberate. The transient caption **names no range** — a
+gesture is drawn between two renders, so a number written there would be the
+range the gesture began at, sitting under a plot that has since moved; the range
+line carries the live numbers instead. And the transform is reset after *every*
+render rather than at the end of a gesture, which is what makes it survive a
+projection answering mid-drag: React has just drawn the range it holds, so any
+transform left over is wrong by definition.
+
 ## Ownership extends from the wheel to the keyboard
 
 ADR 0033's R1.2 rule — *a wheel is claimed only where applying it would change
@@ -229,6 +267,21 @@ and folding a change to a shipped surface into this slice would be changing
 something M5.2 has no evidence for. Recorded as P3 for whichever slice next owns
 that planner.
 
+**A pan at a saturated edge reported a real action.** The two limits above were
+stated for zoom only, and the planner handed pan straight to `panMzDomain`,
+whose clamp recovers a width by subtracting endpoints and rounds the same way:
+`{525.15, 1000.3}` panned right to `{525.1500000000001, 1000.3}`. Forty-eight of
+1,452 windows built flush against one edge did it. `pannedTo` now states the
+edges in values — a window cannot begin before the spectrum does or end after it
+— and governs the keyboard planner and the drag adapter alike, because fixing
+only the planner would have left the identical defect under a finger.
+
+Its two internal branches overlap: the resting guard and the edge-landing
+construction each close the flush case on their own, measured over 400,000
+random windows. Removing either alone is therefore undetectable, and both are
+kept because together they make the limit hold by construction rather than by
+the arithmetic happening to round back.
+
 **A press outlived the spectrum it began on.** `pointerdown` remembers the window
 on screen; the selection can then move — from the table, the chromatogram, or
 Previous and Next — while the button is still down. A gesture already started is
@@ -246,6 +299,16 @@ planner across many domains and anchors, the second by an independent reading of
 the adapter's press record against what the contract promises. Both are pinned by
 tests that fail when the repair is removed.
 
+**And the repaired caption then gave a false reason.** Basing "every one of them
+is drawn" on the stick count was right; the sentence it fell through to said
+*more were measured here than this drawing has columns*, and `columnCount` is
+`min(900, drawnFrom)` — so below nine hundred observations there are exactly as
+many columns as observations and never fewer. Two peaks at m/z 120 and 130 in a
+window of 100 to 200 collapse into one of two available columns, and the columns
+were not the constraint. The reason given is now the one true on both sides of
+the boundary: observations that share a screen column are kept as that column's
+greatest non-negative and deepest negative measured observation.
+
 ## What is deliberately not offered
 
 A spectrum with **no points** keeps the empty state it already had and gains no
@@ -262,11 +325,11 @@ from a spectrum click would each be new product semantics.
 
 ## Evidence
 
-**Frontend tests: 1,267**, up from 1,093. One hundred and seventy over the new
-surface, in three suites, plus four over the drawing itself. The planner's 90
+**Frontend tests: 1,275**, up from 1,093. One hundred and seventy over the new
+surface, in three suites, plus four over the drawing itself. The planner's 95
 hold one rule across six viewport states and every wheel input the arithmetic can
 and cannot read, and two of them are the limits above, over the domains measured
-to round the wrong way. The component's 67 assert, of every wheel and every key,
+to round the wrong way. The component's 70 assert, of every wheel and every key,
 the two facts that are not the same failure — whether the domain moved, and
 whether the browser event was claimed — and cover the drag's slop threshold, its
 single epoch, its computation from the press origin *against the clamp*, its
@@ -282,8 +345,8 @@ a redelivery that asks again for nothing, one bounded drawing kept however far
 the reader pans, a window asked for from Rust's domain rather than from the
 arrays this document holds, and an export that a committed window leaves alone.
 
-**Eighteen mutations**, applied one at a time and restored byte-for-byte, with
-the hash checked after each. Seventeen failed the check aimed at them: a wheel
+**Twenty-five mutations**, applied one at a time and restored byte-for-byte,
+with the hash checked after each. Twenty-two failed the check aimed at them: a wheel
 always claimed and a wheel never claimed; a control offered where the reducer
 would render nothing new; the previous drawing kept under a newly committed
 range; a drawing asked for on every pointer frame; a stale drawing accepted; a
@@ -294,13 +357,18 @@ press from the first; a press keeping its window across a spectrum change; both
 limits removed so the candidate is the raw arithmetic again, and the narrow limit
 put back the way that stops one step short; the caption reading Rust's reduction
 flag; a failed range captioned as one still on its way; and an empty plot
-claiming every intensity is the same.
+claiming every intensity is the same; the caption blaming a shortage of columns;
+both directions of the pan saturation, removed for every consumer; every pointer
+frame publishing to React again; a transient transform surviving the render that
+should have reset it; the roadmap calling M5 unstarted; and the feature catalog
+listing spectrum zoom and pan as unimplemented.
 
-The eighteenth — recording a failure's message the contract refused — survived
+Three survived and are reported as **equivalent mutants** rather than coverage
+gaps. Recording a failure's message the contract refused — recording a failure's message the contract refused — survived
 and is reported as an **equivalent mutant** rather than a coverage gap: the
 message is read back by the contract's own generation, so a stale one could not
-be shown even if it were stored, and the guard beside it keeps the stored value
-truthful rather than the screen.
+be shown even if it were stored. And `pannedTo`'s two internal branches, each of
+which closes the flush case without the other over 400,000 measured windows.
 
 **Rust tests: 1,303, unchanged.** No Rust file was edited. That is the claim this
 slice most wanted to be able to make.

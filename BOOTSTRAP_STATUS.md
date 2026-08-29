@@ -5204,7 +5204,7 @@ wording is untouched.
 
 ### What the evidence establishes
 
-**Frontend: 1,267 tests**, up from 1,093. **Rust: 1,303, unchanged** -- no Rust
+**Frontend: 1,275 tests**, up from 1,093. **Rust: 1,303, unchanged** -- no Rust
 file was edited, which is the claim this slice most wanted to be able to make.
 **Rendered browser QA: 165 tests across seven spec files**, 39 of them this
 slice's, covering both availability states at 1920x1080, 1366x768 and 960x640.
@@ -5228,13 +5228,23 @@ refused, survived and is recorded as an **equivalent mutant**: the message is
 read back by the contract's own generation, so a stale one could not reach the
 screen even if it were stored.
 
-**Four real defects were found by evidence rather than by reading**, and all are
-repaired above: the full-range rounding that left `Zoom out` enabled and
+**Eight real defects were found by evidence rather than by reading**, and all are
+repaired above. Four in the first round: the full-range rounding that left `Zoom out` enabled and
 swallowed the wheel; a press held across a spectrum change starting a gesture on
 the new spectrum at the old one's range; a caption claiming every observation was
 drawn when this plot's own 900-column reduction had just dropped some; and a
 failed range captioned as a drawing still on its way, which for a non-retryable
 refusal never went away.
+
+And four the second round found, three of them in the first round's own repairs:
+the replacement caption blaming a shortage of columns the drawing usually has
+plenty of; a pan at a saturated edge still reporting a real action, because the
+two exact limits had been stated for zoom only; every pointer frame publishing
+through React, which `apps/desktop/AGENTS.md` names directly and which put the
+panel's whole reduction on the pointer-frame path; and four current status
+documents still describing spectrum zoom and pan as something the product does
+not do. The last of those now has a repository guard of its own, because a
+status page that goes stale is the one kind of document nothing else notices.
 
 ### Not built, and by design
 
