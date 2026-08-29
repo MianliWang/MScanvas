@@ -74,7 +74,6 @@ const RANGE_SCOPES: readonly {
   { scope: "current", label: "Current range" },
 ];
 
-
 export interface SelectedSpectrumPanelProps {
   readonly state: SpectrumState;
   readonly onRetry: () => void;
