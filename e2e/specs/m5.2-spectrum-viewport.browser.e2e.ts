@@ -140,6 +140,79 @@ async function wheelClaim(clientX: number, deltaY: number, deltaMode = 0): Promi
   ) as Promise<boolean>;
 }
 
+/** One cancelable wheel carrying a modifier, and whether the panel took it. */
+async function modifiedWheelClaim(
+  clientX: number,
+  deltaY: number,
+  modifiers: { readonly ctrlKey?: boolean; readonly shiftKey?: boolean } = {},
+): Promise<boolean> {
+  return browser.execute(
+    (css: string, x: number, delta: number, held: { ctrlKey: boolean; shiftKey: boolean }) => {
+      const event = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        ctrlKey: held.ctrlKey,
+        deltaY: delta,
+        shiftKey: held.shiftKey,
+      });
+      document.querySelector(css)?.dispatchEvent(event);
+      return event.defaultPrevented;
+    },
+    SPECTRUM_PLOT,
+    clientX,
+    deltaY,
+    { ctrlKey: modifiers.ctrlKey ?? false, shiftKey: modifiers.shiftKey ?? false },
+  ) as Promise<boolean>;
+}
+
+/**
+ * One key press carrying modifiers, and whether the panel took it.
+ *
+ * Every modifier is named explicitly on the way in, so a case that means
+ * "unmodified" says so rather than relying on a field it never considered
+ * being absent from the dictionary.
+ */
+async function modifiedKeyClaim(
+  key: string,
+  modifiers: {
+    readonly ctrlKey?: boolean;
+    readonly metaKey?: boolean;
+    readonly altKey?: boolean;
+    readonly shiftKey?: boolean;
+  } = {},
+): Promise<boolean> {
+  return browser.execute(
+    (
+      css: string,
+      sent: string,
+      held: { ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean },
+    ) => {
+      const plot = document.querySelector<SVGSVGElement>(css);
+      plot?.focus();
+      const event = new KeyboardEvent("keydown", {
+        altKey: held.altKey,
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: held.ctrlKey,
+        key: sent,
+        metaKey: held.metaKey,
+        shiftKey: held.shiftKey,
+      });
+      plot?.dispatchEvent(event);
+      return event.defaultPrevented;
+    },
+    SPECTRUM_PLOT,
+    key,
+    {
+      altKey: modifiers.altKey ?? false,
+      ctrlKey: modifiers.ctrlKey ?? false,
+      metaKey: modifiers.metaKey ?? false,
+      shiftKey: modifiers.shiftKey ?? false,
+    },
+  ) as Promise<boolean>;
+}
+
 /**
  * Sends a whole stream of identical events the way one gesture arrives.
  *
@@ -777,6 +850,119 @@ describe("the visible m/z viewport", () => {
       await browser.action("pointer").up().perform();
       await waitForTheDrawing();
       expect(await spectrumRangeCaption()).toBe(during);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+  });
+
+  describe("input the host owns", () => {
+    /*
+     * Whose input an event is, asked of the shipped bundle.
+     *
+     * The block above asks whether an input is *productive*. This asks the
+     * question before it, and the answer changed: WebView2 enables its zoom
+     * controls by default and drives them with Ctrl+wheel, Ctrl+Plus and
+     * Ctrl+Minus, and this application disables neither. The chromatogram is
+     * held to the identical rule by the identical predicate, because whose input
+     * this is has no axis in it.
+     *
+     * The limitation, stated rather than glossed: a WebDriver `dispatchEvent` is
+     * not a user gesture, and this engine performs no native zoom for one
+     * however the listener answers. What these cases prove is that **MSCanvas
+     * does not claim the event**, which is what leaves the host's documented
+     * accelerator path available. None of them claims a browser zoomed.
+     */
+
+    /** Every key this panel maps, including the duplicate spellings. */
+    const VIEWPORT_KEYS = ["+", "=", "-", "_", "ArrowLeft", "ArrowRight", "Home", "0"];
+
+    it("releases a ctrl wheel and claims the identical wheel without it", async () => {
+      await openTheSpectrum({ width: 1_366, height: 768 });
+      await waitForTheDrawing();
+      await revealTheSpectrum();
+      const at = await spectrumPointAt(0.5);
+      const before = await spectrumRangeCaption();
+      const asked = (await projectionsAskedFor()).length;
+
+      expect(await modifiedWheelClaim(at.x, IN, { ctrlKey: true })).toBe(false);
+
+      // Nothing moved, and nothing was asked of Rust for a window nobody chose.
+      expect(await spectrumRangeCaption()).toBe(before);
+      expect(await projectionsAskedFor()).toHaveLength(asked);
+
+      // The same delta, the same plot, the same anchor. Only the owner differs.
+      expect(await modifiedWheelClaim(at.x, IN)).toBe(true);
+      await browser.waitUntil(async () => (await spectrumRangeCaption()) !== before, {
+        timeout: 15_000,
+        timeoutMsg: "an unmodified wheel changed nothing",
+      });
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("releases a ctrl wheel from a subrange, where both directions are productive", async () => {
+      // At full range an outward wheel is released for an unrelated reason.
+      // From a subrange both directions move the axis, so a release here can
+      // only be about the modifier.
+      await openTheSpectrum({ width: 1_366, height: 768 });
+      await waitForTheDrawing();
+      await press("Zoom in m/z");
+      await waitForTheDrawing();
+      await revealTheSpectrum();
+      const at = await spectrumPointAt(0.5);
+      const subrange = await spectrumRangeCaption();
+
+      for (const deltaY of [IN, OUT]) {
+        expect(await modifiedWheelClaim(at.x, deltaY, { ctrlKey: true })).toBe(false);
+      }
+
+      expect(await spectrumRangeCaption()).toBe(subrange);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("releases every viewport key under ctrl, meta and alt", async () => {
+      await openTheSpectrum({ width: 1_366, height: 768 });
+      await waitForTheDrawing();
+      // From a subrange, so every one of these keys would otherwise be
+      // productive and no release can be a boundary in disguise.
+      await press("Zoom in m/z");
+      await waitForTheDrawing();
+      const subrange = await spectrumRangeCaption();
+      const asked = (await projectionsAskedFor()).length;
+
+      for (const key of VIEWPORT_KEYS) {
+        for (const held of ["ctrlKey", "metaKey", "altKey"] as const) {
+          // The key and the modifier travel into the assertion so a failure
+          // names which of the twenty-four combinations was claimed.
+          expect({ key, held, claimed: await modifiedKeyClaim(key, { [held]: true }) }).toEqual({
+            key,
+            held,
+            claimed: false,
+          });
+        }
+      }
+
+      expect(await spectrumRangeCaption()).toBe(subrange);
+      expect(await projectionsAskedFor()).toHaveLength(asked);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("still claims a shift-produced plus", async () => {
+      // On common layouts `+` is Shift+`=`, so this is how the ordinary shortcut
+      // arrives. Rejecting Shift would take the zoom away and protect nothing.
+      await openTheSpectrum({ width: 1_366, height: 768 });
+      await waitForTheDrawing();
+      const full = await spectrumRangeCaption();
+      expect(full).toContain("full range");
+
+      expect(await modifiedKeyClaim("+", { shiftKey: true })).toBe(true);
+
+      await browser.waitUntil(
+        async () => !(await spectrumRangeCaption()).includes("full range"),
+        { timeout: 15_000, timeoutMsg: "a shift-produced plus did not zoom the m/z range" },
+      );
+      // And the same key with ctrl held is the host's again.
+      const zoomed = await spectrumRangeCaption();
+      expect(await modifiedKeyClaim("+", { ctrlKey: true, shiftKey: true })).toBe(false);
+      expect(await spectrumRangeCaption()).toBe(zoomed);
       expect(await unexpectedConsole()).toEqual([]);
     });
   });

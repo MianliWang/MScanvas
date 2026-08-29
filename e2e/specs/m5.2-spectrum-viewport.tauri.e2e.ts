@@ -136,6 +136,72 @@ async function waitForADrawing(): Promise<void> {
   });
 }
 
+/** One cancelable wheel carrying a modifier, and whether the panel took it. */
+async function modifiedWheelClaim(
+  clientX: number,
+  deltaY: number,
+  ctrlKey: boolean,
+): Promise<boolean> {
+  return browser.execute(
+    (css: string, x: number, delta: number, held: boolean) => {
+      const event = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        ctrlKey: held,
+        deltaY: delta,
+      });
+      document.querySelector(css)?.dispatchEvent(event);
+      return event.defaultPrevented;
+    },
+    PLOT,
+    clientX,
+    deltaY,
+    ctrlKey,
+  ) as Promise<boolean>;
+}
+
+/** One key press carrying modifiers, and whether the panel took it. */
+async function modifiedKeyClaim(
+  key: string,
+  modifiers: {
+    readonly ctrlKey?: boolean;
+    readonly metaKey?: boolean;
+    readonly altKey?: boolean;
+    readonly shiftKey?: boolean;
+  } = {},
+): Promise<boolean> {
+  return browser.execute(
+    (
+      css: string,
+      sent: string,
+      held: { ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean },
+    ) => {
+      const plot = document.querySelector<SVGSVGElement>(css);
+      plot?.focus();
+      const event = new KeyboardEvent("keydown", {
+        altKey: held.altKey,
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: held.ctrlKey,
+        key: sent,
+        metaKey: held.metaKey,
+        shiftKey: held.shiftKey,
+      });
+      plot?.dispatchEvent(event);
+      return event.defaultPrevented;
+    },
+    PLOT,
+    key,
+    {
+      altKey: modifiers.altKey ?? false,
+      ctrlKey: modifiers.ctrlKey ?? false,
+      metaKey: modifiers.metaKey ?? false,
+      shiftKey: modifiers.shiftKey ?? false,
+    },
+  ) as Promise<boolean>;
+}
+
 async function pressButton(name: string): Promise<void> {
   await browser.execute((label: string) => {
     const node = [...document.querySelectorAll("button")].find(
@@ -425,6 +491,70 @@ describe("the m/z viewport against the real projection boundary", () => {
 
       // And nothing was asked of the projection boundary at all.
       expect(await projectionRequests()).toEqual([]);
+    });
+  });
+
+  describe("input the host owns", () => {
+    /*
+     * The cross-axis ownership rule, in the shell it is about.
+     *
+     * WebView2 enables its zoom controls by default and drives them with
+     * Ctrl+wheel, Ctrl+Plus and Ctrl+Minus, and this application disables
+     * neither -- `tauri.conf.json` sets no zoom or accelerator option and the
+     * Rust window setup applies none. So neither plot may claim those inputs,
+     * and the chromatogram's own suite asserts the identical thing.
+     *
+     * **The limitation, stated rather than glossed.** These are dispatched
+     * events, and a dispatched event is not a user gesture: no engine performs
+     * its native zoom for one, however the listener answers. What is proved is
+     * that *MSCanvas does not claim the input*, that the m/z range does not
+     * move, and that the real projection boundary is asked for nothing -- which
+     * is what leaves WebView2's documented path available. It is not proved,
+     * and is not claimed, that the WebView zoomed.
+     */
+    it("takes no ctrl-modified wheel or key, and asks Rust for nothing", async () => {
+      await loadWith(tauriTable({ real: [PROJECT] }));
+      await selectFirstSpectrum();
+      const box = await revealThePlot();
+      await waitForADrawing();
+
+      // From a subrange, so every input below would otherwise be productive and
+      // no release can be a boundary in disguise.
+      await pressButton("Zoom in m/z");
+      await waitForADrawing();
+      const subrange = await rangeCaption();
+      const asked = (await projectionRequests()).length;
+      const at = Math.round(box.left + box.width / 2);
+
+      for (const deltaY of [-240, 240]) {
+        expect(await modifiedWheelClaim(at, deltaY, true)).toBe(false);
+      }
+      for (const key of ["+", "=", "-", "_", "ArrowLeft", "ArrowRight", "Home", "0"]) {
+        for (const held of ["ctrlKey", "metaKey", "altKey"] as const) {
+          expect({ key, held, claimed: await modifiedKeyClaim(key, { [held]: true }) }).toEqual({
+            key,
+            held,
+            claimed: false,
+          });
+        }
+      }
+
+      expect(await rangeCaption()).toBe(subrange);
+      // The real boundary was never asked to draw a window nobody chose.
+      expect(await projectionRequests()).toHaveLength(asked);
+
+      // And the unmodified shortcut still reaches the real boundary in the same
+      // shell, including the shift-produced plus that is how `+` arrives.
+      expect(await modifiedKeyClaim("+", { shiftKey: true })).toBe(true);
+      // Waited for rather than read once: the claim is synchronous and the
+      // range that follows it is not, so reading the caption immediately would
+      // be a race this suite would lose only sometimes.
+      await browser.waitUntil(async () => (await rangeCaption()) !== subrange, {
+        timeout: 30_000,
+        timeoutMsg: "a shift-produced plus did not zoom the m/z range",
+      });
+      await waitForADrawing();
+      expect((await projectionRequests()).length).toBeGreaterThan(asked);
     });
   });
 

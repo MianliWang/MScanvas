@@ -93,6 +93,86 @@ async function keyThePlot(key: string): Promise<void> {
 }
 
 /**
+ * Dispatches one cancelable key press and reports whether the viewer took it.
+ *
+ * `keyThePlot` above answers nothing, which is enough where the question is
+ * whether the range moved. Where the question is *ownership* the claim is half
+ * the answer, so this one returns it and names every modifier explicitly --
+ * a case that means "unmodified" then says so rather than relying on a field it
+ * never considered being absent.
+ */
+async function keyClaim(
+  key: string,
+  modifiers: {
+    readonly ctrlKey?: boolean;
+    readonly metaKey?: boolean;
+    readonly altKey?: boolean;
+    readonly shiftKey?: boolean;
+  } = {},
+): Promise<boolean> {
+  return browser.execute(
+    (
+      css: string,
+      sent: string,
+      held: { ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean },
+    ) => {
+      const plot = document.querySelector<SVGSVGElement>(css);
+      plot?.focus();
+      const event = new KeyboardEvent("keydown", {
+        altKey: held.altKey,
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: held.ctrlKey,
+        key: sent,
+        metaKey: held.metaKey,
+        shiftKey: held.shiftKey,
+      });
+      plot?.dispatchEvent(event);
+      return event.defaultPrevented;
+    },
+    PLOT,
+    key,
+    {
+      altKey: modifiers.altKey ?? false,
+      ctrlKey: modifiers.ctrlKey ?? false,
+      metaKey: modifiers.metaKey ?? false,
+      shiftKey: modifiers.shiftKey ?? false,
+    },
+  ) as Promise<boolean>;
+}
+
+/** One cancelable wheel carrying a modifier, and whether the viewer took it. */
+async function modifiedWheelClaim(
+  clientX: number,
+  deltaY: number,
+  modifiers: { readonly ctrlKey?: boolean; readonly shiftKey?: boolean } = {},
+): Promise<boolean> {
+  return browser.execute(
+    (
+      css: string,
+      x: number,
+      delta: number,
+      held: { ctrlKey: boolean; shiftKey: boolean },
+    ) => {
+      const event = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        ctrlKey: held.ctrlKey,
+        deltaY: delta,
+        shiftKey: held.shiftKey,
+      });
+      document.querySelector(css)?.dispatchEvent(event);
+      return event.defaultPrevented;
+    },
+    PLOT,
+    clientX,
+    deltaY,
+    { ctrlKey: modifiers.ctrlKey ?? false, shiftKey: modifiers.shiftKey ?? false },
+  ) as Promise<boolean>;
+}
+
+/**
  * Dispatches one cancelable wheel and reports whether the viewer took it.
  *
  * `deltaMode` defaults to pixels, which is what nearly every device sends.
@@ -1110,6 +1190,117 @@ describe("the linked viewer, rendered", () => {
           () => document.querySelectorAll("circle.chromatogram-point").length,
         ),
       ).toBe(1);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+  });
+
+  describe("input the host owns, rendered", () => {
+    /*
+     * Whose input an event is, asked of the shipped bundle.
+     *
+     * The suite above asks whether an input is *productive*. This asks the
+     * question before it, and the answer changed: WebView2 enables its zoom
+     * controls by default and drives them with Ctrl+wheel, Ctrl+Plus and
+     * Ctrl+Minus, and this application disables neither, so those inputs are the
+     * window's rather than a plot's. ADR 0033's reasoning about hardware still
+     * stands -- nothing here decides what device sent anything.
+     *
+     * The same limitation as the block above applies and is worth restating,
+     * because it is easy to overclaim here: a WebDriver `dispatchEvent` is not a
+     * user gesture, and this engine performs no native zoom for one however the
+     * listener answers. So what these cases prove is that **MSCanvas does not
+     * claim the event**, which is what leaves the host's documented accelerator
+     * path available. None of them claims that a browser zoomed.
+     */
+
+    const IN = -240;
+    const OUT = 240;
+
+    /** Every key this plot maps, including the duplicate spellings. */
+    const VIEWPORT_KEYS = ["+", "=", "-", "_", "ArrowLeft", "ArrowRight", "Home", "0"];
+
+    it("releases a ctrl wheel and claims the identical wheel without it", async () => {
+      await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+      const at = await pointAt(0.5);
+      const before = await rangeCaption();
+      expect(before).toContain("full range");
+
+      expect(await modifiedWheelClaim(at.x, IN, { ctrlKey: true })).toBe(false);
+      expect(await rangeCaption()).toBe(before);
+
+      // The same delta, the same plot, the same anchor. Only the owner differs.
+      expect(await modifiedWheelClaim(at.x, IN)).toBe(true);
+      await browser.waitUntil(async () => !(await rangeCaption()).includes("full range"), {
+        timeout: 10_000,
+        timeoutMsg: "an unmodified wheel changed nothing",
+      });
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("releases a ctrl wheel from a subrange, where both directions are productive", async () => {
+      // At full range an outward wheel is released for an unrelated reason.
+      // From a subrange both directions move the axis, so a release here can
+      // only be about the modifier.
+      await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+      await keyThePlot("+");
+      await browser.waitUntil(async () => !(await rangeCaption()).includes("full range"), {
+        timeout: 10_000,
+        timeoutMsg: "the run did not zoom",
+      });
+      const at = await pointAt(0.5);
+      const subrange = await rangeCaption();
+
+      for (const deltaY of [IN, OUT]) {
+        expect(await modifiedWheelClaim(at.x, deltaY, { ctrlKey: true })).toBe(false);
+      }
+
+      expect(await rangeCaption()).toBe(subrange);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("releases every viewport key under ctrl, meta and alt", async () => {
+      await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+      // From a subrange, so every one of these keys would otherwise be
+      // productive and no release can be a boundary in disguise.
+      await keyThePlot("+");
+      await browser.waitUntil(async () => !(await rangeCaption()).includes("full range"), {
+        timeout: 10_000,
+        timeoutMsg: "the run did not zoom",
+      });
+      const subrange = await rangeCaption();
+
+      for (const key of VIEWPORT_KEYS) {
+        for (const held of ["ctrlKey", "metaKey", "altKey"] as const) {
+          // The key and the modifier travel into the assertion so a failure
+          // names which of the twenty-four combinations was claimed.
+          expect({ key, held, claimed: await keyClaim(key, { [held]: true }) }).toEqual({
+            key,
+            held,
+            claimed: false,
+          });
+        }
+      }
+
+      expect(await rangeCaption()).toBe(subrange);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("still claims a shift-produced plus", async () => {
+      // On common layouts `+` is Shift+`=`, so this is how the ordinary shortcut
+      // arrives. Rejecting Shift would take the zoom away and protect nothing.
+      await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+      expect(await rangeCaption()).toContain("full range");
+
+      expect(await keyClaim("+", { shiftKey: true })).toBe(true);
+
+      await browser.waitUntil(async () => !(await rangeCaption()).includes("full range"), {
+        timeout: 10_000,
+        timeoutMsg: "a shift-produced plus did not zoom",
+      });
+      // And the same key with ctrl held is the host's again.
+      const zoomed = await rangeCaption();
+      expect(await keyClaim("+", { ctrlKey: true, shiftKey: true })).toBe(false);
+      expect(await rangeCaption()).toBe(zoomed);
       expect(await unexpectedConsole()).toEqual([]);
     });
   });

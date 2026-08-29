@@ -2,6 +2,10 @@ import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 
 import { formatCount, formatIntensity } from "./format";
+import {
+  isViewportKeyboardModifierOwnedByHost,
+  isViewportWheelModifierOwnedByHost,
+} from "./viewer/hostInputOwnership";
 import type {
   ViewerEvent,
   ViewerInteractionState,
@@ -587,13 +591,22 @@ function ChromatogramPlot({
     }
     const onWheel = (event: WheelEvent) => {
       /*
-       * Both numbers the event carries, and nothing else about it.
+       * The host's event before it is anyone's here.
        *
-       * `deltaY` is not a length until `deltaMode` says what its unit is, so
-       * neither is read without the other. `ctrlKey` is deliberately not read:
-       * this viewer has no pinch semantics, and treating a modifier as one
-       * would be a guess about the hardware rather than a reading of it.
+       * WebView2 enables its zoom controls by default and drives them with
+       * Ctrl+wheel, and this application disables neither. So a Ctrl-modified
+       * wheel is released before anything else happens -- no layout, no
+       * normalization, no plan, no claim -- and the window keeps a capability it
+       * would otherwise lose over every plot.
+       *
+       * This supersedes ADR 0033's rule that `ctrlKey` is given no meaning.
+       * It is still given no *device* meaning: nothing decides here whether the
+       * event came from a mouse or from a touchpad pinch Chromium reports this
+       * way, and pinch semantics remain deferred. What it is given is an owner.
        */
+      if (isViewportWheelModifierOwnedByHost(event)) {
+        return;
+      }
       /*
        * A press owns the gesture, and this one is not it.
        *
@@ -609,6 +622,11 @@ function ChromatogramPlot({
       if (drag.current !== null) {
         return;
       }
+      /*
+       * Both numbers the event carries, and nothing else about it. `deltaY` is
+       * not a length until `deltaMode` says what its unit is, so neither is read
+       * without the other.
+       */
       const wheel = { deltaY: event.deltaY, deltaMode: event.deltaMode };
       // Asked before anything is measured. An event this viewer cannot read is
       // not worth a layout, and the answer is the same one the planner would
@@ -764,6 +782,19 @@ function ChromatogramPlot({
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<SVGSVGElement>) => {
+    /*
+     * A modified accelerator belongs to the window around this plot.
+     *
+     * Ctrl+Plus, Ctrl+Minus and Ctrl+0 reach this handler carrying the very
+     * `key` values the bare shortcuts below are matched on, so without this the
+     * plot both swallows the accelerator and moves an axis nobody asked it to
+     * move. Shift is deliberately not in that list: on common layouts `+` is
+     * produced by holding it, and rejecting Shift would take away the ordinary
+     * shortcut rather than protect anything.
+     */
+    if (isViewportKeyboardModifierOwnedByHost(event)) {
+      return;
+    }
     const state = readInteraction();
     const runDomain = state.fullDomain;
     const shown = renderedDomain(state);

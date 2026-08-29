@@ -209,7 +209,7 @@ function renderViewport(
  * reason.
  */
 function givePlotABox(): void {
-  vi.spyOn(plot(), "getBoundingClientRect").mockReturnValue({
+  plotBox = vi.spyOn(plot(), "getBoundingClientRect").mockReturnValue({
     x: 0,
     y: 0,
     left: 0,
@@ -220,6 +220,22 @@ function givePlotABox(): void {
     height: 260,
     toJSON: () => ({}),
   } as DOMRect);
+}
+
+/**
+ * The spy `givePlotABox` installs, so a case can ask whether layout was read.
+ *
+ * Reading it is how "released before anything is measured" becomes a fact
+ * rather than a claim about the order of lines in a handler.
+ */
+let plotBox: { readonly mock: { readonly calls: readonly unknown[] } } | null = null;
+
+/** How many times the adapter has measured the plot. */
+function layoutReads(): number {
+  if (plotBox === null) {
+    throw new Error("this render installed no plot box");
+  }
+  return plotBox.mock.calls.length;
 }
 
 /** The drawing: where the wheel is claimed and where a key press lands. */
@@ -349,13 +365,17 @@ function wheel(options: {
   readonly deltaY: number;
   readonly deltaMode?: number;
   readonly clientX?: number;
+  readonly ctrlKey?: boolean;
+  readonly shiftKey?: boolean;
 }): WheelEvent {
   const event = new WheelEvent("wheel", {
     bubbles: true,
     cancelable: true,
     clientX: options.clientX ?? CENTRE_X,
+    ctrlKey: options.ctrlKey ?? false,
     deltaMode: options.deltaMode ?? 0,
     deltaY: options.deltaY,
+    shiftKey: options.shiftKey ?? false,
   });
   act(() => {
     plot().dispatchEvent(event);
@@ -363,9 +383,31 @@ function wheel(options: {
   return event;
 }
 
-/** One key press, built by hand for the same reason the wheel is. */
-function key(name: string): KeyboardEvent {
-  const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: name });
+/**
+ * One key press, built by hand for the same reason the wheel is.
+ *
+ * Every modifier is defaulted explicitly rather than left off the dictionary, so
+ * a case that means "unmodified" says so and cannot pass because a field it
+ * never thought about happened to be absent.
+ */
+function key(
+  name: string,
+  modifiers: {
+    readonly ctrlKey?: boolean;
+    readonly metaKey?: boolean;
+    readonly altKey?: boolean;
+    readonly shiftKey?: boolean;
+  } = {},
+): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    altKey: modifiers.altKey ?? false,
+    bubbles: true,
+    cancelable: true,
+    ctrlKey: modifiers.ctrlKey ?? false,
+    key: name,
+    metaKey: modifiers.metaKey ?? false,
+    shiftKey: modifiers.shiftKey ?? false,
+  });
   act(() => {
     plot().dispatchEvent(event);
   });
@@ -428,6 +470,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   controller = null;
+  plotBox = null;
 });
 
 describe("what each m/z control would do", () => {
@@ -984,6 +1027,196 @@ describe("who owns a wheel over the spectrum", () => {
       vi.advanceTimersByTime(1_000);
     });
     expect(state()).toBe(before);
+  });
+});
+
+/*
+ * Input the window owns, which this panel may not take.
+ *
+ * `who owns a wheel over the spectrum` above asks whether an input is
+ * *productive*. This asks the question before it: whether the input was this
+ * panel's to plan at all.
+ *
+ * The chromatogram answers it with the same predicate, and its own suite pins
+ * the same cases, because whose input this is has no axis in it. What changed
+ * the answer is evidence about the host rather than about hardware: WebView2
+ * enables its zoom controls by default and drives them with Ctrl+wheel,
+ * Ctrl+Plus and Ctrl+Minus, and this application disables neither. Nothing here
+ * decides what device produced an event.
+ */
+describe("input the host owns", () => {
+  /** A window with room in every direction, so nothing is refused at an edge. */
+  const ROOMY = mzDomain(200, 300);
+
+  /** Every key this panel maps, including the duplicate spellings. */
+  const VIEWPORT_KEYS = ["+", "=", "-", "_", "ArrowLeft", "ArrowRight", "Home", "0"];
+
+  const HOST_MODIFIERS: readonly {
+    readonly label: string;
+    readonly modifiers: {
+      readonly ctrlKey?: boolean;
+      readonly metaKey?: boolean;
+      readonly altKey?: boolean;
+    };
+  }[] = [
+    { label: "ctrl", modifiers: { ctrlKey: true } },
+    { label: "meta", modifiers: { metaKey: true } },
+    { label: "alt", modifiers: { altKey: true } },
+  ];
+
+  it("releases a ctrl wheel before it measures anything, and claims it without ctrl", () => {
+    /*
+     * `live()` rather than `state()` for the released half. A wheel the reducer
+     * accepted would start a gesture, and a gesture's frames are deliberately
+     * not published -- so asking only what React drew could not tell a released
+     * event apart from a claimed one whose frame was withheld. The reducer's own
+     * state is the strict question.
+     */
+    renderViewport();
+    const before = live();
+    const fullSpan = shown().high - shown().low;
+    const measured = layoutReads();
+
+    const released = wheel({ deltaY: IN, ctrlKey: true });
+
+    expect(released.defaultPrevented).toBe(false);
+    // Nothing planned: no reducer event, so no gesture, no epoch, and no
+    // generation spent asking Rust to draw a window nobody asked for.
+    expect(live()).toBe(before);
+    expect(state()).toBe(before);
+    // And nothing measured. The guard sits ahead of the anchor calculation, so a
+    // released wheel costs the panel no layout at all.
+    expect(layoutReads()).toBe(measured);
+    // No settle was scheduled either, so nothing commits a window later.
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(live()).toBe(before);
+
+    // The same delta, the same plot, the same anchor. Only the owner differs.
+    const claimed = wheel({ deltaY: IN });
+
+    expect(claimed.defaultPrevented).toBe(true);
+    expect(liveShown().high - liveShown().low).toBeLessThan(fullSpan);
+    expect(layoutReads()).toBeGreaterThan(measured);
+  });
+
+  it("releases a ctrl wheel from a subrange, where both directions are productive", () => {
+    /*
+     * At full range an outward wheel is released too, for an unrelated reason:
+     * there is nothing wider to show. From a subrange both directions move the
+     * axis, so a release here can only be about the modifier.
+     */
+    renderViewport();
+    send({ type: "viewport-step", domain: ROOMY });
+    const before = live();
+
+    for (const deltaY of [IN, OUT]) {
+      const event = wheel({ deltaY, ctrlKey: true });
+
+      expect(event.defaultPrevented, String(deltaY)).toBe(false);
+      expect(live(), String(deltaY)).toBe(before);
+    }
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(live()).toBe(before);
+  });
+
+  it("still reads magnitude the same way whether or not shift is held", () => {
+    // Shift has no owner and is given no meaning, which is the rule ctrl used to
+    // be judged by. It survives here because it is still true.
+    renderViewport();
+    send({ type: "viewport-step", domain: ROOMY });
+
+    const held = wheel({ deltaY: IN, shiftKey: true });
+    const withShift = liveShown();
+
+    cleanup();
+    renderViewport();
+    send({ type: "viewport-step", domain: ROOMY });
+    const plain = wheel({ deltaY: IN });
+
+    expect(held.defaultPrevented).toBe(true);
+    expect(plain.defaultPrevented).toBe(true);
+    expect(liveShown()).toEqual(withShift);
+  });
+
+  it("releases every viewport key under ctrl, meta and alt", () => {
+    renderViewport();
+    plot().focus();
+
+    for (const name of VIEWPORT_KEYS) {
+      for (const { label, modifiers } of HOST_MODIFIERS) {
+        // Restored before each press, so every key is judged from a window with
+        // somewhere to go and no release can be a boundary in disguise.
+        send({ type: "viewport-step", domain: ROOMY });
+        const before = live();
+
+        const event = key(name, modifiers);
+
+        expect(event.defaultPrevented, label + "+" + name).toBe(false);
+        expect(live(), label + "+" + name).toBe(before);
+      }
+    }
+  });
+
+  it("still claims every unmodified viewport key", () => {
+    // The other half of the same rule, and the one a careless guard breaks.
+    renderViewport();
+    plot().focus();
+
+    for (const name of VIEWPORT_KEYS) {
+      send({ type: "viewport-step", domain: ROOMY });
+      const before = live();
+
+      const event = key(name);
+
+      expect(event.defaultPrevented, name).toBe(true);
+      expect(live(), name).not.toBe(before);
+    }
+  });
+
+  it("still zooms on a shift-produced plus", () => {
+    /*
+     * Not an exotic case: on common layouts `+` *is* Shift+`=`, so this is how
+     * the ordinary shortcut arrives. A guard that rejected Shift would take the
+     * zoom away and protect no accelerator.
+     */
+    renderViewport();
+    plot().focus();
+    const before = shown();
+
+    const event = key("+", { shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(shown().high - shown().low).toBeLessThan(before.high - before.low);
+  });
+
+  it("releases a plus that carries ctrl as well as shift", () => {
+    // Shift is not a licence. Ctrl is present, so the press is the host's.
+    renderViewport();
+    plot().focus();
+    const before = live();
+
+    const event = key("+", { ctrlKey: true, shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(live()).toBe(before);
+  });
+
+  it("leaves a key it does not map alone, modified or not", () => {
+    // The guard is about ownership, not about swallowing more. Tab and Escape
+    // were never this panel's and still are not.
+    renderViewport();
+    plot().focus();
+    const before = live();
+
+    for (const name of ["Tab", "Escape", "a"]) {
+      expect(key(name).defaultPrevented, name).toBe(false);
+      expect(key(name, { ctrlKey: true }).defaultPrevented, "ctrl+" + name).toBe(false);
+    }
+    expect(live()).toBe(before);
   });
 });
 

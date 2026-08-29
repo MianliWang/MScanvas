@@ -12,6 +12,10 @@ import {
   SPECTRUM_STICKS_LAYER,
   StickSpectrum,
 } from "./StickSpectrum";
+import {
+  isViewportKeyboardModifierOwnedByHost,
+  isViewportWheelModifierOwnedByHost,
+} from "./viewer/hostInputOwnership";
 import type { MzDomain, SpectrumViewportEvent, SpectrumViewportState } from "./viewer/spectrumViewport";
 import {
   activeMzGestureEpoch,
@@ -359,6 +363,22 @@ export function SpectrumViewport({
   const onWheel = useCallback(
     (event: WheelEvent) => {
       /*
+       * The host's event before it is anyone's here.
+       *
+       * WebView2 enables its zoom controls by default and drives them with
+       * Ctrl+wheel, and this application disables neither. So a Ctrl-modified
+       * wheel is released before anything else happens -- no layout, no
+       * normalization, no plan, no claim -- and the window keeps a capability it
+       * would otherwise lose over every plot.
+       *
+       * The chromatogram releases it on the same rule and for the same reason:
+       * whose input this is has no axis in it. Neither viewer decides here what
+       * device produced the event, and pinch semantics remain deferred.
+       */
+      if (isViewportWheelModifierOwnedByHost(event)) {
+        return;
+      }
+      /*
        * A press owns the gesture, and this one is not it.
        *
        * `planMzWheelGesture` reads the active epoch out of the state, so a wheel
@@ -376,9 +396,7 @@ export function SpectrumViewport({
       /*
        * Both numbers the event carries, and nothing else about it. `deltaY` is
        * not a length until `deltaMode` says what its unit is, so neither is read
-       * without the other. `ctrlKey` is deliberately not read: this panel has no
-       * pinch semantics, and treating a modifier as one would be a guess about
-       * the hardware rather than a reading of it.
+       * without the other.
        */
       const wheel = { deltaY: event.deltaY, deltaMode: event.deltaMode };
       // Asked before anything is measured. An event this panel cannot read is
@@ -536,6 +554,19 @@ export function SpectrumViewport({
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<SVGSVGElement>) => {
+    /*
+     * A modified accelerator belongs to the window around this plot.
+     *
+     * Ctrl+Plus, Ctrl+Minus and Ctrl+0 reach this handler carrying the very
+     * `key` values the bare shortcuts below are matched on, so without this the
+     * plot both swallows the accelerator and moves an axis nobody asked it to
+     * move. Shift is deliberately not in that list: on common layouts `+` is
+     * produced by holding it, and rejecting Shift would take away the ordinary
+     * shortcut rather than protect anything.
+     */
+    if (isViewportKeyboardModifierOwnedByHost(event)) {
+      return;
+    }
     const current = readState();
     let taken = false;
     switch (event.key) {
