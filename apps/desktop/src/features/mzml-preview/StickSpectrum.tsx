@@ -26,6 +26,36 @@ const PLOT_PADDING_TOP = 10;
 export const SPECTRUM_PLOT_VIEWBOX_WIDTH = PLOT_WIDTH;
 export const SPECTRUM_PLOT_PADDING_LEFT = PLOT_PADDING_LEFT;
 export const SPECTRUM_PLOT_DRAWN_WIDTH = PLOT_WIDTH - PLOT_PADDING_LEFT - PLOT_PADDING_RIGHT;
+
+/**
+ * The parts of the drawing an interaction adapter moves directly.
+ *
+ * A gesture is a stream of pointer frames, and this repository's frontend rules
+ * keep frame data out of React state -- so during one the adapter writes these
+ * three nodes itself rather than asking React to redraw the panel per frame.
+ * Named here, beside the geometry they are positioned by, so the component that
+ * renders them and the adapter that moves them cannot come to disagree about
+ * which node is which.
+ *
+ * The layer exists to be transformed as a whole: a pan is a translate and a
+ * wheel zoom a scale about the pointer, which is exact and costs no reduction.
+ */
+export const SPECTRUM_STICKS_LAYER = "spectrum-sticks-layer";
+export const SPECTRUM_AXIS_LOW = "spectrum-axis-low";
+export const SPECTRUM_AXIS_HIGH = "spectrum-axis-high";
+
+/**
+ * Where the sticks are clipped to while a gesture is moving them.
+ *
+ * Static drawings never reach it -- every stick is placed inside the band by
+ * construction -- but a transient translate slides them out of it, and without a
+ * clip they would be painted over the axis labels and the panel beside them.
+ *
+ * One identifier rather than a generated one: this panel renders exactly one
+ * spectrum plot, either the viewport's or the inert transferred drawing, never
+ * both.
+ */
+const STICKS_CLIP = "spectrum-plot-clip";
 /**
  * The bottom of the drawing area. The gutter below it is deep enough for the
  * lowest-intensity label to sit clear of the m/z labels, which a spectrum
@@ -429,10 +459,18 @@ function describeDrawing(reduction: Reduction, drawing: SpectrumDrawing): string
       : "Waiting for the drawing of this range. Nothing is drawn here yet.";
   }
   if (drawing.kind === "viewport-transient") {
-    // Said plainly rather than hidden, because it is the one moment the picture
-    // is not an answer about the range beneath it. The drawing in hand is being
-    // stretched for feedback; the range is asked for when the gesture stops.
-    return `Showing the drawing already in hand while the range is being changed. Release to draw m/z ${formatMz(drawing.low)} to ${formatMz(drawing.high)} from the retained spectrum.`;
+    /*
+     * Said plainly rather than hidden, because it is the one moment the picture
+     * is not an answer about the range beneath it: the drawing in hand is being
+     * stretched for feedback, and the range is asked for when the gesture stops.
+     *
+     * It names no range, and that is not vagueness. A gesture is drawn between
+     * two React renders -- the one that starts it and the one that settles it --
+     * so any number written here would be the range the gesture *began* at,
+     * sitting under a plot that has since moved. The range line beside the plot
+     * carries the live numbers, and is kept current for exactly that reason.
+     */
+    return "Showing the drawing already in hand while the range is being changed. Release to draw the range under it from the retained spectrum.";
   }
   const observations =
     drawing.sourcePoints === 1
@@ -455,9 +493,20 @@ function describeDrawing(reduction: Reduction, drawing: SpectrumDrawing): string
    * asks, and it answers it for both reductions at once: fewer sticks than
    * observations means some observation is not individually drawn, whichever
    * side of the boundary dropped it.
+   *
+   * **What it must not do is guess why.** The sentence used to say more were
+   * measured here than this drawing has columns, and that is a claim about
+   * scarcity the drawing usually cannot support: `columnCount` is
+   * `min(900, drawnFrom)`, so below nine hundred observations there are exactly
+   * as many columns as observations and never fewer. Two peaks at m/z 120 and
+   * 130 in a window of 100 to 200 collapse into one of two available columns --
+   * the columns were not the constraint, the mapping was. So the reason given is
+   * the one that is always true: observations that share a column are kept as
+   * that column's extremes, which is the same rule on both sides of the boundary
+   * and says nothing about how many columns there were.
    */
   return reduction.sticks.length < drawing.sourcePoints
-    ? `${opening} More were measured here than this drawing has columns, so each column keeps the greatest non-negative and the deepest negative value in it and a peak spread over several points can appear as one stick.`
+    ? `${opening} This bounded drawing groups observations by screen column, and where several fall in one column it keeps that column's greatest non-negative and deepest negative measured observation, so not every observation is shown on its own.`
     : `${opening} Every one of them is drawn.`;
 }
 
@@ -528,16 +577,35 @@ export function StickSpectrum({
         tabIndex={surface.kind === "interactive" ? 0 : undefined}
         viewBox={`0 0 ${PLOT_WIDTH} ${PLOT_HEIGHT}`}
       >
+        <defs>
+          <clipPath id={STICKS_CLIP}>
+            <rect
+              height={BASELINE_Y}
+              width={PLOT_WIDTH - PLOT_PADDING_LEFT - PLOT_PADDING_RIGHT}
+              x={PLOT_PADDING_LEFT}
+              y={0}
+            />
+          </clipPath>
+        </defs>
         <g className="plot-grid">
           <line x1={0} x2={PLOT_WIDTH} y1={reduction.zeroY} y2={reduction.zeroY} />
           <line x1={0} x2={PLOT_WIDTH} y1={PLOT_PADDING_TOP} y2={PLOT_PADDING_TOP} />
         </g>
-        {path === "" ? null : <path className="spectrum-sticks" d={path} />}
-        <text className="axis-label" x={PLOT_PADDING_LEFT} y={PLOT_HEIGHT - 6}>
+        {/* The one node a gesture moves. Transformed as a whole rather than
+            redrawn, so a pointer frame costs an attribute rather than a
+            reduction over the projection. */}
+        <g className={SPECTRUM_STICKS_LAYER} clipPath={`url(#${STICKS_CLIP})`}>
+          {path === "" ? null : <path className="spectrum-sticks" d={path} />}
+        </g>
+        <text
+          className={`axis-label ${SPECTRUM_AXIS_LOW}`}
+          x={PLOT_PADDING_LEFT}
+          y={PLOT_HEIGHT - 6}
+        >
           {formatMz(reduction.domainLow)}
         </text>
         <text
-          className="axis-label"
+          className={`axis-label ${SPECTRUM_AXIS_HIGH}`}
           textAnchor="end"
           x={PLOT_WIDTH - PLOT_PADDING_RIGHT}
           y={PLOT_HEIGHT - 6}

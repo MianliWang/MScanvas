@@ -33,6 +33,7 @@ import { useLayoutEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PreviewError, SpectrumProjection, SpectrumViewportDomain } from "./contracts";
+import { formatMz } from "./format";
 import { SpectrumViewport } from "./SpectrumViewport";
 import {
   SPECTRUM_PLOT_DRAWN_WIDTH,
@@ -125,6 +126,16 @@ interface Shown {
 
 let controller: SpectrumViewportController | null = null;
 
+/**
+ * How many times the surface's owner has been asked to render.
+ *
+ * The panel and the workspace above it render from the same published state, so
+ * counting here counts what a pointer frame would have cost them: the facts
+ * list, the precursor list, the export controls, and a fresh reduction over the
+ * projection, once per browser pointer frame.
+ */
+let ownerRenders = 0;
+
 function Harness({
   domain,
   intensity,
@@ -140,6 +151,7 @@ function Harness({
 }) {
   const viewport = useSpectrumViewport();
   controller = viewport;
+  ownerRenders += 1;
   const { dispatch } = viewport;
   // The announcement the workspace makes, in the same phase it makes it, so the
   // first painted frame already knows whether this spectrum has a range at all.
@@ -248,6 +260,30 @@ function shown(): Shown {
   const domain = renderedMzDomain(state());
   if (domain === null) {
     throw new Error("no m/z range is on screen");
+  }
+  return domain;
+}
+
+/**
+ * The state as the contract holds it right now, published or not.
+ *
+ * A gesture's frames are applied to the reducer and deliberately not published,
+ * so `state()` is what React drew and this is what the reducer knows. Tests
+ * about a gesture in flight ask this one; tests about what a reader sees ask the
+ * other, and the difference between them is the property that keeps pointer
+ * frames off the panel's render path.
+ */
+function live(): SpectrumViewportState {
+  if (controller === null) {
+    throw new Error("the harness published no controller");
+  }
+  return controller.current();
+}
+
+function liveShown(): Shown {
+  const domain = renderedMzDomain(live());
+  if (domain === null) {
+    throw new Error("no m/z range is live");
   }
   return domain;
 }
@@ -375,6 +411,7 @@ function sticks(): Element | null {
 }
 
 beforeEach(() => {
+  ownerRenders = 0;
   // Not `shouldAdvanceTime`. A wheel's settle is scheduled 120ms out, and a
   // clock that advanced with real time could fire it between two lines of a
   // test -- which would make "the gesture has not settled yet" a statement
@@ -873,13 +910,20 @@ describe("who owns a wheel over the spectrum", () => {
     });
     expect(ready().gesture, "one millisecond before the settle").not.toBeNull();
 
-    const transient = shown();
+    // Where the stream has actually got to, read from the contract rather than
+    // from the render: the second and third notches were applied and not
+    // published, which is what keeps a wheel stream off the panel's render path.
+    const transient = liveShown();
+    expect(transient).not.toEqual(shown());
+
     act(() => {
       vi.advanceTimersByTime(1);
     });
     const settled = state();
 
     expect(ready().gesture).toBeNull();
+    // Settling publishes, so what the reader is left looking at is where the
+    // stream ended rather than where its first notch put it.
     expect(renderedMzDomain(settled)).toEqual(transient);
 
     // And once is once: nothing later re-commits what has already been committed.
@@ -1128,6 +1172,114 @@ describe("panning the spectrum with a press", () => {
     expect(ready().committed).not.toBeNull();
   });
 
+  it("does not ask the owner to render once per pointer frame of a long drag", () => {
+    /*
+     * The frontend rule this closes is `apps/desktop/AGENTS.md`'s: keep
+     * pointer-move and cursor-frame data out of React state. A drag is a stream
+     * of frames, and publishing each one re-rendered the panel and the workspace
+     * above it -- the facts list, the precursor list, the export controls -- and
+     * ran the plot's reduction again, for a change one number wide.
+     *
+     * So the count is asserted against the *gesture* rather than against the
+     * frames: a drag publishes when it starts and when it settles, and a
+     * hundred frames in between publish nothing. Asserted as a bound rather than
+     * an exact number, because what matters is that it does not scale.
+     */
+    renderViewport();
+    drawProjection(DRAWN);
+    send({ type: "viewport-step", domain: mzDomain(200, 300) });
+    drawProjection({ ...DRAWN, low: 200, high: 300 });
+
+    const before = ownerRenders;
+    pressPointer(CENTRE_X);
+    for (let frame = 0; frame < 100; frame += 1) {
+      movePointer(CENTRE_X - 20 - frame);
+    }
+    const duringDrag = ownerRenders - before;
+    // One publication for the gesture starting, and nothing for the frames.
+    expect(duringDrag, "renders during a hundred pointer frames").toBeLessThanOrEqual(2);
+
+    releasePointer(CENTRE_X - 120);
+    const wholeGesture = ownerRenders - before;
+    // The settle publishes, and the drawing it commits to needs a render.
+    expect(wholeGesture, "renders for the whole gesture").toBeLessThanOrEqual(4);
+
+    // And it was a real drag: a hundred frames moved the contract's own range.
+    expect(liveShown().low).not.toBe(200);
+  });
+
+  it("keeps moving the drawing while a drag publishes nothing", () => {
+    /*
+     * The other half of the same repair. Taking frames off the render path must
+     * not turn a drag into "nothing happens until you let go", so the adapter
+     * moves the sticks and the numbers itself: the layer is transformed as a
+     * whole, which is exact and costs no second reduction, and the axis and the
+     * range line are written beside it so a drawing never moves under numbers
+     * that do not.
+     */
+    renderViewport();
+    drawProjection(DRAWN);
+    send({ type: "viewport-step", domain: mzDomain(200, 300) });
+    drawProjection({ ...DRAWN, low: 200, high: 300 });
+
+    const layer = () => plot().querySelector("g.spectrum-sticks-layer");
+    const axisLow = () => plot().querySelector("text.spectrum-axis-low")?.textContent ?? "";
+    expect(layer()?.getAttribute("transform"), "at rest").toBeNull();
+
+    pressPointer(CENTRE_X);
+    movePointer(CENTRE_X - 60);
+    const startedAt = rangeText();
+    const publishedRenders = ownerRenders;
+
+    movePointer(CENTRE_X - 200);
+
+    // Nothing was published for that frame, and the drawing moved anyway.
+    expect(ownerRenders, "no render for the frame").toBe(publishedRenders);
+    expect(layer()?.getAttribute("transform"), "the sticks moved").toMatch(/translate/u);
+    expect(rangeText(), "the range line moved").not.toBe(startedAt);
+    expect(axisLow(), "the axis moved").toBe(formatMz(liveShown().low));
+
+    // Settling hands the drawing back to React, which redraws it at the range it
+    // committed to -- so the transform left over from the gesture is gone.
+    releasePointer(CENTRE_X - 200);
+    expect(layer()?.getAttribute("transform"), "after the settle").toBeNull();
+  });
+
+  it("starts no gesture for a drag pushed outward at an edge it already rests on", () => {
+    /*
+     * The drag half of the same boundary. The keyboard's pan and this one are
+     * the same transition asked by different hands, so a window flush against
+     * the source must be as inert under a finger as under `ArrowRight` -- no
+     * epoch allocated, no window committed that differs only in the last place,
+     * and no drawing asked of Rust for it.
+     */
+    renderViewport();
+    drawProjection(DRAWN);
+    // Flush against the low edge of the spectrum.
+    send({ type: "viewport-step", domain: mzDomain(FULL.low, FULL.low + 100) });
+    drawProjection({ ...DRAWN, low: FULL.low, high: FULL.low + 100 });
+    const before = state();
+    expect(ready().committed?.low).toBe(FULL.low);
+
+    // Dragged right, which pushes the window further left: there is nowhere
+    // left for it to go.
+    pressPointer(CENTRE_X);
+    for (const step of [40, 120, 400, 900]) {
+      movePointer(CENTRE_X + step);
+    }
+    expect(ready().gesture, "no gesture was started").toBeNull();
+    expect(state().nextEpoch, "no epoch was spent").toBe(before.nextEpoch);
+    expect(state().nextGeneration, "no drawing was asked for").toBe(before.nextGeneration);
+
+    releasePointer(CENTRE_X + 900);
+    expect(state(), "and the release committed nothing").toBe(before);
+
+    // The way back is open, so the plot is not simply dead.
+    pressPointer(CENTRE_X, 2);
+    movePointer(CENTRE_X - 200, 2);
+    expect(ready().gesture, "the other direction still pans").not.toBeNull();
+  });
+
   it("moves nothing when the spectrum changes under a press that is still down", () => {
     /*
      * A press outlives a selection. The scan can change from the table, from the
@@ -1347,7 +1499,9 @@ describe("what the plot draws, and what it says it is drawing", () => {
     expect(captionText()).toMatch(
       /Showing the drawing already in hand while the range is being changed\./u,
     );
-    expect(captionText()).toMatch(/Release to draw m\/z .* from the retained spectrum\./u);
+    expect(captionText()).toMatch(
+      /Release to draw the range under it from the retained spectrum\./u,
+    );
   });
 
   it("offers to draw the range again for a failure that can be retried", () => {

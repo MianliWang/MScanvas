@@ -1,19 +1,21 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 import type { PreviewError, SpectrumDomainRefusal } from "./contracts";
 import { formatMz } from "./format";
 import type { SpectrumDrawing } from "./StickSpectrum";
 import {
+  SPECTRUM_AXIS_HIGH,
+  SPECTRUM_AXIS_LOW,
   SPECTRUM_PLOT_DRAWN_WIDTH,
   SPECTRUM_PLOT_PADDING_LEFT,
   SPECTRUM_PLOT_VIEWBOX_WIDTH,
+  SPECTRUM_STICKS_LAYER,
   StickSpectrum,
 } from "./StickSpectrum";
 import type { MzDomain, SpectrumViewportEvent, SpectrumViewportState } from "./viewer/spectrumViewport";
 import {
   activeMzGestureEpoch,
   isFullMzDomain,
-  panMzDomain,
   renderedMzDomain,
 } from "./viewer/spectrumViewport";
 import type {
@@ -22,6 +24,7 @@ import type {
 } from "./viewer/spectrumViewportAction";
 import {
   applySpectrumViewportAction,
+  pannedTo,
   planMzWheelGesture,
   planRenderedMzTransition,
   planSpectrumViewportAction,
@@ -252,6 +255,94 @@ export function SpectrumViewport({
   );
 
   /**
+   * The range React last drew, and the nodes a gesture moves in the meantime.
+   *
+   * `useSpectrumViewport` publishes a gesture *starting* and a gesture
+   * *settling*, and nothing in between: a pointer frame is frame data, and this
+   * repository keeps that out of React state. So between those two publications
+   * the drawing on screen answers `paintedRange` and the reader is somewhere
+   * else, and closing that gap is what these two refs are for.
+   */
+  const paintedRange = useRef<MzDomain | null>(null);
+  const paintedNodes = useRef<{
+    layer: SVGGElement | null;
+    low: SVGTextElement | null;
+    high: SVGTextElement | null;
+  }>({ layer: null, low: null, high: null });
+  const rangeRef = useRef<HTMLParagraphElement | null>(null);
+
+  /**
+   * Puts the drawing back where React believes it is.
+   *
+   * Called after every render, which is exactly when that belief becomes true
+   * again: React has just written the sticks and the labels for the range it
+   * holds, so any transform left over from a gesture is now wrong by definition.
+   * Resetting here rather than at the end of a gesture is what makes this
+   * robust to a render arriving *during* one -- a projection answering while a
+   * drag is in flight -- which would otherwise leave a stale transform composed
+   * on top of freshly drawn sticks.
+   */
+  useLayoutEffect(() => {
+    const plot = plotRef.current;
+    paintedNodes.current = {
+      layer: plot?.querySelector<SVGGElement>(`g.${SPECTRUM_STICKS_LAYER}`) ?? null,
+      low: plot?.querySelector<SVGTextElement>(`text.${SPECTRUM_AXIS_LOW}`) ?? null,
+      high: plot?.querySelector<SVGTextElement>(`text.${SPECTRUM_AXIS_HIGH}`) ?? null,
+    };
+    paintedNodes.current.layer?.removeAttribute("transform");
+    paintedRange.current = renderedMzDomain(state);
+  });
+
+  /**
+   * Moves the drawing to where the gesture has got to, without React.
+   *
+   * A pan is a translation of the sticks and a wheel zoom a scale about the
+   * pointer, so the whole layer is transformed rather than the reduction being
+   * run again: one attribute per frame instead of a pass over the projection and
+   * a re-render of the panel around it. The axis numbers and the range line are
+   * written beside it, because a drawing that moves under numbers that do not is
+   * worse than one that does not move.
+   *
+   * Nothing here decides anything. The range comes from the reducer's own live
+   * state, and this is only the arithmetic that puts a range on screen.
+   */
+  const paintTransientFrame = useCallback((current: SpectrumViewportState) => {
+    const target = renderedMzDomain(current);
+    const base = paintedRange.current;
+    const nodes = paintedNodes.current;
+    if (target === null || base === null) {
+      return;
+    }
+    const painted = base.high - base.low;
+    const wanted = target.high - target.low;
+    if (nodes.layer !== null) {
+      if (!(painted > 0) || !(wanted > 0)) {
+        nodes.layer.removeAttribute("transform");
+      } else {
+        // x' = scale * x + shift, in viewBox units, so that the m/z a stick was
+        // drawn at lands where the range on screen now puts it.
+        const scale = painted / wanted;
+        const shift =
+          SPECTRUM_PLOT_PADDING_LEFT * (1 - scale) +
+          (SPECTRUM_PLOT_DRAWN_WIDTH * (base.low - target.low)) / wanted;
+        nodes.layer.setAttribute(
+          "transform",
+          `translate(${String(shift)} 0) scale(${String(scale)} 1)`,
+        );
+      }
+    }
+    if (nodes.low !== null) {
+      nodes.low.textContent = formatMz(target.low);
+    }
+    if (nodes.high !== null) {
+      nodes.high.textContent = formatMz(target.high);
+    }
+    if (rangeRef.current !== null) {
+      rangeRef.current.textContent = describeRange(current, target);
+    }
+  }, []);
+
+  /**
    * The wheel, attached by hand because React's own listener is passive.
    *
    * Which is the whole reason the order below matters. Cancelling a wheel event
@@ -311,7 +402,12 @@ export function SpectrumViewport({
       // The epoch is the reducer's to hand out. An adapter that allocated one
       // could address a gesture that is not its own, which is exactly the race
       // an epoch exists to remove.
-      scheduleSettle(activeMzGestureEpoch(dispatch(plan.event)));
+      const applied = dispatch(plan.event);
+      scheduleSettle(activeMzGestureEpoch(applied));
+      // A wheel inside a gesture already running publishes nothing, so the
+      // drawing is moved here rather than waiting for a render that is not
+      // coming until the stream settles.
+      paintTransientFrame(applied);
     },
     [dispatch, plotFractionAt, readState, scheduleSettle],
   );
@@ -383,9 +479,12 @@ export function SpectrumViewport({
     const full = current.full;
     // From the press origin, never from the previous frame. The same pan
     // arrived at by a different route lands on the same window.
-    const next = panMzDomain(active.start, full, drawnWidth === 0 ? 0 : -moved / drawnWidth);
+    // The same saturation the keyboard's pan gets. A drag pushed outward at an
+    // edge the window already rests on must not allocate a gesture, commit a
+    // window one unit in the last place away, or ask Rust to draw it.
+    const next = pannedTo(active.start, full, drawnWidth === 0 ? 0 : -moved / drawnWidth);
     if (active.epoch !== null) {
-      dispatch({ type: "gesture-moved", epoch: active.epoch, domain: next });
+      paintTransientFrame(dispatch({ type: "gesture-moved", epoch: active.epoch, domain: next }));
       return;
     }
     // The same rule the wheel and the buttons follow, asked before a gesture
@@ -552,14 +651,8 @@ export function SpectrumViewport({
       {/* Not a live region. It changes on every frame of a drag, and a region
           that announced each of them would be noise rather than feedback. It is
           half of the plot's accessible description instead. */}
-      <p className="spectrum-viewport-range" id={RANGE_ID}>
-        {shown === null
-          ? "No m/z range to navigate."
-          : `Showing m/z ${formatMz(shown.low)} to ${formatMz(shown.high)}${
-              state.status === "ready" && isFullMzDomain(shown, state.full)
-                ? " (full range)"
-                : ""
-            }`}
+      <p className="spectrum-viewport-range" id={RANGE_ID} ref={rangeRef}>
+        {describeRange(state, shown)}
       </p>
 
       {/*
@@ -651,6 +744,22 @@ function drawingFor(state: SpectrumViewportState & { readonly status: "ready" })
     sourcePoints: state.projection.projection.sourcePoints,
     reduced: state.projection.projection.reduced,
   };
+}
+
+/**
+ * What range is on screen, in one sentence.
+ *
+ * Written once and read twice: React renders it, and the gesture writer puts the
+ * same sentence back on the same element while a drag is between publications.
+ * Two copies of this wording would be two answers to the question the line
+ * exists to answer.
+ */
+function describeRange(state: SpectrumViewportState, shown: MzDomain | null): string {
+  if (shown === null) {
+    return "No m/z range to navigate.";
+  }
+  const full = state.status === "ready" && isFullMzDomain(shown, state.full) ? " (full range)" : "";
+  return `Showing m/z ${formatMz(shown.low)} to ${formatMz(shown.high)}${full}`;
 }
 
 /**

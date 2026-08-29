@@ -98,8 +98,9 @@ Build a session workspace of local `.mzML` files and inspect one of them:
   preview that did not load the complete spectrum table draws **no** trace rather
   than a prefix presented as the whole run, and says which of those it is.
 
-Not implemented yet: vendor RAW preview; XIC; spectrum zoom and pan;
-directory-formatted acquisition recognition; filtering the workspace by
+Not implemented yet: vendor RAW preview; XIC; exporting a selected spectrum over
+the range on screen rather than its whole source; directory-formatted acquisition
+recognition; filtering the workspace by
 anything other than filename, and grouping it; a workspace that outlives the
 session, which includes remembering a search or a sort; conversion progress as a
 percentage; cancelling one item of a queue while the rest carry on; resuming a

@@ -58,7 +58,7 @@ table remains the target, including the unsupported portions called out below:
 |---|---|---:|---|
 | VIEW-001 | Metadata summary | P0 | Shows format/vendor, size, scan counts, MS levels, RT range and available instrument metadata. |
 | VIEW-002 | TIC/BPC | P0 | **Implemented for a completely loaded mzML spectrum table.** Toggle traces, zoom/pan/reset, inspect coordinates and select nearest scan. |
-| VIEW-003 | Spectrum view | P0 | Profile uses a line; centroid uses sticks; axes and units remain explicit. |
+| VIEW-003 | Spectrum view | P0 | Profile uses a line; centroid uses sticks; axes and units remain explicit. **Zoom/pan/reset implemented per spectrum, wherever an authoritative m/z domain is admitted; an explicit refusal where it is not.** |
 | VIEW-004 | Scan table | P0 | Virtualized rows with scan, RT, MS level and precursor context. |
 | VIEW-005 | Linked selection | P0 | **Implemented across the chromatogram, the loaded scan table and the selected-spectrum panel.** Selection synchronizes chromatogram marker, table row, spectrum and inspector in both directions. |
 | VIEW-006 | Keyboard scan navigation | P0 | **Implemented.** Previous/next and table navigation work without pointer-only access. |
@@ -98,16 +98,28 @@ The acceptance table remains the target, including the parts called out below.
   Where a preview loaded only part of the table, the interface says that the end
   of the loaded rows is not the end of the run.
 
-Still unimplemented across the viewer: XIC (VIEW-007), spectrum zoom and pan,
-multi-layer comparison (VIEW-008), and current-range export of a selected
-spectrum. The chromatogram exports over the full run or the current range, alone
-or linked with the selected scan; see FIG-001 through FIG-006.
+Still unimplemented across the viewer: XIC (VIEW-007), multi-layer comparison
+(VIEW-008), and current-range export of a selected spectrum. The chromatogram
+exports over the full run or the current range, alone or linked with the selected
+scan; see FIG-001 through FIG-006.
+
+**Spectrum zoom and pan are implemented, per spectrum.** M5.2 made the selected
+spectrum's m/z viewport reachable by wheel, drag, keyboard and three buttons
+wherever M5.1's Rust-side contract admits an authoritative finite forward m/z
+domain, and what a committed range draws is a bounded projection of the complete
+spectrum Rust retained rather than the bounded arrays one transfer carries — so
+panning past the end of the prefix shows the source. Where that contract refuses
+a domain, the spectrum has no viewport: it stays selected, stays drawn, states
+the reason, offers no control that pretends to act, and still exports as
+full-source CSV and TSV. There is no `Current range` export of a spectrum; that
+is M5.3 and is not started.
 
 Where each of those is owned, and why, is fixed by
 [ADR 0037](../architecture/adr/0037-viewer-completion-route.md):
 
 - **Spectrum zoom and pan** and **current-range export of a selected spectrum**
-  are M5, in that order. The second depends on the first: the chromatogram's
+  are M5, in that order — the first delivered by M5.2, the second still M5.3 and
+  unstarted. The second depends on the first: the chromatogram's
   `Current range` reads `ViewerInteractionState.committedDomain`, and the
   selected spectrum has no equivalent committed viewport for a range chooser on
   its surface to refer to. Both are delivered **per spectrum**, not universally:

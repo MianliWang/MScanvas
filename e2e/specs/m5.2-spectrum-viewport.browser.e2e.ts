@@ -278,6 +278,19 @@ async function waitForTheAxis(low: string, high: string): Promise<void> {
   );
 }
 
+/**
+ * The transform a gesture has put on the sticks, if one is in flight.
+ *
+ * `null` at rest: React owns the drawing then, and a transform left behind would
+ * mean the layer had not been handed back.
+ */
+async function stickTransform(): Promise<string | null> {
+  return browser.execute((css: string) => {
+    const layer = document.querySelector(css)?.querySelector("g.spectrum-sticks-layer");
+    return layer?.getAttribute("transform") ?? null;
+  }, SPECTRUM_PLOT) as Promise<string | null>;
+}
+
 /** Every drawing this session has asked Rust for, as the windows it asked for. */
 async function projectionsAskedFor(): Promise<readonly { low: number; high: number }[]> {
   return spectrumProjections(await ipcCalls());
@@ -779,14 +792,22 @@ describe("the visible m/z viewport", () => {
       await revealTheSpectrum();
       const from = await spectrumPointAt(0.6);
       const to = await spectrumPointAt(0.45);
+      const restingRange = await spectrumRangeCaption();
       // The release is skipped explicitly. `perform()` releases the pointer when
       // the sequence ends, so "has not been released" would otherwise be true
       // only for the 120ms the settle had left to run -- an assertion about
       // scheduling rather than about the gesture.
+      // Two moves, not one, and the difference is the repair. The first crosses
+      // the slop and *starts* the gesture, which is a semantic transition and is
+      // published -- so React draws that range itself and the layer is untouched.
+      // Every frame after it is frame data, publishes nothing, and is drawn by
+      // the adapter moving the layer instead.
+      const midway = await spectrumPointAt(0.52);
       await browser
         .action("pointer")
         .move({ x: from.x, y: from.y })
         .down()
+        .move({ x: midway.x, y: midway.y })
         .move({ x: to.x, y: to.y })
         .perform(true);
 
@@ -797,7 +818,15 @@ describe("the visible m/z viewport", () => {
       expect(during.caption).toContain(
         "Showing the drawing already in hand while the range is being changed",
       );
-      expect(during.caption).toContain("Release to draw m/z");
+      // The caption names no range, and the range line beside it does. A drag is
+      // drawn between two renders, so a number written into the caption would be
+      // the range the gesture began at, sitting under a plot that has moved.
+      expect(during.caption).toContain("Release to draw the range under it");
+      expect(await spectrumRangeCaption()).not.toBe(restingRange);
+      // And the drawing really did move with the pointer, without a render: the
+      // adapter transforms the layer it already has rather than asking React for
+      // a new one per frame.
+      expect(await stickTransform()).toMatch(/translate/u);
       expect(await projectionsAskedFor()).toHaveLength(asked);
 
       await browser.action("pointer").up().perform();

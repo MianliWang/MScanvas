@@ -46,6 +46,7 @@ import type { RetentionTimeDomain } from "./scanModel";
 import type { MzDomain, SpectrumViewportEvent, SpectrumViewportState } from "./spectrumViewport";
 import {
   activeMzGestureEpoch,
+  clampMzDomain,
   initialSpectrumViewportState,
   minimumMzSpan,
   mzDomain,
@@ -452,6 +453,146 @@ describe("what an m/z viewport control would do", () => {
         ).toBe(false);
       }
     }
+  });
+
+  /**
+   * Endpoint pairs whose arithmetic does not survive a round trip through a
+   * clamp, which is the family the boundary defects live in.
+   *
+   * Eleven lows against eleven highs rather than one hand-picked pair: the
+   * measurement that found the zoom defect ran over these, and the pan defect
+   * turned out to live in the same place. A single fixture would have shown
+   * neither.
+   */
+  const EDGE_LOWS = [50, 50.5, 70.0625, 100, 100.0625, 110.3, 120.08, 133.7, 150.0725, 200.125, 204.9];
+  const EDGE_HIGHS = [500, 600.25, 750.5, 800, 1000.3, 1200.75, 1500.05, 1650.9, 1800.4, 2000, 2500.125];
+
+  /** Every plausible spectrum in that family, as a domain. */
+  function edgeDomains(): readonly MzDomain[] {
+    const pairs: MzDomain[] = [];
+    for (const low of EDGE_LOWS) {
+      for (const high of EDGE_HIGHS) {
+        if (high > low) {
+          pairs.push(mzDomain(low, high));
+        }
+      }
+    }
+    return pairs;
+  }
+
+  /** A viewport committed to one window of one spectrum. */
+  function committedTo(full: MzDomain, window: MzDomain): SpectrumViewportState {
+    return run(selected(admitted(full.low, full.high)), {
+      type: "viewport-step",
+      domain: window,
+    });
+  }
+
+  it("offers no further pan once a window rests on the edge it is pushed toward", () => {
+    /*
+     * The defect, over the family it was measured in. A window already flush
+     * against the source recomputes its far edge through a clamp, and that
+     * subtraction rounds: `{525.15, 1000.3}` pans right to
+     * `{525.1500000000001, 1000.3}`, which the planner compares by value and
+     * calls a change. Forty-eight of 1,452 flush windows did it.
+     *
+     * What a reader got there was `ArrowRight` swallowed, a committed window
+     * nothing on screen distinguishes from the one before it, and a fresh
+     * bounded projection asked of Rust to draw it.
+     */
+    const offenders: string[] = [];
+    let checked = 0;
+    for (const full of edgeDomains()) {
+      const fullSpan = full.high - full.low;
+      for (const fraction of [0.5, 0.1, 0.01, 0.001, 0.0002, 0.0001]) {
+        const width = Math.max(minimumMzSpan(full), fullSpan * fraction);
+        const cases = [
+          ["pan-left", clampMzDomain(mzDomain(full.low, full.low + width), full)],
+          ["pan-right", clampMzDomain(mzDomain(full.high - width, full.high), full)],
+        ] as const;
+        for (const [way, window] of cases) {
+          checked += 1;
+          const plan = planSpectrumViewportAction(committedTo(full, window), way);
+          if (plan.available) {
+            offenders.push(`${String(full.low)}..${String(full.high)} ${way}`);
+          }
+        }
+      }
+    }
+    expect({ checked, offenders }).toEqual({ checked, offenders: [] });
+    expect(checked).toBeGreaterThan(1_400);
+  });
+
+  it("still offers a pan to a window with room left in that direction", () => {
+    // The other half, or the rule above would be satisfied by refusing every
+    // pan. A window one step inside each edge moves.
+    for (const full of edgeDomains().slice(0, 12)) {
+      const width = (full.high - full.low) / 4;
+      const step = width * MZ_PAN_STEP;
+      const label = `${String(full.low)}..${String(full.high)}`;
+
+      const nearLow = clampMzDomain(mzDomain(full.low + step * 2, full.low + step * 2 + width), full);
+      expect(planSpectrumViewportAction(committedTo(full, nearLow), "pan-left").available, `left ${label}`).toBe(true);
+
+      const nearHigh = clampMzDomain(
+        mzDomain(full.high - step * 2 - width, full.high - step * 2),
+        full,
+      );
+      expect(planSpectrumViewportAction(committedTo(full, nearHigh), "pan-right").available, `right ${label}`).toBe(true);
+    }
+  });
+
+  it("lands on the edge in one step, and offers nothing further in that direction", () => {
+    /*
+     * The step that reaches an edge is a real change and is offered; the step
+     * after it is not. That pair is the whole rule, and testing only the second
+     * half would be satisfied by a pan that never moved at all.
+     */
+    for (const full of edgeDomains().slice(0, 12)) {
+      const width = (full.high - full.low) / 8;
+      const step = width * MZ_PAN_STEP;
+      const label = `${String(full.low)}..${String(full.high)}`;
+
+      for (const [way, start] of [
+        ["pan-left", clampMzDomain(mzDomain(full.low + step / 2, full.low + step / 2 + width), full)],
+        ["pan-right", clampMzDomain(mzDomain(full.high - step / 2 - width, full.high - step / 2), full)],
+      ] as const) {
+        let state = committedTo(full, start);
+        const arriving = planSpectrumViewportAction(state, way);
+        expect(arriving.available, `${way} arriving ${label}`).toBe(true);
+        state = run(state, arriving.event as SpectrumViewportEvent);
+
+        const shown = renderedMzDomain(state) as MzDomain;
+        // It arrived at the edge itself, not one rounding short of it.
+        expect(way === "pan-left" ? shown.low : shown.high, `${way} edge ${label}`).toBe(
+          way === "pan-left" ? full.low : full.high,
+        );
+        // And stays: repeated pushes in the same direction are inert by value.
+        for (let again = 0; again < 3; again += 1) {
+          expect(planSpectrumViewportAction(state, way).available, `${way} again ${label}`).toBe(false);
+        }
+        // The way back is open, so this is an edge rather than a trap.
+        const back = way === "pan-left" ? "pan-right" : "pan-left";
+        expect(planSpectrumViewportAction(state, back).available, `${back} ${label}`).toBe(true);
+      }
+    }
+  });
+
+  it("offers no pan at all for a spectrum with no width to pan across", () => {
+    const flat = selected(admitted(250.5, 250.5));
+    expect(planSpectrumViewportAction(flat, "pan-left").available).toBe(false);
+    expect(planSpectrumViewportAction(flat, "pan-right").available).toBe(false);
+  });
+
+  it("moves an ordinary interior window by the step the product states", () => {
+    // Nothing about the edges may change what a pan does in the middle.
+    const full = mzDomain(100, 500);
+    const window = mzDomain(250, 300);
+    const state = committedTo(full, window);
+    const plan = planSpectrumViewportAction(state, "pan-right");
+
+    expect(plan.available).toBe(true);
+    expect(plan.nextDomain).toEqual(panMzDomain(window, full, MZ_PAN_STEP));
   });
 
   it("leaves an inward wheel at that floor to the browser, at every anchor", () => {

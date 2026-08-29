@@ -75,8 +75,13 @@ describe("what a window's caption may claim about it", () => {
     expect(screen.getByText(/^Drawn as 900 sticks of the 1,200 observations/u)).toBeVisible();
     expect(screen.queryByText(/Every one of them is drawn\./u)).not.toBeInTheDocument();
     expect(
-      screen.getByText(/More were measured here than this drawing has columns/u),
+      screen.getByText(/groups observations by screen column/u),
     ).toBeVisible();
+    // And it does not blame a shortage of columns, which for 1,200 observations
+    // happens to be true and for most windows is not.
+    expect(
+      screen.queryByText(/More were measured here than this drawing has columns/u),
+    ).not.toBeInTheDocument();
   });
 
   it("says every observation is drawn when this plot drew every one", () => {

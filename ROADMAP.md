@@ -188,18 +188,33 @@ of 260 is the contract's own arithmetic rather than a number written down beside
 it. The one scientific export lane now serves three surfaces. See
 [ADR 0036](docs/architecture/adr/0036-linked-chromatogram-spectrum-figure.md).
 
-Still outside it, and unchanged:
+What M4 left outside it:
 
-- A saved `FigureSpec` (FIG-007) and a figure composer (FIG-008).
-- Current-range export of a *selected spectrum*.
-- XIC, spectrum zoom/pan, and multi-layer comparison.
+- A saved `FigureSpec` (FIG-007) and a figure composer (FIG-008). Still outside.
+- Current-range export of a *selected spectrum*. Still outside; it is M5.3.
+- XIC and multi-layer comparison. Still outside.
+- Spectrum zoom/pan. **Delivered since, by M5.2**, for a spectrum whose m/z
+  domain the scientific figure contract admits.
 
 ## M5 — Viewer Completion
 
-**The next milestone. Not started.** M4 finished the export lane; the viewing
-workflow it exports from is still missing capabilities a reader meets in normal
-use. M5 completes it before conversion is widened and before the product is
-redesigned.
+**In progress.** M4 finished the export lane; the viewing workflow it exports
+from was missing capabilities a reader meets in normal use. M5 completes it
+before conversion is widened and before the product is redesigned.
+
+- M5.0 — **complete** (route lock, documentation only).
+- M5.1 — **complete** (the m/z viewport authority and the bounded projection).
+- M5.2 — **complete** (the visible spectrum viewport).
+- M5.3 — **next, not started** (selected-spectrum `Current range` export).
+- M5.4 through M5.8 — not started.
+
+**Zoom, pan and reset reach a spectrum whose domain is admitted, and only
+those.** A spectrum the figure contract cannot give an authoritative finite
+forward m/z domain — mzML permits an m/z array the ordered-series contract
+refuses, and nothing here sorts one — keeps an explicit refusal instead. It
+stays selected, stays drawn over its own points, and still exports as full-source
+CSV and TSV. "The selected spectrum zooms" is true per spectrum, never
+universally.
 
 The route, its exit criteria, the live gap audit it was decided from and the
 five product decisions it surfaces are in

@@ -140,13 +140,21 @@ carries both measured columns whichever of them is on screen.
 The run and the scan chosen in it can also be exported *together*, as one figure
 of two ordered panels linked by a marker at that scan.
 
-Still missing from the acquisition view: XIC, spectrum zoom and pan, and
-multi-layer comparison. One more thing is missing that is easier to meet than to
-notice: the plot and every table row stay clickable while the selected-spectrum
-lane is blocked — a running conversion, an installation check, a backend
-resolved unavailable — and neither surface says so.
+Still missing from the acquisition view: XIC and multi-layer comparison. One
+more thing is missing that is easier to meet than to notice: the plot and every
+table row stay clickable while the selected-spectrum lane is blocked — a running
+conversion, an installation check, a backend resolved unavailable — and neither
+surface says so.
 
-Spectrum zoom and pan and that unavailability rule belong to M5 — Viewer
+**The selected spectrum's own m/z range zooms, pans and resets** wherever the
+scientific figure contract admits an authoritative domain for it, by wheel, by
+horizontal drag, by keyboard and by three buttons; a committed range is drawn
+from the complete spectrum Rust retained, so it does not stop where one
+transfer's arrays did. Where that contract refuses a domain the spectrum has no
+viewport at all, says why, and offers no control that pretends to act — which is
+the same posture, per spectrum rather than per product.
+
+That unavailability rule belongs to M5 — Viewer
 Completion — whose route is fixed by
 [ADR 0037](../architecture/adr/0037-viewer-completion-route.md). XIC belongs to
 M5 too, but behind an evidence gate with two valid outcomes: a visible trace

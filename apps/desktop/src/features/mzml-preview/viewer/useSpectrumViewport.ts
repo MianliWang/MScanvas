@@ -13,10 +13,25 @@
  * is exactly the race the epoch and the generation exist to remove. So the
  * reducer keeps allocating, and this returns what it produced.
  *
- * One authority, published twice. The ref is the current state for a handler
- * that runs between renders; the state is the same object for the render. They
- * are written together, in that order, so nothing can read a value the other has
- * not seen.
+ * One authority, two readers. The ref is the current state for a handler that
+ * runs between renders; the published state is what React draws. **They are not
+ * always the same object, and that is this transport's whole job.**
+ *
+ * ## Why a pointer frame is not published
+ *
+ * `apps/desktop/AGENTS.md` says to keep pointer-move and cursor-frame data out
+ * of React state, and a drag is a stream of them. Publishing each one re-rendered
+ * the workspace and the selected-spectrum panel -- the facts list, the precursor
+ * list, the export controls -- and recomputed the plot's reduction, once per
+ * browser pointer frame, for a change that is one number wide.
+ *
+ * So every event is *applied* -- the reducer decides all of them, and the ref is
+ * always current, which is what an adapter reading an epoch depends on -- and
+ * only a transition the rendered surface has to know about is *published*. A
+ * gesture starting is published: a gesture now exists, an epoch was allocated,
+ * and the caption becomes a transient one. A gesture settling or being cancelled
+ * is published. What is not published is the gesture *moving*, which is the frame
+ * data itself, and which the adapter draws by moving the sticks it already has.
  *
  * This is `useViewerInteraction.ts` for the other axis, and deliberately a
  * second hook rather than a generic one: the two contracts own different state
@@ -44,17 +59,57 @@ export interface SpectrumViewportController {
   readonly current: () => SpectrumViewportState;
 }
 
+/**
+ * Whether two states differ only in where a gesture in flight has got to.
+ *
+ * Compared by reference on every field but the gesture's own range, which is
+ * exact rather than approximate: `gesture-moved` is the one transition that
+ * rebuilds the gesture and carries every other field through unchanged, so a
+ * transition that leaves them all identical *is* a frame and a transition that
+ * touches any of them is not. Nothing here needs to know which event was
+ * dispatched, which is what keeps this a property of the states rather than a
+ * second opinion about the contract's events.
+ */
+function isGestureFrame(
+  previous: SpectrumViewportState,
+  next: SpectrumViewportState,
+): boolean {
+  if (previous.status !== "ready" || next.status !== "ready") {
+    return false;
+  }
+  if (previous.gesture === null || next.gesture === null) {
+    return false;
+  }
+  return (
+    previous.gesture.epoch === next.gesture.epoch &&
+    previous.spectrumToken === next.spectrumToken &&
+    previous.full === next.full &&
+    previous.committed === next.committed &&
+    previous.projection === next.projection &&
+    previous.nextEpoch === next.nextEpoch &&
+    previous.nextGeneration === next.nextGeneration
+  );
+}
+
 export function useSpectrumViewport(): SpectrumViewportController {
   const [state, setState] = useState<SpectrumViewportState>(initialSpectrumViewportState);
   const held = useRef<SpectrumViewportState>(initialSpectrumViewportState);
 
   const dispatch = useCallback((event: SpectrumViewportEvent): SpectrumViewportState => {
-    const next = spectrumViewportReducer(held.current, event);
+    const previous = held.current;
+    const next = spectrumViewportReducer(previous, event);
     // An identity no-op publishes nothing. That is what lets a settle whose
     // epoch has been superseded, or an answer whose generation has, cost a
     // comparison rather than a render.
-    if (next !== held.current) {
-      held.current = next;
+    if (next === previous) {
+      return next;
+    }
+    // Applied always: the reducer decides every transition and the ref is what
+    // an adapter reads its epoch and its live range out of between renders.
+    held.current = next;
+    // Published only where the rendered surface has to change. A gesture frame
+    // is drawn by moving the sticks that are already on screen.
+    if (!isGestureFrame(previous, next)) {
       setState(next);
     }
     return next;
