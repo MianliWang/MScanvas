@@ -98,10 +98,10 @@ The acceptance table remains the target, including the parts called out below.
   Where a preview loaded only part of the table, the interface says that the end
   of the loaded rows is not the end of the run.
 
-Still unimplemented across the viewer: XIC (VIEW-007), multi-layer comparison
-(VIEW-008), and current-range export of a selected spectrum. The chromatogram
-exports over the full run or the current range, alone or linked with the selected
-scan; see FIG-001 through FIG-006.
+Still unimplemented across the viewer: XIC (VIEW-007) and multi-layer
+comparison (VIEW-008). The chromatogram exports over the full run or the current
+range, alone or linked with the selected scan; see FIG-001 through FIG-006, and
+**the selected spectrum now does the same over its own m/z axis**.
 
 **Spectrum zoom and pan are implemented, per spectrum.** M5.2 made the selected
 spectrum's m/z viewport reachable by wheel, drag, keyboard and three buttons
@@ -111,18 +111,31 @@ spectrum Rust retained rather than the bounded arrays one transfer carries — s
 panning past the end of the prefix shows the source. Where that contract refuses
 a domain, the spectrum has no viewport: it stays selected, stays drawn, states
 the reason, offers no control that pretends to act, and still exports as
-full-source CSV and TSV. There is no `Current range` export of a spectrum; that
-is M5.3 and is not started.
+full-source CSV and TSV.
+
+**Current-range export of a selected spectrum is implemented, per spectrum.**
+M5.3 gives the selected-spectrum export surface a `Full spectrum` / `Current
+range` chooser wherever that spectrum has an admitted m/z viewport, and every
+format it already offered — SVG, PNG, `Copy plot`, CSV and TSV — is available
+over either. The range is the **committed** viewport, resolved in Rust against
+the complete retained spectrum: a window that spectrum does not have is refused
+rather than clamped, a gesture still in flight is not what gets exported, and no
+screen projection reaches a document. A range figure keeps the complete source
+series and declares a window over it, drawing only genuinely reported peaks
+inside that window; a range data document contains those same observations and
+invents nothing at either edge, so a window holding no peak is a successful empty
+export. Where a spectrum has no viewport there is no `Current` scope at all, and
+its full-source exports are exactly as available as before. See
+[ADR 0040](../architecture/adr/0040-spectrum-range-export.md).
 
 Where each of those is owned, and why, is fixed by
 [ADR 0037](../architecture/adr/0037-viewer-completion-route.md):
 
 - **Spectrum zoom and pan** and **current-range export of a selected spectrum**
-  are M5, in that order — the first delivered by M5.2, the second still M5.3 and
-  unstarted. The second depends on the first: the chromatogram's
-  `Current range` reads `ViewerInteractionState.committedDomain`, and the
-  selected spectrum has no equivalent committed viewport for a range chooser on
-  its surface to refer to. Both are delivered **per spectrum**, not universally:
+  are M5, in that order — the first delivered by M5.2, the second by M5.3. The
+  second depended on the first: a range chooser needs a committed viewport on its
+  own axis to refer to, and until M5.2 the selected spectrum had none. Both are
+  delivered **per spectrum**, not universally:
   a viewport needs an authoritative finite forward m/z domain, `SeriesSpec::new`
   answers a non-ascending array with `SpecError::SourceNotOrdered`, and mzML
   permits exactly that. Such a spectrum is valid source data — its full-source
@@ -240,12 +253,12 @@ recognized. See
 
 | ID | Feature | Priority | Acceptance summary |
 |---|---|---:|---|
-| FIG-001 | Copy plot | P0.5 | **Implemented for the selected mzML spectrum and for the chromatogram, which may be copied over the full run or the current range.** Named `Copy plot` rather than `Copy screenshot`, because the source is the scientific export renderer and not the screen: the same `FigureSpec`, the same SVG and the same rasterizer a PNG export uses, at the chosen size and theme. The pixels are built and written to the clipboard entirely in Rust; the interface never receives an image, and the application is granted no capability to read the clipboard. No file, no dialog, no path. |
-| FIG-002 | PNG export | P0.5 | **Implemented for the selected mzML spectrum (full source) and for the chromatogram over the full run or the current range.** A raster rendering of the same semantic figure the SVG export writes -- not a second renderer, not a screenshot, and not drawn from the arrays the interface received. The file contains exactly the chosen width × height pixels and records the chosen DPI as physical-resolution metadata in `pHYs`. Written through the same snapshot token, the same save dialog and the same no-overwrite transaction as every other export. Current-range applies to the chromatogram; the selected spectrum remains full source. |
-| FIG-003 | SVG export | P0.5 | **Implemented for the selected mzML spectrum (full source) and for the chromatogram over the full run or the current range.** Vector output preserves labels, axes and plot semantics, carries the accessible title/description, contains no application chrome and no source path, and is rendered in Rust from the complete retained spectrum rather than from the screen. Width, height and theme are the user's; DPI does not apply, because a vector document has no pixels whose physical size could be recorded. |
-| FIG-004 | Underlying data export | P0.5 | **Implemented for the selected spectrum and for the chromatogram, as CSV/TSV.** A spectrum writes one record per complete source point in source order. A chromatogram writes one record per source **scan** -- retention time, total ion current and base peak intensity, both columns always, whatever the screen is showing -- in retention-time-then-table-position order, over the full run or the current range. Both carry a metadata preamble with a schema version and the unreported unit states, and both round-trip the parsed `f64` exactly. A current range holding no scans writes no records and is a successful export: the figure for that range may still draw the segment crossing it, because a boundary crossing is geometry and not a scan. |
+| FIG-001 | Copy plot | P0.5 | **Implemented for the selected mzML spectrum and for the chromatogram, each of which may be copied over its full source or its own current range.** Named `Copy plot` rather than `Copy screenshot`, because the source is the scientific export renderer and not the screen: the same `FigureSpec`, the same SVG and the same rasterizer a PNG export uses, at the chosen size and theme. The pixels are built and written to the clipboard entirely in Rust; the interface never receives an image, and the application is granted no capability to read the clipboard. No file, no dialog, no path. |
+| FIG-002 | PNG export | P0.5 | **Implemented for the selected mzML spectrum and for the chromatogram, each over its full source or its own current range.** A raster rendering of the same semantic figure the SVG export writes -- not a second renderer, not a screenshot, and not drawn from the arrays the interface received. The file contains exactly the chosen width × height pixels and records the chosen DPI as physical-resolution metadata in `pHYs`. Written through the same snapshot token, the same save dialog and the same no-overwrite transaction as every other export. A current-range spectrum figure carries the complete source series and declares the committed m/z window over it, drawing only the peaks that window holds. |
+| FIG-003 | SVG export | P0.5 | **Implemented for the selected mzML spectrum and for the chromatogram, each over its full source or its own current range.** Vector output preserves labels, axes and plot semantics, carries the accessible title/description, contains no application chrome and no source path, and is rendered in Rust from the complete retained spectrum rather than from the screen. Width, height and theme are the user's; DPI does not apply, because a vector document has no pixels whose physical size could be recorded. |
+| FIG-004 | Underlying data export | P0.5 | **Implemented for the selected spectrum and for the chromatogram, as CSV/TSV, each over its full source or its own current range.** A spectrum writes one record per source point in source order -- every retained point at full source, and exactly the points inside the committed m/z window for a range, with no value invented at either edge. Its full-source document is schema version 1 and unchanged; a range is schema version 2, which carries the resolved bounds and the source and exported point counts as separate keys so a reader can tell what the file holds without an interface to ask. A chromatogram writes one record per source **scan** -- retention time, total ion current and base peak intensity, both columns always, whatever the screen is showing -- in retention-time-then-table-position order, over the full run or the current range. Both carry a metadata preamble with a schema version and the unreported unit states, and both round-trip the parsed `f64` exactly. A current range holding no scans writes no records and is a successful export: the chromatogram figure for that range may still draw the segment crossing it, because a boundary crossing is geometry and not a scan. An m/z window holding no peak writes no records **and** draws an empty figure, because a spectrum here is discrete marks rather than a polyline and there is no segment to cross. |
 | FIG-005 | Independent figure theme | P0.5 | **Implemented.** Light or Dark, chosen per export and written into the document, so the file means the same thing wherever it is opened. Independent of the application's own theme in both directions: choosing a dark figure does not darken the application, and a user reading a dark screen still publishes a light figure by default. The palettes are the renderer's; nothing in the interface invents a colour. |
-| FIG-006 | Linked two-panel figure | P1 | **Implemented for the chromatogram and the scan selected in it.** One figure of two ordered panels — the chromatogram above, over the full run or the current range and carrying one `Selected scan` marker, and that scan's complete spectrum below — built from one `FigureSpec` and offered as SVG, PNG and `Copy plot` from the chromatogram's own export surface. The pair is bound in one operation: same dataset, and then the **exact retained row** at the spectrum's index, reconciled by identity. Retention time is never the key, because scans may share one; it is the marker's coordinate and is taken from the matched row. A selected scan outside the requested range is a typed refusal rather than a widened range or a moved viewer. The lower panel is always the whole spectrum, whatever the chromatogram covers. No data document: a combined table would have to interleave two different measurements or drop the link. |
+| FIG-006 | Linked two-panel figure | P1 | **Implemented for the chromatogram and the scan selected in it.** One figure of two ordered panels — the chromatogram above, over the full run or the current range and carrying one `Selected scan` marker, and that scan's complete spectrum below — built from one `FigureSpec` and offered as SVG, PNG and `Copy plot` from the chromatogram's own export surface. The pair is bound in one operation: same dataset, and then the **exact retained row** at the spectrum's index, reconciled by identity. Retention time is never the key, because scans may share one; it is the marker's coordinate and is taken from the matched row. A selected scan outside the requested range is a typed refusal rather than a widened range or a moved viewer. The lower panel is always the whole spectrum, whatever the chromatogram covers **and whatever range that spectrum's own export surface is set to**. No data document: a combined table would have to interleave two different measurements or drop the link. |
 | FIG-007 | Saved FigureSpec | P1 | Reopening a spec regenerates the same semantic figure from referenced artifacts. |
 | FIG-008 | Figure composer | P2 | Multi-panel layout is constrained, aligned and provenance-aware rather than a generic slide editor. |
 

@@ -55,6 +55,18 @@ export function spectrumWithPeaks() {
   return buildSpectrum(SELECTED_INDEX, 6);
 }
 
+/**
+ * A second spectrum, with its own token and its own m/z domain.
+ *
+ * The mocked boundary answers every selection from one table, so a test about
+ * *changing* spectra has to supply the second one: a row click that returns the
+ * same token is a redelivery of the spectrum already current, and correctly
+ * resets nothing.
+ */
+export function secondSpectrum() {
+  return buildSpectrum(SELECTED_INDEX + 1, 6);
+}
+
 /** A spectrum that loaded and has none, which is still exportable. */
 export function spectrumWithoutPeaks() {
   const spectrum = buildSpectrum(SELECTED_INDEX, 0);
@@ -236,7 +248,15 @@ export function ipcTable(
       format: "svg",
       fileName: "mscanvas-spectrum-0.svg",
       figure: { width: 1_200, height: 640, dpi: null, theme: "light" },
-      pointCount: COMPLETE_POINT_COUNT,
+      // The full source, which is where a spectrum's export context starts. A
+      // test about a range replaces this answer through `setInvokeResult`, and
+      // the range that was *asked for* is read from the call ledger rather than
+      // from what came back -- so this fixture cannot make a range claim true.
+      rangeScope: "full",
+      rangeLow: null,
+      rangeHigh: null,
+      sourcePointCount: COMPLETE_POINT_COUNT,
+      exportedPointCount: COMPLETE_POINT_COUNT,
     },
     // One command rather than two: a copy chooses no destination, so there is
     // no dialog to gate and nothing to come back from.
@@ -270,7 +290,11 @@ export function ipcTable(
       // RGBA with nowhere for a `pHYs` chunk, so a fixture that reported one
       // would be modelling a claim the product does not make.
       figure: { width: 1_200, height: 640, theme: "light" },
-      pointCount: COMPLETE_POINT_COUNT,
+      rangeScope: "full",
+      rangeLow: null,
+      rangeHigh: null,
+      sourcePointCount: COMPLETE_POINT_COUNT,
+      exportedPointCount: COMPLETE_POINT_COUNT,
     },
     // The linked two-panel figure: a third surface over the two above, in the
     // same two-phase shape. The retention time it answers with is the retained
