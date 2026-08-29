@@ -22,6 +22,7 @@ import type {
   SpectrumCopyOutcome,
   SpectrumProjection,
   SpectrumExportOutcome,
+  SpectrumRange,
   WorkspaceAddResult,
   WorkspaceConversionUpdate,
   WorkspaceRemoveResult,
@@ -228,6 +229,7 @@ export interface PreviewApi {
   exportSelectedSpectrum(
     exportToken: string,
     format: SpectrumExportFormat,
+    range: SpectrumRange,
     settings: FigureSettings,
   ): Promise<SpectrumExportOutcome>;
 
@@ -244,6 +246,7 @@ export interface PreviewApi {
    */
   copySelectedSpectrumPlot(
     exportToken: string,
+    range: SpectrumRange,
     settings: FigureSettings,
   ): Promise<SpectrumCopyOutcome>;
 
@@ -424,13 +427,17 @@ export const tauriPreviewApi: PreviewApi = {
       return saved;
     });
   },
-  exportSelectedSpectrum: (exportToken, format, settings) =>
-    invoke<string>("begin_selected_spectrum_export", { exportToken, format, settings }).then(
-      (reservationId) =>
-        invoke<SpectrumExportOutcome>("save_selected_spectrum_export", { reservationId }),
+  exportSelectedSpectrum: (exportToken, format, range, settings) =>
+    invoke<string>("begin_selected_spectrum_export", {
+      exportToken,
+      format,
+      range,
+      settings,
+    }).then((reservationId) =>
+      invoke<SpectrumExportOutcome>("save_selected_spectrum_export", { reservationId }),
     ),
-  copySelectedSpectrumPlot: (exportToken, settings) =>
-    invoke<SpectrumCopyOutcome>("copy_selected_spectrum_plot", { exportToken, settings }),
+  copySelectedSpectrumPlot: (exportToken, range, settings) =>
+    invoke<SpectrumCopyOutcome>("copy_selected_spectrum_plot", { exportToken, range, settings }),
   projectSelectedSpectrum: (exportToken, low, high) =>
     invoke<SpectrumProjection>("project_selected_spectrum", { exportToken, low, high }),
   exportChromatogram: (exportToken, format, range, traces, settings) =>

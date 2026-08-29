@@ -1080,7 +1080,14 @@ button:disabled {
   padding: 8px 0 0;
 }
 
-.chromatogram-export-range {
+/* The two range choosers, which are one pattern rather than two.
+
+   The selected spectrum's chooser and the chromatogram's answer the same
+   question about different axes, so they share a rule: a reader who has learned
+   one has learned the other, and a change to the interaction language cannot
+   move only half of it. */
+.chromatogram-export-range,
+.spectrum-export-range {
   border: 0;
   display: flex;
   flex-direction: column;

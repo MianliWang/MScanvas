@@ -29,6 +29,17 @@ import {
   shimadzuDataset,
 } from "../../test/previewFixtures";
 
+/**
+ * The range every case in this file exports over.
+ *
+ * A selected spectrum's export context starts at the full source and stays
+ * there unless a reader chooses otherwise, so these cases -- all written before
+ * ranges existed -- are full-source ones and still assert exactly what they
+ * did. The scope is carried explicitly rather than left off, which is what
+ * makes "a viewport did not reach this request" a thing the shape can say.
+ */
+const FULL_RANGE = { scope: "full", low: null, high: null } as const;
+
 function wrapper(api: PreviewApi) {
   return function Wrapper({ children }: { readonly children: ReactNode }) {
     return <PreviewApiProvider value={api}>{children}</PreviewApiProvider>;
@@ -93,7 +104,7 @@ describe("selected spectrum export binding", () => {
     // the keyboard.
     // The figure settings travel with it, exactly as the panel holds them.
     expect(api.spectrumExportRequests).toEqual([
-      { exportToken: bound, format: "csv", settings: FAKE_FIGURE_SETTINGS },
+      { exportToken: bound, format: "csv", range: FULL_RANGE, settings: FAKE_FIGURE_SETTINGS },
     ]);
     // And the preview is exactly as it was: exporting a spectrum is not
     // selecting one, and no reload was provoked by it.
@@ -135,10 +146,10 @@ describe("selected spectrum export binding", () => {
     }
     // Larger than any array this document holds. What was written is the
     // spectrum Rust kept, and this side could not have produced that number.
-    expect(saved.pointCount).toBe(FAKE_COMPLETE_SPECTRUM_POINTS);
+    expect(saved.sourcePointCount).toBe(FAKE_COMPLETE_SPECTRUM_POINTS);
     const transferred =
       result.current.spectrum.status === "loaded" ? result.current.spectrum.spectrum.mz.length : 0;
-    expect(saved.pointCount).toBeGreaterThan(transferred);
+    expect(saved.sourcePointCount).toBeGreaterThan(transferred);
   });
 
   it("clears a result when a different spectrum is loaded", async () => {
@@ -189,7 +200,7 @@ describe("selected spectrum export binding", () => {
     let finishExport = (): void => undefined;
     const api = createFakePreviewApi({
       initialDatasets: [{ file: selectedFile, parents: [] }],
-      spectrumExport: async (_token, format, settings) => {
+      spectrumExport: async (_token, format, _range, settings) => {
         await new Promise<void>((resolve) => {
           finishExport = resolve;
         });
@@ -198,7 +209,11 @@ describe("selected spectrum export binding", () => {
           format,
           fileName: `mscanvas-spectrum.${format}`,
           figure: fakeExportedFigure(settings, format),
-          pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+          rangeScope: "full",
+          rangeLow: null,
+          rangeHigh: null,
+          sourcePointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+          exportedPointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
         };
       },
     });
@@ -301,6 +316,7 @@ describe("selected spectrum export binding", () => {
       {
         exportToken: "token-0",
         format: "png",
+        range: FULL_RANGE,
         settings: { widthPx: 800, heightPx: 600, pngDpi: 600, theme: "dark" },
       },
     ]);
@@ -323,6 +339,7 @@ describe("selected spectrum export binding", () => {
     expect(api.spectrumCopyRequests).toEqual([
       {
         exportToken: "token-0",
+        range: FULL_RANGE,
         settings: { widthPx: 1_200, heightPx: 640, pngDpi: 300, theme: "dark" },
       },
     ]);
@@ -359,7 +376,7 @@ describe("selected spectrum export binding", () => {
   it("keeps the settings an operation was started with when they change under it", async () => {
     let finish = (): void => undefined;
     const { api, result } = await loadedWorkspace({
-      spectrumExport: async (_token, format, settings) => {
+      spectrumExport: async (_token, format, _range, settings) => {
         await new Promise<void>((resolve) => {
           finish = resolve;
         });
@@ -368,7 +385,11 @@ describe("selected spectrum export binding", () => {
           format,
           fileName: `mscanvas-spectrum.${format}`,
           figure: fakeExportedFigure(settings, format),
-          pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+          rangeScope: "full",
+          rangeLow: null,
+          rangeHigh: null,
+          sourcePointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+          exportedPointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
         };
       },
     });
@@ -405,14 +426,18 @@ describe("selected spectrum export binding", () => {
     // say the wrong thing about what is on the clipboard.
     let finishCopy = (): void => undefined;
     const { result } = await loadedWorkspace({
-      spectrumCopy: async (_token, settings) => {
+      spectrumCopy: async (_token, _range, settings) => {
         await new Promise<void>((resolve) => {
           finishCopy = resolve;
         });
         return {
           status: "copied",
           figure: fakeExportedFigure(settings, "png"),
-          pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+          rangeScope: "full",
+          rangeLow: null,
+          rangeHigh: null,
+          sourcePointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+          exportedPointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
         };
       },
     });
@@ -518,10 +543,10 @@ describe("selected spectrum export binding", () => {
     // resolution they travel with is the default stand-in the uniform
     // transport needs and neither output reads.
     expect(api.spectrumExportRequests).toEqual([
-      { exportToken: "token-0", format: "svg", settings: FAKE_FIGURE_SETTINGS },
+      { exportToken: "token-0", format: "svg", range: FULL_RANGE, settings: FAKE_FIGURE_SETTINGS },
     ]);
     expect(api.spectrumCopyRequests).toEqual([
-      { exportToken: "token-0", settings: FAKE_FIGURE_SETTINGS },
+      { exportToken: "token-0", range: FULL_RANGE, settings: FAKE_FIGURE_SETTINGS },
     ]);
   });
 
@@ -550,6 +575,7 @@ describe("selected spectrum export binding", () => {
       {
         exportToken: "token-0",
         format: "png",
+        range: FULL_RANGE,
         settings: { widthPx: 1_200, heightPx: 640, pngDpi: 50, theme: "light" },
       },
     ]);

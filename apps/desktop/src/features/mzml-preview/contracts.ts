@@ -485,7 +485,7 @@ export interface SelectedSpectrum {
  */
 export type SpectrumExportOutcome =
   | { readonly status: "cancelled" }
-  | {
+  | ({
       readonly status: "saved";
       readonly format: SpectrumExportFormat;
       readonly fileName: string;
@@ -497,9 +497,89 @@ export type SpectrumExportOutcome =
        * TSV whatever the figure is being drawn at.
        */
       readonly figure: ExportedFigure | null;
-      /** How many source points the document carries. */
-      readonly pointCount: number;
-    };
+    } & ExportedSpectrumRange);
+
+/**
+ * The range one finished spectrum export was taken over.
+ *
+ * Reported by Rust from the range it resolved when the export **began**, which
+ * is what lets a confirmation stay true after the viewport has moved. A message
+ * built from live viewport state instead would be describing a window the file
+ * may not hold.
+ *
+ * Shared by the saved and copied outcomes because it is the same claim about
+ * the same decision, and two copies of it could drift.
+ */
+export interface ExportedSpectrumRange {
+  /**
+   * `full` or `current`, as asked for rather than as it resolved.
+   *
+   * A current-range export of a viewport that had committed nothing narrower
+   * covers the whole spectrum and is still a current-range export.
+   */
+  readonly rangeScope: SpectrumRangeScope;
+  /**
+   * The exact m/z bounds the export covered, for a current range.
+   *
+   * `null` for a full-source export, which has no window: an absent pair rather
+   * than the spectrum's own bounds, because a full export is not a window that
+   * happens to be wide.
+   */
+  readonly rangeLow: number | null;
+  readonly rangeHigh: number | null;
+  /** How many points the retained spectrum holds. */
+  readonly sourcePointCount: number;
+  /**
+   * How many of them this export covered.
+   *
+   * Equal to `sourcePointCount` for a full export; smaller, possibly zero, for
+   * a range. Zero is a successful export rather than a failure.
+   */
+  readonly exportedPointCount: number;
+}
+
+/**
+ * How much of a spectrum an export covers.
+ *
+ * `full` needs no range at all: Rust resolves it from the spectrum it retained,
+ * and it is the scope that works for every spectrum -- including one whose
+ * figure contract refuses it a viewport, because a data document needs no
+ * ordering to write.
+ *
+ * `current` carries the viewport's **committed** m/z window, and nothing else —
+ * not the range a wheel or a drag is transiently showing, not the SVG viewBox,
+ * not an axis tick, not a pointer position, and not the bounded projection the
+ * screen was given to draw.
+ */
+export type SpectrumRangeScope = "full" | "current";
+
+/**
+ * One spectrum range request, as this side sends it.
+ *
+ * Its own type rather than {@link ChromatogramRange}. The two carry the same
+ * three fields about two different axes, and one shape shared between them
+ * would make handing a retention-time range to a spectrum export a thing that
+ * compiles. Rust keeps the two apart for the same reason.
+ *
+ * The numbers are plain `number`s at this boundary, deliberately. An
+ * {@link MzDomain} is branded so it cannot be confused with a retention-time
+ * pair *inside* the viewport's arithmetic; serialising one would need a cast
+ * around that brand, so the request is built by reading `low` and `high` off a
+ * committed domain rather than by asserting the domain into a wire shape.
+ */
+export interface SpectrumRange {
+  readonly scope: SpectrumRangeScope;
+  /**
+   * The committed window, where there is one.
+   *
+   * `null` is not a missing answer: it is the viewport saying it has committed
+   * no narrower window, so the current range *is* the whole admitted domain.
+   * Rust resolves that from the retained spectrum rather than this side
+   * inventing a subrange to make the option look different.
+   */
+  readonly low: number | null;
+  readonly high: number | null;
+}
 
 /**
  * What a figure put on the clipboard was.
@@ -674,12 +754,10 @@ export interface ChromatogramCopyOutcome {
  * named or saved. A failure arrives as a typed refusal rather than as an
  * outcome.
  */
-export interface SpectrumCopyOutcome {
+export type SpectrumCopyOutcome = {
   readonly status: "copied";
   readonly figure: CopiedFigure;
-  /** How many source points the copied figure was drawn from. */
-  readonly pointCount: number;
-}
+} & ExportedSpectrumRange;
 
 /**
  * A spectrum that exists but has no peaks is `spectrum` with `pointCount: 0`.

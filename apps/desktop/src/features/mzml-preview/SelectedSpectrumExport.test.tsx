@@ -87,6 +87,13 @@ const NO_VIEWPORT = {
   readViewport: () => initialSpectrumViewportState,
   projectionError: null,
   onRetryProjection: () => undefined,
+  // And therefore no range to choose. Every export result below is a
+  // full-source one, reached by a spectrum that has no current range at all --
+  // which is the state M5.3 must leave exactly as it found it.
+  rangeScope: "full",
+  onRangeScope: () => undefined,
+  rangeAvailable: false,
+  committedDomain: null,
 } as const;
 
 function loaded(overrides: Partial<SelectedSpectrum> = {}): SpectrumState {
@@ -236,7 +243,11 @@ describe("selected spectrum export affordance", () => {
       format: "csv",
       fileName: "mscanvas-spectrum-3.csv",
       figure: null,
-      pointCount: 1_000_000,
+      rangeScope: "full",
+      rangeLow: null,
+      rangeHigh: null,
+      sourcePointCount: 1_000_000,
+      exportedPointCount: 1_000_000,
     });
 
     const status = screen.getByRole("status");
@@ -436,7 +447,11 @@ describe("selected spectrum export affordance", () => {
       format: "png",
       fileName: "mscanvas-spectrum-3.png",
       figure: { width: 1_200, height: 640, dpi: 300, theme: "light" },
-      pointCount: 1_000_000,
+      rangeScope: "full",
+      rangeLow: null,
+      rangeHigh: null,
+      sourcePointCount: 1_000_000,
+      exportedPointCount: 1_000_000,
     });
 
     expect(screen.getByRole("status")).toHaveTextContent(
@@ -450,7 +465,11 @@ describe("selected spectrum export affordance", () => {
       format: "svg",
       fileName: "mscanvas-spectrum-3.svg",
       figure: { width: 800, height: 600, dpi: null, theme: "dark" },
-      pointCount: 12,
+      rangeScope: "full",
+      rangeLow: null,
+      rangeHigh: null,
+      sourcePointCount: 12,
+      exportedPointCount: 12,
     });
 
     const status = screen.getByRole("status");
@@ -462,7 +481,11 @@ describe("selected spectrum export affordance", () => {
     renderPanel(loaded(), {
       status: "copied",
       figure: { width: 1_200, height: 640, theme: "dark" },
-      pointCount: 8,
+      rangeScope: "full",
+      rangeLow: null,
+      rangeHigh: null,
+      sourcePointCount: 8,
+      exportedPointCount: 8,
     });
 
     const status = screen.getByRole("status");
