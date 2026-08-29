@@ -86,14 +86,15 @@ use super::dto::{
     ChromatogramCopyOutcomeDto, ChromatogramExportOutcomeDto, ChromatogramRangeDto,
     ChromatogramTracesDto, CopiedFigureDto, ExportedFigureDto, FigureSettingsDto,
     LinkedFigureCopyOutcomeDto, LinkedFigureExportOutcomeDto, SpectrumCopyOutcomeDto,
-    SpectrumExportOutcomeDto, chromatogram_export_refused, chromatogram_export_stale,
-    chromatogram_no_visible_trace, chromatogram_range_outside_source, figure_clipboard_unavailable,
-    figure_font_unavailable, figure_not_rasterizable, figure_settings_refused,
-    linked_figure_not_drawable, linked_figure_source_mismatch, linked_figure_stale,
-    linked_figure_too_short, linked_selection_outside_range, scientific_export_in_progress,
-    spectrum_destination_exists, spectrum_destination_misnamed, spectrum_destination_unusable,
-    spectrum_export_in_progress, spectrum_export_refused, spectrum_export_stale,
-    spectrum_not_finalized, spectrum_not_written,
+    SpectrumExportOutcomeDto, SpectrumRangeDto, chromatogram_export_refused,
+    chromatogram_export_stale, chromatogram_no_visible_trace, chromatogram_range_outside_source,
+    figure_clipboard_unavailable, figure_font_unavailable, figure_not_rasterizable,
+    figure_settings_refused, linked_figure_not_drawable, linked_figure_source_mismatch,
+    linked_figure_stale, linked_figure_too_short, linked_selection_outside_range,
+    scientific_export_in_progress, spectrum_destination_exists, spectrum_destination_misnamed,
+    spectrum_destination_unusable, spectrum_export_in_progress, spectrum_export_refused,
+    spectrum_export_stale, spectrum_not_finalized, spectrum_not_written,
+    spectrum_range_outside_source, spectrum_range_unavailable, spectrum_range_unusable,
 };
 use super::dto::{
     ConversionDiagnosticsExportDto, ConversionDiagnosticsReservationDto,
@@ -119,8 +120,8 @@ use super::dto::{
 use super::export::{
     BeginExportRefusal, ClaimedChromatogramExport, ClaimedLinkedFigureExport,
     ClaimedSpectrumExport, FigureFailure, LinkedTokens, PreviewOpenTicket, ScientificExportSlots,
-    SpectrumExportFormat, SpectrumProjectionRefusal, data_document, figure_raster, png_document,
-    png_of, raster_of, svg_document,
+    SpectrumExportFormat, SpectrumProjectionRefusal, SpectrumRangeRequest, data_document,
+    exported_point_count, figure_raster, png_document, png_of, raster_of, svg_document,
 };
 use super::figure::{
     FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
@@ -140,7 +141,7 @@ use super::selection::{
     lock_against_replacement, open_conversion_source, relative_contexts, revalidate,
     selected_file_dto, source_kind_dto, unknown_dataset,
 };
-use mscanvas_plot_spec::spec::FigureTheme;
+use mscanvas_plot_spec::spec::{Domain, FigureTheme};
 
 /// The name the native save dialog offers for a diagnostics export.
 ///
@@ -2132,9 +2133,16 @@ impl PreviewService {
         &self,
         token: &str,
         format: &str,
+        range: &SpectrumRangeDto,
         settings_wire: &FigureSettingsDto,
     ) -> Result<String, PreviewErrorDto> {
         let format = SpectrumExportFormat::from_wire(format).ok_or_else(spectrum_export_stale)?;
+        // A pair that is not an interval -- non-finite, inverted, or half
+        // present -- never reaches a snapshot. Whether the retained spectrum
+        // *has* the window is the next question, and it is asked where the
+        // source is known.
+        let request = SpectrumRangeRequest::from_wire(&range.scope, range.low, range.high)
+            .ok_or_else(spectrum_range_unusable)?;
         // Read before the reservation, so an export that could not have been
         // rendered is refused before a dialog is offered for it. The settings
         // are then held by the reservation rather than read again at write
@@ -2165,7 +2173,7 @@ impl PreviewService {
             None
         };
         self.spectrum_export_slot()
-            .begin(token, format, settings, dpi)
+            .begin(token, format, request, settings, dpi)
             .map(|reservation| reservation.as_wire())
             .map_err(Self::spectrum_refusal)
     }
@@ -2231,20 +2239,28 @@ impl PreviewService {
 
     /// How a lane refusal reads for the selected-spectrum surface.
     ///
-    /// Exhaustive rather than wildcarded. The two range answers cannot arise on
-    /// this path -- a spectrum export carries no range and no trace set -- and
-    /// saying so here is what makes that a fact a reader can check instead of an
-    /// assumption. If a spectrum ever gains a range, this stops compiling.
+    /// Exhaustive rather than wildcarded, and each range answer keeps its own
+    /// sentence. A window outside the spectrum, a current range asked of a
+    /// spectrum that has no viewport, and a figure this build cannot draw are
+    /// three different things for a reader to do something about; collapsing
+    /// them into one `export_failed` would be the interface knowing which and
+    /// declining to say.
+    ///
+    /// The m/z wording is this surface's own. `RangeOutsideSource` is raised on
+    /// both axes -- the shape of the mistake is shared -- but the chromatogram's
+    /// sentence names a retention-time range, and reporting that to someone who
+    /// chose an m/z window would send them to the wrong control.
     fn spectrum_refusal(refusal: BeginExportRefusal) -> PreviewErrorDto {
         match refusal {
             BeginExportRefusal::AlreadyExporting => spectrum_export_in_progress(),
             BeginExportRefusal::Stale => spectrum_export_stale(),
-            // A selected spectrum has no range, no pair and no second panel, so
-            // none of these can describe a refusal it produced. Named rather
-            // than swept into a wildcard: if a spectrum ever gains one of them,
-            // this stops compiling instead of reporting the wrong sentence.
-            BeginExportRefusal::RangeOutsideSource
-            | BeginExportRefusal::NoVisibleTrace
+            BeginExportRefusal::RangeOutsideSource => spectrum_range_outside_source(),
+            BeginExportRefusal::NoViewportDomain => spectrum_range_unavailable(),
+            // A selected spectrum has no trace set and no second panel, so none
+            // of these can describe a refusal it produced. Named rather than
+            // swept into a wildcard: if a spectrum ever gains one of them, this
+            // stops compiling instead of reporting the wrong sentence.
+            BeginExportRefusal::NoVisibleTrace
             | BeginExportRefusal::LinkedSourceMismatch
             | BeginExportRefusal::SelectedScanOutsideRange
             | BeginExportRefusal::FigureTooShort => spectrum_export_refused(),
@@ -2264,6 +2280,14 @@ impl PreviewService {
             BeginExportRefusal::SelectedScanOutsideRange => linked_selection_outside_range(),
             BeginExportRefusal::NoVisibleTrace => chromatogram_no_visible_trace(),
             BeginExportRefusal::FigureTooShort => linked_figure_too_short(),
+            // A linked figure's range is the *chromatogram's*, whose authority
+            // is a retention-time domain every eligible run has. The selected
+            // spectrum's m/z viewport reaches neither panel of this figure --
+            // ADR 0036's rule that the lower panel is the complete spectrum is
+            // exactly what makes that true -- so this refusal cannot be one this
+            // surface produced. Named rather than wildcarded: if the linked
+            // figure ever consumed a spectrum range, this stops compiling.
+            BeginExportRefusal::NoViewportDomain => linked_figure_not_drawable(),
         }
     }
 
@@ -2276,8 +2300,13 @@ impl PreviewService {
             BeginExportRefusal::NoVisibleTrace => chromatogram_no_visible_trace(),
             // A chromatogram on its own has no paired source and no second
             // panel. Named for the same reason as above.
+            //
+            // A chromatogram's range authority is its retained retention-time
+            // domain, which every export-eligible run has, so it has no
+            // "no viewport domain" state to report either.
             BeginExportRefusal::LinkedSourceMismatch
             | BeginExportRefusal::SelectedScanOutsideRange
+            | BeginExportRefusal::NoViewportDomain
             | BeginExportRefusal::FigureTooShort => chromatogram_export_refused(),
         }
     }
@@ -2424,6 +2453,7 @@ impl PreviewService {
         &self,
         app: &tauri::AppHandle,
         token: &str,
+        range: &SpectrumRangeDto,
         settings: &FigureSettingsDto,
     ) -> Result<SpectrumCopyOutcomeDto, PreviewErrorDto> {
         // The figure, and room for its pixels. No resolution: a clipboard image
@@ -2437,9 +2467,15 @@ impl PreviewService {
         // the rasterizer and attempted about 1.6 GiB of pixmap.
         let settings = Self::render_settings(settings)?;
         Self::raster_budget(settings)?;
-        let snapshot = self
+        let request = SpectrumRangeRequest::from_wire(&range.scope, range.low, range.high)
+            .ok_or_else(spectrum_range_unusable)?;
+        // The range is resolved with the claim, in one critical section, so the
+        // image that reaches the clipboard and the range the confirmation names
+        // are the same decision rather than two readings a gesture could fall
+        // between.
+        let (snapshot, resolved) = self
             .spectrum_export_slot()
-            .begin_copy(token)
+            .begin_copy(token, request)
             .map_err(Self::spectrum_refusal)?;
         // Released however this ends, including a panic in the rasterizer. A
         // lane left claimed would refuse every later figure operation for the
@@ -2448,8 +2484,9 @@ impl PreviewService {
 
         // Rendered from the snapshot the claim took, off the locks. The
         // spectrum on screen may be replaced while this runs; what is copied is
-        // the one the user asked for.
-        let raster = figure_raster(snapshot.spectrum(), settings).map_err(Self::figure_failure)?;
+        // the one the user asked for, over the range they asked for.
+        let raster =
+            figure_raster(snapshot.spectrum(), settings, resolved).map_err(Self::figure_failure)?;
         let (width, height) = (raster.width(), raster.height());
         let image = tauri::image::Image::new_owned(raster.into_rgba(), width, height);
 
@@ -2460,7 +2497,11 @@ impl PreviewService {
 
         Ok(SpectrumCopyOutcomeDto::Copied {
             figure: Self::copied_figure(settings),
-            point_count: snapshot.point_count(),
+            range_scope: resolved.scope().stable_id().to_owned(),
+            range_low: resolved.domain().map(Domain::low),
+            range_high: resolved.domain().map(Domain::high),
+            source_point_count: snapshot.point_count(),
+            exported_point_count: exported_point_count(snapshot.spectrum(), resolved),
         })
     }
 
@@ -2512,8 +2553,13 @@ impl PreviewService {
         let _in_flight = SpectrumExportInFlight(self);
 
         let spectrum = claimed.snapshot.spectrum();
+        // The range resolved when this export began, carried here rather than
+        // read again. By now the user has been in a modal dialog and the
+        // viewport may have moved twice over; what is written is the window
+        // they asked for.
+        let range = claimed.range;
         let bytes = match claimed.format {
-            SpectrumExportFormat::Svg => svg_document(spectrum, claimed.settings)
+            SpectrumExportFormat::Svg => svg_document(spectrum, claimed.settings, range)
                 .map_err(|_| spectrum_export_refused())?
                 .into_bytes(),
             SpectrumExportFormat::Png => {
@@ -2521,12 +2567,13 @@ impl PreviewService {
                 // rather than read again: the settings the user is about to
                 // save with are the ones they were shown in the dialog.
                 let dpi = claimed.dpi.expect("a PNG export reserved a resolution");
-                png_document(spectrum, claimed.settings, dpi).map_err(Self::figure_failure)?
+                png_document(spectrum, claimed.settings, dpi, range)
+                    .map_err(Self::figure_failure)?
             }
             // The data documents, which no figure setting reaches. The same
             // bytes come out of here whatever the figure is being drawn at,
             // because a size and a theme are not properties of a measurement.
-            format => data_document(spectrum, format)
+            format => data_document(spectrum, format, range)
                 .ok_or_else(spectrum_export_refused)?
                 .into_bytes(),
         };
@@ -2553,7 +2600,14 @@ impl PreviewService {
             format: claimed.format.stable_id().to_owned(),
             file_name: bounded_text(&file_name.to_string_lossy(), MAX_CANDIDATE_NAME_CHARS),
             figure: Self::exported_figure(claimed.format, claimed.settings, claimed.dpi),
-            point_count: claimed.snapshot.point_count(),
+            // The range this export claimed at BEGIN, so the confirmation
+            // describes the file that was written rather than whatever the
+            // viewport happens to be showing now.
+            range_scope: range.scope().stable_id().to_owned(),
+            range_low: range.domain().map(Domain::low),
+            range_high: range.domain().map(Domain::high),
+            source_point_count: claimed.snapshot.point_count(),
+            exported_point_count: exported_point_count(spectrum, range),
         })
     }
 

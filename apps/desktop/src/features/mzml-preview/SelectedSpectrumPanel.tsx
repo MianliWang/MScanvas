@@ -3,10 +3,13 @@ import { memo } from "react";
 import type {
   CopiedFigure,
   ExportedFigure,
+  ExportedSpectrumRange,
   FigureTheme,
   PreviewError,
   SelectedSpectrum,
   SpectrumExportFormat,
+  SpectrumRangeAvailability,
+  SpectrumRangeScope,
 } from "./contracts";
 import { FigureSettingsFields } from "./FigureSettingsFields";
 import { formatCount, formatIntensity, formatMz, formatRetentionTime } from "./format";
@@ -18,6 +21,7 @@ import type {
   SpectrumState,
 } from "./usePreviewWorkspace";
 import type {
+  MzDomain,
   SpectrumViewportEvent,
   SpectrumViewportState,
 } from "./viewer/spectrumViewport";
@@ -55,6 +59,21 @@ const DATA_FORMATS: readonly { readonly format: SpectrumExportFormat; readonly l
 /** What every identifier in this panel's figure settings is named after. */
 const FIGURE_PREFIX = "spectrum";
 
+/**
+ * The two scopes, in the order they are offered.
+ *
+ * The chromatogram's own chooser reads the same way and is the pattern this
+ * follows rather than a second one invented beside it. The words differ because
+ * the sources do: a chromatogram covers a *run*, a spectrum covers a spectrum.
+ */
+const RANGE_SCOPES: readonly {
+  readonly scope: SpectrumRangeScope;
+  readonly label: string;
+}[] = [
+  { scope: "full", label: "Full spectrum" },
+  { scope: "current", label: "Current range" },
+];
+
 export interface SelectedSpectrumPanelProps {
   readonly state: SpectrumState;
   readonly onRetry: () => void;
@@ -87,6 +106,32 @@ export interface SelectedSpectrumPanelProps {
    * chromatogram's result is never shown here.
    */
   readonly scientificExportBusy: boolean;
+  /**
+   * How much of this spectrum an export covers.
+   *
+   * The effective scope, already resolved by the workspace: a spectrum with no
+   * admitted viewport is always `full`, so this panel never has to decide what
+   * a choice means for a spectrum that cannot honour it.
+   */
+  readonly rangeScope: SpectrumRangeScope;
+  readonly onRangeScope: (scope: SpectrumRangeScope) => void;
+  /**
+   * Whether this spectrum has a range to export over, and if not, why.
+   *
+   * Anything but `available` hides the choice rather than offering an inert
+   * one, and the sentence in its place says which of the two absences it is.
+   * Neither is a fact about the source: the full-source exports below are
+   * exactly as available as ever.
+   */
+  readonly rangeAvailability: SpectrumRangeAvailability;
+  /**
+   * The window a current-range export would cover, as the viewport committed it.
+   *
+   * `null` means nothing narrower has been committed, so the current range is
+   * the whole spectrum. Said in those words rather than filled in with the
+   * spectrum's own bounds, which would look like a choice the user had made.
+   */
+  readonly committedDomain: MzDomain | null;
   readonly onExport: (format: SpectrumExportFormat) => void;
   readonly onCopyPlot: () => void;
   readonly onDismissExport: () => void;
@@ -124,6 +169,10 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel({
   onRetryProjection,
   exportState,
   scientificExportBusy,
+  rangeScope,
+  onRangeScope,
+  rangeAvailability,
+  committedDomain,
   onExport,
   onCopyPlot,
   onDismissExport,
@@ -149,6 +198,7 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel({
         */}
         {state.status === "loaded" ? (
           <SpectrumExportActions
+            committedDomain={committedDomain}
             exportState={exportState}
             figureSettings={figureSettings}
             onCopyPlot={onCopyPlot}
@@ -156,7 +206,10 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel({
             onExport={onExport}
             onFigureSetting={onFigureSetting}
             onFigureTheme={onFigureTheme}
+            onRangeScope={onRangeScope}
             pngDpiProblem={pngDpiProblem}
+            rangeAvailability={rangeAvailability}
+            rangeScope={rangeScope}
             renderSettingsProblem={renderSettingsProblem}
             scientificExportBusy={scientificExportBusy}
           />
@@ -178,6 +231,10 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel({
 function SpectrumExportActions({
   exportState,
   scientificExportBusy,
+  rangeScope,
+  onRangeScope,
+  rangeAvailability,
+  committedDomain,
   onExport,
   onCopyPlot,
   onDismiss,
@@ -189,6 +246,10 @@ function SpectrumExportActions({
 }: {
   readonly exportState: SpectrumExportState;
   readonly scientificExportBusy: boolean;
+  readonly rangeScope: SpectrumRangeScope;
+  readonly onRangeScope: (scope: SpectrumRangeScope) => void;
+  readonly rangeAvailability: SpectrumRangeAvailability;
+  readonly committedDomain: MzDomain | null;
   readonly onExport: (format: SpectrumExportFormat) => void;
   readonly onCopyPlot: () => void;
   readonly onDismiss: () => void;
@@ -218,6 +279,65 @@ function SpectrumExportActions({
   const rasterBlocked = figureBlocked || pngDpiProblem !== null;
   return (
     <div className="spectrum-export">
+      {/*
+        The range chooser, and it comes first because it is the question the
+        five actions below are all answers to. Offered only where this spectrum
+        has an admitted m/z viewport: a control with no range to read is not
+        shown as an inert one, because a disabled radio a reader cannot explain
+        is worse than a section that honestly says the choice is unavailable.
+
+        Deliberately *not* closed while the lane is busy. A scope is a decision
+        about the next export rather than a claim on the lane, and closing it
+        would leave the reader unable to prepare while a file is being written.
+      */}
+      <fieldset className="spectrum-export-range">
+        <legend>Range</legend>
+        {rangeAvailability === "available" ? (
+          <>
+            <div
+              aria-labelledby="spectrum-range-label"
+              className="spectrum-figure-themes"
+              role="radiogroup"
+            >
+              <span className="visually-hidden" id="spectrum-range-label">
+                How much of the spectrum to export
+              </span>
+              {RANGE_SCOPES.map(({ scope, label }) => (
+                <label className="spectrum-figure-theme" key={scope}>
+                  <input
+                    checked={rangeScope === scope}
+                    name="spectrum-range-scope"
+                    onChange={() => {
+                      onRangeScope(scope);
+                    }}
+                    type="radio"
+                    value={scope}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+            <p className="chromatogram-export-note">{describeRange(committedDomain)}</p>
+          </>
+        ) : (
+          /*
+            The absence, said as which one it is. A spectrum with no peaks has
+            an admitted domain that is zero wide and simply has no range to
+            take; a spectrum the figure contract refuses was refused. Reporting
+            the first as the second would state a verdict Rust never reached.
+
+            Either way the three figure formats keep whatever availability the
+            figure contract gives them and the two data formats are untouched: a
+            spectrum with no drawable domain is still valid source data, and its
+            CSV and TSV still write.
+          */
+          <p className="chromatogram-export-note">
+            {rangeAvailability === "noPeaks"
+              ? "This spectrum has no peaks, so there is no range to take of it. Exports cover the full spectrum."
+              : "This spectrum has no m/z viewport, so there is no current range to export. Exports cover the full spectrum."}
+          </p>
+        )}
+      </fieldset>
       <FigureSettingsFields
         idPrefix={FIGURE_PREFIX}
         onFigureSetting={onFigureSetting}
@@ -334,11 +454,52 @@ function describeSize(figure: { readonly width: number; readonly height: number 
 }
 
 /**
+ * What the range chooser says a current-range export would cover.
+ *
+ * The exact committed bounds, or the fact that nothing narrower is committed --
+ * and in both cases that a gesture still in flight is not what gets exported.
+ * A reader mid-drag has to be able to tell what pressing a button now would
+ * write, and "the current range" does not answer that.
+ */
+function describeRange(committedDomain: MzDomain | null): string {
+  if (committedDomain === null) {
+    return "Current range is the whole spectrum until the viewport is changed.";
+  }
+  return (
+    `Current range is m/z ${formatMz(committedDomain.low)} to ${formatMz(committedDomain.high)}. ` +
+    "A zoom or pan in progress is not exported until it settles."
+  );
+}
+
+/**
+ * How a finished export names the range it covered.
+ *
+ * Every fact here comes from the outcome Rust returned, which describes the
+ * range resolved when the export **began**. Nothing is read from live viewport
+ * state: by the time this sentence is read the reader may have zoomed
+ * somewhere else, and "the current range" would then name a window the file
+ * does not hold.
+ *
+ * A full export keeps its existing concise wording -- one count, no bounds --
+ * because it has no window to disambiguate and the sentence it has already
+ * says which measurement it wrote.
+ */
+function describeExportedRange(state: ExportedSpectrumRange): string {
+  if (state.rangeScope === "full" || state.rangeLow === null || state.rangeHigh === null) {
+    return `${formatCount(state.sourcePointCount)} points`;
+  }
+  return (
+    `${formatCount(state.exportedPointCount)} of ${formatCount(state.sourcePointCount)} points, ` +
+    `m/z ${formatMz(state.rangeLow)} to ${formatMz(state.rangeHigh)}`
+  );
+}
+
+/**
  * What the export status region says.
  *
- * Never a path. A saved export names the file and how many points went into it,
- * which is what a reader needs to know the document is the whole spectrum and
- * not the drawing beside it.
+ * Never a path. A saved export names the file and the range it covered, which
+ * is what a reader needs to know which document they are holding -- and, for a
+ * range, to know it after the viewport has moved on.
  */
 function describeExport(state: SpectrumExportState): string {
   switch (state.status) {
@@ -352,10 +513,10 @@ function describeExport(state: SpectrumExportState): string {
       return "Export cancelled. Nothing was saved.";
     case "saved":
       return state.figure === null
-        ? `Saved ${state.fileName} with ${formatCount(state.pointCount)} points.`
-        : `Saved ${state.fileName} with ${formatCount(state.pointCount)} points, ${describeFigure(state.figure)}.`;
+        ? `Saved ${state.fileName} with ${describeExportedRange(state)}.`
+        : `Saved ${state.fileName} with ${describeExportedRange(state)}, ${describeFigure(state.figure)}.`;
     case "copied":
-      return `Copied the plot with ${formatCount(state.pointCount)} points, ${describeCopiedFigure(state.figure)}.`;
+      return `Copied the plot with ${describeExportedRange(state)}, ${describeCopiedFigure(state.figure)}.`;
     case "failed":
       return state.error.summary;
   }

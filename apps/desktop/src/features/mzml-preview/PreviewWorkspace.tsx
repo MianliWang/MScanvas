@@ -713,6 +713,7 @@ export function PreviewWorkspace() {
               table={preview.preview.spectrumTable}
             />
             <SelectedSpectrumPanel
+              committedDomain={workspace.spectrumCommittedDomain}
               dispatchViewport={workspace.dispatchSpectrumViewportEvent}
               exportState={workspace.spectrumExport}
               figureSettings={workspace.figureSettings}
@@ -721,9 +722,12 @@ export function PreviewWorkspace() {
               onExport={workspace.exportSpectrum}
               onFigureSetting={workspace.setFigureSetting}
               onFigureTheme={workspace.setFigureTheme}
+              onRangeScope={workspace.setSpectrumRangeScope}
               onRetry={workspace.retrySpectrum}
               onRetryProjection={workspace.retrySpectrumProjection}
               pngDpiProblem={workspace.pngDpiProblem}
+              rangeAvailability={workspace.spectrumRangeAvailability}
+              rangeScope={workspace.spectrumRangeScope}
               projectionError={workspace.spectrumProjectionError}
               readViewport={workspace.readSpectrumViewport}
               renderSettingsProblem={workspace.renderSettingsProblem}

@@ -191,7 +191,8 @@ it. The one scientific export lane now serves three surfaces. See
 What M4 left outside it:
 
 - A saved `FigureSpec` (FIG-007) and a figure composer (FIG-008). Still outside.
-- Current-range export of a *selected spectrum*. Still outside; it is M5.3.
+- Current-range export of a *selected spectrum*. **Delivered since, by M5.3**,
+  for a spectrum whose m/z viewport the scientific figure contract admits.
 - XIC and multi-layer comparison. Still outside.
 - Spectrum zoom/pan. **Delivered since, by M5.2**, for a spectrum whose m/z
   domain the scientific figure contract admits.
@@ -205,8 +206,9 @@ before conversion is widened and before the product is redesigned.
 - M5.0 — **complete** (route lock, documentation only).
 - M5.1 — **complete** (the m/z viewport authority and the bounded projection).
 - M5.2 — **complete** (the visible spectrum viewport).
-- M5.3 — **next, not started** (selected-spectrum `Current range` export).
-- M5.4 through M5.8 — not started.
+- M5.3 — **complete** (selected-spectrum `Current range` export).
+- M5.4 — **next, not started** (XIC source and capability evidence).
+- M5.5 through M5.8 — not started.
 
 **Zoom, pan and reset reach a spectrum whose domain is admitted, and only
 those.** A spectrum the figure contract cannot give an authoritative finite
@@ -242,14 +244,23 @@ five product decisions it surfaces are in
   command was added, and the two sentences that described the drawing as the
   transferred prefix were corrected because a viewport made them false. See
   [ADR 0039](docs/architecture/adr/0039-visible-spectrum-viewport-adapter.md).
-- **M5.3 — selected-spectrum `Current range` export.** Every format that
-  spectrum already supports — all five where the figure contract admits it, CSV
-  and TSV where it refuses it — over the full source, and over the committed m/z
-  range wherever a viewport exists, resolved in Rust against the retained
-  spectrum. Where none exists there is no `Current` scope — never a synthesised
-  range, a sorted source or a full-source export labelled as a current one. This
-  slice adds a **range** to what a spectrum already exports; it never adds a
-  format, and never requires M5 to build a figure the existing contract refuses.
+- **M5.3 — selected-spectrum `Current range` export.** **Closed.** Every format
+  that spectrum already supports — all five where the figure contract admits it,
+  CSV and TSV where it refuses it — over the full source, and over the committed
+  m/z range wherever a viewport exists, resolved in Rust against the retained
+  spectrum and refused rather than clamped where that spectrum does not have the
+  window. Where no viewport exists there is no `Current` scope — no synthesised
+  range, no sorted source, and no full-source export labelled as a current one.
+  A range figure keeps the complete source series and declares a window over it,
+  scaled from the observations that window holds so an off-window peak cannot
+  flatten it; a discrete representation draws only real in-range peaks and
+  interpolates no boundary value, and a data document invents no measurement at
+  any range. Full data documents stay schema version 1 byte for byte, and a range
+  is schema version 2 with the resolved bounds and both point counts in it. The
+  linked two-panel figure is untouched: its lower panel is still the complete
+  selected spectrum. This slice added a **range** to what a spectrum already
+  exported; it added no format and built no figure the existing contract refuses.
+  See [ADR 0040](docs/architecture/adr/0040-spectrum-range-export.md).
 - **M5.4 — XIC source and capability evidence.** A live measured run deciding
   whether an acceptable XIC source exists and which query it is. `tic`'s
   signature already declares an `mz=<mzLow>[,<mzHigh>]` window and the installed

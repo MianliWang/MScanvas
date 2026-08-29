@@ -49,6 +49,10 @@ import type {
   WorkspaceOutputAdoptionResult,
   WorkspaceRoster,
 } from "../features/mzml-preview/contracts";
+import type {
+  ExportedSpectrumRange,
+  SpectrumRange,
+} from "../features/mzml-preview/contracts";
 
 /**
  * How many points the fake says a complete exported spectrum carries.
@@ -58,6 +62,71 @@ import type {
  * arrays this side received.
  */
 export const FAKE_COMPLETE_SPECTRUM_POINTS = 1_000_000;
+
+/**
+ * How many points the fake says a *current-range* export covered.
+ *
+ * Deliberately unlike the complete count, so a test can tell the two apart in a
+ * message and a fixture cannot accidentally assert one while meaning the other.
+ */
+export const FAKE_CURRENT_RANGE_POINTS = 2_500;
+
+/**
+ * The m/z domain the fake says Rust retained for the selected spectrum.
+ *
+ * What a current-range request with nothing committed resolves to, because that
+ * is what the real resolver does: it answers from the retained domain rather
+ * than echoing the absent pair back. Deliberately unlike the transferred
+ * arrays' own span, so a test cannot accidentally assert one while meaning the
+ * other.
+ */
+export const FAKE_RETAINED_MZ_LOW = 100;
+export const FAKE_RETAINED_MZ_HIGH = 1_800.5;
+
+/**
+ * The range facts Rust would report for one resolved request.
+ *
+ * Modelled as Rust resolves them rather than echoed: a `current` request with no
+ * committed window covers the whole spectrum -- the real boundary answers it
+ * from the retained domain -- and a full request carries no window at all. What
+ * a fake must not do is invent a subrange for the first case, because that is
+ * exactly the behaviour the real resolver is forbidden.
+ */
+function fakeExportedRange(range: SpectrumRange): ExportedSpectrumRange {
+  if (range.scope === "full") {
+    return {
+      rangeScope: "full",
+      // A full export has no window, so it reports none. The pair is absent
+      // rather than filled with the spectrum's own bounds, exactly as Rust
+      // answers it.
+      rangeLow: null,
+      rangeHigh: null,
+      sourcePointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+      exportedPointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+    };
+  }
+  if (range.low === null || range.high === null) {
+    // A current request with nothing committed. **Rust never answers this with
+    // a null pair**: it resolves the window from the retained domain, so the
+    // outcome always names one. A fake that echoed the null back would model a
+    // shape `ResolvedSpectrumRange::Current` cannot produce, and would leave
+    // the sentence a whole-domain range export writes untested.
+    return {
+      rangeScope: "current",
+      rangeLow: FAKE_RETAINED_MZ_LOW,
+      rangeHigh: FAKE_RETAINED_MZ_HIGH,
+      sourcePointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+      exportedPointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+    };
+  }
+  return {
+    rangeScope: "current",
+    rangeLow: range.low,
+    rangeHigh: range.high,
+    sourcePointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+    exportedPointCount: FAKE_CURRENT_RANGE_POINTS,
+  };
+}
 
 export interface FakeWorkspaceDropTransport extends WorkspaceDropTransport {
   emit(update: WorkspaceDropUpdate): void;
@@ -485,6 +554,14 @@ function describeOrigin(origin: DatasetOrigin): string {
 export interface SpectrumExportRequest {
   readonly exportToken: string;
   readonly format: SpectrumExportFormat;
+  /**
+   * How much of the spectrum was asked for, exactly as the panel sent it.
+   *
+   * Recorded rather than asserted about here: whether a `current` scope carried
+   * the committed window -- and never the transient one -- is a claim the tests
+   * make about the caller, so the fake keeps the request instead of judging it.
+   */
+  readonly range: SpectrumRange;
   /** What the figure was asked to look like, exactly as the panel sent it. */
   readonly settings: FigureSettings;
 }
@@ -492,6 +569,7 @@ export interface SpectrumExportRequest {
 /** One `Copy plot`, as it reached the boundary. */
 export interface SpectrumCopyRequest {
   readonly exportToken: string;
+  readonly range: SpectrumRange;
   readonly settings: FigureSettings;
 }
 
@@ -596,6 +674,7 @@ export interface FakePreviewApiOptions {
   readonly spectrumExport?: (
     exportToken: string,
     format: SpectrumExportFormat,
+    range: SpectrumRange,
     settings: FigureSettings,
   ) => Promise<SpectrumExportOutcome>;
   /**
@@ -606,6 +685,7 @@ export interface FakePreviewApiOptions {
    */
   readonly spectrumCopy?: (
     exportToken: string,
+    range: SpectrumRange,
     settings: FigureSettings,
   ) => Promise<SpectrumCopyOutcome>;
   /**
@@ -1516,36 +1596,35 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     // Modelled as Rust behaves: the token names a snapshot Rust retained, and
     // what comes back names the file and the number of points that went into
     // it. Nothing here reads an array this fake holds.
-    exportSelectedSpectrum: async (exportToken, format, settings) => {
-      spectrumExportRequests.push({ exportToken, format, settings });
+    exportSelectedSpectrum: async (exportToken, format, range, settings) => {
+      spectrumExportRequests.push({ exportToken, format, range, settings });
       if (options.spectrumExport !== undefined) {
-        return options.spectrumExport(exportToken, format, settings);
+        return options.spectrumExport(exportToken, format, range, settings);
       }
       return {
         status: "saved",
         format,
-        fileName: `mscanvas-spectrum.${format}`,
+        fileName:
+          range.scope === "current"
+            ? `mscanvas-spectrum-current.${format}`
+            : `mscanvas-spectrum.${format}`,
         // Reported back as Rust does, and only for the formats that are
         // figures: a size and a theme are not properties of a data document.
         figure: format === "svg" || format === "png" ? fakeExportedFigure(settings, format) : null,
-        // Deliberately not read from any array this fake holds. Rust writes the
-        // complete spectrum it retained, and a fake that answered with the
-        // length of the transferred arrays would model the defect rather than
-        // the behaviour.
-        pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+        ...fakeExportedRange(range),
       };
     },
     // Modelled as Rust behaves: the pixels never cross this boundary. What
     // comes back says what was drawn and how many points it was drawn from.
-    copySelectedSpectrumPlot: async (exportToken, settings) => {
-      spectrumCopyRequests.push({ exportToken, settings });
+    copySelectedSpectrumPlot: async (exportToken, range, settings) => {
+      spectrumCopyRequests.push({ exportToken, range, settings });
       if (options.spectrumCopy !== undefined) {
-        return options.spectrumCopy(exportToken, settings);
+        return options.spectrumCopy(exportToken, range, settings);
       }
       return {
         status: "copied",
         figure: fakeCopiedFigure(settings),
-        pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+        ...fakeExportedRange(range),
       };
     },
     // Modelled as Rust behaves: the window is drawn from the complete spectrum

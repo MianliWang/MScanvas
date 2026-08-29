@@ -410,7 +410,7 @@ describe("recovering from a drawing that failed", () => {
 });
 
 describe("what the viewport never touches", () => {
-  it("leaves the spectrum's own export untouched by a committed window", async () => {
+  it("leaves a full-source export untouched by a committed window", async () => {
     const { api, rendered } = await openTheWorkspace();
     await selectAndSettle(rendered, 2);
     await waitFor(() => {
@@ -434,15 +434,59 @@ describe("what the viewport never touches", () => {
       expect(api.spectrumExportRequests).toHaveLength(1);
     });
 
-    // The export sends a token and a format. There is no range in it, and M5.3
-    // is where one would appear -- a committed viewport changed nothing about
-    // what a full-source document is taken from.
+    // M5.3 added the range this request now carries, and the point of this case
+    // survives it: the scope is `full`, so the committed window reached the
+    // request as *nothing at all*. A viewport that moved changed neither what a
+    // full-source document is taken from nor what is sent to ask for one.
     expect(api.spectrumExportRequests[0]?.exportToken).toBe("token-2");
     expect(Object.keys(api.spectrumExportRequests[0] ?? {}).sort()).toEqual([
       "exportToken",
       "format",
+      "range",
       "settings",
     ]);
+    expect(api.spectrumExportRequests[0]?.range).toEqual({
+      scope: "full",
+      low: null,
+      high: null,
+    });
+  });
+
+  it("carries the committed window only once the reader asks for the current range", async () => {
+    // The other half of the same rule. A range reaches Rust because a scope was
+    // chosen, never because a viewport moved -- and what it carries is the
+    // *committed* window rather than anything the screen was drawn from.
+    const { api, rendered } = await openTheWorkspace();
+    await selectAndSettle(rendered, 2);
+
+    act(() => {
+      rendered.result.current.dispatchSpectrumViewportEvent({
+        type: "viewport-step",
+        domain: mzDomain(302, 303),
+      });
+    });
+    await waitFor(() => {
+      expect(api.spectrumProjectionRequests).toHaveLength(2);
+    });
+
+    act(() => {
+      rendered.result.current.setSpectrumRangeScope("current");
+    });
+    act(() => {
+      rendered.result.current.exportSpectrum("csv");
+    });
+    await waitFor(() => {
+      expect(api.spectrumExportRequests).toHaveLength(1);
+    });
+
+    expect(api.spectrumExportRequests[0]?.range).toEqual({
+      scope: "current",
+      low: 302,
+      high: 303,
+    });
+    // And the projection is still a drawing nobody exported: the numbers above
+    // came off the committed domain, not out of the bounded arrays Rust drew.
+    expect(api.spectrumProjectionRequests).toHaveLength(2);
   });
 
   it("holds one bounded drawing at a time, however many ranges are committed", async () => {

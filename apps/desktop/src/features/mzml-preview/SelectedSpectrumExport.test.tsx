@@ -12,9 +12,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import type { SelectedSpectrum } from "./contracts";
+import type {
+  ExportedSpectrumRange,
+  SelectedSpectrum,
+  SpectrumRangeScope,
+} from "./contracts";
 import { SelectedSpectrumPanel } from "./SelectedSpectrumPanel";
-import { initialSpectrumViewportState } from "./viewer/spectrumViewport";
+import type { MzDomain } from "./viewer/spectrumViewport";
+import { initialSpectrumViewportState, mzDomain } from "./viewer/spectrumViewport";
 import type {
   FigureSettingsDraft,
   SpectrumExportState,
@@ -87,6 +92,13 @@ const NO_VIEWPORT = {
   readViewport: () => initialSpectrumViewportState,
   projectionError: null,
   onRetryProjection: () => undefined,
+  // And therefore no range to choose. Every export result below is a
+  // full-source one, reached by a spectrum that has no current range at all --
+  // which is the state M5.3 must leave exactly as it found it.
+  rangeScope: "full",
+  onRangeScope: () => undefined,
+  rangeAvailability: "noViewport",
+  committedDomain: null,
 } as const;
 
 function loaded(overrides: Partial<SelectedSpectrum> = {}): SpectrumState {
@@ -236,7 +248,11 @@ describe("selected spectrum export affordance", () => {
       format: "csv",
       fileName: "mscanvas-spectrum-3.csv",
       figure: null,
-      pointCount: 1_000_000,
+      rangeScope: "full",
+      rangeLow: null,
+      rangeHigh: null,
+      sourcePointCount: 1_000_000,
+      exportedPointCount: 1_000_000,
     });
 
     const status = screen.getByRole("status");
@@ -436,7 +452,11 @@ describe("selected spectrum export affordance", () => {
       format: "png",
       fileName: "mscanvas-spectrum-3.png",
       figure: { width: 1_200, height: 640, dpi: 300, theme: "light" },
-      pointCount: 1_000_000,
+      rangeScope: "full",
+      rangeLow: null,
+      rangeHigh: null,
+      sourcePointCount: 1_000_000,
+      exportedPointCount: 1_000_000,
     });
 
     expect(screen.getByRole("status")).toHaveTextContent(
@@ -450,7 +470,11 @@ describe("selected spectrum export affordance", () => {
       format: "svg",
       fileName: "mscanvas-spectrum-3.svg",
       figure: { width: 800, height: 600, dpi: null, theme: "dark" },
-      pointCount: 12,
+      rangeScope: "full",
+      rangeLow: null,
+      rangeHigh: null,
+      sourcePointCount: 12,
+      exportedPointCount: 12,
     });
 
     const status = screen.getByRole("status");
@@ -462,7 +486,11 @@ describe("selected spectrum export affordance", () => {
     renderPanel(loaded(), {
       status: "copied",
       figure: { width: 1_200, height: 640, theme: "dark" },
-      pointCount: 8,
+      rangeScope: "full",
+      rangeLow: null,
+      rangeHigh: null,
+      sourcePointCount: 8,
+      exportedPointCount: 8,
     });
 
     const status = screen.getByRole("status");
@@ -526,5 +554,342 @@ describe("selected spectrum export affordance", () => {
     expect(onFigureSetting.mock.calls).toEqual([["widthPx", "800"]]);
     expect(onFigureTheme.mock.calls).toEqual([["dark"]]);
     expect(onCopyPlot).toHaveBeenCalledOnce();
+  });
+});
+
+/**
+ * The range chooser, and the sentences it and its results are allowed to say.
+ *
+ * Rendered rather than asserted through the hook, because every claim here is
+ * about what a person can see and reach: a choice that exists but has no range
+ * to read, a note that says "the current range" while the reader is mid-drag,
+ * or a confirmation that stops being true once the viewport moves are all
+ * failures a passing hook test would not notice.
+ */
+describe("the selected spectrum's range chooser", () => {
+  /** A viewport that has a domain and a committed window. */
+  function withRange(
+    committedDomain: MzDomain | null,
+    rangeScope: SpectrumRangeScope = "full",
+  ): { readonly onRangeScope: ReturnType<typeof vi.fn> } {
+    const onRangeScope = vi.fn();
+    render(
+      <SelectedSpectrumPanel
+        {...NO_VIEWPORT}
+        committedDomain={committedDomain}
+        exportState={{ status: "idle" }}
+        figureSettings={DEFAULT_DRAFT}
+        onCopyPlot={() => undefined}
+        onDismissExport={() => undefined}
+        onExport={() => undefined}
+        onFigureSetting={() => undefined}
+        onFigureTheme={() => undefined}
+        onRangeScope={onRangeScope}
+        onRetry={() => undefined}
+        pngDpiProblem={null}
+        rangeAvailability="available"
+        rangeScope={rangeScope}
+        renderSettingsProblem={null}
+        scientificExportBusy={false}
+        state={loaded()}
+      />,
+    );
+    return { onRangeScope };
+  }
+
+  it("offers both scopes once the spectrum has an m/z viewport", () => {
+    withRange(null);
+
+    const group = screen.getByRole("radiogroup", {
+      name: "How much of the spectrum to export",
+    });
+    expect(group).toBeInTheDocument();
+    const full = screen.getByRole("radio", { name: "Full spectrum" });
+    const current = screen.getByRole("radio", { name: "Current range" });
+    // Distinguishable, and one of them is the answer. A group in which neither
+    // is chosen would leave a reader unable to tell what a button would write.
+    expect(full).toBeChecked();
+    expect(current).not.toBeChecked();
+  });
+
+  it("says the current range is the whole spectrum until something is committed", () => {
+    withRange(null);
+    // `null` is a real state, not a missing answer, and it is said in words
+    // rather than filled in with the spectrum's own bounds -- which would read
+    // as a choice the user had made.
+    expect(
+      screen.getByText("Current range is the whole spectrum until the viewport is changed."),
+    ).toBeInTheDocument();
+  });
+
+  it("names the exact committed bounds, and says a gesture is not exported", () => {
+    withRange(mzDomain(105.25, 130.5));
+
+    const note = screen.getByText(/Current range is m\/z/u);
+    expect(note).toHaveTextContent("Current range is m/z 105.2500 to 130.5000.");
+    // The half a reader mid-drag needs: what is on screen right now is not what
+    // pressing a button would write.
+    expect(note).toHaveTextContent("A zoom or pan in progress is not exported until it settles.");
+  });
+
+  it("reports a choice without taking focus away from it", () => {
+    const { onRangeScope } = withRange(mzDomain(105.0, 130.0));
+
+    const current = screen.getByRole("radio", { name: "Current range" });
+    current.focus();
+    fireEvent.click(current);
+
+    expect(onRangeScope).toHaveBeenCalledWith("current");
+    // The scope is the panel's to own, so the control the reader just used is
+    // still the control they are on. Nothing here reaches for focus on a scope
+    // change -- a chooser that moved it would take a keyboard reader out of the
+    // group they were still deciding in.
+    expect(document.activeElement).toBe(current);
+  });
+
+  it("offers no current range where the spectrum has no viewport, and no inert control", () => {
+    // `NO_VIEWPORT` carries `rangeAvailable: false`, which is the state every
+    // other case in this file is written at.
+    renderPanel(loaded());
+
+    expect(screen.queryByRole("radiogroup", { name: /How much of the spectrum/u })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "Current range" })).toBeNull();
+    // Said honestly, and as a fact about drawability rather than about the
+    // source: the data exports beside it are exactly as available as ever.
+    expect(
+      screen.getByText(/This spectrum has no m\/z viewport, so there is no current range/u),
+    ).toBeInTheDocument();
+    for (const button of exportButtons()) {
+      expect(button).toBeEnabled();
+    }
+  });
+
+  it("says a spectrum with no peaks has no range, without calling it a refusal", () => {
+    // Two absences, and only one of them is a verdict. An empty spectrum's
+    // domain *is* admitted -- zero wide -- so no viewport is published for it
+    // and there is nothing to take a range of. Reporting that as the figure
+    // contract having refused the source would state something Rust never said.
+    render(
+      <SelectedSpectrumPanel
+        {...NO_VIEWPORT}
+        committedDomain={null}
+        exportState={{ status: "idle" }}
+        figureSettings={DEFAULT_DRAFT}
+        onCopyPlot={() => undefined}
+        onDismissExport={() => undefined}
+        onExport={() => undefined}
+        onFigureSetting={() => undefined}
+        onFigureTheme={() => undefined}
+        onRangeScope={() => undefined}
+        onRetry={() => undefined}
+        pngDpiProblem={null}
+        rangeAvailability="noPeaks"
+        rangeScope="full"
+        renderSettingsProblem={null}
+        scientificExportBusy={false}
+        state={loaded({ pointCount: 0, mz: [], intensity: [] })}
+      />,
+    );
+
+    expect(screen.getByText(/This spectrum has no peaks, so there is no range/u)).toBeInTheDocument();
+    expect(screen.queryByText(/no m\/z viewport/u)).toBeNull();
+    expect(screen.queryByRole("radio", { name: "Current range" })).toBeNull();
+    // And its full-source data exports are exactly as available as ever.
+    for (const label of ["Export CSV…", "Export TSV…"]) {
+      expect(screen.getByRole("button", { name: label })).toBeEnabled();
+    }
+  });
+
+  it("calls a refused viewport a refusal, and says which absence it is", () => {
+    renderPanel(loaded());
+
+    expect(
+      screen.getByText(/This spectrum has no m\/z viewport, so there is no current range/u),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/no peaks/u)).toBeNull();
+  });
+
+  it("keeps the choice open while the one export lane is busy", () => {
+    // A scope is a decision about the *next* export rather than a claim on the
+    // lane. Closing it would leave a reader unable to prepare while a file is
+    // being written, for no safety this side owns.
+    render(
+      <SelectedSpectrumPanel
+        {...NO_VIEWPORT}
+        committedDomain={mzDomain(105.0, 130.0)}
+        exportState={{ status: "running", operation: "csv", namesVisibleRun: true }}
+        figureSettings={DEFAULT_DRAFT}
+        onCopyPlot={() => undefined}
+        onDismissExport={() => undefined}
+        onExport={() => undefined}
+        onFigureSetting={() => undefined}
+        onFigureTheme={() => undefined}
+        onRangeScope={() => undefined}
+        onRetry={() => undefined}
+        pngDpiProblem={null}
+        rangeAvailability="available"
+        rangeScope="current"
+        renderSettingsProblem={null}
+        scientificExportBusy
+        state={loaded()}
+      />,
+    );
+
+    expect(screen.getByRole("radio", { name: "Current range" })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: "Full spectrum" })).toBeEnabled();
+    // While every action the lane owns is closed, as it always was.
+    expect(screen.getByRole("button", { name: "Export SVG…" })).toBeDisabled();
+  });
+
+  it("announces the range note once, in the section rather than a live region", () => {
+    withRange(mzDomain(105.0, 130.0));
+    // One reading. The note is ordinary text a traversal meets once; the export
+    // status region beside it is the one live region this panel has, and it is
+    // empty until an export has something to report.
+    expect(screen.getAllByText(/Current range is m\/z/u)).toHaveLength(1);
+    expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+});
+
+describe("what a finished range export is allowed to claim", () => {
+  /** One saved outcome, over the range Rust resolved when it began. */
+  function savedOver(
+    range: Partial<ExportedSpectrumRange> & { readonly fileName?: string },
+  ): SpectrumExportState {
+    return {
+      status: "saved",
+      format: "csv",
+      fileName: "mscanvas-spectrum-3-current.csv",
+      figure: null,
+      rangeScope: "current",
+      rangeLow: 105.25,
+      rangeHigh: 130.5,
+      sourcePointCount: 1_000_000,
+      exportedPointCount: 2_500,
+      ...range,
+    };
+  }
+
+  it("names the file, both counts and the exact bounds it was taken over", () => {
+    renderPanel(loaded(), savedOver({}));
+
+    const status = screen.getByRole("status");
+    // Everything needed to identify the document after the viewport has moved:
+    // "saved the current range" would name a window this file may not hold.
+    expect(status).toHaveTextContent(
+      "Saved mscanvas-spectrum-3-current.csv with 2,500 of 1,000,000 points, " +
+        "m/z 105.2500 to 130.5000.",
+    );
+    // Still no path. The one forward slash in this sentence is the `m/z` the
+    // axis is named by, so the separator check is made against what is left
+    // once that word is accounted for rather than being dropped.
+    expect(status.textContent?.replaceAll("m/z", "")).not.toMatch(/[/\\]/u);
+  });
+
+  it("keeps the full-source sentence exactly as concise as it was", () => {
+    renderPanel(
+      loaded(),
+      savedOver({
+        fileName: "mscanvas-spectrum-3.csv",
+        rangeScope: "full",
+        rangeLow: null,
+        rangeHigh: null,
+        exportedPointCount: 1_000_000,
+      }),
+    );
+
+    // A full export has no window to disambiguate, so it says one count and no
+    // bounds -- the wording M4.1 shipped, unchanged.
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Saved mscanvas-spectrum-3.csv with 1,000,000 points.",
+    );
+  });
+
+  it("reports an empty range as a successful export rather than a failure", () => {
+    renderPanel(loaded(), savedOver({ exportedPointCount: 0 }));
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Saved mscanvas-spectrum-3-current.csv with 0 of 1,000,000");
+    // Nothing about this is an error: a window of a spectrum may truthfully
+    // hold no reported peak.
+    expect(status).not.toHaveTextContent("could not");
+    expect(status).not.toHaveTextContent("failed");
+  });
+
+  it("names the range a copy covered, since the clipboard holds one image", () => {
+    renderPanel(loaded(), {
+      status: "copied",
+      figure: { width: 1_200, height: 640, theme: "light" },
+      rangeScope: "current",
+      rangeLow: 105.25,
+      rangeHigh: 130.5,
+      sourcePointCount: 1_000_000,
+      exportedPointCount: 2_500,
+    });
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent(
+      "Copied the plot with 2,500 of 1,000,000 points, m/z 105.2500 to 130.5000, " +
+        "1,200 by 640 pixels, light theme.",
+    );
+    expect(status).not.toHaveTextContent("Saved");
+  });
+
+  it("does not rewrite a result when the viewport moves after it landed", () => {
+    // The message is built from the outcome and from nothing else, so a panel
+    // re-rendered with a different committed window says exactly what it said.
+    const outcome = savedOver({});
+    const { rerender } = render(
+      <SelectedSpectrumPanel
+        {...NO_VIEWPORT}
+        committedDomain={mzDomain(105.25, 130.5)}
+        exportState={outcome}
+        figureSettings={DEFAULT_DRAFT}
+        onCopyPlot={() => undefined}
+        onDismissExport={() => undefined}
+        onExport={() => undefined}
+        onFigureSetting={() => undefined}
+        onFigureTheme={() => undefined}
+        onRangeScope={() => undefined}
+        onRetry={() => undefined}
+        pngDpiProblem={null}
+        rangeAvailability="available"
+        rangeScope="current"
+        renderSettingsProblem={null}
+        scientificExportBusy={false}
+        state={loaded()}
+      />,
+    );
+    const before = screen.getByRole("status").textContent;
+
+    rerender(
+      <SelectedSpectrumPanel
+        {...NO_VIEWPORT}
+        committedDomain={mzDomain(900.0, 950.0)}
+        exportState={outcome}
+        figureSettings={DEFAULT_DRAFT}
+        onCopyPlot={() => undefined}
+        onDismissExport={() => undefined}
+        onExport={() => undefined}
+        onFigureSetting={() => undefined}
+        onFigureTheme={() => undefined}
+        onRangeScope={() => undefined}
+        onRetry={() => undefined}
+        pngDpiProblem={null}
+        rangeAvailability="available"
+        rangeScope="current"
+        renderSettingsProblem={null}
+        scientificExportBusy={false}
+        state={loaded()}
+      />,
+    );
+
+    expect(screen.getByRole("status").textContent).toBe(before);
+    expect(screen.getByRole("status")).toHaveTextContent("m/z 105.2500 to 130.5000");
+    // And the *note* did follow the viewport, which is the difference: it
+    // describes what the next export would cover.
+    expect(screen.getByText(/Current range is m\/z/u)).toHaveTextContent(
+      "m/z 900.0000 to 950.0000",
+    );
   });
 });

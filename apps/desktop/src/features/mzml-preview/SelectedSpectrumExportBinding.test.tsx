@@ -20,14 +20,29 @@ import { describe, expect, it } from "vitest";
 
 import { PreviewApiProvider, type PreviewApi } from "./api";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
+import { mzDomain } from "./viewer/spectrumViewport";
 import {
   FAKE_COMPLETE_SPECTRUM_POINTS,
   FAKE_FIGURE_SETTINGS,
+  FAKE_RETAINED_MZ_HIGH,
+  FAKE_RETAINED_MZ_LOW,
+  buildSpectrum,
   fakeExportedFigure,
   createFakePreviewApi,
   selectedFile,
   shimadzuDataset,
 } from "../../test/previewFixtures";
+
+/**
+ * The range every case in this file exports over.
+ *
+ * A selected spectrum's export context starts at the full source and stays
+ * there unless a reader chooses otherwise, so these cases -- all written before
+ * ranges existed -- are full-source ones and still assert exactly what they
+ * did. The scope is carried explicitly rather than left off, which is what
+ * makes "a viewport did not reach this request" a thing the shape can say.
+ */
+const FULL_RANGE = { scope: "full", low: null, high: null } as const;
 
 function wrapper(api: PreviewApi) {
   return function Wrapper({ children }: { readonly children: ReactNode }) {
@@ -93,7 +108,7 @@ describe("selected spectrum export binding", () => {
     // the keyboard.
     // The figure settings travel with it, exactly as the panel holds them.
     expect(api.spectrumExportRequests).toEqual([
-      { exportToken: bound, format: "csv", settings: FAKE_FIGURE_SETTINGS },
+      { exportToken: bound, format: "csv", range: FULL_RANGE, settings: FAKE_FIGURE_SETTINGS },
     ]);
     // And the preview is exactly as it was: exporting a spectrum is not
     // selecting one, and no reload was provoked by it.
@@ -135,10 +150,10 @@ describe("selected spectrum export binding", () => {
     }
     // Larger than any array this document holds. What was written is the
     // spectrum Rust kept, and this side could not have produced that number.
-    expect(saved.pointCount).toBe(FAKE_COMPLETE_SPECTRUM_POINTS);
+    expect(saved.sourcePointCount).toBe(FAKE_COMPLETE_SPECTRUM_POINTS);
     const transferred =
       result.current.spectrum.status === "loaded" ? result.current.spectrum.spectrum.mz.length : 0;
-    expect(saved.pointCount).toBeGreaterThan(transferred);
+    expect(saved.sourcePointCount).toBeGreaterThan(transferred);
   });
 
   it("clears a result when a different spectrum is loaded", async () => {
@@ -189,7 +204,7 @@ describe("selected spectrum export binding", () => {
     let finishExport = (): void => undefined;
     const api = createFakePreviewApi({
       initialDatasets: [{ file: selectedFile, parents: [] }],
-      spectrumExport: async (_token, format, settings) => {
+      spectrumExport: async (_token, format, _range, settings) => {
         await new Promise<void>((resolve) => {
           finishExport = resolve;
         });
@@ -198,7 +213,11 @@ describe("selected spectrum export binding", () => {
           format,
           fileName: `mscanvas-spectrum.${format}`,
           figure: fakeExportedFigure(settings, format),
-          pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+          rangeScope: "full",
+          rangeLow: null,
+          rangeHigh: null,
+          sourcePointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+          exportedPointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
         };
       },
     });
@@ -301,6 +320,7 @@ describe("selected spectrum export binding", () => {
       {
         exportToken: "token-0",
         format: "png",
+        range: FULL_RANGE,
         settings: { widthPx: 800, heightPx: 600, pngDpi: 600, theme: "dark" },
       },
     ]);
@@ -323,6 +343,7 @@ describe("selected spectrum export binding", () => {
     expect(api.spectrumCopyRequests).toEqual([
       {
         exportToken: "token-0",
+        range: FULL_RANGE,
         settings: { widthPx: 1_200, heightPx: 640, pngDpi: 300, theme: "dark" },
       },
     ]);
@@ -359,7 +380,7 @@ describe("selected spectrum export binding", () => {
   it("keeps the settings an operation was started with when they change under it", async () => {
     let finish = (): void => undefined;
     const { api, result } = await loadedWorkspace({
-      spectrumExport: async (_token, format, settings) => {
+      spectrumExport: async (_token, format, _range, settings) => {
         await new Promise<void>((resolve) => {
           finish = resolve;
         });
@@ -368,7 +389,11 @@ describe("selected spectrum export binding", () => {
           format,
           fileName: `mscanvas-spectrum.${format}`,
           figure: fakeExportedFigure(settings, format),
-          pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+          rangeScope: "full",
+          rangeLow: null,
+          rangeHigh: null,
+          sourcePointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+          exportedPointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
         };
       },
     });
@@ -405,14 +430,18 @@ describe("selected spectrum export binding", () => {
     // say the wrong thing about what is on the clipboard.
     let finishCopy = (): void => undefined;
     const { result } = await loadedWorkspace({
-      spectrumCopy: async (_token, settings) => {
+      spectrumCopy: async (_token, _range, settings) => {
         await new Promise<void>((resolve) => {
           finishCopy = resolve;
         });
         return {
           status: "copied",
           figure: fakeExportedFigure(settings, "png"),
-          pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+          rangeScope: "full",
+          rangeLow: null,
+          rangeHigh: null,
+          sourcePointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+          exportedPointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
         };
       },
     });
@@ -518,10 +547,10 @@ describe("selected spectrum export binding", () => {
     // resolution they travel with is the default stand-in the uniform
     // transport needs and neither output reads.
     expect(api.spectrumExportRequests).toEqual([
-      { exportToken: "token-0", format: "svg", settings: FAKE_FIGURE_SETTINGS },
+      { exportToken: "token-0", format: "svg", range: FULL_RANGE, settings: FAKE_FIGURE_SETTINGS },
     ]);
     expect(api.spectrumCopyRequests).toEqual([
-      { exportToken: "token-0", settings: FAKE_FIGURE_SETTINGS },
+      { exportToken: "token-0", range: FULL_RANGE, settings: FAKE_FIGURE_SETTINGS },
     ]);
   });
 
@@ -550,6 +579,7 @@ describe("selected spectrum export binding", () => {
       {
         exportToken: "token-0",
         format: "png",
+        range: FULL_RANGE,
         settings: { widthPx: 1_200, heightPx: 640, pngDpi: 50, theme: "light" },
       },
     ]);
@@ -629,5 +659,518 @@ describe("selected spectrum export binding", () => {
     if (outcome.status === "saved") {
       expect(outcome.figure).toBeNull();
     }
+  });
+});
+
+/**
+ * Which range a selected-spectrum export is taken over, and whose it is.
+ *
+ * The scope belongs to one spectrum's export context, so every case here is a
+ * way that ownership could be lost: a choice following a different spectrum, a
+ * choice surviving a viewport that stopped admitting one, or a screen state
+ * deciding whether a scientific export may happen at all.
+ */
+describe("the selected spectrum's export range", () => {
+  /** One workspace with a spectrum loaded, and the fake it is talking to. */
+  async function loadedWorkspace(options: Parameters<typeof createFakePreviewApi>[0] = {}) {
+    const api = createFakePreviewApi({
+      initialDatasets: [{ file: selectedFile, parents: [] }],
+      ...options,
+    });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => {
+      expect(result.current.roster.datasets).toHaveLength(1);
+    });
+    act(() => {
+      result.current.activateDataset(selectedFile.handle);
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("loaded");
+    });
+    act(() => {
+      result.current.selectSpectrum(0);
+    });
+    await waitFor(() => {
+      expect(result.current.spectrum.status).toBe("loaded");
+    });
+    return { api, result };
+  }
+
+  /**
+   * Waits until the loaded spectrum's viewport is the admitted one.
+   *
+   * The fixture spectrum carries an admitted domain, so this is the ordinary
+   * path rather than a state these tests arrange: what it waits for is the
+   * reducer having been told, not a viewport being forced into existence.
+   */
+  async function admitViewport(
+    result: { readonly current: ReturnType<typeof usePreviewWorkspace> },
+    { settle = true }: { readonly settle?: boolean } = {},
+  ): Promise<void> {
+    await waitFor(() => {
+      expect(result.current.spectrumRangeAvailability).toBe("available");
+    });
+    if (settle) {
+      await waitFor(() => {
+        const viewport = result.current.spectrumViewport;
+        expect(viewport.status === "ready" ? viewport.projection.status : null).toBe("ready");
+      });
+    }
+  }
+
+  it("starts at the full source, carrying no window", async () => {
+    const { api, result } = await loadedWorkspace();
+
+    expect(result.current.spectrumRangeScope).toBe("full");
+    act(() => {
+      result.current.exportSpectrum("csv");
+    });
+    await waitFor(() => {
+      expect(api.spectrumExportRequests).toHaveLength(1);
+    });
+    expect(api.spectrumExportRequests[0]?.range).toEqual(FULL_RANGE);
+  });
+
+  it("sends the committed window once the current range is chosen", async () => {
+    const { api, result } = await loadedWorkspace();
+    await admitViewport(result);
+
+    act(() => {
+      result.current.dispatchSpectrumViewportEvent({
+        type: "viewport-step",
+        domain: mzDomain(301.5, 303.5),
+      });
+    });
+    act(() => {
+      result.current.setSpectrumRangeScope("current");
+    });
+    act(() => {
+      result.current.exportSpectrum("csv");
+    });
+    await waitFor(() => {
+      expect(api.spectrumExportRequests).toHaveLength(1);
+    });
+
+    expect(api.spectrumExportRequests[0]?.range).toEqual({
+      scope: "current",
+      low: 301.5,
+      high: 303.5,
+    });
+  });
+
+  it("sends a null window while nothing narrower is committed", async () => {
+    // A real state rather than a missing answer: Rust resolves it from the
+    // domain it retained. Nothing here invents a subrange to fill it.
+    const { api, result } = await loadedWorkspace();
+    await admitViewport(result);
+
+    act(() => {
+      result.current.setSpectrumRangeScope("current");
+    });
+    act(() => {
+      result.current.copySpectrumPlot();
+    });
+    await waitFor(() => {
+      expect(api.spectrumCopyRequests).toHaveLength(1);
+    });
+
+    expect(api.spectrumCopyRequests[0]?.range).toEqual({
+      scope: "current",
+      low: null,
+      high: null,
+    });
+  });
+
+  it("reports the resolved domain when a whole-spectrum range is exported", async () => {
+    // A current request with nothing committed carries a null pair, and Rust
+    // answers it from the retained domain -- so the outcome always names one.
+    // The sentence a reader gets is therefore the full "N of M, m/z X to Y"
+    // one, not a range with no bounds in it.
+    const { api, result } = await loadedWorkspace();
+    await admitViewport(result);
+    act(() => {
+      result.current.setSpectrumRangeScope("current");
+    });
+    act(() => {
+      result.current.exportSpectrum("csv");
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("saved");
+    });
+
+    expect(api.spectrumExportRequests[0]?.range).toEqual({
+      scope: "current",
+      low: null,
+      high: null,
+    });
+    const outcome = result.current.spectrumExport;
+    if (outcome.status !== "saved") {
+      throw new Error("the export resolved to something other than a saved file");
+    }
+    expect(outcome.rangeScope).toBe("current");
+    // Resolved, never echoed back as the null it was asked with.
+    expect(outcome.rangeLow).toBe(FAKE_RETAINED_MZ_LOW);
+    expect(outcome.rangeHigh).toBe(FAKE_RETAINED_MZ_HIGH);
+    expect(outcome.exportedPointCount).toBe(outcome.sourcePointCount);
+  });
+
+  it("distinguishes a spectrum with no peaks from one with no viewport", async () => {
+    const { result } = await loadedWorkspace({
+      spectrum: (index) =>
+        Promise.resolve({
+          outcome: "spectrum",
+          spectrum: { ...buildSpectrum(index, 0), pointCount: 0, mz: [], intensity: [] },
+        }),
+    });
+
+    // An empty spectrum's domain is admitted and zero wide, so this document
+    // publishes no viewport for it -- and that is not the figure contract
+    // refusing anything.
+    await waitFor(() => {
+      expect(result.current.spectrumRangeAvailability).toBe("noPeaks");
+    });
+    expect(result.current.spectrumRangeScope).toBe("full");
+  });
+
+  it("exports the last committed window while a gesture is still moving", async () => {
+    // A gesture is a drawing rather than a decision. Exporting over one neither
+    // settles it nor cancels it, and what is written is what was last settled.
+    const { api, result } = await loadedWorkspace();
+    await admitViewport(result);
+
+    act(() => {
+      result.current.dispatchSpectrumViewportEvent({
+        type: "viewport-step",
+        domain: mzDomain(301.5, 303.5),
+      });
+    });
+    let epoch = 0;
+    act(() => {
+      const started = result.current.dispatchSpectrumViewportEvent({
+        type: "gesture-started",
+        domain: mzDomain(304, 305),
+      });
+      epoch = started.status === "ready" ? (started.gesture?.epoch ?? 0) : 0;
+    });
+    act(() => {
+      result.current.dispatchSpectrumViewportEvent({
+        type: "gesture-moved",
+        epoch,
+        domain: mzDomain(304.5, 305.5),
+      });
+    });
+
+    act(() => {
+      result.current.setSpectrumRangeScope("current");
+    });
+    act(() => {
+      result.current.exportSpectrum("tsv");
+    });
+    await waitFor(() => {
+      expect(api.spectrumExportRequests).toHaveLength(1);
+    });
+
+    expect(api.spectrumExportRequests[0]?.range).toEqual({
+      scope: "current",
+      low: 301.5,
+      high: 303.5,
+    });
+    // And the gesture is exactly where it was: it was not settled by having
+    // been exported over.
+    const viewport = result.current.spectrumViewport;
+    expect(viewport.status === "ready" ? viewport.gesture?.epoch : null).toBe(epoch);
+  });
+
+  it("takes a newly committed window immediately, before any drawing succeeds", async () => {
+    const { api, result } = await loadedWorkspace({
+      // Every projection fails, so no drawing for this window ever arrives.
+      spectrumProjection: () => Promise.reject(new Error("the screen cannot draw this")),
+    });
+    await admitViewport(result, { settle: false });
+
+    act(() => {
+      result.current.dispatchSpectrumViewportEvent({
+        type: "viewport-step",
+        domain: mzDomain(301.5, 303.5),
+      });
+    });
+    act(() => {
+      result.current.setSpectrumRangeScope("current");
+    });
+    act(() => {
+      result.current.exportSpectrum("csv");
+    });
+    await waitFor(() => {
+      expect(api.spectrumExportRequests).toHaveLength(1);
+    });
+
+    // The committed window is the authority, and it was committed the moment
+    // the reader settled it -- not when a screen agreed to draw it.
+    expect(api.spectrumExportRequests[0]?.range).toEqual({
+      scope: "current",
+      low: 301.5,
+      high: 303.5,
+    });
+  });
+
+  it("keeps the current range available while a projection is loading or failed", async () => {
+    // A failed drawing is not empty science. The export reads the retained
+    // source and the committed window, neither of which the screen owns.
+    let failProjection = (): void => undefined;
+    const { api, result } = await loadedWorkspace({
+      spectrumProjection: () =>
+        new Promise((_resolve, reject) => {
+          failProjection = () => {
+            reject(new Error("the screen cannot draw this"));
+          };
+        }),
+    });
+    await admitViewport(result, { settle: false });
+
+    // Loading.
+    expect(result.current.spectrumRangeAvailability).toBe("available");
+    act(() => {
+      result.current.setSpectrumRangeScope("current");
+    });
+    expect(result.current.spectrumRangeScope).toBe("current");
+
+    // Failed.
+    await act(async () => {
+      failProjection();
+      await Promise.resolve();
+    });
+    expect(result.current.spectrumRangeAvailability).toBe("available");
+    expect(result.current.spectrumRangeScope).toBe("current");
+
+    act(() => {
+      result.current.exportSpectrum("csv");
+    });
+    await waitFor(() => {
+      expect(api.spectrumExportRequests).toHaveLength(1);
+    });
+    expect(api.spectrumExportRequests[0]?.range.scope).toBe("current");
+  });
+
+  it("offers no current range for a spectrum whose viewport is refused", async () => {
+    // Rust's verdict about this spectrum, arriving with the spectrum -- not a
+    // state dispatched over the top of one that has a domain.
+    const { api, result } = await loadedWorkspace({
+      spectrum: (index) =>
+        Promise.resolve({
+          outcome: "spectrum",
+          spectrum: {
+            ...buildSpectrum(index, 12),
+            viewportDomain: { state: "refused", reason: "sourceNotOrdered" },
+          },
+        }),
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumViewport.status).toBe("refused");
+    });
+
+    expect(result.current.spectrumRangeAvailability).toBe("noViewport");
+    expect(result.current.spectrumRangeScope).toBe("full");
+    // And the full-source export is exactly as available as ever: a viewport
+    // refusal is a fact about drawability, never about the source.
+    act(() => {
+      result.current.exportSpectrum("csv");
+    });
+    await waitFor(() => {
+      expect(api.spectrumExportRequests).toHaveLength(1);
+    });
+    expect(api.spectrumExportRequests[0]?.range).toEqual(FULL_RANGE);
+  });
+
+  it("returns to the full source when a viewport stops being admitted", async () => {
+    const { result } = await loadedWorkspace();
+    await admitViewport(result);
+    act(() => {
+      result.current.setSpectrumRangeScope("current");
+    });
+    expect(result.current.spectrumRangeScope).toBe("current");
+
+    act(() => {
+      result.current.dispatchSpectrumViewportEvent({
+        type: "spectrum-selected",
+        spectrumToken: "token-refused",
+        domain: { state: "refused", reason: "sourceNotOrdered" },
+      });
+    });
+
+    expect(result.current.spectrumRangeAvailability).toBe("noViewport");
+    expect(result.current.spectrumRangeScope).toBe("full");
+  });
+
+  it("does not resurrect a hidden choice when a viewport is admitted again", async () => {
+    const { result } = await loadedWorkspace();
+    await admitViewport(result);
+    act(() => {
+      result.current.setSpectrumRangeScope("current");
+    });
+    act(() => {
+      result.current.dispatchSpectrumViewportEvent({
+        type: "spectrum-selected",
+        spectrumToken: "token-refused",
+        domain: { state: "refused", reason: "sourceNotOrdered" },
+      });
+    });
+    act(() => {
+      result.current.dispatchSpectrumViewportEvent({
+        type: "spectrum-selected",
+        spectrumToken: "token-admitted-again",
+        domain: { state: "admitted", low: 100, high: 400 },
+      });
+    });
+
+    // A choice the reader had no way to see they still had is not a choice.
+    expect(result.current.spectrumRangeAvailability).toBe("available");
+    expect(result.current.spectrumRangeScope).toBe("full");
+  });
+
+  it("survives an ordinary zoom, pan and reset of the same spectrum", async () => {
+    // Moving a window is not choosing a different scope.
+    const { result } = await loadedWorkspace();
+    await admitViewport(result);
+    act(() => {
+      result.current.setSpectrumRangeScope("current");
+    });
+
+    for (const event of [
+      { type: "viewport-step", domain: mzDomain(120, 140) },
+      { type: "viewport-step", domain: mzDomain(160, 180) },
+      { type: "viewport-reset" },
+    ] as const) {
+      act(() => {
+        result.current.dispatchSpectrumViewportEvent(event);
+      });
+      expect(result.current.spectrumRangeScope).toBe("current");
+    }
+  });
+
+  it("starts a newly selected spectrum's own context at the full source", async () => {
+    // A `Current` chosen for one spectrum must not follow another, whose
+    // committed window and admitted domain are not the first one's.
+    const { api, result } = await loadedWorkspace();
+    await admitViewport(result);
+    act(() => {
+      result.current.setSpectrumRangeScope("current");
+    });
+    expect(result.current.spectrumRangeScope).toBe("current");
+
+    act(() => {
+      result.current.selectSpectrum(1);
+    });
+    await waitFor(() => {
+      expect(result.current.spectrum.status).toBe("loaded");
+    });
+
+    expect(result.current.spectrumRangeScope).toBe("full");
+    act(() => {
+      result.current.exportSpectrum("csv");
+    });
+    await waitFor(() => {
+      expect(api.spectrumExportRequests).toHaveLength(1);
+    });
+    expect(api.spectrumExportRequests[0]?.range).toEqual(FULL_RANGE);
+  });
+
+  it("publishes the range Rust resolved rather than one read back afterwards", async () => {
+    let finish = (): void => undefined;
+    const { result } = await loadedWorkspace({
+      spectrumExport: async (_token, format, range) => {
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        return {
+          status: "saved",
+          format,
+          fileName: `mscanvas-spectrum-current.${format}`,
+          figure: null,
+          rangeScope: "current",
+          rangeLow: range.low ?? 0,
+          rangeHigh: range.high ?? 0,
+          sourcePointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+          exportedPointCount: 7,
+        };
+      },
+    });
+    await admitViewport(result);
+    act(() => {
+      result.current.dispatchSpectrumViewportEvent({
+        type: "viewport-step",
+        domain: mzDomain(301.5, 303.5),
+      });
+    });
+    act(() => {
+      result.current.setSpectrumRangeScope("current");
+    });
+    act(() => {
+      result.current.exportSpectrum("csv");
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("running");
+    });
+
+    // The reader moves the viewport while the save dialog is open.
+    act(() => {
+      result.current.dispatchSpectrumViewportEvent({
+        type: "viewport-step",
+        domain: mzDomain(304.5, 305.5),
+      });
+    });
+    await act(async () => {
+      finish();
+      await Promise.resolve();
+    });
+
+    const outcome = result.current.spectrumExport;
+    expect(outcome.status).toBe("saved");
+    if (outcome.status === "saved") {
+      // The window the export began on, which is what the file holds.
+      expect(outcome.rangeLow).toBe(301.5);
+      expect(outcome.rangeHigh).toBe(303.5);
+      expect(outcome.exportedPointCount).toBe(7);
+      expect(outcome.sourcePointCount).toBe(FAKE_COMPLETE_SPECTRUM_POINTS);
+    }
+    // While what the *next* export would cover has moved on, as it should.
+    expect(result.current.spectrumCommittedDomain).toEqual({ low: 304.5, high: 305.5 });
+  });
+
+  it("leaves the linked figure's range to the chromatogram", async () => {
+    // ADR 0036: the linked figure's lower panel is the complete selected
+    // spectrum. Choosing a spectrum range says nothing about it, and the linked
+    // request carries the chromatogram's range and no other.
+    const { api, result } = await loadedWorkspace();
+    await admitViewport(result);
+    act(() => {
+      result.current.dispatchSpectrumViewportEvent({
+        type: "viewport-step",
+        domain: mzDomain(301.5, 303.5),
+      });
+    });
+    act(() => {
+      result.current.setSpectrumRangeScope("current");
+    });
+
+    act(() => {
+      result.current.exportLinkedFigure("svg");
+    });
+    await waitFor(() => {
+      expect(api.linkedFigureRequests).toHaveLength(1);
+    });
+
+    const request = api.linkedFigureRequests[0];
+    expect(request?.range).toEqual({ scope: "full", low: null, high: null });
+    expect(Object.keys(request ?? {}).sort()).toEqual([
+      "chromatogramToken",
+      "format",
+      "range",
+      "settings",
+      "spectrumToken",
+      "traces",
+    ]);
+    // No m/z number reached it, under any key.
+    expect(JSON.stringify(request)).not.toContain("301.5");
+    expect(JSON.stringify(request)).not.toContain("303.5");
   });
 });

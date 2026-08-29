@@ -101,7 +101,11 @@ describe("M4.2 figure settings, in the rendered interface", () => {
         format: "png",
         fileName: "mscanvas-spectrum-0.png",
         figure: { width: 800, height: 600, dpi: 600, theme: "dark" },
-        pointCount: COMPLETE_POINT_COUNT,
+        rangeScope: "full",
+        rangeLow: null,
+        rangeHigh: null,
+        sourcePointCount: COMPLETE_POINT_COUNT,
+        exportedPointCount: COMPLETE_POINT_COUNT,
       });
 
       await setField("Width", "800");
@@ -140,7 +144,11 @@ describe("M4.2 figure settings, in the rendered interface", () => {
         // The same settings object crosses for every figure format; only the
         // raster one has pixels whose physical size can be recorded.
         figure: { width: 1_200, height: 640, dpi: null, theme: "light" },
-        pointCount: COMPLETE_POINT_COUNT,
+        rangeScope: "full",
+        rangeLow: null,
+        rangeHigh: null,
+        sourcePointCount: COMPLETE_POINT_COUNT,
+        exportedPointCount: COMPLETE_POINT_COUNT,
       });
 
       await setField("PNG DPI", "600");
@@ -168,7 +176,11 @@ describe("M4.2 figure settings, in the rendered interface", () => {
 
       const copied = await argumentsOf("copy_selected_spectrum_plot");
       expect(copied).toHaveLength(1);
-      expect(Object.keys(copied[0] ?? {}).sort()).toEqual(["exportToken", "settings"]);
+      // The range came with M5.3, and the point of this case survives it: a copy
+      // carries what it is about and nothing more -- no destination, no format,
+      // and no file name, because it writes none.
+      expect(Object.keys(copied[0] ?? {}).sort()).toEqual(["exportToken", "range", "settings"]);
+      expect(copied[0]?.["range"]).toEqual({ scope: "full", low: null, high: null });
       expect(copied[0]?.["settings"]).toEqual({
         widthPx: 640,
         heightPx: 640,
@@ -191,7 +203,11 @@ describe("M4.2 figure settings, in the rendered interface", () => {
         format: "csv",
         fileName: "mscanvas-spectrum-0.csv",
         figure: null,
-        pointCount: COMPLETE_POINT_COUNT,
+        rangeScope: "full",
+        rangeLow: null,
+        rangeHigh: null,
+        sourcePointCount: COMPLETE_POINT_COUNT,
+        exportedPointCount: COMPLETE_POINT_COUNT,
       });
 
       await setField("Width", "4000");
@@ -252,7 +268,11 @@ describe("M4.2 figure settings, in the rendered interface", () => {
           format: "csv",
           fileName: "mscanvas-spectrum-0.csv",
           figure: null,
-          pointCount: COMPLETE_POINT_COUNT,
+          rangeScope: "full",
+          rangeLow: null,
+          rangeHigh: null,
+          sourcePointCount: COMPLETE_POINT_COUNT,
+          exportedPointCount: COMPLETE_POINT_COUNT,
         });
         await press("Export CSV…");
         await browser.waitUntil(async () => (await statusText()).startsWith("Saved"), {
@@ -452,8 +472,12 @@ describe("M4.2 figure settings, in the rendered interface", () => {
         });
 
         expect(facts).not.toBeNull();
-        // Three fields, two theme choices, five actions.
-        expect(facts?.count).toBe(10);
+        // Three fields, two range scopes, two theme choices, five actions. The
+        // range scopes arrived with M5.3 and are counted here rather than
+        // filtered out: this case is about every control in the panel fitting
+        // inside it, and a control excluded from the count is a control this
+        // measurement stops making a claim about.
+        expect(facts?.count).toBe(12);
         expect(facts?.offenders).toEqual([]);
         expect(await unexpectedConsole()).toEqual([]);
       });

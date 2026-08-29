@@ -4976,10 +4976,10 @@ does is give each an owning M5 slice. All four were re-confirmed against
 
 | # | Finding | Owner |
 | --- | --- | --- |
-| P3-1 | `_validate_linked_pair_has_one_constructor` asks `functions_naming` which functions call `LinkedPair::new`, and that helper recognises a definition only at exactly four spaces of indentation. `mod linked_pair` is at column zero, so its methods sit at eight — a wrapper added inside the module would not be seen as its own function. **No current production bypass**: the private fields still make a struct literal a compile error elsewhere, `LinkedPair::new` is still `pub(super)`, and the cross-file direct-reader rules are unchanged. The debt is a repository rule weaker than it reads. | **M5.3**, the first slice to change `preview/export.rs`; M5.8 as backstop |
+| P3-1 | `_validate_linked_pair_has_one_constructor` asks `functions_naming` which functions call `LinkedPair::new`, and that helper recognises a definition only at exactly four spaces of indentation. `mod linked_pair` is at column zero, so its methods sit at eight — a wrapper added inside the module would not be seen as its own function. **No current production bypass**: the private fields still make a struct literal a compile error elsewhere, `LinkedPair::new` is still `pub(super)`, and the cross-file direct-reader rules are unchanged. The debt is a repository rule weaker than it reads. | **M5.3 — closed**, with mutation evidence: see the M5.3 section below |
 | P3-2 | The first comment above the linked section in `ChromatogramExportPanel.tsx` still describes the `42ba0a2`-era single-element live region. `8efdd59` replaced that shape with two elements, which the comment immediately below describes correctly; the two now disagree about the code they sit on. | **M5.7** |
 | P3-3 | When the linked section cannot be used, the refusal sentence is in the accessibility tree twice — once as the visible paragraph the three buttons point `aria-describedby` at, once as the hidden `aria-live` region's content. `visually-hidden` removes an element from the page, not from the tree. **This is not the announcement defect `42ba0a2` and `8efdd59` closed, and must not be described as fixed.** | **M5.7** |
-| P3-4 | In `usePreviewWorkspace.ts` the block documenting `scientificExportBusy` is separated from it by the `useState<LinkedFigureExportState>` declaration M4.4 introduced. Third instance of one insertion mistake: `42ba0a2` moved two stranded comments, `8efdd59` corrected one of those moves, and neither found this. | **M5.3** |
+| P3-4 | In `usePreviewWorkspace.ts` the block documenting `scientificExportBusy` is separated from it by the `useState<LinkedFigureExportState>` declaration M4.4 introduced. Third instance of one insertion mistake: `42ba0a2` moved two stranded comments, `8efdd59` corrected one of those moves, and neither found this. | **M5.3 — closed** |
 
 None of the four is a reason to reopen M4.
 
@@ -5344,6 +5344,138 @@ started**: no range chooser, no scope, no command, and no path from a screen
 projection to a document. The four inherited M4.4 P3s remain unresolved, owned
 by M5.3 and M5.7, and M5.1's `projection.rs` rustdoc P3 is carried unchanged --
 this slice did not edit that scientific boundary at all.
+
+### Validation
+
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build` and `git diff --check`, each run directly and each exiting zero,
+plus `pnpm e2e:typecheck`, `pnpm e2e:browser`, `pnpm e2e:build` and
+`pnpm e2e:tauri`.
+## M5.3 — selected-spectrum `Current range` export, 2026-08-29
+
+A selected spectrum already exported as SVG, PNG, `Copy plot`, CSV and TSV over
+its complete retained source. This slice adds a **range** to those five outputs
+and no format to the spectrum: where M5.1 admitted an m/z viewport and M5.2 made
+it reachable, the same outputs are also available over the window that viewport
+has committed to. See
+[ADR 0040](docs/architecture/adr/0040-spectrum-range-export.md).
+
+### Where the range comes from, and where it cannot come from
+
+`SpectrumSnapshot::resolve` is the one resolver, and every format reaches its
+range through it. Its authority is the complete arrays Rust retained plus the
+`ViewportDomain` settled when they were retained — never the transferred prefix,
+never the backend's separately reported `mz_low`/`mz_high` pair, and never the
+bounded screen projection. That last substitution is the one this slice existed
+to make impossible, and the types do most of the work: `ScreenProjection` is only
+ever the return of `project_spectrum`, no document writer sees one, and
+`preview/export.rs` does not import it.
+
+Two typed refusals, both path-free and both in m/z words rather than the
+chromatogram's. A window outside the source is **refused, not clamped**. A
+`Current` range asked of a spectrum whose viewport the figure contract refuses is
+its own refusal rather than a full-source export wearing that name — nothing is
+sorted, and neither the reported bounds nor a first/last or min/max of the array
+is used to manufacture the domain the contract declined to establish.
+
+### Full is a different shape from Current
+
+`ResolvedSpectrumRange` is `Full` or `Current(Domain)`. `Full` carries no bounds,
+and that is load-bearing: a full-source export never asks the viewport question,
+which is what keeps CSV and TSV writing for the unordered m/z array mzML permits
+and nothing here sorts.
+
+### What a range figure is, and what it is not
+
+The same panel `spectrum_panel` already built, with a window declared on it. The
+series is still the complete source at `DataScope::FullSource`; the full m/z and
+value domains are still the source's own; the range decides what is drawn. An
+off-window peak of nine million stays in the document and stays out of the value
+axis of a window that does not contain it, because the visible value window is
+computed from the observations that window actually holds **and zero** — a
+stick's length is read from zero, so an axis without it would make every mark in
+the window a lie about its own size.
+
+The representation decides the filtering, and this is where the chromatogram's
+rule deliberately does not carry across. A chromatogram is a polyline and clips
+with an interpolated boundary height; a spectrum here is discrete marks, so the
+figure draws only genuinely reported peaks inside the inclusive window and
+invents nothing at either edge. **A data document invents no measurement at any
+range under any representation.**
+
+A current range covering the whole spectrum declares no window and canonicalizes
+to the full-source figure.
+
+### Two data schemas, and version 1 still means what it meant
+
+Version 1 is frozen as the full-source document — the same source writes the same
+bytes it always did. A range is version 2, carrying `range_scope`, the resolved
+`range_low`/`range_high`, and `source_point_count` and `exported_point_count` as
+**separate** keys, because in a ranged document those two numbers differ and one
+`point_count` would leave a reader unable to tell whether the rows they hold are
+all the spectrum has. One writer and one record loop serve both, so the two
+cannot come to disagree about how a measurement is written.
+
+Records are the source points satisfying `low <= mz <= high`, edges included, in
+**source order**. Zero rows is a successful export, and a zero-width range is
+valid.
+
+### The range is fixed when the export begins
+
+The claim carries it. A viewport that moves while the save dialog is open changes
+neither the file nor the sentence that reports it, and the outcome carries the
+range so the interface never reads it back from a viewport that has moved. The
+range **note** beside that sentence does follow the viewport, because it
+describes what the next export would cover — the difference is the point.
+
+### The scope belongs to one spectrum's export context
+
+Initial `full`; reset to `full` when a different spectrum is selected; `Current`
+disappears with a viewport that stops being admitted and is not resurrected when
+one is admitted again; ordinary zoom, pan and reset leave it alone. The effective
+scope is derived rather than stored twice, so it cannot disagree with the reducer
+for the one render in which a refusal arrives.
+
+`Current` export is independent of whether the screen drawing is idle, loading,
+ready, empty, retryably failed or not: a failed drawing is not empty science.
+
+### The linked figure is unchanged
+
+`spectrum_panel` takes no range, so there is nothing a spectrum's range chooser
+could hand it. ADR 0036's rule that the lower panel is the complete selected
+spectrum is preserved by the signature rather than by a convention, and the
+linked export carries the chromatogram's range and no m/z at all.
+
+### Two inherited M4.4 debts, closed
+
+**P3-1 was reproduced before it was repaired.** An unauthorized constructor
+nested inside `impl LinkedPair` passed `python -B scripts/check_repo.py` on this
+branch's parent. The existing whole-file rule is untouched and no shared scanner
+was loosened; what was added is a rule about `mod linked_pair` itself, where the
+methods it declares are a closed list, `LinkedPair::new` and `Self::new` may not
+be called inside the module that defines them, and exactly one `Self` struct
+literal exists. Three mutations — the nested wrapper, the same route spelled
+`Self::new`, and one bypassing the constructor with a struct literal — were
+applied one at a time and restored byte for byte; the guard passed all three
+before and each is now caught by two of the three rules independently.
+
+**P3-4** is closed by moving the `scientificExportBusy` documentation block back
+onto the declaration it describes, with no runtime change. The comment above the
+three export-state declarations was corrected from "two states" to "three",
+which had been false since M4.4 added the linked one.
+
+### Not built, and by design
+
+**No XIC work was started.** No operation, no capability gate, no parser, no
+service path, no measurement, and no answer to XIC-D1 through D5. ProteoWizard
+query capability is unchanged. M5.4 remains next and unstarted.
+
+No second export lane was added. No linked data document was added. No production
+QA hook was added. `MAX_SPECTRUM_POINTS` was not raised. The three P3s this slice
+does not own — M4.4's stale linked comment and duplicated linked refusal, and
+M5.1's `projection.rs` rustdoc — are carried unchanged.
 
 ### Validation
 

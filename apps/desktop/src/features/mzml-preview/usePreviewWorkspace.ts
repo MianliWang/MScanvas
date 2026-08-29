@@ -19,6 +19,7 @@ import type {
   ChromatogramTraceSet,
   CopiedFigure,
   ExportedFigure,
+  ExportedSpectrumRange,
   LinkedFigureFormat,
   FigureSettings,
   FigureTheme,
@@ -27,6 +28,9 @@ import type {
   SelectedFile,
   SelectedSpectrum,
   SpectrumExportFormat,
+  SpectrumRange,
+  SpectrumRangeAvailability,
+  SpectrumRangeScope,
   SpectrumRow,
   WorkspaceDropRejectionReason,
   WorkspaceDropUpdate,
@@ -57,7 +61,11 @@ import type { ViewerEvent, ViewerInteractionState } from "./viewer/interactionSt
 import { buildPreviewScanModel } from "./viewer/previewScanModel";
 import type { RetentionTimeDomain, ScanModel, TraceKind } from "./viewer/scanModel";
 import { adjacentScan } from "./viewer/scanModel";
-import type { SpectrumViewportEvent, SpectrumViewportState } from "./viewer/spectrumViewport";
+import type {
+  MzDomain,
+  SpectrumViewportEvent,
+  SpectrumViewportState,
+} from "./viewer/spectrumViewport";
 import { projectionWindow } from "./viewer/spectrumViewport";
 import { useSpectrumViewport } from "./viewer/useSpectrumViewport";
 import { useViewerInteraction } from "./viewer/useViewerInteraction";
@@ -253,20 +261,18 @@ export type SpectrumExportState =
       readonly namesVisibleRun: boolean;
     }
   | { readonly status: "cancelled" }
-  | {
+  | ({
       readonly status: "saved";
       readonly format: SpectrumExportFormat;
       readonly fileName: string;
       /** What the figure was rendered as. `null` for the data documents. */
       readonly figure: ExportedFigure | null;
-      readonly pointCount: number;
-    }
-  | {
+    } & ExportedSpectrumRange)
+  | ({
       readonly status: "copied";
       /** A size and a theme. A clipboard image records no resolution. */
       readonly figure: CopiedFigure;
-      readonly pointCount: number;
-    }
+    } & ExportedSpectrumRange)
   | {
       readonly status: "failed";
       readonly operation: FigureOperation;
@@ -798,6 +804,34 @@ export interface PreviewWorkspace {
    * is exactly as it was when the dialog closes however it closes.
    */
   readonly exportSpectrum: (format: SpectrumExportFormat) => void;
+  /**
+   * How much of the selected spectrum the next export will cover.
+   *
+   * The *effective* scope, which is `full` wherever this spectrum has no
+   * admitted m/z viewport. A control cannot offer `Current` for a spectrum that
+   * has no current range, and a stored choice left behind by a spectrum that
+   * did is not a choice about this one.
+   */
+  readonly spectrumRangeScope: SpectrumRangeScope;
+  readonly setSpectrumRangeScope: (scope: SpectrumRangeScope) => void;
+  /**
+   * Whether this spectrum has an m/z range to export over, and if not, why.
+   *
+   * Not a boolean, because "no peaks to take a range of" and "the figure
+   * contract refuses this source a domain" are different facts and only the
+   * second is a refusal. The full-source exports are available whichever it is.
+   */
+  readonly spectrumRangeAvailability: SpectrumRangeAvailability;
+  /**
+   * The committed m/z window, or `null` where none is committed.
+   *
+   * The **committed** one, and deliberately not what a wheel or a drag is
+   * transiently showing: an export invoked mid-gesture writes the last window
+   * the user settled on, and the gesture is neither settled nor cancelled by
+   * having been exported over. `null` means the current range is the whole
+   * admitted domain, which Rust resolves from the spectrum it retained.
+   */
+  readonly spectrumCommittedDomain: MzDomain | null;
   /**
    * Puts the loaded selected spectrum's figure on the system clipboard.
    *
@@ -2593,24 +2627,27 @@ export function usePreviewWorkspace(): PreviewWorkspace {
 
   // ------------------------------------------------- scientific exports
   //
-  // Two states, and they stay two. A selected spectrum and a chromatogram
-  // publish different results, bind different tokens and say different things
-  // about what was written, so one state standing for both would have to invent
-  // a result for whichever surface did not run.
+  // Three states, and they stay three. A selected spectrum, a chromatogram and
+  // the linked pair publish different results, bind different tokens and say
+  // different things about what was written, so one state standing for any two
+  // of them would have to invent a result for whichever surface did not run.
   //
   // They are declared together because there is exactly one lane underneath
-  // them, and the projection below has to be able to see both.
+  // them, and the projection below has to be able to see all three.
   const [spectrumExport, setSpectrumExport] = useState<SpectrumExportState>({ status: "idle" });
   const [chromatogramExport, setChromatogramExport] = useState<ChromatogramExportState>({
+    status: "idle",
+  });
+  const [linkedFigureExport, setLinkedFigureExport] = useState<LinkedFigureExportState>({
     status: "idle",
   });
   /**
    * Whether the session's one scientific export lane is occupied.
    *
-   * Derived, and deliberately not stored. Rust holds a single lane across both
-   * surfaces -- two native save dialogs for one window is not a state this
+   * Derived, and deliberately not stored. Rust holds a single lane across all
+   * three surfaces -- two native save dialogs for one window is not a state this
    * application can be in -- so "may another scientific export begin now" has
-   * one answer, and a third state machine here could only disagree with it.
+   * one answer, and a fourth state machine here could only disagree with it.
    *
    * It governs *availability* and nothing else. Each surface keeps its own
    * result, its own status message and its own token binding, because each of
@@ -2618,9 +2655,6 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * remains the safety boundary: this is what makes the interface truthful, not
    * what makes it safe.
    */
-  const [linkedFigureExport, setLinkedFigureExport] = useState<LinkedFigureExportState>({
-    status: "idle",
-  });
   const scientificExportBusy =
     spectrumExport.status === "running" ||
     chromatogramExport.status === "running" ||
@@ -2867,6 +2901,120 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     setSpectrumExport({ status: "idle" });
   }, []);
 
+  /**
+   * How much of the selected spectrum its exports cover.
+   *
+   * A property of *this spectrum's* export context, so its lifecycle is that
+   * context's and not the viewport's. Frozen deliberately, because every one of
+   * these is a way a range chosen for one measurement could quietly be applied
+   * to another:
+   *
+   * - a newly selected spectrum starts at `full`;
+   * - a viewport that stops being admitted takes `Current` with it;
+   * - a viewport admitted again does **not** resurrect an older hidden choice;
+   * - zooming, panning or resetting the *same* spectrum changes nothing here,
+   *   because moving a window is not choosing a different scope.
+   */
+  const [spectrumRangeScope, setSpectrumRangeScope] = useState<SpectrumRangeScope>("full");
+  /**
+   * Whether this spectrum has an m/z range to export over, and if not, why.
+   *
+   * Three answers rather than a boolean, because the two absences are not the
+   * same fact and a surface that reported them identically would state one of
+   * them falsely.
+   *
+   * - `available` — Rust admitted a domain and the viewport is navigating it.
+   * - `noPeaks` — the spectrum loaded with zero points. Its domain *is*
+   *   admitted, zero wide, and this document deliberately publishes no viewport
+   *   for it: there is nothing to navigate and nothing to draw. Saying the
+   *   contract refused it would be saying something Rust did not say.
+   * - `noViewport` — the figure contract could not establish a domain over this
+   *   source without altering it. That is a refusal, and it is the only one of
+   *   the three that is.
+   *
+   * None of them is a fact about whether the source is valid: the full-source
+   * exports are available in all three.
+   */
+  const spectrumRangeAvailability: SpectrumRangeAvailability =
+    spectrumViewportState.status === "ready"
+      ? "available"
+      : spectrum.status === "loaded" && spectrum.spectrum.pointCount === 0
+        ? "noPeaks"
+        : "noViewport";
+  const spectrumRangeAvailable = spectrumRangeAvailability === "available";
+  /**
+   * The scope an export actually uses, which is `full` wherever there is no
+   * viewport to read.
+   *
+   * Derived rather than a second stored answer. A stored one could disagree
+   * with the reducer for exactly one render -- the render in which a refusal
+   * arrives -- and that is the render in which an export would be sent with a
+   * `Current` scope the spectrum cannot answer.
+   */
+  const effectiveSpectrumRangeScope: SpectrumRangeScope = spectrumRangeAvailable
+    ? spectrumRangeScope
+    : "full";
+  // A choice belongs to the spectrum it was made for. Selecting another one
+  // starts that spectrum's own export context at `full`, so a `Current` chosen
+  // for spectrum A never silently follows spectrum B -- whose committed window,
+  // and whose admitted domain, are not A's.
+  useEffect(() => {
+    setSpectrumRangeScope("full");
+  }, [exportedSpectrumToken]);
+  // And a viewport that stops being admitted takes the choice with it rather
+  // than hiding it. Without this the control would disappear while `Current`
+  // stayed selected underneath, and re-admitting a viewport later would bring
+  // back a choice the reader had no way to see they still had.
+  useEffect(() => {
+    if (!spectrumRangeAvailable) {
+      setSpectrumRangeScope("full");
+    }
+  }, [spectrumRangeAvailable]);
+
+  /**
+   * What a current-range export would cover, as the viewport has committed it.
+   *
+   * Read from the reducer's **committed** window and from nothing else. Not the
+   * gesture's transient domain, which a wheel or a drag owns; not the SVG's
+   * viewBox, not an axis end, not a pointer position; and above all not the
+   * bounded screen projection, which is a drawing of the science rather than
+   * the science.
+   *
+   * `null` means no narrower window is committed, so the current range is the
+   * whole admitted domain -- said in those words rather than filled in with the
+   * spectrum's own bounds, which would look like a choice the user had made.
+   */
+  const spectrumCommittedDomain =
+    spectrumViewportState.status === "ready" ? spectrumViewportState.committed : null;
+
+  /** The range one export is taken over, read at the moment it is invoked. */
+  const spectrumRange = useCallback((): SpectrumRange => {
+    // Through the controller's own reader rather than a render closure. The
+    // committed window can move between the render that drew a button and the
+    // press that reaches it -- a settling gesture is exactly that -- and what is
+    // exported is what the viewport has committed *now*.
+    const viewport = readSpectrumViewport();
+    if (viewport.status !== "ready" || spectrumRangeScope === "full") {
+      // Either there is no viewport to read a window from, or the full source
+      // was chosen. Both are `full`, and neither carries a range: Rust resolves
+      // the complete retained spectrum without one.
+      return { scope: "full", low: null, high: null };
+    }
+    const committed = viewport.committed;
+    if (committed === null) {
+      // A real state rather than a missing answer, and Rust resolves it from
+      // the retained domain. No subrange is manufactured here to make the
+      // option look different from the one beside it.
+      return { scope: "current", low: null, high: null };
+    }
+    // Read off the committed domain rather than asserted into a wire shape. The
+    // `MzDomain` brand exists to stop an m/z window being confused with a
+    // retention-time one inside this module's arithmetic; reaching for its two
+    // numbers needs no cast around that brand, and adding one would weaken the
+    // separation for the sake of serialisation.
+    return { scope: "current", low: committed.low, high: committed.high };
+  }, [readSpectrumViewport, spectrumRangeScope]);
+
   const exportSpectrum = useCallback(
     (format: SpectrumExportFormat) => {
       // Read here rather than closed over, so the token is the one on screen at
@@ -2907,9 +3055,13 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           ? DEFAULT_FIGURE_SETTINGS
           : figureSettingsFor(resolvedRenderSettings, resolvedPngDpi);
       const token = spectrum.spectrum.exportToken;
+      // Read at the moment the user acted, not closed over from the render that
+      // drew the button. A gesture settling between the two moves the committed
+      // window, and what is exported is what is committed now.
+      const range = spectrumRange();
       setSpectrumExport({ status: "running", operation: format, namesVisibleRun: true });
       void api
-        .exportSelectedSpectrum(token, format, settings)
+        .exportSelectedSpectrum(token, format, range, settings)
         .then((outcome) => {
           // Dropped rather than shown if the panel has moved on. The file was
           // still written -- Rust decided that, not this -- but "Saved 1,000,000
@@ -2932,7 +3084,15 @@ export function usePreviewWorkspace(): PreviewWorkspace {
                   format: outcome.format,
                   fileName: outcome.fileName,
                   figure: outcome.figure,
-                  pointCount: outcome.pointCount,
+                  // The range Rust resolved when the export began, carried
+                  // through rather than re-read here. The viewport may have
+                  // moved while the save dialog was open, and a message built
+                  // from where it is now would describe a different file.
+                  rangeScope: outcome.rangeScope,
+                  rangeLow: outcome.rangeLow,
+                  rangeHigh: outcome.rangeHigh,
+                  sourcePointCount: outcome.sourcePointCount,
+                  exportedPointCount: outcome.exportedPointCount,
                 },
           );
         })
@@ -2952,7 +3112,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           });
         });
     },
-    [api, resolvedPngDpi, resolvedRenderSettings, scientificExportBusy, spectrum],
+    [api, resolvedPngDpi, resolvedRenderSettings, scientificExportBusy, spectrum, spectrumRange],
   );
 
   /**
@@ -2978,9 +3138,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }
     const settings = figureSettingsFor(render, resolvedPngDpi);
     const token = spectrum.spectrum.exportToken;
+    const range = spectrumRange();
     setSpectrumExport({ status: "running", operation: "copy", namesVisibleRun: true });
     void api
-      .copySelectedSpectrumPlot(token, settings)
+      .copySelectedSpectrumPlot(token, range, settings)
       .then((outcome) => {
         // The same binding discipline a save has. The clipboard was written --
         // Rust decided that -- but a "copied" message beside a spectrum those
@@ -2997,7 +3158,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         setSpectrumExport({
           status: "copied",
           figure: outcome.figure,
-          pointCount: outcome.pointCount,
+          rangeScope: outcome.rangeScope,
+          rangeLow: outcome.rangeLow,
+          rangeHigh: outcome.rangeHigh,
+          sourcePointCount: outcome.sourcePointCount,
+          exportedPointCount: outcome.exportedPointCount,
         });
       })
       .catch((cause: unknown) => {
@@ -3015,7 +3180,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           error: toPreviewError(cause),
         });
       });
-  }, [api, resolvedPngDpi, resolvedRenderSettings, scientificExportBusy, spectrum]);
+  }, [
+    api,
+    resolvedPngDpi,
+    resolvedRenderSettings,
+    scientificExportBusy,
+    spectrum,
+    spectrumRange,
+  ]);
 
   // ------------------------------------------------- chromatogram export
 
@@ -3616,6 +3788,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     viewerInteraction: viewer.state,
     chromatogramExportToken,
     chromatogramRangeScope,
+    spectrumRangeScope: effectiveSpectrumRangeScope,
+    setSpectrumRangeScope,
+    spectrumRangeAvailability,
+    spectrumCommittedDomain,
     linkedFigureExport,
     linkedFigureUnavailable,
     exportLinkedFigure,
