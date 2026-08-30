@@ -5,9 +5,20 @@
 No query the installed ProteoWizard build offers can serve as a general XIC
 scientific source. Four of its eight analysis queries cannot express an m/z
 window at all. The four that can — `tic`, `sic`, `slice` and `image` — were each
-measured to one standard and each rejected, and the decisive reason is shared:
-**they serialize intensity at four fixed decimal places, which maps a legitimate
-positive signal onto the same output as a true zero.**
+measured and each rejected, on **two** grounds rather than one:
+
+- `tic`, `sic` and `slice` **serialize intensity at four fixed decimal places**,
+  which maps a legitimate positive signal onto the same output as a true zero.
+- `image` is rejected **independently of that**. It renders a pseudo-2D-gel,
+  which carries no per-scan quantity and no result identity even when it
+  succeeds, and it produced no usable output on either pinned source. It never
+  produced an intensity column to serialize, so the four-decimal finding does not
+  reach it — the matrix below records its numeric fidelity as `NOT_APPLICABLE`
+  for exactly that reason.
+
+Keeping the two grounds separate is what makes the record useful at re-entry: a
+later build could repair the serialization without changing what `image`
+produces, or the reverse.
 
 This is an evidence slice. It implements no XIC and changes no production code.
 Refusal is a valid outcome; approximation is not, and none was substituted.
@@ -409,11 +420,49 @@ Measured rather than excluded by signature, because its prose arg list includes
 | Representative | `image mz=400,1000` | `0` | none | same |
 | Representative | `image` (default window) | `0` | none | same |
 
-Three representative invocations — narrow, wide and default — so the result is
-not an artefact of one window. `image` produced no output on either pinned
-source, and its purpose, named by its own `Pseudo2DGel` class, is a rendered gel
-image, which carries no per-scan intensity and no result identity even when it
-succeeds. `MEASURED_REJECTED`.
+Three **different** windows — narrow, wide and default — so the result is not an
+artefact of one window. That is cross-window evidence, and it is not
+repeatability; repeatability is measured separately below.
+
+`image` produced no output on either pinned source, and its purpose, named by its
+own `Pseudo2DGel` class, is a rendered gel image, which carries no per-scan
+intensity and no result identity even when it succeeds. `MEASURED_REJECTED`.
+
+### `image` repeatability, same invocation
+
+Repeatability is a claim about **one** input repeated, so it is measured that
+way: the ordinary narrow case, `image mz=500,502`, run five consecutive times
+with byte-identical argv. One fixed output directory, emptied before each pass,
+so the argv does not vary between passes and each pass's artifact state is
+observed on its own.
+
+| Fact | Value |
+| --- | --- |
+| Executable | `msaccess.exe` SHA-256 `85681B205569A9850F47D079749E04BA45F4B0C64E363D4A2C5C67C3C67ED1F4` |
+| Source | representative, SHA-256 `262D1178303CD934223239D5D93A3B842DCA69DA09CEF58E95A39B950D26B7E8`, `208,408,454` bytes |
+| Analysis argument | `image mz=500,502`, identical on every pass |
+
+| Pass | Exit | stdout bytes | stderr bytes | Generated files | stderr SHA-256 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `0` | `0` | `113` | **`0`** | `9440A5E0BF18299362BB2A6530B33022F7A486F74FE78D8F2C58E98DF2D87B56` |
+| 2 | `0` | `0` | `113` | **`0`** | same |
+| 3 | `0` | `0` | `113` | **`0`** | same |
+| 4 | `0` | `0` | `113` | **`0`** | same |
+| 5 | `0` | `0` | `113` | **`0`** | same |
+
+Every pass produced **no artifact at all**, so there is no output hash to
+record, and none is invented here: the repeated observable is the exit status,
+the empty output directory and the byte-identical diagnostic
+
+```text
+[Pseudo2DGel::Impl::writeImages] nothing to do
+[MSDataAnalyzerApplication] Caught exception for file rep.mzML.
+```
+
+The three cross-window runs above carry that same stderr digest, so the
+repeated narrow pass is the same observation the window sweep recorded, not a
+different one. `image` is repeatable in this build; what it repeats is producing
+nothing.
 
 ## `sic`, measured to the candidate standard
 
@@ -561,7 +610,7 @@ standard?* Every cell is either a located result or an explicit
 | No-signal behaviour | complete table of explicit `0.0000`; **no scan omitted** | all three artifacts present, zero rows, `nonzeroCount: 0` | artifact present, zero rows, `64` bytes | `NOT_APPLICABLE` |
 | Malformed / error | parse errors exit `1`; inverted exits `0` with no output; non-finite silently unwindowed; abort leaves **no file** | abort leaves a **partial `231`-row file**, no `peaks`/`summary` | abort leaves a **partial `62`-row file**, reproduced 3× | exits `0` with no output and a caught exception on both sources |
 | Completeness / byte bound | `36,319` rows, `2,989,606` bytes, `82.3`/row, ~36 % of the bound; predictable from scan count | `3,268` of `36,319` scans; peak-driven, not predictable | `3,700` rows; peak-driven, not predictable | `NOT_APPLICABLE` — nothing written |
-| Repeatability | 3× byte-identical on both sources | 2× representative, 3× synthetic, byte-identical | 2× representative byte-identical; failing window 3× identical | 3 representative invocations, identical failure |
+| Repeatability | 3× byte-identical on both sources | 2× representative, 3× synthetic, byte-identical | 2× representative byte-identical; failing window 3× identical | **5× the identical `image mz=500,502` invocation** — exit `0`, `0` files, stderr byte-identical (`9440A5E0…7B56`) |
 | Aggregation / quantity | sum of in-window intensities, pinned to `RegionAnalyzer.cpp` | same sum, plus an **interpolated** peak | **none** — raw per-peak values | `NOT_APPLICABLE` — an image |
 | Numeric fidelity | `setprecision(4)`; `1e-6` and `4e-5` serialize as `0.0000` | same, via `RegionSIC.cpp:186-188` | same, via `RegionAnalyzer.cpp:245-246` | `NOT_APPLICABLE` |
 | **Outcome** | `MEASURED_REJECTED` | `MEASURED_REJECTED` | `MEASURED_REJECTED` | `MEASURED_REJECTED` |
@@ -571,6 +620,13 @@ shape: it produced no output on either pinned source, and what it produces when
 it succeeds is a rendered gel with no rows and no per-scan quantity. Fabricating
 a scan-identity or ordering test for an output that has no rows would be
 inventing evidence, not gathering it.
+
+Its numeric-fidelity cell is one of them, and it is load-bearing: **`image` does
+not carry the four-decimal defect.** That defect is located in `RegionTIC`,
+`RegionSIC` and `RegionAnalyzer`, which is what `tic`, `sic` and `slice` write
+through; `image` writes no intensity column on any measured path. Its rejection
+stands on its own output contract and would survive a build that fixed the
+serialization for the other three.
 
 ## A second build-specific failure, recorded
 

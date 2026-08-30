@@ -266,38 +266,19 @@ five product decisions it surfaces are in
   exported; it added no format and built no figure the existing contract refuses.
   See [ADR 0040](docs/architecture/adr/0040-spectrum-range-export.md).
 - **M5.4 — XIC source and capability evidence.** **Closed, outcome
-  `XIC_SOURCE_REFUSED`.** Measured against a real ProteoWizard `3.0.26013
-  (47b13cf)` installation — `msaccess.exe` SHA-256 `85681B20…D1F4` — on the
-  pinned synthetic fixture, the pinned public representative acquisition, and a
-  generated low-intensity fixture. The installed build declares eight analysis
-  queries. Four — `metadata`, `run_summary`, `spectrum_table`, `binary` — declare
-  no m/z term at all and are excluded by their own signature. The other four were
-  measured to one standard on every source their evidence required.
-
-  **All four were rejected, and the decisive reason is shared.** This build
-  serializes region intensities with `fixed << setprecision(4)`, so any
-  in-window sum below `0.00005` is written as the literal `0.0000` — the same
-  text a true zero produces. Measured directly: a spectrum whose in-window sum is
-  `1e-6`, and one whose sum is `4e-5`, both serialize byte-identically to a
-  spectrum whose sum is genuinely `0`. The build offers no precision control for
-  that output: `RegionTIC::Config` accepts only `mz=` and `delimiter=`, and the
-  only `precision` in the whole installed help belongs to `binary`, which cannot
-  express an m/z window at all. An XIC built on this output would render real
-  low-intensity signal as a flat zero line and be unable to say which it was
-  showing, so `tic` is rejected for
-  `LOSSY_INTENSITY_SERIALIZATION_DESTROYS_ZERO_NONZERO_DISTINCTION`.
-
-  `sic`, `slice` and `image` carry that same loss plus independent reasons of
-  their own — `sic` omits every zero-sum scan and leaves a partial file when it
-  fails; `slice` performs no aggregation and its size scales with peak count;
-  `image` renders a gel and produced no output on either pinned source.
-
-  Two further build-specific findings are recorded rather than smoothed over: a
-  non-finite window is silently answered with the *unwindowed* result while an
-  inverted one exits `0` with no output, and a **wide** window can abort with no
-  output when a spectrum's window maximum sits on a duplicated m/z — which is the
-  cause of the previously unexplained M0C observation. See
-  [the spike](docs/spikes/M5_XIC_SOURCE_EVIDENCE.md).
+  `XIC_SOURCE_REFUSED`.** An evidence slice, measured against a real ProteoWizard
+  `3.0.26013 (47b13cf)` installation on the pinned synthetic fixture, the pinned
+  public representative acquisition and a generated low-intensity fixture. Of the
+  build's eight analysis queries four cannot express an m/z window at all and are
+  excluded by their own signature; the four that can were each measured and each
+  rejected, on two grounds rather than one — `tic`, `sic` and `slice` on a
+  serialization that cannot distinguish a real low-intensity signal from a true
+  zero, and `image` independently, on its own output contract, which is a
+  rendered gel with no per-scan quantity or identity. The measurements, the
+  candidate-standard matrix that closes every candidate to one standard, and the
+  six refusal conditions are in
+  [the spike](docs/spikes/M5_XIC_SOURCE_EVIDENCE.md), which is the authority for
+  all of them and is not restated here.
 
   **XIC is refused for this executable, not for all time.** The re-entry gate is
   an exact executable identity covered by fresh measurement, plus a resolved

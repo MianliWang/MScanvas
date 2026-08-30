@@ -5489,8 +5489,15 @@ plus `pnpm e2e:typecheck`, `pnpm e2e:browser`, `pnpm e2e:build` and
 
 An evidence slice. It implements no XIC and changed no production code; it
 decides whether a defensible backend source exists and names the contract M5.5
-would implement. Full measurement record:
-[`docs/spikes/M5_XIC_SOURCE_EVIDENCE.md`](docs/spikes/M5_XIC_SOURCE_EVIDENCE.md).
+would implement.
+
+**The measurement record is
+[`docs/spikes/M5_XIC_SOURCE_EVIDENCE.md`](docs/spikes/M5_XIC_SOURCE_EVIDENCE.md),
+and it is the authority for every fact about the backend.** This entry carries
+the outcome, what it binds to and what follows from it. It deliberately does not
+restate the measurements: a result maintained in two places is a result that can
+disagree with itself, and each review round of this slice found its errors in
+the restatements rather than in the measurements.
 
 ### Outcome
 
@@ -5512,124 +5519,53 @@ distribution and is corroborated by the installation directory name.
 
 **This is not M0's build.** M0 measured `3.0.26204 (a09eea9)` in an isolated
 runner, so no source-level semantic claim was carried across; every aggregation
-citation here is pinned to `47b13cf` and re-read.
+citation in the spike is pinned to `47b13cf` and re-read.
 
 ### What was measured, and against what
 
-Both sources are external, hash-pinned and verified before execution; neither
-payload is committed. The synthetic fixture is ProteoWizard's
+Both pinned sources are external, hash-pinned and verified before execution;
+neither payload is committed. The synthetic fixture is ProteoWizard's
 `tiny.pwiz.1.1.mzML`; the representative is PRIDE `PXD081190`'s CC0
 `BBM_506_P110_31_MIA_004_30_calibrated.mzML`, `208,408,454` bytes, `36,319` MS2
-spectra — the same two M0 pinned, re-verified.
+spectra — the same two M0 pinned, re-verified. A third, low-intensity fixture was
+generated for the measurement that decided the outcome, because neither pinned
+source could expose it.
 
 The installed build declares **eight** analysis queries. Four — `metadata`,
 `run_summary`, `spectrum_table`, `binary` — declare no m/z term at all and are
-excluded by their own signature. **The other four were measured to the same
-standard.** `tic`, `sic` and `slice` declare an m/z window. `image` declares no
-parameters at all — its `mz=` appears only in the prose arg list under an
-`[args - see list]` placeholder — and it was measured rather than argued away
-precisely because that left the signature ambiguous.
+excluded by their own signature. The other four were measured, including `image`,
+whose signature declares no parameters at all and was therefore too ambiguous to
+argue away. **"To the same standard" is not asserted here**: it is discharged by
+the spike's candidate-standard matrix, where every dimension of the standard is
+either a located result or an explicit `NOT_APPLICABLE` with its reason, for each
+of `tic`, `sic`, `slice` and `image`.
 
-### Why `tic` was rejected
+### Why the four were rejected — two grounds, not one
 
-`RegionTIC.cpp:156` at `47b13cf` writes `fixed << setprecision(4)`, so any
-in-window sum below `0.00005` becomes the literal `0.0000`. Measured on a
-generated low-intensity fixture whose values were first proved to round-trip
-through `binary precision=12`: a sum of `1e-6` and a sum of `4e-5` are both
-serialized byte-identically to a genuine `0`. Five points each individually below
-the boundary do sum to a value that survives, so the accumulation is right and
-the loss is entirely in the output format.
+**`tic`, `sic` and `slice`** share a measured serialization defect: the build
+writes region intensities with `fixed << setprecision(4)`, so a real in-window
+sum below the fourth decimal is written as the same text a true zero produces,
+and no precision control exists for that output. MSCanvas admits mzML generally
+and holds no trustworthy minimum intensity scale that could rule such values out
+before invoking, so an XIC built on it would render real low-intensity signal as
+a flat zero line and be unable to say which it was showing. `tic` is rejected for
+`LOSSY_INTENSITY_SERIALIZATION_DESTROYS_ZERO_NONZERO_DISTINCTION`; `sic` and
+`slice` carry the identical loss plus further reasons of their own. The earlier
+candidate's claim that `0.0000` is explicit no-signal behaviour is **withdrawn**:
+it is either no signal or signal below resolution, and the output does not
+distinguish them.
 
-There is no precision control. `RegionTIC::Config` parses only `mz=` and
-`delimiter=`; the only `precision` in the complete installed help belongs to
-`binary`, a different analyzer that cannot express an m/z window; and no
-top-level option offers one. The same `setprecision(4)` is used by `RegionSIC`
-and by `RegionAnalyzer`'s per-peak dump, so `sic` and `slice` carry the identical
-loss.
+**`image` does not share that defect and is not rejected for it.** It renders a
+pseudo-2D-gel, which carries no per-scan quantity and no result identity even
+when it succeeds, and it produced no usable output on either pinned source — five
+repeats of one identical invocation, every one exit `0` with no artifact and a
+byte-identical diagnostic. It never produced an intensity column to serialize.
+The two grounds are kept apart because a later build could repair one without
+touching the other.
 
-MSCanvas admits mzML generally and holds no trustworthy minimum intensity scale
-that could rule out sub-resolution values before invoking. An XIC on this output
-would render real low-intensity signal as a flat zero line and be unable to say
-which it was showing. Rejected for
-`LOSSY_INTENSITY_SERIALIZATION_DESTROYS_ZERO_NONZERO_DISTINCTION`.
-
-The claim in the earlier candidate that `0.0000` is explicit no-signal behaviour
-is **withdrawn**: it is either no signal or signal below resolution, and the
-output does not distinguish them.
-
-### What `tic` did get right, recorded so the refusal is specific
-
-One row per spectrum; window inclusive at both ends; the arithmetic **sum** of
-the in-window binary intensities, read from `RegionAnalyzer.cpp` at `47b13cf`
-rather than inferred from the query's name — a recomputed trace, not the file's
-stored TIC, which the fixture proves by reporting `120` where its stored value is
-`1.66755e+07`. Rows are in **source-index** order, which the fixture proves by
-emitting retention times `353.43, 359.43, 0.00, 42.05`. Every scan is present and
-a no-signal scan is an explicit `0.0000`, so an omitted scan and a zero scan
-cannot be confused. On the representative it returned a complete `36,319`-row,
-`2,989,606`-byte result — `82.3` bytes per row, about 36 % of
-`MAX_PREVIEW_TEXT_BYTES` — byte-identical across three passes.
-
-Both the comma form the signature declares and the dash form the build's own
-examples use are accepted, and a single value is a zero-width window.
-
-### Three things the measurement found that a signature would not have
-
-**`index` is renumbered under a filter.** `--filter="msLevel N"` composes and
-computes correct sums, but the `index` column becomes the position in the
-*filtered* list rather than the source spectrum index. Unfiltered, `index`
-reconciles exactly with `spectrum_table` across all `36,319` rows. Under a filter
-the `id` is the only stable key — and it arrives in the raw form
-(`controllerType=0 controllerNumber=1 scan=413`) where `spectrum_table` gives the
-abbreviated one (`0.1.413`), so a consumer must canonicalize rather than compare
-strings.
-
-**A malformed window is not reliably an error.** `mz=abc,def` and `mz=` exit `1`
-with a typed parse message. But an **inverted** window exits `0` and produces no
-output, and a **non-finite** window exits `0` and silently returns the
-*unwindowed* result — byte-identical to the default window's, and to the hash M0
-recorded for this fixture on a different build. Both must be refused before
-invoking.
-
-**The M0C mystery has a cause.** M0C recorded the representative TIC as "exit 0,
-no generated output" and left it as a capability observation. It is a
-`[Parabola.cpp::solve()] Matrix is singular` exception: `RegionAnalyzer::update`
-computes a parabola-interpolated peak for *every* spectrum whichever consumer
-asked, and the fit is singular when the window maximum sits on a duplicated m/z.
-The trigger is present in the representative at spectrum index `342`, where the
-maximum `2,278,863` sits on a duplicated m/z `401.2151` — and the failing `sic`
-run stopped writing at exactly that index.
-
-It bites **wide** windows: at m/z 400 the threshold is sharp, complete at 1–2 Da
-and aborted at 3 Da and above. At widths an extraction actually uses it did not
-occur at all — `0.02` Da and `0.50` Da across sixteen centres, and `2` Da across
-sixteen more, all returned complete `36,319`-row results. It does not block
-admission because `RegionTIC` writes only at close, so an aborted `tic` leaves
-**no file**, which the shipped contract already classifies as
-`MissingRequiredOutput`.
-
-### Why the other three were rejected
-
-**`sic`** — the query whose name means *selected ion chromatogram*, and whose
-signature this repository had never held. It works: same inclusive window, same
-sum, `ppm` and `amu` both accepted, deterministic. Rejected for four measured
-reasons: it emits a row only `if (spectrumStats.sumIntensity)`, so it **omits
-every zero-sum scan** — `3,268` rows for `36,319` scans on the representative,
-making an absent scan and a silent scan indistinguishable within its own output;
-it writes `.data.tsv` incrementally, so the abort above leaves a **partial
-`231`-row file** that is under the byte bound and would be read as complete; its
-`peakMZ`/`peakIntensity` are **parabola-interpolated** coordinates no instrument
-recorded; and its file names encode only `mzCenter`, so two radii at one centre
-collide.
-
-**`slice`** — returns unaggregated per-peak rows, so it is not a chromatogram;
-omits zero scans; its size scales with peak count rather than scan count, so the
-byte bound cannot be predicted before invoking; and it leaves partial output on
-the same abort.
-
-**`image`** — measured, not argued away. Exit `0`, no output, `invalid vector
-subscript`. It renders a pseudo-2D-gel image, carrying no per-scan intensity and
-no result identity.
+The spike also gives a cause for something this log left open: M0C's
+"representative TIC: exit 0, no generated output" is a singular parabola fit,
+reproduced and located.
 
 ### Capability contract
 
@@ -5657,11 +5593,11 @@ rule this slice needed:
 > Scientific evidence is transferable only to an executable identity explicitly
 > covered by that evidence.
 
-Re-entry requires an exact `msaccess.exe` identity covered by fresh measurement
-— the measured digest here is
-`85681B205569A9850F47D079749E04BA45F4B0C64E363D4A2C5C67C3C67ED1F4` — plus the
-required exact capability grammar, plus a resolved numeric-fidelity answer.
-A different digest is not admitted because its help looks the same.
+Re-entry requires an exact `msaccess.exe` identity covered by fresh measurement,
+plus the required exact capability grammar, plus a resolved numeric-fidelity
+answer. A different digest is not admitted because its help looks the same. The
+measured digest is recorded once, in the spike's re-entry gate, where repository
+validation checks it against the build table it came from.
 
 `ProviderBuild::is("3.0.26013", "47b13cf")` is **not** sufficient on its own for
 this tool: this build's `msaccess` reports its release but not its revision, so a

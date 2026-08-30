@@ -1366,6 +1366,13 @@ def validate_the_xic_route_outcome_has_one_answer(errors: list[str]) -> None:
     some fixed string. Revising the outcome stays a one-line edit in the spike;
     what stops being possible is revising it *there only*.
 
+    Both halves are scoped to where a document states M5.4's own status. That is
+    not a refinement, it is the rule: these documents are append-only, so a
+    whole-file search for the outcome asks only whether the token appears
+    anywhere, and route-lock prose written before the measurement names both
+    branches. Deleting the current conclusion outright would leave that history
+    to satisfy the check.
+
     Also pinned: the re-entry gate names the exact measured executable digest.
     The whole point of that gate is that a build is admitted by identity rather
     than by resembling a measured one, and a gate that named no identity would
@@ -1398,14 +1405,6 @@ def validate_the_xic_route_outcome_has_one_answer(errors: list[str]) -> None:
             continue
         body = document.read_text(encoding="utf-8")
 
-        if f"`{outcome}`" not in body:
-            fail(
-                f"{name} does not state M5.4's measured outcome `{outcome}`. The spike holds "
-                "the measurement; a status document that does not carry its answer leaves a "
-                "reader unable to tell which sentence is current",
-                errors,
-            )
-
         # Only where the document states M5.4's *own* status: its slice section,
         # and the bullets that open with the slice's name.
         #
@@ -1414,7 +1413,27 @@ def validate_the_xic_route_outcome_has_one_answer(errors: list[str]) -> None:
         # then planned -- including that an M5 without a real installation
         # "cannot reach an `XIC_SOURCE_ADMITTED` outcome at all" -- and that is
         # correct history rather than a claim about what was found.
-        for number, region in _status_claims_about(body, "M5.4"):
+        regions = _status_claims_about(body, "M5.4")
+
+        # Existence is asked of the current regions, for the reason the
+        # docstring gives: elsewhere in these documents the token is history.
+        if not regions:
+            fail(
+                f"{name} states no M5.4 status of its own. The spike holds the measurement, "
+                "and a status document that never states the slice's status cannot be "
+                "checked against it",
+                errors,
+            )
+        elif not any(f"`{outcome}`" in region for _, region in regions):
+            fail(
+                f"{name} does not state M5.4's measured outcome `{outcome}` in any current "
+                "M5.4 status region. A mention elsewhere in the document does not carry it: "
+                "historical planning prose names both branches, and a reader meeting the "
+                "current section has no way to tell which sentence is the answer",
+                errors,
+            )
+
+        for number, region in regions:
             # A record that says a conclusion was withdrawn has to be able to
             # name the conclusion it withdrew. Only an *unmarked* mention is a
             # claim; the marker has to sit on the same line as the token, so a

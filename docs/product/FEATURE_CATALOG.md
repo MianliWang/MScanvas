@@ -148,17 +148,11 @@ Where each of those is owned, and why, is fixed by
 - **VIEW-007**'s evidence gate is **answered, and the answer is a refusal.**
   M5.4 measured a real ProteoWizard `3.0.26013 (47b13cf)` installation against
   the pinned synthetic fixture, the pinned public representative acquisition and
-  a generated low-intensity fixture, and recorded `XIC_SOURCE_REFUSED`.
-
-  Four of the build's eight analysis queries cannot express an m/z window at all.
-  The four that can — `tic`, `sic`, `slice`, `image` — were each measured and
-  each rejected, and the decisive reason is shared: the build serializes region
-  intensities with `fixed << setprecision(4)`, so an in-window sum below
-  `0.00005` is written as the same text as a true zero. Measured directly, sums
-  of `1e-6` and `4e-5` are byte-identical to a genuine `0`, and the build offers
-  no precision control for that output. An XIC on it would render real
-  low-intensity signal as a flat zero line without being able to say which it was
-  showing. See [the spike](../spikes/M5_XIC_SOURCE_EVIDENCE.md).
+  a generated low-intensity fixture, and recorded `XIC_SOURCE_REFUSED`. Every
+  installed candidate was closed on its own measurement, and the evidence — the
+  candidate-standard matrix, the six refusal conditions and the source citations
+  behind them — is in [the spike](../spikes/M5_XIC_SOURCE_EVIDENCE.md), which is
+  the authority for all of it.
 
   An XIC also cannot be derived in the interface, and that reasoning is
   unchanged: the loaded table's per-scan base peak m/z is a summary, not a
@@ -170,9 +164,8 @@ Where each of those is owned, and why, is fixed by
   the measured executable, and re-entry requires an exact executable identity
   covered by fresh measurement plus a resolved numeric-fidelity answer — help
   text that looks the same is not evidence that an implementation behaves the
-  same. **M5 writes no XIC figure or data document**, and a reusable XIC export
-  belongs to M9 if XIC ever ships. **M5 writes no XIC figure or data document**; a reusable XIC
-  export belongs to M9.
+  same. **M5 writes no XIC figure or data document**; a reusable XIC export
+  belongs to M9 if XIC ever ships.
 - **VIEW-008** is deferred past M5 on a dependency audit, not on priority alone.
   It needs several runs loaded at once where the application holds exactly one
   by contract, a layer identity `FigureSpec` has no concept of, a normalization
