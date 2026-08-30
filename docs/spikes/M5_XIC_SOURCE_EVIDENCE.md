@@ -106,18 +106,22 @@ gate was invented for it.
 
 ## Sources measured
 
-Three, all external to the repository and identified by hash. None is committed.
+Four, all external to the repository and identified by hash. None is committed.
 
-| | Synthetic fixture | Representative acquisition | Low-intensity fixture |
-| --- | --- | --- | --- |
-| Identity | ProteoWizard `example_data/tiny.pwiz.1.1.mzML` | PRIDE `PXD081190`, `BBM_506_P110_31_MIA_004_30_calibrated.mzML` | generated for this slice, `lowint.mzML` |
-| Provenance | pinned upstream example data | public CC0 deposit, reacquired from the official location | written by a deterministic generator; see below |
-| Licence | Apache-2.0 | Creative Commons Public Domain (CC0) | n/a — synthetic, no acquisition |
-| Bytes | `25,072` | `208,408,454` | `14,540` |
-| SHA-256 | `711ac14b666f14817c208bd4d39b738e96ac827574c4639d8f8f6eebbfde9c83` | `262D1178303CD934223239D5D93A3B842DCA69DA09CEF58E95A39B950D26B7E8` | `e00e390a33d4028e638897f8abc3f608d2b2e9ff1a579f30b7f07468743680da` |
-| Spectra | `4` (MS1 ×3, MS2 ×1) | `36,319` (MS2 only) | `8` (MS1) |
+| | Synthetic fixture | Representative acquisition | Low-intensity fixture | Duplicate-RT fixture |
+| --- | --- | --- | --- | --- |
+| Identity | ProteoWizard `example_data/tiny.pwiz.1.1.mzML` | PRIDE `PXD081190`, `BBM_506_P110_31_MIA_004_30_calibrated.mzML` | generated for this slice, `lowint.mzML` | generated for this slice, `duprt.mzML` |
+| Provenance | pinned upstream example data | public CC0 deposit, reacquired from the official location | written by a deterministic generator; see below | written by a deterministic generator; see below |
+| Licence | Apache-2.0 | Creative Commons Public Domain (CC0) | n/a — synthetic, no acquisition | n/a — synthetic, no acquisition |
+| Bytes | `25,072` | `208,408,454` | `14,540` | `10,023` |
+| SHA-256 | `711ac14b666f14817c208bd4d39b738e96ac827574c4639d8f8f6eebbfde9c83` | `262D1178303CD934223239D5D93A3B842DCA69DA09CEF58E95A39B950D26B7E8` | `e00e390a33d4028e638897f8abc3f608d2b2e9ff1a579f30b7f07468743680da` | `87731CB1C49A2D4398D282365DC846E21FD095E4E0D49424ECD356B0E4B6C548` |
+| Spectra | `4` (MS1 ×3, MS2 ×1) | `36,319` (MS2 only) | `8` (MS1) | `5` (MS1) |
 
 The first two hashes are the ones M0 pinned, re-verified before execution here.
+The two generated fixtures exist because a required dimension of the candidate
+standard is unreachable on the pinned pair: the pinned sources cannot exhibit a
+positive sum below the serialization resolution, and they cannot exhibit two
+spectra sharing a retention time.
 
 **The synthetic fixture's arrays are not what its headers say.** Its stored CV
 metadata declares `mzLow 400.39 / mzHigh 1795.56`, while its actual binary arrays
@@ -156,6 +160,46 @@ intended value exactly — `0.000001000000`, `0.000040000000`, `0.000050000000`,
 `0.000060000000`, `0.001000000000`, `123.456789000000`, and the five
 `0.000010000000`. So `msaccess` holds the values; anything lost below is lost by
 the query's own serialization, not by the fixture or the parser.
+
+### The duplicate-retention-time fixture
+
+The candidate standard requires duplicate-retention-time behaviour where
+relevant, and it is relevant to `tic`, `sic` and `slice`: each emits a retention
+time beside a scan identity, so what happens when two spectra share one retention
+time decides whether a consumer may key on it. **Both pinned sources have
+strictly distinct retention times**, so a fourth input was generated.
+
+Five MS1 spectra, 64-bit little-endian doubles, no compression, so the stored
+bytes *are* the values. The design makes each possible backend behaviour
+separately visible:
+
+| source index | native id | scan start time | in-window sum over `[500, 502]` |
+| ---: | --- | ---: | ---: |
+| 0 | `scan=1` | `60` s | `1000` |
+| 1 | `scan=2` | **`120` s** | `2000` |
+| 2 | `scan=3` | `180` s | `4000` |
+| 3 | `scan=4` | **`120` s** | `24000` |
+| 4 | `scan=5` | `240` s | `16000` |
+
+Indices `1` and `3` share a retention time exactly, and are **not adjacent**, so
+a reordering is as visible as a merge. Every sum is distinct, and the merged sum
+of the duplicate pair would be `26000`, which is no single spectrum's sum and no
+other pair's — a merge cannot be mistaken for anything else. In-window points
+come in clusters of three, each with one unambiguous maximum on a unique m/z, so
+the singular parabola fit measured on the representative cannot confound this;
+index `3` carries two such clusters and the rest carry one, so *several rows from
+one scan* stays distinguishable from *two scans at one time*. Every spectrum also carries one
+point at m/z `600.0`, outside the window, so windowing itself is observable. All
+intensities are integers far above the four-decimal boundary, so the
+serialization defect cannot hide a row.
+
+**Verified through the backend's own readers before any candidate ran.**
+`spectrum_table` returns all five spectra, ids `1`–`5`, `ms1`, and retention
+times `60.00, 120.00, 180.00, 120.00, 240.00` — the duplicate is real and read as
+such. `binary index=1 precision=12` and `binary index=3 precision=12` return
+`id: scan=2` / `id: scan=4`, `retentionTime: 120` for both, and every intended
+m/z and intensity exactly. A malformed fixture cannot become evidence about
+duplicate-RT behaviour this way.
 
 ## Live candidate inventory
 
@@ -592,28 +636,83 @@ scan may contribute many rows; it omits scans with no in-window peak; its output
 size is peak-driven and unbounded from the request; and it leaves partial output
 on abort.
 
+## Duplicate retention times, measured
+
+One ordinary window, `[500, 502]`, containing signal from both equal-time
+spectra, on each candidate that emits a retention time.
+
+**`tic mz=500,502`** — exit `0`, five rows:
+
+```text
+      0      scan=1      0  Unknown     ms1       60.00       1000.0000
+      1      scan=2      0  Unknown     ms1      120.00       2000.0000
+      2      scan=3      0  Unknown     ms1      180.00       4000.0000
+      3      scan=4      0  Unknown     ms1      120.00      24000.0000
+      4      scan=5      0  Unknown     ms1      240.00      16000.0000
+```
+
+Both equal-time spectra are **present**, as **separate rows**, with their
+**identities preserved** (`scan=2`, `scan=4`) and their own sums. There is no
+`26000.0000` anywhere, so nothing was merged; no row is missing, so nothing was
+deduplicated or overwritten. Rows stay in **source-index order** while the
+retention-time column reads `60, 120, 180, 120, 240` — non-monotonic, which is
+direct evidence that the output is not sorted by time. Each sum excludes the
+out-of-window point, so the window still windowed.
+
+**The consequence for a consumer.** Retention time is **not** a key in this
+output. Two rows legitimately carry `120.00`, and only `index` and `id`
+distinguish them. Anything that built an XIC point keyed on retention time would
+silently collapse them into one.
+
+**`sic mzCenter=501 radius=1 radiusUnits=amu delimiter=tab`** — exit `0`, all
+three artifacts. `peaks.tsv` holds one row per scan for all five, including both
+equal-time scans with their own `2000.0000` and `24000.0000`; `summary.txt`
+reports `nonzeroCount: 5` — five rows for five source spectra, not four for four
+distinct times. (`sum_sumIntensity: 47000` does not distinguish the two: merging
+would move intensity between rows, not create or destroy it. The row count is
+what settles it.) `data.tsv` holds all eighteen in-window peaks with their scan
+identity on every row. No merge, no deduplication, source order preserved.
+
+**`slice mz=500,502`** — exit `0`, eighteen rows. Each scan's peaks stay
+**grouped and consecutive** under its own `index`/`id`. The six rows of `scan=4`
+and the three of `scan=2` share `120.00` and are **not brought together**: the
+three rows of `scan=3`, at `180.00`, sit between them, exactly where source order
+puts them. So `slice` groups by spectrum rather than by time, and *multiple rows
+from one scan* remains distinguishable from *two scans at one time*.
+
+**None of this rescues any candidate.** All three handle duplicate retention
+times correctly; they are rejected for reasons this dimension does not touch.
+That is the point of measuring it rather than assuming it: the refusal now says
+what the source does right here too.
+
 ## Candidate-standard matrix
 
 The mechanical answer to *were all still-applicable candidates closed to the same
-standard?* Every cell is either a located result or an explicit
-`NOT_APPLICABLE` with its reason. No cell is a bare tick.
+standard?* The dimension vocabulary is not chosen here: it is
+[ADR 0037's candidate evidence dimensions](../architecture/adr/0037-viewer-completion-route.md#m54-candidate-evidence-dimensions),
+and repository validation requires this table to name exactly those dimensions,
+each once. Every cell is a located result or an explicit `NOT_APPLICABLE` with
+its reason. No cell is a bare tick.
+
+Source coverage is not a dimension of the standard and is not a row here; each
+candidate's own section records which sources it was run against. The outcome is
+not a row either — it is the [final classification](#final-classification).
 
 | Dimension | `tic` | `sic` | `slice` | `image` |
 | --- | --- | --- | --- | --- |
-| Synthetic run | yes — windows `0,4` / `2,4` / `4` | yes — `mzCenter=4 radius=2 amu`, and `ppm` | yes — `mz=2,4` | yes — `image mz=0,4` |
-| Representative run | yes — `mz=500,502` and 40+ windows | yes — `mzCenter=501 radius=1 amu` | yes — `mz=500,502` | yes — narrow, wide and default windows |
-| Parameter / window semantics | comma, dash and single-value forms; inclusive both ends | centre + radius; `amu` and `ppm`; resolves to `[500,502]` | `mz=`, plus `rt=`/`index=`/`sn=`; inclusive both ends | `NOT_APPLICABLE` — no output produced on either source, so no window semantics are observable |
-| Output schema | `index·id·event·analyzer·msLevel·rt·sumIntensity` | three artifacts; `peaks.tsv` adds `peakMZ`/`peakIntensity` | `index·…·rt·m/z·intensity`, per peak | `NOT_APPLICABLE` — renders a gel image, not a table |
-| RT and ordering | 2 dp; **source index order**, proved by fixture RTs `353,359,0,42` | 2 dp; source order, sparse | 2 dp; source order, peaks consecutive | `NOT_APPLICABLE` — no rows |
+| Invocation / accepted parameter form | `tic mz=`; comma, dash and single-value forms all accepted; synthetic `0,4` / `2,4` / `4`, representative `500,502` and 40+ windows | `sic mzCenter= radius= radiusUnits=`, all three required; synthetic `mzCenter=4 radius=2` in both `amu` and `ppm`, representative `mzCenter=501 radius=1 amu` | `slice mz=`, and `rt=`/`index=`/`sn=` declared beside it; synthetic `2,4`, representative `500,502` | `image mz=` accepted although the installed signature declares no parameters at all; synthetic `0,4`, representative narrow, wide and default |
+| m/z-window semantics | inclusive at both ends; a single value is a zero-width window; an omitted `mz=` is a `0.00–10000.00` default rather than "no window" | centre + radius resolves to the absolute `[500, 502]`; `ppm` resolves as `mzCenter × radius / 1e6` | inclusive at both ends | `NOT_APPLICABLE` — no output produced on either pinned source, so no window semantics are observable |
+| Output shape / schema | one row per spectrum: `index·id·event·analyzer·msLevel·rt·sumIntensity` | three artifacts; `peaks.tsv` adds `peakMZ`/`peakIntensity`, `summary.txt` adds run-level statistics | one row per peak: `index·…·rt·m/z·intensity` | `NOT_APPLICABLE` — renders a gel image, not a table |
+| Retention-time values / ordering | 2 dp; **source-index order**, proved by fixture RTs `353,359,0,42` | 2 dp; source order, sparse | 2 dp; source order, a scan's peaks consecutive | `NOT_APPLICABLE` — no rows |
 | Identity reconciliation | `index` == `spectrum_table` across all `36,319` rows unfiltered; renumbered under any filter | source `index` with gaps; raw `id`; omission indistinguishable from absence | same, and one scan yields many rows, so a row is not a point identity | `NOT_APPLICABLE` — no result identity by construction |
 | MS-level behaviour | fixture: correct sums, **renumbers `index`**; representative MS2 filter byte-identical | fixture: reduces to signal-carrying MS1 scans; representative byte-identical | representative byte-identical | `NOT_APPLICABLE` — no output to filter |
-| No-signal behaviour | complete table of explicit `0.0000`; **no scan omitted** | all three artifacts present, zero rows, `nonzeroCount: 0` | artifact present, zero rows, `64` bytes | `NOT_APPLICABLE` |
-| Malformed / error | parse errors exit `1`; inverted exits `0` with no output; non-finite silently unwindowed; abort leaves **no file** | abort leaves a **partial `231`-row file**, no `peaks`/`summary` | abort leaves a **partial `62`-row file**, reproduced 3× | exits `0` with no output and a caught exception on both sources |
-| Completeness / byte bound | `36,319` rows, `2,989,606` bytes, `82.3`/row, ~36 % of the bound; predictable from scan count | `3,268` of `36,319` scans; peak-driven, not predictable | `3,700` rows; peak-driven, not predictable | `NOT_APPLICABLE` — nothing written |
-| Repeatability | 3× byte-identical on both sources | 2× representative, 3× synthetic, byte-identical | 2× representative byte-identical; failing window 3× identical | **5× the identical `image mz=500,502` invocation** — exit `0`, `0` files, stderr byte-identical (`9440A5E0…7B56`) |
 | Aggregation / quantity | sum of in-window intensities, pinned to `RegionAnalyzer.cpp` | same sum, plus an **interpolated** peak | **none** — raw per-peak values | `NOT_APPLICABLE` — an image |
+| No-signal behaviour | complete table of explicit `0.0000`; **no scan omitted** | all three artifacts present, zero rows, `nonzeroCount: 0` | artifact present, zero rows, `64` bytes | `NOT_APPLICABLE` |
+| Duplicate-retention-time behaviour | measured on the duplicate-RT fixture: both equal-time spectra kept as **separate rows** with their own sums (`2000.0000`, `24000.0000`; no merged `26000.0000`), identities preserved, source order kept while `rt` reads non-monotonically — so `rt` is **not** a key | same: `peaks.tsv` one row per scan for both — `nonzeroCount: 5`, five rows for five source spectra rather than four for four distinct times; `data.tsv` carries scan identity on every row | same: each scan's peaks stay grouped and consecutive under its own `index`/`id`, so grouping is by spectrum rather than by time | `NOT_APPLICABLE` — no per-scan tabular quantity or identity for duplicate-RT semantics to apply to |
+| Completeness / byte bound | `36,319` rows, `2,989,606` bytes, `82.3`/row, ~36 % of the bound; predictable from scan count | `3,268` of `36,319` scans; peak-driven, not predictable | `3,700` rows; peak-driven, not predictable | `NOT_APPLICABLE` — nothing written |
+| Malformed / error behaviour | parse errors exit `1`; inverted exits `0` with no output; non-finite silently unwindowed; abort leaves **no file** | abort leaves a **partial `231`-row file**, no `peaks`/`summary` | abort leaves a **partial `62`-row file**, reproduced 3× | exits `0` with no output and a caught exception on both sources |
+| Repeatability | 3× byte-identical on both sources | 2× representative, 3× synthetic, byte-identical | 2× representative byte-identical; failing window 3× identical | **5× the identical `image mz=500,502` invocation** — exit `0`, `0` files, stderr byte-identical (`9440A5E0…7B56`) |
 | Numeric fidelity | `setprecision(4)`; `1e-6` and `4e-5` serialize as `0.0000` | same, via `RegionSIC.cpp:186-188` | same, via `RegionAnalyzer.cpp:245-246` | `NOT_APPLICABLE` |
-| **Outcome** | `MEASURED_REJECTED` | `MEASURED_REJECTED` | `MEASURED_REJECTED` | `MEASURED_REJECTED` |
 
 `image`'s `NOT_APPLICABLE` cells are a consequence of its measured artifact
 shape: it produced no output on either pinned source, and what it produces when
@@ -696,11 +795,13 @@ hash M0 recorded for this fixture on a different one.
    declares, none left in an intermediate state.
 3. **Every still-plausible candidate was measured to the same standard.** All
    four that can express an m/z window, on the synthetic fixture and on the
-   representative acquisition. This condition is **not** a narrative assertion:
-   it is discharged by the [candidate-standard
-   matrix](#candidate-standard-matrix), where every dimension of the standard is
-   either a located result or an explicit `NOT_APPLICABLE` with its reason, for
-   each of `tic`, `sic`, `slice` and `image`.
+   representative acquisition, plus the two generated fixtures the standard's
+   remaining dimensions required. This condition is **not** a narrative
+   assertion, and the standard is not this document's to choose: the dimensions
+   are ADR 0037's, repository validation requires the [candidate-standard
+   matrix](#candidate-standard-matrix) to name exactly those and no others, and
+   every cell of it is a located result or an explicit `NOT_APPLICABLE` with its
+   reason, for each of `tic`, `sic`, `slice` and `image`.
 4. **Every unmeasured candidate is excluded explicitly by signature.** The four
    are `metadata`, `run_summary`, `spectrum_table` and `binary`, each because its
    declared parameter set contains no m/z term.
@@ -765,10 +866,11 @@ authority. No `PreviewOperation` was extended. No production code changed at all
   that help text does not expose.
 - One representative acquisition, MS2-only, no chromatogram list. It says nothing
   about MS1 extraction behaviour.
-- **Duplicate retention times were not reachable.** Both pinned sources have
-  strictly distinct retention times. That duplicates would appear in source-index
-  order follows from `RegionTIC::close()` iterating its cache in order, which is
-  read from source rather than measured.
+- **Duplicate retention times are measured on a generated fixture, not on an
+  acquisition.** Both pinned sources have strictly distinct retention times, so
+  the behaviour was measured on `duprt.mzML` instead. It establishes what the
+  three tabular candidates do with two spectra at one time; it is not evidence
+  about how often real acquisitions contain them.
 - The low-intensity fixture is synthetic and establishes serialization behaviour,
   not instrument realism. It is not evidence about what intensity scales real
   acquisitions carry — which is precisely why the refusal does not depend on such

@@ -5527,9 +5527,10 @@ Both pinned sources are external, hash-pinned and verified before execution;
 neither payload is committed. The synthetic fixture is ProteoWizard's
 `tiny.pwiz.1.1.mzML`; the representative is PRIDE `PXD081190`'s CC0
 `BBM_506_P110_31_MIA_004_30_calibrated.mzML`, `208,408,454` bytes, `36,319` MS2
-spectra — the same two M0 pinned, re-verified. A third, low-intensity fixture was
-generated for the measurement that decided the outcome, because neither pinned
-source could expose it.
+spectra — the same two M0 pinned, re-verified. Two further fixtures were
+generated, because the pinned pair cannot reach two dimensions of the standard:
+a positive sum below the serialization resolution, and two spectra sharing a
+retention time.
 
 The installed build declares **eight** analysis queries. Four — `metadata`,
 `run_summary`, `spectrum_table`, `binary` — declare no m/z term at all and are

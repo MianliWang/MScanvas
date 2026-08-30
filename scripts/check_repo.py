@@ -1574,6 +1574,138 @@ def _validate_the_reentry_gate_names_the_measured_digest(
         )
 
 
+def _first_markdown_table(text: str, heading: str) -> list[list[str]] | None:
+    """The first pipe-table following one heading, as rows of stripped cells.
+
+    Deliberately not a markdown parser. Two repository-owned structures are
+    read by this: ADR 0037's candidate-dimension table and the spike's
+    candidate-standard matrix. Both are plain pipe tables whose cells contain no
+    pipes, and both follow a heading this repository controls.
+    """
+    start = text.find(heading)
+    if start < 0:
+        return None
+    rows: list[list[str]] = []
+    for line in text[start + len(heading) :].split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            rows.append([cell.strip() for cell in stripped.strip("|").split("|")])
+        elif rows:
+            break
+    return rows or None
+
+
+def _table_column(rows: list[list[str]], index: int) -> list[str]:
+    """One column's data cells, header and alignment rows dropped."""
+    body: list[list[str]] = []
+    seen_rule = False
+    for row in rows:
+        if not seen_rule:
+            # The alignment rule is the only row made entirely of dashes and
+            # colons; everything before it is the header.
+            if row and all(set(cell) <= set("-: ") and cell for cell in row):
+                seen_rule = True
+            continue
+        body.append(row)
+    return [row[index] for row in body if len(row) > index]
+
+
+def validate_one_candidate_evidence_dimension_vocabulary(errors: list[str]) -> None:
+    """The M5.4 matrix answers exactly the dimensions ADR 0037 requires.
+
+    Two documents, one vocabulary, and the split is deliberate: the ADR decides
+    what a candidate must be measured across, and the spike holds the answers.
+    Nothing connected them, and the failure that follows from that is not
+    hypothetical -- the ADR required duplicate-retention-time behaviour, the
+    matrix had no such row, and a refusal condition still described the matrix
+    as discharging the whole standard.
+
+    Set equality rather than containment, in both directions. A missing
+    dimension is an unanswered requirement. An extra one is a dimension nobody
+    agreed to, which is how `Synthetic run`, `Representative run` and `Outcome`
+    came to pad the matrix while a real dimension was absent and the row count
+    still looked plausible.
+
+    The intended failure mode is that amending the ADR's table breaks this rule
+    until the evidence owner classifies the new dimension for every candidate.
+    Nothing here reads a cell: what a dimension is worth answering, and whether
+    an answer is any good, stay matters for review.
+    """
+    adr = ROOT / "docs/architecture/adr/0037-viewer-completion-route.md"
+    spike = ROOT / "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md"
+    if not adr.is_file() or not spike.is_file():
+        return
+
+    required = _first_markdown_table(
+        adr.read_text(encoding="utf-8"), "#### M5.4 candidate evidence dimensions"
+    )
+    if required is None:
+        fail(
+            "docs/architecture/adr/0037-viewer-completion-route.md has no "
+            "`#### M5.4 candidate evidence dimensions` table. It is the route's own statement "
+            "of what a candidate must be measured across, and the spike's matrix is checked "
+            "against it",
+            errors,
+        )
+        return
+    answered = _first_markdown_table(
+        spike.read_text(encoding="utf-8"), "## Candidate-standard matrix"
+    )
+    if answered is None:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md has no `## Candidate-standard matrix` table. "
+            "The refusal's third condition is discharged by that matrix rather than by prose, "
+            "so it has to exist",
+            errors,
+        )
+        return
+
+    # The ADR numbers its rows, so the dimension is the second column; the
+    # matrix leads with the dimension and then one column per candidate.
+    names = _table_column(required, 1)
+    rows = _table_column(answered, 0)
+
+    for label, values, where in (
+        ("ADR 0037", names, "docs/architecture/adr/0037-viewer-completion-route.md"),
+        ("the spike matrix", rows, "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md"),
+    ):
+        if not values:
+            fail(
+                f"{where}: the candidate-dimension table has no rows. An empty vocabulary "
+                "would let the other side say anything",
+                errors,
+            )
+            return
+        repeated = sorted({value for value in values if values.count(value) > 1})
+        if repeated:
+            fail(
+                f"{where}: {label} names {', '.join(repr(value) for value in repeated)} more "
+                "than once. A dimension answered twice is two answers with nothing deciding "
+                "between them",
+                errors,
+            )
+            return
+
+    missing = sorted(set(names) - set(rows))
+    if missing:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md: the candidate-standard matrix does not "
+            f"answer {', '.join(repr(value) for value in missing)}, which ADR 0037 requires of "
+            "every measured candidate. An unanswered dimension is not discharged by the "
+            "matrix, whatever the refusal conditions say",
+            errors,
+        )
+    extra = sorted(set(rows) - set(names))
+    if extra:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md: the candidate-standard matrix answers "
+            f"{', '.join(repr(value) for value in extra)}, which ADR 0037 does not define as a "
+            "candidate evidence dimension. Rows the standard never asked for make the matrix "
+            "look complete while a required dimension is missing",
+            errors,
+        )
+
+
 def _section(text: str, heading: str) -> str | None:
     """One `##` section of a markdown document, heading included."""
     start = text.find(heading)
@@ -1702,6 +1834,7 @@ def main() -> int:
         validate_drawability_is_settled_in_one_place(errors)
         validate_a_spectrum_range_is_resolved_in_one_place(errors)
         validate_the_xic_route_outcome_has_one_answer(errors)
+        validate_one_candidate_evidence_dimension_vocabulary(errors)
         validate_current_status_documents_describe_the_shipped_product(errors)
 
     if errors:

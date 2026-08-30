@@ -983,14 +983,37 @@ Concretely: complete help captured from the installed build for both `tic` and
 each candidate then classified as below; and **every candidate still classified
 applicable measured to one standard** — `tic mz=<low>,<high>` and any applicable
 `sic` form alike — on a representative acquisition and on the pinned synthetic
-fixture. For each measured candidate: the invocation and accepted parameter form;
-m/z-window semantics; output shape and schema; retention-time values and
-ordering; whether its scan identities reconcile with the spectrum table's;
-MS-level behaviour; the aggregation actually performed, read from the pinned
-ProteoWizard commit rather than inferred; behaviour for a window containing no
-signal; duplicate-retention-time behaviour where relevant; completeness against
-`MAX_PREVIEW_TEXT_BYTES`; malformed and error behaviour; and repeatability
-sufficient for the use the route intends.
+fixture.
+
+#### M5.4 candidate evidence dimensions
+
+The standard is this finite list. It is the dimension vocabulary the spike's
+candidate-standard matrix must use, and repository validation requires the two to
+name exactly the same dimensions — so a dimension added here is unanswerable
+until the evidence owner classifies it for every candidate.
+
+| # | Dimension |
+| --- | --- |
+| 1 | Invocation / accepted parameter form |
+| 2 | m/z-window semantics |
+| 3 | Output shape / schema |
+| 4 | Retention-time values / ordering |
+| 5 | Identity reconciliation |
+| 6 | MS-level behaviour |
+| 7 | Aggregation / quantity |
+| 8 | No-signal behaviour |
+| 9 | Duplicate-retention-time behaviour |
+| 10 | Completeness / byte bound |
+| 11 | Malformed / error behaviour |
+| 12 | Repeatability |
+| 13 | Numeric fidelity |
+
+Each is answered per measured candidate as a located result, or as an explicit
+`NOT_APPLICABLE` carrying its reason. Two carry their own history. **Aggregation**
+is read from the pinned ProteoWizard commit rather than inferred from a query's
+name. **Numeric fidelity** is in the standard because M5.4 measured a build whose
+serialization alone invalidated an otherwise plausible source, and because the
+re-entry gate already requires a resolved answer for it.
 
 An exit code of 0 is not evidence of correctness — the M0 spike already recorded
 that `msaccess` exits 0 for an unavailable spectrum and for unsupported input —
@@ -1466,12 +1489,12 @@ This supersedes the unconditional wording, and only that wording. Everything els
 in this section stands, including that M5.4 settles *how* a candidate is closed
 and that nothing may presume an outcome before the measurement.
 
-**What M5.4 measured.** Zero. All four candidates that can express an m/z window
-were measured and rejected — the decisive reason being that this build serializes
-region intensities at four fixed decimal places, which maps a legitimate positive
-signal onto the same output as a true zero. So D4 is closed as **not applicable
-under the refusal branch**. See
-[`docs/spikes/M5_XIC_SOURCE_EVIDENCE.md`](../../spikes/M5_XIC_SOURCE_EVIDENCE.md).
+**What M5.4 measured.** Zero admissible sources; the recorded outcome is
+`XIC_SOURCE_REFUSED`. So D4 is closed as **not applicable under the refusal
+branch**, and M5.5 and M5.6 follow that branch. Which candidates were measured,
+why each was rejected, and what a future attempt must re-measure are owned by
+[`docs/spikes/M5_XIC_SOURCE_EVIDENCE.md`](../../spikes/M5_XIC_SOURCE_EVIDENCE.md)
+and are deliberately not restated here.
 
 #### Amended 2026-08-29: evidence is bound to an executable, not to a help text
 
