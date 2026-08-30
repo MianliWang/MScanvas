@@ -140,11 +140,22 @@ carries both measured columns whichever of them is on screen.
 The run and the scan chosen in it can also be exported *together*, as one figure
 of two ordered panels linked by a marker at that scan.
 
-Still missing from the acquisition view: XIC and multi-layer comparison. One
-more thing is missing that is easier to meet than to notice: the plot and every
-table row stay clickable while the selected-spectrum lane is blocked — a running
-conversion, an installation check, a backend resolved unavailable — and neither
-surface says so.
+Still missing from the acquisition view: XIC, refused on measured evidence rather
+than pending, and multi-layer comparison, deferred with named owners.
+
+**A click that cannot select a scan says so, once.** Where the
+selected-spectrum lane is held — a running conversion or a dispatched retry, an
+installation check, a backend this session resolved unavailable — the viewer
+states the reason in one place and both the plot and the scan table point at it.
+Neither is disabled: hover, zoom, pan, the range controls, the trace toggles,
+scrolling and keyboard row navigation all keep working, because none of them asks
+the backend for anything. What stops is the one action that would have.
+
+One window is knowingly left open, and it belongs to the conversion lane rather
+than to the viewer: starting a conversion claims the backend lane immediately,
+while the rendered availability follows only when the queue slot is read back, so
+for that moment an activation is refused before either surface has caught up. It
+is the same window every conversion-gated control here has. Owner: M6.
 
 **The selected spectrum's own m/z range zooms, pans and resets** wherever the
 scientific figure contract admits an authoritative domain for it, by wheel, by
@@ -154,14 +165,20 @@ transfer's arrays did. Where that contract refuses a domain the spectrum has no
 viewport at all, says why, and offers no control that pretends to act — which is
 the same posture, per spectrum rather than per product.
 
-That unavailability rule belongs to M5 — Viewer
+That unavailability rule and this viewport were delivered by M5 — Viewer
 Completion — whose route is fixed by
-[ADR 0037](../architecture/adr/0037-viewer-completion-route.md). XIC belongs to
-M5 too, but behind an evidence gate with two valid outcomes: a visible trace
-inside this same linked selection where a backend source is proved, or a recorded
-refusal and a reassignment where it is not. Either way M5 writes no XIC export.
-Multi-layer comparison is deferred past M5, with named owners for the contracts
-it needs.
+[ADR 0037](../architecture/adr/0037-viewer-completion-route.md) and whose closure
+is [ADR 0042](../architecture/adr/0042-viewer-completion-closure-and-handoff.md).
+
+**XIC went through the same route's evidence gate and the gate refused it.**
+Measured against a real ProteoWizard installation, no query that build offers can
+serve as a general XIC source, so MSCanvas draws none rather than a trace nobody
+could defend — and writes no XIC export either. The refusal belongs to the
+executable that was measured, and re-entry is gated: the conditions are the three
+[the spike](../spikes/M5_XIC_SOURCE_EVIDENCE.md) records, which include
+re-measuring everything that record establishes and are not restated here in a
+shorter form. Owner: M6, for that measurement. Multi-layer comparison is deferred
+past M5, with named owners for the contracts it needs.
 See also
 [ADR 0032](../architecture/adr/0032-viewer-interaction-and-viewport-state.md) and
 [ADR 0033](../architecture/adr/0033-visible-linked-tic-bpc-viewer.md).

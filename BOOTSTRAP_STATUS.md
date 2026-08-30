@@ -5721,3 +5721,107 @@ and the binary rebuilt, and is reported rather than attributed here.
 `pnpm build` and `git diff --check`, each run directly and each exiting zero,
 plus `pnpm e2e:typecheck`, `pnpm e2e:browser`, `pnpm e2e:build` and
 `pnpm e2e:tauri`.
+
+## M5.8 — Viewer Completion closure and handoff, 2026-08-30
+
+The closure slice. **Documentation only**: no production Rust, no frontend, no
+CSS, no new behaviour and no tests for new behaviour. The closure record is
+[ADR 0042](docs/architecture/adr/0042-viewer-completion-closure-and-handoff.md),
+which answers each exit criterion by citation; nothing is retold here.
+
+Baseline `8a8fdacb54dde05cf8f761bc84f30a864cfbce25`.
+
+### The eight exit criteria
+
+| # | Criterion | Disposition |
+| --- | --- | --- |
+| 1 | Spectrum viewport, both paths | **PASS** |
+| 2 | Selected-spectrum export, both paths | **PASS** |
+| 3 | A visible XIC | **NOT_APPLICABLE** — evidence-gated refusal |
+| 4 | XIC linked selection | **NOT_APPLICABLE** — `XIC_SOURCE_REFUSED` |
+| 5 | Selection availability | **PASS** |
+| 6 | Multi-layer comparison | **DEFERRED** — M8, then M9 |
+| 7 | Bounded preview cache | **DEFERRED / OPTIMIZATION_ONLY** — M7, on measurement |
+| 8 | Vendor-format direct preview | **DEFERRED / EVIDENCE_GATED** — M6 |
+
+The three milestone-wide conditions pass.
+
+**Criterion 5 required amending the route, and that is said rather than
+implied.** It passes for the availability rule it is about, and does **not** claim
+the `convert` ref/render window closed with it: `convert` claims the backend lane
+as it dispatches and the rendered state follows only when the queue slot is read
+back, so inside that interval an activation still does nothing without saying so.
+ADR 0037 stated the criterion unconditionally and never mentioned the case, so
+M5.8 **narrowed the criterion** — dated, in ADR 0037 where the criterion lives —
+on the one ground that the window is not a viewer property: it belongs to
+`convert` claiming a lane before the slot confirms it, every conversion-gated
+control here has it, and it predates M5. **Owner: M6.** This is the only exit
+criterion this closure changed rather than merely proved.
+
+Condition A cost more than expected, and it cuts both ways. Nothing described an
+unimplemented feature as implemented; four current product-facing passages
+described **delivered** work as missing — the README's "what is next" and its
+"not implemented yet" list, `PRIMARY_WORKFLOWS.md`, and a `FEATURE_CATALOG.md`
+bullet found in review. All corrected.
+
+### `XIC_SOURCE_REFUSED`, closed rather than passed over
+
+M5.5 and M5.6 did not run. No pseudo-XIC was substituted, no XIC export exists,
+and **`M5 COMPLETE` does not mean XIC exists.** Re-entry needs all three of the
+spike's gate: an executable identity and capability grammar covered by fresh
+evidence; a resolved numeric-fidelity answer; and **re-measurement of everything
+the record establishes**, because the aggregation each query performs and the
+singular-parabola abort are invisible in help text, so a build can match the
+grammar and still be scientifically different. No executable inherits the
+refusal's evidence because its help text resembles the measured one's.
+**VIEW-007's owner is M6**, the milestone that measures this backend's
+capabilities against a build; the gate is the condition, not the owner.
+
+### Two record debts closed
+
+**M5.4's deferred synthetic `slice` P2.** The matrix cell `synthetic 2,4` was the
+only place that run appeared. The evidence was authenticated rather than copied:
+`msaccess.exe` re-hashed to `85681B20…D1F4`, `tiny.pwiz.1.1.mzML` re-hashed to
+`711ac14b…9c83`, and `slice mz=2,4 delimiter=tab` re-run — exit `0`, `543` bytes,
+`8` rows, SHA-256
+`fd279dbc0e3f1636d2d7f306c5d346aa657d13444cd32532bb067c0054a6ad6f`,
+byte-identical to the preserved artifact. The synthetic no-signal case reproduces
+too (`74` bytes, `9dfd5839…ab87`). No classification changed.
+
+**ADR 0037's four inherited M4.4 debts.** The route still said none had been
+repaired. Verified against `main`: **P3-1 and P3-4 closed by M5.3**, **P3-2 and
+P3-3 closed by M5.7**. The findings are left as written and each carries its
+disposition.
+
+### Handoff
+
+**M6** inherits the capability-evidence discipline M5.4 established and the
+viewer/conversion lane boundary M5.7 froze, including the `convert` ref/render
+window handed over open and described. **M7** inherits the interaction and
+availability principles, plus chromatogram touch semantics and a bounded preview
+cache. **M8/M9** own VIEW-008, and a reusable XIC artifact if XIC ever re-enters.
+
+### Validation
+
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build` and `git diff --check`, each run directly and each exiting zero, plus
+`pnpm e2e:typecheck`, `pnpm e2e:browser` (9 suites, 199 cases) and
+`pnpm e2e:build`. Rust **1,350**; frontend **1,378**.
+
+`pnpm e2e:tauri` was run as a regression inventory against M5.7's baseline, not
+as new product evidence. M5.7 classified three environmental failures; this run
+reproduced **two** of them, and the comparison is enumerated so the claim is
+checkable:
+
+| M5.7 baseline case | This run |
+| --- | --- |
+| `renders every figure control and the settings it starts at` — figure-settings theme default | fails, as before |
+| `holds one scientific lane, whichever range is chosen` — clipboard | fails, as before |
+| `reports the range Rust resolved for a real copy` — clipboard | **passed** |
+
+The third passing is what a focus-dependent clipboard case does rather than
+evidence that anything was fixed, and it is recorded as an observation rather
+than a repair. The four M5.7 real-shell cases pass. **No new failure.** The suite
+is not green and is not described as green.

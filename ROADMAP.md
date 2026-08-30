@@ -199,9 +199,17 @@ What M4 left outside it:
 
 ## M5 — Viewer Completion
 
-**In progress.** M4 finished the export lane; the viewing workflow it exports
-from was missing capabilities a reader meets in normal use. M5 completes it
-before conversion is widened and before the product is redesigned.
+**Complete, on the `XIC_SOURCE_REFUSED` branch.** M4 finished the export lane;
+the viewing workflow it exports from was missing capabilities a reader meets in
+normal use. M5 completed it before conversion is widened and before the product
+is redesigned. The closure record — every exit criterion with its disposition and
+evidence, the deferred owners, and the M6/M7 handoff — is
+[ADR 0042](docs/architecture/adr/0042-viewer-completion-closure-and-handoff.md).
+
+**`M5 COMPLETE` does not mean XIC exists.** It means every Viewer Completion
+capability the evidence gates could honestly admit was delivered, and every one
+they refused was recorded, given an owner and a re-entry path, and not
+approximated.
 
 - M5.0 — **complete** (route lock, documentation only).
 - M5.1 — **complete** (the m/z viewport authority and the bounded projection).
@@ -212,7 +220,7 @@ before conversion is widened and before the product is redesigned.
 - M5.5 — **`NOT_APPLICABLE`** (the XIC model and runtime).
 - M5.6 — **`NOT_APPLICABLE`** (the visible XIC, and linked selection).
 - M5.7 — **complete** (selection-availability affordance consistency).
-- M5.8 — **next, not started** (Viewer Completion closure and handoff).
+- M5.8 — **complete** (Viewer Completion closure and handoff).
 
 **Zoom, pan and reset reach a spectrum whose domain is admitted, and only
 those.** A spectrum the figure contract cannot give an authoritative finite
@@ -281,9 +289,12 @@ five product decisions it surfaces are in
   all of them and is not restated here.
 
   **XIC is refused for this executable, not for all time.** The re-entry gate is
-  an exact executable identity covered by fresh measurement, plus a resolved
-  numeric-fidelity answer. No XIC was implemented, no approximation was
-  substituted, and no production code changed.
+  the three conditions
+  [the spike](docs/spikes/M5_XIC_SOURCE_EVIDENCE.md) records — including
+  re-measuring everything that record establishes, because aggregation and the
+  singular-parabola abort cannot be read off a help text — and it is cited rather
+  than restated in a shorter form. Owner: M6. No XIC was implemented, no
+  approximation was substituted, and no production code changed.
 - **M5.5 — the XIC model and runtime.** **`NOT_APPLICABLE`.** It was conditional
   on an admitted source, and M5.4 measured a refusal. The typed operation, its
   capability gate, its parser and its service path are not built, and are not
@@ -302,13 +313,31 @@ five product decisions it surfaces are in
   inherited M4.4 P3 debts in the linked figure section, whose refusal had been
   present in the accessibility tree twice. See
   [ADR 0041](docs/architecture/adr/0041-viewer-selection-availability.md).
-- **M5.8 — Viewer Completion closure and handoff.** **Next.**
+- **M5.8 — Viewer Completion closure and handoff.** **Closed.** Documentation
+  only: no production code, no new capability. Criteria 1, 2 and 5 PASS from
+  published evidence — criterion 5 against a text M5.8 **narrowed** at closure to
+  carve out the conversion lane's dispatch race, which is the one exit criterion
+  this closure changed rather than merely proved; 3 and 4 are closed
+  **`NOT_APPLICABLE`** under the measured refusal rather than passed over; 6, 7
+  and 8 are deferred with named owners. It
+  also closed M5.4's deferred synthetic `slice` record — the run was re-verified
+  against a re-hashed executable and source and reproduces byte-identically — and
+  reconciled ADR 0037's four inherited M4.4 debts, all four of which M5.3 and
+  M5.7 had in fact closed. See
+  [ADR 0042](docs/architecture/adr/0042-viewer-completion-closure-and-handoff.md).
 
 M5 is complete when the selected spectrum has a committed viewport wherever the
 scientific contract admits one and an honest refusal wherever it does not, the
 spectrum exports over the full source and over that range wherever it exists, no
 viewer click surface accepts a click that commits nothing without saying why, and
 M5.4's outcome has been carried through.
+
+**That fourth condition carries one named exception**, added to the criterion
+itself at closure rather than assumed: for the interval between starting a
+conversion and its queue state being read back, an activation is refused before
+either surface has caught up. It is the conversion lane's dispatch race, shared
+by every conversion-gated control here and older than M5, and its owner is M6.
+See [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md#m5-exit-criteria).
 
 **A valid scientific source need not be renderable.** Where the existing figure
 and domain contract cannot admit a viewport without changing the source, MSCanvas
@@ -326,7 +355,8 @@ was given.
 M5.4 measured `XIC_SOURCE_REFUSED`, so this is the branch M5 is on: M5.5 and
 M5.6 are `NOT_APPLICABLE`, the refusal and its measurement are recorded, those
 criteria are closed explicitly as evidence-gated rather than passed over, and
-VIEW-007 is reassigned to the re-entry gate the spike records. **`M5 COMPLETE`
+VIEW-007 is reassigned to **M6** for the re-measurement, behind the re-entry
+gate the spike records. **`M5 COMPLETE`
 does not mean XIC exists** — it means every viewer capability that could honestly
 be admitted was delivered and the rest was recorded rather than approximated from
 a source that cannot produce it.
@@ -350,6 +380,18 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 
 ## M6 — Conversion Completion
 
+**Next, not started.**
+
+M5 hands it two things beyond the backlog below. The **capability-evidence
+discipline** M5.4 established — exact installed signature, exact executable
+identity, live measurement, classification, then admission or an explicit
+refusal — applies directly to widening `msconvert`, and evidence does not
+transfer between executables because help text looks identical. And the
+**viewer/conversion lane boundary** M5.7 froze: the queue slot and a dispatched
+retry own the one backend lane, an adoption and a diagnostics export do not, and
+the `convert` ref/render window is handed over open and described rather than
+claimed closed.
+
 - Widen the typed conversion settings the interface can actually express:
   CNV-002's mzXML gate, CNV-004 to CNV-007's processing and compression choices,
   and CNV-003's output-location choices.
@@ -361,8 +403,29 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
   proves `msconvert` writes a correct mzML, and says nothing about whether
   `msaccess` can answer preview queries against a vendor acquisition. It is not
   automatically an M6 exit criterion either.
+- **VIEW-007 re-measurement, conditional and not an exit criterion.** M5 assigned
+  XIC's re-entry here because M6 is the milestone that measures this backend
+  against a build. The trigger is a **different measured `msaccess` identity**:
+  where M6 measures one — for a direct-preview slice, for a widened `msconvert`
+  distribution, or because the installation changed — it also answers the spike's
+  three-part gate, which needs an executable identity and capability grammar
+  covered by fresh evidence, a resolved numeric-fidelity answer, and
+  re-measurement of everything the record establishes. Where M6 measures no new
+  identity, this item is closed by that fact and no XIC work is owed. Admission
+  would schedule a viewer slice at that point; it does not make one an M6
+  deliverable. See
+  [ADR 0042](docs/architecture/adr/0042-viewer-completion-closure-and-handoff.md)
+  and [the spike](docs/spikes/M5_XIC_SOURCE_EVIDENCE.md).
 
 ## M7 — UI/UX and public product hardening
+
+M5 hands it the interaction principles it proved rather than asserted:
+availability means activating would do what it says; an unavailable action has
+one understandable reason; live regions are mounted before they have anything to
+say; keyboard equivalence; the three responsive targets; and explicit scroll
+ownership. M5.7's single selection-unavailability posture is the pattern to
+generalize outside the viewer. Chromatogram touch semantics and a bounded preview
+cache are deferred here, the second only on a measurement showing a need.
 
 - Consolidation and redesign of the surfaces M5 and M6 complete, owning the
   principles M5.0 froze rather than inheriting drift across them.
@@ -400,11 +463,17 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 - Isolated worker contract and one or two reviewed recipes backed by mature
   packages.
 - Recipe mode first; no generic workflow canvas until real needs justify it.
-- **A reusable XIC export**, if M5 admitted an XIC. M5 builds the visible trace
-  and no exported artifact; an XIC is a derived analytical quantity rather than a
-  second view of something the file contains, so its reusable form belongs with
-  the milestone that owns derived analytical results, on top of M8's artifact
-  identity. See [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md).
+- **A reusable XIC export**, if an XIC ever exists. M5 measured
+  `XIC_SOURCE_REFUSED` and built neither a trace nor an artifact, so the
+  condition this entry was written under — *if M5 admitted one* — can no longer
+  be met. It is **not** thereby closed: re-entry is M6's, behind the spike's
+  three-part gate, and if a measured build admits a source the visible trace
+  becomes a viewer slice scheduled then. An XIC is a derived analytical quantity
+  rather than a second view of something the file contains, so its reusable form
+  still belongs with the milestone that owns derived analytical results, on top
+  of M8's artifact identity. See
+  [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md) and
+  [ADR 0042](docs/architecture/adr/0042-viewer-completion-closure-and-handoff.md).
 - **Multi-layer comparison (VIEW-008)** belongs here for its semantics, on top of
   M8's layer identity. Deferred from M5 with a recorded dependency audit: the
   application holds one preview by contract — Rust's open ticket states that

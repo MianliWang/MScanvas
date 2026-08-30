@@ -62,7 +62,7 @@ table remains the target, including the unsupported portions called out below:
 | VIEW-004 | Scan table | P0 | Virtualized rows with scan, RT, MS level and precursor context. |
 | VIEW-005 | Linked selection | P0 | **Implemented across the chromatogram, the loaded scan table and the selected-spectrum panel.** Selection synchronizes chromatogram marker, table row, spectrum and inspector in both directions. Where a scan cannot be committed right now, both surfaces say so once and neither stops being readable. |
 | VIEW-006 | Keyboard scan navigation | P0 | **Implemented.** Previous/next and table navigation work without pointer-only access, including while selection is unavailable: `Enter` and `Space` are the activations that stop, and arrow, page, `Home` and `End` navigation does not. |
-| VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. **Unimplemented, and the evidence gate is answered `XIC_SOURCE_REFUSED`: no query the measured ProteoWizard build offers can serve as a general XIC source.** M5.5 and M5.6 are `NOT_APPLICABLE`. Re-entry requires an exact executable identity covered by fresh measurement and a resolved numeric-fidelity answer. |
+| VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. **Unimplemented, and the evidence gate is answered `XIC_SOURCE_REFUSED`: no query the measured ProteoWizard build offers can serve as a general XIC source.** M5.5 and M5.6 are `NOT_APPLICABLE`. Re-entry requires an exact executable identity and capability grammar covered by fresh evidence, a resolved numeric-fidelity answer, and re-measurement of everything the record establishes — aggregation and the singular-parabola abort are invisible in help text; **owner: M6**, for that measurement. |
 | VIEW-008 | Multi-layer comparison | P2 | Visibility, style and provenance remain inspectable per layer. **Deferred: M8 for layer identity, M9 for comparison semantics.** |
 
 Implementation notes for the three viewer features Viewer Closure closed follow.
@@ -161,20 +161,29 @@ Where each of those is owned, and why, is fixed by
   often looking.
 
   **A refusal is not a deferral to a later build by default.** XIC is refused for
-  the measured executable, and re-entry requires an exact executable identity
-  covered by fresh measurement plus a resolved numeric-fidelity answer — help
-  text that looks the same is not evidence that an implementation behaves the
-  same. **M5 writes no XIC figure or data document**; a reusable XIC export
-  belongs to M9 if XIC ever ships.
+  the measured executable, and re-entry is gated on the three conditions
+  [the spike](../spikes/M5_XIC_SOURCE_EVIDENCE.md) records — cited rather than
+  restated, because a shorter list is how a build that fixed the precision and
+  changed the aggregation would get admitted. Help text that looks the same is
+  not evidence that an implementation behaves the same. Owner: M6, for that
+  measurement. **M5 writes no XIC figure or data document**; a reusable XIC
+  export belongs to M9 if XIC ever ships.
 - **VIEW-008** is deferred past M5 on a dependency audit, not on priority alone.
   It needs several runs loaded at once where the application holds exactly one
   by contract, a layer identity `FigureSpec` has no concept of, a normalization
   this product has not admitted, and a selection type wider than the one
   selected scan every linked view consumes.
-- **Telling a click surface that a selection is unavailable** is M5 as well. The
-  chromatogram's plot and every scan-table row stay clickable while the
-  selected-spectrum lane is blocked, and neither says so; M5 adds more
-  selectable surfaces, so the rule is settled before the set grows.
+- **Telling a click surface that a selection is unavailable** was M5, and is
+  delivered. Where the selected-spectrum lane is held — a running conversion or a
+  dispatched retry, an installation check, a backend this session resolved
+  unavailable — the viewer says why once and both the chromatogram's plot and the
+  scan table point at that one explanation. Neither is disabled: hover, zoom,
+  pan, the range controls, the trace toggles, scrolling and keyboard row
+  navigation keep working, because none of them asks the backend for anything.
+  One window is knowingly left open and belongs to the conversion lane rather
+  than the viewer: `convert` claims the backend lane as it dispatches and the
+  rendered state follows only when the queue slot is read back. See
+  [ADR 0041](../architecture/adr/0041-viewer-selection-availability.md).
 
 ## Conversion
 
