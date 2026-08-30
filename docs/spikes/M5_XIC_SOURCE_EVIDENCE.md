@@ -584,6 +584,52 @@ collide.
 `sic` was measured over. `slice` additionally accepts `rt=`, `index=` and `sn=`
 restrictions.
 
+### On the synthetic fixture
+
+Recorded here because the matrix's `synthetic 2,4` cell was, for a time, the only
+place this run appeared — the section below it held representative rows alone, so
+the cell was accurate and unverifiable from the record. M5.8 closed that: both
+artifacts were re-hashed, and the query was re-run against a re-hashed executable
+and a re-hashed source, reproducing byte-identically.
+
+| Fact | Value |
+| --- | --- |
+| Executable | `msaccess.exe` SHA-256 `85681B205569A9850F47D079749E04BA45F4B0C64E363D4A2C5C67C3C67ED1F4` |
+| Source | `tiny.pwiz.1.1.mzML`, SHA-256 `711ac14b666f14817c208bd4d39b738e96ac827574c4639d8f8f6eebbfde9c83` |
+| Invocation | `slice mz=2,4 delimiter=tab` |
+| Exit / stderr | `0` / empty |
+| Artifact | `tiny.pwiz.1.1.mzML.slice.mz_2.0000-4.0000.tsv`, `543` bytes, `8` rows |
+| SHA-256 | `fd279dbc0e3f1636d2d7f306c5d346aa657d13444cd32532bb067c0054a6ad6f` |
+
+```text
+0	scan=19	3	IonTrap	ms1	353.43	2.0000	13.0000
+0	scan=19	3	IonTrap	ms1	353.43	3.0000	12.0000
+0	scan=19	3	IonTrap	ms1	353.43	4.0000	11.0000
+1	scan=20	4	IonTrap	ms2	359.43	2.0000	18.0000
+1	scan=20	4	IonTrap	ms2	359.43	4.0000	16.0000
+3	sample=1 period=1 cycle=22 experiment=1	0	IonTrap	ms1	42.05	2.0000	13.0000
+3	sample=1 period=1 cycle=22 experiment=1	0	IonTrap	ms1	42.05	3.0000	12.0000
+3	sample=1 period=1 cycle=22 experiment=1	0	IonTrap	ms1	42.05	4.0000	11.0000
+```
+
+Hand-checkable, which is the whole reason a synthetic run is worth having. The
+window is inclusive at both ends and the values are `initializeTiny`'s small
+integers. **Source index `2` is absent** — its arrays are empty and
+`spectrum_table` reports its TIC as `0.00` — which is the omission the
+representative measurement also found, here on four spectra a reader can count.
+**One scan gives many rows**: indices `0` and `3` give three each, index `1`
+gives two, because that spectrum's array holds even values only and carries no
+`m/z 3`. Both facts are properties of the output shape rather than of scale.
+
+**No signal, synthetic.** `slice mz=100,200` writes the artifact with its header
+and zero rows — `74` bytes, SHA-256
+`9dfd5839643946a73e576430006781334742672e787bd1e866e8b5274696ab87`, empty
+stderr, exit `0`. The same posture the representative no-signal window showed.
+
+Neither run changes `slice`'s classification. It is recorded because refusal
+condition 3 says every applicable candidate was measured on both pinned sources,
+and a claim discharged by a matrix cell alone is a claim a reader cannot check.
+
 **Output shape.** One artifact,
 `…slice.mz_500.0000-502.0000.tsv`: `3,700` rows, `349,596` bytes, SHA-256
 `2d9b0d2e…be69`. Schema is

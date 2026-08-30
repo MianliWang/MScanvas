@@ -1,6 +1,13 @@
 # ADR 0037 — Viewer Completion is the next milestone, and this is its route
 
-Status: accepted, amended 2026-08-29
+Status: accepted, amended 2026-08-30
+
+**Route fulfilled.** M5 is complete on the `XIC_SOURCE_REFUSED` branch, and the
+closure record is
+[ADR 0042](0042-viewer-completion-closure-and-handoff.md) -- which answers the
+exit criteria below, closes criteria 3 and 4 as evidence-gated, and names an
+owner for everything deferred. This document remains the route-lock and history
+authority and is **not** rewritten as though the outcome had always been known.
 
 Amended by M5.4's measurement in two places, both in
 [XIC-D4](#xic-d4--which-query-is-the-source): D4 is `USER_DECISION_REQUIRED` only
@@ -1272,6 +1279,11 @@ those is conditional.
 as `NOT_APPLICABLE` under a recorded evidence refusal, or deferred with a named
 owner and reason. No item is left silent.
 
+**Closed 2026-08-30.** Criteria 1, 2 and 5 PASS; 3 and 4 are `NOT_APPLICABLE`
+under `XIC_SOURCE_REFUSED`; 6, 7 and 8 are deferred with owners. The dispositions,
+their evidence and the M6/M7 handoff are in
+[ADR 0042](0042-viewer-completion-closure-and-handoff.md).
+
 ## M5 exit criteria
 
 M5 is complete when, and only when:
@@ -1635,13 +1647,25 @@ milestone claim moves.
 ### M4.4 confirmation findings, inherited as technical debt
 
 M4.4's final confirmation review recorded four findings. They did not block M4
-completion, **none of them has been repaired**, and each is inherited here as
-explicit debt rather than represented as fixed. This route-lock slice changes no
-production code, so it repairs none of them; what it does is give each one an
-owning M5 slice.
+completion, none of them had been repaired when this route was written, and each
+was inherited here as explicit debt rather than represented as fixed. This
+route-lock slice changed no production code, so it repaired none of them; what it
+did was give each one an owning M5 slice.
 
 Each was re-confirmed against `b77e5e8` while this route was written, and the
 location is cited so the next reader does not have to find it again.
+
+**Amended 2026-08-30 by M5.8: all four are now closed.** The findings below are
+left exactly as recorded, because they are the history this document exists to
+keep; each carries its disposition, verified against `main` at closure rather
+than assumed from the slice that owned it.
+
+| Finding | Disposition | Verified |
+| --- | --- | --- |
+| P3-1 | **CLOSED by M5.3** | `_validate_linked_pair_module_adds_no_route` in `scripts/check_repo.py` |
+| P3-2 | **CLOSED by M5.7** | the linked section's comment in `ChromatogramExportPanel.tsx` |
+| P3-3 | **CLOSED by M5.7** | one accessible occurrence, announcement intact |
+| P3-4 | **CLOSED by M5.3** | the block sits on `scientificExportBusy` in `usePreviewWorkspace.ts` |
 
 **P3-1 — the single-constructor guard has a scanning blind spot.**
 `_validate_linked_pair_has_one_constructor` in
@@ -1665,6 +1689,15 @@ The debt is that one repository rule is weaker than it reads.
 **Owner: M5.3**, the first M5 slice that changes `preview/export.rs`, with M5.8
 as the backstop.
 
+**CLOSED by M5.3**, and the backstop was not needed.
+`_validate_linked_pair_module_adds_no_route` reads `mod linked_pair` directly
+rather than through `functions_naming`, so the four-space blind spot cannot
+apply: it holds the module to a closed method list, rejects `LinkedPair::new` and
+`Self::new` called from inside the module, and requires exactly one `Self {`
+literal -- the two ways in that the module's private fields make legal here and
+nowhere else. A wrapper added inside the module now fails the rule that could not
+see it.
+
 **P3-2 — a comment describing a shape that was replaced.** The first comment
 block above the linked section in
 [`ChromatogramExportPanel.tsx`](../../../apps/desktop/src/features/mzml-preview/ChromatogramExportPanel.tsx)
@@ -1675,6 +1708,10 @@ hidden live region, which the comment block immediately below it describes
 correctly. The two comments now disagree about the code they sit on.
 
 **Owner: M5.7**, which rewrites this section's availability messaging.
+
+**CLOSED by M5.7.** The comment now describes the composition the file has: one
+sentence at a time, in whichever of two elements the reader's situation calls
+for, and never both.
 
 **P3-3 — the linked refusal is in the accessibility tree twice.** When the
 linked section cannot be used, the same sentence is rendered by the visible
@@ -1691,6 +1728,14 @@ duplication in what a traversal reads.
 surface says it cannot be used right now, once, in a way a screen reader hears
 once.
 
+**CLOSED by M5.7.** One permanent live region carries the refusal *visibly* and
+empties on recovery; the ordinary description is a separate element rendered only
+when there is no refusal. One accessible occurrence in either state, announcement
+intact, and becoming usable stays silent. Collapsed out of flow rather than with
+`display: none`, which would have taken the region out of the accessibility tree
+and left it arriving with its first sentence -- pinned, along with the single
+occurrence, by tests.
+
 **P3-4 — a documentation block separated from what it documents.** In
 [`usePreviewWorkspace.ts`](../../../apps/desktop/src/features/mzml-preview/usePreviewWorkspace.ts),
 the block beginning *Whether the session's one scientific export lane is
@@ -1703,8 +1748,13 @@ found by either.
 **Owner: M5.3**, which adds the selected spectrum's range scope in this region
 of the file.
 
-M5 inherits all four. None of them is a reason to reopen M4, and none of them is
-repaired by this documentation-only slice.
+**CLOSED by M5.3.** The `useState<LinkedFigureExportState>` declaration now sits
+above the block, and the block sits directly on the `scientificExportBusy` it
+documents, with nothing between them.
+
+M5 inherited all four. None of them was a reason to reopen M4, and none of them
+was repaired by this documentation-only slice -- M5.3 and M5.7 repaired them, and
+M5.8 verified each against `main` and recorded the disposition above.
 
 ## Consequences
 

@@ -5721,3 +5721,78 @@ and the binary rebuilt, and is reported rather than attributed here.
 `pnpm build` and `git diff --check`, each run directly and each exiting zero,
 plus `pnpm e2e:typecheck`, `pnpm e2e:browser`, `pnpm e2e:build` and
 `pnpm e2e:tauri`.
+
+## M5.8 — Viewer Completion closure and handoff, 2026-08-30
+
+The closure slice. **Documentation only**: no production Rust, no frontend, no
+CSS, no new behaviour and no tests for new behaviour. The closure record is
+[ADR 0042](docs/architecture/adr/0042-viewer-completion-closure-and-handoff.md),
+which answers each exit criterion by citation; nothing is retold here.
+
+Baseline `8a8fdacb54dde05cf8f761bc84f30a864cfbce25`.
+
+### The eight exit criteria
+
+| # | Criterion | Disposition |
+| --- | --- | --- |
+| 1 | Spectrum viewport, both paths | **PASS** |
+| 2 | Selected-spectrum export, both paths | **PASS** |
+| 3 | A visible XIC | **NOT_APPLICABLE** — evidence-gated refusal |
+| 4 | XIC linked selection | **NOT_APPLICABLE** — `XIC_SOURCE_REFUSED` |
+| 5 | Selection availability | **PASS** |
+| 6 | Multi-layer comparison | **DEFERRED** — M8, then M9 |
+| 7 | Bounded preview cache | **DEFERRED / OPTIMIZATION_ONLY** — M7, on measurement |
+| 8 | Vendor-format direct preview | **DEFERRED / EVIDENCE_GATED** — M6 |
+
+The three milestone-wide conditions pass: no unimplemented viewer feature is
+described as implemented; every M5 control satisfies the frozen principles at all
+three responsive targets, cited from the published M5.2/M5.3/M5.7 evidence and
+re-confirmed by this slice's own browser run; and the local gate set passes
+unchanged.
+
+### `XIC_SOURCE_REFUSED`, closed rather than passed over
+
+M5.5 and M5.6 did not run. No pseudo-XIC was substituted, no XIC export exists,
+and **`M5 COMPLETE` does not mean XIC exists.** Re-entry needs all three of an
+exact `msaccess.exe` identity covered by fresh measurement, the exact required
+capability grammar, and a resolved numeric-fidelity answer — and no executable
+inherits the refusal's evidence because its help text resembles the measured
+one's.
+
+### Two record debts closed
+
+**M5.4's deferred synthetic `slice` P2.** The matrix cell `synthetic 2,4` was the
+only place that run appeared. The evidence was authenticated rather than copied:
+`msaccess.exe` re-hashed to `85681B20…D1F4`, `tiny.pwiz.1.1.mzML` re-hashed to
+`711ac14b…9c83`, and `slice mz=2,4 delimiter=tab` re-run — exit `0`, `543` bytes,
+`8` rows, SHA-256
+`fd279dbc0e3f1636d2d7f306c5d346aa657d13444cd32532bb067c0054a6ad6f`,
+byte-identical to the preserved artifact. The synthetic no-signal case reproduces
+too (`74` bytes, `9dfd5839…ab87`). No classification changed.
+
+**ADR 0037's four inherited M4.4 debts.** The route still said none had been
+repaired. Verified against `main`: **P3-1 and P3-4 closed by M5.3**, **P3-2 and
+P3-3 closed by M5.7**. The findings are left as written and each carries its
+disposition.
+
+### Handoff
+
+**M6** inherits the capability-evidence discipline M5.4 established and the
+viewer/conversion lane boundary M5.7 froze, including the `convert` ref/render
+window handed over open and described. **M7** inherits the interaction and
+availability principles, plus chromatogram touch semantics and a bounded preview
+cache. **M8/M9** own VIEW-008, and a reusable XIC artifact if XIC ever re-enters.
+
+### Validation
+
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build` and `git diff --check`, each run directly and each exiting zero, plus
+`pnpm e2e:typecheck`, `pnpm e2e:browser` (9 suites, 199 cases) and
+`pnpm e2e:build`. Rust **1,350**; frontend **1,378**.
+
+`pnpm e2e:tauri` was run as a regression inventory against M5.7's baseline: the
+M5.7 real-shell cases pass, and the failures are the already-classified
+environmental ones — a figure-settings theme default and a clipboard case. **No
+new failure.** The suite is not green and is not described as green.

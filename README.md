@@ -98,9 +98,9 @@ Build a session workspace of local `.mzML` files and inspect one of them:
   preview that did not load the complete spectrum table draws **no** trace rather
   than a prefix presented as the whole run, and says which of those it is.
 
-Not implemented yet: vendor RAW preview; XIC; exporting a selected spectrum over
-the range on screen rather than its whole source; directory-formatted acquisition
-recognition; filtering the workspace by
+Not implemented yet: vendor RAW preview; XIC — refused on measured evidence for
+the ProteoWizard build MSCanvas was tested against, not merely pending;
+directory-formatted acquisition recognition; filtering the workspace by
 anything other than filename, and grouping it; a workspace that outlives the
 session, which includes remembering a search or a sort; conversion progress as a
 percentage; cancelling one item of a queue while the rest carry on; resuming a
@@ -109,8 +109,8 @@ diagnostics for anything but the latest attempt of each item, a diagnostics
 history, complete raw converter logs, and sending a diagnostics file anywhere;
 and every figure export but the selected spectrum's own SVG, PNG, CSV and TSV,
 the chromatogram's, and the linked two-panel figure of the two -- there is no
-saved figure specification, no figure composer, no current-range export of a
-selected spectrum, and figure settings are not remembered across a restart. mzXML output stays disabled and fail-closed until
+saved figure specification, no figure composer, and figure settings are not
+remembered across a restart. mzXML output stays disabled and fail-closed until
 representative multi-source integrity checks pass.
 
 A conversion queue is reachable, and its limits are the claim. `Add files…`
@@ -200,8 +200,11 @@ exploration and TIC/BPC are built for mzML; nothing else in this list is built
 yet. See [What works today](#what-works-today).
 
 - drag-and-drop file and folder workspaces;
-- metadata, TIC/BPC, spectrum and scan-table exploration (shipped for mzML);
-- linked selection across views (shipped for mzML);
+- metadata, TIC/BPC, spectrum and scan-table exploration (shipped for mzML),
+  with a committed m/z viewport on the selected spectrum wherever the figure
+  contract admits one;
+- linked selection across views (shipped for mzML), with one availability rule
+  that says why a scan cannot be selected without taking the run away;
 - conversion to mzML through user-installed ProteoWizard, with mzXML gated behind
   representative multi-source integrity checks;
 - queue, cancellation, retry and actionable errors;
@@ -215,33 +218,40 @@ Analysis is deferred rather than prohibited. MSCanvas should reuse mature algori
 
 ## What is next
 
-**M5 — Viewer Completion.** The viewing workflow above is the product's first
-real answer and is not finished: the selected spectrum has no viewport, so it
-neither zooms nor exports over a range; there is no extracted-ion chromatogram;
-and a click on the plot or a scan row while the backend is busy commits nothing
-without saying so. M5 closes the viewport, the range export and the click
-affordance before conversion is widened (M6) and before the interface is
-consolidated and redesigned (M7).
+**M6 — Conversion Completion.** M5 finished the viewing workflow; M6 widens
+conversion, and M7 consolidates and redesigns the surfaces both of them leave.
 
-The viewport is delivered wherever the scientific figure contract can establish
-an m/z domain without altering the measurement. mzML permits an m/z sequence that
-contract will not accept, and MSCanvas does not sort one to make a viewport
-possible: such a spectrum stays selectable, still draws, still exports as
-full-source CSV and TSV, and is told plainly that it has no viewport and no
-current range.
+**What M5 delivered.** The selected spectrum has a committed m/z viewport that
+zooms, pans and resets, and exports over the full source or over that range — in
+every format that spectrum already supported. The viewport is delivered wherever
+the scientific figure contract can establish an m/z domain without altering the
+measurement: mzML permits an m/z sequence that contract will not accept, and
+MSCanvas does not sort one to make a viewport possible. Such a spectrum stays
+selectable, still draws, still exports as full-source CSV and TSV, and is told
+plainly that it has no viewport and no current range. And a click on the plot or
+a scan row that cannot commit a scan no longer does nothing in silence: both
+surfaces read one availability rule, say once why, and keep everything that needs
+no backend — zoom, pan, hover, scrolling, keyboard navigation — working while
+they say it.
 
-The extracted-ion chromatogram sits behind an evidence gate rather than a
-promise: no m/z-windowed backend query has ever been run here, so M5 first proves
-a source exists. If it does, M5 delivers a visible XIC inside the viewer's one
-linked selection — a trace, not an exported file. If it does not, M5 records the
-refusal and the measurement behind it and reassigns the feature, rather than
-approximating it from data that cannot produce one.
+**There is no extracted-ion chromatogram, and that is a measured answer rather
+than an omission.** M5 ran the evidence gate against a real ProteoWizard
+installation instead of assuming one. No query that build offers can serve as a
+general XIC source: the three that could express an m/z window serialize
+intensity at four fixed decimal places, so a real low-intensity signal is written
+as the same text as a true zero, and the fourth produces a gel image with no
+per-scan quantity. So MSCanvas ships no XIC rather than a trace nobody could
+defend, records the refusal and the measurement behind it, and states the exact
+conditions under which the feature could be reconsidered. That refusal belongs to
+the executable that was measured, not to the idea.
 
 Multi-layer comparison, a bounded preview cache and vendor-format direct preview
 are deferred past M5 with named owners rather than left in the near-term list.
-The route, its exit criteria and the live audit behind them are in
-[ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md); the milestone
-sequence is in [`ROADMAP.md`](ROADMAP.md).
+The route and its exit criteria are in
+[ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md), the closure
+record in
+[ADR 0042](docs/architecture/adr/0042-viewer-completion-closure-and-handoff.md),
+and the milestone sequence in [`ROADMAP.md`](ROADMAP.md).
 
 ## Repository status
 
