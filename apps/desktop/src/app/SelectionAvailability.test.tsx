@@ -22,6 +22,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import appStyles from "./app.css?raw";
+
 import type { BackendAvailability } from "../features/mzml-preview/contracts";
 import type { PreviewApi } from "../features/mzml-preview/api";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
@@ -260,5 +262,52 @@ describe("the viewer's selection availability", () => {
     }, SETTLING);
     // Exactly one read, from one click.
     expect(preview.requestedSpectra).toHaveLength(1);
+  });
+});
+
+/**
+ * How an empty live region is collapsed, which is not a detail.
+ *
+ * `display: none` removes an element from the accessibility tree as well as from
+ * the layout, so a region collapsed that way arrives together with its first
+ * sentence -- and a region that arrives with its text is not announced. Mounting
+ * it early buys nothing at all in that shape.
+ *
+ * This stylesheet already recorded the lesson once, for
+ * `.spectrum-viewport-status:empty`. Nothing was checking it, so it was
+ * regressed here in review and is checked now.
+ */
+describe("how an empty availability region is collapsed", () => {
+  /** One rule's declarations, as the stylesheet writes them. */
+  function ruleBody(selector: string): string {
+    const body = appStyles.split(`${selector} {`)[1]?.split("}")[0];
+    expect(body, `Expected a CSS rule for ${selector}`).toBeDefined();
+    return body ?? "";
+  }
+
+  for (const selector of [".viewer-selection-notice:empty", ".chromatogram-export-note:empty"]) {
+    it(`keeps ${selector} in the accessibility tree`, () => {
+      const body = ruleBody(selector);
+
+      // Out of the picture.
+      expect(body).toContain("position: absolute");
+      expect(body).toContain("clip-path: inset(50%)");
+      // Still in the tree. Neither of these collapses an element without also
+      // taking it out of it.
+      expect(body).not.toContain("display: none");
+      expect(body).not.toContain("visibility: hidden");
+      expect(body).not.toContain("content-visibility: hidden");
+    });
+  }
+
+  it("declares each of them exactly once", () => {
+    // Written twice, a later copy silently decides. Both of these were, once.
+    for (const selector of [
+      ".viewer-column {",
+      ".viewer-selection-notice:empty {",
+      ".chromatogram-export-note:empty {",
+    ]) {
+      expect(appStyles.split(selector).length - 1, selector).toBe(1);
+    }
   });
 });

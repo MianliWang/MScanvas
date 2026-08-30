@@ -5651,8 +5651,10 @@ focus all stay live. Neither surface is disabled and neither is made inert;
 can still be navigated.
 
 **One explanation, once.** The viewer states it in a permanent live region that
-is empty and collapsed while selection is available, and both surfaces point at
-it by `aria-describedby`. It sits above the three measured panels in a flex
+is empty while selection is available -- collapsed out of flow rather than with
+`display: none`, which would take it out of the accessibility tree and leave it
+arriving together with its first sentence -- and both surfaces point at it by
+`aria-describedby`. It sits above the three measured panels in a flex
 column rather than as a fourth grid row, which would have cost 8px of gap
 permanently.
 
@@ -5671,15 +5673,17 @@ silent.
 
 ### Evidence
 
-Frontend tests **1,372** (from 1,343), across the pure rule and its precedence,
+Frontend tests **1,375** (from 1,343), across the pure rule and its precedence,
 each surface's blocked and preserved behaviour, and the assembled document —
 where the single occurrence, both associations, the announcement, the absence of
 any backend read, and recovery without a remount are asserted together.
 
-Four counterfactuals, each applied alone and restored byte-for-byte: the
+Seven counterfactuals, each applied alone and restored byte-for-byte: the
 chromatogram committing anyway, the table's row click and `Enter` committing
-anyway, the chromatogram taking the viewport away along with selection, and the
-linked refusal duplicated back into a hidden copy. All caught.
+anyway, the chromatogram taking the viewport away along with selection, the
+linked refusal duplicated back into a hidden copy, and -- after review -- either
+empty region collapsed with `display: none` again, and the viewer's own rules
+written into the stylesheet twice. All caught.
 
 Rendered QA at 1920×1080, 1366×768 and 960×640: the explanation is legible, the
 column keeps its width, all three panels stay present and nothing scrolls

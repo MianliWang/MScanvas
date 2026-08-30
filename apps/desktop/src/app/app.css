@@ -925,7 +925,7 @@ button:disabled {
    Not a fourth grid row. The rows below are measured against a 768px window and
    a fourth track would have cost 8px of gap permanently, whether or not it had
    anything in it. A flex column costs nothing while the notice is empty, because
-   `display: none` takes an item out of the flow and out of the gap with it. */
+   the empty notice is taken out of flow rather than left in it. */
 .viewer-column {
   display: flex;
   min-height: 0;
@@ -935,34 +935,26 @@ button:disabled {
 
 /* Says why a scan cannot be selected, and nothing at all otherwise.
 
-   Collapsed rather than unmounted: a live region that arrives in the same
-   commit as its text is not being watched when the text arrives, and the reader
-   this is for is looking somewhere else when the lane closes. */
+   Collapsed rather than unmounted: a live region that arrives in the same commit
+   as its text is not being watched when the text arrives, and the reader this is
+   for is looking somewhere else when the lane closes.
+
+   Collapsed the way `visually-hidden` collapses, and deliberately **not** with
+   `display: none`. That removes the element from the accessibility tree, which
+   is the same thing as not having mounted it: the region and its text would
+   still be arriving together with nothing watching. Out of flow rather than out
+   of the tree -- `position: absolute` also keeps it out of the flex column's
+   gap, so an available viewer is the height it always was. */
 .viewer-selection-notice:empty {
-  display: none;
-}
-
-/* The viewer column: an explanation that is usually not there, and the three
-   measured panels.
-
-   Not a fourth grid row. The rows below are measured against a 768px window and
-   a fourth track would have cost 8px of gap permanently, whether or not it had
-   anything in it. A flex column costs nothing while the notice is empty, because
-   `display: none` takes an item out of the flow and out of the gap with it. */
-.viewer-column {
-  display: flex;
-  min-height: 0;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* Says why a scan cannot be selected, and nothing at all otherwise.
-
-   Collapsed rather than unmounted: a live region that arrives in the same
-   commit as its text is not being watched when the text arrives, and the reader
-   this is for is looking somewhere else when the lane closes. */
-.viewer-selection-notice:empty {
-  display: none;
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .viewer-stack {
@@ -1178,9 +1170,21 @@ button:disabled {
 
    Collapsed rather than unmounted, so the live region is being watched before
    the refusal arrives -- and so the section stays one sentence tall, which is
-   the height the open surface was measured against. */
+   the height the open surface was measured against.
+
+   Out of flow rather than `display: none`, for the reason the viewer's own
+   notice gives: a region that is not in the accessibility tree is not being
+   watched, and it would arrive carrying its text. */
 .chromatogram-export-note:empty {
-  display: none;
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .chromatogram-svg {
