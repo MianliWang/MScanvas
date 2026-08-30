@@ -5744,11 +5744,18 @@ Baseline `8a8fdacb54dde05cf8f761bc84f30a864cfbce25`.
 | 7 | Bounded preview cache | **DEFERRED / OPTIMIZATION_ONLY** — M7, on measurement |
 | 8 | Vendor-format direct preview | **DEFERRED / EVIDENCE_GATED** — M6 |
 
-The three milestone-wide conditions pass: no unimplemented viewer feature is
-described as implemented; every M5 control satisfies the frozen principles at all
-three responsive targets, cited from the published M5.2/M5.3/M5.7 evidence and
-re-confirmed by this slice's own browser run; and the local gate set passes
-unchanged.
+The three milestone-wide conditions pass. Criterion 5 passes for the availability
+rule it is about and does **not** claim the `convert` ref/render window closed
+with it: `convert` claims the backend lane as it dispatches and the rendered state
+follows only when the queue slot is read back, so inside that window an
+activation still does nothing without saying so. ADR 0037 recorded it before M5.7
+began and M5.7's scope excluded it; **owner: M6**.
+
+Condition A cost more than expected, and it cuts both ways. Nothing described an
+unimplemented feature as implemented; four current product-facing passages
+described **delivered** work as missing — the README's "what is next" and its
+"not implemented yet" list, `PRIMARY_WORKFLOWS.md`, and a `FEATURE_CATALOG.md`
+bullet found in review. All corrected.
 
 ### `XIC_SOURCE_REFUSED`, closed rather than passed over
 
@@ -5757,7 +5764,8 @@ and **`M5 COMPLETE` does not mean XIC exists.** Re-entry needs all three of an
 exact `msaccess.exe` identity covered by fresh measurement, the exact required
 capability grammar, and a resolved numeric-fidelity answer — and no executable
 inherits the refusal's evidence because its help text resembles the measured
-one's.
+one's. **VIEW-007's owner is M6**, the milestone that measures this backend's
+capabilities against a build; the gate is the condition, not the owner.
 
 ### Two record debts closed
 

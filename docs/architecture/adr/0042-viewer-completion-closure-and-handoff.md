@@ -41,7 +41,7 @@ approximated.
 | 2 | Selected-spectrum export, both paths | **PASS** | [ADR 0040](0040-spectrum-range-export.md); `SelectedSpectrumExport.test.tsx`, `SelectedSpectrumExportBinding.test.tsx`, `preview/export.rs` and `preview/tests.rs`; `e2e/specs/m5.3-spectrum-range-export.{browser,tauri}.e2e.ts` |
 | 3 | A visible XIC | **NOT_APPLICABLE — evidence-gated refusal** | [`M5_XIC_SOURCE_EVIDENCE.md`](../../spikes/M5_XIC_SOURCE_EVIDENCE.md), outcome `XIC_SOURCE_REFUSED` |
 | 4 | XIC linked selection | **NOT_APPLICABLE — `XIC_SOURCE_REFUSED`** | same; there is no XIC surface to select on |
-| 5 | Selection availability | **PASS** | [ADR 0041](0041-viewer-selection-availability.md); `viewerSelectionAuthority.test.tsx`, `SelectionAvailability.test.tsx`, `Chromatogram.test.tsx`, `SpectrumTable.test.tsx`; `e2e/specs/m5.7-selection-availability.{browser,tauri}.e2e.ts` |
+| 5 | Selection availability | **PASS**, with the `convert` ref/render window named as a pre-existing exception the route excluded | [ADR 0041](0041-viewer-selection-availability.md); `viewerSelectionAuthority.test.tsx`, `SelectionAvailability.test.tsx`, `Chromatogram.test.tsx`, `SpectrumTable.test.tsx`; `e2e/specs/m5.7-selection-availability.{browser,tauri}.e2e.ts` |
 | 6 | Multi-layer comparison | **DEFERRED** | M8 (layer identity and provenance), M9 (comparison semantics) |
 | 7 | Bounded preview cache | **DEFERRED / OPTIMIZATION_ONLY** | M7, and only on a measurement showing a need |
 | 8 | Vendor-format direct preview | **DEFERRED / EVIDENCE_GATED** | M6, behind its own evidence slice |
@@ -119,22 +119,40 @@ ordinary window aborts. Re-entry requires all of:
    zero/non-zero distinction over the mzML domain MSCanvas supports, or a
    declared, measured, capability-gateable precision control.
 
+**VIEW-007's owner is M6**, and the gate is the condition rather than the owner.
+M6 is the milestone that measures this backend's capabilities against a build, so
+a different `msaccess` is measured there or nowhere. If such a measurement admits
+a source, the visible XIC becomes a viewer slice scheduled at that point — and a
+reusable XIC artifact or export remains M9's, on M8 artifact identity, exactly as
+it would have been had M5.4 admitted one.
+
 ### Criterion 5
 
 Both surfaces that commit a scan — the chromatogram and the scan table — read one
 selection-start authority, which carries its reason as well as its answer. An
 unavailable selection gives **one** truthful explanation, in one accessibility
-occurrence, that both surfaces point at; no blocked activation silently commits
-nothing; and every backend-free interaction stays available while it says so.
-Operation-side and rendered readers share one rule, over the whole lane space.
+occurrence, that both surfaces point at, and every backend-free interaction stays
+available while it says so. Operation-side and rendered readers share one rule:
+the boolean the operation guards itself with is a projection of the same value
+the surfaces render, over every combination of the lane's four facts.
 
 The lane is the queue slot **or** a retry this document has dispatched. An
 adoption and a diagnostics export are not the lane — neither claims the guarded
-ref, and the operation accepts a click through both. The **`convert` ref/render
-window remains open and is the conversion lane's**: `convert` claims the ref as
-it dispatches and no rendered value follows until the slot is read back. That is
-the same window every conversion-gated control in this interface has. It is named
-here rather than claimed closed.
+ref, and the operation accepts a click through both.
+
+**One window remains where an activation can still do nothing without saying so,
+and it is stated rather than smoothed over.** `convert` claims the guarded ref
+the moment it dispatches, and no rendered value follows until the slot is read
+back; inside that window the operation refuses while the surfaces still say
+available. It is not a defect this slice introduced or could close: it is the
+same window every conversion-gated control in this interface has, ADR 0037
+recorded it before M5.7 began, and M5.7's scope excluded it explicitly because
+closing it belongs to the conversion lane's contract rather than to a viewer
+adapter. **Owner: M6**, if conversion's growth makes it worth closing.
+
+So criterion 5 passes for the availability rule it is about — one authority, one
+reason, one occurrence, nothing taken away that needs no backend — and does not
+claim the conversion lane's own dispatch race was closed with it.
 
 M4.4's P3-2 and P3-3 were closed by the same slice; their dispositions are in
 [ADR 0037](0037-viewer-completion-route.md#m44-confirmation-findings-inherited-as-technical-debt).
@@ -195,8 +213,8 @@ assumed from three separate slices.
 | Bounded preview cache | **M7**, gated on measurement | M5 supplied no reason to introduce one |
 | Chromatogram touch semantics | **M7** | deliberately undecided |
 | Vendor-format direct preview | **M6**, behind its own evidence slice | conversion support is not direct-preview support |
-| `convert` ref/render availability window | **M6** if conversion growth requires it | a conversion-lane contract question, not a viewer one |
-| VIEW-007 re-entry | whoever satisfies the three-part gate | not scheduled; the gate is the schedule |
+| `convert` ref/render availability window | **M6**, if conversion's growth makes it worth closing | a conversion-lane contract question, not a viewer one; recorded before M5.7 and excluded from its scope |
+| VIEW-007 re-entry | **M6**, for the re-measurement | M6 is the milestone that measures this backend's capabilities against a build, so it is where a different `msaccess` would be measured. Admission would schedule a new viewer slice at that point; a reusable XIC **export** stays M9's |
 
 ## M6 readiness
 

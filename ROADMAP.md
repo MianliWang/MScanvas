@@ -342,7 +342,8 @@ was given.
 M5.4 measured `XIC_SOURCE_REFUSED`, so this is the branch M5 is on: M5.5 and
 M5.6 are `NOT_APPLICABLE`, the refusal and its measurement are recorded, those
 criteria are closed explicitly as evidence-gated rather than passed over, and
-VIEW-007 is reassigned to the re-entry gate the spike records. **`M5 COMPLETE`
+VIEW-007 is reassigned to **M6** for the re-measurement, behind the re-entry
+gate the spike records. **`M5 COMPLETE`
 does not mean XIC exists** — it means every viewer capability that could honestly
 be admitted was delivered and the rest was recorded rather than approximated from
 a source that cannot produce it.
