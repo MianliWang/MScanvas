@@ -415,35 +415,162 @@ source, and its purpose, named by its own `Pseudo2DGel` class, is a rendered gel
 image, which carries no per-scan intensity and no result identity even when it
 succeeds. `MEASURED_REJECTED`.
 
-## `sic` and `slice`, measured and rejected
+## `sic`, measured to the candidate standard
 
-**`sic`** works in the ordinary sense: `sic mzCenter=4 radius=2 radiusUnits=amu`
-on the fixture selects the inclusive window `[2,6]` and reports `sumIntensity`
-`55` — the same sum `tic` computes over the same window. `radiusUnits=ppm`
-resolves as `mzCenter × radius / 1e6`. It is deterministic across three passes.
-It produces three files: `.data.tsv` (one row per matching peak), `.peaks.tsv`
-(one row per scan) and `.summary.txt`.
+Every row below is a real invocation against the pinned representative
+acquisition unless it says otherwise. `sic`'s rejection does **not** rest on the
+shared serialization loss alone, and the candidate-specific findings are recorded
+because a future build could fix the numeric format and leave all of them intact.
 
-Rejected for the shared serialization loss **and** four independent reasons:
+**Invocation and window.** `sic mzCenter=501 radius=1 radiusUnits=amu
+delimiter=tab` resolves to the absolute window `[500, 502]`, inclusive at both
+ends. `radiusUnits=ppm` resolves as `mzCenter × radius / 1e6`, measured on the
+synthetic fixture. All three parameters are required by the installed signature.
 
-1. **It omits scans.** `RegionSIC::close()` emits a row only
-   `if (spectrumStats.sumIntensity)`. On the representative, `peaks.tsv`
-   returned **`3,268` rows for `36,319` scans** — `33,051` silently missing.
-2. **It leaves partial output on failure.** `.data.tsv` is written incrementally,
-   so an abort leaves a truncated file — measured at **`231` rows** of `36,319`,
-   exit `0`, with no `peaks.tsv` or `summary.txt`. That file is under the byte
-   bound and would be accepted as complete.
-3. **Its peak columns are interpolated.** `interpolatedPeak` returns the vertex
-   of a parabola fitted to three points, returning a measured point only at the
-   window edge — so `peakMZ`/`peakIntensity` are in general coordinates no
-   instrument recorded.
-4. **Its filenames encode only `mzCenter`**, so two radii at one centre collide.
+**Artifacts.** Three per invocation, and the set is itself evidence:
 
-**`slice`** returns one row per matching peak with the same inclusive window.
-Rejected for the shared serialization loss **and**: it performs no per-scan
-aggregation, so it is not a chromatogram; it omits zero scans; its size scales
-with peak count rather than scan count, so the byte bound cannot be predicted
-before invoking; and it leaves partial output on the same abort.
+| Artifact | Role | Rows | Bytes | SHA-256 |
+| --- | --- | ---: | ---: | --- |
+| `…sic.501.0000.data.tsv` | one row per matching **peak** | `3,700` | `349,596` | `2d9b0d2e…be69` |
+| `…sic.501.0000.peaks.tsv` | one row per **scan that had signal** | `3,268` | `344,547` | `f954e62b…d41e` |
+| `…sic.501.0000.summary.txt` | aggregate statistics | `12` | `355` | `079b3d40…a59b` |
+
+**Schema.** `peaks.tsv` is
+`# index · id · event · analyzer · msLevel · rt · sumIntensity · peakMZ · peakIntensity`;
+`data.tsv` replaces the last three with `m/z · intensity`. Both prefix the column
+header with `#`, which `spectrum_table` does not.
+
+**Retention time and ordering.** `rt` is emitted at two decimals and ascends with
+the rows (`64.00` … `1956.30`). Rows are in **source spectrum order**, not sorted
+by retention time and not re-indexed — established from the emitted `index`
+sequence rather than assumed from `tic`'s behaviour, which shares
+`RegionAnalyzer` but not `RegionSIC`'s printer.
+
+**Identity, and its gaps.** The emitted `index` is the **source spectrum index**
+for an unfiltered query: the sequence runs `18, 36, 69, …, 36113, 36123` — sparse,
+because omitted scans leave gaps rather than shifting later rows. The `id` is the
+raw form (`controllerType=0 controllerNumber=1 scan=543`) where `spectrum_table`
+gives the abbreviated one, so a consumer would canonicalize rather than
+string-compare. **The gaps are the problem, not the identity**: from `sic` output
+alone a reader cannot tell an omitted scan from a scan the run does not have,
+because both are simply absent.
+
+**MS-level.** `--filter="msLevel 2"` produced output byte-identical to unfiltered
+across all three artifacts. As with `tic`, that is a fact about an MS2-only file
+rather than evidence about filtered indices; the synthetic fixture remains the
+only source that discriminates, and there `--filter="msLevel 1"` reduced `sic` to
+the two MS1 scans that carried signal.
+
+**No signal.** `sic mzCenter=5000 radius=1 radiusUnits=amu` still writes all
+three artifacts: `data.tsv` and `peaks.tsv` carry their headers and **zero** rows,
+and `summary.txt` reports `nonzeroCount: 0`. So an empty result is an empty
+document rather than a missing one — but every scan is absent from it, which is
+the same ambiguity at whole-file scale.
+
+**Malformed and failure.** The singular-parabola abort reaches `sic` too:
+`sic mzCenter=405 radius=5 radiusUnits=amu` exits `0` and leaves a **partial**
+`data.tsv` of `231` rows with **no** `peaks.tsv` and **no** `summary.txt`. That
+file is `21,071` bytes, far below `MAX_PREVIEW_TEXT_BYTES`, so a consumer
+checking only exit code and file existence would read a truncated answer as a
+complete one.
+
+**Completeness.** `3,268` scan rows against `36,319` source scans — `33,051`
+silently absent. Row count is peak- and signal-driven, so output size cannot be
+predicted from the scan count before invoking.
+
+**Repeatability.** Two representative runs of the same query produced
+byte-identical output across all three artifacts (`2d9b0d2e…`, `f954e62b…`,
+`079b3d40…`). Three synthetic runs were likewise byte-identical.
+
+**Rejection, restated with its own reasons.** Beyond the shared four-decimal
+loss: it omits every zero-sum scan (`RegionSIC::close()` emits only
+`if (spectrumStats.sumIntensity)`); it leaves partial output on abort; its
+`peakMZ`/`peakIntensity` are parabola-interpolated coordinates no instrument
+recorded; and its filenames encode only `mzCenter`, so two radii at one centre
+collide.
+
+## `slice`, measured to the candidate standard
+
+**Invocation and window.** `slice mz=500,502 delimiter=tab`, the same window
+`sic` was measured over. `slice` additionally accepts `rt=`, `index=` and `sn=`
+restrictions.
+
+**Output shape.** One artifact,
+`…slice.mz_500.0000-502.0000.tsv`: `3,700` rows, `349,596` bytes, SHA-256
+`2d9b0d2e…be69`. Schema is
+`# index · id · event · analyzer · msLevel · rt · m/z · intensity`.
+
+That hash is **byte-identical to `sic`'s `data.tsv`** for the equivalent window,
+which is direct evidence that both are `RegionAnalyzer`'s per-peak dump and not
+two independent readings.
+
+**Rows are per peak, not per scan.** Spectrum `36123` appears twice, once for
+`m/z 500.1334` and once for `501.0525`. **That is why a `slice` row cannot be an
+XIC point identity**: an XIC point is one value per scan, and `slice` emits one
+row per measurement with no aggregate anywhere in its output.
+
+**Retention time and ordering.** `rt` at two decimals, ascending with rows; rows
+in source spectrum order, with a scan's own peaks consecutive and in ascending
+m/z.
+
+**Identity.** Same as `sic`: source `index` for an unfiltered query, sparse
+because scans with no in-window peak are omitted, and the raw `id` form.
+
+**MS-level.** `--filter="msLevel 2"` produced byte-identical output, with the
+same MS2-only caveat.
+
+**No signal.** `slice mz=5000,5001` writes the artifact with its header and
+**zero** rows — `64` bytes, empty stderr, exit `0`.
+
+**Malformed and failure.** `slice mz=400,403` hits the singular-parabola abort:
+exit `0`, stderr `[Parabola.cpp::solve()] Matrix is singular`, and a **partial**
+file of `62` rows / `5,720` bytes. Reproduced identically on three runs
+(`d5c06b4e…61e7` each time), so the partial output is deterministic rather than a
+race — and it too sits far below the byte bound.
+
+**Completeness and scale.** `3,700` rows for `36,319` scans. The count tracks
+**peaks in the window**, not scans, so the byte bound cannot be predicted from
+the spectrum count the way `tic`'s can — the same window on a peak-dense
+acquisition would produce a much larger file, and nothing in the request bounds
+it.
+
+**Repeatability.** Two representative runs byte-identical (`2d9b0d2e…be69`), and
+the failing window reproduced byte-identically three times.
+
+**Rejection, restated with its own reasons.** Beyond the shared four-decimal
+loss: it performs no per-scan aggregation, so it is not a chromatogram and each
+scan may contribute many rows; it omits scans with no in-window peak; its output
+size is peak-driven and unbounded from the request; and it leaves partial output
+on abort.
+
+## Candidate-standard matrix
+
+The mechanical answer to *were all still-applicable candidates closed to the same
+standard?* Every cell is either a located result or an explicit
+`NOT_APPLICABLE` with its reason. No cell is a bare tick.
+
+| Dimension | `tic` | `sic` | `slice` | `image` |
+| --- | --- | --- | --- | --- |
+| Synthetic run | yes — windows `0,4` / `2,4` / `4` | yes — `mzCenter=4 radius=2 amu`, and `ppm` | yes — `mz=2,4` | yes — `image mz=0,4` |
+| Representative run | yes — `mz=500,502` and 40+ windows | yes — `mzCenter=501 radius=1 amu` | yes — `mz=500,502` | yes — narrow, wide and default windows |
+| Parameter / window semantics | comma, dash and single-value forms; inclusive both ends | centre + radius; `amu` and `ppm`; resolves to `[500,502]` | `mz=`, plus `rt=`/`index=`/`sn=`; inclusive both ends | `NOT_APPLICABLE` — no output produced on either source, so no window semantics are observable |
+| Output schema | `index·id·event·analyzer·msLevel·rt·sumIntensity` | three artifacts; `peaks.tsv` adds `peakMZ`/`peakIntensity` | `index·…·rt·m/z·intensity`, per peak | `NOT_APPLICABLE` — renders a gel image, not a table |
+| RT and ordering | 2 dp; **source index order**, proved by fixture RTs `353,359,0,42` | 2 dp; source order, sparse | 2 dp; source order, peaks consecutive | `NOT_APPLICABLE` — no rows |
+| Identity reconciliation | `index` == `spectrum_table` across all `36,319` rows unfiltered; renumbered under any filter | source `index` with gaps; raw `id`; omission indistinguishable from absence | same, and one scan yields many rows, so a row is not a point identity | `NOT_APPLICABLE` — no result identity by construction |
+| MS-level behaviour | fixture: correct sums, **renumbers `index`**; representative MS2 filter byte-identical | fixture: reduces to signal-carrying MS1 scans; representative byte-identical | representative byte-identical | `NOT_APPLICABLE` — no output to filter |
+| No-signal behaviour | complete table of explicit `0.0000`; **no scan omitted** | all three artifacts present, zero rows, `nonzeroCount: 0` | artifact present, zero rows, `64` bytes | `NOT_APPLICABLE` |
+| Malformed / error | parse errors exit `1`; inverted exits `0` with no output; non-finite silently unwindowed; abort leaves **no file** | abort leaves a **partial `231`-row file**, no `peaks`/`summary` | abort leaves a **partial `62`-row file**, reproduced 3× | exits `0` with no output and a caught exception on both sources |
+| Completeness / byte bound | `36,319` rows, `2,989,606` bytes, `82.3`/row, ~36 % of the bound; predictable from scan count | `3,268` of `36,319` scans; peak-driven, not predictable | `3,700` rows; peak-driven, not predictable | `NOT_APPLICABLE` — nothing written |
+| Repeatability | 3× byte-identical on both sources | 2× representative, 3× synthetic, byte-identical | 2× representative byte-identical; failing window 3× identical | 3 representative invocations, identical failure |
+| Aggregation / quantity | sum of in-window intensities, pinned to `RegionAnalyzer.cpp` | same sum, plus an **interpolated** peak | **none** — raw per-peak values | `NOT_APPLICABLE` — an image |
+| Numeric fidelity | `setprecision(4)`; `1e-6` and `4e-5` serialize as `0.0000` | same, via `RegionSIC.cpp:186-188` | same, via `RegionAnalyzer.cpp:245-246` | `NOT_APPLICABLE` |
+| **Outcome** | `MEASURED_REJECTED` | `MEASURED_REJECTED` | `MEASURED_REJECTED` | `MEASURED_REJECTED` |
+
+`image`'s `NOT_APPLICABLE` cells are a consequence of its measured artifact
+shape: it produced no output on either pinned source, and what it produces when
+it succeeds is a rendered gel with no rows and no per-scan quantity. Fabricating
+a scan-identity or ordering test for an output that has no rows would be
+inventing evidence, not gathering it.
 
 ## A second build-specific failure, recorded
 
@@ -513,8 +640,11 @@ hash M0 recorded for this fixture on a different one.
    declares, none left in an intermediate state.
 3. **Every still-plausible candidate was measured to the same standard.** All
    four that can express an m/z window, on the synthetic fixture and on the
-   representative acquisition — `image` included, with three representative
-   invocations.
+   representative acquisition. This condition is **not** a narrative assertion:
+   it is discharged by the [candidate-standard
+   matrix](#candidate-standard-matrix), where every dimension of the standard is
+   either a located result or an explicit `NOT_APPLICABLE` with its reason, for
+   each of `tic`, `sic`, `slice` and `image`.
 4. **Every unmeasured candidate is excluded explicitly by signature.** The four
    are `metadata`, `run_summary`, `spectrum_table` and `binary`, each because its
    declared parameter set contains no m/z term.
@@ -531,7 +661,9 @@ XIC is refused for this executable, not for all time. A future attempt must
 satisfy **all** of the following before any XIC work resumes:
 
 1. **An executable identity covered by fresh evidence.** The gate is the exact
-   `msaccess.exe` SHA-256, plus the required exact help/capability grammar.
+   `msaccess.exe` SHA-256 — for the build this record covers, that is
+   `85681B205569A9850F47D079749E04BA45F4B0C64E363D4A2C5C67C3C67ED1F4` — plus the
+   required exact help/capability grammar.
    Release and build-date facts may additionally be checked. A different digest
    is **not** admitted because its help looks the same — it requires fresh
    measurement and a newly authorized evidence profile.

@@ -1390,26 +1390,7 @@ def validate_the_xic_route_outcome_has_one_answer(errors: list[str]) -> None:
         "XIC_SOURCE_ADMITTED" if outcome == "XIC_SOURCE_REFUSED" else "XIC_SOURCE_REFUSED"
     )
 
-    # The measured executable identity, checked inside the gate section rather
-    # than anywhere in the file. The digest appears in the build table too, and
-    # a gate that stopped naming an identity while the table still carried one
-    # is exactly the regression worth catching.
-    gate = _section(text, "## The XIC re-entry gate")
-    if gate is None:
-        fail(
-            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md has no `## The XIC re-entry gate` section. "
-            "A refusal that records no re-entry condition leaves the next attempt with nothing "
-            "to satisfy",
-            errors,
-        )
-    elif "SHA-256" not in gate:
-        fail(
-            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md: the re-entry gate no longer requires an "
-            "executable identity. Scientific evidence is transferable only to an executable "
-            "the evidence covers, and a gate that names no identity admits any build whose "
-            "help happens to match",
-            errors,
-        )
+    _validate_the_reentry_gate_names_the_measured_digest(text, errors)
 
     for name in ("ROADMAP.md", "BOOTSTRAP_STATUS.md"):
         document = ROOT / name
@@ -1455,6 +1436,79 @@ def validate_the_xic_route_outcome_has_one_answer(errors: list[str]) -> None:
                     "status document is the one way this record can mislead",
                     errors,
                 )
+
+
+def _validate_the_reentry_gate_names_the_measured_digest(
+    text: str, errors: list[str]
+) -> None:
+    """The re-entry gate repeats the digest the measured-build table records.
+
+    One source of documentary truth and one consistency check: the digest is
+    read out of the evidence table rather than written down a second time here,
+    so a rebuild measured against a different executable is a one-line edit in
+    the spike and this rule follows it.
+
+    The word `SHA-256` is not an executable identity. A gate that said only
+    "the exact SHA-256" would pass a text search while naming nothing, and the
+    whole point of the rule it enforces is that a build is admitted by identity
+    rather than by resembling a measured one.
+
+    Fails closed on every way the pair can stop meaning anything: no table
+    digest, an ambiguous set of them, a value that is not 64 hex characters, no
+    gate section, or a gate that does not repeat that exact value. Hex case is
+    not treated as semantic, which is the convention `Sha256Digest` already
+    uses.
+    """
+    build = _section(text, "## Measured ProteoWizard build")
+    if build is None:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md has no `## Measured ProteoWizard build` "
+            "section, so there is no measured executable identity for the re-entry gate to "
+            "repeat",
+            errors,
+        )
+        return
+
+    # The one row that names the executable this evidence belongs to. Anchored
+    # on `msaccess.exe` and `SHA-256` together, so the sibling `msconvert.exe`
+    # row and the release strings cannot be mistaken for it.
+    digests = {
+        found.upper()
+        for line in build.split("\n")
+        if "msaccess.exe" in line and "SHA-256" in line
+        for found in re.findall(r"\b([0-9a-fA-F]{64})\b", line)
+    }
+    if len(digests) != 1:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md: the measured-build table names "
+            f"{len(digests)} `msaccess.exe` SHA-256 values, not 1. The re-entry gate is "
+            "checked against that table, so exactly one measured identity has to be "
+            "readable from it",
+            errors,
+        )
+        return
+    measured = digests.pop()
+
+    gate = _section(text, "## The XIC re-entry gate")
+    if gate is None:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md has no `## The XIC re-entry gate` section. "
+            "A refusal that records no re-entry condition leaves the next attempt with nothing "
+            "to satisfy",
+            errors,
+        )
+        return
+
+    named = {found.upper() for found in re.findall(r"\b([0-9a-fA-F]{64})\b", gate)}
+    if measured not in named:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md: the re-entry gate does not name the "
+            f"measured `msaccess.exe` digest `{measured[:8]}...{measured[-4:]}` that the "
+            "measured-build table records. Scientific evidence is transferable only to an "
+            "executable identity the evidence covers, and the word `SHA-256` is not an "
+            "identity",
+            errors,
+        )
 
 
 def _section(text: str, heading: str) -> str | None:
