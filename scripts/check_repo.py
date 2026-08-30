@@ -1595,19 +1595,28 @@ def _first_markdown_table(text: str, heading: str) -> list[list[str]] | None:
     return rows or None
 
 
-def _table_column(rows: list[list[str]], index: int) -> list[str]:
-    """One column's data cells, header and alignment rows dropped."""
-    body: list[list[str]] = []
-    seen_rule = False
-    for row in rows:
-        if not seen_rule:
-            # The alignment rule is the only row made entirely of dashes and
-            # colons; everything before it is the header.
-            if row and all(set(cell) <= set("-: ") and cell for cell in row):
-                seen_rule = True
-            continue
-        body.append(row)
-    return [row[index] for row in body if len(row) > index]
+def _table_header_and_body(rows: list[list[str]]) -> tuple[list[str], list[list[str]]]:
+    """A pipe table's header cells and its data rows.
+
+    The alignment rule is the only row made entirely of dashes and colons; the
+    row before it is the header and everything after it is data.
+    """
+    for index, row in enumerate(rows):
+        if row and all(cell and set(cell) <= set("-: ") for cell in row):
+            return (rows[index - 1] if index else []), rows[index + 1 :]
+    return [], []
+
+
+def _bare(cell: str) -> str:
+    """A cell's identity without the markup it is presented in."""
+    return cell.strip().strip("*").strip("`").strip()
+
+
+# The final-classification states that mean a candidate had to be measured, and
+# therefore has to be answered across every dimension of the standard. The
+# candidates themselves are read from the document; only this vocabulary is
+# fixed, because it is what "was measured" means.
+MEASURED_STATES: frozenset[str] = frozenset({"MEASURED_ADMITTED", "MEASURED_REJECTED"})
 
 
 def validate_one_candidate_evidence_dimension_vocabulary(errors: list[str]) -> None:
@@ -1626,10 +1635,18 @@ def validate_one_candidate_evidence_dimension_vocabulary(errors: list[str]) -> N
     came to pad the matrix while a real dimension was absent and the row count
     still looked plausible.
 
+    The same argument closes the other axis. Candidate columns are read from the
+    spike's own final classification -- every candidate whose recorded state
+    means it had to be measured -- rather than written down a second time here,
+    so a candidate cannot leave the matrix while its classification still says
+    it was measured, and one cannot appear that nothing measured. Deleting a
+    whole column used to pass: the rows were intact, and rows were all this
+    checked.
+
     The intended failure mode is that amending the ADR's table breaks this rule
     until the evidence owner classifies the new dimension for every candidate.
-    Nothing here reads a cell: what a dimension is worth answering, and whether
-    an answer is any good, stay matters for review.
+    Nothing here reads what a cell says: presence and shape are structure, and
+    whether an answer is any good stays a matter for review.
     """
     adr = ROOT / "docs/architecture/adr/0037-viewer-completion-route.md"
     spike = ROOT / "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md"
@@ -1648,9 +1665,8 @@ def validate_one_candidate_evidence_dimension_vocabulary(errors: list[str]) -> N
             errors,
         )
         return
-    answered = _first_markdown_table(
-        spike.read_text(encoding="utf-8"), "## Candidate-standard matrix"
-    )
+    spike_text = spike.read_text(encoding="utf-8")
+    answered = _first_markdown_table(spike_text, "## Candidate-standard matrix")
     if answered is None:
         fail(
             "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md has no `## Candidate-standard matrix` table. "
@@ -1659,11 +1675,22 @@ def validate_one_candidate_evidence_dimension_vocabulary(errors: list[str]) -> N
             errors,
         )
         return
+    classified = _first_markdown_table(spike_text, "## Final classification")
+    if classified is None:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md has no `## Final classification` table. It "
+            "is where a candidate's state is recorded, and the matrix's columns are checked "
+            "against it",
+            errors,
+        )
+        return
 
     # The ADR numbers its rows, so the dimension is the second column; the
     # matrix leads with the dimension and then one column per candidate.
-    names = _table_column(required, 1)
-    rows = _table_column(answered, 0)
+    _, required_body = _table_header_and_body(required)
+    names = [row[1] for row in required_body if len(row) > 1]
+    header, body = _table_header_and_body(answered)
+    rows = [row[0] for row in body if row]
 
     for label, values, where in (
         ("ADR 0037", names, "docs/architecture/adr/0037-viewer-completion-route.md"),
@@ -1702,6 +1729,121 @@ def validate_one_candidate_evidence_dimension_vocabulary(errors: list[str]) -> N
             f"{', '.join(repr(value) for value in extra)}, which ADR 0037 does not define as a "
             "candidate evidence dimension. Rows the standard never asked for make the matrix "
             "look complete while a required dimension is missing",
+            errors,
+        )
+
+    _validate_the_matrix_covers_every_measured_candidate(classified, header, body, errors)
+
+
+def _validate_the_matrix_covers_every_measured_candidate(
+    classified: list[list[str]],
+    header: list[str],
+    body: list[list[str]],
+    errors: list[str],
+) -> None:
+    """The matrix's columns are the candidates the classification says were measured.
+
+    Read from the record rather than restated: a candidate list written here
+    would be a second authority, and the point of the rule is that there is one.
+    A signature-excluded candidate needs no column, because its exclusion is
+    closed without measuring it.
+    """
+    spike = "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md"
+    _, states = _table_header_and_body(classified)
+    ragged = [row for row in states if len(row) < 2]
+    if ragged:
+        fail(
+            f"{spike}: {len(ragged)} row(s) of the final classification carry no state. A "
+            "candidate without a recorded state is neither measured nor excluded",
+            errors,
+        )
+        return
+
+    named = [_bare(row[0]) for row in states]
+    repeated = sorted({value for value in named if named.count(value) > 1})
+    if repeated:
+        fail(
+            f"{spike}: the final classification lists "
+            f"{', '.join(repr(value) for value in repeated)} more than once. A candidate with "
+            "two states has no state",
+            errors,
+        )
+        return
+
+    measured = {
+        _bare(row[0]) for row in states if _bare(row[1]) in MEASURED_STATES
+    }
+    if not measured:
+        fail(
+            f"{spike}: the final classification records no measured candidate, so the "
+            "candidate-standard matrix would have nothing to be complete about",
+            errors,
+        )
+        return
+
+    columns = [_bare(cell) for cell in header[1:]]
+    if not columns or not all(columns):
+        fail(
+            f"{spike}: the candidate-standard matrix header names no candidate columns. The "
+            "matrix is what discharges the refusal's third condition, and it discharges "
+            "nothing without them",
+            errors,
+        )
+        return
+    duplicated = sorted({value for value in columns if columns.count(value) > 1})
+    if duplicated:
+        fail(
+            f"{spike}: the candidate-standard matrix has "
+            f"{', '.join(repr(value) for value in duplicated)} in more than one column. Two "
+            "columns for one candidate are two answers with nothing deciding between them",
+            errors,
+        )
+        return
+
+    absent = sorted(measured - set(columns))
+    if absent:
+        fail(
+            f"{spike}: the candidate-standard matrix has no column for "
+            f"{', '.join(repr(value) for value in absent)}, which the final classification "
+            "records as measured. A measured candidate that leaves the matrix takes its "
+            "unanswered dimensions with it, and the row count still looks right",
+            errors,
+        )
+    unmeasured = sorted(set(columns) - measured)
+    if unmeasured:
+        fail(
+            f"{spike}: the candidate-standard matrix has a column for "
+            f"{', '.join(repr(value) for value in unmeasured)}, which the final classification "
+            "does not record as measured. A column nothing measured is a claim the evidence "
+            "does not carry",
+            errors,
+        )
+    if absent or unmeasured:
+        return
+
+    # Rectangular, and every intersection answered. What the answer says is not
+    # read here; that a pair was answered at all is structure.
+    for row in body:
+        if len(row) != len(header):
+            fail(
+                f"{spike}: the candidate-standard matrix row {row[0]!r} has {len(row)} cells "
+                f"where the header has {len(header)}. A ragged row silently shifts every "
+                "answer after the gap onto the wrong candidate",
+                errors,
+            )
+            return
+    blank = [
+        (row[0], columns[position])
+        for row in body
+        for position, cell in enumerate(row[1:])
+        if not cell.strip()
+    ]
+    if blank:
+        fail(
+            f"{spike}: the candidate-standard matrix leaves "
+            + ", ".join(f"{candidate} on {dimension!r}" for dimension, candidate in blank)
+            + " unanswered. Every measured candidate is answered on every required dimension, "
+            "as a located result or an explicit `NOT_APPLICABLE` with its reason",
             errors,
         )
 
