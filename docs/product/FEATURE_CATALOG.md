@@ -161,11 +161,13 @@ Where each of those is owned, and why, is fixed by
   often looking.
 
   **A refusal is not a deferral to a later build by default.** XIC is refused for
-  the measured executable, and re-entry requires an exact executable identity
-  covered by fresh measurement plus a resolved numeric-fidelity answer — help
-  text that looks the same is not evidence that an implementation behaves the
-  same. **M5 writes no XIC figure or data document**; a reusable XIC export
-  belongs to M9 if XIC ever ships.
+  the measured executable, and re-entry is gated on the three conditions
+  [the spike](../spikes/M5_XIC_SOURCE_EVIDENCE.md) records — cited rather than
+  restated, because a shorter list is how a build that fixed the precision and
+  changed the aggregation would get admitted. Help text that looks the same is
+  not evidence that an implementation behaves the same. Owner: M6, for that
+  measurement. **M5 writes no XIC figure or data document**; a reusable XIC
+  export belongs to M9 if XIC ever ships.
 - **VIEW-008** is deferred past M5 on a dependency audit, not on priority alone.
   It needs several runs loaded at once where the application holds exactly one
   by contract, a layer identity `FigureSpec` has no concept of, a normalization

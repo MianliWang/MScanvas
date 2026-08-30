@@ -174,10 +174,11 @@ is [ADR 0042](../architecture/adr/0042-viewer-completion-closure-and-handoff.md)
 Measured against a real ProteoWizard installation, no query that build offers can
 serve as a general XIC source, so MSCanvas draws none rather than a trace nobody
 could defend — and writes no XIC export either. The refusal belongs to the
-executable that was measured; re-entry needs an exact executable identity covered
-by fresh measurement, the required capability grammar, and a resolved
-numeric-fidelity answer. Multi-layer comparison is deferred past M5, with named
-owners for the contracts it needs.
+executable that was measured, and re-entry is gated: the conditions are the three
+[the spike](../spikes/M5_XIC_SOURCE_EVIDENCE.md) records, which include
+re-measuring everything that record establishes and are not restated here in a
+shorter form. Owner: M6, for that measurement. Multi-layer comparison is deferred
+past M5, with named owners for the contracts it needs.
 See also
 [ADR 0032](../architecture/adr/0032-viewer-interaction-and-viewport-state.md) and
 [ADR 0033](../architecture/adr/0033-visible-linked-tic-bpc-viewer.md).

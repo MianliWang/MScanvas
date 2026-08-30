@@ -289,9 +289,12 @@ five product decisions it surfaces are in
   all of them and is not restated here.
 
   **XIC is refused for this executable, not for all time.** The re-entry gate is
-  an exact executable identity covered by fresh measurement, plus a resolved
-  numeric-fidelity answer. No XIC was implemented, no approximation was
-  substituted, and no production code changed.
+  the three conditions
+  [the spike](docs/spikes/M5_XIC_SOURCE_EVIDENCE.md) records — including
+  re-measuring everything that record establishes, because aggregation and the
+  singular-parabola abort cannot be read off a help text — and it is cited rather
+  than restated in a shorter form. Owner: M6. No XIC was implemented, no
+  approximation was substituted, and no production code changed.
 - **M5.5 — the XIC model and runtime.** **`NOT_APPLICABLE`.** It was conditional
   on an admitted source, and M5.4 measured a refusal. The typed operation, its
   capability gate, its parser and its service path are not built, and are not
