@@ -116,6 +116,25 @@ whether or not it had anything in it, and the three floors were measured against
 a 768px window where that arithmetic decides whether a control is still inside
 the column.
 
+## The lane is the queue slot, not the conversion panel
+
+`conversion.busy` is the conversion panel's notion of having work in flight, and
+it includes a dispatched retry, an adoption and a diagnostics export. None of
+those launches a ProteoWizard process or touches the preview, and the operation's
+own guard reads the queue slot alone -- so `selectSpectrum` accepts a click
+through all three.
+
+The rendered projection read the wider value. Before this slice that closed two
+scan-step buttons; here it would have closed the chromatogram and every row of
+the table, and told the reader a conversion was running while a diagnostics text
+file finished being written. **A surface that refuses where the operation accepts
+is not the safe direction when it is also saying something untrue.**
+
+So the lane is one predicate with two readers, the same shape the selection rule
+itself has: `busyRef` for the handler and `backendLaneBusy` for the interface,
+both from `ownsTheBackendLane`. The panel keeps its wider `busy` for its own
+controls, which is what it is for.
+
 ## What this ADR does not decide
 
 - **The lane rule itself.** Its four facts are unchanged, and it is still not

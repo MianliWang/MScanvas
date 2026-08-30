@@ -22,7 +22,14 @@ import { describe, expect, it } from "vitest";
 
 import type { PreviewApi } from "./api";
 import { PreviewApiProvider } from "./api";
-import type { BackendAvailability, Preview, SelectedSpectrumOutcome } from "./contracts";
+import type {
+  BackendAvailability,
+  ConversionQueueItem,
+  Preview,
+  SelectedSpectrumOutcome,
+  WorkspaceConversionState,
+  WorkspaceOutputAdoptionResult,
+} from "./contracts";
 import type { WorkspaceDropTransport } from "./dropTransport";
 import { WorkspaceDropTransportProvider } from "./dropTransport";
 import { canStartSpectrumSelection, usePreviewWorkspace } from "./usePreviewWorkspace";
@@ -48,6 +55,53 @@ import {
 
 const VENDOR_ROW = shimadzuDataset(9);
 
+/**
+ * A finished queue with an output worth adopting.
+ *
+ * Terminal, so the slot owns no lane: what an adoption of it exercises is the
+ * conversion panel's own busy, which is a different thing and is the point of
+ * the case below.
+ */
+const ADOPTABLE_TERMINAL_QUEUE: WorkspaceConversionState = {
+  status: "terminal",
+  operationId: "1",
+  reason: "completed",
+  queue: queueOf([adoptable(VENDOR_ROW.handle, VENDOR_ROW.fileName)]),
+};
+
+function adoptable(handle: string, name: string): ConversionQueueItem {
+  return queueItem(handle, name, {
+    state: "finalized",
+    attempts: 1,
+    result: {
+      kind: "single" as const,
+      report: {
+        datasetHandle: handle,
+        sourceKind: "sciex_wiff",
+        outcome: "finalized",
+        detailedOutcome: null,
+        outputFileName: `${name.replace(/\.[^.]+$/u, "")}.mzML`,
+        output: {
+          byteLength: 28_637,
+          sha256: "B3D97B38".repeat(8).slice(0, 64),
+          spectrumCount: 1,
+          chromatogramCount: 1,
+        },
+        validation: {
+          mode: "output_only",
+          verified: [],
+          unverified: [],
+          inapplicable: [],
+          fullyVerified: false,
+        },
+        backend: null,
+        stagingResidue: null,
+        installationGeneration: 0,
+      },
+    },
+  });
+}
+
 function wrapper(
   api: PreviewApi,
   dropTransport: WorkspaceDropTransport = createFakeWorkspaceDropTransport(),
@@ -70,6 +124,8 @@ function mount(
     readonly spectrum?: (index: number) => Promise<SelectedSpectrumOutcome>;
     readonly availability?: () => Promise<BackendAvailability>;
     readonly conversion?: FakePreviewApiOptions["conversion"];
+    readonly adoption?: FakePreviewApiOptions["adoption"];
+    readonly initialConversion?: FakePreviewApiOptions["initialConversion"];
   } = {},
 ) {
   const api = createFakePreviewApi({
@@ -78,6 +134,10 @@ function mount(
     ...(options.spectrum === undefined ? {} : { spectrum: options.spectrum }),
     ...(options.availability === undefined ? {} : { availability: options.availability }),
     ...(options.conversion === undefined ? {} : { conversion: options.conversion }),
+    ...(options.adoption === undefined ? {} : { adoption: options.adoption }),
+    ...(options.initialConversion === undefined
+      ? {}
+      : { initialConversion: options.initialConversion }),
   });
   const rendered = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
   return { api, ...rendered };
@@ -759,6 +819,52 @@ describe("what a scan step says it can do", () => {
     // preview.
     expect(result.current.preview.status).toBe("loaded");
     expect(result.current.selectedIndex).toBe(2);
+  });
+
+  it("stays available through an adoption, which owns no backend lane", async () => {
+    /*
+     * The confirmation review's case, and the distinction is the whole point of
+     * the rule. `conversion.busy` is the conversion panel's notion of having
+     * work in flight -- a dispatched retry, an adoption, a diagnostics export --
+     * and none of those launches a ProteoWizard process or touches the preview.
+     * `selectSpectrum` guards itself with the queue slot alone, so it accepts a
+     * click through all three; a surface that refused there would take away a
+     * selection the operation would have made, and would say a conversion was
+     * running while a text file finished being written.
+     */
+    const adoption = deferred<WorkspaceOutputAdoptionResult>();
+    const { result, api } = mount({
+      initialConversion: ADOPTABLE_TERMINAL_QUEUE,
+      adoption: () => adoption.promise,
+    });
+    await openThePreview(result);
+    await select(result, 2);
+    await waitFor(() => {
+      expect(result.current.spectrum.status).toBe("loaded");
+    });
+
+    act(() => {
+      result.current.conversion.adopt();
+    });
+    await waitFor(() => {
+      expect(result.current.conversion.adopting).toBe(true);
+    });
+
+    // The panel is busy, and the lane is not.
+    expect(result.current.conversion.busy).toBe(true);
+    expect(result.current.conversion.backendLaneBusy).toBe(false);
+    expect(result.current.spectrumSelection).toEqual({ status: "available" });
+    expect(result.current.canSelectNextScan).toBe(true);
+
+    // And the operation agrees, which is what makes the posture true rather
+    // than merely permissive.
+    await act(async () => {
+      result.current.selectSpectrum(3);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(api.requestedSpectra).toEqual([2, 3]);
+    });
   });
 
   it("takes both steps back off once the backend is resolved unavailable", async () => {

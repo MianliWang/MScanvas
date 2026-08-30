@@ -5643,6 +5643,14 @@ as not usable for as long as it runs, and reading that as a verdict tells a
 reader their installation is broken every time it is looked at. That correction
 was made after an existing scan-step test caught the first ordering.
 
+**The lane is the queue slot.** `conversion.busy` also covers a dispatched
+retry, an adoption and a diagnostics export, none of which launches a backend
+process -- and the operation's guard reads the slot alone, so it accepts a click
+through all three. The rendered projection now reads the same slot state, through
+one predicate with a ref twin and a rendered twin. Found in confirmation review,
+where the wider value would have closed both surfaces and said a conversion was
+running while a text file was being written.
+
 **A blocked selection blocks committing a scan, not reading the run.** Hover,
 wheel zoom, drag pan, the keyboard viewport shortcuts, the range buttons, the
 trace toggles, scrolling, virtualization and `Arrow`/`Page`/`Home`/`End` roving
@@ -5673,7 +5681,7 @@ silent.
 
 ### Evidence
 
-Frontend tests **1,375** (from 1,343), across the pure rule and its precedence,
+Frontend tests **1,377** (from 1,343), across the pure rule and its precedence,
 each surface's blocked and preserved behaviour, and the assembled document —
 where the single occurrence, both associations, the announcement, the absence of
 any backend read, and recovery without a remount are asserted together.

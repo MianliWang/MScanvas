@@ -3491,9 +3491,17 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         hasLoadedPreview,
         backendUsable,
         backendBusy,
-        conversionBusy: conversion.busy,
+        // The lane, not the conversion panel's wider "has work in flight".
+        // `conversion.busy` also covers a dispatched retry, an adoption and a
+        // diagnostics export, none of which launches a backend process -- and
+        // `selectSpectrum` accepts a click through all three, because the ref
+        // it guards itself with is this same slot state. A surface that refused
+        // there would take away a selection the operation would have made, and
+        // would say a conversion was running while a text file finished being
+        // written.
+        conversionBusy: conversion.backendLaneBusy,
       }),
-    [backendBusy, backendUsable, conversion.busy, hasLoadedPreview],
+    [backendBusy, backendUsable, conversion.backendLaneBusy, hasLoadedPreview],
   );
   const spectrumSelectionAvailable = spectrumSelection.status === "available";
 
