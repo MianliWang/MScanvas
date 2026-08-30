@@ -163,9 +163,10 @@ Where each of those is owned, and why, is fixed by
   often looking.
 
   **A named source is not a built feature.** The trace belongs to M5.5 and M5.6,
-  and neither may start until the window's unit posture, the MS-level scope and
-  the presentation are decided; M5.4 settled only which query and, through it,
-  which aggregation. **M5 writes no XIC figure or data document**; a reusable XIC
+  and neither may start until the window's unit posture, the MS-level scope, the
+  aggregation and the presentation are decided. M5.4 settled only *which query*;
+  it narrowed the aggregation to the sum that query computes, which is not the
+  same as the product having accepted a sum. **M5 writes no XIC figure or data document**; a reusable XIC
   export belongs to M9.
 - **VIEW-008** is deferred past M5 on a dependency audit, not on priority alone.
   It needs several runs loaded at once where the application holds exactly one

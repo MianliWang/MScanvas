@@ -5605,11 +5605,14 @@ already express the candidate inventory" is worth checking rather than asserting
 
 ### What was not decided
 
-M5.4 answered **D4** by evidence — exactly one candidate survived, so no choice
-between viable sources remains — and through it constrained **D3**, since the
-admitted query computes a sum and no admitted query offers a maximum. **D1, D2
-and D5 remain open product decisions**, and M5.5 does not begin until they are
-settled.
+M5.4 answered **D4** by evidence: exactly one candidate survived, so no choice
+between viable sources remains.
+
+It **constrained but did not answer D3**. The admitted query computes a sum and
+no admitted query offers a maximum, so a sum is the only aggregation available —
+which is not the same as the product having accepted a sum as the quantity to
+present. **D1, D2, D3 and D5 all remain open**, and M5.5 does not begin until
+they are settled.
 
 No XIC was implemented: no operation, no capability gate, no parser, no DTO, no
 service command, no frontend, no cache, no export, no new selection authority,

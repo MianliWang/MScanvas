@@ -498,8 +498,12 @@ M5.4 supplies evidence. It does not answer these.
 | **D5** — panel and value-axis presentation | The value is a summed, unitless intensity; one point per scan; complete coverage including explicit zeros; rows in source-index order with `rt` available per row. | Whether the axis is retention time or index, how a refused window is shown, and how a recomputed trace is labelled. |
 
 Because D4 is evidence-determined and no second viable source remains, this slice
-does not reach `USER_DECISION_REQUIRED`. **D1, D2, D3 and D5 remain open**, and
-M5.5 may not begin until they are settled.
+does not reach `USER_DECISION_REQUIRED`.
+
+**D1, D2, D3 and D5 all remain open.** D3 is *constrained* — a sum is the only
+aggregation any admitted query offers — but constrained is not decided, and the
+product has not accepted a sum as the quantity to present. M5.5 may not begin
+until all four are settled.
 
 ## What was not done
 

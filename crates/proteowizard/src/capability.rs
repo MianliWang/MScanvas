@@ -1224,6 +1224,12 @@ Analysis commands (used with -x/--exec):
       radius: set radius value
       radiusUnits: set units for radius value (must be amu or ppm)
 
+  image [args - see list]
+    (create pseudo-2D-gel image)
+      args:
+      label=<xxxx> (set filename label to xxxx)
+      mz=<mzLow>[,<mzHigh>] (set m/z cutoff range)
+
 Examples:
 
 msaccess data.mzML -x "tic mz=409-410" --filter="msLevel 2"
@@ -1390,7 +1396,7 @@ msconvert data.RAW --mzXML
     }
 
     /// Every live analysis query the installed backend declares is readable
-    /// through the generic accessor, including the three this repository had
+    /// through the generic accessor, including the four this repository had
     /// never held a signature for.
     ///
     /// M5.4 evidence, and the reason that slice changed no production code. The
@@ -1455,6 +1461,62 @@ msconvert data.RAW --mzXML
         assert_eq!(
             capabilities.tic_capability(),
             TicCapability::SupportedWithMsLevelFilter
+        );
+
+        // `image`, whose declaration is the odd one: its parameters are listed
+        // as prose under an `[args - see list]` placeholder rather than in the
+        // signature. It is held as a declaration with no parameters, which is
+        // the honest reading -- the grammar genuinely does not declare any.
+        let image = capabilities
+            .analysis_query("image")
+            .expect("the installed build declares image");
+        assert_eq!(image.normalized_signature(), "[args - see list]");
+        assert_eq!(image.parameter_names().count(), 0);
+        assert!(!image.has_parameter("mz"));
+    }
+
+    /// Two limits of the generic accessor, pinned so a caller does not mistake
+    /// it for more than it is.
+    ///
+    /// The case above reads exact signatures out of live help, which is what
+    /// M5.4 needed. It would be easy to read that as "the accessor models the
+    /// grammar", and it does not model two things a caller could otherwise be
+    /// misled by. Both are recorded here rather than fixed, because M5.4 is an
+    /// evidence slice and neither is reachable from any shipped route: nothing
+    /// in production asks about `binary`'s alternation or `slice`'s brackets.
+    #[test]
+    fn the_generic_accessor_models_neither_alternation_nor_malformed_help() {
+        let capabilities = msaccess(MSACCESS_HELP);
+
+        // `binary index=<...> | sn=<...>` is an *alternation*: exactly one of
+        // the two is supplied. The accessor reports both as required, because
+        // it reads optionality from bracketing alone and `|` is not bracketing.
+        // A caller that gated `binary sn=413` on `parameter_is_optional` would
+        // reject a valid invocation.
+        let binary = capabilities
+            .analysis_query("binary")
+            .expect("binary query declaration");
+        assert_eq!(binary.parameter_is_optional("index"), Some(false));
+        assert_eq!(binary.parameter_is_optional("sn"), Some(false));
+
+        // And `slice`'s own declaration is unbalanced in the installed help --
+        // `[rt=<rtLow>[,<rtHigh>]]]` closes one bracket more than it opens.
+        // That is upstream's text, reproduced verbatim above rather than
+        // silently repaired, and the parser absorbs the extra close instead of
+        // refusing the line. Asserted so a later transcription error in the
+        // fixture is a failing test rather than an invisible edit.
+        let slice = capabilities
+            .analysis_query("slice")
+            .expect("slice query declaration");
+        assert_eq!(
+            slice.normalized_signature(),
+            "[mz=<mzLow>[,<mzHigh>]] [rt=<rtLow>[,<rtHigh>]]] [index=<indexLow>[,<indexHigh>] | sn=<scanLow>[,<scanHigh>]] [delimiter=<fixed|space|comma|tab>]"
+        );
+        let signature = slice.normalized_signature();
+        assert_eq!(
+            signature.matches(']').count(),
+            signature.matches('[').count() + 1,
+            "the installed help closes one bracket more than it opens"
         );
     }
 

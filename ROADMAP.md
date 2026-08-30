@@ -328,10 +328,11 @@ was given.
 **XIC is conditional on M5.4, and both outcomes complete the milestone.**
 M5.4 measured `XIC_SOURCE_ADMITTED`, so this is the branch M5 is on: an XIC is
 produced from the evidenced source, participates in the one linked selection, and
-its criteria apply. Being on that branch is not permission to start M5.5 — the
-evidence settled which backend query (D4) and constrained the aggregation to the
-sum that query computes (D3); the window's unit posture, the MS-level scope and
-the presentation remain product decisions that have to be made first. On `XIC_SOURCE_REFUSED`
+its criteria apply. Being on that branch is not permission to start M5.5. The
+evidence settled exactly one of the five decisions — which backend query (D4) —
+and constrained a second, since the admitted query computes a sum and no admitted
+query offers a maximum. **D1, D2, D3 and D5 all remain open**: a sum being the
+only aggregation on offer is not the product having accepted it. On `XIC_SOURCE_REFUSED`
 M5.5 and M5.6 are `NOT_APPLICABLE`, the refusal and its measurement are recorded,
 those criteria are closed explicitly as evidence-gated rather than passed over,
 and VIEW-007 is reassigned to a named owner and re-entry gate. In that outcome
