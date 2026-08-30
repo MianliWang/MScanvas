@@ -960,6 +960,12 @@ button:disabled {
 .viewer-stack {
   display: grid;
   min-height: 0;
+  /* Fills what the column has left, which is what it did for free as a direct
+     grid item of `.workspace-layout` and its `minmax(0, 1fr)` rows. As a flex
+     item it defaults to `0 1 auto` -- its own content, floored by the tracks
+     below -- so a tall window showing a short run would have left the three
+     scientific views bunched at the top under a band of nothing. */
+  flex: 1 1 auto;
   /* Three linked views, top to bottom in the order a reader moves through
      them: the run's shape, the scans it is made of, and the one scan they
      chose. The chromatogram takes the smallest share, because it is a locator

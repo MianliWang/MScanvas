@@ -300,6 +300,20 @@ describe("how an empty availability region is collapsed", () => {
     });
   }
 
+  it("lets the three-panel stack fill the column the notice shares", () => {
+    /*
+     * The stack was a direct grid item of `.workspace-layout`, whose
+     * `minmax(0, 1fr)` rows stretched it. Wrapping it in a flex column takes
+     * that away: a flex item defaults to `0 1 auto`, so it would take its own
+     * content height -- floored by the three tracks and nothing more -- and a
+     * tall window showing a short run would show a band of nothing beneath the
+     * three scientific views.
+     */
+    const body = ruleBody(".viewer-stack");
+    expect(body).toContain("flex: 1 1 auto");
+    expect(body).toContain("min-height: 0");
+  });
+
   it("declares each of them exactly once", () => {
     // Written twice, a later copy silently decides. Both of these were, once.
     for (const selector of [

@@ -51,6 +51,7 @@ const VIEWPORTS = [
 const NOTICE = "#viewer-selection-availability";
 const REGION = '[data-live-region="spectrum-selection-availability"]';
 const VIEWER_COLUMN = ".viewer-column";
+const VIEWER_STACK = ".viewer-stack";
 const GRID = "div.spectrum-table";
 const FIRST_ROW = 'div.spectrum-table-row[data-row-position="0"]';
 
@@ -272,6 +273,14 @@ describe("M5.7 — selection availability, rendered", () => {
       for (const panel of [CHROMATOGRAM, TABLE, SPECTRUM]) {
         expect(await browser.$(panel).isExisting()).toBe(true);
       }
+
+      // And the stack still fills what the column has left. Presence is not
+      // enough: wrapping the stack in a flex column takes away the stretch it
+      // had for free as a grid item, and the symptom is a band of nothing under
+      // three views that have bunched at the top.
+      const stack = await boxOf(VIEWER_STACK);
+      expect(Math.abs(stack.bottom - column.bottom)).toBeLessThan(2);
+      expect(stack.top).toBeGreaterThanOrEqual(notice.bottom - 1);
       const overflow = await horizontalOverflow();
       expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth);
 
