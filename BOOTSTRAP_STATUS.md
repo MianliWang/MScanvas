@@ -5803,7 +5803,18 @@ cache. **M8/M9** own VIEW-008, and a reusable XIC artifact if XIC ever re-enters
 `pnpm e2e:typecheck`, `pnpm e2e:browser` (9 suites, 199 cases) and
 `pnpm e2e:build`. Rust **1,350**; frontend **1,378**.
 
-`pnpm e2e:tauri` was run as a regression inventory against M5.7's baseline: the
-M5.7 real-shell cases pass, and the failures are the already-classified
-environmental ones — a figure-settings theme default and a clipboard case. **No
-new failure.** The suite is not green and is not described as green.
+`pnpm e2e:tauri` was run as a regression inventory against M5.7's baseline, not
+as new product evidence. M5.7 classified three environmental failures; this run
+reproduced **two** of them, and the comparison is enumerated so the claim is
+checkable:
+
+| M5.7 baseline case | This run |
+| --- | --- |
+| `renders every figure control and the settings it starts at` — figure-settings theme default | fails, as before |
+| `holds one scientific lane, whichever range is chosen` — clipboard | fails, as before |
+| `reports the range Rust resolved for a real copy` — clipboard | **passed** |
+
+The third passing is what a focus-dependent clipboard case does rather than
+evidence that anything was fixed, and it is recorded as an observation rather
+than a repair. The four M5.7 real-shell cases pass. **No new failure.** The suite
+is not green and is not described as green.

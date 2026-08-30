@@ -390,6 +390,19 @@ claimed closed.
   proves `msconvert` writes a correct mzML, and says nothing about whether
   `msaccess` can answer preview queries against a vendor acquisition. It is not
   automatically an M6 exit criterion either.
+- **VIEW-007 re-measurement, conditional and not an exit criterion.** M5 assigned
+  XIC's re-entry here because M6 is the milestone that measures this backend
+  against a build. The trigger is a **different measured `msaccess` identity**:
+  where M6 measures one — for a direct-preview slice, for a widened `msconvert`
+  distribution, or because the installation changed — it also answers the spike's
+  three-part gate, which needs an executable identity and capability grammar
+  covered by fresh evidence, a resolved numeric-fidelity answer, and
+  re-measurement of everything the record establishes. Where M6 measures no new
+  identity, this item is closed by that fact and no XIC work is owed. Admission
+  would schedule a viewer slice at that point; it does not make one an M6
+  deliverable. See
+  [ADR 0042](docs/architecture/adr/0042-viewer-completion-closure-and-handoff.md)
+  and [the spike](docs/spikes/M5_XIC_SOURCE_EVIDENCE.md).
 
 ## M7 — UI/UX and public product hardening
 

@@ -225,7 +225,7 @@ assumed from three separate slices.
 | Chromatogram touch semantics | **M7** | deliberately undecided |
 | Vendor-format direct preview | **M6**, behind its own evidence slice | conversion support is not direct-preview support |
 | `convert` ref/render availability window | **M6**, if conversion's growth makes it worth closing | a conversion-lane contract question, not a viewer one; recorded before M5.7 and excluded from its scope |
-| VIEW-007 re-entry | **M6**, for the re-measurement | M6 is the milestone that measures this backend's capabilities against a build, so it is where a different `msaccess` would be measured. Admission would schedule a new viewer slice at that point; a reusable XIC **export** stays M9's |
+| VIEW-007 re-entry | **M6**, for the re-measurement, with a conditional backlog item | M6 is the milestone that measures this backend's capabilities against a build, so it is where a different `msaccess` would be measured. The trigger is a different measured identity; where M6 measures none, nothing is owed. Admission would schedule a new viewer slice at that point; a reusable XIC **export** stays M9's |
 
 ## M6 readiness
 
