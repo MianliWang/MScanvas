@@ -1,19 +1,22 @@
 # M5.4 — XIC source and capability evidence
 
-**Route outcome: `XIC_SOURCE_ADMITTED`.**
+**Route outcome: `XIC_SOURCE_REFUSED`.**
 
-The admitted source is **`msaccess -x "tic mz=<mzLow>,<mzHigh>"`**, measured against
-a real ProteoWizard installation on the pinned synthetic fixture and on the
-pinned public representative acquisition.
+No query the installed ProteoWizard build offers can serve as a general XIC
+scientific source. Four of its eight analysis queries cannot express an m/z
+window at all. The four that can — `tic`, `sic`, `slice` and `image` — were each
+measured to one standard and each rejected, and the decisive reason is shared:
+**they serialize intensity at four fixed decimal places, which maps a legitimate
+positive signal onto the same output as a true zero.**
 
-This is an evidence slice. It implements no XIC: no operation, no parser, no DTO,
-no service path, no frontend. It decides whether a defensible backend source
-exists and names the contract M5.5 would implement.
+This is an evidence slice. It implements no XIC and changes no production code.
+Refusal is a valid outcome; approximation is not, and none was substituted.
 
-**Every conclusion here belongs to one build**, ProteoWizard `3.0.26013
-(47b13cf)`. Nothing in it transfers to another build without re-measurement, and
-the M0 spike's conclusions — taken against `3.0.26204 (a09eea9)` — are
-deliberately not carried across.
+**Every conclusion here belongs to one executable**, `msaccess.exe` SHA-256
+`85681B205569A9850F47D079749E04BA45F4B0C64E363D4A2C5C67C3C67ED1F4`, from
+ProteoWizard `3.0.26013 (47b13cf)`. Nothing in it transfers to another
+executable, and the M0 spike's conclusions — taken against `3.0.26204
+(a09eea9)` — are deliberately not carried across.
 
 ## Repository baseline
 
@@ -34,65 +37,119 @@ executable path is recorded here.**
 | Fact | Value |
 | --- | --- |
 | Tool | `msaccess` |
-| Release (from `msaccess` own output) | `3.0.26013` |
-| Release with revision (from sibling `msconvert` in the same distribution) | `3.0.26013 (47b13cf)` |
+| Release (from `msaccess` itself) | `3.0.26013` |
+| Release with revision (from sibling `msconvert`, same distribution) | `3.0.26013 (47b13cf)` |
 | Build date (both tools) | `Jan 13 2026 14:42:37` |
 | `msaccess.exe` bytes | `12,898,816` |
-| `msaccess.exe` SHA-256 | `85681B205569A9850F47D079749E04BA45F4B0C64E363D4A2C5C67C3C67ED1F4` |
+| **`msaccess.exe` SHA-256** | **`85681B205569A9850F47D079749E04BA45F4B0C64E363D4A2C5C67C3C67ED1F4`** |
 | `msconvert.exe` SHA-256 | `9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD` |
 
-`msaccess` in this build emits the release but **not** the source revision, which
-is the same limitation M0 recorded for its own build. The revision `47b13cf` is
-established from `msconvert` in the same distribution — same build date — and is
-independently corroborated by the installation directory name. Every source
-citation below is pinned to `47b13cf` on that basis.
+`msaccess` in this build emits the release but **not** the source revision. The
+revision `47b13cf` comes from `msconvert` in the same distribution — same build
+date — and is corroborated by the installation directory name. Every source
+citation below is pinned to `47b13cf` on that basis, and the consequence is
+recorded in the re-entry gate: a gate that asked `msaccess` for its own revision
+would be asking for something it does not emit.
 
 ### Complete help capture
 
-Both forms were captured to files rather than through a pipe, so neither stream
-was truncated. `msaccess` writes help to **stderr** and exits `1`; `stdout` is
-empty, which is the empty-stream digest below.
+Captured to files rather than through a pipe, so neither stream was truncated.
+`msaccess` writes help to **stderr** and exits `1`; `stdout` is empty.
 
 | Invocation | Exit | stdout bytes | stderr bytes | stdout SHA-256 | stderr SHA-256 |
 | --- | --- | --- | --- | --- | --- |
 | `msaccess` (no arguments) | `1` | `0` | `8,027` | `E3B0C442…B855` | `44B9D4634B7F8F234BE8BD8E30F6C20CC317777898A933CF4915EA56F815E073` |
 | `msaccess --help` | `1` | `0` | `28,873` | `E3B0C442…B855` | `81C280BDFA15F8130D541CFC079345E31F3D86FDB0C1713CEF19104866743553` |
 
-Neither stream was truncated: both end in the build's own release/build-date
-footer, and the byte counts are the complete captures.
+Both end in the build's own release/build-date footer, and the byte counts are
+the complete captures.
 
-The bare form carries the complete `Analysis commands (used with -x/--exec):`
-section, which is the candidate inventory below. `--help` adds spectrum-filter
-detail only.
+## Evidence is bound to an executable, not to a help text
+
+**This rule is the slice's durable governance output, and it holds whatever the
+route outcome is.**
+
+> Scientific evidence is transferable only to an executable identity explicitly
+> covered by that evidence.
+
+Two `msaccess` builds can print identical help — identical `tic` signature,
+identical filter grammar, identical `TicCapability` — while differing in exactly
+the things this slice had to measure: the aggregation performed, the numeric
+precision serialized, and whether an ordinary window aborts. **Help text is not
+implementation evidence.** A gate that admits on grammar alone admits an
+implementation nobody measured.
+
+Concretely, none of these is sufficient on its own or in combination:
+
+- the query name `tic`;
+- the `tic` signature `[mz=<mzLow>[,<mzHigh>]] [delimiter=…]`;
+- the `--filter` grammar;
+- `TicCapability::SupportedWithMsLevelFilter`;
+- the release string `3.0.26013`.
+
+**Syntax-equivalent future ProteoWizard builds do not inherit this measurement.**
+
+Because the outcome below is refusal, this rule is recorded as the **XIC
+re-entry gate** rather than as a production capability requirement, and no unused
+gate was invented for it.
 
 ## Sources measured
 
-Both are external to the repository, pinned by hash, and verified **before**
-execution. Neither payload is committed.
+Three, all external to the repository and identified by hash. None is committed.
 
-| | Synthetic fixture | Representative acquisition |
-| --- | --- | --- |
-| Identity | ProteoWizard `example_data/tiny.pwiz.1.1.mzML` | PRIDE `PXD081190`, `BBM_506_P110_31_MIA_004_30_calibrated.mzML` |
-| Licence | Apache-2.0 (ProteoWizard) | Creative Commons Public Domain (CC0) |
-| Bytes | `25,072` | `208,408,454` |
-| SHA-256 | `711ac14b666f14817c208bd4d39b738e96ac827574c4639d8f8f6eebbfde9c83` | `262D1178303CD934223239D5D93A3B842DCA69DA09CEF58E95A39B950D26B7E8` |
-| Spectra | `4` (MS1 ×3, MS2 ×1) | `36,319` (MS2 only) |
-| Retention times | `353.43`, `359.43`, `0.00`, `42.05` | `55` … `1980`, all distinct |
+| | Synthetic fixture | Representative acquisition | Low-intensity fixture |
+| --- | --- | --- | --- |
+| Identity | ProteoWizard `example_data/tiny.pwiz.1.1.mzML` | PRIDE `PXD081190`, `BBM_506_P110_31_MIA_004_30_calibrated.mzML` | generated for this slice, `lowint.mzML` |
+| Provenance | pinned upstream example data | public CC0 deposit, reacquired from the official location | written by a deterministic generator; see below |
+| Licence | Apache-2.0 | Creative Commons Public Domain (CC0) | n/a — synthetic, no acquisition |
+| Bytes | `25,072` | `208,408,454` | `14,540` |
+| SHA-256 | `711ac14b666f14817c208bd4d39b738e96ac827574c4639d8f8f6eebbfde9c83` | `262D1178303CD934223239D5D93A3B842DCA69DA09CEF58E95A39B950D26B7E8` | `e00e390a33d4028e638897f8abc3f608d2b2e9ff1a579f30b7f07468743680da` |
+| Spectra | `4` (MS1 ×3, MS2 ×1) | `36,319` (MS2 only) | `8` (MS1) |
 
-Both hashes are the ones M0 pinned, re-verified here. The representative was
-reacquired from the official PRIDE location; its accession, CC0 licence and
-advertised size were re-queried live before download.
+The first two hashes are the ones M0 pinned, re-verified before execution here.
 
 **The synthetic fixture's arrays are not what its headers say.** Its stored CV
 metadata declares `mzLow 400.39 / mzHigh 1795.56`, while its actual binary arrays
 are the small integers `0 … 14` (indices 0 and 3) and `0, 2, … 18` (index 1).
-That is `examples::initializeTiny` synthetic data, and it is what makes exact
-window arithmetic checkable by hand below.
+That is `examples::initializeTiny` data, and it is what makes exact window
+arithmetic checkable by hand.
+
+### The low-intensity fixture
+
+Neither pinned source can answer the precision question: the synthetic fixture
+carries small integers and the representative carries instrument-scale counts, so
+**neither can exhibit a positive sum below the serialization resolution.** A
+third input was therefore generated.
+
+Written by a small deterministic generator: eight MS1 spectra, 64-bit
+little-endian doubles, no compression, so the stored bytes *are* the values.
+Every spectrum isolates one magnitude at m/z `100.0`, so the expected in-window
+sum over `[100, 101]` is exactly the value below and is calculable without
+reference to the backend. One spectrum carries five points that are each
+individually below the boundary and together cross it.
+
+| index | case | intended in-window sum |
+| ---: | --- | --- |
+| 0 | true zero | `0.0` |
+| 1 | far below the boundary | `1e-6` |
+| 2 | just below | `4e-5` |
+| 3 | at the rounding boundary | `5e-5` |
+| 4 | just above | `6e-5` |
+| 5 | clearly above | `1e-3` |
+| 6 | non-trivial fractional, well above | `123.456789` |
+| 7 | five points of `1e-5` each | `5e-5` |
+
+**The fixture was proved to round-trip through the backend's own reader before
+`tic` was measured on it.** `binary index=0,7 precision=12` returns every
+intended value exactly — `0.000001000000`, `0.000040000000`, `0.000050000000`,
+`0.000060000000`, `0.001000000000`, `123.456789000000`, and the five
+`0.000010000000`. So `msaccess` holds the values; anything lost below is lost by
+the query's own serialization, not by the fixture or the parser.
 
 ## Live candidate inventory
 
-Every analysis command the installed build declares, with its exact installed
-signature, verbatim from the help capture.
+Every analysis command the installed build declares, verbatim from the help
+capture.
 
 | # | Candidate | Exact installed signature |
 | --- | --- | --- |
@@ -103,75 +160,166 @@ signature, verbatim from the help capture.
 | 5 | `slice` | `[mz=<mzLow>[,<mzHigh>]] [rt=<rtLow>[,<rtHigh>]]] [index=<indexLow>[,<indexHigh>] \| sn=<scanLow>[,<scanHigh>]] [delimiter=<fixed\|space\|comma\|tab>]` |
 | 6 | `tic` | `[mz=<mzLow>[,<mzHigh>]] [delimiter=<fixed\|space\|comma\|tab>]` |
 | 7 | `sic` | `mzCenter=<mz> radius=<radius> radiusUnits=<amu\|ppm> [delimiter=<fixed\|space\|comma\|tab>]` |
-| 8 | `image` | `[args - see list]`, whose args include `mz=<mzLow>[,<mzHigh>]` |
+| 8 | `image` | `[args - see list]`, whose prose arg list includes `mz=<mzLow>[,<mzHigh>]` |
 
-`sic`'s signature is one this repository had never held. It is recorded here
-exactly as the build declares it.
+`sic`'s signature is one this repository had never held. It is recorded exactly
+as the build declares it.
 
-## Classification
+## Final classification
 
 | Candidate | State | Basis |
 | --- | --- | --- |
-| `metadata` | `EXCLUDED_BY_SIGNATURE` | No parameter of any kind, so the required m/z window cannot be expressed. |
-| `run_summary` | `EXCLUDED_BY_SIGNATURE` | Parameters are `msLevels`, `charges`, `delimiter`. No m/z window can be expressed. |
-| `spectrum_table` | `EXCLUDED_BY_SIGNATURE` | Only `delimiter`. No m/z window can be expressed. |
-| `binary` | `EXCLUDED_BY_SIGNATURE` | Only `index`/`sn`/`precision`. No m/z window can be expressed; selecting spectra by index and extracting arrays is the per-scan-process substitute the route already refuses. |
-| `slice` | `MEASURED_REJECTED` | Measured on both sources. |
-| `tic` | **`MEASURED_ADMITTED`** | Measured on both sources. |
-| `sic` | `MEASURED_REJECTED` | Measured on both sources. |
-| `image` | `MEASURED_REJECTED` | Measured rather than excluded. |
+| `metadata` | `EXCLUDED_BY_SIGNATURE` | No parameter of any kind; the required m/z window cannot be expressed. |
+| `run_summary` | `EXCLUDED_BY_SIGNATURE` | Parameters are `msLevels`, `charges`, `delimiter`; no m/z window. |
+| `spectrum_table` | `EXCLUDED_BY_SIGNATURE` | Only `delimiter`; no m/z window. |
+| `binary` | `EXCLUDED_BY_SIGNATURE` | Only `index`/`sn`/`precision`; no m/z window. Selecting spectra by index and extracting arrays is the per-scan-process substitute the route refuses. |
+| `tic` | `MEASURED_REJECTED` | `LOSSY_INTENSITY_SERIALIZATION_DESTROYS_ZERO_NONZERO_DISTINCTION` |
+| `sic` | `MEASURED_REJECTED` | Same serialization loss, plus omitted scans, partial output on failure, and interpolated peak coordinates. |
+| `slice` | `MEASURED_REJECTED` | Same serialization loss, plus no aggregation, omitted scans, and unbounded output size. |
+| `image` | `MEASURED_REJECTED` | Produces a gel image with no per-scan quantity and no result identity; produced no output on either pinned source. |
+
+**No candidate is left unmeasured.** No applicable candidate is closed by
+anything except its own measurement.
 
 ### On the four signature-only exclusions
 
-Each is excluded by the one category the signature actually establishes: **the
-required m/z window cannot be expressed**. For each, the requirement is that the
-query accept an explicit m/z interval; the limitation is that its declared
-parameter set contains no m/z term at all; and execution cannot change that,
-because a parameter the grammar does not declare cannot be supplied. Nothing is
-inferred about what these queries compute.
-
-`image` was **not** excluded by signature even though its output is a rendered
-gel image, because its args do include `mz=` and the route requires an ambiguous
-signature to be measured. It was measured, and is rejected on measurement below.
+Each is excluded by the one category its signature actually establishes: **the
+required m/z window cannot be expressed.** The requirement is that the query
+accept an explicit m/z interval; the limitation is that its declared parameter
+set contains no m/z term; and execution cannot change that, because a parameter
+the grammar does not declare cannot be supplied. Nothing is inferred about what
+these queries compute.
 
 ### What was not treated as evidence
 
 That MSCanvas has no `sic` parser, holds no `sic` signature constant, exposes no
 m/z field on `PreviewOperation::Tic`, and invokes none of these from a production
-route are facts about this application. None of them was used to exclude
-anything.
+route are facts about this application. None was used to exclude anything.
 
-## Measurement standard
+## The decisive finding — four fixed decimal places
 
-Every applicable candidate was measured to one standard on both sources: exact
-invocation, accepted parameter syntax, window semantics, stdout/stderr/output-file
-behaviour, schema and row shape, retention times, ordering, scan identity and its
-reconciliation with `spectrum_table`, MS-level behaviour, aggregation, no-signal
-behaviour, completeness against `MAX_PREVIEW_TEXT_BYTES`, malformed and error
-behaviour, and repeatability.
+### What the source does
 
-**Exit code is never treated as semantic evidence.** This build exits `0` while
-producing no output, while producing a *partial* output, and while silently
-ignoring a malformed window — all three are recorded below.
+At revision `47b13cf`,
+[`RegionTIC.cpp:156`](https://github.com/ProteoWizard/pwiz/blob/47b13cf/pwiz/analysis/passive/RegionTIC.cpp):
 
-## `tic` — the admitted source
+```cpp
+DELIMWRITE_EOL(width_sumIntensity, fixed << setprecision(4) << spectrumStats.sumIntensity);
+```
 
-### Accepted parameter forms
+`fixed` with `setprecision(4)` writes exactly four digits after the decimal
+point. Any sum below `0.00005` rounds to the literal text `0.0000`.
 
-| Form | Resolved window | Result |
-| --- | --- | --- |
-| `mz=0,4` | `0.00–4.00` | accepted |
-| `mz=0-4` | `0.00–4.00` | accepted; byte-identical to the comma form |
-| `mz=4` | `4.00–4.00` | accepted; a single value is a zero-width window |
-| *(omitted)* | `0.00–10000.00` | accepted; a default window, **not** "no window" |
+**The same serialization is used by every candidate that can express an m/z
+window**, so this is a property of the build's region analyzers rather than of
+one query:
 
-Both the comma form the signature declares and the dash form the build's own
-examples use are accepted, and produce identical output. The resolved window is
-echoed into the generated file name.
+| Source location at `47b13cf` | Column |
+| --- | --- |
+| `RegionTIC.cpp:156` | `sumIntensity` |
+| `RegionSIC.cpp:186–188` | `sumIntensity`, `peakMZ`, `peakIntensity` |
+| `RegionAnalyzer.cpp:245–246` | per-peak `m/z`, `intensity` (used by `slice` and `sic`'s data table) |
 
-### Window semantics — inclusive at both ends
+### There is no precision control
 
-Checked by hand against the synthetic fixture's real arrays.
+Investigated before rejecting, and the answer is unambiguous.
+
+`RegionTIC::Config` at `47b13cf` parses exactly two things: `delimiter=` via
+`checkDelimiter`, and `mz=` via `parseRange`. There is no precision token, and
+the `setprecision(4)` at line 156 is a literal.
+
+In the **complete installed help**, the word `precision` appears exactly twice,
+both times for `binary`:
+
+```text
+binary index=<spectrumIndexLow>[,<spectrumIndexHigh>] | sn=… [precision=<precision>]
+      precision: write d decimal places
+```
+
+`binary` is a different analyzer, cannot express an m/z window, and is excluded
+above. The top-level option set — `--filelist`, `--outdir`, `--config`, `--exec`,
+`--filter`, `--verbose`, `--help` — contains no precision control either.
+
+**No supported way to request greater `tic` output precision exists in this
+build.** No undocumented flag was invented or attempted.
+
+### What it does to real values
+
+Measured on the low-intensity fixture, `tic mz=100,101 delimiter=tab`:
+
+| index | case | intended sum | serialized | verdict |
+| ---: | --- | ---: | ---: | --- |
+| 0 | true zero | `0.0` | `0.0000` | true zero |
+| 1 | far below | `1e-6` | `0.0000` | **destroyed — identical to true zero** |
+| 2 | just below | `4e-5` | `0.0000` | **destroyed — identical to true zero** |
+| 3 | at boundary | `5e-5` | `0.0001` | survives |
+| 4 | just above | `6e-5` | `0.0001` | survives |
+| 5 | clearly above | `1e-3` | `0.0010` | survives |
+| 6 | fractional | `123.456789` | `123.4568` | survives, truncated |
+| 7 | five sub-threshold points | `5e-5` | `0.0001` | survives |
+
+Rows 1 and 2 carry a mathematically positive in-window sum and are serialized
+byte-identically to row 0's true zero. **A consumer of this output cannot
+distinguish them.**
+
+Row 7 is worth stating separately: five points each individually below the
+boundary sum to a value that *does* survive. The accumulation is correct; the
+loss is entirely in the serialization of the result.
+
+Row 6 shows ordinary precision truncation (`123.456789` → `123.4568`). That is a
+fidelity concern rather than a zero/non-zero ambiguity, and it is not the reason
+for rejection.
+
+`sic` shows the same loss with an additional wrinkle. Its row filter is
+`if (spectrumStats.sumIntensity)`, which tests the **double**, not the printed
+text — so on the same fixture it emits rows for indices 1 and 2 whose printed
+`sumIntensity` is `0.0000`, while omitting index 0 entirely. A row reading
+`0.0000` there means *non-zero but below serialization resolution*, recoverable
+only by inference from the row's presence, and directly contradicting any reading
+of `0.0000` as zero. Its index 7 prints `sumIntensity 0.0001` beside
+`peakIntensity 0.0000`, losing the peak while keeping the sum.
+
+### Why this rejects the source
+
+The invariant this slice is held to:
+
+> An admitted XIC source must preserve the distinction between zero signal and
+> legitimate non-zero signal over the input domain MSCanvas claims to support.
+
+MSCanvas admits mzML generally. Nothing in its current support establishes a
+trustworthy minimum intensity scale that could rule out sub-resolution values
+*before* invoking the query — normalized, scaled and otherwise small-magnitude
+intensity arrays are legal mzML, and the low-intensity fixture is legal mzML.
+
+So an XIC built on this output would silently render a real low-intensity trace
+as a flat zero line, and MSCanvas could not tell the reader which it was looking
+at. The following are **not** available as rescues, because each is a product or
+scientific assumption this repository has not admitted:
+
+- that real instruments normally produce larger values;
+- that normalized mzML is unusual;
+- that a user does not care below `1e-4`;
+- that displaying four decimals is good enough anyway.
+
+`tic` is therefore `MEASURED_REJECTED` for
+`LOSSY_INTENSITY_SERIALIZATION_DESTROYS_ZERO_NONZERO_DISTINCTION`, and the
+claim made in an earlier draft of this record — that `0.0000` is explicit
+no-signal behaviour — is **withdrawn**. It is not: it is either no signal or
+signal below resolution, and the output does not say which.
+
+## What `tic` did get right, recorded so the refusal is specific
+
+A refusal is only credible if it says what the candidate *could* do. All of the
+following was measured and holds; none of it rescues the source.
+
+**Parameter forms.** `mz=0,4`, `mz=0-4` and `mz=4` are all accepted; the comma
+and dash forms produce byte-identical output; a single value is a zero-width
+window. Omitting `mz=` applies a default window of `0.00–10000.00`, which is a
+default rather than "no window".
+
+**Window semantics — inclusive at both ends**, checked by hand against the
+synthetic fixture's real arrays and confirmed in source
+(`lower_bound(mzRange.first)` / `upper_bound(mzRange.second)`):
 
 | Invocation | index 0 (m/z `0…14`, int. `15…1`) | index 1 (m/z `0,2,…18`, int. `20,18,…2`) |
 | --- | --- | --- |
@@ -179,13 +327,9 @@ Checked by hand against the synthetic fixture's real arrays.
 | `mz=2,4` | `36` = 13+12+11 | `34` = 18+16 |
 | `mz=4` | `11` | `16` |
 
-Both endpoints are included in all three. Source-backed: `RegionAnalyzer.cpp`
-selects the run with `lower_bound(mzRange.first)` and `upper_bound(mzRange.second)`,
-which includes a point equal to either bound.
-
-### Aggregation — a sum, read from the pinned source
-
-[`pwiz/analysis/passive/RegionAnalyzer.cpp` at `47b13cf`](https://github.com/ProteoWizard/pwiz/blob/47b13cf/pwiz/analysis/passive/RegionAnalyzer.cpp):
+**Aggregation is a sum**, read from
+[`RegionAnalyzer.cpp`](https://github.com/ProteoWizard/pwiz/blob/47b13cf/pwiz/analysis/passive/RegionAnalyzer.cpp)
+rather than inferred from the query's name:
 
 ```cpp
 double sumIntensity = 0;
@@ -198,102 +342,147 @@ for (vector<MZIntensityPair>::const_iterator it=begin; it!=end; ++it)
 spectrumStats.sumIntensity = sumIntensity;
 ```
 
-**A point is the arithmetic sum of the binary intensities whose m/z lies inside
-the inclusive window.** Not a maximum, not an average, and not the file's stored
-TIC value: the fixture's stored `totalIonCurrent` is `1.66755e+07`, while the
-unwindowed `tic` reports `120` — the sum of that spectrum's actual intensity
-array. The result is a **recomputed** trace and must be labelled as one.
+It is a **recomputed** trace, not the file's stored TIC: the fixture's stored
+`totalIonCurrent` is `1.66755e+07` while unwindowed `tic` reports `120`.
 
-### Output schema
+**Ordering is source spectrum index**, not retention time — proved by the
+fixture emitting `353.43, 359.43, 0.00, 42.05` in that order.
+`RegionTIC::close()` iterates its cache in order and prints every entry
+unconditionally.
+
+**Row coverage is complete.** Every spectrum in scope gets a row. On the
+representative, `tic mz=500,502` returned `36,319` rows in `2,989,606` bytes
+(`82.3` bytes/row, about 36 % of `MAX_PREVIEW_TEXT_BYTES = 8,388,608`),
+byte-identical across three passes. Row count equals spectrum count, so output
+size is predictable before invoking.
+
+**Identity reconciles when unfiltered.** On the representative, `tic`'s `index`
+agrees with `spectrum_table`'s across all `36,319` rows; the `id` arrives in the
+raw form (`controllerType=0 controllerNumber=1 scan=413`) where `spectrum_table`
+gives the abbreviated one (`0.1.413`), so a consumer would have to canonicalize
+rather than string-compare.
+
+## MS-level behaviour, measured at representative scale
+
+Recorded in full so the refusal is evidence-complete rather than selectively
+incomplete.
+
+**On the synthetic fixture**, `--filter="msLevel N"` composes and returns correct
+windowed sums — `msLevel 1` returns the three MS1 spectra, `msLevel 2` the one
+MS2 spectrum. It also **renumbers the `index` column** to the position in the
+*filtered* list: unfiltered, `scan=21` is index `2` and
+`sample=1 period=1 cycle=22 experiment=1` is index `3`; under `msLevel 1` the
+same two are reported as index `1` and `2`.
+
+**On the representative acquisition:**
+
+| Invocation | Exit | Rows | Bytes | SHA-256 | stderr |
+| --- | --- | ---: | ---: | --- | --- |
+| `tic mz=500,502` (unfiltered) | `0` | `36,319` | `2,989,606` | `f326cd1c…b37c2` | empty |
+| `tic mz=500,502` `--filter="msLevel 2"` | `0` | `36,319` | `2,989,606` | `f326cd1c…b37c2` | empty |
+| `tic mz=500,502` `--filter="msLevel 1"` | `0` | `0` | `63` | `43f058bb…4a5d` | empty |
+
+The filtered MS2 run is **byte-identical** to the unfiltered one, and is
+byte-identical across two passes.
+
+**That equality is a fact about this file, not about filtered identity.** The
+representative is MS2-only, so the filtered list *is* the source list and the two
+index sequences coincide. It is not evidence that filtered `index` is generally
+the source index, and the synthetic fixture's renumbering result stands
+unqualified. Under any filter the canonicalized spectrum `id` remains the only
+stable key.
+
+A filter selecting **no** scans (`msLevel 1` on an MS2-only file) is a clean
+success: exit `0`, empty stderr, and a generated file carrying the header and
+zero rows. That is distinguishable from the abort below, which produces no file
+at all.
+
+## `image`, measured on both pinned sources
+
+Measured rather than excluded by signature, because its prose arg list includes
+`mz=` even though its declared signature has no parameters.
+
+| Source | Invocation | Exit | Output | stderr |
+| --- | --- | --- | --- | --- |
+| Synthetic | `image mz=0,4` | `0` | none | `invalid vector subscript`; `Caught exception` |
+| Representative | `image mz=500,502` | `0` | none | `[Pseudo2DGel::Impl::writeImages] nothing to do`; `Caught exception` |
+| Representative | `image mz=400,1000` | `0` | none | same |
+| Representative | `image` (default window) | `0` | none | same |
+
+Three representative invocations — narrow, wide and default — so the result is
+not an artefact of one window. `image` produced no output on either pinned
+source, and its purpose, named by its own `Pseudo2DGel` class, is a rendered gel
+image, which carries no per-scan intensity and no result identity even when it
+succeeds. `MEASURED_REJECTED`.
+
+## `sic` and `slice`, measured and rejected
+
+**`sic`** works in the ordinary sense: `sic mzCenter=4 radius=2 radiusUnits=amu`
+on the fixture selects the inclusive window `[2,6]` and reports `sumIntensity`
+`55` — the same sum `tic` computes over the same window. `radiusUnits=ppm`
+resolves as `mzCenter × radius / 1e6`. It is deterministic across three passes.
+It produces three files: `.data.tsv` (one row per matching peak), `.peaks.tsv`
+(one row per scan) and `.summary.txt`.
+
+Rejected for the shared serialization loss **and** four independent reasons:
+
+1. **It omits scans.** `RegionSIC::close()` emits a row only
+   `if (spectrumStats.sumIntensity)`. On the representative, `peaks.tsv`
+   returned **`3,268` rows for `36,319` scans** — `33,051` silently missing.
+2. **It leaves partial output on failure.** `.data.tsv` is written incrementally,
+   so an abort leaves a truncated file — measured at **`231` rows** of `36,319`,
+   exit `0`, with no `peaks.tsv` or `summary.txt`. That file is under the byte
+   bound and would be accepted as complete.
+3. **Its peak columns are interpolated.** `interpolatedPeak` returns the vertex
+   of a parabola fitted to three points, returning a measured point only at the
+   window edge — so `peakMZ`/`peakIntensity` are in general coordinates no
+   instrument recorded.
+4. **Its filenames encode only `mzCenter`**, so two radii at one centre collide.
+
+**`slice`** returns one row per matching peak with the same inclusive window.
+Rejected for the shared serialization loss **and**: it performs no per-scan
+aggregation, so it is not a chromatogram; it omits zero scans; its size scales
+with peak count rather than scan count, so the byte bound cannot be predicted
+before invoking; and it leaves partial output on the same abort.
+
+## A second build-specific failure, recorded
+
+Independently of precision, `tic`, `sic` and `slice` **abort for some windows**
+on the representative acquisition:
 
 ```text
-# <input file name>
-# index<TAB>id<TAB>event<TAB>analyzer<TAB>msLevel<TAB>rt<TAB>sumIntensity
-0<TAB>scan=19<TAB>3<TAB>IonTrap<TAB>ms1<TAB>353.43<TAB>65.0000
+[Parabola.cpp::solve()] Matrix is singular.
+[MSDataAnalyzerApplication] Caught exception for file <input>.
 ```
 
-One row per spectrum in scope. `rt` is fixed at 2 decimals, `sumIntensity` at 4.
-The column header line is prefixed `#`, which `spectrum_table`'s is not — a
-parser must not assume one convention across queries.
+exit `0`, and for `tic` no output file at all.
 
-### Ordering — source index, not retention time
+This is the previously unexplained M0C observation — "TIC: exit 0, no generated
+output" — now given a cause. `RegionAnalyzer::update` computes
+`interpolatedPeak` for *every* spectrum whichever consumer asked, and the
+parabola is singular when the window maximum sits on a duplicated m/z. The
+trigger is present at representative spectrum index `342`, whose window `400–403`
+holds:
 
-`RegionTIC::close()` iterates its cache in order and prints every entry
-unconditionally. On the synthetic fixture the emitted retention times are
-`353.43, 359.43, 0.00, 42.05` — **not** ascending — which proves rows are ordered
-by source spectrum index rather than sorted by retention time.
+```text
+m/z 401.2151   intensity  108963.5391
+m/z 401.2151   intensity 2278863.0000   <- the window maximum, on a duplicate m/z
+m/z 402.5356   intensity  107573.5156
+m/z 402.8630   intensity  119413.7969
+```
 
-### Scan identity, and where it must not be trusted
+The failing `sic` run stopped writing at exactly index `342`, corroborating the
+position. At one centre the threshold is sharp — complete at 1–2 Da, aborted at
+≥3 Da — while at realistic extraction tolerances (`0.02` Da and `0.50` Da across
+sixteen centres, `2` Da across sixteen more) it did not occur at all.
 
-| | Unfiltered | With `--filter="msLevel N"` |
-| --- | --- | --- |
-| `index` column | the source spectrum index | **renumbered to the position in the filtered list** |
-| `id` column | the raw source id | the raw source id |
+This failure alone would not have rejected `tic`: it produces no file, which the
+existing preview contract already classifies as `MissingRequiredOutput`, so it
+is honestly refusable. It is recorded because a refusal must state what was
+found, and because it is a second reason a future re-entry must re-measure rather
+than re-read.
 
-Measured on the synthetic fixture. Unfiltered, `scan=21` is index `2` and
-`sample=1 period=1 cycle=22 experiment=1` is index `3`. Under `msLevel 1` the same
-two spectra are reported as index `1` and `2`.
-
-**So `index` is a usable identity only for an unfiltered query.** Under a filter
-the `id` is the only stable key.
-
-Reconciled against `spectrum_table` on the representative acquisition across all
-`36,319` rows at both ends:
-
-| Source | index 0 | index 36318 |
-| --- | --- | --- |
-| `spectrum_table` id | `0.1.413` | `0.1.43873` |
-| `tic` id | `controllerType=0 controllerNumber=1 scan=413` | `controllerType=0 controllerNumber=1 scan=43873` |
-
-The indices agree exactly. The ids are the **abbreviated** and **raw** forms of
-the same spectrum, which is the dual representation M0 recorded on the tiny
-fixture, now confirmed at scale: a consumer must canonicalize rather than
-string-compare.
-
-### Empty and no-signal behaviour
-
-- A window containing no signal returns a **complete** table of `0.0000` values —
-  measured with `mz=100,200` on the fixture, all four rows present.
-- A spectrum with no peaks at all (fixture index 2) is present with `0.0000`.
-- **No scan is ever omitted.** An omitted scan and a zero-valued scan cannot be
-  confused, because there are no omitted scans.
-
-### MS-level behaviour
-
-`--filter="msLevel N"` composes with `tic` and is applied before the analysis.
-On the fixture, `msLevel 1` returns the three MS1 spectra and `msLevel 2` returns
-the one MS2 spectrum, with correct windowed sums in both. The representative is
-MS2-only and `run_summary` reports `36,319` MS2 spectra.
-
-The capability to gate this already exists and is already computed by the shipped
-contract: `TicCapability::SupportedWithMsLevelFilter`.
-
-The renumbering caveat above is the load-bearing MS-level fact, and it is a
-consequence of filtering rather than of MS level specifically.
-
-### Completeness and scale
-
-| Fact | Representative |
-| --- | --- |
-| Spectra in scope | `36,319` |
-| Rows returned | `36,319` |
-| Output bytes (tab delimiter) | `2,989,606` |
-| Bytes per row | `82.3` |
-| `MAX_PREVIEW_TEXT_BYTES` | `8,388,608` |
-| Headroom | complete, at ~36 % of the bound |
-
-Row count is exactly the spectrum count, so output size is **predictable before
-invoking** from a number the product already holds. The existing preview contract
-already implements the posture the route requires — a generated file over the
-bound is refused whole as `IncompleteParserInput`, and no output at all is
-`MissingRequiredOutput` — so "complete below the bound; refuse whole above it" is
-the shipped behaviour and needs no new code.
-
-Extrapolating from the measured row width, the bound is reached near **~101,900
-scans**. That is arithmetic from one measured acquisition, not a general claim:
-row width varies with id length and delimiter.
-
-### Malformed and error behaviour
+## Malformed and error behaviour
 
 | Input | Exit | Output | stderr |
 | --- | --- | --- | --- |
@@ -303,233 +492,97 @@ row width varies with id length and delimiter.
 | `mz=-5,-1` | `0` | complete zero-valued table | none |
 | `mz=nan,inf` | **`0`** | **complete table byte-identical to the default window** | none |
 
-Two of these are the reason exit code is not evidence. A **reversed** window
-exits `0` and produces nothing. A **non-finite** window exits `0` and silently
-returns the *unwindowed* result: its SHA-256 is
-`7bf8e058…f951`, byte-identical to the default window's on the same build, and to
-the hash M0 recorded for the unfiltered TIC of this fixture on a different one. A caller must therefore reject non-finite and inverted windows itself,
-before invoking; it cannot learn about them afterwards.
+Two of these are why exit code is never treated as semantic evidence here. A
+non-finite window silently returns the *unwindowed* result: its SHA-256 is
+`7bf8e058…f951`, byte-identical to the default window's on this build and to the
+hash M0 recorded for this fixture on a different one.
 
-### The build-specific failure this slice found
+## Refusal conditions
 
-On the representative acquisition, `tic` **aborts for some windows**:
+`XIC_SOURCE_REFUSED` requires all six. Each is closed:
 
-```text
-[Parabola.cpp::solve()] Matrix is singular.
-[MSDataAnalyzerApplication] Caught exception for file <input>.
-```
+1. **`tic mz=` received the complete required investigation.** Parameter forms,
+   inclusive window semantics, aggregation from pinned source, ordering, identity
+   and its reconciliation with `spectrum_table` at representative scale,
+   MS-level behaviour on both fixture and representative including an empty
+   filter, no-signal behaviour, completeness against `MAX_PREVIEW_TEXT_BYTES`,
+   malformed and error behaviour, repeatability on both sources — **and the
+   low-intensity serialization measurement that rejected it**, together with the
+   precision-control investigation that found no override.
+2. **Every live installed candidate was classified.** All eight the build
+   declares, none left in an intermediate state.
+3. **Every still-plausible candidate was measured to the same standard.** All
+   four that can express an m/z window, on the synthetic fixture and on the
+   representative acquisition — `image` included, with three representative
+   invocations.
+4. **Every unmeasured candidate is excluded explicitly by signature.** The four
+   are `metadata`, `run_summary`, `spectrum_table` and `binary`, each because its
+   declared parameter set contains no m/z term.
+5. **No pseudo-XIC or approximation was substituted.** No base-peak m/z
+   filtering, no base-peak intensity as extracted intensity, no TIC/BPC summary
+   column, no per-scan backend process, no whole-run transfer into the webview,
+   no frontend extraction, and no fabricated zero-valued scans.
+6. **The record says what was measured, what was excluded and why**, which is
+   this document.
 
-exit `0`, **no output file**.
+## The XIC re-entry gate
 
-This is the previously unexplained M0C observation — "TIC: exit 0, no generated
-output" — now given a cause. It is not a property of the acquisition being large,
-and it is not the query being unsupported.
+XIC is refused for this executable, not for all time. A future attempt must
+satisfy **all** of the following before any XIC work resumes:
 
-**Mechanism, established from source and confirmed by measurement.**
-`RegionAnalyzer::update` computes `spectrumStats.peak = interpolatedPeak(begin,
-end, max)` for *every* spectrum, whichever consumer asked — so `tic` pays for a
-peak interpolation it never prints. `interpolatedPeak` fits a parabola to the
-three points around the window maximum. If two of those three share an m/z, the
-fit is singular and throws, and the exception aborts the whole analysis.
+1. **An executable identity covered by fresh evidence.** The gate is the exact
+   `msaccess.exe` SHA-256, plus the required exact help/capability grammar.
+   Release and build-date facts may additionally be checked. A different digest
+   is **not** admitted because its help looks the same — it requires fresh
+   measurement and a newly authorized evidence profile.
+2. **A resolved numeric-fidelity answer.** Either the build serializes region
+   intensities at a resolution that preserves the zero/non-zero distinction over
+   the mzML domain MSCanvas supports, or it exposes a precision control that is
+   declared, measured to change `sumIntensity` serialization as required, and
+   capability-gateable.
+3. **Re-measurement of everything this record establishes**, because the two
+   defects found here — the four-decimal serialization and the singular-parabola
+   abort — are both implementation properties invisible in help text.
 
-The trigger is present in the representative acquisition. Spectrum index `342`,
-window `400–403` (four rows, from a CC0 public dataset):
+Note for whoever implements it: `ProviderBuild::is("3.0.26013", "47b13cf")` is
+**not** a sufficient gate on its own for this tool. This build's `msaccess`
+reports its release but not its source revision, so a revision-bearing check
+would not match the executable actually being launched. The executable digest is
+the identity that is actually available.
 
-```text
-m/z 401.2151   intensity  108963.5391
-m/z 401.2151   intensity 2278863.0000   <- the window maximum, on a duplicate m/z
-m/z 402.5356   intensity  107573.5156
-m/z 402.8630   intensity  119413.7969
-```
+## XIC-D1 … D5
 
-The maximum sits on a duplicated m/z, so the parabola receives two identical
-x-values. The failing `sic` run over the same window stopped writing at exactly
-index `342`, which corroborates the position independently.
+Under refusal, M5.5 and M5.6 are `NOT_APPLICABLE`, so none of these is a blocker
+for work that is now unreachable. They are recorded as the evidence stands, for
+whoever re-enters through the gate above.
 
-**How far it reaches, measured rather than assumed.** At one centre the
-behaviour has a sharp width threshold:
-
-| Window | Result |
-| --- | --- |
-| `mz=400,401` (1 Da) | complete, `36,319` rows |
-| `mz=400,402` (2 Da) | complete, `36,319` rows |
-| `mz=400,403` (3 Da) | aborted |
-| `mz=400,405`, `400,410`, `400,420` | aborted |
-
-And at widths an extraction actually uses:
-
-| Width | Centres measured | Complete | Aborted |
-| --- | --- | --- | --- |
-| `0.02` Da | 16, from m/z 350 to 1200 | **16** | 0 |
-| `0.50` Da | 16, from m/z 350 to 1200 | **16** | 0 |
-| `2` Da | 16, from m/z 300 to 1800 | **16** | 0 |
-
-So the defect bites **wide** windows, and every window at a realistic extraction
-tolerance returned a complete `36,319`-row result. It is nonetheless
-data-dependent and cannot be predicted from the request alone.
-
-**Why this does not block admission.** `RegionTIC` writes its output only in
-`close()`, so an aborted `tic` produces **no file at all** — never a partial one.
-The existing preview contract already classifies that as
-`MissingRequiredOutput`. The failure is therefore detectable with the code that
-already ships, and the honest product behaviour — refuse this window, say the
-backend could not compute it — is available without approximating anything.
-
-### Repeatability
-
-| Source | Query | Passes | Result |
-| --- | --- | --- | --- |
-| Synthetic | `tic mz=2,4` | 3 | byte-identical, SHA-256 `2e9ae851…22e7`, 4 rows each |
-| Representative | `tic mz=500,502` | 3 | byte-identical, SHA-256 `f326cd1c…b37c2`, `36,319` rows each |
-
-Elapsed times are recorded as observations only and are not a threshold:
-representative `tic` runs took `3,313` / `3,681` / `3,758` ms on this host.
-
-## `sic` — measured, rejected
-
-The query whose name means *selected ion chromatogram*, measured to the same
-standard.
-
-**It works.** `sic mzCenter=4 radius=2 radiusUnits=amu` on the fixture selects
-the inclusive window `[2,6]` and reports `sumIntensity` `55` for index 0
-(= 13+12+11+10+9) — the same sum `tic` computes over the same window, through the
-same `RegionAnalyzer`. `radiusUnits=ppm` works and resolves as
-`mzCenter × radius / 1e6`. It is deterministic across three passes.
-
-It produces **three** files per invocation: `.data.tsv` (one row per matching
-peak), `.peaks.tsv` (one row per scan, with `sumIntensity`, `peakMZ`,
-`peakIntensity`) and `.summary.txt`.
-
-**Rejected for four measured reasons, any one of which is disqualifying.**
-
-1. **It omits scans.** `RegionSIC::close()` emits a row only
-   `if (spectrumStats.sumIntensity)`. The fixture's empty spectrum is absent from
-   both tables. On the representative, `peaks.tsv` returned **`3,268` rows for
-   `36,319` scans** — `33,051` scans silently missing. Within `sic`'s own output a
-   scan with no signal is indistinguishable from a scan that does not exist, which
-   is precisely the distinction the route requires a source to be able to make.
-2. **It leaves partial output on failure.** `.data.tsv` is written incrementally
-   during the scan, so the parabola abort leaves a truncated file — measured at
-   **`231` rows** of `36,319`, with exit `0` and no `peaks.tsv` or `summary.txt`.
-   A file that size is under `MAX_PREVIEW_TEXT_BYTES` and would be accepted as a
-   complete document by the existing contract. `tic` has no such failure mode.
-3. **Its peak columns are interpolated, not measured.** `interpolatedPeak`
-   returns the vertex of a parabola fitted to three points, returning a real
-   measured point only when the maximum is at the window edge. `peakMZ` and
-   `peakIntensity` are therefore in general coordinates no instrument recorded.
-   `sumIntensity` is honest; the peak columns are not, and a source whose
-   headline columns are synthetic is the wrong thing to build a scientific view on.
-4. **Its output file names collide.** The generated names encode only
-   `mzCenter` — `…sic.4.0000.data.tsv` — and not the radius, so two different
-   radii at one centre overwrite each other in a shared output directory.
-
-`sic` is capable of answering the question. It is rejected because `tic` answers
-the same question with complete scan coverage, no partial artifacts and no
-synthetic coordinates.
-
-## `slice` — measured, rejected
-
-`slice mz=2,4` returns one row per matching **peak** — `index, id, event,
-analyzer, msLevel, rt, m/z, intensity` — with the same inclusive window.
-
-Rejected because:
-
-- **It is not a chromatogram.** It performs no per-scan aggregation, so it
-  answers "which peaks are in this region", not "what is the intensity in this
-  window as a function of scan".
-- **It omits scans**, exactly as `sic` does: the fixture's empty spectrum is
-  absent.
-- **Its size scales with peak count rather than scan count**, so the completeness
-  bound cannot be predicted from the spectrum count before invoking.
-- **It leaves partial output on failure**, sharing the parabola abort
-  (`slice mz=400,403` on the representative aborted on both of two passes).
-
-## `image` — measured, rejected
-
-Measured rather than excluded by signature, because its args do include `mz=`.
-`image mz=0,4` on the synthetic fixture returned exit `0` with **no output** and
-`invalid vector subscript` / `Caught exception`. It produces a rendered
-pseudo-2D-gel image rather than a table, so it carries no per-scan intensity and
-no result identity. Rejected.
-
-## Why the admitted candidate is sufficient
-
-`tic mz=<mzLow>,<mzHigh>` can truthfully name every element §18 requires:
-
-| Required | Named as |
-| --- | --- |
-| Requested m/z window | absolute `mzLow,mzHigh`, inclusive both ends; single value = zero width |
-| Produced quantity | arithmetic sum of in-window binary intensities, pinned to `RegionAnalyzer.cpp` at `47b13cf`; a recomputed trace, not the stored TIC |
-| Result ordering | source spectrum index order |
-| Result identity | `index` for an unfiltered query, reconciled across `36,319` rows; `id` otherwise, requiring canonicalization between abbreviated and raw forms |
-| MS-level applicability | `--filter="msLevel N"` composes; **`index` is renumbered under any filter** |
-| Empty behaviour | complete table of explicit `0.0000`; no scan omitted |
-| Completeness / refusal bound | one row per spectrum, `82.3` bytes/row measured; complete below `MAX_PREVIEW_TEXT_BYTES`, refused whole above it, already implemented |
-| Capability signature to gate it | `analysis_query("tic")` with an `mz` parameter, plus `--filter`; already computed as `TicCapability::SupportedWithMsLevelFilter` |
-
-with two named limitations M5.5 must carry rather than approximate away:
-
-- a **non-finite or inverted window must be rejected before invoking**, because
-  the backend answers the first silently with the unwindowed result and the
-  second with exit `0` and no output;
-- a **wide window may abort** on this build with no output, detectable as
-  `MissingRequiredOutput` and honestly reportable as a refusal.
-
-## Capability contract
-
-**No production code was changed.** The existing generic model already holds
-every live signature: `InstalledHelpCapabilities::analysis_query` returns a
-`NamedGrammarDeclaration` for `sic` and `slice` with no new parsing, exact
-signature text, required/optional parameter facts, and closed value sets — so
-`radiusUnits` admits exactly `amu` and `ppm`. One test was added to pin that,
-because "the contract can already express the candidate inventory" is a claim
-worth checking rather than asserting.
-
-## Decision inputs for XIC-D1 … D5
-
-M5.4 supplies evidence. It does not answer these.
-
-| | Evidence established | Still a product decision |
+| | Status under refusal | Evidence established |
 | --- | --- | --- |
-| **D1** — window expression and unit posture | `tic` accepts **absolute m/z bounds only**; it has no ppm form. `sic` has `radiusUnits=amu\|ppm` but is rejected, so a ppm tolerance would have to be converted to absolute bounds by MSCanvas. The backend establishes no m/z unit, so the existing `UnitState::Unreported` posture applies. | Whether the interface offers ppm, Da, or both; and the default tolerance. |
-| **D2** — MS-level scope | `--filter="msLevel N"` composes and returns correct windowed sums. **It renumbers `index`**, so a filtered query must key on `id`. The representative is MS2-only. | The default MS level, and whether filtering is offered at all. |
-| **D3** — aggregation | Constrained by D4: the admitted source computes a **sum**. A maximum-intensity trace is not available from `tic`; only `sic`'s interpolated peak offers one, and `sic` is rejected. | Whether "sum" is the quantity the product wants to present, given it is the only one on offer. |
-| **D4** — backend source query | **Evidence-determined.** Exactly one candidate was admitted: `tic mz=`. The other three applicable candidates were measured and rejected on their own merits, so no choice between viable sources remains. | — |
-| **D5** — panel and value-axis presentation | The value is a summed, unitless intensity; one point per scan; complete coverage including explicit zeros; rows in source-index order with `rt` available per row. | Whether the axis is retention time or index, how a refused window is shown, and how a recomputed trace is labelled. |
-
-Because D4 is evidence-determined and no second viable source remains, this slice
-does not reach `USER_DECISION_REQUIRED`.
-
-**D1, D2, D3 and D5 all remain open.** D3 is *constrained* — a sum is the only
-aggregation any admitted query offers — but constrained is not decided, and the
-product has not accepted a sum as the quantity to present. M5.5 may not begin
-until all four are settled.
+| **D1** — window expression and unit posture | Moot; no source | `tic`/`slice` accept absolute m/z bounds only; `sic` accepts a centre with `amu`/`ppm` radius. No query establishes an m/z unit, so `UnitState::Unreported` would apply. |
+| **D2** — MS-level scope | Moot; no source | `--filter="msLevel N"` composes with `tic` and `sic`, returns correct sums, and **renumbers the `index` column**. An empty filter is a clean header-only success. |
+| **D3** — aggregation | Moot; no source | The only aggregation any candidate offers is a sum. A rejected source does not define a future product's aggregation, and this is **not** a standing recommendation. |
+| **D4** — backend source query | **Not applicable under the refusal branch.** Zero admissible sources means there is nothing to choose between. See the amended rule in ADR 0037. | Four candidates measured and rejected; four excluded by signature. |
+| **D5** — panel and value-axis presentation | Moot; no source | — |
 
 ## What was not done
 
 No XIC was implemented: no operation, no capability gate, no parser, no DTO, no
 service command, no frontend, no cache, no export, and no new selection
-authority. No `PreviewOperation` was extended. No product decision was made
-because a backend happens to support something.
-
-No pseudo-XIC was substituted at any point: no base-peak m/z filtering, no
-base-peak intensity as extracted intensity, no TIC/BPC summary column, no
-per-scan backend process, no whole-run transfer into the webview, no frontend
-extraction, and no fabricated zero-valued scans.
+authority. No `PreviewOperation` was extended. No production code changed at all.
 
 ## Limitations
 
-- **Every conclusion belongs to `3.0.26013 (47b13cf)`.** The parabola abort in
-  particular is a property of this build's `interpolatedPeak`, and another build
-  may or may not carry it. `msaccess` does not emit its own revision, so a
-  consumer of this record must re-establish the build identity the way this slice
-  did.
+- **Every conclusion belongs to `msaccess.exe` `85681B20…D1F4`** from
+  `3.0.26013 (47b13cf)`. Both defects found here are implementation properties
+  that help text does not expose.
 - One representative acquisition, MS2-only, no chromatogram list. It says nothing
-  about MS1 extraction behaviour or about acquisitions with duplicate retention
-  times.
-- **Duplicate retention times were not reachable.** Both measured sources have
-  strictly distinct retention times, so the ordering of equal-`rt` rows was not
-  observed. It follows from `RegionTIC::close()` iterating its cache in source
-  order that duplicates would appear in index order, but that is read from source
-  rather than measured.
+  about MS1 extraction behaviour.
+- **Duplicate retention times were not reachable.** Both pinned sources have
+  strictly distinct retention times. That duplicates would appear in source-index
+  order follows from `RegionTIC::close()` iterating its cache in order, which is
+  read from source rather than measured.
+- The low-intensity fixture is synthetic and establishes serialization behaviour,
+  not instrument realism. It is not evidence about what intensity scales real
+  acquisitions carry — which is precisely why the refusal does not depend on such
+  a claim.
 - Timings are single observations on one host and are not thresholds.

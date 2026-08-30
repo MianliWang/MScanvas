@@ -5494,7 +5494,14 @@ would implement. Full measurement record:
 
 ### Outcome
 
-**`XIC_SOURCE_ADMITTED`.** The source is `msaccess -x "tic mz=<mzLow>,<mzHigh>"`.
+**`XIC_SOURCE_REFUSED`.** No query this build offers can serve as a general XIC
+scientific source.
+
+An earlier candidate of this slice recorded `XIC_SOURCE_ADMITTED` for
+`tic mz=`. That conclusion was **withdrawn** under a post-review authorization
+after a measurement it had not made: the build serializes region intensities at
+four fixed decimal places, and a legitimate positive signal below `0.00005` is
+written as the same text as a true zero.
 
 ### The build the conclusion belongs to
 
@@ -5523,7 +5530,34 @@ parameters at all — its `mz=` appears only in the prose arg list under an
 `[args - see list]` placeholder — and it was measured rather than argued away
 precisely because that left the signature ambiguous.
 
-### Why `tic` was admitted
+### Why `tic` was rejected
+
+`RegionTIC.cpp:156` at `47b13cf` writes `fixed << setprecision(4)`, so any
+in-window sum below `0.00005` becomes the literal `0.0000`. Measured on a
+generated low-intensity fixture whose values were first proved to round-trip
+through `binary precision=12`: a sum of `1e-6` and a sum of `4e-5` are both
+serialized byte-identically to a genuine `0`. Five points each individually below
+the boundary do sum to a value that survives, so the accumulation is right and
+the loss is entirely in the output format.
+
+There is no precision control. `RegionTIC::Config` parses only `mz=` and
+`delimiter=`; the only `precision` in the complete installed help belongs to
+`binary`, a different analyzer that cannot express an m/z window; and no
+top-level option offers one. The same `setprecision(4)` is used by `RegionSIC`
+and by `RegionAnalyzer`'s per-peak dump, so `sic` and `slice` carry the identical
+loss.
+
+MSCanvas admits mzML generally and holds no trustworthy minimum intensity scale
+that could rule out sub-resolution values before invoking. An XIC on this output
+would render real low-intensity signal as a flat zero line and be unable to say
+which it was showing. Rejected for
+`LOSSY_INTENSITY_SERIALIZATION_DESTROYS_ZERO_NONZERO_DISTINCTION`.
+
+The claim in the earlier candidate that `0.0000` is explicit no-signal behaviour
+is **withdrawn**: it is either no signal or signal below resolution, and the
+output does not distinguish them.
+
+### What `tic` did get right, recorded so the refusal is specific
 
 One row per spectrum; window inclusive at both ends; the arithmetic **sum** of
 the in-window binary intensities, read from `RegionAnalyzer.cpp` at `47b13cf`
@@ -5605,20 +5639,41 @@ value sets for `sic` and `slice` with no new parsing — `radiusUnits` admits
 exactly `amu` and `ppm`. One test was added to pin that, because "the contract can
 already express the candidate inventory" is worth checking rather than asserting.
 
-### What was not decided
+### The decisions, under refusal
 
-M5.4 answered **D4** by evidence: exactly one candidate survived, so no choice
-between viable sources remains.
+**D4 is not applicable.** ADR 0037 was amended by this slice: D4 is
+`USER_DECISION_REQUIRED` only where the evidence admits **two or more** sources;
+zero means refusal and there is nothing to choose. It admitted none.
 
-It **constrained but did not answer D3**. The admitted query computes a sum and
-no admitted query offers a maximum, so a sum is the only aggregation available —
-which is not the same as the product having accepted a sum as the quantity to
-present. **D1, D2, D3 and D5 all remain open**, and M5.5 does not begin until
-they are settled.
+D1, D2, D3 and D5 are moot for the same reason — M5.5 and M5.6 are
+`NOT_APPLICABLE`, so none of them blocks reachable work. The evidence gathered
+about each is preserved in the spike for whoever re-enters through the gate.
+
+### The XIC re-entry gate
+
+XIC is refused for **this executable**, not for all time. ADR 0037 now carries the
+rule this slice needed:
+
+> Scientific evidence is transferable only to an executable identity explicitly
+> covered by that evidence.
+
+Re-entry requires an exact `msaccess.exe` identity covered by fresh measurement
+— the measured digest here is
+`85681B205569A9850F47D079749E04BA45F4B0C64E363D4A2C5C67C3C67ED1F4` — plus the
+required exact capability grammar, plus a resolved numeric-fidelity answer.
+A different digest is not admitted because its help looks the same.
+
+`ProviderBuild::is("3.0.26013", "47b13cf")` is **not** sufficient on its own for
+this tool: this build's `msaccess` reports its release but not its revision, so a
+revision-bearing check would not match the executable actually launched.
 
 No XIC was implemented: no operation, no capability gate, no parser, no DTO, no
 service command, no frontend, no cache, no export, no new selection authority,
-and no `PreviewOperation` extension. No pseudo-XIC was substituted at any point.
+and no `PreviewOperation` extension. No pseudo-XIC was substituted at any point,
+and no approximation was built to rescue the refusal.
+
+M5.5 = `NOT_APPLICABLE`. M5.6 = `NOT_APPLICABLE`. **M5.7 is next**, and it is
+reachable: its predecessor on the refusal branch is M5.3, which is complete.
 
 ### Validation
 

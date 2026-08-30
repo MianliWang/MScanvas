@@ -1410,6 +1410,15 @@ msconvert data.RAW --mzXML
     /// `3.0.26013 (47b13cf)`. They are that build's, and a different build may
     /// declare different ones -- which is exactly why they are asserted as
     /// exact text rather than described.
+    ///
+    /// **A readable signature is not an admitted source.** M5.4's route outcome
+    /// was `XIC_SOURCE_REFUSED`: every query below that can express an m/z
+    /// window was measured and rejected, the decisive reason being that this
+    /// build serializes region intensities at four fixed decimal places and so
+    /// writes a legitimate positive signal as the same text as a true zero.
+    /// What this case pins is that the capability contract can *describe* the
+    /// candidate inventory, which is why that slice changed no production code
+    /// -- not that anything in it may be used.
     #[test]
     fn every_live_analysis_query_is_readable_through_the_generic_accessor() {
         let capabilities = msaccess(MSACCESS_HELP);

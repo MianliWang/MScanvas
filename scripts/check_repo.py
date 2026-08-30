@@ -1352,6 +1352,157 @@ MISSING_LIST_OPENINGS: tuple[str, ...] = (
 )
 
 
+def validate_the_xic_route_outcome_has_one_answer(errors: list[str]) -> None:
+    """Every status document reports the route outcome the spike measured.
+
+    M5.4 is an evidence slice, so almost everything it produces is prose, and
+    prose is exactly what drifts. The failure this closes is concrete and
+    happened once already in this repository's history: a slice's conclusion was
+    revised, and one status document went on asserting the withdrawn one. A
+    reader meeting that document has no way to know which sentence is current.
+
+    The spike is the authority -- it holds the measurement -- so the rule is that
+    the two current-status documents agree with it rather than that all three say
+    some fixed string. Revising the outcome stays a one-line edit in the spike;
+    what stops being possible is revising it *there only*.
+
+    Also pinned: the re-entry gate names the exact measured executable digest.
+    The whole point of that gate is that a build is admitted by identity rather
+    than by resembling a measured one, and a gate that named no identity would
+    be the defect it exists to prevent.
+    """
+    spike = ROOT / "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md"
+    if not spike.is_file():
+        return
+    text = spike.read_text(encoding="utf-8")
+
+    outcomes = re.findall(r"\*\*Route outcome: `(XIC_SOURCE_[A-Z_]+)`\.\*\*", text)
+    if len(outcomes) != 1:
+        fail(
+            f"docs/spikes/M5_XIC_SOURCE_EVIDENCE.md declares {len(outcomes)} route outcomes, "
+            "not 1. The spike is where the measurement lives, so it has to state exactly one "
+            "answer for the status documents to agree with",
+            errors,
+        )
+        return
+    outcome = outcomes[0]
+    superseded = (
+        "XIC_SOURCE_ADMITTED" if outcome == "XIC_SOURCE_REFUSED" else "XIC_SOURCE_REFUSED"
+    )
+
+    # The measured executable identity, checked inside the gate section rather
+    # than anywhere in the file. The digest appears in the build table too, and
+    # a gate that stopped naming an identity while the table still carried one
+    # is exactly the regression worth catching.
+    gate = _section(text, "## The XIC re-entry gate")
+    if gate is None:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md has no `## The XIC re-entry gate` section. "
+            "A refusal that records no re-entry condition leaves the next attempt with nothing "
+            "to satisfy",
+            errors,
+        )
+    elif "SHA-256" not in gate:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md: the re-entry gate no longer requires an "
+            "executable identity. Scientific evidence is transferable only to an executable "
+            "the evidence covers, and a gate that names no identity admits any build whose "
+            "help happens to match",
+            errors,
+        )
+
+    for name in ("ROADMAP.md", "BOOTSTRAP_STATUS.md"):
+        document = ROOT / name
+        if not document.is_file():
+            continue
+        body = document.read_text(encoding="utf-8")
+
+        if f"`{outcome}`" not in body:
+            fail(
+                f"{name} does not state M5.4's measured outcome `{outcome}`. The spike holds "
+                "the measurement; a status document that does not carry its answer leaves a "
+                "reader unable to tell which sentence is current",
+                errors,
+            )
+
+        # Only where the document states M5.4's *own* status: its slice section,
+        # and the bullets that open with the slice's name.
+        #
+        # Deliberately not every paragraph mentioning M5.4. The route-lock prose
+        # written before the measurement discusses both branches as they were
+        # then planned -- including that an M5 without a real installation
+        # "cannot reach an `XIC_SOURCE_ADMITTED` outcome at all" -- and that is
+        # correct history rather than a claim about what was found.
+        for number, region in _status_claims_about(body, "M5.4"):
+            # A record that says a conclusion was withdrawn has to be able to
+            # name the conclusion it withdrew. Only an *unmarked* mention is a
+            # claim; the marker has to sit on the same line as the token, so a
+            # withdrawal elsewhere in a long section cannot license a stale
+            # sentence further down.
+            stale = [
+                line
+                for line in region.split("\n")
+                if f"`{superseded}`" in line
+                and not any(
+                    marker in line.lower()
+                    for marker in ("withdraw", "supersede", "earlier candidate", "no longer")
+                )
+            ]
+            if stale:
+                fail(
+                    f"{name}:{number} reports M5.4 as `{superseded}`, which the spike "
+                    f"supersedes with `{outcome}`. A withdrawn conclusion left standing in a "
+                    "status document is the one way this record can mislead",
+                    errors,
+                )
+
+
+def _section(text: str, heading: str) -> str | None:
+    """One `##` section of a markdown document, heading included."""
+    start = text.find(heading)
+    if start < 0:
+        return None
+    after = text.find("\n## ", start + len(heading))
+    return text[start:] if after < 0 else text[start:after]
+
+
+def _status_claims_about(text: str, slice_name: str) -> list[tuple[int, str]]:
+    """Where a status document states one slice's own outcome.
+
+    Two shapes, which is what these documents actually use: a `## <slice>`
+    section in the append-only log, and a top-level bullet opening with the
+    slice's name in the roadmap's status and slice lists.
+
+    A bullet is collected with its continuation lines rather than as a
+    paragraph, because a markdown list separated by no blank lines is a single
+    paragraph and the outcome routinely sits on a bullet's second line.
+    """
+    found: list[tuple[int, str]] = []
+    lines = text.split("\n")
+    starts = (f"- {slice_name}", f"- **{slice_name}")
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith(f"## {slice_name}"):
+            end = index + 1
+            while end < len(lines) and not lines[end].startswith("## "):
+                end += 1
+            found.append((index + 1, "\n".join(lines[index:end])))
+            index = end
+            continue
+        if line.startswith(starts):
+            end = index + 1
+            # Continuation lines are indented; a new bullet or a blank line ends
+            # this one.
+            while end < len(lines) and lines[end].startswith(" "):
+                end += 1
+            found.append((index + 1, "\n".join(lines[index:end])))
+            index = end
+            continue
+        index += 1
+    return found
+
+
 def validate_current_status_documents_describe_the_shipped_product(
     errors: list[str],
 ) -> None:
@@ -1433,6 +1584,7 @@ def main() -> int:
         validate_the_current_status_section_has_one_answer(errors)
         validate_drawability_is_settled_in_one_place(errors)
         validate_a_spectrum_range_is_resolved_in_one_place(errors)
+        validate_the_xic_route_outcome_has_one_answer(errors)
         validate_current_status_documents_describe_the_shipped_product(errors)
 
     if errors:
