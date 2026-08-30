@@ -1365,6 +1365,40 @@ XIC_ROUTE_OUTCOMES: frozenset[str] = frozenset(
 )
 
 
+def _route_outcome(text: str, errors: list[str] | None = None) -> str | None:
+    """The spike's declared route outcome, if it is one the route defines.
+
+    One reader, because two would be two answers. The pattern locates the
+    declaration; it does not decide whether what it found is a route outcome --
+    that is the closed vocabulary's job. Callers that own the reporting pass
+    `errors`; callers that only need the value pass nothing and get `None`,
+    because the failure has already been reported by then.
+    """
+    outcomes = re.findall(r"\*\*Route outcome: `([A-Z_][A-Z0-9_]*)`\.\*\*", text)
+    if len(outcomes) != 1:
+        if errors is not None:
+            fail(
+                f"docs/spikes/M5_XIC_SOURCE_EVIDENCE.md declares {len(outcomes)} route "
+                "outcomes, not 1. The spike is where the measurement lives, so it has to "
+                "state exactly one answer for the status documents to agree with",
+                errors,
+            )
+        return None
+    outcome = outcomes[0]
+    if outcome not in XIC_ROUTE_OUTCOMES:
+        if errors is not None:
+            fail(
+                f"docs/spikes/M5_XIC_SOURCE_EVIDENCE.md declares route outcome `{outcome}`, "
+                f"which is not one of the {len(XIC_ROUTE_OUTCOMES)} the route defines "
+                f"({', '.join(f'`{name}`' for name in sorted(XIC_ROUTE_OUTCOMES))}). A token "
+                "that resembles an outcome is not one, and the status documents would agree "
+                "with it just as readily",
+                errors,
+            )
+        return None
+    return outcome
+
+
 def validate_the_xic_route_outcome_has_one_answer(errors: list[str]) -> None:
     """Every status document reports the route outcome the spike measured.
 
@@ -1396,27 +1430,8 @@ def validate_the_xic_route_outcome_has_one_answer(errors: list[str]) -> None:
         return
     text = spike.read_text(encoding="utf-8")
 
-    # The pattern locates the declaration; it does not decide whether what it
-    # found is a route outcome. That is the closed vocabulary's job, below.
-    outcomes = re.findall(r"\*\*Route outcome: `([A-Z_][A-Z0-9_]*)`\.\*\*", text)
-    if len(outcomes) != 1:
-        fail(
-            f"docs/spikes/M5_XIC_SOURCE_EVIDENCE.md declares {len(outcomes)} route outcomes, "
-            "not 1. The spike is where the measurement lives, so it has to state exactly one "
-            "answer for the status documents to agree with",
-            errors,
-        )
-        return
-    outcome = outcomes[0]
-    if outcome not in XIC_ROUTE_OUTCOMES:
-        fail(
-            f"docs/spikes/M5_XIC_SOURCE_EVIDENCE.md declares route outcome `{outcome}`, which "
-            f"is not one of the {len(XIC_ROUTE_OUTCOMES)} the route defines "
-            f"({', '.join(f'`{name}`' for name in sorted(XIC_ROUTE_OUTCOMES))}). A token that "
-            "resembles an outcome is not one, and the status documents would agree with it "
-            "just as readily",
-            errors,
-        )
+    outcome = _route_outcome(text, errors)
+    if outcome is None:
         return
     # By exclusion from the closed set rather than by an `else`, so an unknown
     # token can never be handed the opposite outcome's name. The unpacking
@@ -1589,7 +1604,15 @@ def _first_markdown_table(text: str, heading: str) -> list[list[str]] | None:
     for line in text[start + len(heading) :].split("\n"):
         stripped = line.strip()
         if stripped.startswith("|"):
-            rows.append([cell.strip() for cell in stripped.strip("|").split("|")])
+            # An escaped pipe is content, not a cell boundary. The live
+            # candidate inventory quotes signatures containing `<a\\|b>`, and
+            # splitting naively makes those rows look ragged.
+            rows.append(
+                [
+                    cell.strip().replace("\\|", "|")
+                    for cell in re.split(r"(?<!\\)\|", stripped.strip("|"))
+                ]
+            )
         elif rows:
             break
     return rows or None
@@ -1612,11 +1635,38 @@ def _bare(cell: str) -> str:
     return cell.strip().strip("*").strip("`").strip()
 
 
-# The final-classification states that mean a candidate had to be measured, and
-# therefore has to be answered across every dimension of the standard. The
-# candidates themselves are read from the document; only this vocabulary is
-# fixed, because it is what "was measured" means.
-MEASURED_STATES: frozenset[str] = frozenset({"MEASURED_ADMITTED", "MEASURED_REJECTED"})
+# Every state a candidate may end in. Three, and there is no fourth: a candidate
+# was measured and admitted, measured and rejected, or excluded by its own
+# declared signature without being measured. A token that merely resembles one
+# of these is not one, and `EXCLUDED_BY_SIGNATURED` would otherwise pass as a
+# terminal state nobody defined.
+XIC_CANDIDATE_FINAL_STATES: frozenset[str] = frozenset(
+    {
+        "MEASURED_ADMITTED",
+        "MEASURED_REJECTED",
+        "EXCLUDED_BY_SIGNATURE",
+    }
+)
+
+# The states that mean a candidate had to be measured, and therefore has to be
+# answered across every dimension of the standard. Derived rather than written
+# out again, so the two vocabularies cannot drift apart. The candidates
+# themselves are read from the document; only the vocabulary is fixed, because
+# it is what "was measured" means.
+MEASURED_STATES: frozenset[str] = XIC_CANDIDATE_FINAL_STATES - {"EXCLUDED_BY_SIGNATURE"}
+
+
+def _column_index(header: list[str], name: str, where: str, errors: list[str]) -> int | None:
+    """One named column of a table, or a failure saying it is not there."""
+    found = [index for index, cell in enumerate(header) if _bare(cell) == name]
+    if len(found) != 1:
+        fail(
+            f"{where}: the table has {len(found)} `{name}` columns, not 1. The column is read "
+            "by repository validation, so it has to be identifiable",
+            errors,
+        )
+        return None
+    return found[0]
 
 
 def validate_one_candidate_evidence_dimension_vocabulary(errors: list[str]) -> None:
@@ -1675,16 +1725,6 @@ def validate_one_candidate_evidence_dimension_vocabulary(errors: list[str]) -> N
             errors,
         )
         return
-    classified = _first_markdown_table(spike_text, "## Final classification")
-    if classified is None:
-        fail(
-            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md has no `## Final classification` table. It "
-            "is where a candidate's state is recorded, and the matrix's columns are checked "
-            "against it",
-            errors,
-        )
-        return
-
     # The ADR numbers its rows, so the dimension is the second column; the
     # matrix leads with the dimension and then one column per candidate.
     _, required_body = _table_header_and_body(required)
@@ -1732,11 +1772,190 @@ def validate_one_candidate_evidence_dimension_vocabulary(errors: list[str]) -> N
             errors,
         )
 
-    _validate_the_matrix_covers_every_measured_candidate(classified, header, body, errors)
+    measured = _validate_every_installed_candidate_has_one_final_state(spike_text, errors)
+    if measured is not None:
+        _validate_the_matrix_covers_every_measured_candidate(measured, header, body, errors)
+
+
+def _validate_every_installed_candidate_has_one_final_state(
+    spike_text: str, errors: list[str]
+) -> set[str] | None:
+    """Every declared candidate is classified once, in a state the route defines.
+
+    Refusal conditions 2 and 4 -- every live installed candidate was classified,
+    and every unmeasured one is excluded explicitly by its signature -- rest
+    entirely on this table, and nothing checked it. A candidate could leave the
+    classification, or take a state nobody defined, and the canonical check
+    stayed silent while the matrix obligation quietly shrank with it.
+
+    So the inventory and the classification are held equal as sets, the state
+    is required to be one of three, and the measured set is derived only after
+    both hold. Returns that set, or `None` when the classification cannot be
+    trusted to derive it from.
+
+    What the `Basis` cell argues is not read. That a candidate has a basis at
+    all is structure; whether the argument is any good is review's.
+    """
+    spike = "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md"
+
+    inventory = _first_markdown_table(spike_text, "## Live candidate inventory")
+    if inventory is None:
+        fail(
+            f"{spike} has no `## Live candidate inventory` table. It is the record of what the "
+            "measured build declares, and the classification is checked against it",
+            errors,
+        )
+        return None
+    inventory_header, inventory_rows = _table_header_and_body(inventory)
+    at = _column_index(inventory_header, "Candidate", f"{spike} live candidate inventory", errors)
+    if at is None:
+        return None
+    declared = [_bare(row[at]) for row in inventory_rows if len(row) > at]
+    if len(declared) != len(inventory_rows) or not all(declared):
+        fail(
+            f"{spike}: the live candidate inventory has a row with no candidate. A row that "
+            "names nothing cannot be classified",
+            errors,
+        )
+        return None
+    repeated = sorted({value for value in declared if declared.count(value) > 1})
+    if repeated:
+        fail(
+            f"{spike}: the live candidate inventory declares "
+            f"{', '.join(repr(value) for value in repeated)} more than once. The build declares "
+            "a command once",
+            errors,
+        )
+        return None
+    if not declared:
+        fail(
+            f"{spike}: the live candidate inventory declares no candidate, so nothing could be "
+            "classified and the refusal would have nothing to be complete about",
+            errors,
+        )
+        return None
+
+    classification = _first_markdown_table(spike_text, "## Final classification")
+    if classification is None:
+        fail(
+            f"{spike} has no `## Final classification` table. It is where a candidate's state "
+            "is recorded, and the matrix's columns are checked against it",
+            errors,
+        )
+        return None
+    header, rows = _table_header_and_body(classification)
+    where = f"{spike} final classification"
+    columns = {
+        name: _column_index(header, name, where, errors)
+        for name in ("Candidate", "State", "Basis")
+    }
+    if any(index is None for index in columns.values()):
+        return None
+    ragged = [row for row in rows if len(row) != len(header)]
+    if ragged:
+        fail(
+            f"{spike}: {len(ragged)} row(s) of the final classification have a cell count the "
+            f"header's {len(header)} does not match. A ragged row shifts a candidate's state "
+            "onto the wrong column",
+            errors,
+        )
+        return None
+    blank = [
+        (_bare(row[columns["Candidate"]]) or "<unnamed>", name)
+        for row in rows
+        for name in ("Candidate", "State", "Basis")
+        if not row[columns[name]].strip()
+    ]
+    if blank:
+        fail(
+            f"{spike}: the final classification leaves "
+            + ", ".join(f"{candidate} without a {name}" for candidate, name in blank)
+            + ". A candidate is classified by naming it, its state, and why",
+            errors,
+        )
+        return None
+
+    classified = [_bare(row[columns["Candidate"]]) for row in rows]
+    repeated = sorted({value for value in classified if classified.count(value) > 1})
+    if repeated:
+        fail(
+            f"{spike}: the final classification lists "
+            f"{', '.join(repr(value) for value in repeated)} more than once. A candidate with "
+            "two states has no state",
+            errors,
+        )
+        return None
+
+    states = {
+        _bare(row[columns["Candidate"]]): _bare(row[columns["State"]]) for row in rows
+    }
+    invalid = sorted(
+        (candidate, state)
+        for candidate, state in states.items()
+        if state not in XIC_CANDIDATE_FINAL_STATES
+    )
+    if invalid:
+        fail(
+            f"{spike}: the final classification ends "
+            + ", ".join(f"{candidate} in `{state}`" for candidate, state in invalid)
+            + f", which is not one of the {len(XIC_CANDIDATE_FINAL_STATES)} states a candidate "
+            "may end in ("
+            + ", ".join(f"`{name}`" for name in sorted(XIC_CANDIDATE_FINAL_STATES))
+            + "). A token that resembles a terminal state is not one",
+            errors,
+        )
+        return None
+
+    unclassified = sorted(set(declared) - set(classified))
+    if unclassified:
+        fail(
+            f"{spike}: the live candidate inventory declares "
+            f"{', '.join(repr(value) for value in unclassified)} with no final classification. "
+            "An installed candidate left in no state is the one thing the refusal's second "
+            "condition rules out",
+            errors,
+        )
+    undeclared = sorted(set(classified) - set(declared))
+    if undeclared:
+        fail(
+            f"{spike}: the final classification records "
+            f"{', '.join(repr(value) for value in undeclared)}, which the live candidate "
+            "inventory does not declare. A candidate the build never offered cannot have been "
+            "classified from it",
+            errors,
+        )
+    if unclassified or undeclared:
+        return None
+
+    # The route outcome and the candidate states are both finite now, so their
+    # minimum agreement is checkable. Nothing about *which* source to choose is
+    # decided here -- that is D4's, and it stays a product question.
+    outcome = _route_outcome(spike_text)
+    admitted = sorted(
+        candidate for candidate, state in states.items() if state == "MEASURED_ADMITTED"
+    )
+    if outcome == "XIC_SOURCE_REFUSED" and admitted:
+        fail(
+            f"{spike}: the route outcome is `XIC_SOURCE_REFUSED` while "
+            f"{', '.join(repr(value) for value in admitted)} is classified `MEASURED_ADMITTED`. "
+            "A refusal means no candidate was admitted; one of the two is wrong, and a reader "
+            "cannot tell which",
+            errors,
+        )
+        return None
+    if outcome == "XIC_SOURCE_ADMITTED" and not admitted:
+        fail(
+            f"{spike}: the route outcome is `XIC_SOURCE_ADMITTED` while no candidate is "
+            "classified `MEASURED_ADMITTED`. An admission names the source it admitted",
+            errors,
+        )
+        return None
+
+    return {candidate for candidate, state in states.items() if state in MEASURED_STATES}
 
 
 def _validate_the_matrix_covers_every_measured_candidate(
-    classified: list[list[str]],
+    measured: set[str],
     header: list[str],
     body: list[list[str]],
     errors: list[str],
@@ -1749,30 +1968,6 @@ def _validate_the_matrix_covers_every_measured_candidate(
     closed without measuring it.
     """
     spike = "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md"
-    _, states = _table_header_and_body(classified)
-    ragged = [row for row in states if len(row) < 2]
-    if ragged:
-        fail(
-            f"{spike}: {len(ragged)} row(s) of the final classification carry no state. A "
-            "candidate without a recorded state is neither measured nor excluded",
-            errors,
-        )
-        return
-
-    named = [_bare(row[0]) for row in states]
-    repeated = sorted({value for value in named if named.count(value) > 1})
-    if repeated:
-        fail(
-            f"{spike}: the final classification lists "
-            f"{', '.join(repr(value) for value in repeated)} more than once. A candidate with "
-            "two states has no state",
-            errors,
-        )
-        return
-
-    measured = {
-        _bare(row[0]) for row in states if _bare(row[1]) in MEASURED_STATES
-    }
     if not measured:
         fail(
             f"{spike}: the final classification records no measured candidate, so the "
