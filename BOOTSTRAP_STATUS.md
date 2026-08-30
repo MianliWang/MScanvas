@@ -5619,3 +5619,91 @@ reachable: its predecessor on the refusal branch is M5.3, which is complete.
 `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
 `pnpm build` and `git diff --check`, each run directly and each exiting zero. No
 browser or Tauri E2E was required: this slice has no frontend.
+
+## M5.7 — selection-availability affordance consistency, 2026-08-30
+
+One rule for how every viewer surface that commits a scan says it cannot right
+now, applied to both of them at once. Frontend only: no Rust changed, and no XIC
+was built. The durable rule is
+[ADR 0041](docs/architecture/adr/0041-viewer-selection-availability.md); this
+entry records what shipped and what it was proved with.
+
+### The rule
+
+`canStartSpectrumSelection` stays the one selection-start authority and its four
+lane facts are unchanged. What it returns is now a projection rather than a
+boolean — available, or unavailable with a reason and the sentence a reader is
+shown — and the boolean is `status === "available"`. Every committing surface
+reads that one value, so no component decides for itself what is wrong.
+
+**Precedence names the fact that decides.** Nothing to select from; a check
+owning the backend lane; a settled verdict needing the reader to act; a
+conversion. The second ranks above the third because a check reports the backend
+as not usable for as long as it runs, and reading that as a verdict tells a
+reader their installation is broken every time it is looked at. That correction
+was made after an existing scan-step test caught the first ordering.
+
+**A blocked selection blocks committing a scan, not reading the run.** Hover,
+wheel zoom, drag pan, the keyboard viewport shortcuts, the range buttons, the
+trace toggles, scrolling, virtualization and `Arrow`/`Page`/`Home`/`End` roving
+focus all stay live. Neither surface is disabled and neither is made inert;
+`aria-disabled` is on the rows, which cannot be activated, not on the grid, which
+can still be navigated.
+
+**One explanation, once.** The viewer states it in a permanent live region that
+is empty and collapsed while selection is available, and both surfaces point at
+it by `aria-describedby`. It sits above the three measured panels in a flex
+column rather than as a fourth grid row, which would have cost 8px of gap
+permanently.
+
+### The two inherited M4.4 P3 debts, closed
+
+**P3-2.** The linked section's comment described one sentence in one element that
+is a live region from the start; it had been two elements since the announcement
+was repaired. Rewritten to the shape the file has.
+
+**P3-3.** The linked refusal was in the accessibility tree twice — a visible
+paragraph and a visually-hidden `aria-live` copy of it. One permanent live region
+now carries the refusal visibly and empties on recovery, and the ordinary
+description is a separate element rendered only when there is no refusal. One
+occurrence in either state, announcement intact, and becoming usable stays
+silent.
+
+### Evidence
+
+Frontend tests **1,372** (from 1,343), across the pure rule and its precedence,
+each surface's blocked and preserved behaviour, and the assembled document —
+where the single occurrence, both associations, the announcement, the absence of
+any backend read, and recovery without a remount are asserted together.
+
+Four counterfactuals, each applied alone and restored byte-for-byte: the
+chromatogram committing anyway, the table's row click and `Enter` committing
+anyway, the chromatogram taking the viewport away along with selection, and the
+linked refusal duplicated back into a hidden copy. All caught.
+
+Rendered QA at 1920×1080, 1366×768 and 960×640: the explanation is legible, the
+column keeps its width, all three panels stay present and nothing scrolls
+sideways.
+
+**Real WebView2 evidence, which M5.3 truthfully could not produce.** An official
+`msedgedriver` 151.0.4129.107 was restored outside the repository, exactly
+matching the installed WebView2 runtime 151.0.4129.107; Edge itself is
+152.0.4191.53 and is not what the shell uses. No project dependency changed and
+no driver is committed. The M5.7 suite passes in the compiled shell: the
+explanation appears and is announced there, both surfaces send nothing across the
+real IPC boundary while it stands, the run stays readable, and selection commits
+again when the lane clears.
+
+Three failures in the wider Tauri suite are **pre-existing and environmental**,
+not this slice's: one figure-settings theme default, and two clipboard operations
+that need a focused window. Each was reproduced on `main` with this slice stashed
+and the binary rebuilt, and is reported rather than attributed here.
+
+### Validation
+
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build` and `git diff --check`, each run directly and each exiting zero,
+plus `pnpm e2e:typecheck`, `pnpm e2e:browser`, `pnpm e2e:build` and
+`pnpm e2e:tauri`.

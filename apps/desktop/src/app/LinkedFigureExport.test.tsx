@@ -494,28 +494,53 @@ describe("the linked chromatogram and spectrum section", () => {
     expect(linkedButton("Export linked SVG…").disabled).toBe(false);
   });
 
-  it("costs no visible paragraph for the announcement", async () => {
-    // The section shows one sentence at a time because it is measured to the
-    // pixel, and a second *visible* paragraph is what that measurement
-    // rejected. The announcement is carried by an element with no layout.
+  it("says one sentence at a time, and says the refusal exactly once", async () => {
+    /*
+     * The section is measured to the pixel and shows one sentence in either
+     * state, which is what a second paragraph would have spent.
+     *
+     * It used to buy the announcement with a visually-hidden copy of the
+     * refusal beside the visible one. That announced correctly and put the same
+     * sentence in the accessibility tree twice, so a reader traversing the
+     * section met it, moved on, and met it again -- M4.4 P3-3. The live region
+     * is now the visible sentence, empty and collapsed while there is nothing
+     * wrong, and the description is a separate element rendered only when there
+     * is no refusal to displace.
+     */
     const preview = api();
     await openTheViewer(preview);
     await selectAScan();
     openExport();
 
-    const visible = Array.from(linkedSection().querySelectorAll("p")).filter(
-      (node) => !node.classList.contains("visually-hidden"),
-    );
-    expect(visible).toHaveLength(1);
-    expect(linkedAnnouncement()).toHaveClass("visually-hidden");
+    const sentences = () =>
+      Array.from(linkedSection().querySelectorAll("p")).filter(
+        (node) => (node.textContent ?? "").trim().length > 0,
+      );
+
+    // AVAILABLE: one sentence, and it is the description rather than a refusal.
+    expect(sentences()).toHaveLength(1);
+    expect(sentences()[0]?.textContent).toMatch(/^Two panels: this chromatogram/u);
+    // The live region is there, empty, and carries no layout while it is.
+    expect(linkedAnnouncement().textContent).toBe("");
+    expect(sentences()).not.toContain(linkedAnnouncement());
 
     fireEvent.change(within(panel()).getByRole("textbox", { name: /^Height/u }), {
       target: { value: "259" },
     });
-    const whileClosed = Array.from(linkedSection().querySelectorAll("p")).filter(
-      (node) => !node.classList.contains("visually-hidden"),
-    );
-    expect(whileClosed).toHaveLength(1);
+
+    // UNAVAILABLE: still one sentence, and now it is the refusal -- carried by
+    // the same element that announced it, so it is in the tree once.
+    const reason = "A two-panel linked figure needs a height of at least 260.";
+    expect(sentences()).toHaveLength(1);
+    expect(sentences()[0]).toBe(linkedAnnouncement());
+    expect(sentences()[0]?.textContent).toBe(reason);
+    // Once, counted over everything the section says.
+    const occurrences = (linkedSection().textContent ?? "").split(reason).length - 1;
+    expect(occurrences).toBe(1);
+    // And the description is not underneath it.
+    expect(
+      within(linkedSection()).queryByText(/^Two panels: this chromatogram/u),
+    ).toBeNull();
   });
 
   it("closes every linked action when the width is not a size at all", async () => {

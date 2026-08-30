@@ -60,8 +60,8 @@ table remains the target, including the unsupported portions called out below:
 | VIEW-002 | TIC/BPC | P0 | **Implemented for a completely loaded mzML spectrum table.** Toggle traces, zoom/pan/reset, inspect coordinates and select nearest scan. |
 | VIEW-003 | Spectrum view | P0 | Profile uses a line; centroid uses sticks; axes and units remain explicit. **Zoom/pan/reset implemented per spectrum, wherever an authoritative m/z domain is admitted; an explicit refusal where it is not.** |
 | VIEW-004 | Scan table | P0 | Virtualized rows with scan, RT, MS level and precursor context. |
-| VIEW-005 | Linked selection | P0 | **Implemented across the chromatogram, the loaded scan table and the selected-spectrum panel.** Selection synchronizes chromatogram marker, table row, spectrum and inspector in both directions. |
-| VIEW-006 | Keyboard scan navigation | P0 | **Implemented.** Previous/next and table navigation work without pointer-only access. |
+| VIEW-005 | Linked selection | P0 | **Implemented across the chromatogram, the loaded scan table and the selected-spectrum panel.** Selection synchronizes chromatogram marker, table row, spectrum and inspector in both directions. Where a scan cannot be committed right now, both surfaces say so once and neither stops being readable. |
+| VIEW-006 | Keyboard scan navigation | P0 | **Implemented.** Previous/next and table navigation work without pointer-only access, including while selection is unavailable: `Enter` and `Space` are the activations that stop, and arrow, page, `Home` and `End` navigation does not. |
 | VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. **Unimplemented, and the evidence gate is answered `XIC_SOURCE_REFUSED`: no query the measured ProteoWizard build offers can serve as a general XIC source.** M5.5 and M5.6 are `NOT_APPLICABLE`. Re-entry requires an exact executable identity covered by fresh measurement and a resolved numeric-fidelity answer. |
 | VIEW-008 | Multi-layer comparison | P2 | Visibility, style and provenance remain inspectable per layer. **Deferred: M8 for layer identity, M9 for comparison semantics.** |
 

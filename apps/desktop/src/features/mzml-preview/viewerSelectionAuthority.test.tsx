@@ -26,6 +26,7 @@ import type { BackendAvailability, Preview, SelectedSpectrumOutcome } from "./co
 import type { WorkspaceDropTransport } from "./dropTransport";
 import { WorkspaceDropTransportProvider } from "./dropTransport";
 import { canStartSpectrumSelection, usePreviewWorkspace } from "./usePreviewWorkspace";
+import { spectrumSelectionAvailability } from "./viewer/selectionAvailability";
 import { activeGestureEpoch, renderedDomain } from "./viewer/interactionState";
 import type { Deferred, FakePreviewApiOptions } from "../../test/previewFixtures";
 import {
@@ -570,6 +571,89 @@ describe("the global spectrum-selection lane", () => {
       expect(canStartSpectrumSelection(blocker.lane), blocker.name).toBe(false);
     }
   });
+
+  it("names each blocker, in words a reader can act on", () => {
+    // The boolean could gate a handler and could tell nobody anything, so
+    // every surface that wanted to explain itself decided again what was
+    // wrong. This is the one answer; the boolean is a projection of it.
+    const cases = [
+      { lane: { ...FREE, hasLoadedPreview: false }, reason: "no-loaded-run" },
+      { lane: { ...FREE, backendBusy: true }, reason: "backend-changing" },
+      { lane: { ...FREE, backendUsable: false }, reason: "backend-unavailable" },
+      { lane: { ...FREE, conversionBusy: true }, reason: "conversion-running" },
+    ] as const;
+
+    for (const { lane, reason } of cases) {
+      const availability = spectrumSelectionAvailability(lane);
+      expect(availability.status, reason).toBe("unavailable");
+      if (availability.status !== "unavailable") {
+        continue;
+      }
+      expect(availability.reason).toBe(reason);
+      // Something on screen or something the reader can change. A lane, a ref,
+      // a token or a mutex is true and useless.
+      expect(availability.message).not.toMatch(/lane|token|ref\b|mutex|busy flag/iu);
+      expect(availability.message.length).toBeGreaterThan(20);
+      expect(availability.message.endsWith(".")).toBe(true);
+    }
+  });
+
+  it("says nothing at all when a scan can be selected", () => {
+    // An explanation beside a control that works is a reason to doubt it.
+    expect(spectrumSelectionAvailability(FREE)).toEqual({ status: "available" });
+  });
+
+  it("names the blocker that decides when several hold at once", () => {
+    /*
+     * Deterministic, and ordered by which fact settles the question rather
+     * than by which lasts longest.
+     *
+     * A check reports the backend as not usable for as long as it runs, so
+     * ranking the settled verdict first told a reader their installation was
+     * broken every time it was looked at -- which an existing scan-step test
+     * caught the first time this rule was written the other way round.
+     */
+    const everything = {
+      hasLoadedPreview: false,
+      backendUsable: false,
+      backendBusy: true,
+      conversionBusy: true,
+    };
+    const reasonOf = (lane: typeof everything) => {
+      const availability = spectrumSelectionAvailability(lane);
+      return availability.status === "unavailable" ? availability.reason : null;
+    };
+
+    expect(reasonOf(everything)).toBe("no-loaded-run");
+    expect(reasonOf({ ...everything, hasLoadedPreview: true })).toBe("backend-changing");
+    expect(reasonOf({ ...everything, hasLoadedPreview: true, backendBusy: false })).toBe(
+      "backend-unavailable",
+    );
+    expect(
+      reasonOf({
+        ...everything,
+        hasLoadedPreview: true,
+        backendBusy: false,
+        backendUsable: true,
+      }),
+    ).toBe("conversion-running");
+  });
+
+  it("agrees with the boolean the operation guards itself with", () => {
+    // Not two rules that look alike. Every lane in the space, both readings.
+    for (const hasLoadedPreview of [true, false]) {
+      for (const backendUsable of [true, false]) {
+        for (const backendBusy of [true, false]) {
+          for (const conversionBusy of [true, false]) {
+            const lane = { hasLoadedPreview, backendUsable, backendBusy, conversionBusy };
+            expect(canStartSpectrumSelection(lane), JSON.stringify(lane)).toBe(
+              spectrumSelectionAvailability(lane).status === "available",
+            );
+          }
+        }
+      }
+    }
+  });
 });
 
 describe("what a scan step says it can do", () => {
@@ -581,7 +665,7 @@ describe("what a scan step says it can do", () => {
       expect(result.current.spectrum.status).toBe("loaded");
     });
 
-    expect(result.current.spectrumSelectionAvailable).toBe(true);
+    expect(result.current.spectrumSelection).toEqual({ status: "available" });
     expect(result.current.canSelectPreviousScan).toBe(true);
     expect(result.current.canSelectNextScan).toBe(true);
 
@@ -611,7 +695,11 @@ describe("what a scan step says it can do", () => {
       expect(result.current.backendBusy).toBe(true);
     });
 
-    expect(result.current.spectrumSelectionAvailable).toBe(false);
+    expect(result.current.spectrumSelection.status).toBe("unavailable");
+    expect(
+      result.current.spectrumSelection.status === "unavailable" &&
+        result.current.spectrumSelection.reason,
+    ).toBe("backend-changing");
     expect(result.current.canSelectPreviousScan).toBe(false);
     expect(result.current.canSelectNextScan).toBe(false);
     // And the operation refuses too, so the disabled state is a report of the
@@ -653,7 +741,11 @@ describe("what a scan step says it can do", () => {
       expect(result.current.conversion.busy).toBe(true);
     });
 
-    expect(result.current.spectrumSelectionAvailable).toBe(false);
+    expect(result.current.spectrumSelection.status).toBe("unavailable");
+    expect(
+      result.current.spectrumSelection.status === "unavailable" &&
+        result.current.spectrumSelection.reason,
+    ).toBe("conversion-running");
     expect(result.current.canSelectPreviousScan).toBe(false);
     expect(result.current.canSelectNextScan).toBe(false);
     await act(async () => {
@@ -690,7 +782,11 @@ describe("what a scan step says it can do", () => {
     // so there is still something to step through, and the steps still have to
     // say they cannot.
     expect(result.current.preview.status).toBe("loaded");
-    expect(result.current.spectrumSelectionAvailable).toBe(false);
+    expect(result.current.spectrumSelection.status).toBe("unavailable");
+    expect(
+      result.current.spectrumSelection.status === "unavailable" &&
+        result.current.spectrumSelection.reason,
+    ).toBe("backend-unavailable");
     expect(result.current.canSelectPreviousScan).toBe(false);
     expect(result.current.canSelectNextScan).toBe(false);
     await act(async () => {
@@ -707,7 +803,7 @@ describe("what a scan step says it can do", () => {
     await openThePreview(result);
 
     await select(result, 0);
-    expect(result.current.spectrumSelectionAvailable).toBe(true);
+    expect(result.current.spectrumSelection).toEqual({ status: "available" });
     expect(result.current.canSelectPreviousScan).toBe(false);
     expect(result.current.canSelectNextScan).toBe(true);
 
@@ -750,7 +846,7 @@ describe("what a scan step says it can do", () => {
     expect(result.current.previewBackendBusy).toBe(true);
     expect(result.current.spectrum.status).toBe("loading");
     // The scan lane does not, because a different scan may still supersede it.
-    expect(result.current.spectrumSelectionAvailable).toBe(true);
+    expect(result.current.spectrumSelection).toEqual({ status: "available" });
     expect(result.current.canSelectNextScan).toBe(true);
     const first = result.current.viewerInteraction.selection?.revision ?? 0;
 

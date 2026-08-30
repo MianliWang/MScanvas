@@ -10,6 +10,7 @@ import { DatasetRoster } from "./DatasetRoster";
 import { PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel } from "./SelectedSpectrumPanel";
 import { SpectrumTable } from "./SpectrumTable";
+import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
 import { formatCount, formatDatasetLabel } from "./format";
 import { rosterProjection, type WorkspaceNotice } from "./rosterSelection";
 import { describeProjection } from "./rosterView";
@@ -651,90 +652,121 @@ export function PreviewWorkspace() {
         </aside>
 
         {preview.status === "loaded" ? (
-          <div className="viewer-stack">
-            <Chromatogram
-              dispatch={workspace.dispatchViewerEvent}
-              exportPanel={
-                chromatogramExportOpen && workspace.chromatogramExportToken !== null ? (
-                  <ChromatogramExportPanel
-                    committedDomain={workspace.chromatogramCommittedDomain}
-                    exportState={workspace.chromatogramExport}
-                    figureSettings={workspace.figureSettings}
-                    linkedExportState={workspace.linkedFigureExport}
-                    linkedUnavailable={workspace.linkedFigureUnavailable}
-                    onCopyLinkedPlot={workspace.copyLinkedPlot}
-                    onCopyPlot={workspace.copyChromatogramPlot}
-                    onDismiss={workspace.dismissChromatogramExport}
-                    onDismissLinked={workspace.dismissLinkedFigureExport}
-                    onExport={workspace.exportChromatogram}
-                    onExportLinked={workspace.exportLinkedFigure}
-                    onFigureSetting={workspace.setFigureSetting}
-                    onFigureTheme={workspace.setFigureTheme}
-                    onRangeScope={workspace.setChromatogramRangeScope}
-                    pngDpiProblem={workspace.pngDpiProblem}
-                    rangeScope={workspace.chromatogramRangeScope}
-                    renderSettingsProblem={workspace.renderSettingsProblem}
-                    scientificExportBusy={workspace.scientificExportBusy}
-                    traces={workspace.chromatogramTraces}
-                  />
-                ) : null
+          <div className="viewer-column">
+            {/*
+              One explanation for both committing surfaces, and one occurrence
+              of it in the accessibility tree. Always mounted so that the
+              announcement is watched before the text arrives, and empty --
+              collapsed by `:empty` -- while a scan can be selected, because a
+              working control with a sentence under it is a reason to doubt it.
+            */}
+            <p
+              aria-live="polite"
+              className="notice notice-warning viewer-selection-notice"
+              data-live-region="spectrum-selection-availability"
+              /*
+               * The id only while there is something to point at. The element
+               * is permanent so that it is watched before the text arrives; a
+               * described-by target with no text is a promise of an
+               * explanation that is not there.
+               */
+              id={
+                workspace.spectrumSelection.status === "unavailable"
+                  ? SPECTRUM_SELECTION_NOTICE_ID
+                  : undefined
               }
-              exportToggle={
-                workspace.chromatogramExportToken === null ? null : (
-                  <button
-                    aria-controls="chromatogram-export-panel"
-                    aria-expanded={chromatogramExportOpen}
-                    className="secondary-button"
-                    id="chromatogram-export-toggle"
-                    onClick={() => {
-                      setChromatogramExportOpen((open) => !open);
-                    }}
-                    type="button"
-                  >
-                    Export
-                  </button>
-                )
-              }
-              interaction={workspace.viewerInteraction}
-              model={workspace.scanModel}
-              onSelect={workspace.selectSpectrum}
-              onToggleTrace={workspace.toggleChromatogramTrace}
-              readInteraction={workspace.readViewerInteraction}
-              traces={workspace.chromatogramTraces}
-            />
-            <SpectrumTable
-              canSelectNext={workspace.canSelectNextScan}
-              canSelectPrevious={workspace.canSelectPreviousScan}
-              onRendered={handleTableRendered}
-              onSelect={workspace.selectSpectrum}
-              onSelectNext={workspace.selectNextScan}
-              onSelectPrevious={workspace.selectPreviousScan}
-              selection={workspace.viewerInteraction.selection}
-              table={preview.preview.spectrumTable}
-            />
-            <SelectedSpectrumPanel
-              committedDomain={workspace.spectrumCommittedDomain}
-              dispatchViewport={workspace.dispatchSpectrumViewportEvent}
-              exportState={workspace.spectrumExport}
-              figureSettings={workspace.figureSettings}
-              onCopyPlot={workspace.copySpectrumPlot}
-              onDismissExport={workspace.dismissSpectrumExport}
-              onExport={workspace.exportSpectrum}
-              onFigureSetting={workspace.setFigureSetting}
-              onFigureTheme={workspace.setFigureTheme}
-              onRangeScope={workspace.setSpectrumRangeScope}
-              onRetry={workspace.retrySpectrum}
-              onRetryProjection={workspace.retrySpectrumProjection}
-              pngDpiProblem={workspace.pngDpiProblem}
-              rangeAvailability={workspace.spectrumRangeAvailability}
-              rangeScope={workspace.spectrumRangeScope}
-              projectionError={workspace.spectrumProjectionError}
-              readViewport={workspace.readSpectrumViewport}
-              renderSettingsProblem={workspace.renderSettingsProblem}
-              scientificExportBusy={workspace.scientificExportBusy}
-              state={spectrum}
-              viewport={workspace.spectrumViewport}
-            />
+            >
+              {workspace.spectrumSelection.status === "unavailable"
+                ? workspace.spectrumSelection.message
+                : ""}
+            </p>
+            <div className="viewer-stack">
+              <Chromatogram
+                dispatch={workspace.dispatchViewerEvent}
+                exportPanel={
+                  chromatogramExportOpen && workspace.chromatogramExportToken !== null ? (
+                    <ChromatogramExportPanel
+                      committedDomain={workspace.chromatogramCommittedDomain}
+                      exportState={workspace.chromatogramExport}
+                      figureSettings={workspace.figureSettings}
+                      linkedExportState={workspace.linkedFigureExport}
+                      linkedUnavailable={workspace.linkedFigureUnavailable}
+                      onCopyLinkedPlot={workspace.copyLinkedPlot}
+                      onCopyPlot={workspace.copyChromatogramPlot}
+                      onDismiss={workspace.dismissChromatogramExport}
+                      onDismissLinked={workspace.dismissLinkedFigureExport}
+                      onExport={workspace.exportChromatogram}
+                      onExportLinked={workspace.exportLinkedFigure}
+                      onFigureSetting={workspace.setFigureSetting}
+                      onFigureTheme={workspace.setFigureTheme}
+                      onRangeScope={workspace.setChromatogramRangeScope}
+                      pngDpiProblem={workspace.pngDpiProblem}
+                      rangeScope={workspace.chromatogramRangeScope}
+                      renderSettingsProblem={workspace.renderSettingsProblem}
+                      scientificExportBusy={workspace.scientificExportBusy}
+                      traces={workspace.chromatogramTraces}
+                    />
+                  ) : null
+                }
+                exportToggle={
+                  workspace.chromatogramExportToken === null ? null : (
+                    <button
+                      aria-controls="chromatogram-export-panel"
+                      aria-expanded={chromatogramExportOpen}
+                      className="secondary-button"
+                      id="chromatogram-export-toggle"
+                      onClick={() => {
+                        setChromatogramExportOpen((open) => !open);
+                      }}
+                      type="button"
+                    >
+                      Export
+                    </button>
+                  )
+                }
+                interaction={workspace.viewerInteraction}
+                model={workspace.scanModel}
+                onSelect={workspace.selectSpectrum}
+                onToggleTrace={workspace.toggleChromatogramTrace}
+                readInteraction={workspace.readViewerInteraction}
+                selectionAvailability={workspace.spectrumSelection}
+                traces={workspace.chromatogramTraces}
+              />
+              <SpectrumTable
+                canSelectNext={workspace.canSelectNextScan}
+                canSelectPrevious={workspace.canSelectPreviousScan}
+                onRendered={handleTableRendered}
+                onSelect={workspace.selectSpectrum}
+                onSelectNext={workspace.selectNextScan}
+                onSelectPrevious={workspace.selectPreviousScan}
+                selection={workspace.viewerInteraction.selection}
+                selectionAvailability={workspace.spectrumSelection}
+                table={preview.preview.spectrumTable}
+              />
+              <SelectedSpectrumPanel
+                committedDomain={workspace.spectrumCommittedDomain}
+                dispatchViewport={workspace.dispatchSpectrumViewportEvent}
+                exportState={workspace.spectrumExport}
+                figureSettings={workspace.figureSettings}
+                onCopyPlot={workspace.copySpectrumPlot}
+                onDismissExport={workspace.dismissSpectrumExport}
+                onExport={workspace.exportSpectrum}
+                onFigureSetting={workspace.setFigureSetting}
+                onFigureTheme={workspace.setFigureTheme}
+                onRangeScope={workspace.setSpectrumRangeScope}
+                onRetry={workspace.retrySpectrum}
+                onRetryProjection={workspace.retrySpectrumProjection}
+                pngDpiProblem={workspace.pngDpiProblem}
+                rangeAvailability={workspace.spectrumRangeAvailability}
+                rangeScope={workspace.spectrumRangeScope}
+                projectionError={workspace.spectrumProjectionError}
+                readViewport={workspace.readSpectrumViewport}
+                renderSettingsProblem={workspace.renderSettingsProblem}
+                scientificExportBusy={workspace.scientificExportBusy}
+                state={spectrum}
+                viewport={workspace.spectrumViewport}
+              />
+            </div>
           </div>
         ) : (
           <section className="panel workspace-placeholder">

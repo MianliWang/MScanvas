@@ -58,6 +58,15 @@ import {
   type WorkspaceNotice,
 } from "./rosterSelection";
 import type { ViewerEvent, ViewerInteractionState } from "./viewer/interactionState";
+import type {
+  SpectrumSelectionAvailability,
+  SpectrumSelectionLane,
+  SpectrumSelectionUnavailableReason,
+} from "./viewer/selectionAvailability";
+import {
+  canStartSpectrumSelection,
+  spectrumSelectionAvailability,
+} from "./viewer/selectionAvailability";
 import { buildPreviewScanModel } from "./viewer/previewScanModel";
 import type { RetentionTimeDomain, ScanModel, TraceKind } from "./viewer/scanModel";
 import { adjacentScan } from "./viewer/scanModel";
@@ -173,57 +182,15 @@ export interface TraceVisibility {
  */
 const INITIAL_TRACES: TraceVisibility = { tic: true, bpc: false };
 
-/**
- * What a selection needs before it can look at a target at all.
- *
- * The four facts `selectSpectrum` reads before it has considered *which* row
- * was asked for. They are about the lane rather than about the row: a run to
- * select from, a backend worth launching, and neither of the two things that
- * own the one backend lane already doing so.
- */
-export interface SpectrumSelectionLane {
-  /** Whether a run's spectrum table is loaded to select a row of. */
-  readonly hasLoadedPreview: boolean;
-  /** Whether this session's own verdict says the backend can be launched. */
-  readonly backendUsable: boolean;
-  /** Whether an installation check or change owns the backend lane. */
-  readonly backendBusy: boolean;
-  /** Whether a conversion owns it. */
-  readonly conversionBusy: boolean;
-}
-
-/**
- * Whether a selection could reach its target-specific checks right now.
- *
- * One rule with two readers, and that is the whole reason it is a function.
- * The operation asks it from refs, inside a handler that may be several
- * commits older than the truth; the interface asks it from rendered state, to
- * decide whether a control may advertise itself as available. Two handwritten
- * expressions that merely looked alike is how a button came to say a scan step
- * was available for the length of a conversion queue and do nothing when it
- * was pressed.
- *
- * Deliberately **not** in it:
- *
- * - whether an adjacent row exists, or the requested row is in the table, or
- *   that exact row is already being read. Those are questions about a target,
- *   and a control that had to predict them would be predicting a different
- *   thing for every target;
- * - whether another selected-spectrum read is unresolved. A newer selection of
- *   a *different* scan is allowed to supersede an older one -- that is the
- *   contract `spectrumToken` exists for, and disabling a scan step for it
- *   would take away a step the operation would have accepted. It is why this
- *   is not `canPreview`, which includes exactly that and several policies
- *   belonging to other actions.
- */
-export function canStartSpectrumSelection(lane: SpectrumSelectionLane): boolean {
-  return (
-    lane.hasLoadedPreview &&
-    lane.backendUsable &&
-    !lane.backendBusy &&
-    !lane.conversionBusy
-  );
-}
+// The selection-start rule moved to `viewer/selectionAvailability` so that the
+// plot and the table can read it without importing a hook. Re-exported here
+// because this module is where its callers have always found it.
+export type {
+  SpectrumSelectionAvailability,
+  SpectrumSelectionLane,
+  SpectrumSelectionUnavailableReason,
+};
+export { canStartSpectrumSelection };
 
 /** Whether this format is drawn rather than written. */
 function isFigureFormat(format: SpectrumExportFormat): boolean {
@@ -854,14 +821,19 @@ export interface PreviewWorkspace {
   readonly selectPreviousScan: () => void;
   readonly selectNextScan: () => void;
   /**
-   * Whether a selection could reach its target-specific checks right now.
+   * Whether a selection could reach its target-specific checks right now, and
+   * what to tell the reader when it could not.
    *
    * The rendered reading of the same rule `selectSpectrum` guards itself with.
    * A control that advertises availability has to tell the truth about the
    * lane; what it cannot be asked to predict is a target -- whether a
    * particular row is in the table, or is already being read.
+   *
+   * Every surface that commits a scan reads this one value. A surface that
+   * decided for itself what to say would be deciding for itself what is wrong,
+   * and two of those disagree the first time a lane changes.
    */
-  readonly spectrumSelectionAvailable: boolean;
+  readonly spectrumSelection: SpectrumSelectionAvailability;
   /**
    * Whether a scan step can act: the lane, and a row to step to.
    *
@@ -3501,13 +3473,29 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * `Preview focused` included, and closing it belongs to the conversion lane's
    * own contract rather than to this adapter.
    */
-  const spectrumSelectionAvailable = canStartSpectrumSelection({
-    hasLoadedPreview: preview.status === "loaded",
-    backendUsable:
-      backend.status === "resolved" && backend.availability.state === "available",
-    backendBusy,
-    conversionBusy: conversion.busy,
-  });
+  const hasLoadedPreview = preview.status === "loaded";
+  const backendUsable =
+    backend.status === "resolved" && backend.availability.state === "available";
+  /*
+   * Memoized on the four facts it is made of, and not because building it is
+   * expensive.
+   *
+   * Two memoized surfaces take this as a prop, and a new object every render
+   * would defeat both of them -- on a viewer whose props change whenever the
+   * pointer crosses from one scan to the next. The lane changes a handful of
+   * times in a session; the pointer moves at frame rate.
+   */
+  const spectrumSelection = useMemo(
+    () =>
+      spectrumSelectionAvailability({
+        hasLoadedPreview,
+        backendUsable,
+        backendBusy,
+        conversionBusy: conversion.busy,
+      }),
+    [backendBusy, backendUsable, conversion.busy, hasLoadedPreview],
+  );
+  const spectrumSelectionAvailable = spectrumSelection.status === "available";
 
   // ------------------------------------------- linked two-panel figure
   //
@@ -3862,7 +3850,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     toggleChromatogramTrace,
     selectPreviousScan,
     selectNextScan,
-    spectrumSelectionAvailable,
+    spectrumSelection,
     canSelectPreviousScan: spectrumSelectionAvailable && previousScanIndex !== null,
     canSelectNextScan: spectrumSelectionAvailable && nextScanIndex !== null,
     figureSettings,

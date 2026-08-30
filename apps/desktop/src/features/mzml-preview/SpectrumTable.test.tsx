@@ -15,6 +15,7 @@ import appStyles from "../../app/app.css?raw";
 import { buildRows } from "../../test/previewFixtures";
 import { SpectrumTable } from "./SpectrumTable";
 import type { Selection } from "./viewer/interactionState";
+import type { SpectrumSelectionAvailability } from "./viewer/selectionAvailability";
 
 const COLUMN_LABELS = [
   "Index",
@@ -48,6 +49,7 @@ interface TableOptions {
   readonly truncated?: boolean;
   readonly canSelectPrevious?: boolean;
   readonly canSelectNext?: boolean;
+  readonly selectionAvailability?: SpectrumSelectionAvailability;
 }
 
 function renderTable(options: TableOptions = {}) {
@@ -64,6 +66,8 @@ function renderTable(options: TableOptions = {}) {
     onSelectNext,
     onSelectPrevious,
     selection,
+    selectionAvailability:
+      options.selectionAvailability ?? ({ status: "available" } as const),
     table: {
       rows: buildRows(rowCount),
       totalRowCount: options.truncated === true ? rowCount * 10 : rowCount,
@@ -80,6 +84,21 @@ function renderTable(options: TableOptions = {}) {
     /** Publishes another selection commit, as the workspace would. */
     commitSelection: (selection: Selection | null) => {
       result.rerender(<SpectrumTable {...props(selection)} />);
+    },
+    /**
+     * Publishes a new selection availability, as the workspace would.
+     *
+     * A re-render rather than a remount, which is the point: a lane clearing
+     * does not rebuild the viewer, and a table that only worked again after
+     * being rebuilt would have lost the reader's scroll position and tab stop.
+     */
+    rerenderWithAvailability: (availability: SpectrumSelectionAvailability) => {
+      result.rerender(
+        <SpectrumTable
+          {...props(options.selection ?? null)}
+          selectionAvailability={availability}
+        />,
+      );
     },
   };
 }
@@ -377,5 +396,149 @@ describe("stepping through scans from the table", () => {
     expect(
       screen.getByText(/step through these rows and stop at the end of them, which is not the end of the run/),
     ).toBeVisible();
+  });
+});
+
+describe("the spectrum table while selection is unavailable", () => {
+  const BLOCKED = {
+    status: "unavailable",
+    reason: "conversion-running",
+    message: "Selecting a scan is unavailable while a conversion is running.",
+  } as const;
+
+  function blocked(options: TableOptions = {}) {
+    return renderTable({ ...options, selectionAvailability: BLOCKED });
+  }
+
+  function grid(): HTMLElement {
+    return screen.getByRole("grid", { name: "Spectra" });
+  }
+
+  it("does not commit a clicked row", () => {
+    // A closed control is asserted by pressing it: `aria-disabled` is an
+    // affordance, and what matters is that nothing crossed the boundary.
+    const { onSelect } = blocked();
+
+    fireEvent.click(within(grid()).getAllByRole("row")[1] as HTMLElement);
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("does not commit on Enter or Space", () => {
+    const { onSelect } = blocked();
+    const rows = within(grid()).getAllByRole("row");
+    rows[1]?.focus();
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Enter" });
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: " " });
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("keeps Previous and Next unavailable through the same lane rule", () => {
+    // Their `canSelect*` inputs are the lane rule and adjacency together, which
+    // is the workspace's job; here they are simply closed, and pressing them
+    // proves it rather than reading the attribute.
+    const { onSelectPrevious, onSelectNext } = blocked({
+      canSelectPrevious: false,
+      canSelectNext: false,
+      selection: commit(3, 1),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous scan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next scan" }));
+
+    expect(onSelectPrevious).not.toHaveBeenCalled();
+    expect(onSelectNext).not.toHaveBeenCalled();
+  });
+
+  it("still walks the rows with the arrows, pages, Home and End", () => {
+    blocked({ rowCount: 400 });
+    within(grid()).getAllByRole("row")[1]?.focus();
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "ArrowDown" });
+    expect(document.activeElement).toHaveAttribute("aria-rowindex", "3");
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "PageDown" });
+    expect(document.activeElement).toHaveAttribute("aria-rowindex", "21");
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Home" });
+    expect(document.activeElement).toHaveAttribute("aria-rowindex", "2");
+  });
+
+  it("moves the tab stop to a clicked row even though it does not commit it", () => {
+    // The click still meant "I am here". Taking the tab stop away as well would
+    // be a second surprise on top of the one the reader already has.
+    blocked({ rowCount: 40 });
+    const rows = within(grid()).getAllByRole("row");
+
+    fireEvent.click(rows[3] as HTMLElement);
+
+    expect(rows[3]).toHaveAttribute("tabindex", "0");
+    expect(rows[1]).toHaveAttribute("tabindex", "-1");
+  });
+
+  it("still scrolls, and still renders a window rather than the whole run", () => {
+    const { container } = blocked({ rowCount: 4_000 });
+    const viewport = requireElement(container, ".spectrum-table-viewport");
+
+    expect(container.querySelectorAll('[role="row"]').length).toBeLessThan(100);
+    fireEvent.scroll(viewport, { target: { scrollTop: 600 } });
+    expect(container.querySelectorAll('[role="row"]').length).toBeLessThan(100);
+    // And the window moved with the scroll rather than staying at the top.
+    expect(
+      container.querySelector('[role="row"]:not(.spectrum-table-head)')?.getAttribute(
+        "aria-rowindex",
+      ),
+    ).not.toBe("2");
+  });
+
+  it("keeps the selected row selected and readable", () => {
+    const { container } = blocked({ rowCount: 40, selection: commit(3, 1) });
+    const selected = requireElement(container, '[role="row"][aria-selected="true"]');
+
+    expect(selected).toHaveAttribute("aria-rowindex", "5");
+    expect(within(selected).getByText("Selected,")).toBeInTheDocument();
+    // Its values are still readable rather than blanked out or hidden.
+    expect(selected.textContent).toMatch(/MS\d/u);
+  });
+
+  it("marks the rows rather than the grid, and points at the one explanation", () => {
+    const { container } = blocked({ rowCount: 40 });
+
+    // The grid is navigable; it is the rows that cannot be activated.
+    expect(grid().getAttribute("aria-disabled")).toBeNull();
+    expect(grid().getAttribute("aria-describedby")).toBe("viewer-selection-availability");
+    for (const row of container.querySelectorAll('[role="row"]:not(.spectrum-table-head)')) {
+      expect(row.getAttribute("aria-disabled")).toBe("true");
+    }
+    // The sentence itself lives once, in the viewer. Not here.
+    expect(screen.queryByText(/conversion is running/u)).toBeNull();
+    // And the hint that Enter opens a row is not offered while it does not.
+    expect(screen.queryByText(/Enter or Space opens the focused row/u)).toBeNull();
+  });
+
+  it("says nothing about availability, and describes nothing, once selection returns", () => {
+    const { container } = renderTable({ rowCount: 40 });
+
+    expect(grid().getAttribute("aria-describedby")).toBeNull();
+    for (const row of container.querySelectorAll('[role="row"]:not(.spectrum-table-head)')) {
+      expect(row.getAttribute("aria-disabled")).toBeNull();
+    }
+    expect(screen.getByText(/Enter or Space opens the focused row/u)).toBeInTheDocument();
+  });
+
+  it("commits again as soon as the lane clears, without being remounted", () => {
+    const { onSelect, rerenderWithAvailability } = blocked({ rowCount: 40 });
+    const rows = () => within(grid()).getAllByRole("row");
+
+    fireEvent.click(rows()[2] as HTMLElement);
+    expect(onSelect).not.toHaveBeenCalled();
+
+    rerenderWithAvailability({ status: "available" });
+
+    fireEvent.click(rows()[2] as HTMLElement);
+    expect(onSelect.mock.calls).toEqual([[1]]);
+    expect(grid().getAttribute("aria-describedby")).toBeNull();
   });
 });

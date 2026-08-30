@@ -21,6 +21,8 @@ import type {
   TraceKind,
 } from "./viewer/scanModel";
 import { nearestScan } from "./viewer/scanModel";
+import type { SpectrumSelectionAvailability } from "./viewer/selectionAvailability";
+import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
 import { panDomain } from "./viewer/viewport";
 import type { ViewportAction } from "./viewer/viewportAction";
 import {
@@ -112,6 +114,15 @@ export interface ChromatogramProps {
   /** The one selected-spectrum operation, which the table and the steps share. */
   readonly onSelect: (index: number) => void;
   /**
+   * Whether a click may commit a scan, from the one selection authority.
+   *
+   * Read rather than re-derived, and it governs the commit alone. The plot is a
+   * viewport over data already on screen: refusing a hover, a zoom or a pan
+   * because a conversion holds the backend lane would take away the reading
+   * that is still perfectly true.
+   */
+  readonly selectionAvailability: SpectrumSelectionAvailability;
+  /**
    * The control that opens this panel's export surface.
    *
    * Rendered into the header's existing control row rather than below the plot,
@@ -149,6 +160,7 @@ export const Chromatogram = memo(function Chromatogram({
   traces,
   onToggleTrace,
   onSelect,
+  selectionAvailability,
   exportToggle,
   exportPanel,
 }: ChromatogramProps) {
@@ -255,6 +267,7 @@ export const Chromatogram = memo(function Chromatogram({
             points={model.points}
             readInteraction={readInteraction}
             selected={interaction.selection?.index ?? null}
+            selectionAvailability={selectionAvailability}
             traces={traces}
             showingFullRange={showingFullRange}
           />
@@ -326,6 +339,7 @@ interface PlotProps {
   readonly dispatch: (event: ViewerEvent) => ViewerInteractionState;
   readonly readInteraction: () => ViewerInteractionState;
   readonly onSelect: (index: number) => void;
+  readonly selectionAvailability: SpectrumSelectionAvailability;
 }
 
 function ChromatogramPlot({
@@ -339,6 +353,7 @@ function ChromatogramPlot({
   dispatch,
   readInteraction,
   onSelect,
+  selectionAvailability,
 }: PlotProps) {
   const plotRef = useRef<SVGSVGElement | null>(null);
 
@@ -759,6 +774,13 @@ function ChromatogramPlot({
     if (retentionTime === null) {
       return;
     }
+    // Only the commit is gated, and only here: everything above this line has
+    // already run, so the gesture that ended in this click still moved the
+    // viewport it was moving. A click that cannot commit does nothing rather
+    // than dispatching an operation that would refuse itself one frame later.
+    if (selectionAvailability.status !== "available") {
+      return;
+    }
     const scan = nearestScan(points, retentionTime);
     if (scan !== null) {
       onSelect(scan.spectrumIndex);
@@ -831,7 +853,17 @@ function ChromatogramPlot({
   return (
     <div className="chromatogram-plot">
       <svg
-        aria-describedby="chromatogram-readout"
+        /*
+         * The readout always, and the reason for a blocked selection while
+         * there is one. Described rather than disabled: this plot can still be
+         * read, and a reader who arrives at it is told which of the things it
+         * offers is temporarily not one of them.
+         */
+        aria-describedby={
+          selectionAvailability.status === "available"
+            ? "chromatogram-readout"
+            : `chromatogram-readout ${SPECTRUM_SELECTION_NOTICE_ID}`
+        }
         aria-labelledby="chromatogram-heading"
         className="chromatogram-svg"
         onBlur={() => {

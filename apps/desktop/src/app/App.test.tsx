@@ -1862,7 +1862,8 @@ describe("the session workspace roster", () => {
     // doing, what the search found, what the last workspace action did,
     // whether a folder scan is running, what native drop is doing, and what
     // the one conversion is doing.
-    expect(regions()).toHaveLength(6);
+    const applicationRegions = regions();
+    expect(applicationRegions).toHaveLength(6);
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
@@ -1871,8 +1872,17 @@ describe("the session workspace roster", () => {
         "Workspace: Added 2 files.",
       );
     });
-    // The same six regions, with new text in one of them.
-    expect(regions()).toHaveLength(6);
+    // The same six regions, with new text in one of them -- the same nodes,
+    // which is what "for the life of the application" means and is what a bare
+    // count was standing in for. A loaded run mounts the viewer's own
+    // selection-availability region beside them; that one comes and goes with
+    // the run, and these six never do.
+    for (const region of applicationRegions) {
+      expect(
+        document.contains(region),
+        region.getAttribute("data-live-region") ?? "region",
+      ).toBe(true);
+    }
   });
 
   it("does not claim the session is empty before its list has been read", async () => {
