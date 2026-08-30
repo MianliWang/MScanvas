@@ -1352,6 +1352,19 @@ MISSING_LIST_OPENINGS: tuple[str, ...] = (
 )
 
 
+# The M5 route defines exactly two outcomes, and there is no third. A token that
+# merely looks like one is not one: `XIC_SOURCE_REFUSEDD` would otherwise be
+# accepted as authoritative wherever the spike and the status documents happened
+# to agree on the misspelling, and the opposite-outcome derivation below would
+# then name a real outcome as the withdrawn one.
+XIC_ROUTE_OUTCOMES: frozenset[str] = frozenset(
+    {
+        "XIC_SOURCE_ADMITTED",
+        "XIC_SOURCE_REFUSED",
+    }
+)
+
+
 def validate_the_xic_route_outcome_has_one_answer(errors: list[str]) -> None:
     """Every status document reports the route outcome the spike measured.
 
@@ -1383,7 +1396,9 @@ def validate_the_xic_route_outcome_has_one_answer(errors: list[str]) -> None:
         return
     text = spike.read_text(encoding="utf-8")
 
-    outcomes = re.findall(r"\*\*Route outcome: `(XIC_SOURCE_[A-Z_]+)`\.\*\*", text)
+    # The pattern locates the declaration; it does not decide whether what it
+    # found is a route outcome. That is the closed vocabulary's job, below.
+    outcomes = re.findall(r"\*\*Route outcome: `([A-Z_][A-Z0-9_]*)`\.\*\*", text)
     if len(outcomes) != 1:
         fail(
             f"docs/spikes/M5_XIC_SOURCE_EVIDENCE.md declares {len(outcomes)} route outcomes, "
@@ -1393,9 +1408,20 @@ def validate_the_xic_route_outcome_has_one_answer(errors: list[str]) -> None:
         )
         return
     outcome = outcomes[0]
-    superseded = (
-        "XIC_SOURCE_ADMITTED" if outcome == "XIC_SOURCE_REFUSED" else "XIC_SOURCE_REFUSED"
-    )
+    if outcome not in XIC_ROUTE_OUTCOMES:
+        fail(
+            f"docs/spikes/M5_XIC_SOURCE_EVIDENCE.md declares route outcome `{outcome}`, which "
+            f"is not one of the {len(XIC_ROUTE_OUTCOMES)} the route defines "
+            f"({', '.join(f'`{name}`' for name in sorted(XIC_ROUTE_OUTCOMES))}). A token that "
+            "resembles an outcome is not one, and the status documents would agree with it "
+            "just as readily",
+            errors,
+        )
+        return
+    # By exclusion from the closed set rather than by an `else`, so an unknown
+    # token can never be handed the opposite outcome's name. The unpacking
+    # asserts what the vocabulary promises: exactly one other outcome.
+    (superseded,) = XIC_ROUTE_OUTCOMES - {outcome}
 
     _validate_the_reentry_gate_names_the_measured_digest(text, errors)
 
@@ -1518,6 +1544,12 @@ def _validate_the_reentry_gate_names_the_measured_digest(
         )
         return
 
+    # Set equality, not membership. The gate names the identities that fresh
+    # evidence covers, and this record covers exactly one executable. A gate
+    # reading "this digest or that one" would admit a build nobody measured --
+    # which is the move the rule exists to forbid -- while still containing the
+    # measured value. Comparing normalized values, so restating the same
+    # identity more than once is not a second identity.
     named = {found.upper() for found in re.findall(r"\b([0-9a-fA-F]{64})\b", gate)}
     if measured not in named:
         fail(
@@ -1526,6 +1558,18 @@ def _validate_the_reentry_gate_names_the_measured_digest(
             "measured-build table records. Scientific evidence is transferable only to an "
             "executable identity the evidence covers, and the word `SHA-256` is not an "
             "identity",
+            errors,
+        )
+    unevidenced = sorted(named - {measured})
+    if unevidenced:
+        noun = "identity" if len(unevidenced) == 1 else "identities"
+        fail(
+            f"docs/spikes/M5_XIC_SOURCE_EVIDENCE.md: the re-entry gate names {len(unevidenced)} "
+            f"executable {noun} this record holds no evidence for -- "
+            + ", ".join(f"`{value[:8]}...{value[-4:]}`" for value in unevidenced)
+            + ". The gate admits an executable the evidence covers, not a shortlist that "
+            "happens to include it; a further build becomes eligible by being measured, not "
+            "by being listed alongside one that was",
             errors,
         )
 
