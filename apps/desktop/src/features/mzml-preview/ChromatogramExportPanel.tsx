@@ -392,19 +392,18 @@ function LinkedFigureSection({
     <fieldset className="linked-figure-actions" id={`${LINKED_PREFIX}-section`}>
       <legend>Linked chromatogram + spectrum</legend>
       {/*
-        One sentence, in one element that is a live region from the start.
+        One sentence, in whichever of two elements the reader's situation calls
+        for -- and never both at once.
 
-        Which sentence depends on whether the reader can act.
-
-        Measured, in the state where the three actions are live: this section
-        costs the open surface 116px at 1366x768 and at 960x640, and 96px at
-        1920x1080 where the sentence fits on one line. Two stacked paragraphs
-        cost 163px, 163px and 122px for the same states -- and at 1366x768 the
-        difference decides whether the plot's top edge is still inside the
-        614px viewer column when the surface is open. The three panels' floors
-        were measured for M4.3 and the export surface's own scroll owner was
-        accepted on that arithmetic, so a third section has to fit inside it
-        rather than spend it.
+        Which sentence depends on whether the reader can act. Measured, in the
+        state where the three actions are live: this section costs the open
+        surface 116px at 1366x768 and at 960x640, and 96px at 1920x1080 where
+        the sentence fits on one line. Two stacked paragraphs cost 163px, 163px
+        and 122px for the same states -- and at 1366x768 the difference decides
+        whether the plot's top edge is still inside the 614px viewer column when
+        the surface is open. The three panels' floors were measured for M4.3 and
+        the export surface's own scroll owner was accepted on that arithmetic,
+        so a third section has to fit inside it rather than spend it.
 
         Which sentence to drop is not a coin toss. A reader who cannot use this
         yet needs to know what to change; a reader who can needs to know what
@@ -412,41 +411,48 @@ function LinkedFigureSection({
         underneath their own.
       */}
       {/*
-        What is read, and what is announced, are two elements doing two jobs.
+        The refusal is announced and read from the same element, because it is
+        one sentence and a reader should meet it once.
 
-        The reason *appears* while the reader is somewhere else -- typing a
-        height, choosing a range scope -- and closes three controls as it does.
-        A correction nobody is told about has to be hunted for, and a disabled
-        control cannot be tabbed to, so its `aria-describedby` is not a way to
-        find one either. So it has to be announced.
+        It has to be announced: the reason appears while the reader is somewhere
+        else -- typing a height, choosing a range scope -- and closes three
+        controls as it does. A correction nobody is told about has to be hunted
+        for, and a disabled control cannot be tabbed to, so its
+        `aria-describedby` is not a way to find one either.
 
-        Two conditional paragraphs did not announce it, and looked as though
+        And the region has to be mounted before the text arrives. Two
+        conditional paragraphs did not announce anything and looked as though
         they did: React reconciles same-typed siblings in one slot, so the node
         was reused and `aria-live` arrived in the very commit that replaced the
-        text. Nothing was watching a live region there until the mutation
-        itself.
+        text. Nothing was watching.
 
-        Making the visible paragraph live instead announced the wrong thing.
-        The element also carries the description, so becoming *usable* -- the
-        state nobody needs telling about -- read the whole of it aloud. The two
-        figure-setting problems on this surface avoid that by holding only the
-        problem and emptying it on recovery, and that is what the hidden region
-        below does. It costs no layout, so the visible paragraph stays the one
-        sentence this section can afford.
+        So this element is permanent, visible, and holds the refusal alone. It
+        empties on recovery rather than filling with the description, which is
+        why becoming *usable* -- the state nobody needs telling about -- is
+        silent; it is the same rule the two figure-setting problems on this
+        surface follow. `:empty` collapses it, so the section is one sentence
+        tall in both states, and the description below it is rendered only while
+        there is no refusal to displace. One occurrence either way: the earlier
+        shape kept a hidden copy of the refusal beside the visible one, which
+        announced correctly and made a reader traverse the same sentence twice.
       */}
       <p
-        className="chromatogram-export-note"
-        id={unavailable === null ? undefined : LINKED_UNAVAILABLE_ID}
-      >
-        {unavailable ?? LINKED_DESCRIPTION}
-      </p>
-      <p
         aria-live="polite"
-        className="visually-hidden"
+        className="chromatogram-export-note"
         data-live-region="linked-figure-availability"
+        /*
+         * The id only while there is something to point at. The element is
+         * permanent so that it is watched before the text arrives; a
+         * described-by target with no text is a promise of an explanation
+         * that is not there.
+         */
+        id={unavailable === null ? undefined : LINKED_UNAVAILABLE_ID}
       >
         {unavailable ?? ""}
       </p>
+      {unavailable === null ? (
+        <p className="chromatogram-export-note">{LINKED_DESCRIPTION}</p>
+      ) : null}
       <div className="spectrum-export-actions">
         {LINKED_FIGURE_FORMATS.map(({ format, label, recordsDpi }) => (
           <button

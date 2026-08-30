@@ -10,6 +10,8 @@ import {
 import type { Selection, SelectionConsumer } from "./viewer/interactionState";
 import { consumeSelection, initialSelectionConsumer } from "./viewer/interactionState";
 import { revealScrollTop } from "./viewer/renderGeometry";
+import type { SpectrumSelectionAvailability } from "./viewer/selectionAvailability";
+import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
 
 /** Fixed row height keeps the windowing arithmetic exact. Mirrored in CSS. */
 const ROW_HEIGHT = 30;
@@ -69,6 +71,15 @@ export interface SpectrumTableProps {
   readonly onSelectNext: () => void;
   readonly canSelectPrevious: boolean;
   readonly canSelectNext: boolean;
+  /**
+   * Whether an activation may commit a scan, from the one selection authority.
+   *
+   * The same value the steps above are derived from, and the same one the plot
+   * reads. It governs committing only: a reader waiting for a conversion can
+   * still scroll this table, walk it with the arrow keys and read every value
+   * in it, because none of that asks the backend for anything.
+   */
+  readonly selectionAvailability: SpectrumSelectionAvailability;
 }
 
 /**
@@ -88,7 +99,9 @@ export const SpectrumTable = memo(function SpectrumTable({
   onSelectNext,
   canSelectPrevious,
   canSelectNext,
+  selectionAvailability,
 }: SpectrumTableProps) {
+  const canCommit = selectionAvailability.status === "available";
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(FALLBACK_VIEWPORT_HEIGHT);
@@ -225,6 +238,10 @@ export const SpectrumTable = memo(function SpectrumTable({
    * Arrow keys move focus without selecting. Selection is committed with Enter
    * or Space because each selection launches one backend process, and
    * selection-following-focus would launch one per key press.
+   *
+   * Which is also why only those two are gated when selection is unavailable.
+   * Movement costs nothing and stays; the commit is the part that would have
+   * launched a process the operation is going to refuse.
    */
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>, position: number) => {
@@ -250,14 +267,16 @@ export const SpectrumTable = memo(function SpectrumTable({
           break;
         case "Enter":
         case " ":
-          onSelect(rows[position]?.index ?? 0);
+          if (canCommit) {
+            onSelect(rows[position]?.index ?? 0);
+          }
           break;
         default:
           return;
       }
       event.preventDefault();
     },
-    [moveFocus, onSelect, rowCount, rows, rowsHeight],
+    [canCommit, moveFocus, onSelect, rowCount, rows, rowsHeight],
   );
 
   return (
@@ -271,7 +290,7 @@ export const SpectrumTable = memo(function SpectrumTable({
             {table.truncated
               ? ` · showing the first ${formatCount(rowCount)} rows`
               : " · all rows loaded"}
-            {" · Enter or Space opens the focused row"}
+            {canCommit ? " · Enter or Space opens the focused row" : ""}
             {/* Stated where the values are, not only in the detail panel. A
                 bare number invites being read as minutes. */}
             {" · retention times have no unit because the file reports none"}
@@ -312,6 +331,12 @@ export const SpectrumTable = memo(function SpectrumTable({
 
       <div
         aria-colcount={COLUMNS.length}
+        /*
+         * The reason, while there is one -- described, never disabled. A
+         * disabled grid is a grid that cannot be navigated, and every value in
+         * it is still readable and still true.
+         */
+        aria-describedby={canCommit ? undefined : SPECTRUM_SELECTION_NOTICE_ID}
         aria-labelledby="spectrum-table-heading"
         aria-rowcount={table.totalRowCount + 1}
         className="spectrum-table"
@@ -358,14 +383,20 @@ export const SpectrumTable = memo(function SpectrumTable({
               >
                 {rendered.map((row, offset) => (
                   <SpectrumTableRow
+                    canCommit={canCommit}
                     isFocusStop={start + offset === focusStop}
                     isSelected={selectedIndex === row.index}
                     key={row.index}
                     onActivate={(position) => {
                       // Activating a row also makes it the tab stop, so keyboard
-                      // navigation resumes from what the user just chose.
+                      // navigation resumes from what the user just chose. That
+                      // part happens either way: where the row cannot be
+                      // committed, moving the tab stop is still what the click
+                      // meant, and losing it would be a second surprise.
                       setFocusRow(position);
-                      onSelect(row.index);
+                      if (canCommit) {
+                        onSelect(row.index);
+                      }
                     }}
                     onKeyDown={handleKeyDown}
                     position={start + offset}
@@ -386,6 +417,8 @@ interface SpectrumTableRowProps {
   readonly position: number;
   readonly isSelected: boolean;
   readonly isFocusStop: boolean;
+  /** Whether activating this row would commit it. */
+  readonly canCommit: boolean;
   readonly onActivate: (position: number) => void;
   readonly onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>, position: number) => void;
 }
@@ -395,6 +428,7 @@ function SpectrumTableRow({
   position,
   isSelected,
   isFocusStop,
+  canCommit,
   onActivate,
   onKeyDown,
 }: SpectrumTableRowProps) {
@@ -412,6 +446,12 @@ function SpectrumTableRow({
 
   return (
     <div
+      /*
+       * On the row rather than on the grid: this row cannot be activated, and
+       * the table it is in can still be navigated. The tab stop and the reading
+       * are untouched.
+       */
+      aria-disabled={canCommit ? undefined : true}
       aria-rowindex={position + 2}
       aria-selected={isSelected}
       className={`spectrum-table-row${isSelected ? " is-selected" : ""}`}

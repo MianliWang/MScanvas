@@ -919,9 +919,53 @@ button:disabled {
   gap: 6px;
 }
 
+/* The viewer column: an explanation that is usually not there, and the three
+   measured panels.
+
+   Not a fourth grid row. The rows below are measured against a 768px window and
+   a fourth track would have cost 8px of gap permanently, whether or not it had
+   anything in it. A flex column costs nothing while the notice is empty, because
+   the empty notice is taken out of flow rather than left in it. */
+.viewer-column {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Says why a scan cannot be selected, and nothing at all otherwise.
+
+   Collapsed rather than unmounted: a live region that arrives in the same commit
+   as its text is not being watched when the text arrives, and the reader this is
+   for is looking somewhere else when the lane closes.
+
+   Collapsed the way `visually-hidden` collapses, and deliberately **not** with
+   `display: none`. That removes the element from the accessibility tree, which
+   is the same thing as not having mounted it: the region and its text would
+   still be arriving together with nothing watching. Out of flow rather than out
+   of the tree -- `position: absolute` also keeps it out of the flex column's
+   gap, so an available viewer is the height it always was. */
+.viewer-selection-notice:empty {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .viewer-stack {
   display: grid;
   min-height: 0;
+  /* Fills what the column has left, which is what it did for free as a direct
+     grid item of `.workspace-layout` and its `minmax(0, 1fr)` rows. As a flex
+     item it defaults to `0 1 auto` -- its own content, floored by the tracks
+     below -- so a tall window showing a short run would have left the three
+     scientific views bunched at the top under a band of nothing. */
+  flex: 1 1 auto;
   /* Three linked views, top to bottom in the order a reader moves through
      them: the run's shape, the scans it is made of, and the one scan they
      chose. The chromatogram takes the smallest share, because it is a locator
@@ -1126,6 +1170,27 @@ button:disabled {
   color: var(--text-muted, #56606e);
   font-size: 0.85rem;
   margin: 0;
+}
+
+/* The linked section's availability note when it has nothing to say.
+
+   Collapsed rather than unmounted, so the live region is being watched before
+   the refusal arrives -- and so the section stays one sentence tall, which is
+   the height the open surface was measured against.
+
+   Out of flow rather than `display: none`, for the reason the viewer's own
+   notice gives: a region that is not in the accessibility tree is not being
+   watched, and it would arrive carrying its text. */
+.chromatogram-export-note:empty {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .chromatogram-svg {

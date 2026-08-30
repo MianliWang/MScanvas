@@ -211,8 +211,8 @@ before conversion is widened and before the product is redesigned.
   outcome **`XIC_SOURCE_REFUSED`**.
 - M5.5 — **`NOT_APPLICABLE`** (the XIC model and runtime).
 - M5.6 — **`NOT_APPLICABLE`** (the visible XIC, and linked selection).
-- M5.7 — **next, not started** (selection-availability affordance consistency).
-- M5.8 — not started.
+- M5.7 — **complete** (selection-availability affordance consistency).
+- M5.8 — **next, not started** (Viewer Completion closure and handoff).
 
 **Zoom, pan and reset reach a spectrum whose domain is admitted, and only
 those.** A spectrum the figure contract cannot give an authoritative finite
@@ -290,14 +290,19 @@ five product decisions it surfaces are in
   approximated from a source that cannot produce the science.
 - **M5.6 — the visible XIC, and linked selection.** **`NOT_APPLICABLE`**, for the
   same reason.
-- **M5.7 — selection-availability affordance consistency.** **Next.** One rule
-  for how every viewer click surface says a selection cannot be performed right
-  now, applied to all of them at once. Deferred from Viewer Closure R1 with a
-  recorded reason; required here because M5 adds more selectable surfaces. Its
-  predecessor is conditional — M5.6 where XIC ships, M5.3 where it does not —
-  and on the refusal branch that predecessor is **M5.3, which is complete**, so
-  this slice is reachable now.
-- **M5.8 — Viewer Completion closure and handoff.**
+- **M5.7 — selection-availability affordance consistency.** **Closed.** One rule
+  for how every viewer surface that commits a scan says it cannot right now,
+  applied to both of them at once: the chromatogram and the scan table read one
+  selection authority, which now carries its reason as well as its answer, and
+  the viewer states that reason once for both of them to point at. **A blocked
+  selection blocks committing a scan, not reading the run**: hover, zoom, pan,
+  the range controls, the trace toggles, scrolling, virtualization and roving
+  focus all stay live, because none of them asks the backend for anything.
+  Neither surface is disabled or made inert. The slice also closes the two
+  inherited M4.4 P3 debts in the linked figure section, whose refusal had been
+  present in the accessibility tree twice. See
+  [ADR 0041](docs/architecture/adr/0041-viewer-selection-availability.md).
+- **M5.8 — Viewer Completion closure and handoff.** **Next.**
 
 M5 is complete when the selected spectrum has a committed viewport wherever the
 scientific contract admits one and an honest refusal wherever it does not, the

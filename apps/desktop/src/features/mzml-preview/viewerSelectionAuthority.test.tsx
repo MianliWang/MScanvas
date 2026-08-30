@@ -22,10 +22,18 @@ import { describe, expect, it } from "vitest";
 
 import type { PreviewApi } from "./api";
 import { PreviewApiProvider } from "./api";
-import type { BackendAvailability, Preview, SelectedSpectrumOutcome } from "./contracts";
+import type {
+  BackendAvailability,
+  ConversionQueueItem,
+  Preview,
+  SelectedSpectrumOutcome,
+  WorkspaceConversionState,
+  WorkspaceOutputAdoptionResult,
+} from "./contracts";
 import type { WorkspaceDropTransport } from "./dropTransport";
 import { WorkspaceDropTransportProvider } from "./dropTransport";
 import { canStartSpectrumSelection, usePreviewWorkspace } from "./usePreviewWorkspace";
+import { spectrumSelectionAvailability } from "./viewer/selectionAvailability";
 import { activeGestureEpoch, renderedDomain } from "./viewer/interactionState";
 import type { Deferred, FakePreviewApiOptions } from "../../test/previewFixtures";
 import {
@@ -46,6 +54,67 @@ import {
 } from "../../test/previewFixtures";
 
 const VENDOR_ROW = shimadzuDataset(9);
+
+/**
+ * A finished queue with an output worth adopting.
+ *
+ * Terminal, so the slot owns no lane: what an adoption of it exercises is the
+ * conversion panel's own busy, which is a different thing and is the point of
+ * the case below.
+ */
+const ADOPTABLE_TERMINAL_QUEUE: WorkspaceConversionState = {
+  status: "terminal",
+  operationId: "1",
+  reason: "completed",
+  queue: queueOf([adoptable(VENDOR_ROW.handle, VENDOR_ROW.fileName)]),
+};
+
+/** A finished queue with a failure worth rerunning. */
+const RETRYABLE_TERMINAL_QUEUE: WorkspaceConversionState = {
+  status: "terminal",
+  operationId: "1",
+  reason: "completed",
+  queue: queueOf([
+    queueItem(VENDOR_ROW.handle, VENDOR_ROW.fileName, {
+      state: "failed",
+      attempts: 1,
+      retryable: true,
+    }),
+  ]),
+};
+
+function adoptable(handle: string, name: string): ConversionQueueItem {
+  return queueItem(handle, name, {
+    state: "finalized",
+    attempts: 1,
+    result: {
+      kind: "single" as const,
+      report: {
+        datasetHandle: handle,
+        sourceKind: "sciex_wiff",
+        outcome: "finalized",
+        detailedOutcome: null,
+        outputFileName: `${name.replace(/\.[^.]+$/u, "")}.mzML`,
+        output: {
+          byteLength: 28_637,
+          sha256: "B3D97B38".repeat(8).slice(0, 64),
+          spectrumCount: 1,
+          chromatogramCount: 1,
+        },
+        validation: {
+          mode: "output_only",
+          verified: [],
+          unverified: [],
+          inapplicable: [],
+          fullyVerified: false,
+        },
+        backend: null,
+        stagingResidue: null,
+        installationGeneration: 0,
+      },
+    },
+  });
+}
 
 function wrapper(
   api: PreviewApi,
@@ -69,6 +138,9 @@ function mount(
     readonly spectrum?: (index: number) => Promise<SelectedSpectrumOutcome>;
     readonly availability?: () => Promise<BackendAvailability>;
     readonly conversion?: FakePreviewApiOptions["conversion"];
+    readonly adoption?: FakePreviewApiOptions["adoption"];
+    readonly initialConversion?: FakePreviewApiOptions["initialConversion"];
+    readonly retry?: FakePreviewApiOptions["retry"];
   } = {},
 ) {
   const api = createFakePreviewApi({
@@ -77,6 +149,11 @@ function mount(
     ...(options.spectrum === undefined ? {} : { spectrum: options.spectrum }),
     ...(options.availability === undefined ? {} : { availability: options.availability }),
     ...(options.conversion === undefined ? {} : { conversion: options.conversion }),
+    ...(options.adoption === undefined ? {} : { adoption: options.adoption }),
+    ...(options.initialConversion === undefined
+      ? {}
+      : { initialConversion: options.initialConversion }),
+    ...(options.retry === undefined ? {} : { retry: options.retry }),
   });
   const rendered = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
   return { api, ...rendered };
@@ -570,6 +647,89 @@ describe("the global spectrum-selection lane", () => {
       expect(canStartSpectrumSelection(blocker.lane), blocker.name).toBe(false);
     }
   });
+
+  it("names each blocker, in words a reader can act on", () => {
+    // The boolean could gate a handler and could tell nobody anything, so
+    // every surface that wanted to explain itself decided again what was
+    // wrong. This is the one answer; the boolean is a projection of it.
+    const cases = [
+      { lane: { ...FREE, hasLoadedPreview: false }, reason: "no-loaded-run" },
+      { lane: { ...FREE, backendBusy: true }, reason: "backend-changing" },
+      { lane: { ...FREE, backendUsable: false }, reason: "backend-unavailable" },
+      { lane: { ...FREE, conversionBusy: true }, reason: "conversion-running" },
+    ] as const;
+
+    for (const { lane, reason } of cases) {
+      const availability = spectrumSelectionAvailability(lane);
+      expect(availability.status, reason).toBe("unavailable");
+      if (availability.status !== "unavailable") {
+        continue;
+      }
+      expect(availability.reason).toBe(reason);
+      // Something on screen or something the reader can change. A lane, a ref,
+      // a token or a mutex is true and useless.
+      expect(availability.message).not.toMatch(/lane|token|ref\b|mutex|busy flag/iu);
+      expect(availability.message.length).toBeGreaterThan(20);
+      expect(availability.message.endsWith(".")).toBe(true);
+    }
+  });
+
+  it("says nothing at all when a scan can be selected", () => {
+    // An explanation beside a control that works is a reason to doubt it.
+    expect(spectrumSelectionAvailability(FREE)).toEqual({ status: "available" });
+  });
+
+  it("names the blocker that decides when several hold at once", () => {
+    /*
+     * Deterministic, and ordered by which fact settles the question rather
+     * than by which lasts longest.
+     *
+     * A check reports the backend as not usable for as long as it runs, so
+     * ranking the settled verdict first told a reader their installation was
+     * broken every time it was looked at -- which an existing scan-step test
+     * caught the first time this rule was written the other way round.
+     */
+    const everything = {
+      hasLoadedPreview: false,
+      backendUsable: false,
+      backendBusy: true,
+      conversionBusy: true,
+    };
+    const reasonOf = (lane: typeof everything) => {
+      const availability = spectrumSelectionAvailability(lane);
+      return availability.status === "unavailable" ? availability.reason : null;
+    };
+
+    expect(reasonOf(everything)).toBe("no-loaded-run");
+    expect(reasonOf({ ...everything, hasLoadedPreview: true })).toBe("backend-changing");
+    expect(reasonOf({ ...everything, hasLoadedPreview: true, backendBusy: false })).toBe(
+      "backend-unavailable",
+    );
+    expect(
+      reasonOf({
+        ...everything,
+        hasLoadedPreview: true,
+        backendBusy: false,
+        backendUsable: true,
+      }),
+    ).toBe("conversion-running");
+  });
+
+  it("agrees with the boolean the operation guards itself with", () => {
+    // Not two rules that look alike. Every lane in the space, both readings.
+    for (const hasLoadedPreview of [true, false]) {
+      for (const backendUsable of [true, false]) {
+        for (const backendBusy of [true, false]) {
+          for (const conversionBusy of [true, false]) {
+            const lane = { hasLoadedPreview, backendUsable, backendBusy, conversionBusy };
+            expect(canStartSpectrumSelection(lane), JSON.stringify(lane)).toBe(
+              spectrumSelectionAvailability(lane).status === "available",
+            );
+          }
+        }
+      }
+    }
+  });
 });
 
 describe("what a scan step says it can do", () => {
@@ -581,7 +741,7 @@ describe("what a scan step says it can do", () => {
       expect(result.current.spectrum.status).toBe("loaded");
     });
 
-    expect(result.current.spectrumSelectionAvailable).toBe(true);
+    expect(result.current.spectrumSelection).toEqual({ status: "available" });
     expect(result.current.canSelectPreviousScan).toBe(true);
     expect(result.current.canSelectNextScan).toBe(true);
 
@@ -611,7 +771,11 @@ describe("what a scan step says it can do", () => {
       expect(result.current.backendBusy).toBe(true);
     });
 
-    expect(result.current.spectrumSelectionAvailable).toBe(false);
+    expect(result.current.spectrumSelection.status).toBe("unavailable");
+    expect(
+      result.current.spectrumSelection.status === "unavailable" &&
+        result.current.spectrumSelection.reason,
+    ).toBe("backend-changing");
     expect(result.current.canSelectPreviousScan).toBe(false);
     expect(result.current.canSelectNextScan).toBe(false);
     // And the operation refuses too, so the disabled state is a report of the
@@ -653,7 +817,11 @@ describe("what a scan step says it can do", () => {
       expect(result.current.conversion.busy).toBe(true);
     });
 
-    expect(result.current.spectrumSelectionAvailable).toBe(false);
+    expect(result.current.spectrumSelection.status).toBe("unavailable");
+    expect(
+      result.current.spectrumSelection.status === "unavailable" &&
+        result.current.spectrumSelection.reason,
+    ).toBe("conversion-running");
     expect(result.current.canSelectPreviousScan).toBe(false);
     expect(result.current.canSelectNextScan).toBe(false);
     await act(async () => {
@@ -667,6 +835,101 @@ describe("what a scan step says it can do", () => {
     // preview.
     expect(result.current.preview.status).toBe("loaded");
     expect(result.current.selectedIndex).toBe(2);
+  });
+
+  it("stays available through an adoption, which owns no backend lane", async () => {
+    /*
+     * The confirmation review's case, and the distinction is the whole point of
+     * the rule. `conversion.busy` is the conversion panel's notion of having
+     * work in flight -- a dispatched retry, an adoption, a diagnostics export --
+     * and none of those launches a ProteoWizard process or touches the preview.
+     * `selectSpectrum` guards itself with the queue slot alone, so it accepts a
+     * click through all three; a surface that refused there would take away a
+     * selection the operation would have made, and would say a conversion was
+     * running while a text file finished being written.
+     */
+    const adoption = deferred<WorkspaceOutputAdoptionResult>();
+    const { result, api } = mount({
+      initialConversion: ADOPTABLE_TERMINAL_QUEUE,
+      adoption: () => adoption.promise,
+    });
+    await openThePreview(result);
+    await select(result, 2);
+    await waitFor(() => {
+      expect(result.current.spectrum.status).toBe("loaded");
+    });
+
+    act(() => {
+      result.current.conversion.adopt();
+    });
+    await waitFor(() => {
+      expect(result.current.conversion.adopting).toBe(true);
+    });
+
+    // The panel is busy, and the lane is not.
+    expect(result.current.conversion.busy).toBe(true);
+    expect(result.current.conversion.backendLaneBusy).toBe(false);
+    expect(result.current.spectrumSelection).toEqual({ status: "available" });
+    expect(result.current.canSelectNextScan).toBe(true);
+
+    // And the operation agrees, which is what makes the posture true rather
+    // than merely permissive.
+    await act(async () => {
+      result.current.selectSpectrum(3);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(api.requestedSpectra).toEqual([2, 3]);
+    });
+  });
+
+  it("goes unavailable the moment a retry is dispatched, before the slot moves", async () => {
+    /*
+     * The one conversion-panel activity that does own the guarded lane. `retry`
+     * sets `busyRef` itself, and Rust reads `terminal` for the whole rerun -- it
+     * answers once, when the serial rerun is over -- so the slot's status never
+     * reports it. A rendered lane derived from the status alone would advertise
+     * a selection here and the operation would drop it silently, which is the
+     * direction of mismatch that costs a reader a press for nothing.
+     */
+    const rerun = deferred<WorkspaceConversionState>();
+    const { result, api } = mount({
+      initialConversion: RETRYABLE_TERMINAL_QUEUE,
+      retry: () => rerun.promise,
+    });
+    await openThePreview(result);
+    await select(result, 2);
+    await waitFor(() => {
+      expect(result.current.spectrum.status).toBe("loaded");
+    });
+    await waitFor(() => {
+      expect(result.current.conversion.canRetry).toBe(true);
+    });
+
+    act(() => {
+      result.current.conversion.retry();
+    });
+    await waitFor(() => {
+      expect(result.current.conversion.retrying).toBe(true);
+    });
+
+    // The slot still says terminal, and the lane is held anyway.
+    expect(result.current.conversion.state.status).toBe("terminal");
+    expect(result.current.conversion.backendLaneBusy).toBe(true);
+    expect(result.current.spectrumSelection.status).toBe("unavailable");
+    expect(
+      result.current.spectrumSelection.status === "unavailable" &&
+        result.current.spectrumSelection.reason,
+    ).toBe("conversion-running");
+    expect(result.current.canSelectNextScan).toBe(false);
+
+    // And the operation refuses too, which is what makes the refusal a report
+    // of the boundary rather than a guess about it.
+    await act(async () => {
+      result.current.selectSpectrum(3);
+      await Promise.resolve();
+    });
+    expect(api.requestedSpectra).toEqual([2]);
   });
 
   it("takes both steps back off once the backend is resolved unavailable", async () => {
@@ -690,7 +953,11 @@ describe("what a scan step says it can do", () => {
     // so there is still something to step through, and the steps still have to
     // say they cannot.
     expect(result.current.preview.status).toBe("loaded");
-    expect(result.current.spectrumSelectionAvailable).toBe(false);
+    expect(result.current.spectrumSelection.status).toBe("unavailable");
+    expect(
+      result.current.spectrumSelection.status === "unavailable" &&
+        result.current.spectrumSelection.reason,
+    ).toBe("backend-unavailable");
     expect(result.current.canSelectPreviousScan).toBe(false);
     expect(result.current.canSelectNextScan).toBe(false);
     await act(async () => {
@@ -707,7 +974,7 @@ describe("what a scan step says it can do", () => {
     await openThePreview(result);
 
     await select(result, 0);
-    expect(result.current.spectrumSelectionAvailable).toBe(true);
+    expect(result.current.spectrumSelection).toEqual({ status: "available" });
     expect(result.current.canSelectPreviousScan).toBe(false);
     expect(result.current.canSelectNextScan).toBe(true);
 
@@ -750,7 +1017,7 @@ describe("what a scan step says it can do", () => {
     expect(result.current.previewBackendBusy).toBe(true);
     expect(result.current.spectrum.status).toBe("loading");
     // The scan lane does not, because a different scan may still supersede it.
-    expect(result.current.spectrumSelectionAvailable).toBe(true);
+    expect(result.current.spectrumSelection).toEqual({ status: "available" });
     expect(result.current.canSelectNextScan).toBe(true);
     const first = result.current.viewerInteraction.selection?.revision ?? 0;
 

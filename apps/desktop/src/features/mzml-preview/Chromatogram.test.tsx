@@ -24,6 +24,7 @@ import type { ViewerInteractionState } from "./viewer/interactionState";
 import { renderedDomain } from "./viewer/interactionState";
 import { buildPreviewScanModel } from "./viewer/previewScanModel";
 import type { RetentionTimeDomain, ScanModel } from "./viewer/scanModel";
+import type { SpectrumSelectionAvailability } from "./viewer/selectionAvailability";
 import type { ViewerInteractionController } from "./viewer/useViewerInteraction";
 import { useViewerInteraction } from "./viewer/useViewerInteraction";
 import { buildRows } from "../../test/previewFixtures";
@@ -80,11 +81,13 @@ function Harness({
   initialTraces,
   onSelect,
   onToggleTrace,
+  selectionAvailability,
 }: {
   readonly model: ScanModel;
   readonly initialTraces: TraceVisibility;
   readonly onSelect: (index: number) => void;
   readonly onToggleTrace: (trace: keyof TraceVisibility) => void;
+  readonly selectionAvailability?: SpectrumSelectionAvailability;
 }) {
   const viewer = useViewerInteraction();
   controller = viewer;
@@ -103,6 +106,7 @@ function Harness({
       interaction={viewer.state}
       model={model}
       onSelect={onSelect}
+      selectionAvailability={selectionAvailability ?? { status: "available" }}
       onToggleTrace={(trace) => {
         onToggleTrace(trace);
         setTraces((current) => ({ ...current, [trace]: !current[trace] }));
@@ -114,7 +118,11 @@ function Harness({
 }
 
 function renderChromatogram(
-  options: { readonly model?: ScanModel; readonly traces?: TraceVisibility } = {},
+  options: {
+    readonly model?: ScanModel;
+    readonly traces?: TraceVisibility;
+    readonly selectionAvailability?: SpectrumSelectionAvailability;
+  } = {},
 ) {
   const onSelect = vi.fn();
   const onToggleTrace = vi.fn();
@@ -125,6 +133,7 @@ function renderChromatogram(
       model={model}
       onSelect={onSelect}
       onToggleTrace={onToggleTrace}
+      selectionAvailability={options.selectionAvailability}
     />,
   );
   if (model.status === "ready") {
@@ -2109,5 +2118,129 @@ describe("who owns a press on the plot", () => {
     // And once the owner is done, the wheel is the viewer's again.
     up(460, OWNER);
     expect(wheel({ deltaY: -240 }).defaultPrevented).toBe(true);
+  });
+});
+
+/**
+ * A blocked selection is a blocked *commit*.
+ *
+ * The plot is a viewport over data that is already here and already true. A
+ * conversion holding the backend lane says nothing about whether this run can
+ * be read, so the only thing that stops is the one action that would have asked
+ * the backend for something.
+ */
+describe("choosing a scan while selection is unavailable", () => {
+  const BLOCKED = {
+    status: "unavailable",
+    reason: "conversion-running",
+    message: "Selecting a scan is unavailable while a conversion is running.",
+  } as const;
+
+  function blocked(options: { readonly model?: ScanModel; readonly traces?: TraceVisibility } = {}) {
+    return renderChromatogram({ ...options, selectionAvailability: BLOCKED });
+  }
+
+  it("does not commit a scan the click resolved to", () => {
+    const { onSelect } = blocked();
+    const at = clientXFor(30 * 0.0125, shown());
+
+    fireEvent.pointerDown(plot(), { button: 0, clientX: at, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 0, clientX: at, pointerId: 1 });
+
+    // Not a disabled affordance. Nothing crossed the boundary.
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("points at the one explanation rather than repeating it", () => {
+    blocked();
+    mountAppStyles();
+    // Described, never disabled: this plot can still be read, and marking it
+    // unavailable would say the run cannot be.
+    expect(plot().getAttribute("aria-describedby")).toBe(
+      "chromatogram-readout viewer-selection-availability",
+    );
+    expect(plot().getAttribute("aria-disabled")).toBeNull();
+    expect(styleOf(".chromatogram-svg").pointerEvents).not.toBe("none");
+    // The sentence itself lives once, in the viewer. Not here.
+    expect(screen.queryByText(/conversion is running/u)).toBeNull();
+  });
+
+  it("keeps describing the readout alone once selection returns", () => {
+    renderChromatogram();
+    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout");
+  });
+
+  it("still reports the scan under the pointer", () => {
+    blocked();
+    fireEvent.pointerMove(plot(), { clientX: clientXFor(12 * 0.0125, shown()), pointerId: 1 });
+
+    expect(state().hover?.spectrumIndex).toBe(12);
+    expect(screen.getByText(/^Hovering/u)).toBeVisible();
+  });
+
+  it("still zooms on the wheel", () => {
+    blocked();
+    const before = shown();
+
+    wheel({ deltaY: -400 });
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(shown().high - shown().low).toBeLessThan(before.high - before.low);
+  });
+
+  it("still pans on a drag", () => {
+    // From a range that has somewhere to go: a full-range pan clamps to what is
+    // already drawn, which would make this pass for the wrong reason.
+    blocked();
+    send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
+    const before = shown();
+
+    fireEvent.pointerDown(plot(), { button: 0, clientX: 700, pointerId: 1 });
+    fireEvent.pointerMove(plot(), { clientX: 500, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 0, clientX: 500, pointerId: 1 });
+
+    const after = state().committedDomain;
+    expect(after?.low).toBeGreaterThan(before.low);
+    expect((after?.high ?? 0) - (after?.low ?? 0)).toBeCloseTo(before.high - before.low, 9);
+  });
+
+  it("still moves the viewport from the keyboard", () => {
+    blocked();
+    const before = shown();
+
+    key({ key: "+" });
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(shown().high - shown().low).toBeLessThan(before.high - before.low);
+  });
+
+  it("still offers the range buttons by their own rule", () => {
+    blocked();
+    // Zoom out and Reset are the ones a full range closes, and that rule is
+    // about the range rather than about the backend.
+    expect(screen.getByRole("button", { name: "Zoom in" }).hasAttribute("disabled")).toBe(false);
+
+    wheel({ deltaY: -400 });
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(screen.getByRole("button", { name: "Reset range" }).hasAttribute("disabled")).toBe(
+      false,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Reset range" }));
+    expect(shown()).toEqual(state().fullDomain);
+  });
+
+  it("still toggles a trace", () => {
+    const { onToggleTrace } = blocked();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "BPC" }));
+
+    expect(onToggleTrace.mock.calls).toEqual([["bpc"]]);
   });
 });

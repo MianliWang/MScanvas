@@ -28,6 +28,7 @@ function renderTable(rowCount: number) {
       canSelectPrevious={false}
       onRendered={onRendered}
       onSelect={onSelect}
+      selectionAvailability={{ status: "available" }}
       onSelectNext={() => undefined}
       onSelectPrevious={() => undefined}
       selection={null}

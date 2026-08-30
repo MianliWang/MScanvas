@@ -80,13 +80,30 @@ export interface ConversionOperation {
   readonly busy: boolean;
 
   /**
-   * The same answer as `busy`, readable from a handler.
+   * Whether anything owns the one backend lane, readable from a handler.
    *
-   * A click handler that read the rendered value could start work inside a
-   * render that has not committed the transition yet, which is the same reason
-   * every other gate in this workspace is a paired state and ref.
+   * **Narrower than `busy`, deliberately.** `busy` additionally covers an
+   * adoption and a diagnostics export, and neither launches a backend process
+   * or touches the preview -- each sets its own flag rather than this one, and
+   * says so where it does. What this reports is what actually owns the lane: the
+   * queue slot, and a retry this document has dispatched. Every gate that means
+   * *the backend is occupied* has to read it, and its rendered twin is
+   * {@link backendLaneBusy}.
+   *
+   * A click handler that read a rendered value could start work inside a render
+   * that has not committed the transition yet, which is why this is a ref.
    */
   readonly busyRef: { readonly current: boolean };
+
+  /**
+   * The same answer as `busyRef`, for the interface.
+   *
+   * One predicate with two readers, so a control cannot come to disagree with
+   * the operation it advertises. Used by the selection lane, whose whole
+   * contract is that what a surface says and what the operation does are the
+   * same rule.
+   */
+  readonly backendLaneBusy: boolean;
   readonly plan: ConversionPlanState;
   /** A request that never reached Rust's slot, kept apart from a conversion's own outcome. */
   readonly error: PreviewError | null;
@@ -208,6 +225,19 @@ export interface AdoptedOutputsSink {
   apply: (result: WorkspaceOutputAdoptionResult, startedAt: number) => void;
 }
 
+/**
+ * Whether a queue slot in this state owns the one backend lane.
+ *
+ * One predicate, read from an arriving update by the ref and from rendered state
+ * by the interface. Written once because the two answers being the same is the
+ * property that matters: a control that refuses where the operation accepts
+ * takes away work the user could have done, and the reverse offers work that
+ * will not happen.
+ */
+function ownsTheBackendLane(status: WorkspaceConversionState["status"]): boolean {
+  return status === "awaitingDestination" || status === "running" || status === "stopping";
+}
+
 export function useConversionOperation(
   onInstallationGeneration: (generation: number) => void,
   onOutputsAdopted: AdoptedOutputsSink,
@@ -296,10 +326,7 @@ export function useConversionOperation(
     // "not terminal any more" is not a test that catches it.
     setAdoption((previous) => (previous === null || describes(previous, update) ? previous : null));
     installedSequence.current = update.sequence;
-    busyRef.current =
-      update.state.status === "awaitingDestination" ||
-      update.state.status === "running" ||
-      update.state.status === "stopping";
+    busyRef.current = ownsTheBackendLane(update.state.status);
     setState(update.state);
     setDiagnostics(update.diagnostics);
     // Cleared from the authoritative state rather than from the reply, because
@@ -413,14 +440,23 @@ export function useConversionOperation(
   // asked and is waiting, which is the same thing `pickerBusy` and `folderBusy`
   // report elsewhere. The authoritative queue arrives on the first poll and
   // takes over from there.
-  const busy =
-    retrying ||
-    adopting ||
-    exportRequested ||
-    diagnostics.exporting ||
-    state.status === "awaitingDestination" ||
-    state.status === "running" ||
-    state.status === "stopping";
+  // What owns the one backend lane: the slot, and a retry this document has
+  // dispatched and not been answered on.
+  //
+  // The retry belongs here and the other two do not, and the difference is
+  // written into this file. `retry` sets `busyRef` -- the ref
+  // `canStartSpectrumSelection` is guarded with -- while `adopt` and
+  // `exportDiagnostics` each say "its own flag, and deliberately not `busyRef`".
+  // `retrying` is the rendered twin of that claim, and exists because Rust reads
+  // `terminal` throughout a rerun, so the slot's own status cannot report one.
+  //
+  // Leaving it out would put the mismatch in the direction that hurts: a surface
+  // advertising a selection the operation then silently drops.
+  const backendLaneBusy = ownsTheBackendLane(state.status) || retrying;
+  // And this panel's own notion of having work in flight, wider on purpose: an
+  // adoption and a diagnostics export are things this surface must not offer
+  // twice, and neither owns the backend.
+  const busy = adopting || exportRequested || diagnostics.exporting || backendLaneBusy;
 
   // A retry this document dispatched, for a slot that has not been seen to move
   // yet. It is the one window in this workflow where the authoritative state is
@@ -789,6 +825,7 @@ export function useConversionOperation(
   return {
     state,
     busy,
+    backendLaneBusy,
     busyHandles,
     busyRef,
     canRetry,
