@@ -5516,10 +5516,12 @@ payload is committed. The synthetic fixture is ProteoWizard's
 spectra — the same two M0 pinned, re-verified.
 
 The installed build declares **eight** analysis queries. Four — `metadata`,
-`run_summary`, `spectrum_table`, `binary` — cannot express an m/z window at all
-and are excluded by their own signature. **All four that can express one were
-measured to the same standard**: `tic`, `sic`, `slice` and `image`. `image` was
-measured rather than argued away, because its args do include `mz=`.
+`run_summary`, `spectrum_table`, `binary` — declare no m/z term at all and are
+excluded by their own signature. **The other four were measured to the same
+standard.** `tic`, `sic` and `slice` declare an m/z window. `image` declares no
+parameters at all — its `mz=` appears only in the prose arg list under an
+`[args - see list]` placeholder — and it was measured rather than argued away
+precisely because that left the signature ambiguous.
 
 ### Why `tic` was admitted
 

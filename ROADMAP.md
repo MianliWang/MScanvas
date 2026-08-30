@@ -268,9 +268,11 @@ five product decisions it surfaces are in
   `XIC_SOURCE_ADMITTED`.** Measured against a real ProteoWizard `3.0.26013
   (47b13cf)` installation, on the pinned synthetic fixture and on the pinned
   public representative acquisition. The installed build declares eight analysis
-  queries; four cannot express an m/z window at all and are excluded by their own
-  signature, and all four that can — `tic`, `sic`, `slice` and `image` — were
-  measured to one standard.
+  queries. Four — `metadata`, `run_summary`, `spectrum_table`, `binary` — declare
+  no m/z term at all and are excluded by their own signature. The other four were
+  measured to one standard: `tic`, `sic` and `slice` declare an m/z window, and
+  `image` was measured rather than argued away because its prose arg list
+  mentions `mz=` even though its signature declares no parameters.
 
   The admitted source is **`tic mz=<mzLow>,<mzHigh>`**: one row per spectrum,
   inclusive at both ends, the arithmetic sum of the in-window binary intensities

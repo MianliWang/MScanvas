@@ -1396,8 +1396,8 @@ msconvert data.RAW --mzXML
     }
 
     /// Every live analysis query the installed backend declares is readable
-    /// through the generic accessor, including the four this repository had
-    /// never held a signature for.
+    /// through the generic accessor, including `slice`, `sic` and `image` --
+    /// the three the repository held no signature constant for.
     ///
     /// M5.4 evidence, and the reason that slice changed no production code. The
     /// question it had to answer was whether an XIC source could be *described*
@@ -1413,6 +1413,27 @@ msconvert data.RAW --mzXML
     #[test]
     fn every_live_analysis_query_is_readable_through_the_generic_accessor() {
         let capabilities = msaccess(MSACCESS_HELP);
+
+        // All eight the installed build declares, so the name of this case is
+        // the claim it makes. The four the product already depends on are
+        // asserted by exact signature at the end; the four below are the ones
+        // M5.4 had to read for the first time or reason about.
+        for declared in [
+            "metadata",
+            "run_summary",
+            "spectrum_table",
+            "binary",
+            "slice",
+            "tic",
+            "sic",
+            "image",
+        ] {
+            assert!(
+                capabilities.analysis_query(declared).is_some(),
+                "{declared} is declared by the installed build"
+            );
+        }
+        assert!(capabilities.analysis_query("write").is_none());
 
         // `sic` -- the one whose name means *selected ion chromatogram*, and
         // whose three parameters are all required. A window is expressed as a
@@ -1508,15 +1529,14 @@ msconvert data.RAW --mzXML
         let slice = capabilities
             .analysis_query("slice")
             .expect("slice query declaration");
+        //
+        // Pinned as exact text, which is what makes a later transcription error
+        // in the fixture a failing test rather than an invisible edit. A
+        // separate bracket-balance assertion would add nothing: it would run on
+        // the string this line has already fixed.
         assert_eq!(
             slice.normalized_signature(),
             "[mz=<mzLow>[,<mzHigh>]] [rt=<rtLow>[,<rtHigh>]]] [index=<indexLow>[,<indexHigh>] | sn=<scanLow>[,<scanHigh>]] [delimiter=<fixed|space|comma|tab>]"
-        );
-        let signature = slice.normalized_signature();
-        assert_eq!(
-            signature.matches(']').count(),
-            signature.matches('[').count() + 1,
-            "the installed help closes one bracket more than it opens"
         );
     }
 
