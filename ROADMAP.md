@@ -315,8 +315,11 @@ five product decisions it surfaces are in
   [ADR 0041](docs/architecture/adr/0041-viewer-selection-availability.md).
 - **M5.8 — Viewer Completion closure and handoff.** **Closed.** Documentation
   only: no production code, no new capability. Criteria 1, 2 and 5 PASS from
-  published evidence; 3 and 4 are closed **`NOT_APPLICABLE`** under the measured
-  refusal rather than passed over; 6, 7 and 8 are deferred with named owners. It
+  published evidence — criterion 5 against a text M5.8 **narrowed** at closure to
+  carve out the conversion lane's dispatch race, which is the one exit criterion
+  this closure changed rather than merely proved; 3 and 4 are closed
+  **`NOT_APPLICABLE`** under the measured refusal rather than passed over; 6, 7
+  and 8 are deferred with named owners. It
   also closed M5.4's deferred synthetic `slice` record — the run was re-verified
   against a re-hashed executable and source and reproduces byte-identically — and
   reconciled ADR 0037's four inherited M4.4 debts, all four of which M5.3 and
@@ -328,6 +331,13 @@ scientific contract admits one and an honest refusal wherever it does not, the
 spectrum exports over the full source and over that range wherever it exists, no
 viewer click surface accepts a click that commits nothing without saying why, and
 M5.4's outcome has been carried through.
+
+**That fourth condition carries one named exception**, added to the criterion
+itself at closure rather than assumed: for the interval between starting a
+conversion and its queue state being read back, an activation is refused before
+either surface has caught up. It is the conversion lane's dispatch race, shared
+by every conversion-gated control here and older than M5, and its owner is M6.
+See [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md#m5-exit-criteria).
 
 **A valid scientific source need not be renderable.** Where the existing figure
 and domain contract cannot admit a viewport without changing the source, MSCanvas
