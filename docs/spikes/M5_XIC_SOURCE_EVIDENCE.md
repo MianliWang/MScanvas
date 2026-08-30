@@ -265,10 +265,6 @@ DELIMWRITE_EOL(width_sumIntensity, fixed << setprecision(4) << spectrumStats.sum
 `fixed` with `setprecision(4)` writes exactly four digits after the decimal
 point. Any sum below `0.00005` rounds to the literal text `0.0000`.
 
-**The same serialization is used by every candidate that can express an m/z
-window**, so this is a property of the build's region analyzers rather than of
-one query:
-
 | Source location at `47b13cf` | Column |
 | --- | --- |
 | `RegionTIC.cpp:156` | `sumIntensity` |
