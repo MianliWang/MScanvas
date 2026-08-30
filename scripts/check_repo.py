@@ -1399,6 +1399,93 @@ def _route_outcome(text: str, errors: list[str] | None = None) -> str | None:
     return outcome
 
 
+def _acceptance_row_for_view_007(body: str, errors: list[str]) -> list[tuple[int, str]]:
+    """The `VIEW-007` row of the viewer acceptance table, as one governed region.
+
+    A reader checks a feature against this row, so it states the outcome on its
+    own account rather than as a summary of the implementation note further
+    down. Located through the table rather than by searching the file, so a
+    mention in some other feature's row could never satisfy it.
+    """
+    where = "docs/product/FEATURE_CATALOG.md acceptance table"
+    table = _first_markdown_table(body, "## Acquisition overview and viewer")
+    if table is None:
+        fail(
+            f"{where}: no feature table follows `## Acquisition overview and viewer`. The "
+            "`VIEW-007` row is where the product states this feature's current status",
+            errors,
+        )
+        return []
+    header, rows = _table_header_and_body(table)
+    at = _column_index(header, "ID", where, errors)
+    if at is None:
+        return []
+    matching = [row for row in rows if _bare(row[at]) == "VIEW-007"]
+    if len(matching) != 1:
+        fail(
+            f"{where}: {len(matching)} rows carry the id `VIEW-007`, not 1. The acceptance "
+            "table states each feature's status once",
+            errors,
+        )
+        return []
+    row = matching[0]
+    if len(row) != len(header):
+        fail(
+            f"{where}: the `VIEW-007` row has {len(row)} cells where the header has "
+            f"{len(header)}. A ragged row shifts the acceptance summary onto another column",
+            errors,
+        )
+        return []
+    numbered = [
+        index + 1
+        for index, line in enumerate(body.split("\n"))
+        if line.strip().startswith("| VIEW-007 |")
+    ]
+    return [(numbered[0] if len(numbered) == 1 else 0, " | ".join(row))]
+
+
+# Every current repository surface that authoritatively states M5.4's outcome,
+# each under the identity it actually uses. The roadmap and the append-only log
+# state the slice's own status under `M5.4`; the feature catalogue states the
+# same answer under the product identity `VIEW-007`, because that is what a
+# reader checks a feature against -- and it states it twice, in the acceptance
+# row and in the implementation note, which are two current assertions rather
+# than one and its summary.
+ROUTE_STATUS_SURFACES: tuple[tuple[str, str, object], ...] = (
+    ("ROADMAP.md", "M5.4", None),
+    ("BOOTSTRAP_STATUS.md", "M5.4", None),
+    ("docs/product/FEATURE_CATALOG.md", "VIEW-007", _acceptance_row_for_view_007),
+)
+
+
+def _route_status_regions(errors: list[str]) -> list[tuple[str, int, str]]:
+    """Where each governed document states the route outcome, with its line.
+
+    Document-specific authority decides what counts as a current region; the
+    validator then applies one law to all of them, so no outcome token is
+    written down per document.
+    """
+    found: list[tuple[str, int, str]] = []
+    for name, anchor, extra in ROUTE_STATUS_SURFACES:
+        document = ROOT / name
+        if not document.is_file():
+            continue
+        body = document.read_text(encoding="utf-8")
+        regions = list(_status_claims_about(body, anchor))
+        if extra is not None:
+            regions.extend(extra(body, errors))
+        if not regions:
+            fail(
+                f"{name} states no `{anchor}` status of its own. The spike holds the "
+                "measurement, and a status document that never states the outcome cannot be "
+                "checked against it",
+                errors,
+            )
+            continue
+        found.extend((name, number, region) for number, region in regions)
+    return found
+
+
 def validate_the_xic_route_outcome_has_one_answer(errors: list[str]) -> None:
     """Every status document reports the route outcome the spike measured.
 
@@ -1420,6 +1507,12 @@ def validate_the_xic_route_outcome_has_one_answer(errors: list[str]) -> None:
     branches. Deleting the current conclusion outright would leave that history
     to satisfy the check.
 
+    Three documents state that outcome, not two, and they do not share one
+    anchor: `FEATURE_CATALOG.md` states it under the product identity
+    `VIEW-007`, in an acceptance row and an implementation note. Each governed
+    region answers for itself, so a correct acceptance row cannot cover for a
+    note that has drifted, or the reverse.
+
     Also pinned: the re-entry gate names the exact measured executable digest.
     The whole point of that gate is that a build is admitted by identity rather
     than by resembling a measured one, and a gate that named no identity would
@@ -1440,62 +1533,50 @@ def validate_the_xic_route_outcome_has_one_answer(errors: list[str]) -> None:
 
     _validate_the_reentry_gate_names_the_measured_digest(text, errors)
 
-    for name in ("ROADMAP.md", "BOOTSTRAP_STATUS.md"):
-        document = ROOT / name
-        if not document.is_file():
-            continue
-        body = document.read_text(encoding="utf-8")
-
-        # Only where the document states M5.4's *own* status: its slice section,
-        # and the bullets that open with the slice's name.
-        #
-        # Deliberately not every paragraph mentioning M5.4. The route-lock prose
-        # written before the measurement discusses both branches as they were
-        # then planned -- including that an M5 without a real installation
-        # "cannot reach an `XIC_SOURCE_ADMITTED` outcome at all" -- and that is
-        # correct history rather than a claim about what was found.
-        regions = _status_claims_about(body, "M5.4")
-
-        # Existence is asked of the current regions, for the reason the
-        # docstring gives: elsewhere in these documents the token is history.
-        if not regions:
+    # Only where a document states the outcome as its *own* current status --
+    # the slice section, the bullets opening with the slice's name, and the
+    # feature catalogue's `VIEW-007` row and note.
+    #
+    # Deliberately not every paragraph mentioning M5.4. The route-lock prose
+    # written before the measurement discusses both branches as they were then
+    # planned -- including that an M5 without a real installation "cannot reach
+    # an `XIC_SOURCE_ADMITTED` outcome at all" -- and that is correct history
+    # rather than a claim about what was found.
+    #
+    # One law per region rather than per document: the feature catalogue makes
+    # two independent current assertions, and one of them being right must not
+    # license the other to drift.
+    for name, number, region in _route_status_regions(errors):
+        if f"`{outcome}`" not in region:
             fail(
-                f"{name} states no M5.4 status of its own. The spike holds the measurement, "
-                "and a status document that never states the slice's status cannot be "
-                "checked against it",
-                errors,
-            )
-        elif not any(f"`{outcome}`" in region for _, region in regions):
-            fail(
-                f"{name} does not state M5.4's measured outcome `{outcome}` in any current "
-                "M5.4 status region. A mention elsewhere in the document does not carry it: "
-                "historical planning prose names both branches, and a reader meeting the "
-                "current section has no way to tell which sentence is the answer",
+                f"{name}:{number} does not state M5.4's measured outcome `{outcome}`. A "
+                "mention elsewhere in the document does not carry it: historical planning "
+                "prose names both branches, and a reader meeting this one has no way to tell "
+                "which sentence is the answer",
                 errors,
             )
 
-        for number, region in regions:
-            # A record that says a conclusion was withdrawn has to be able to
-            # name the conclusion it withdrew. Only an *unmarked* mention is a
-            # claim; the marker has to sit on the same line as the token, so a
-            # withdrawal elsewhere in a long section cannot license a stale
-            # sentence further down.
-            stale = [
-                line
-                for line in region.split("\n")
-                if f"`{superseded}`" in line
-                and not any(
-                    marker in line.lower()
-                    for marker in ("withdraw", "supersede", "earlier candidate", "no longer")
-                )
-            ]
-            if stale:
-                fail(
-                    f"{name}:{number} reports M5.4 as `{superseded}`, which the spike "
-                    f"supersedes with `{outcome}`. A withdrawn conclusion left standing in a "
-                    "status document is the one way this record can mislead",
-                    errors,
-                )
+        # A record that says a conclusion was withdrawn has to be able to name
+        # the conclusion it withdrew. Only an *unmarked* mention is a claim; the
+        # marker has to sit on the same line as the token, so a withdrawal
+        # elsewhere in a long section cannot license a stale sentence further
+        # down.
+        stale = [
+            line
+            for line in region.split("\n")
+            if f"`{superseded}`" in line
+            and not any(
+                marker in line.lower()
+                for marker in ("withdraw", "supersede", "earlier candidate", "no longer")
+            )
+        ]
+        if stale:
+            fail(
+                f"{name}:{number} reports M5.4 as `{superseded}`, which the spike supersedes "
+                f"with `{outcome}`. A withdrawn conclusion left standing in a status document "
+                "is the one way this record can mislead",
+                errors,
+            )
 
 
 def _validate_the_reentry_gate_names_the_measured_digest(
