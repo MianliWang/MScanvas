@@ -80,14 +80,15 @@ export interface ConversionOperation {
   readonly busy: boolean;
 
   /**
-   * Whether the queue slot owns the one backend lane, readable from a handler.
+   * Whether anything owns the one backend lane, readable from a handler.
    *
-   * **Narrower than `busy`, deliberately.** `busy` is this panel's notion of
-   * having work in flight and includes a dispatched retry, an adoption and a
-   * diagnostics export -- none of which launches a backend process or touches
-   * the preview. What this reports is the slot alone, which is what actually
-   * owns the lane, and it is what every gate that means *the backend is
-   * occupied* has to read. Its rendered twin is {@link backendLaneBusy}.
+   * **Narrower than `busy`, deliberately.** `busy` additionally covers an
+   * adoption and a diagnostics export, and neither launches a backend process
+   * or touches the preview -- each sets its own flag rather than this one, and
+   * says so where it does. What this reports is what actually owns the lane: the
+   * queue slot, and a retry this document has dispatched. Every gate that means
+   * *the backend is occupied* has to read it, and its rendered twin is
+   * {@link backendLaneBusy}.
    *
    * A click handler that read a rendered value could start work inside a render
    * that has not committed the transition yet, which is why this is a ref.
@@ -439,13 +440,23 @@ export function useConversionOperation(
   // asked and is waiting, which is the same thing `pickerBusy` and `folderBusy`
   // report elsewhere. The authoritative queue arrives on the first poll and
   // takes over from there.
-  // What the slot is doing, and nothing else. The lane, for every gate that
-  // means "the backend is occupied".
-  const backendLaneBusy = ownsTheBackendLane(state.status);
-  // And this panel's own notion of having work in flight, which is wider on
-  // purpose: a retry, an adoption and a diagnostics export are all things this
-  // surface must not offer twice, and none of them owns the backend.
-  const busy = retrying || adopting || exportRequested || diagnostics.exporting || backendLaneBusy;
+  // What owns the one backend lane: the slot, and a retry this document has
+  // dispatched and not been answered on.
+  //
+  // The retry belongs here and the other two do not, and the difference is
+  // written into this file. `retry` sets `busyRef` -- the ref
+  // `canStartSpectrumSelection` is guarded with -- while `adopt` and
+  // `exportDiagnostics` each say "its own flag, and deliberately not `busyRef`".
+  // `retrying` is the rendered twin of that claim, and exists because Rust reads
+  // `terminal` throughout a rerun, so the slot's own status cannot report one.
+  //
+  // Leaving it out would put the mismatch in the direction that hurts: a surface
+  // advertising a selection the operation then silently drops.
+  const backendLaneBusy = ownsTheBackendLane(state.status) || retrying;
+  // And this panel's own notion of having work in flight, wider on purpose: an
+  // adoption and a diagnostics export are things this surface must not offer
+  // twice, and neither owns the backend.
+  const busy = adopting || exportRequested || diagnostics.exporting || backendLaneBusy;
 
   // A retry this document dispatched, for a slot that has not been seen to move
   // yet. It is the one window in this workflow where the authoritative state is

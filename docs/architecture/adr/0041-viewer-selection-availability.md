@@ -130,10 +130,21 @@ the table, and told the reader a conversion was running while a diagnostics text
 file finished being written. **A surface that refuses where the operation accepts
 is not the safe direction when it is also saying something untrue.**
 
+A **dispatched retry is the exception, and it belongs in the lane.** `retry` sets
+that same guarded ref itself, and Rust reads `terminal` for the whole rerun -- it
+answers once, when the serial rerun is over -- so the slot's own status never
+reports one. Leaving it out puts the mismatch in the other direction, which is
+worse: a surface advertising a selection the operation then silently drops.
+
 So the lane is one predicate with two readers, the same shape the selection rule
 itself has: `busyRef` for the handler and `backendLaneBusy` for the interface,
-both from `ownsTheBackendLane`. The panel keeps its wider `busy` for its own
-controls, which is what it is for.
+both meaning *the slot, or a retry this document has dispatched*. The panel keeps
+its wider `busy` for its own controls, which is what it is for.
+
+The `convert` window is not closed here and is still the named exception: it
+claims the ref as it dispatches, and no rendered value follows until the slot is
+read back. That is the same window every conversion-gated control in this
+interface has, and it belongs to the conversion lane's contract.
 
 ## What this ADR does not decide
 

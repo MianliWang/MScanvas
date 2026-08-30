@@ -5643,13 +5643,15 @@ as not usable for as long as it runs, and reading that as a verdict tells a
 reader their installation is broken every time it is looked at. That correction
 was made after an existing scan-step test caught the first ordering.
 
-**The lane is the queue slot.** `conversion.busy` also covers a dispatched
-retry, an adoption and a diagnostics export, none of which launches a backend
-process -- and the operation's guard reads the slot alone, so it accepts a click
-through all three. The rendered projection now reads the same slot state, through
-one predicate with a ref twin and a rendered twin. Found in confirmation review,
-where the wider value would have closed both surfaces and said a conversion was
-running while a text file was being written.
+**The lane is the queue slot, plus a dispatched retry.** `conversion.busy` also
+covers an adoption and a diagnostics export, neither of which claims the guarded
+ref -- each sets its own -- so the operation accepts a click through both, and a
+surface that refused there would have said a conversion was running while a
+diagnostics text file was being written. A retry is the other way round: it sets
+the guarded ref itself and Rust reads `terminal` throughout the rerun, so the
+slot's status never reports it. Both directions were found in review, and the
+lane is now one predicate with a ref twin and a rendered twin. The `convert`
+ref/render window is untouched and remains the named exception.
 
 **A blocked selection blocks committing a scan, not reading the run.** Hover,
 wheel zoom, drag pan, the keyboard viewport shortcuts, the range buttons, the
@@ -5681,7 +5683,7 @@ silent.
 
 ### Evidence
 
-Frontend tests **1,377** (from 1,343), across the pure rule and its precedence,
+Frontend tests **1,378** (from 1,343), across the pure rule and its precedence,
 each surface's blocked and preserved behaviour, and the assembled document —
 where the single occurrence, both associations, the announcement, the absence of
 any backend read, and recovery without a remount are asserted together.

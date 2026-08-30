@@ -69,6 +69,20 @@ const ADOPTABLE_TERMINAL_QUEUE: WorkspaceConversionState = {
   queue: queueOf([adoptable(VENDOR_ROW.handle, VENDOR_ROW.fileName)]),
 };
 
+/** A finished queue with a failure worth rerunning. */
+const RETRYABLE_TERMINAL_QUEUE: WorkspaceConversionState = {
+  status: "terminal",
+  operationId: "1",
+  reason: "completed",
+  queue: queueOf([
+    queueItem(VENDOR_ROW.handle, VENDOR_ROW.fileName, {
+      state: "failed",
+      attempts: 1,
+      retryable: true,
+    }),
+  ]),
+};
+
 function adoptable(handle: string, name: string): ConversionQueueItem {
   return queueItem(handle, name, {
     state: "finalized",
@@ -126,6 +140,7 @@ function mount(
     readonly conversion?: FakePreviewApiOptions["conversion"];
     readonly adoption?: FakePreviewApiOptions["adoption"];
     readonly initialConversion?: FakePreviewApiOptions["initialConversion"];
+    readonly retry?: FakePreviewApiOptions["retry"];
   } = {},
 ) {
   const api = createFakePreviewApi({
@@ -138,6 +153,7 @@ function mount(
     ...(options.initialConversion === undefined
       ? {}
       : { initialConversion: options.initialConversion }),
+    ...(options.retry === undefined ? {} : { retry: options.retry }),
   });
   const rendered = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
   return { api, ...rendered };
@@ -865,6 +881,55 @@ describe("what a scan step says it can do", () => {
     await waitFor(() => {
       expect(api.requestedSpectra).toEqual([2, 3]);
     });
+  });
+
+  it("goes unavailable the moment a retry is dispatched, before the slot moves", async () => {
+    /*
+     * The one conversion-panel activity that does own the guarded lane. `retry`
+     * sets `busyRef` itself, and Rust reads `terminal` for the whole rerun -- it
+     * answers once, when the serial rerun is over -- so the slot's status never
+     * reports it. A rendered lane derived from the status alone would advertise
+     * a selection here and the operation would drop it silently, which is the
+     * direction of mismatch that costs a reader a press for nothing.
+     */
+    const rerun = deferred<WorkspaceConversionState>();
+    const { result, api } = mount({
+      initialConversion: RETRYABLE_TERMINAL_QUEUE,
+      retry: () => rerun.promise,
+    });
+    await openThePreview(result);
+    await select(result, 2);
+    await waitFor(() => {
+      expect(result.current.spectrum.status).toBe("loaded");
+    });
+    await waitFor(() => {
+      expect(result.current.conversion.canRetry).toBe(true);
+    });
+
+    act(() => {
+      result.current.conversion.retry();
+    });
+    await waitFor(() => {
+      expect(result.current.conversion.retrying).toBe(true);
+    });
+
+    // The slot still says terminal, and the lane is held anyway.
+    expect(result.current.conversion.state.status).toBe("terminal");
+    expect(result.current.conversion.backendLaneBusy).toBe(true);
+    expect(result.current.spectrumSelection.status).toBe("unavailable");
+    expect(
+      result.current.spectrumSelection.status === "unavailable" &&
+        result.current.spectrumSelection.reason,
+    ).toBe("conversion-running");
+    expect(result.current.canSelectNextScan).toBe(false);
+
+    // And the operation refuses too, which is what makes the refusal a report
+    // of the boundary rather than a guess about it.
+    await act(async () => {
+      result.current.selectSpectrum(3);
+      await Promise.resolve();
+    });
+    expect(api.requestedSpectra).toEqual([2]);
   });
 
   it("takes both steps back off once the backend is resolved unavailable", async () => {
