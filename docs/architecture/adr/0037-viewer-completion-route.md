@@ -1,6 +1,12 @@
 # ADR 0037 — Viewer Completion is the next milestone, and this is its route
 
-Status: accepted
+Status: accepted, amended 2026-08-29
+
+Amended by M5.4's measurement in two places, both in
+[XIC-D4](#xic-d4--which-query-is-the-source): D4 is `USER_DECISION_REQUIRED` only
+where the evidence admits **two or more** sources, and scientific evidence is
+bound to an exact executable identity rather than to a help text. M5.4 measured
+zero admissible sources, so the route outcome is `XIC_SOURCE_REFUSED`.
 Date: 2026-08-27
 Related: [0003](0003-msaccess-preview-spike.md),
 [0028](0028-figure-renderer-and-semantic-specification.md),
@@ -977,14 +983,37 @@ Concretely: complete help captured from the installed build for both `tic` and
 each candidate then classified as below; and **every candidate still classified
 applicable measured to one standard** — `tic mz=<low>,<high>` and any applicable
 `sic` form alike — on a representative acquisition and on the pinned synthetic
-fixture. For each measured candidate: the invocation and accepted parameter form;
-m/z-window semantics; output shape and schema; retention-time values and
-ordering; whether its scan identities reconcile with the spectrum table's;
-MS-level behaviour; the aggregation actually performed, read from the pinned
-ProteoWizard commit rather than inferred; behaviour for a window containing no
-signal; duplicate-retention-time behaviour where relevant; completeness against
-`MAX_PREVIEW_TEXT_BYTES`; malformed and error behaviour; and repeatability
-sufficient for the use the route intends.
+fixture.
+
+#### M5.4 candidate evidence dimensions
+
+The standard is this finite list. It is the dimension vocabulary the spike's
+candidate-standard matrix must use, and repository validation requires the two to
+name exactly the same dimensions — so a dimension added here is unanswerable
+until the evidence owner classifies it for every candidate.
+
+| # | Dimension |
+| --- | --- |
+| 1 | Invocation / accepted parameter form |
+| 2 | m/z-window semantics |
+| 3 | Output shape / schema |
+| 4 | Retention-time values / ordering |
+| 5 | Identity reconciliation |
+| 6 | MS-level behaviour |
+| 7 | Aggregation / quantity |
+| 8 | No-signal behaviour |
+| 9 | Duplicate-retention-time behaviour |
+| 10 | Completeness / byte bound |
+| 11 | Malformed / error behaviour |
+| 12 | Repeatability |
+| 13 | Numeric fidelity |
+
+Each is answered per measured candidate as a located result, or as an explicit
+`NOT_APPLICABLE` carrying its reason. Two carry their own history. **Aggregation**
+is read from the pinned ProteoWizard commit rather than inferred from a query's
+name. **Numeric fidelity** is in the standard because M5.4 measured a build whose
+serialization alone invalidated an otherwise plausible source, and because the
+re-entry gate already requires a resolved answer for it.
 
 An exit code of 0 is not evidence of correctness — the M0 spike already recorded
 that `msaccess` exits 0 for an unavailable spectrum and for unsupported input —
@@ -1436,9 +1465,53 @@ exit criterion 3.
 
 **Recommended default.** Do not choose before M5.4. If both prove usable, prefer
 (a) for the reason the repository already applies elsewhere: the narrower change
-against proved code. **This stays `USER_DECISION_REQUIRED`** — the repair to
-M5.4's evidence gate settles how a candidate is closed, not which candidate
-wins.
+against proved code.
+
+#### Amended 2026-08-29: D4 is conditional on how many sources survive
+
+The sentence this replaces read: *"This stays `USER_DECISION_REQUIRED`" — the
+repair to M5.4's evidence gate settles how a candidate is closed, not which
+candidate wins.* That was written before any candidate had been measured, and it
+is unconditional in a way the rest of this section is not: two paragraphs above
+it already says D4 "is an evidence question first and a product decision **only
+if M5.4 finds both usable**". The two readings disagreed, and M5.4 met the case
+that separates them.
+
+**The rule, by how many candidates the evidence admits:**
+
+| Admissible backend sources | D4 |
+| --- | --- |
+| zero | **not applicable.** The route is `XIC_SOURCE_REFUSED`; there is no source to choose. |
+| exactly one | **evidence-determined.** There is no product choice between viable backend sources. |
+| two or more | **`USER_DECISION_REQUIRED`.** Evidence establishes the options; governance chooses between them. |
+
+This supersedes the unconditional wording, and only that wording. Everything else
+in this section stands, including that M5.4 settles *how* a candidate is closed
+and that nothing may presume an outcome before the measurement.
+
+**What M5.4 measured.** Zero admissible sources; the recorded outcome is
+`XIC_SOURCE_REFUSED`. So D4 is closed as **not applicable under the refusal
+branch**, and M5.5 and M5.6 follow that branch. Which candidates were measured,
+why each was rejected, and what a future attempt must re-measure are owned by
+[`docs/spikes/M5_XIC_SOURCE_EVIDENCE.md`](../../spikes/M5_XIC_SOURCE_EVIDENCE.md)
+and are deliberately not restated here.
+
+#### Amended 2026-08-29: evidence is bound to an executable, not to a help text
+
+Nothing in this ADR previously said what a measured capability conclusion may be
+carried to. M5.4 needed that rule and it is recorded here because it outlives the
+slice:
+
+> Scientific evidence is transferable only to an executable identity explicitly
+> covered by that evidence.
+
+Two builds can print identical help — identical query signature, identical filter
+grammar, identical `TicCapability` — while differing in the aggregation they
+perform, the numeric precision they serialize, and whether an ordinary window
+aborts. A gate that admits on grammar alone admits an implementation nobody
+measured. Any future XIC admission, or re-entry after this refusal, requires an
+exact executable identity covered by measurement **and** the required exact
+capability grammar.
 
 ### XIC-D5 — where the XIC is drawn, and against which value axis
 

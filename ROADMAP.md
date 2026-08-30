@@ -207,8 +207,12 @@ before conversion is widened and before the product is redesigned.
 - M5.1 — **complete** (the m/z viewport authority and the bounded projection).
 - M5.2 — **complete** (the visible spectrum viewport).
 - M5.3 — **complete** (selected-spectrum `Current range` export).
-- M5.4 — **next, not started** (XIC source and capability evidence).
-- M5.5 through M5.8 — not started.
+- M5.4 — **complete** (XIC source and capability evidence);
+  outcome **`XIC_SOURCE_REFUSED`**.
+- M5.5 — **`NOT_APPLICABLE`** (the XIC model and runtime).
+- M5.6 — **`NOT_APPLICABLE`** (the visible XIC, and linked selection).
+- M5.7 — **next, not started** (selection-availability affordance consistency).
+- M5.8 — not started.
 
 **Zoom, pan and reset reach a spectrum whose domain is admitted, and only
 those.** A spectrum the figure contract cannot give an authoritative finite
@@ -261,24 +265,38 @@ five product decisions it surfaces are in
   selected spectrum. This slice added a **range** to what a spectrum already
   exported; it added no format and built no figure the existing contract refuses.
   See [ADR 0040](docs/architecture/adr/0040-spectrum-range-export.md).
-- **M5.4 — XIC source and capability evidence.** A live measured run deciding
-  whether an acceptable XIC source exists and which query it is. `tic`'s
-  signature already declares an `mz=<mzLow>[,<mzHigh>]` window and the installed
-  help declared a `sic` query, but neither has ever been run as an XIC and
-  `sic` has never been captured here at all.
-- **M5.5 — the XIC model and runtime.** *Only on `XIC_SOURCE_ADMITTED`.* The
-  typed operation, its capability gate, its parser and its service path. Rust
-  only.
-- **M5.6 — the visible XIC, and linked selection.** *Only on
-  `XIC_SOURCE_ADMITTED`.* A typed m/z window produces a trace over the same
-  retention-time axis, and a scan chosen on it is the one selection every other
-  view already follows. No second selection authority, and no XIC export.
-- **M5.7 — selection-availability affordance consistency.** One rule for how
-  every viewer click surface says a selection cannot be performed right now,
-  applied to all of them at once. Deferred from Viewer Closure R1 with a
+- **M5.4 — XIC source and capability evidence.** **Closed, outcome
+  `XIC_SOURCE_REFUSED`.** An evidence slice, measured against a real ProteoWizard
+  `3.0.26013 (47b13cf)` installation on the pinned synthetic fixture, the pinned
+  public representative acquisition and a generated low-intensity fixture. Of the
+  build's eight analysis queries four cannot express an m/z window at all and are
+  excluded by their own signature; the four that can were each measured and each
+  rejected, on two grounds rather than one — `tic`, `sic` and `slice` on a
+  serialization that cannot distinguish a real low-intensity signal from a true
+  zero, and `image` independently, on its own output contract, which is a
+  rendered gel with no per-scan quantity or identity. The measurements, the
+  candidate-standard matrix that closes every candidate to one standard, and the
+  six refusal conditions are in
+  [the spike](docs/spikes/M5_XIC_SOURCE_EVIDENCE.md), which is the authority for
+  all of them and is not restated here.
+
+  **XIC is refused for this executable, not for all time.** The re-entry gate is
+  an exact executable identity covered by fresh measurement, plus a resolved
+  numeric-fidelity answer. No XIC was implemented, no approximation was
+  substituted, and no production code changed.
+- **M5.5 — the XIC model and runtime.** **`NOT_APPLICABLE`.** It was conditional
+  on an admitted source, and M5.4 measured a refusal. The typed operation, its
+  capability gate, its parser and its service path are not built, and are not
+  approximated from a source that cannot produce the science.
+- **M5.6 — the visible XIC, and linked selection.** **`NOT_APPLICABLE`**, for the
+  same reason.
+- **M5.7 — selection-availability affordance consistency.** **Next.** One rule
+  for how every viewer click surface says a selection cannot be performed right
+  now, applied to all of them at once. Deferred from Viewer Closure R1 with a
   recorded reason; required here because M5 adds more selectable surfaces. Its
-  predecessor is conditional — M5.6 where XIC ships, M5.3 where it does not — so
-  the refusal branch still reaches closure.
+  predecessor is conditional — M5.6 where XIC ships, M5.3 where it does not —
+  and on the refusal branch that predecessor is **M5.3, which is complete**, so
+  this slice is reachable now.
 - **M5.8 — Viewer Completion closure and handoff.**
 
 M5 is complete when the selected spectrum has a committed viewport wherever the
@@ -299,9 +317,19 @@ it for the committed domain, refreshed as that domain changes; and scientific
 export is always taken from the retained source rather than from what the screen
 was given.
 
-**XIC is conditional on M5.4, and both outcomes complete the milestone.** On
-`XIC_SOURCE_ADMITTED` an XIC is produced from the evidenced source, participates
-in the one linked selection, and its criteria apply. On `XIC_SOURCE_REFUSED`
+**XIC is conditional on M5.4, and both outcomes complete the milestone.**
+M5.4 measured `XIC_SOURCE_REFUSED`, so this is the branch M5 is on: M5.5 and
+M5.6 are `NOT_APPLICABLE`, the refusal and its measurement are recorded, those
+criteria are closed explicitly as evidence-gated rather than passed over, and
+VIEW-007 is reassigned to the re-entry gate the spike records. **`M5 COMPLETE`
+does not mean XIC exists** — it means every viewer capability that could honestly
+be admitted was delivered and the rest was recorded rather than approximated from
+a source that cannot produce it.
+
+D4 is **not applicable** under this branch: ADR 0037's amended rule makes it a
+product decision only where the evidence admits two or more sources, and it
+admitted none. D1, D2, D3 and D5 are moot for the same reason; the evidence
+gathered about each is preserved in the spike for whoever re-enters. On `XIC_SOURCE_REFUSED`
 M5.5 and M5.6 are `NOT_APPLICABLE`, the refusal and its measurement are recorded,
 those criteria are closed explicitly as evidence-gated rather than passed over,
 and VIEW-007 is reassigned to a named owner and re-entry gate. In that outcome

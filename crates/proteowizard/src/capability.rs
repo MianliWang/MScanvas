@@ -1212,8 +1212,23 @@ Analysis commands (used with -x/--exec):
   binary index=<spectrumIndexLow>[,<spectrumIndexHigh>] | sn=<scanNumberLow>[,<scanNumberHigh>] [precision=<precision>]
     (write binary data for selected spectra)
 
+  slice [mz=<mzLow>[,<mzHigh>]] [rt=<rtLow>[,<rtHigh>]]] [index=<indexLow>[,<indexHigh>] | sn=<scanLow>[,<scanHigh>]] [delimiter=<fixed|space|comma|tab>]
+    (write data from a rectangular region)
+
   tic [mz=<mzLow>[,<mzHigh>]] [delimiter=<fixed|space|comma|tab>]
     (write total ion counts for an m/z range)
+
+  sic mzCenter=<mz> radius=<radius> radiusUnits=<amu|ppm> [delimiter=<fixed|space|comma|tab>]
+    (write selected ion chromatogram for an m/z and radius)
+      mzCenter: set mz value
+      radius: set radius value
+      radiusUnits: set units for radius value (must be amu or ppm)
+
+  image [args - see list]
+    (create pseudo-2D-gel image)
+      args:
+      label=<xxxx> (set filename label to xxxx)
+      mz=<mzLow>[,<mzHigh>] (set m/z cutoff range)
 
 Examples:
 
@@ -1378,6 +1393,160 @@ msconvert data.RAW --mzXML
         assert!(capabilities.analysis_query("write").is_none());
         assert_eq!(capabilities.examples().len(), 2);
         assert_eq!(capabilities.raw_help_hashes().stdout, FIXTURE_SHA256);
+    }
+
+    /// Every live analysis query the installed backend declares is readable
+    /// through the generic accessor, including `slice`, `sic` and `image` --
+    /// the three the repository held no signature constant for.
+    ///
+    /// M5.4 evidence, and the reason that slice changed no production code. The
+    /// question it had to answer was whether an XIC source could be *described*
+    /// by the capability contract as it stands; `analysis_query` is the same
+    /// accessor `tic` already reaches through, and it holds `sic` and `slice`
+    /// with no new parsing at all. A candidate inventory is therefore a thing
+    /// this contract can express, not a thing that needed one.
+    ///
+    /// The signatures below are copied verbatim from the help of ProteoWizard
+    /// `3.0.26013 (47b13cf)`. They are that build's, and a different build may
+    /// declare different ones -- which is exactly why they are asserted as
+    /// exact text rather than described.
+    ///
+    /// **A readable signature is not an admitted source.** M5.4's route outcome
+    /// was `XIC_SOURCE_REFUSED`: every query below that can express an m/z
+    /// window was measured and rejected, the decisive reason being that this
+    /// build serializes region intensities at four fixed decimal places and so
+    /// writes a legitimate positive signal as the same text as a true zero.
+    /// What this case pins is that the capability contract can *describe* the
+    /// candidate inventory, which is why that slice changed no production code
+    /// -- not that anything in it may be used.
+    #[test]
+    fn every_live_analysis_query_is_readable_through_the_generic_accessor() {
+        let capabilities = msaccess(MSACCESS_HELP);
+
+        // All eight the installed build declares, so the name of this case is
+        // the claim it makes. The four the product already depends on are
+        // asserted by exact signature at the end; the four below are the ones
+        // M5.4 had to read for the first time or reason about.
+        for declared in [
+            "metadata",
+            "run_summary",
+            "spectrum_table",
+            "binary",
+            "slice",
+            "tic",
+            "sic",
+            "image",
+        ] {
+            assert!(
+                capabilities.analysis_query(declared).is_some(),
+                "{declared} is declared by the installed build"
+            );
+        }
+        assert!(capabilities.analysis_query("write").is_none());
+
+        // `sic` -- the one whose name means *selected ion chromatogram*, and
+        // whose three parameters are all required. A window is expressed as a
+        // centre and a radius rather than as two bounds, which is a different
+        // input shape from `tic`'s and is the fact M5.4 had to measure rather
+        // than assume.
+        let sic = capabilities
+            .analysis_query("sic")
+            .expect("the installed build declares sic");
+        assert_eq!(
+            sic.normalized_signature(),
+            "mzCenter=<mz> radius=<radius> radiusUnits=<amu|ppm> [delimiter=<fixed|space|comma|tab>]"
+        );
+        for required in ["mzCenter", "radius", "radiusUnits"] {
+            assert_eq!(
+                sic.parameter_is_optional(required),
+                Some(false),
+                "{required} is required by this signature"
+            );
+        }
+        // The units are a closed pair, which is a gate a caller can enforce
+        // before invoking rather than discovering from a failure.
+        assert!(sic.parameter_allows_exact_value("radiusUnits", "amu"));
+        assert!(sic.parameter_allows_exact_value("radiusUnits", "ppm"));
+        assert!(!sic.parameter_allows_exact_value("radiusUnits", "da"));
+
+        // `slice` -- a rectangular region reader. It expresses an m/z window the
+        // same way `tic` does, and adds retention-time and index/scan bounds.
+        let slice = capabilities
+            .analysis_query("slice")
+            .expect("the installed build declares slice");
+        assert!(slice.has_parameter("mz"));
+        assert!(slice.has_parameter("rt"));
+        assert_eq!(slice.parameter_is_optional("mz"), Some(true));
+
+        // And `tic`, unchanged, so this case also pins that adding the two
+        // above did not disturb the declaration the product already depends on.
+        let tic = capabilities
+            .analysis_query("tic")
+            .expect("the installed build declares tic");
+        assert_eq!(
+            tic.normalized_signature(),
+            "[mz=<mzLow>[,<mzHigh>]] [delimiter=<fixed|space|comma|tab>]"
+        );
+        assert_eq!(tic.parameter_is_optional("mz"), Some(true));
+        assert_eq!(
+            capabilities.tic_capability(),
+            TicCapability::SupportedWithMsLevelFilter
+        );
+
+        // `image`, whose declaration is the odd one: its parameters are listed
+        // as prose under an `[args - see list]` placeholder rather than in the
+        // signature. It is held as a declaration with no parameters, which is
+        // the honest reading -- the grammar genuinely does not declare any.
+        let image = capabilities
+            .analysis_query("image")
+            .expect("the installed build declares image");
+        assert_eq!(image.normalized_signature(), "[args - see list]");
+        assert_eq!(image.parameter_names().count(), 0);
+        assert!(!image.has_parameter("mz"));
+    }
+
+    /// Two limits of the generic accessor, pinned so a caller does not mistake
+    /// it for more than it is.
+    ///
+    /// The case above reads exact signatures out of live help, which is what
+    /// M5.4 needed. It would be easy to read that as "the accessor models the
+    /// grammar", and it does not model two things a caller could otherwise be
+    /// misled by. Both are recorded here rather than fixed, because M5.4 is an
+    /// evidence slice and neither is reachable from any shipped route: nothing
+    /// in production asks about `binary`'s alternation or `slice`'s brackets.
+    #[test]
+    fn the_generic_accessor_models_neither_alternation_nor_malformed_help() {
+        let capabilities = msaccess(MSACCESS_HELP);
+
+        // `binary index=<...> | sn=<...>` is an *alternation*: exactly one of
+        // the two is supplied. The accessor reports both as required, because
+        // it reads optionality from bracketing alone and `|` is not bracketing.
+        // A caller that gated `binary sn=413` on `parameter_is_optional` would
+        // reject a valid invocation.
+        let binary = capabilities
+            .analysis_query("binary")
+            .expect("binary query declaration");
+        assert_eq!(binary.parameter_is_optional("index"), Some(false));
+        assert_eq!(binary.parameter_is_optional("sn"), Some(false));
+
+        // And `slice`'s own declaration is unbalanced in the installed help --
+        // `[rt=<rtLow>[,<rtHigh>]]]` closes one bracket more than it opens.
+        // That is upstream's text, reproduced verbatim above rather than
+        // silently repaired, and the parser absorbs the extra close instead of
+        // refusing the line. Asserted so a later transcription error in the
+        // fixture is a failing test rather than an invisible edit.
+        let slice = capabilities
+            .analysis_query("slice")
+            .expect("slice query declaration");
+        //
+        // Pinned as exact text, which is what makes a later transcription error
+        // in the fixture a failing test rather than an invisible edit. A
+        // separate bracket-balance assertion would add nothing: it would run on
+        // the string this line has already fixed.
+        assert_eq!(
+            slice.normalized_signature(),
+            "[mz=<mzLow>[,<mzHigh>]] [rt=<rtLow>[,<rtHigh>]]] [index=<indexLow>[,<indexHigh>] | sn=<scanLow>[,<scanHigh>]] [delimiter=<fixed|space|comma|tab>]"
+        );
     }
 
     #[test]

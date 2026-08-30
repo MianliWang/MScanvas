@@ -1352,6 +1352,824 @@ MISSING_LIST_OPENINGS: tuple[str, ...] = (
 )
 
 
+# The M5 route defines exactly two outcomes, and there is no third. A token that
+# merely looks like one is not one: `XIC_SOURCE_REFUSEDD` would otherwise be
+# accepted as authoritative wherever the spike and the status documents happened
+# to agree on the misspelling, and the opposite-outcome derivation below would
+# then name a real outcome as the withdrawn one.
+XIC_ROUTE_OUTCOMES: frozenset[str] = frozenset(
+    {
+        "XIC_SOURCE_ADMITTED",
+        "XIC_SOURCE_REFUSED",
+    }
+)
+
+
+def _route_outcome(text: str, errors: list[str] | None = None) -> str | None:
+    """The spike's declared route outcome, if it is one the route defines.
+
+    One reader, because two would be two answers. The pattern locates the
+    declaration; it does not decide whether what it found is a route outcome --
+    that is the closed vocabulary's job. Callers that own the reporting pass
+    `errors`; callers that only need the value pass nothing and get `None`,
+    because the failure has already been reported by then.
+    """
+    outcomes = re.findall(r"\*\*Route outcome: `([A-Z_][A-Z0-9_]*)`\.\*\*", text)
+    if len(outcomes) != 1:
+        if errors is not None:
+            fail(
+                f"docs/spikes/M5_XIC_SOURCE_EVIDENCE.md declares {len(outcomes)} route "
+                "outcomes, not 1. The spike is where the measurement lives, so it has to "
+                "state exactly one answer for the status documents to agree with",
+                errors,
+            )
+        return None
+    outcome = outcomes[0]
+    if outcome not in XIC_ROUTE_OUTCOMES:
+        if errors is not None:
+            fail(
+                f"docs/spikes/M5_XIC_SOURCE_EVIDENCE.md declares route outcome `{outcome}`, "
+                f"which is not one of the {len(XIC_ROUTE_OUTCOMES)} the route defines "
+                f"({', '.join(f'`{name}`' for name in sorted(XIC_ROUTE_OUTCOMES))}). A token "
+                "that resembles an outcome is not one, and the status documents would agree "
+                "with it just as readily",
+                errors,
+            )
+        return None
+    return outcome
+
+
+def _acceptance_row_for_view_007(body: str, errors: list[str]) -> list[tuple[int, str]]:
+    """The `VIEW-007` row of the viewer acceptance table, as one governed region.
+
+    A reader checks a feature against this row, so it states the outcome on its
+    own account rather than as a summary of the implementation note further
+    down. Located through the table rather than by searching the file, so a
+    mention in some other feature's row could never satisfy it.
+    """
+    where = "docs/product/FEATURE_CATALOG.md acceptance table"
+    table = _first_markdown_table(body, "## Acquisition overview and viewer")
+    if table is None:
+        fail(
+            f"{where}: no feature table follows `## Acquisition overview and viewer`. The "
+            "`VIEW-007` row is where the product states this feature's current status",
+            errors,
+        )
+        return []
+    header, rows = _table_header_and_body(table)
+    at = _column_index(header, "ID", where, errors)
+    if at is None:
+        return []
+    matching = [row for row in rows if _bare(row[at]) == "VIEW-007"]
+    if len(matching) != 1:
+        fail(
+            f"{where}: {len(matching)} rows carry the id `VIEW-007`, not 1. The acceptance "
+            "table states each feature's status once",
+            errors,
+        )
+        return []
+    row = matching[0]
+    if len(row) != len(header):
+        fail(
+            f"{where}: the `VIEW-007` row has {len(row)} cells where the header has "
+            f"{len(header)}. A ragged row shifts the acceptance summary onto another column",
+            errors,
+        )
+        return []
+    numbered = [
+        index + 1
+        for index, line in enumerate(body.split("\n"))
+        if line.strip().startswith("| VIEW-007 |")
+    ]
+    return [(numbered[0] if len(numbered) == 1 else 0, " | ".join(row))]
+
+
+# Every current repository surface that authoritatively states M5.4's outcome,
+# each under the identity it actually uses. The roadmap and the append-only log
+# state the slice's own status under `M5.4`; the feature catalogue states the
+# same answer under the product identity `VIEW-007`, because that is what a
+# reader checks a feature against -- and it states it twice, in the acceptance
+# row and in the implementation note, which are two current assertions rather
+# than one and its summary.
+ROUTE_STATUS_SURFACES: tuple[tuple[str, str, object], ...] = (
+    ("ROADMAP.md", "M5.4", None),
+    ("BOOTSTRAP_STATUS.md", "M5.4", None),
+    ("docs/product/FEATURE_CATALOG.md", "VIEW-007", _acceptance_row_for_view_007),
+)
+
+
+def _route_status_regions(errors: list[str]) -> list[tuple[str, int, str]]:
+    """Where each governed document states the route outcome, with its line.
+
+    Document-specific authority decides what counts as a current region; the
+    validator then applies one law to all of them, so no outcome token is
+    written down per document.
+    """
+    found: list[tuple[str, int, str]] = []
+    for name, anchor, extra in ROUTE_STATUS_SURFACES:
+        document = ROOT / name
+        if not document.is_file():
+            continue
+        body = document.read_text(encoding="utf-8")
+        regions = list(_status_claims_about(body, anchor))
+        if extra is not None:
+            regions.extend(extra(body, errors))
+        if not regions:
+            fail(
+                f"{name} states no `{anchor}` status of its own. The spike holds the "
+                "measurement, and a status document that never states the outcome cannot be "
+                "checked against it",
+                errors,
+            )
+            continue
+        found.extend((name, number, region) for number, region in regions)
+    return found
+
+
+def validate_the_xic_route_outcome_has_one_answer(errors: list[str]) -> None:
+    """Every status document reports the route outcome the spike measured.
+
+    M5.4 is an evidence slice, so almost everything it produces is prose, and
+    prose is exactly what drifts. The failure this closes is concrete and
+    happened once already in this repository's history: a slice's conclusion was
+    revised, and one status document went on asserting the withdrawn one. A
+    reader meeting that document has no way to know which sentence is current.
+
+    The spike is the authority -- it holds the measurement -- so the rule is that
+    the two current-status documents agree with it rather than that all three say
+    some fixed string. Revising the outcome stays a one-line edit in the spike;
+    what stops being possible is revising it *there only*.
+
+    Both halves are scoped to where a document states M5.4's own status. That is
+    not a refinement, it is the rule: these documents are append-only, so a
+    whole-file search for the outcome asks only whether the token appears
+    anywhere, and route-lock prose written before the measurement names both
+    branches. Deleting the current conclusion outright would leave that history
+    to satisfy the check.
+
+    Three documents state that outcome, not two, and they do not share one
+    anchor: `FEATURE_CATALOG.md` states it under the product identity
+    `VIEW-007`, in an acceptance row and an implementation note. Each governed
+    region answers for itself, so a correct acceptance row cannot cover for a
+    note that has drifted, or the reverse.
+
+    Also pinned: the re-entry gate names the exact measured executable digest.
+    The whole point of that gate is that a build is admitted by identity rather
+    than by resembling a measured one, and a gate that named no identity would
+    be the defect it exists to prevent.
+    """
+    spike = ROOT / "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md"
+    if not spike.is_file():
+        return
+    text = spike.read_text(encoding="utf-8")
+
+    outcome = _route_outcome(text, errors)
+    if outcome is None:
+        return
+    # By exclusion from the closed set rather than by an `else`, so an unknown
+    # token can never be handed the opposite outcome's name. The unpacking
+    # asserts what the vocabulary promises: exactly one other outcome.
+    (superseded,) = XIC_ROUTE_OUTCOMES - {outcome}
+
+    _validate_the_reentry_gate_names_the_measured_digest(text, errors)
+
+    # Only where a document states the outcome as its *own* current status --
+    # the slice section, the bullets opening with the slice's name, and the
+    # feature catalogue's `VIEW-007` row and note.
+    #
+    # Deliberately not every paragraph mentioning M5.4. The route-lock prose
+    # written before the measurement discusses both branches as they were then
+    # planned -- including that an M5 without a real installation "cannot reach
+    # an `XIC_SOURCE_ADMITTED` outcome at all" -- and that is correct history
+    # rather than a claim about what was found.
+    #
+    # One law per region rather than per document: the feature catalogue makes
+    # two independent current assertions, and one of them being right must not
+    # license the other to drift.
+    for name, number, region in _route_status_regions(errors):
+        if f"`{outcome}`" not in region:
+            fail(
+                f"{name}:{number} does not state M5.4's measured outcome `{outcome}`. A "
+                "mention elsewhere in the document does not carry it: historical planning "
+                "prose names both branches, and a reader meeting this one has no way to tell "
+                "which sentence is the answer",
+                errors,
+            )
+
+        # A record that says a conclusion was withdrawn has to be able to name
+        # the conclusion it withdrew. Only an *unmarked* mention is a claim; the
+        # marker has to sit on the same line as the token, so a withdrawal
+        # elsewhere in a long section cannot license a stale sentence further
+        # down.
+        stale = [
+            line
+            for line in region.split("\n")
+            if f"`{superseded}`" in line
+            and not any(
+                marker in line.lower()
+                for marker in ("withdraw", "supersede", "earlier candidate", "no longer")
+            )
+        ]
+        if stale:
+            fail(
+                f"{name}:{number} reports M5.4 as `{superseded}`, which the spike supersedes "
+                f"with `{outcome}`. A withdrawn conclusion left standing in a status document "
+                "is the one way this record can mislead",
+                errors,
+            )
+
+
+def _validate_the_reentry_gate_names_the_measured_digest(
+    text: str, errors: list[str]
+) -> None:
+    """The re-entry gate repeats the digest the measured-build table records.
+
+    One source of documentary truth and one consistency check: the digest is
+    read out of the evidence table rather than written down a second time here,
+    so a rebuild measured against a different executable is a one-line edit in
+    the spike and this rule follows it.
+
+    The word `SHA-256` is not an executable identity. A gate that said only
+    "the exact SHA-256" would pass a text search while naming nothing, and the
+    whole point of the rule it enforces is that a build is admitted by identity
+    rather than by resembling a measured one.
+
+    Fails closed on every way the pair can stop meaning anything: no table
+    digest, an ambiguous set of them, a value that is not 64 hex characters, no
+    gate section, or a gate that does not repeat that exact value. Hex case is
+    not treated as semantic, which is the convention `Sha256Digest` already
+    uses.
+    """
+    build = _section(text, "## Measured ProteoWizard build")
+    if build is None:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md has no `## Measured ProteoWizard build` "
+            "section, so there is no measured executable identity for the re-entry gate to "
+            "repeat",
+            errors,
+        )
+        return
+
+    # The one row that names the executable this evidence belongs to. Anchored
+    # on `msaccess.exe` and `SHA-256` together, so the sibling `msconvert.exe`
+    # row and the release strings cannot be mistaken for it.
+    digests = {
+        found.upper()
+        for line in build.split("\n")
+        if "msaccess.exe" in line and "SHA-256" in line
+        for found in re.findall(r"\b([0-9a-fA-F]{64})\b", line)
+    }
+    if len(digests) != 1:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md: the measured-build table names "
+            f"{len(digests)} `msaccess.exe` SHA-256 values, not 1. The re-entry gate is "
+            "checked against that table, so exactly one measured identity has to be "
+            "readable from it",
+            errors,
+        )
+        return
+    measured = digests.pop()
+
+    gate = _section(text, "## The XIC re-entry gate")
+    if gate is None:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md has no `## The XIC re-entry gate` section. "
+            "A refusal that records no re-entry condition leaves the next attempt with nothing "
+            "to satisfy",
+            errors,
+        )
+        return
+
+    # Set equality, not membership. The gate names the identities that fresh
+    # evidence covers, and this record covers exactly one executable. A gate
+    # reading "this digest or that one" would admit a build nobody measured --
+    # which is the move the rule exists to forbid -- while still containing the
+    # measured value. Comparing normalized values, so restating the same
+    # identity more than once is not a second identity.
+    named = {found.upper() for found in re.findall(r"\b([0-9a-fA-F]{64})\b", gate)}
+    if measured not in named:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md: the re-entry gate does not name the "
+            f"measured `msaccess.exe` digest `{measured[:8]}...{measured[-4:]}` that the "
+            "measured-build table records. Scientific evidence is transferable only to an "
+            "executable identity the evidence covers, and the word `SHA-256` is not an "
+            "identity",
+            errors,
+        )
+    unevidenced = sorted(named - {measured})
+    if unevidenced:
+        noun = "identity" if len(unevidenced) == 1 else "identities"
+        fail(
+            f"docs/spikes/M5_XIC_SOURCE_EVIDENCE.md: the re-entry gate names {len(unevidenced)} "
+            f"executable {noun} this record holds no evidence for -- "
+            + ", ".join(f"`{value[:8]}...{value[-4:]}`" for value in unevidenced)
+            + ". The gate admits an executable the evidence covers, not a shortlist that "
+            "happens to include it; a further build becomes eligible by being measured, not "
+            "by being listed alongside one that was",
+            errors,
+        )
+
+
+def _first_markdown_table(text: str, heading: str) -> list[list[str]] | None:
+    """The first pipe-table following one heading, as rows of stripped cells.
+
+    Deliberately not a markdown parser. Two repository-owned structures are
+    read by this: ADR 0037's candidate-dimension table and the spike's
+    candidate-standard matrix. Both are plain pipe tables whose cells contain no
+    pipes, and both follow a heading this repository controls.
+    """
+    start = text.find(heading)
+    if start < 0:
+        return None
+    rows: list[list[str]] = []
+    for line in text[start + len(heading) :].split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            # An escaped pipe is content, not a cell boundary. The live
+            # candidate inventory quotes signatures containing `<a\\|b>`, and
+            # splitting naively makes those rows look ragged.
+            rows.append(
+                [
+                    cell.strip().replace("\\|", "|")
+                    for cell in re.split(r"(?<!\\)\|", stripped.strip("|"))
+                ]
+            )
+        elif rows:
+            break
+    return rows or None
+
+
+def _table_header_and_body(rows: list[list[str]]) -> tuple[list[str], list[list[str]]]:
+    """A pipe table's header cells and its data rows.
+
+    The alignment rule is the only row made entirely of dashes and colons; the
+    row before it is the header and everything after it is data.
+    """
+    for index, row in enumerate(rows):
+        if row and all(cell and set(cell) <= set("-: ") for cell in row):
+            return (rows[index - 1] if index else []), rows[index + 1 :]
+    return [], []
+
+
+def _bare(cell: str) -> str:
+    """A cell's identity without the markup it is presented in."""
+    return cell.strip().strip("*").strip("`").strip()
+
+
+# Every state a candidate may end in. Three, and there is no fourth: a candidate
+# was measured and admitted, measured and rejected, or excluded by its own
+# declared signature without being measured. A token that merely resembles one
+# of these is not one, and `EXCLUDED_BY_SIGNATURED` would otherwise pass as a
+# terminal state nobody defined.
+XIC_CANDIDATE_FINAL_STATES: frozenset[str] = frozenset(
+    {
+        "MEASURED_ADMITTED",
+        "MEASURED_REJECTED",
+        "EXCLUDED_BY_SIGNATURE",
+    }
+)
+
+# The states that mean a candidate had to be measured, and therefore has to be
+# answered across every dimension of the standard. Derived rather than written
+# out again, so the two vocabularies cannot drift apart. The candidates
+# themselves are read from the document; only the vocabulary is fixed, because
+# it is what "was measured" means.
+MEASURED_STATES: frozenset[str] = XIC_CANDIDATE_FINAL_STATES - {"EXCLUDED_BY_SIGNATURE"}
+
+
+def _column_index(header: list[str], name: str, where: str, errors: list[str]) -> int | None:
+    """One named column of a table, or a failure saying it is not there."""
+    found = [index for index, cell in enumerate(header) if _bare(cell) == name]
+    if len(found) != 1:
+        fail(
+            f"{where}: the table has {len(found)} `{name}` columns, not 1. The column is read "
+            "by repository validation, so it has to be identifiable",
+            errors,
+        )
+        return None
+    return found[0]
+
+
+def validate_one_candidate_evidence_dimension_vocabulary(errors: list[str]) -> None:
+    """The M5.4 matrix answers exactly the dimensions ADR 0037 requires.
+
+    Two documents, one vocabulary, and the split is deliberate: the ADR decides
+    what a candidate must be measured across, and the spike holds the answers.
+    Nothing connected them, and the failure that follows from that is not
+    hypothetical -- the ADR required duplicate-retention-time behaviour, the
+    matrix had no such row, and a refusal condition still described the matrix
+    as discharging the whole standard.
+
+    Set equality rather than containment, in both directions. A missing
+    dimension is an unanswered requirement. An extra one is a dimension nobody
+    agreed to, which is how `Synthetic run`, `Representative run` and `Outcome`
+    came to pad the matrix while a real dimension was absent and the row count
+    still looked plausible.
+
+    The same argument closes the other axis. Candidate columns are read from the
+    spike's own final classification -- every candidate whose recorded state
+    means it had to be measured -- rather than written down a second time here,
+    so a candidate cannot leave the matrix while its classification still says
+    it was measured, and one cannot appear that nothing measured. Deleting a
+    whole column used to pass: the rows were intact, and rows were all this
+    checked.
+
+    The intended failure mode is that amending the ADR's table breaks this rule
+    until the evidence owner classifies the new dimension for every candidate.
+    Nothing here reads what a cell says: presence and shape are structure, and
+    whether an answer is any good stays a matter for review.
+    """
+    adr = ROOT / "docs/architecture/adr/0037-viewer-completion-route.md"
+    spike = ROOT / "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md"
+    if not adr.is_file() or not spike.is_file():
+        return
+
+    required = _first_markdown_table(
+        adr.read_text(encoding="utf-8"), "#### M5.4 candidate evidence dimensions"
+    )
+    if required is None:
+        fail(
+            "docs/architecture/adr/0037-viewer-completion-route.md has no "
+            "`#### M5.4 candidate evidence dimensions` table. It is the route's own statement "
+            "of what a candidate must be measured across, and the spike's matrix is checked "
+            "against it",
+            errors,
+        )
+        return
+    spike_text = spike.read_text(encoding="utf-8")
+    answered = _first_markdown_table(spike_text, "## Candidate-standard matrix")
+    if answered is None:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md has no `## Candidate-standard matrix` table. "
+            "The refusal's third condition is discharged by that matrix rather than by prose, "
+            "so it has to exist",
+            errors,
+        )
+        return
+    # The ADR numbers its rows, so the dimension is the second column; the
+    # matrix leads with the dimension and then one column per candidate.
+    _, required_body = _table_header_and_body(required)
+    names = [row[1] for row in required_body if len(row) > 1]
+    header, body = _table_header_and_body(answered)
+    rows = [row[0] for row in body if row]
+
+    for label, values, where in (
+        ("ADR 0037", names, "docs/architecture/adr/0037-viewer-completion-route.md"),
+        ("the spike matrix", rows, "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md"),
+    ):
+        if not values:
+            fail(
+                f"{where}: the candidate-dimension table has no rows. An empty vocabulary "
+                "would let the other side say anything",
+                errors,
+            )
+            return
+        repeated = sorted({value for value in values if values.count(value) > 1})
+        if repeated:
+            fail(
+                f"{where}: {label} names {', '.join(repr(value) for value in repeated)} more "
+                "than once. A dimension answered twice is two answers with nothing deciding "
+                "between them",
+                errors,
+            )
+            return
+
+    missing = sorted(set(names) - set(rows))
+    if missing:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md: the candidate-standard matrix does not "
+            f"answer {', '.join(repr(value) for value in missing)}, which ADR 0037 requires of "
+            "every measured candidate. An unanswered dimension is not discharged by the "
+            "matrix, whatever the refusal conditions say",
+            errors,
+        )
+    extra = sorted(set(rows) - set(names))
+    if extra:
+        fail(
+            "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md: the candidate-standard matrix answers "
+            f"{', '.join(repr(value) for value in extra)}, which ADR 0037 does not define as a "
+            "candidate evidence dimension. Rows the standard never asked for make the matrix "
+            "look complete while a required dimension is missing",
+            errors,
+        )
+
+    measured = _validate_every_installed_candidate_has_one_final_state(spike_text, errors)
+    if measured is not None:
+        _validate_the_matrix_covers_every_measured_candidate(measured, header, body, errors)
+
+
+def _validate_every_installed_candidate_has_one_final_state(
+    spike_text: str, errors: list[str]
+) -> set[str] | None:
+    """Every declared candidate is classified once, in a state the route defines.
+
+    Refusal conditions 2 and 4 -- every live installed candidate was classified,
+    and every unmeasured one is excluded explicitly by its signature -- rest
+    entirely on this table, and nothing checked it. A candidate could leave the
+    classification, or take a state nobody defined, and the canonical check
+    stayed silent while the matrix obligation quietly shrank with it.
+
+    So the inventory and the classification are held equal as sets, the state
+    is required to be one of three, and the measured set is derived only after
+    both hold. Returns that set, or `None` when the classification cannot be
+    trusted to derive it from.
+
+    What the `Basis` cell argues is not read. That a candidate has a basis at
+    all is structure; whether the argument is any good is review's.
+    """
+    spike = "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md"
+
+    inventory = _first_markdown_table(spike_text, "## Live candidate inventory")
+    if inventory is None:
+        fail(
+            f"{spike} has no `## Live candidate inventory` table. It is the record of what the "
+            "measured build declares, and the classification is checked against it",
+            errors,
+        )
+        return None
+    inventory_header, inventory_rows = _table_header_and_body(inventory)
+    at = _column_index(inventory_header, "Candidate", f"{spike} live candidate inventory", errors)
+    if at is None:
+        return None
+    declared = [_bare(row[at]) for row in inventory_rows if len(row) > at]
+    if len(declared) != len(inventory_rows) or not all(declared):
+        fail(
+            f"{spike}: the live candidate inventory has a row with no candidate. A row that "
+            "names nothing cannot be classified",
+            errors,
+        )
+        return None
+    repeated = sorted({value for value in declared if declared.count(value) > 1})
+    if repeated:
+        fail(
+            f"{spike}: the live candidate inventory declares "
+            f"{', '.join(repr(value) for value in repeated)} more than once. The build declares "
+            "a command once",
+            errors,
+        )
+        return None
+    if not declared:
+        fail(
+            f"{spike}: the live candidate inventory declares no candidate, so nothing could be "
+            "classified and the refusal would have nothing to be complete about",
+            errors,
+        )
+        return None
+
+    classification = _first_markdown_table(spike_text, "## Final classification")
+    if classification is None:
+        fail(
+            f"{spike} has no `## Final classification` table. It is where a candidate's state "
+            "is recorded, and the matrix's columns are checked against it",
+            errors,
+        )
+        return None
+    header, rows = _table_header_and_body(classification)
+    where = f"{spike} final classification"
+    columns = {
+        name: _column_index(header, name, where, errors)
+        for name in ("Candidate", "State", "Basis")
+    }
+    if any(index is None for index in columns.values()):
+        return None
+    ragged = [row for row in rows if len(row) != len(header)]
+    if ragged:
+        fail(
+            f"{spike}: {len(ragged)} row(s) of the final classification have a cell count the "
+            f"header's {len(header)} does not match. A ragged row shifts a candidate's state "
+            "onto the wrong column",
+            errors,
+        )
+        return None
+    blank = [
+        (_bare(row[columns["Candidate"]]) or "<unnamed>", name)
+        for row in rows
+        for name in ("Candidate", "State", "Basis")
+        if not row[columns[name]].strip()
+    ]
+    if blank:
+        fail(
+            f"{spike}: the final classification leaves "
+            + ", ".join(f"{candidate} without a {name}" for candidate, name in blank)
+            + ". A candidate is classified by naming it, its state, and why",
+            errors,
+        )
+        return None
+
+    classified = [_bare(row[columns["Candidate"]]) for row in rows]
+    repeated = sorted({value for value in classified if classified.count(value) > 1})
+    if repeated:
+        fail(
+            f"{spike}: the final classification lists "
+            f"{', '.join(repr(value) for value in repeated)} more than once. A candidate with "
+            "two states has no state",
+            errors,
+        )
+        return None
+
+    states = {
+        _bare(row[columns["Candidate"]]): _bare(row[columns["State"]]) for row in rows
+    }
+    invalid = sorted(
+        (candidate, state)
+        for candidate, state in states.items()
+        if state not in XIC_CANDIDATE_FINAL_STATES
+    )
+    if invalid:
+        fail(
+            f"{spike}: the final classification ends "
+            + ", ".join(f"{candidate} in `{state}`" for candidate, state in invalid)
+            + f", which is not one of the {len(XIC_CANDIDATE_FINAL_STATES)} states a candidate "
+            "may end in ("
+            + ", ".join(f"`{name}`" for name in sorted(XIC_CANDIDATE_FINAL_STATES))
+            + "). A token that resembles a terminal state is not one",
+            errors,
+        )
+        return None
+
+    unclassified = sorted(set(declared) - set(classified))
+    if unclassified:
+        fail(
+            f"{spike}: the live candidate inventory declares "
+            f"{', '.join(repr(value) for value in unclassified)} with no final classification. "
+            "An installed candidate left in no state is the one thing the refusal's second "
+            "condition rules out",
+            errors,
+        )
+    undeclared = sorted(set(classified) - set(declared))
+    if undeclared:
+        fail(
+            f"{spike}: the final classification records "
+            f"{', '.join(repr(value) for value in undeclared)}, which the live candidate "
+            "inventory does not declare. A candidate the build never offered cannot have been "
+            "classified from it",
+            errors,
+        )
+    if unclassified or undeclared:
+        return None
+
+    # The route outcome and the candidate states are both finite now, so their
+    # minimum agreement is checkable. Nothing about *which* source to choose is
+    # decided here -- that is D4's, and it stays a product question.
+    outcome = _route_outcome(spike_text)
+    admitted = sorted(
+        candidate for candidate, state in states.items() if state == "MEASURED_ADMITTED"
+    )
+    if outcome == "XIC_SOURCE_REFUSED" and admitted:
+        fail(
+            f"{spike}: the route outcome is `XIC_SOURCE_REFUSED` while "
+            f"{', '.join(repr(value) for value in admitted)} is classified `MEASURED_ADMITTED`. "
+            "A refusal means no candidate was admitted; one of the two is wrong, and a reader "
+            "cannot tell which",
+            errors,
+        )
+        return None
+    if outcome == "XIC_SOURCE_ADMITTED" and not admitted:
+        fail(
+            f"{spike}: the route outcome is `XIC_SOURCE_ADMITTED` while no candidate is "
+            "classified `MEASURED_ADMITTED`. An admission names the source it admitted",
+            errors,
+        )
+        return None
+
+    return {candidate for candidate, state in states.items() if state in MEASURED_STATES}
+
+
+def _validate_the_matrix_covers_every_measured_candidate(
+    measured: set[str],
+    header: list[str],
+    body: list[list[str]],
+    errors: list[str],
+) -> None:
+    """The matrix's columns are the candidates the classification says were measured.
+
+    Read from the record rather than restated: a candidate list written here
+    would be a second authority, and the point of the rule is that there is one.
+    A signature-excluded candidate needs no column, because its exclusion is
+    closed without measuring it.
+    """
+    spike = "docs/spikes/M5_XIC_SOURCE_EVIDENCE.md"
+    if not measured:
+        fail(
+            f"{spike}: the final classification records no measured candidate, so the "
+            "candidate-standard matrix would have nothing to be complete about",
+            errors,
+        )
+        return
+
+    columns = [_bare(cell) for cell in header[1:]]
+    if not columns or not all(columns):
+        fail(
+            f"{spike}: the candidate-standard matrix header names no candidate columns. The "
+            "matrix is what discharges the refusal's third condition, and it discharges "
+            "nothing without them",
+            errors,
+        )
+        return
+    duplicated = sorted({value for value in columns if columns.count(value) > 1})
+    if duplicated:
+        fail(
+            f"{spike}: the candidate-standard matrix has "
+            f"{', '.join(repr(value) for value in duplicated)} in more than one column. Two "
+            "columns for one candidate are two answers with nothing deciding between them",
+            errors,
+        )
+        return
+
+    absent = sorted(measured - set(columns))
+    if absent:
+        fail(
+            f"{spike}: the candidate-standard matrix has no column for "
+            f"{', '.join(repr(value) for value in absent)}, which the final classification "
+            "records as measured. A measured candidate that leaves the matrix takes its "
+            "unanswered dimensions with it, and the row count still looks right",
+            errors,
+        )
+    unmeasured = sorted(set(columns) - measured)
+    if unmeasured:
+        fail(
+            f"{spike}: the candidate-standard matrix has a column for "
+            f"{', '.join(repr(value) for value in unmeasured)}, which the final classification "
+            "does not record as measured. A column nothing measured is a claim the evidence "
+            "does not carry",
+            errors,
+        )
+    if absent or unmeasured:
+        return
+
+    # Rectangular, and every intersection answered. What the answer says is not
+    # read here; that a pair was answered at all is structure.
+    for row in body:
+        if len(row) != len(header):
+            fail(
+                f"{spike}: the candidate-standard matrix row {row[0]!r} has {len(row)} cells "
+                f"where the header has {len(header)}. A ragged row silently shifts every "
+                "answer after the gap onto the wrong candidate",
+                errors,
+            )
+            return
+    blank = [
+        (row[0], columns[position])
+        for row in body
+        for position, cell in enumerate(row[1:])
+        if not cell.strip()
+    ]
+    if blank:
+        fail(
+            f"{spike}: the candidate-standard matrix leaves "
+            + ", ".join(f"{candidate} on {dimension!r}" for dimension, candidate in blank)
+            + " unanswered. Every measured candidate is answered on every required dimension, "
+            "as a located result or an explicit `NOT_APPLICABLE` with its reason",
+            errors,
+        )
+
+
+def _section(text: str, heading: str) -> str | None:
+    """One `##` section of a markdown document, heading included."""
+    start = text.find(heading)
+    if start < 0:
+        return None
+    after = text.find("\n## ", start + len(heading))
+    return text[start:] if after < 0 else text[start:after]
+
+
+def _status_claims_about(text: str, slice_name: str) -> list[tuple[int, str]]:
+    """Where a status document states one slice's own outcome.
+
+    Two shapes, which is what these documents actually use: a `## <slice>`
+    section in the append-only log, and a top-level bullet opening with the
+    slice's name in the roadmap's status and slice lists.
+
+    A bullet is collected with its continuation lines rather than as a
+    paragraph, because a markdown list separated by no blank lines is a single
+    paragraph and the outcome routinely sits on a bullet's second line.
+    """
+    found: list[tuple[int, str]] = []
+    lines = text.split("\n")
+    starts = (f"- {slice_name}", f"- **{slice_name}")
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith(f"## {slice_name}"):
+            end = index + 1
+            while end < len(lines) and not lines[end].startswith("## "):
+                end += 1
+            found.append((index + 1, "\n".join(lines[index:end])))
+            index = end
+            continue
+        if line.startswith(starts):
+            end = index + 1
+            # Continuation lines are indented; a new bullet or a blank line ends
+            # this one.
+            while end < len(lines) and lines[end].startswith(" "):
+                end += 1
+            found.append((index + 1, "\n".join(lines[index:end])))
+            index = end
+            continue
+        index += 1
+    return found
+
+
 def validate_current_status_documents_describe_the_shipped_product(
     errors: list[str],
 ) -> None:
@@ -1433,6 +2251,8 @@ def main() -> int:
         validate_the_current_status_section_has_one_answer(errors)
         validate_drawability_is_settled_in_one_place(errors)
         validate_a_spectrum_range_is_resolved_in_one_place(errors)
+        validate_the_xic_route_outcome_has_one_answer(errors)
+        validate_one_candidate_evidence_dimension_vocabulary(errors)
         validate_current_status_documents_describe_the_shipped_product(errors)
 
     if errors:

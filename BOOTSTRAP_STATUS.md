@@ -5485,3 +5485,137 @@ M5.1's `projection.rs` rustdoc — are carried unchanged.
 `pnpm build` and `git diff --check`, each run directly and each exiting zero,
 plus `pnpm e2e:typecheck`, `pnpm e2e:browser`, `pnpm e2e:build` and
 `pnpm e2e:tauri`.
+## M5.4 — XIC source and capability evidence, 2026-08-29
+
+An evidence slice. It implements no XIC and changed no production code; it
+decides whether a defensible backend source exists and names the contract M5.5
+would implement.
+
+**The measurement record is
+[`docs/spikes/M5_XIC_SOURCE_EVIDENCE.md`](docs/spikes/M5_XIC_SOURCE_EVIDENCE.md),
+and it is the authority for every fact about the backend.** This entry carries
+the outcome, what it binds to and what follows from it. It deliberately does not
+restate the measurements: a result maintained in two places is a result that can
+disagree with itself, and each review round of this slice found its errors in
+the restatements rather than in the measurements.
+
+### Outcome
+
+**`XIC_SOURCE_REFUSED`.** No query this build offers can serve as a general XIC
+scientific source.
+
+An earlier candidate of this slice recorded `XIC_SOURCE_ADMITTED` for
+`tic mz=`. That conclusion was **withdrawn** under a post-review authorization
+after a measurement it had not made: the build serializes region intensities at
+four fixed decimal places, and a legitimate positive signal below `0.00005` is
+written as the same text as a true zero.
+
+### The build the conclusion belongs to
+
+ProteoWizard `3.0.26013 (47b13cf)`, build date `Jan 13 2026 14:42:37`, found
+where this repository's own discovery searches. `msaccess` emits the release but
+not the revision, so the revision comes from `msconvert` in the same
+distribution and is corroborated by the installation directory name.
+
+**This is not M0's build.** M0 measured `3.0.26204 (a09eea9)` in an isolated
+runner, so no source-level semantic claim was carried across; every aggregation
+citation in the spike is pinned to `47b13cf` and re-read.
+
+### What was measured, and against what
+
+Both pinned sources are external, hash-pinned and verified before execution;
+neither payload is committed. The synthetic fixture is ProteoWizard's
+`tiny.pwiz.1.1.mzML`; the representative is PRIDE `PXD081190`'s CC0
+`BBM_506_P110_31_MIA_004_30_calibrated.mzML`, `208,408,454` bytes, `36,319` MS2
+spectra — the same two M0 pinned, re-verified. Two further fixtures were
+generated, because the pinned pair cannot reach two dimensions of the standard:
+a positive sum below the serialization resolution, and two spectra sharing a
+retention time.
+
+The installed build declares **eight** analysis queries. Four — `metadata`,
+`run_summary`, `spectrum_table`, `binary` — declare no m/z term at all and are
+excluded by their own signature. The other four were measured, including `image`,
+whose signature declares no parameters at all and was therefore too ambiguous to
+argue away. **"To the same standard" is not asserted here**: it is discharged by
+the spike's candidate-standard matrix, where every dimension of the standard is
+either a located result or an explicit `NOT_APPLICABLE` with its reason, for each
+of `tic`, `sic`, `slice` and `image`.
+
+### Why the four were rejected — two grounds, not one
+
+**`tic`, `sic` and `slice`** share a measured serialization defect: the build
+writes region intensities with `fixed << setprecision(4)`, so a real in-window
+sum below the fourth decimal is written as the same text a true zero produces,
+and no precision control exists for that output. MSCanvas admits mzML generally
+and holds no trustworthy minimum intensity scale that could rule such values out
+before invoking, so an XIC built on it would render real low-intensity signal as
+a flat zero line and be unable to say which it was showing. `tic` is rejected for
+`LOSSY_INTENSITY_SERIALIZATION_DESTROYS_ZERO_NONZERO_DISTINCTION`; `sic` and
+`slice` carry the identical loss plus further reasons of their own. The earlier
+candidate's claim that `0.0000` is explicit no-signal behaviour is **withdrawn**:
+it is either no signal or signal below resolution, and the output does not
+distinguish them.
+
+**`image` does not share that defect and is not rejected for it.** It renders a
+pseudo-2D-gel, which carries no per-scan quantity and no result identity even
+when it succeeds, and it produced no usable output on either pinned source — five
+repeats of one identical invocation, every one exit `0` with no artifact and a
+byte-identical diagnostic. It never produced an intensity column to serialize.
+The two grounds are kept apart because a later build could repair one without
+touching the other.
+
+The spike also gives a cause for something this log left open: M0C's
+"representative TIC: exit 0, no generated output" is a singular parabola fit,
+reproduced and located.
+
+### Capability contract
+
+**No production code changed.** `InstalledHelpCapabilities::analysis_query`
+already returns exact signatures, required/optional parameter facts and closed
+value sets for `sic` and `slice` with no new parsing — `radiusUnits` admits
+exactly `amu` and `ppm`. One test was added to pin that, because "the contract can
+already express the candidate inventory" is worth checking rather than asserting.
+
+### The decisions, under refusal
+
+**D4 is not applicable.** ADR 0037 was amended by this slice: D4 is
+`USER_DECISION_REQUIRED` only where the evidence admits **two or more** sources;
+zero means refusal and there is nothing to choose. It admitted none.
+
+D1, D2, D3 and D5 are moot for the same reason — M5.5 and M5.6 are
+`NOT_APPLICABLE`, so none of them blocks reachable work. The evidence gathered
+about each is preserved in the spike for whoever re-enters through the gate.
+
+### The XIC re-entry gate
+
+XIC is refused for **this executable**, not for all time. ADR 0037 now carries the
+rule this slice needed:
+
+> Scientific evidence is transferable only to an executable identity explicitly
+> covered by that evidence.
+
+Re-entry requires an exact `msaccess.exe` identity covered by fresh measurement,
+plus the required exact capability grammar, plus a resolved numeric-fidelity
+answer. A different digest is not admitted because its help looks the same. The
+measured digest is recorded once, in the spike's re-entry gate, where repository
+validation checks it against the build table it came from.
+
+`ProviderBuild::is("3.0.26013", "47b13cf")` is **not** sufficient on its own for
+this tool: this build's `msaccess` reports its release but not its revision, so a
+revision-bearing check would not match the executable actually launched.
+
+No XIC was implemented: no operation, no capability gate, no parser, no DTO, no
+service command, no frontend, no cache, no export, no new selection authority,
+and no `PreviewOperation` extension. No pseudo-XIC was substituted at any point,
+and no approximation was built to rescue the refusal.
+
+M5.5 = `NOT_APPLICABLE`. M5.6 = `NOT_APPLICABLE`. **M5.7 is next**, and it is
+reachable: its predecessor on the refusal branch is M5.3, which is complete.
+
+### Validation
+
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build` and `git diff --check`, each run directly and each exiting zero. No
+browser or Tauri E2E was required: this slice has no frontend.

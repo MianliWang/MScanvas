@@ -62,7 +62,7 @@ table remains the target, including the unsupported portions called out below:
 | VIEW-004 | Scan table | P0 | Virtualized rows with scan, RT, MS level and precursor context. |
 | VIEW-005 | Linked selection | P0 | **Implemented across the chromatogram, the loaded scan table and the selected-spectrum panel.** Selection synchronizes chromatogram marker, table row, spectrum and inspector in both directions. |
 | VIEW-006 | Keyboard scan navigation | P0 | **Implemented.** Previous/next and table navigation work without pointer-only access. |
-| VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. **M5, behind an evidence gate with two valid outcomes: a visible trace, or a recorded refusal and a reassignment. No XIC export in M5.** |
+| VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. **Unimplemented, and the evidence gate is answered `XIC_SOURCE_REFUSED`: no query the measured ProteoWizard build offers can serve as a general XIC source.** M5.5 and M5.6 are `NOT_APPLICABLE`. Re-entry requires an exact executable identity covered by fresh measurement and a resolved numeric-fidelity answer. |
 | VIEW-008 | Multi-layer comparison | P2 | Visibility, style and provenance remain inspectable per layer. **Deferred: M8 for layer identity, M9 for comparison semantics.** |
 
 Implementation notes for the three viewer features Viewer Closure closed follow.
@@ -98,8 +98,9 @@ The acceptance table remains the target, including the parts called out below.
   Where a preview loaded only part of the table, the interface says that the end
   of the loaded rows is not the end of the run.
 
-Still unimplemented across the viewer: XIC (VIEW-007) and multi-layer
-comparison (VIEW-008). The chromatogram exports over the full run or the current
+Still unimplemented across the viewer: XIC (VIEW-007), now refused on measured
+backend evidence rather than merely pending, and multi-layer comparison
+(VIEW-008). The chromatogram exports over the full run or the current
 range, alone or linked with the selected scan; see FIG-001 through FIG-006, and
 **the selected spectrum now does the same over its own m/z axis**.
 
@@ -144,18 +145,27 @@ Where each of those is owned, and why, is fixed by
   bounded projection of the complete spectrum Rust retains rather than the
   bounded arrays one transfer carries, so zooming into a large spectrum shows the
   source rather than the end of the prefix.
-- **VIEW-007** is M5 behind an evidence gate. The backend's `tic` query already
-  declares an `mz=<mzLow>[,<mzHigh>]` window and the installed help declared a
-  `sic` query, but no m/z-windowed query has ever been run here and `sic` has
-  never been captured. An XIC cannot be derived in the interface instead. The
-  loaded table's per-scan base peak m/z is a summary, not a spectrum: filtering
-  scans by it returns zero for every scan carrying signal in the window under a
-  taller peak elsewhere, which is where an analyst is most often looking. The
-  gate has two valid outcomes, and M5 completes under either: a visible trace
-  whose window, unit posture, MS-level scope, aggregation and source query it
-  carries where they can be read, or a recorded refusal with the measurement
-  behind it and a named owner and re-entry gate. **M5 writes no XIC figure or
-  data document**; a reusable XIC export belongs to M9.
+- **VIEW-007**'s evidence gate is **answered, and the answer is a refusal.**
+  M5.4 measured a real ProteoWizard `3.0.26013 (47b13cf)` installation against
+  the pinned synthetic fixture, the pinned public representative acquisition and
+  a generated low-intensity fixture, and recorded `XIC_SOURCE_REFUSED`. Every
+  installed candidate was closed on its own measurement, and the evidence — the
+  candidate-standard matrix, the six refusal conditions and the source citations
+  behind them — is in [the spike](../spikes/M5_XIC_SOURCE_EVIDENCE.md), which is
+  the authority for all of it.
+
+  An XIC also cannot be derived in the interface, and that reasoning is
+  unchanged: the loaded table's per-scan base peak m/z is a summary, not a
+  spectrum, so filtering scans by it returns zero for every scan carrying signal
+  in the window under a taller peak elsewhere — which is where an analyst is most
+  often looking.
+
+  **A refusal is not a deferral to a later build by default.** XIC is refused for
+  the measured executable, and re-entry requires an exact executable identity
+  covered by fresh measurement plus a resolved numeric-fidelity answer — help
+  text that looks the same is not evidence that an implementation behaves the
+  same. **M5 writes no XIC figure or data document**; a reusable XIC export
+  belongs to M9 if XIC ever ships.
 - **VIEW-008** is deferred past M5 on a dependency audit, not on priority alone.
   It needs several runs loaded at once where the application holds exactly one
   by contract, a layer identity `FigureSpec` has no concept of, a normalization
