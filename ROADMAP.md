@@ -437,11 +437,17 @@ cache are deferred here, the second only on a measurement showing a need.
 - Isolated worker contract and one or two reviewed recipes backed by mature
   packages.
 - Recipe mode first; no generic workflow canvas until real needs justify it.
-- **A reusable XIC export**, if M5 admitted an XIC. M5 builds the visible trace
-  and no exported artifact; an XIC is a derived analytical quantity rather than a
-  second view of something the file contains, so its reusable form belongs with
-  the milestone that owns derived analytical results, on top of M8's artifact
-  identity. See [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md).
+- **A reusable XIC export**, if an XIC ever exists. M5 measured
+  `XIC_SOURCE_REFUSED` and built neither a trace nor an artifact, so the
+  condition this entry was written under — *if M5 admitted one* — can no longer
+  be met. It is **not** thereby closed: re-entry is M6's, behind the spike's
+  three-part gate, and if a measured build admits a source the visible trace
+  becomes a viewer slice scheduled then. An XIC is a derived analytical quantity
+  rather than a second view of something the file contains, so its reusable form
+  still belongs with the milestone that owns derived analytical results, on top
+  of M8's artifact identity. See
+  [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md) and
+  [ADR 0042](docs/architecture/adr/0042-viewer-completion-closure-and-handoff.md).
 - **Multi-layer comparison (VIEW-008)** belongs here for its semantics, on top of
   M8's layer identity. Deferred from M5 with a recorded dependency audit: the
   application holds one preview by contract — Rust's open ticket states that

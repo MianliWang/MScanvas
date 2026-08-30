@@ -5760,11 +5760,14 @@ bullet found in review. All corrected.
 ### `XIC_SOURCE_REFUSED`, closed rather than passed over
 
 M5.5 and M5.6 did not run. No pseudo-XIC was substituted, no XIC export exists,
-and **`M5 COMPLETE` does not mean XIC exists.** Re-entry needs all three of an
-exact `msaccess.exe` identity covered by fresh measurement, the exact required
-capability grammar, and a resolved numeric-fidelity answer — and no executable
-inherits the refusal's evidence because its help text resembles the measured
-one's. **VIEW-007's owner is M6**, the milestone that measures this backend's
+and **`M5 COMPLETE` does not mean XIC exists.** Re-entry needs all three of the
+spike's gate: an executable identity and capability grammar covered by fresh
+evidence; a resolved numeric-fidelity answer; and **re-measurement of everything
+the record establishes**, because the aggregation each query performs and the
+singular-parabola abort are invisible in help text, so a build can match the
+grammar and still be scientifically different. No executable inherits the
+refusal's evidence because its help text resembles the measured one's.
+**VIEW-007's owner is M6**, the milestone that measures this backend's
 capabilities against a build; the gate is the condition, not the owner.
 
 ### Two record debts closed

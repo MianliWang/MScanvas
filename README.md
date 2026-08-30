@@ -229,10 +229,13 @@ measurement: mzML permits an m/z sequence that contract will not accept, and
 MSCanvas does not sort one to make a viewport possible. Such a spectrum stays
 selectable, still draws, still exports as full-source CSV and TSV, and is told
 plainly that it has no viewport and no current range. And a click on the plot or
-a scan row that cannot commit a scan no longer does nothing in silence: both
-surfaces read one availability rule, say once why, and keep everything that needs
-no backend — zoom, pan, hover, scrolling, keyboard navigation — working while
-they say it.
+a scan row that cannot commit a scan says why instead of doing nothing in
+silence: both surfaces read one availability rule, say once why, and keep
+everything that needs no backend — zoom, pan, hover, scrolling, keyboard
+navigation — working while they say it. One window is knowingly left open and
+belongs to conversion rather than to the viewer: for the moment between starting
+a conversion and its queue state being read back, an activation is still refused
+without the surfaces having caught up.
 
 **There is no extracted-ion chromatogram, and that is a measured answer rather
 than an omission.** M5 ran the evidence gate against a real ProteoWizard

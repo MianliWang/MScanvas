@@ -111,20 +111,31 @@ grammar resembles the measured one — two builds can print identical help while
 differing in the aggregation performed, the precision serialized and whether an
 ordinary window aborts. Re-entry requires all of:
 
-1. an exact `msaccess.exe` identity covered by fresh measurement, recorded in the
-   spike's re-entry gate and checked by repository validation against the
-   measured-build table it came from;
-2. the exact required capability grammar;
-3. a resolved numeric-fidelity answer — either a serialization that preserves the
-   zero/non-zero distinction over the mzML domain MSCanvas supports, or a
-   declared, measured, capability-gateable precision control.
+1. **an executable identity covered by fresh evidence** — the exact
+   `msaccess.exe` digest, recorded in the spike's re-entry gate and checked by
+   repository validation against the measured-build table it came from, plus the
+   required exact help/capability grammar;
+2. **a resolved numeric-fidelity answer** — either a serialization that preserves
+   the zero/non-zero distinction over the mzML domain MSCanvas supports, or a
+   precision control that is declared, measured to change `sumIntensity`
+   serialization as required, and capability-gateable;
+3. **re-measurement of everything this record establishes.** Not a formality and
+   not covered by the first two: both defects M5.4 found — the four-decimal
+   serialization and the singular-parabola abort on an ordinary wide window — are
+   implementation properties **invisible in help text**, and so is the
+   aggregation each query performs. A build can match the grammar, fix the
+   precision, and still aggregate differently or fail on a window a reader would
+   actually ask for.
 
 **VIEW-007's owner is M6**, and the gate is the condition rather than the owner.
 M6 is the milestone that measures this backend's capabilities against a build, so
 a different `msaccess` is measured there or nowhere. If such a measurement admits
 a source, the visible XIC becomes a viewer slice scheduled at that point — and a
 reusable XIC artifact or export remains M9's, on M8 artifact identity, exactly as
-it would have been had M5.4 admitted one.
+it would have been had M5.4 admitted one. M9's backlog entry was written as *if
+M5 admitted an XIC*, a condition that can no longer be met; it now covers XIC
+re-entering after M5 instead, so the artifact this closure routes there has
+somewhere to land.
 
 ### Criterion 5
 

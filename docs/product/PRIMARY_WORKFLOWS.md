@@ -143,13 +143,19 @@ of two ordered panels linked by a marker at that scan.
 Still missing from the acquisition view: XIC, refused on measured evidence rather
 than pending, and multi-layer comparison, deferred with named owners.
 
-**A click that cannot select a scan now says so, once.** Where the
+**A click that cannot select a scan says so, once.** Where the
 selected-spectrum lane is held — a running conversion or a dispatched retry, an
 installation check, a backend this session resolved unavailable — the viewer
 states the reason in one place and both the plot and the scan table point at it.
 Neither is disabled: hover, zoom, pan, the range controls, the trace toggles,
 scrolling and keyboard row navigation all keep working, because none of them asks
 the backend for anything. What stops is the one action that would have.
+
+One window is knowingly left open, and it belongs to the conversion lane rather
+than to the viewer: starting a conversion claims the backend lane immediately,
+while the rendered availability follows only when the queue slot is read back, so
+for that moment an activation is refused before either surface has caught up. It
+is the same window every conversion-gated control here has. Owner: M6.
 
 **The selected spectrum's own m/z range zooms, pans and resets** wherever the
 scientific figure contract admits an authoritative domain for it, by wheel, by
