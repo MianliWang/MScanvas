@@ -207,8 +207,11 @@ before conversion is widened and before the product is redesigned.
 - M5.1 — **complete** (the m/z viewport authority and the bounded projection).
 - M5.2 — **complete** (the visible spectrum viewport).
 - M5.3 — **complete** (selected-spectrum `Current range` export).
-- M5.4 — **next, not started** (XIC source and capability evidence).
-- M5.5 through M5.8 — not started.
+- M5.4 — **complete** (XIC source and capability evidence);
+  outcome **`XIC_SOURCE_ADMITTED`**, source `tic mz=<mzLow>,<mzHigh>`.
+- M5.5 — **next, not started**, and **blocked** until XIC-D1, D2, D3 and D5 are
+  settled. M5.4 determined D4 by evidence and deliberately answered no other.
+- M5.6 through M5.8 — not started.
 
 **Zoom, pan and reset reach a spectrum whose domain is admitted, and only
 those.** A spectrum the figure contract cannot give an authoritative finite
@@ -261,11 +264,34 @@ five product decisions it surfaces are in
   selected spectrum. This slice added a **range** to what a spectrum already
   exported; it added no format and built no figure the existing contract refuses.
   See [ADR 0040](docs/architecture/adr/0040-spectrum-range-export.md).
-- **M5.4 — XIC source and capability evidence.** A live measured run deciding
-  whether an acceptable XIC source exists and which query it is. `tic`'s
-  signature already declares an `mz=<mzLow>[,<mzHigh>]` window and the installed
-  help declared a `sic` query, but neither has ever been run as an XIC and
-  `sic` has never been captured here at all.
+- **M5.4 — XIC source and capability evidence.** **Closed, outcome
+  `XIC_SOURCE_ADMITTED`.** Measured against a real ProteoWizard `3.0.26013
+  (47b13cf)` installation, on the pinned synthetic fixture and on the pinned
+  public representative acquisition. The installed build declares eight analysis
+  queries; four cannot express an m/z window at all and are excluded by their own
+  signature, and all four that can — `tic`, `sic`, `slice` and `image` — were
+  measured to one standard.
+
+  The admitted source is **`tic mz=<mzLow>,<mzHigh>`**: one row per spectrum,
+  inclusive at both ends, the arithmetic sum of the in-window binary intensities
+  read from the pinned source rather than inferred from the query's name, in
+  source-index order, with every scan present and a no-signal scan reported as an
+  explicit zero. `sic` — the query whose name means *selected ion chromatogram*,
+  and whose signature this repository had never held — was measured and
+  **rejected**: it omits every zero-sum scan, leaves a partial file when it
+  fails, and its headline peak columns are parabola-interpolated coordinates no
+  instrument recorded. `slice` and `image` were measured and rejected.
+
+  Two limitations are named rather than smoothed over. A non-finite window is
+  silently answered with the *unwindowed* result, and an inverted one exits `0`
+  with no output, so both must be refused before invoking. And on this build a
+  **wide** window can abort with no output at all when a spectrum's window
+  maximum sits on a duplicated m/z — which is the cause of the previously
+  unexplained M0C observation. Every window at a realistic extraction tolerance
+  returned a complete `36,319`-row result. See
+  [the spike](docs/spikes/M5_XIC_SOURCE_EVIDENCE.md).
+
+  No XIC was implemented and no production code changed.
 - **M5.5 — the XIC model and runtime.** *Only on `XIC_SOURCE_ADMITTED`.* The
   typed operation, its capability gate, its parser and its service path. Rust
   only.
@@ -299,9 +325,13 @@ it for the committed domain, refreshed as that domain changes; and scientific
 export is always taken from the retained source rather than from what the screen
 was given.
 
-**XIC is conditional on M5.4, and both outcomes complete the milestone.** On
-`XIC_SOURCE_ADMITTED` an XIC is produced from the evidenced source, participates
-in the one linked selection, and its criteria apply. On `XIC_SOURCE_REFUSED`
+**XIC is conditional on M5.4, and both outcomes complete the milestone.**
+M5.4 measured `XIC_SOURCE_ADMITTED`, so this is the branch M5 is on: an XIC is
+produced from the evidenced source, participates in the one linked selection, and
+its criteria apply. Being on that branch is not permission to start M5.5 — the
+evidence settled which backend query (D4) and constrained the aggregation to the
+sum that query computes (D3); the window's unit posture, the MS-level scope and
+the presentation remain product decisions that have to be made first. On `XIC_SOURCE_REFUSED`
 M5.5 and M5.6 are `NOT_APPLICABLE`, the refusal and its measurement are recorded,
 those criteria are closed explicitly as evidence-gated rather than passed over,
 and VIEW-007 is reassigned to a named owner and re-entry gate. In that outcome

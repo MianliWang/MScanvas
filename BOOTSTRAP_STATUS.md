@@ -5485,3 +5485,140 @@ M5.1's `projection.rs` rustdoc — are carried unchanged.
 `pnpm build` and `git diff --check`, each run directly and each exiting zero,
 plus `pnpm e2e:typecheck`, `pnpm e2e:browser`, `pnpm e2e:build` and
 `pnpm e2e:tauri`.
+## M5.4 — XIC source and capability evidence, 2026-08-29
+
+An evidence slice. It implements no XIC and changed no production code; it
+decides whether a defensible backend source exists and names the contract M5.5
+would implement. Full measurement record:
+[`docs/spikes/M5_XIC_SOURCE_EVIDENCE.md`](docs/spikes/M5_XIC_SOURCE_EVIDENCE.md).
+
+### Outcome
+
+**`XIC_SOURCE_ADMITTED`.** The source is `msaccess -x "tic mz=<mzLow>,<mzHigh>"`.
+
+### The build the conclusion belongs to
+
+ProteoWizard `3.0.26013 (47b13cf)`, build date `Jan 13 2026 14:42:37`, found
+where this repository's own discovery searches. `msaccess` emits the release but
+not the revision, so the revision comes from `msconvert` in the same
+distribution and is corroborated by the installation directory name.
+
+**This is not M0's build.** M0 measured `3.0.26204 (a09eea9)` in an isolated
+runner, so no source-level semantic claim was carried across; every aggregation
+citation here is pinned to `47b13cf` and re-read.
+
+### What was measured, and against what
+
+Both sources are external, hash-pinned and verified before execution; neither
+payload is committed. The synthetic fixture is ProteoWizard's
+`tiny.pwiz.1.1.mzML`; the representative is PRIDE `PXD081190`'s CC0
+`BBM_506_P110_31_MIA_004_30_calibrated.mzML`, `208,408,454` bytes, `36,319` MS2
+spectra — the same two M0 pinned, re-verified.
+
+The installed build declares **eight** analysis queries. Four — `metadata`,
+`run_summary`, `spectrum_table`, `binary` — cannot express an m/z window at all
+and are excluded by their own signature. **All four that can express one were
+measured to the same standard**: `tic`, `sic`, `slice` and `image`. `image` was
+measured rather than argued away, because its args do include `mz=`.
+
+### Why `tic` was admitted
+
+One row per spectrum; window inclusive at both ends; the arithmetic **sum** of
+the in-window binary intensities, read from `RegionAnalyzer.cpp` at `47b13cf`
+rather than inferred from the query's name — a recomputed trace, not the file's
+stored TIC, which the fixture proves by reporting `120` where its stored value is
+`1.66755e+07`. Rows are in **source-index** order, which the fixture proves by
+emitting retention times `353.43, 359.43, 0.00, 42.05`. Every scan is present and
+a no-signal scan is an explicit `0.0000`, so an omitted scan and a zero scan
+cannot be confused. On the representative it returned a complete `36,319`-row,
+`2,989,606`-byte result — `82.3` bytes per row, about 36 % of
+`MAX_PREVIEW_TEXT_BYTES` — byte-identical across three passes.
+
+Both the comma form the signature declares and the dash form the build's own
+examples use are accepted, and a single value is a zero-width window.
+
+### Three things the measurement found that a signature would not have
+
+**`index` is renumbered under a filter.** `--filter="msLevel N"` composes and
+computes correct sums, but the `index` column becomes the position in the
+*filtered* list rather than the source spectrum index. Unfiltered, `index`
+reconciles exactly with `spectrum_table` across all `36,319` rows. Under a filter
+the `id` is the only stable key — and it arrives in the raw form
+(`controllerType=0 controllerNumber=1 scan=413`) where `spectrum_table` gives the
+abbreviated one (`0.1.413`), so a consumer must canonicalize rather than compare
+strings.
+
+**A malformed window is not reliably an error.** `mz=abc,def` and `mz=` exit `1`
+with a typed parse message. But an **inverted** window exits `0` and produces no
+output, and a **non-finite** window exits `0` and silently returns the
+*unwindowed* result — byte-identical to the default window's, and to the hash M0
+recorded for this fixture on a different build. Both must be refused before
+invoking.
+
+**The M0C mystery has a cause.** M0C recorded the representative TIC as "exit 0,
+no generated output" and left it as a capability observation. It is a
+`[Parabola.cpp::solve()] Matrix is singular` exception: `RegionAnalyzer::update`
+computes a parabola-interpolated peak for *every* spectrum whichever consumer
+asked, and the fit is singular when the window maximum sits on a duplicated m/z.
+The trigger is present in the representative at spectrum index `342`, where the
+maximum `2,278,863` sits on a duplicated m/z `401.2151` — and the failing `sic`
+run stopped writing at exactly that index.
+
+It bites **wide** windows: at m/z 400 the threshold is sharp, complete at 1–2 Da
+and aborted at 3 Da and above. At widths an extraction actually uses it did not
+occur at all — `0.02` Da and `0.50` Da across sixteen centres, and `2` Da across
+sixteen more, all returned complete `36,319`-row results. It does not block
+admission because `RegionTIC` writes only at close, so an aborted `tic` leaves
+**no file**, which the shipped contract already classifies as
+`MissingRequiredOutput`.
+
+### Why the other three were rejected
+
+**`sic`** — the query whose name means *selected ion chromatogram*, and whose
+signature this repository had never held. It works: same inclusive window, same
+sum, `ppm` and `amu` both accepted, deterministic. Rejected for four measured
+reasons: it emits a row only `if (spectrumStats.sumIntensity)`, so it **omits
+every zero-sum scan** — `3,268` rows for `36,319` scans on the representative,
+making an absent scan and a silent scan indistinguishable within its own output;
+it writes `.data.tsv` incrementally, so the abort above leaves a **partial
+`231`-row file** that is under the byte bound and would be read as complete; its
+`peakMZ`/`peakIntensity` are **parabola-interpolated** coordinates no instrument
+recorded; and its file names encode only `mzCenter`, so two radii at one centre
+collide.
+
+**`slice`** — returns unaggregated per-peak rows, so it is not a chromatogram;
+omits zero scans; its size scales with peak count rather than scan count, so the
+byte bound cannot be predicted before invoking; and it leaves partial output on
+the same abort.
+
+**`image`** — measured, not argued away. Exit `0`, no output, `invalid vector
+subscript`. It renders a pseudo-2D-gel image, carrying no per-scan intensity and
+no result identity.
+
+### Capability contract
+
+**No production code changed.** `InstalledHelpCapabilities::analysis_query`
+already returns exact signatures, required/optional parameter facts and closed
+value sets for `sic` and `slice` with no new parsing — `radiusUnits` admits
+exactly `amu` and `ppm`. One test was added to pin that, because "the contract can
+already express the candidate inventory" is worth checking rather than asserting.
+
+### What was not decided
+
+M5.4 answered **D4** by evidence — exactly one candidate survived, so no choice
+between viable sources remains — and through it constrained **D3**, since the
+admitted query computes a sum and no admitted query offers a maximum. **D1, D2
+and D5 remain open product decisions**, and M5.5 does not begin until they are
+settled.
+
+No XIC was implemented: no operation, no capability gate, no parser, no DTO, no
+service command, no frontend, no cache, no export, no new selection authority,
+and no `PreviewOperation` extension. No pseudo-XIC was substituted at any point.
+
+### Validation
+
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build` and `git diff --check`, each run directly and each exiting zero. No
+browser or Tauri E2E was required: this slice has no frontend.

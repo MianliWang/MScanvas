@@ -1212,8 +1212,17 @@ Analysis commands (used with -x/--exec):
   binary index=<spectrumIndexLow>[,<spectrumIndexHigh>] | sn=<scanNumberLow>[,<scanNumberHigh>] [precision=<precision>]
     (write binary data for selected spectra)
 
+  slice [mz=<mzLow>[,<mzHigh>]] [rt=<rtLow>[,<rtHigh>]]] [index=<indexLow>[,<indexHigh>] | sn=<scanLow>[,<scanHigh>]] [delimiter=<fixed|space|comma|tab>]
+    (write data from a rectangular region)
+
   tic [mz=<mzLow>[,<mzHigh>]] [delimiter=<fixed|space|comma|tab>]
     (write total ion counts for an m/z range)
+
+  sic mzCenter=<mz> radius=<radius> radiusUnits=<amu|ppm> [delimiter=<fixed|space|comma|tab>]
+    (write selected ion chromatogram for an m/z and radius)
+      mzCenter: set mz value
+      radius: set radius value
+      radiusUnits: set units for radius value (must be amu or ppm)
 
 Examples:
 
@@ -1378,6 +1387,75 @@ msconvert data.RAW --mzXML
         assert!(capabilities.analysis_query("write").is_none());
         assert_eq!(capabilities.examples().len(), 2);
         assert_eq!(capabilities.raw_help_hashes().stdout, FIXTURE_SHA256);
+    }
+
+    /// Every live analysis query the installed backend declares is readable
+    /// through the generic accessor, including the three this repository had
+    /// never held a signature for.
+    ///
+    /// M5.4 evidence, and the reason that slice changed no production code. The
+    /// question it had to answer was whether an XIC source could be *described*
+    /// by the capability contract as it stands; `analysis_query` is the same
+    /// accessor `tic` already reaches through, and it holds `sic` and `slice`
+    /// with no new parsing at all. A candidate inventory is therefore a thing
+    /// this contract can express, not a thing that needed one.
+    ///
+    /// The signatures below are copied verbatim from the help of ProteoWizard
+    /// `3.0.26013 (47b13cf)`. They are that build's, and a different build may
+    /// declare different ones -- which is exactly why they are asserted as
+    /// exact text rather than described.
+    #[test]
+    fn every_live_analysis_query_is_readable_through_the_generic_accessor() {
+        let capabilities = msaccess(MSACCESS_HELP);
+
+        // `sic` -- the one whose name means *selected ion chromatogram*, and
+        // whose three parameters are all required. A window is expressed as a
+        // centre and a radius rather than as two bounds, which is a different
+        // input shape from `tic`'s and is the fact M5.4 had to measure rather
+        // than assume.
+        let sic = capabilities
+            .analysis_query("sic")
+            .expect("the installed build declares sic");
+        assert_eq!(
+            sic.normalized_signature(),
+            "mzCenter=<mz> radius=<radius> radiusUnits=<amu|ppm> [delimiter=<fixed|space|comma|tab>]"
+        );
+        for required in ["mzCenter", "radius", "radiusUnits"] {
+            assert_eq!(
+                sic.parameter_is_optional(required),
+                Some(false),
+                "{required} is required by this signature"
+            );
+        }
+        // The units are a closed pair, which is a gate a caller can enforce
+        // before invoking rather than discovering from a failure.
+        assert!(sic.parameter_allows_exact_value("radiusUnits", "amu"));
+        assert!(sic.parameter_allows_exact_value("radiusUnits", "ppm"));
+        assert!(!sic.parameter_allows_exact_value("radiusUnits", "da"));
+
+        // `slice` -- a rectangular region reader. It expresses an m/z window the
+        // same way `tic` does, and adds retention-time and index/scan bounds.
+        let slice = capabilities
+            .analysis_query("slice")
+            .expect("the installed build declares slice");
+        assert!(slice.has_parameter("mz"));
+        assert!(slice.has_parameter("rt"));
+        assert_eq!(slice.parameter_is_optional("mz"), Some(true));
+
+        // And `tic`, unchanged, so this case also pins that adding the two
+        // above did not disturb the declaration the product already depends on.
+        let tic = capabilities
+            .analysis_query("tic")
+            .expect("the installed build declares tic");
+        assert_eq!(
+            tic.normalized_signature(),
+            "[mz=<mzLow>[,<mzHigh>]] [delimiter=<fixed|space|comma|tab>]"
+        );
+        assert_eq!(tic.parameter_is_optional("mz"), Some(true));
+        assert_eq!(
+            capabilities.tic_capability(),
+            TicCapability::SupportedWithMsLevelFilter
+        );
     }
 
     #[test]

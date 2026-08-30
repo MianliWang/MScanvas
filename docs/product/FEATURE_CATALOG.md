@@ -62,7 +62,7 @@ table remains the target, including the unsupported portions called out below:
 | VIEW-004 | Scan table | P0 | Virtualized rows with scan, RT, MS level and precursor context. |
 | VIEW-005 | Linked selection | P0 | **Implemented across the chromatogram, the loaded scan table and the selected-spectrum panel.** Selection synchronizes chromatogram marker, table row, spectrum and inspector in both directions. |
 | VIEW-006 | Keyboard scan navigation | P0 | **Implemented.** Previous/next and table navigation work without pointer-only access. |
-| VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. **M5, behind an evidence gate with two valid outcomes: a visible trace, or a recorded refusal and a reassignment. No XIC export in M5.** |
+| VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. **Still unimplemented, but the evidence gate is answered: M5.4 measured `XIC_SOURCE_ADMITTED` and named `tic mz=<mzLow>,<mzHigh>` as the source.** The trace itself is M5.5/M5.6, and does not start until the remaining product decisions are settled. No XIC export in M5. |
 | VIEW-008 | Multi-layer comparison | P2 | Visibility, style and provenance remain inspectable per layer. **Deferred: M8 for layer identity, M9 for comparison semantics.** |
 
 Implementation notes for the three viewer features Viewer Closure closed follow.
@@ -144,18 +144,29 @@ Where each of those is owned, and why, is fixed by
   bounded projection of the complete spectrum Rust retains rather than the
   bounded arrays one transfer carries, so zooming into a large spectrum shows the
   source rather than the end of the prefix.
-- **VIEW-007** is M5 behind an evidence gate. The backend's `tic` query already
-  declares an `mz=<mzLow>[,<mzHigh>]` window and the installed help declared a
-  `sic` query, but no m/z-windowed query has ever been run here and `sic` has
-  never been captured. An XIC cannot be derived in the interface instead. The
-  loaded table's per-scan base peak m/z is a summary, not a spectrum: filtering
-  scans by it returns zero for every scan carrying signal in the window under a
-  taller peak elsewhere, which is where an analyst is most often looking. The
-  gate has two valid outcomes, and M5 completes under either: a visible trace
-  whose window, unit posture, MS-level scope, aggregation and source query it
-  carries where they can be read, or a recorded refusal with the measurement
-  behind it and a named owner and re-entry gate. **M5 writes no XIC figure or
-  data document**; a reusable XIC export belongs to M9.
+- **VIEW-007**'s evidence gate is **answered**. M5.4 measured a real
+  ProteoWizard `3.0.26013 (47b13cf)` installation against the pinned synthetic
+  fixture and the pinned public representative acquisition, and recorded
+  `XIC_SOURCE_ADMITTED`: the source is `tic mz=<mzLow>,<mzHigh>`, which returns
+  one row per spectrum, sums the in-window binary intensities, orders by source
+  index, and reports a scan with no signal as an explicit zero rather than
+  omitting it. `sic` was measured too — its signature had never been captured
+  here — and rejected, because it drops every zero-sum scan, leaves a partial
+  file when it fails, and its peak columns are interpolated coordinates no
+  instrument recorded. See
+  [the spike](../spikes/M5_XIC_SOURCE_EVIDENCE.md).
+
+  An XIC still cannot be derived in the interface, and that reasoning is
+  unchanged: the loaded table's per-scan base peak m/z is a summary, not a
+  spectrum, so filtering scans by it returns zero for every scan carrying signal
+  in the window under a taller peak elsewhere — which is where an analyst is most
+  often looking.
+
+  **A named source is not a built feature.** The trace belongs to M5.5 and M5.6,
+  and neither may start until the window's unit posture, the MS-level scope and
+  the presentation are decided; M5.4 settled only which query and, through it,
+  which aggregation. **M5 writes no XIC figure or data document**; a reusable XIC
+  export belongs to M9.
 - **VIEW-008** is deferred past M5 on a dependency audit, not on priority alone.
   It needs several runs loaded at once where the application holds exactly one
   by contract, a layer identity `FigureSpec` has no concept of, a normalization
