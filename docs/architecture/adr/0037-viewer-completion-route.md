@@ -2,8 +2,10 @@
 
 Status: accepted, amended 2026-08-30
 
-**Route fulfilled.** M5 is complete on the `XIC_SOURCE_REFUSED` branch, and the
-closure record is
+**Route fulfilled, with one criterion narrowed at closure.** M5 is complete on
+the `XIC_SOURCE_REFUSED` branch. Criterion 5 carries a named exception for the
+conversion lane's dispatch race, added by M5.8 and stated where the criteria are;
+it is a narrowing, not a reading this document always had. The closure record is
 [ADR 0042](0042-viewer-completion-closure-and-handoff.md) -- which answers the
 exit criteria below, closes criteria 3 and 4 as evidence-gated, and names an
 owner for everything deferred. This document remains the route-lock and history
@@ -1303,6 +1305,31 @@ Three further conditions apply to the milestone as a whole: no unimplemented
 viewer feature is described as implemented anywhere in the repository; every M5
 control satisfies the frozen principles below at all three responsive targets;
 and the local gate set passes unchanged.
+
+**Amended 2026-08-30 by M5.8: criterion 5 carries one named exception.** It is a
+**narrowing of the criterion, decided at closure**, and not a reading it always
+had -- this document did not mention the case until now.
+
+The criterion is met by the viewer: both surfaces that commit a scan read one
+availability rule, an unavailable selection gives one truthful explanation, and
+nothing backend-free is taken away while it says so. What is carved out is the
+**conversion lane's dispatch race**: `convert` claims the guarded ref the moment
+it dispatches, and no rendered value follows until the queue slot is read back,
+so for that interval an activation is refused while both surfaces still say
+available. Inside it, a click does commit nothing without saying why.
+
+Why it is carved out rather than fixed. The window is **not a viewer property**:
+it belongs to `convert` claiming a lane before the slot confirms it, it is shared
+by every conversion-gated control in this application, it predates M5, and no
+M5 slice created or widened it. Closing it means changing the conversion lane's
+contract, which a viewer adapter cannot do and a documentation slice must not.
+Holding a viewer criterion hostage to another lane's contract would make the
+milestone unreachable for a reason that has nothing to do with the viewer.
+
+**Owner: M6**, if conversion's growth makes it worth closing. Recorded in
+[ADR 0042](0042-viewer-completion-closure-and-handoff.md) with the same wording,
+and named in the product surfaces that describe the behaviour, so no reader is
+told the viewer is exceptionless.
 
 **No criterion assumes every spectrum is renderable, and none requires M5 to make
 one renderable.** A valid mzML spectrum may carry an m/z sequence the

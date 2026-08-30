@@ -5744,12 +5744,19 @@ Baseline `8a8fdacb54dde05cf8f761bc84f30a864cfbce25`.
 | 7 | Bounded preview cache | **DEFERRED / OPTIMIZATION_ONLY** — M7, on measurement |
 | 8 | Vendor-format direct preview | **DEFERRED / EVIDENCE_GATED** — M6 |
 
-The three milestone-wide conditions pass. Criterion 5 passes for the availability
-rule it is about and does **not** claim the `convert` ref/render window closed
-with it: `convert` claims the backend lane as it dispatches and the rendered state
-follows only when the queue slot is read back, so inside that window an
-activation still does nothing without saying so. ADR 0037 recorded it before M5.7
-began and M5.7's scope excluded it; **owner: M6**.
+The three milestone-wide conditions pass.
+
+**Criterion 5 required amending the route, and that is said rather than
+implied.** It passes for the availability rule it is about, and does **not** claim
+the `convert` ref/render window closed with it: `convert` claims the backend lane
+as it dispatches and the rendered state follows only when the queue slot is read
+back, so inside that interval an activation still does nothing without saying so.
+ADR 0037 stated the criterion unconditionally and never mentioned the case, so
+M5.8 **narrowed the criterion** — dated, in ADR 0037 where the criterion lives —
+on the one ground that the window is not a viewer property: it belongs to
+`convert` claiming a lane before the slot confirms it, every conversion-gated
+control here has it, and it predates M5. **Owner: M6.** This is the only exit
+criterion this closure changed rather than merely proved.
 
 Condition A cost more than expected, and it cuts both ways. Nothing described an
 unimplemented feature as implemented; four current product-facing passages

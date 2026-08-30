@@ -41,7 +41,7 @@ approximated.
 | 2 | Selected-spectrum export, both paths | **PASS** | [ADR 0040](0040-spectrum-range-export.md); `SelectedSpectrumExport.test.tsx`, `SelectedSpectrumExportBinding.test.tsx`, `preview/export.rs` and `preview/tests.rs`; `e2e/specs/m5.3-spectrum-range-export.{browser,tauri}.e2e.ts` |
 | 3 | A visible XIC | **NOT_APPLICABLE — evidence-gated refusal** | [`M5_XIC_SOURCE_EVIDENCE.md`](../../spikes/M5_XIC_SOURCE_EVIDENCE.md), outcome `XIC_SOURCE_REFUSED` |
 | 4 | XIC linked selection | **NOT_APPLICABLE — `XIC_SOURCE_REFUSED`** | same; there is no XIC surface to select on |
-| 5 | Selection availability | **PASS**, with the `convert` ref/render window named as a pre-existing exception the route excluded | [ADR 0041](0041-viewer-selection-availability.md); `viewerSelectionAuthority.test.tsx`, `SelectionAvailability.test.tsx`, `Chromatogram.test.tsx`, `SpectrumTable.test.tsx`; `e2e/specs/m5.7-selection-availability.{browser,tauri}.e2e.ts` |
+| 5 | Selection availability | **PASS**, against a criterion M5.8 narrowed to carve out the conversion lane's dispatch race | [ADR 0041](0041-viewer-selection-availability.md); `viewerSelectionAuthority.test.tsx`, `SelectionAvailability.test.tsx`, `Chromatogram.test.tsx`, `SpectrumTable.test.tsx`; `e2e/specs/m5.7-selection-availability.{browser,tauri}.e2e.ts` |
 | 6 | Multi-layer comparison | **DEFERRED** | M8 (layer identity and provenance), M9 (comparison semantics) |
 | 7 | Bounded preview cache | **DEFERRED / OPTIMIZATION_ONLY** | M7, and only on a measurement showing a need |
 | 8 | Vendor-format direct preview | **DEFERRED / EVIDENCE_GATED** | M6, behind its own evidence slice |
@@ -151,19 +151,30 @@ The lane is the queue slot **or** a retry this document has dispatched. An
 adoption and a diagnostics export are not the lane — neither claims the guarded
 ref, and the operation accepts a click through both.
 
-**One window remains where an activation can still do nothing without saying so,
-and it is stated rather than smoothed over.** `convert` claims the guarded ref
-the moment it dispatches, and no rendered value follows until the slot is read
-back; inside that window the operation refuses while the surfaces still say
-available. It is not a defect this slice introduced or could close: it is the
-same window every conversion-gated control in this interface has, ADR 0037
-recorded it before M5.7 began, and M5.7's scope excluded it explicitly because
-closing it belongs to the conversion lane's contract rather than to a viewer
-adapter. **Owner: M6**, if conversion's growth makes it worth closing.
+**One window remains where an activation can still do nothing without saying so.**
+`convert` claims the guarded ref the moment it dispatches, and no rendered value
+follows until the queue slot is read back; inside that interval the operation
+refuses while both surfaces still say available.
+
+**Criterion 5 as ADR 0037 first wrote it does not admit that window, and this
+slice narrowed the criterion rather than discovering an exception in it.** The
+route stated the requirement unconditionally, repeated it unconditionally in
+M5.7's exit, and never mentioned the case; an earlier draft of this record said
+the route had excluded it, which was false. The amendment is dated and recorded
+[in ADR 0037 itself](0037-viewer-completion-route.md#m5-exit-criteria), where the
+criterion lives, so a reader meeting the criterion meets its exception with it.
+
+The narrowing is defensible on one ground and it is the only one claimed here:
+the window is **not a viewer property**. It belongs to `convert` claiming a lane
+before the slot confirms it, every conversion-gated control in this application
+has it, it predates M5, and no M5 slice created or widened it. Closing it means
+changing the conversion lane's contract — which a viewer adapter cannot do and a
+closure slice must not. **Owner: M6.**
 
 So criterion 5 passes for the availability rule it is about — one authority, one
-reason, one occurrence, nothing taken away that needs no backend — and does not
-claim the conversion lane's own dispatch race was closed with it.
+reason, one occurrence, nothing taken away that needs no backend — and neither
+claims the conversion lane's dispatch race was closed with it nor pretends the
+criterion always allowed for it.
 
 M4.4's P3-2 and P3-3 were closed by the same slice; their dispositions are in
 [ADR 0037](0037-viewer-completion-route.md#m44-confirmation-findings-inherited-as-technical-debt).
