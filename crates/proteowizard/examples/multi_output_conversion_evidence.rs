@@ -30,9 +30,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use mscanvas_proteowizard::{
-    AvailabilityState, ConflictPolicy, ConversionSource, DiscoveryRequest, MultiOutputOutcome,
-    MzmlScanLimits, SystemProcessRunner, discover, run_admitted_multi_output_conversion,
-    run_multi_output_conversion_evidence,
+    AdmittedSetRun, AvailabilityState, ConflictPolicy, ConversionIntent, ConversionSource,
+    DiscoveryRequest, MultiOutputOutcome, MzmlScanLimits, SystemProcessRunner, discover,
+    run_admitted_multi_output_conversion, run_multi_output_conversion_evidence,
 };
 
 fn main() -> ExitCode {
@@ -215,9 +215,12 @@ fn run(cli: Cli) -> Result<(), String> {
                     source.bound_object_count()
                 );
                 run_admitted_multi_output_conversion(
-                    &source,
-                    &destination,
-                    cli.conflict,
+                    AdmittedSetRun {
+                        source: &source,
+                        destination_root: &destination,
+                        conflict: cli.conflict,
+                        intent: ConversionIntent::SHIPPED,
+                    },
                     &capabilities,
                     &SystemProcessRunner,
                     None,

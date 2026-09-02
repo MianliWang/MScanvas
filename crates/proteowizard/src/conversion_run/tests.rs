@@ -4,17 +4,18 @@ use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::output_set::AdmittedSetRun;
 use super::*;
 use super::{OwnedStagingArea, StagingResidue};
 use crate::cancellation::CancellationRequest;
 use crate::capability::{CapturedHelpStream, CompleteHelpCapture};
 use crate::command::{BackendTool, CommandSpec};
 use crate::conversion::{
-    CompressionPolicy, IntegrityProperty, SourceObjectFacts, ValidationMode,
-    capture_conversion_source, verify_mzml_conversion_retaining_output,
-    verify_vendor_conversion_retaining_output,
+    IntegrityProperty, SourceObjectFacts, ValidationMode, capture_conversion_source,
+    verify_mzml_conversion_retaining_output, verify_vendor_conversion_retaining_output,
 };
 use crate::finalized_output::OutputDrift;
+use crate::intent::CompressionIntent;
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -73,9 +74,15 @@ enum Serialization {
 }
 
 fn document(spectra: u32, serialization: Serialization) -> String {
-    let precision = match serialization {
-        Serialization::Source => "MS:1000523",
-        Serialization::Output => "MS:1000521",
+    // Per array role, because the shipped intent asks per array role. A source
+    // is whatever a source is; an output is what this build writes when asked
+    // for nothing in particular, which M6.2 measured as m/z at 64 bits and
+    // intensity at 32. The two fixtures therefore still disagree about the
+    // intensity encoding, which is the legal re-encoding the advisory exists
+    // for and must never fail a conversion.
+    let (mz_precision, intensity_precision) = match serialization {
+        Serialization::Source => ("MS:1000523", "MS:1000523"),
+        Serialization::Output => ("MS:1000523", "MS:1000521"),
     };
     let mut body = String::new();
     for index in 0..spectra {
@@ -86,7 +93,10 @@ fn document(spectra: u32, serialization: Serialization) -> String {
         body.push_str(r#"<cvParam accession="MS:1000511" name="ms level" value="1"/>"#);
         body.push_str(r#"<cvParam accession="MS:1000128" name="profile spectrum"/>"#);
         body.push_str(r#"<binaryDataArrayList count="2">"#);
-        for accession in ["MS:1000514", "MS:1000515"] {
+        for (accession, precision) in [
+            ("MS:1000514", mz_precision),
+            ("MS:1000515", intensity_precision),
+        ] {
             body.push_str(&format!(
                 r#"<binaryDataArray encodedLength="8"><cvParam accession="{accession}"/><cvParam accession="MS:1000574"/><cvParam accession="{precision}"/><binary>AA==</binary></binaryDataArray>"#
             ));
@@ -144,7 +154,8 @@ fn open_source(path: &Path) -> ConversionSource {
 }
 
 fn plan_into(source: ConversionSource, root: &Path, conflict: ConflictPolicy) -> ConversionPlan {
-    ConversionPlan::to_mzml(source, root, conflict).expect("plan an mzML conversion")
+    ConversionPlan::to_mzml(source, root, conflict, ConversionIntent::SHIPPED)
+        .expect("plan an mzML conversion")
 }
 
 /// A `msconvert` stand-in. It receives the real planned command, so what it is
@@ -290,7 +301,7 @@ fn a_plan_derives_a_deterministic_mzml_name_and_fixes_every_other_decision() {
     assert_eq!(plan.output_file_name(), OsStr::new("样本 01.mzML"));
     assert_eq!(plan.format(), OpenFormat::MzMl);
     assert_eq!(plan.conflict_policy(), ConflictPolicy::Fail);
-    assert_eq!(plan.compression_policy().compression().stable_id(), "zlib");
+    assert_eq!(plan.intent().compression().stable_id(), "zlib");
     assert_eq!(plan.source().kind(), ConversionSourceKind::MzmlFile);
     // The plan judges its output with the same limits that read its source.
     assert_eq!(plan.scan_limits(), plan.source().scan_limits());
@@ -446,10 +457,7 @@ fn the_planned_command_writes_into_the_staging_directory_and_never_names_mzxml()
     assert_eq!(argv[1], OsStr::new("--mzML"));
     // The compression the integrity contract is entitled to assume and the flag
     // the backend is actually given are two facts, and they must agree.
-    assert_eq!(
-        plan.compression_policy().compression(),
-        CompressionPolicy::Zlib
-    );
+    assert_eq!(plan.intent().compression(), CompressionIntent::Zlib);
     assert_eq!(argv[2], OsStr::new("--zlib"));
     assert_eq!(argv[3], OsStr::new("--outdir"));
     assert_eq!(
@@ -801,8 +809,13 @@ fn the_acquisition_cannot_be_changed_while_a_run_holds_it() {
     let source = write_thermo_source(directory.path(), "acquisition.raw");
     let root = directory.path().join("out");
     fs::create_dir(&root).expect("create destination root");
-    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
-        .expect("plan a vendor conversion");
+    let plan = ConversionPlan::to_mzml(
+        open_thermo(&source),
+        &root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .expect("plan a vendor conversion");
 
     let attempts = RefCell::new(Vec::new());
     let act = |spec: &CommandSpec| {
@@ -1146,7 +1159,12 @@ fn an_output_name_that_leaves_no_room_for_a_staging_name_is_refused_when_planned
         let name = format!("{}.mzML", "n".repeat(stem_length));
         let source = base.join(&name);
         fs::write(&source, source_document()).expect("write a long-named source");
-        let planned = ConversionPlan::to_mzml(open_source(&source), &root, ConflictPolicy::Fail);
+        let planned = ConversionPlan::to_mzml(
+            open_source(&source),
+            &root,
+            ConflictPolicy::Fail,
+            ConversionIntent::SHIPPED,
+        );
         assert_eq!(
             planned.is_ok(),
             expected,
@@ -1236,6 +1254,7 @@ fn a_plan_refuses_a_destination_root_that_is_not_a_readable_directory() {
             open_source(&source),
             &directory.path().join("absent"),
             ConflictPolicy::Fail,
+            ConversionIntent::SHIPPED,
         ),
         Err(ConversionPlanError::DestinationRootNotInspectable {
             kind: io::ErrorKind::NotFound
@@ -1245,7 +1264,12 @@ fn a_plan_refuses_a_destination_root_that_is_not_a_readable_directory() {
     let file_as_root = directory.path().join("root.txt");
     fs::write(&file_as_root, b"not a directory").expect("write file used as a root");
     assert_eq!(
-        ConversionPlan::to_mzml(open_source(&source), &file_as_root, ConflictPolicy::Fail),
+        ConversionPlan::to_mzml(
+            open_source(&source),
+            &file_as_root,
+            ConflictPolicy::Fail,
+            ConversionIntent::SHIPPED
+        ),
         Err(ConversionPlanError::DestinationRootNotADirectory)
     );
 }
@@ -1884,7 +1908,7 @@ fn a_validated_output_describes_itself_without_a_path_or_a_handle() {
         &facts,
         &staging,
         OsStr::new("sample.mzML"),
-        ConversionPolicy::default(),
+        ConversionIntent::SHIPPED,
         MzmlScanLimits::default(),
     ) {
         VerifiedConversion::Valid(validated) => validated,
@@ -3078,8 +3102,13 @@ fn a_vendor_conversion_is_validated_on_its_output_alone() {
     let source = write_thermo_source(directory.path(), "acquisition.raw");
     let root = directory.path().join("out");
     fs::create_dir(&root).expect("create destination root");
-    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
-        .expect("plan a vendor conversion");
+    let plan = ConversionPlan::to_mzml(
+        open_thermo(&source),
+        &root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .expect("plan a vendor conversion");
     assert_eq!(plan.output_file_name(), OsStr::new("acquisition.mzML"));
 
     let runner = FakeRunner::new(&convert_faithfully);
@@ -3110,11 +3139,31 @@ fn a_vendor_conversion_is_validated_on_its_output_alone() {
             "output_spectrum_metadata",
             "index_sequences",
             "compression_policy",
+            // What the intent asked for, as far as an output alone can say it.
+            // The population and the processing claim are not here: neither can
+            // be established without the source this posture does not have.
+            "requested_numeric_precision",
         ])
     );
     // Every comparison is recorded as never having been a question, rather than
     // as something this run failed to establish.
-    assert!(valid.unverified().is_empty(), "{:?}", valid.unverified());
+    //
+    // Two requested properties are unverified rather than inapplicable, and the
+    // difference is the point. A comparison was never asked for here; these two
+    // were asked and could not be answered. Whether the output holds *exactly*
+    // the spectra that were requested needs the source to count against, and
+    // what was done to the peaks is a claim this posture has nothing to check
+    // against -- neither may be reported as established.
+    assert_eq!(
+        valid
+            .unverified()
+            .iter()
+            .map(|property| property.stable_id())
+            .collect::<BTreeSet<&str>>(),
+        BTreeSet::from(["requested_spectrum_population", "requested_processing"]),
+        "{:?}",
+        valid.unverified()
+    );
     assert!(
         valid
             .inapplicable()
@@ -3176,8 +3225,13 @@ fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
             NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).expect("create destination root");
-        let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
-            .expect("plan a vendor conversion");
+        let plan = ConversionPlan::to_mzml(
+            open_thermo(&source),
+            &root,
+            ConflictPolicy::Fail,
+            ConversionIntent::SHIPPED,
+        )
+        .expect("plan a vendor conversion");
         let runner = FakeRunner::new(act);
         let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
         let outcome = match report.outcome() {
@@ -3278,7 +3332,7 @@ fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
                 .replace(r#"<binaryDataArrayList count="2">"#, "")
                 .replace("</binaryDataArrayList>", "")
                 .replace(
-                    r#"<binaryDataArray encodedLength="8"><cvParam accession="MS:1000514"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/><binary>AA==</binary></binaryDataArray>"#,
+                    r#"<binaryDataArray encodedLength="8"><cvParam accession="MS:1000514"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000523"/><binary>AA==</binary></binaryDataArray>"#,
                     "",
                 )
                 .replace(
@@ -3315,12 +3369,42 @@ fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
         "output_array_role_missing"
     );
 
+    // One array losing its encoding while the other keeps one is a quieter
+    // version, and the record-level encoding check cannot see it: the union of
+    // the record's markers is still non-empty. What catches it is the width the
+    // intent asked for, read per array role.
+    assert_eq!(
+        attempt(&|spec| {
+            let half = output_document().replace(r#"<cvParam accession="MS:1000521"/>"#, "");
+            fs::write(staged_destination(spec), half).expect("write a half-encoded output");
+            Ok(0)
+        }),
+        "numeric_precision_mismatch"
+    );
+
+    // A width that is stated and is not the one that was asked for. The same
+    // output satisfies an intent asking for 32-bit intensities and fails the
+    // one this conversion was actually bound to.
+    assert_eq!(
+        attempt(&|spec| {
+            let widened = output_document().replace(
+                r#"<cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/>"#,
+                r#"<cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000523"/>"#,
+            );
+            fs::write(staged_destination(spec), widened).expect("write a widened output");
+            Ok(0)
+        }),
+        "numeric_precision_mismatch"
+    );
+
     // Arrays with no numeric encoding: their width and type are unstated, so
     // the payload cannot be decoded even though everything about it looks
     // present.
     assert_eq!(
         attempt(&|spec| {
-            let unencoded = output_document().replace(r#"<cvParam accession="MS:1000521"/>"#, "");
+            let unencoded = output_document()
+                .replace(r#"<cvParam accession="MS:1000521"/>"#, "")
+                .replace(r#"<cvParam accession="MS:1000523"/>"#, "");
             fs::write(staged_destination(spec), unencoded).expect("write an unencoded output");
             Ok(0)
         }),
@@ -3431,8 +3515,13 @@ fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
         .replace("<binary>AA==</binary>", "<binary></binary>");
     let root = directory.path().join("peakless-out");
     fs::create_dir(&root).expect("create destination root");
-    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
-        .expect("plan a vendor conversion");
+    let plan = ConversionPlan::to_mzml(
+        open_thermo(&source),
+        &root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .expect("plan a vendor conversion");
     let act = |spec: &CommandSpec| {
         fs::write(staged_destination(spec), &peakless).expect("write a peakless output");
         Ok(0)
@@ -3479,8 +3568,13 @@ fn a_vendor_source_replaced_or_rewritten_before_the_run_is_refused() {
 
     // Rewritten in place, same name, same length: only the content moved.
     let source = write_thermo_source(directory.path(), "acquisition.raw");
-    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
-        .expect("plan a vendor conversion");
+    let plan = ConversionPlan::to_mzml(
+        open_thermo(&source),
+        &root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .expect("plan a vendor conversion");
     fs::write(&source, thermo_bytes(b"different-body!!")).expect("rewrite the acquisition");
     let runner = FakeRunner::new(&convert_faithfully);
     let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
@@ -3496,8 +3590,13 @@ fn a_vendor_source_replaced_or_rewritten_before_the_run_is_refused() {
 
     // Replaced by a different object under the same name.
     let replaced = write_thermo_source(directory.path(), "second.raw");
-    let plan = ConversionPlan::to_mzml(open_thermo(&replaced), &root, ConflictPolicy::Fail)
-        .expect("plan a vendor conversion");
+    let plan = ConversionPlan::to_mzml(
+        open_thermo(&replaced),
+        &root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .expect("plan a vendor conversion");
     fs::remove_file(&replaced).expect("remove the acquisition");
     fs::write(&replaced, thermo_bytes(b"acquisition-body")).expect("replace the acquisition");
     let runner = FakeRunner::new(&convert_faithfully);
@@ -3531,8 +3630,13 @@ fn a_vendor_family_runs_only_on_a_build_it_has_evidence_for() {
             NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).expect("create destination root");
-        let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
-            .expect("plan a vendor conversion");
+        let plan = ConversionPlan::to_mzml(
+            open_thermo(&source),
+            &root,
+            ConflictPolicy::Fail,
+            ConversionIntent::SHIPPED,
+        )
+        .expect("plan a vendor conversion");
         let runner = FakeRunner::new(&convert_faithfully);
         let report = run_conversion(&plan, installed, &runner);
         // Nothing may be created for a build with no evidence, so the staging
@@ -3666,8 +3770,13 @@ fn a_vendor_conversion_reuses_the_whole_safety_boundary() {
         fs::write(&staged, output_document()).expect("write the staged output");
         Ok(0)
     };
-    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
-        .expect("plan a vendor conversion");
+    let plan = ConversionPlan::to_mzml(
+        open_thermo(&source),
+        &root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .expect("plan a vendor conversion");
     let runner = FakeRunner::new(&act);
     let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
 
@@ -3679,8 +3788,13 @@ fn a_vendor_conversion_reuses_the_whole_safety_boundary() {
     // No-clobber: a second run refuses the name the first one took, and leaves
     // what is there exactly as it is.
     let existing = fs::read(root.join("acquisition.mzML")).expect("read the finalized output");
-    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
-        .expect("plan a second vendor conversion");
+    let plan = ConversionPlan::to_mzml(
+        open_thermo(&source),
+        &root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .expect("plan a second vendor conversion");
     let runner = FakeRunner::new(&convert_faithfully);
     let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
     assert_eq!(
@@ -3702,8 +3816,13 @@ fn a_vendor_run_that_did_not_complete_finalizes_nothing() {
     let source = write_thermo_source(directory.path(), "acquisition.raw");
     let root = directory.path().join("out");
     fs::create_dir(&root).expect("create destination root");
-    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
-        .expect("plan a vendor conversion");
+    let plan = ConversionPlan::to_mzml(
+        open_thermo(&source),
+        &root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .expect("plan a vendor conversion");
 
     let runner = FakeRunner::new(&convert_faithfully).reporting(Termination::Cancelled);
     let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
@@ -3735,8 +3854,13 @@ fn a_vendor_source_is_named_to_the_backend_in_a_spelling_its_reader_accepts() {
     let source = write_thermo_source(directory.path(), "acquisition.raw");
     let root = directory.path().join("out");
     fs::create_dir(&root).expect("create destination root");
-    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
-        .expect("plan a vendor conversion");
+    let plan = ConversionPlan::to_mzml(
+        open_thermo(&source),
+        &root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .expect("plan a vendor conversion");
 
     let runner = FakeRunner::new(&convert_faithfully);
     let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
@@ -3804,7 +3928,7 @@ fn an_output_whose_acquisition_no_longer_matches_is_refused() {
         &stale,
         &staging,
         OsStr::new("acquisition.mzML"),
-        ConversionPolicy::default(),
+        ConversionIntent::SHIPPED,
         MzmlScanLimits::default(),
     );
 
@@ -3841,7 +3965,13 @@ fn the_vendor_raw_evidence_run_is_reproducible() {
     let directory = TestDirectory::new();
     let root = directory.path().join("out");
     fs::create_dir(&root).expect("create destination root");
-    let plan = ConversionPlan::to_mzml(source, &root, ConflictPolicy::Fail).expect("plan");
+    let plan = ConversionPlan::to_mzml(
+        source,
+        &root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .expect("plan");
 
     let report = run_conversion(&plan, &capabilities, &crate::process::SystemProcessRunner);
     let ConversionRunOutcome::Finalized(finalized) = report.outcome() else {
@@ -4251,8 +4381,13 @@ fn a_replaced_compound_file_acquisition_is_caught_before_the_backend() {
     let root = directory.path().join("out");
     fs::create_dir(&root).expect("create destination root");
 
-    let plan = ConversionPlan::to_mzml(open_shimadzu(&source), &root, ConflictPolicy::Fail)
-        .expect("plan a vendor conversion");
+    let plan = ConversionPlan::to_mzml(
+        open_shimadzu(&source),
+        &root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .expect("plan a vendor conversion");
     // Same family, same length, different bytes: only the digest tells them
     // apart, and it is the digest of the object the handle recognized.
     fs::write(
@@ -4299,8 +4434,13 @@ fn a_compound_file_family_runs_through_the_same_boundary_and_is_judged_on_its_ou
         fs::write(&staged, output_document()).expect("write the staged output");
         Ok(0)
     };
-    let plan = ConversionPlan::to_mzml(open_shimadzu(&source), &root, ConflictPolicy::Fail)
-        .expect("plan a vendor conversion");
+    let plan = ConversionPlan::to_mzml(
+        open_shimadzu(&source),
+        &root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .expect("plan a vendor conversion");
     let runner = FakeRunner::new(&act);
     let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
 
@@ -4318,8 +4458,13 @@ fn a_compound_file_family_runs_through_the_same_boundary_and_is_judged_on_its_ou
 
     // No-clobber, on this family.
     let existing = fs::read(root.join("acquisition.mzML")).expect("read the finalized output");
-    let plan = ConversionPlan::to_mzml(open_shimadzu(&source), &root, ConflictPolicy::Fail)
-        .expect("plan a second vendor conversion");
+    let plan = ConversionPlan::to_mzml(
+        open_shimadzu(&source),
+        &root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .expect("plan a second vendor conversion");
     let runner = FakeRunner::new(&convert_faithfully);
     let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
     assert_eq!(
@@ -4352,8 +4497,13 @@ fn a_compound_file_run_that_left_more_than_the_planned_output_finalizes_nothing(
             NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).expect("create destination root");
-        let plan = ConversionPlan::to_mzml(open_shimadzu(&source), &root, ConflictPolicy::Fail)
-            .expect("plan a vendor conversion");
+        let plan = ConversionPlan::to_mzml(
+            open_shimadzu(&source),
+            &root,
+            ConflictPolicy::Fail,
+            ConversionIntent::SHIPPED,
+        )
+        .expect("plan a vendor conversion");
         let runner = FakeRunner::new(act);
         let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
         // The detailed identifier, because the distinction between these two
@@ -4447,8 +4597,13 @@ fn the_compound_file_family_runs_only_on_a_build_it_has_evidence_for() {
             NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).expect("create destination root");
-        let plan = ConversionPlan::to_mzml(open_shimadzu(&source), &root, ConflictPolicy::Fail)
-            .expect("plan a vendor conversion");
+        let plan = ConversionPlan::to_mzml(
+            open_shimadzu(&source),
+            &root,
+            ConflictPolicy::Fail,
+            ConversionIntent::SHIPPED,
+        )
+        .expect("plan a vendor conversion");
         let runner = FakeRunner::new(&convert_faithfully);
         let report = run_conversion(&plan, installed, &runner);
         (
@@ -4500,8 +4655,13 @@ fn a_compound_file_family_is_named_to_the_backend_in_the_spelling_its_reader_acc
     let source = write_shimadzu_source(directory.path(), "acquisition.lcd");
     let root = directory.path().join("out");
     fs::create_dir(&root).expect("create destination root");
-    let plan = ConversionPlan::to_mzml(open_shimadzu(&source), &root, ConflictPolicy::Fail)
-        .expect("plan a vendor conversion");
+    let plan = ConversionPlan::to_mzml(
+        open_shimadzu(&source),
+        &root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .expect("plan a vendor conversion");
 
     let runner = FakeRunner::new(&convert_faithfully);
     assert_eq!(
@@ -4544,7 +4704,13 @@ fn the_shimadzu_lcd_evidence_run_is_reproducible() {
     let directory = TestDirectory::new();
     let root = directory.path().join("out");
     fs::create_dir(&root).expect("create destination root");
-    let plan = ConversionPlan::to_mzml(source, &root, ConflictPolicy::Fail).expect("plan");
+    let plan = ConversionPlan::to_mzml(
+        source,
+        &root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .expect("plan");
 
     let report = run_conversion(&plan, &capabilities, &crate::process::SystemProcessRunner);
     let ConversionRunOutcome::Finalized(finalized) = report.outcome() else {
@@ -4691,7 +4857,7 @@ impl SetFixture {
             },
             &destination,
             conflict,
-            ConversionPolicy::default(),
+            ConversionIntent::SHIPPED,
             MzmlScanLimits::default(),
             output_set::SetRunSeam {
                 names_claimed: &mut |_| output_set::OutputNamesClaimed::None,
@@ -4730,7 +4896,7 @@ fn a_claimed_output_name_is_reported_from_the_discovered_set() {
             },
             &destination,
             ConflictPolicy::Fail,
-            ConversionPolicy::default(),
+            ConversionIntent::SHIPPED,
             MzmlScanLimits::default(),
             output_set::SetRunSeam {
                 names_claimed: &mut |_| output_set::OutputNamesClaimed::Already { index: answered },
@@ -5070,7 +5236,7 @@ fn publication_moves_the_validated_object_not_whatever_the_name_holds() {
         },
         &destination,
         ConflictPolicy::Fail,
-        ConversionPolicy::default(),
+        ConversionIntent::SHIPPED,
         MzmlScanLimits::default(),
         output_set::SetRunSeam {
             names_claimed: &mut |_| output_set::OutputNamesClaimed::None,
@@ -5203,7 +5369,7 @@ fn a_mid_set_publication_failure_is_reported_as_partially_finalized() {
         },
         &destination,
         ConflictPolicy::Fail,
-        ConversionPolicy::default(),
+        ConversionIntent::SHIPPED,
         MzmlScanLimits::default(),
         output_set::SetRunSeam {
             names_claimed: &mut |_| output_set::OutputNamesClaimed::None,
@@ -5300,7 +5466,7 @@ fn a_first_member_publication_failure_is_a_refusal_not_a_partial_state() {
         },
         &destination,
         ConflictPolicy::Fail,
-        ConversionPolicy::default(),
+        ConversionIntent::SHIPPED,
         MzmlScanLimits::default(),
         output_set::SetRunSeam {
             names_claimed: &mut |_| output_set::OutputNamesClaimed::None,
@@ -5635,6 +5801,7 @@ fn the_set_command_requires_and_rechecks_a_fresh_output_directory() {
         &capabilities(),
         &source,
         &staged,
+        &ConversionIntent::SHIPPED,
         InputSpelling::PlainVerified,
     )
     .expect("an empty output directory is plannable");
@@ -5655,6 +5822,7 @@ fn the_set_command_requires_and_rechecks_a_fresh_output_directory() {
             &capabilities(),
             &source,
             &staged,
+            &ConversionIntent::SHIPPED,
             InputSpelling::PlainVerified,
         )
         .is_err(),
@@ -6650,7 +6818,13 @@ fn a_bundle_cannot_be_planned_as_a_single_output() {
     fs::create_dir(&destination).expect("create the destination root");
 
     assert_eq!(
-        ConversionPlan::to_mzml(source, &destination, ConflictPolicy::Fail).map(|_| ()),
+        ConversionPlan::to_mzml(
+            source,
+            &destination,
+            ConflictPolicy::Fail,
+            ConversionIntent::SHIPPED
+        )
+        .map(|_| ()),
         Err(ConversionPlanError::SourceProducesAnOutputSet)
     );
 }
@@ -6676,9 +6850,12 @@ fn every_bundle_member_is_rechecked_before_the_backend_starts() {
     };
     let runner = FakeRunner::new(&act).declaring(&["acquisition-S1.mzML"]);
     let run = run_admitted_multi_output_conversion(
-        &open_sciex(&primary),
-        &destination_root,
-        ConflictPolicy::Fail,
+        AdmittedSetRun {
+            source: &open_sciex(&primary),
+            destination_root: &destination_root,
+            conflict: ConflictPolicy::Fail,
+            intent: ConversionIntent::SHIPPED,
+        },
         &evidenced_capabilities(),
         &runner,
         None,
@@ -6700,9 +6877,12 @@ fn every_bundle_member_is_rechecked_before_the_backend_starts() {
     .expect("replace the companion");
     let runner = FakeRunner::new(&act).declaring(&["acquisition-S1.mzML"]);
     let run = run_admitted_multi_output_conversion(
-        &source,
-        &destination_root,
-        ConflictPolicy::Fail,
+        AdmittedSetRun {
+            source: &source,
+            destination_root: &destination_root,
+            conflict: ConflictPolicy::Fail,
+            intent: ConversionIntent::SHIPPED,
+        },
         &evidenced_capabilities(),
         &runner,
         None,
@@ -6735,9 +6915,12 @@ fn the_admitted_set_lifecycle_gates_family_and_build_before_anything_runs() {
     // backend to name its own outputs, and for that family it does not.
     let lcd = write_shimadzu_source(directory.path(), "acquisition.lcd");
     let run = run_admitted_multi_output_conversion(
-        &open_shimadzu(&lcd),
-        &destination_root,
-        ConflictPolicy::Fail,
+        AdmittedSetRun {
+            source: &open_shimadzu(&lcd),
+            destination_root: &destination_root,
+            conflict: ConflictPolicy::Fail,
+            intent: ConversionIntent::SHIPPED,
+        },
         &evidenced_capabilities(),
         &runner,
         None,
@@ -6758,9 +6941,12 @@ fn the_admitted_set_lifecycle_gates_family_and_build_before_anything_runs() {
     let primary = write_sciex_bundle(directory.path(), "acquisition");
     let unevidenced = capabilities_reporting("3.0.26204", Some("a09eea9"));
     let run = run_admitted_multi_output_conversion(
-        &open_sciex(&primary),
-        &destination_root,
-        ConflictPolicy::Fail,
+        AdmittedSetRun {
+            source: &open_sciex(&primary),
+            destination_root: &destination_root,
+            conflict: ConflictPolicy::Fail,
+            intent: ConversionIntent::SHIPPED,
+        },
         &unevidenced,
         &runner,
         None,
@@ -6949,9 +7135,12 @@ fn a_bundle_run_binds_every_member_to_the_command_it_spawns() {
     };
     let runner = FakeRunner::new(&act).declaring(&["acquisition-S1.mzML"]);
     let run = run_admitted_multi_output_conversion(
-        &open_sciex(&primary),
-        &destination_root,
-        ConflictPolicy::Fail,
+        AdmittedSetRun {
+            source: &open_sciex(&primary),
+            destination_root: &destination_root,
+            conflict: ConflictPolicy::Fail,
+            intent: ConversionIntent::SHIPPED,
+        },
         &evidenced_capabilities(),
         &runner,
         None,
@@ -7001,9 +7190,12 @@ fn an_incomplete_sciex_acquisition_publishes_no_member() {
         .declaring(&["a-S1.mzML", "a-S2.mzML"])
         .complaining("[Reader_ABI::read] Error opening run 3 in \"a.wiff\":\nboom\n");
     let run = run_admitted_multi_output_conversion(
-        &open_sciex(&primary),
-        &destination_root,
-        ConflictPolicy::Fail,
+        AdmittedSetRun {
+            source: &open_sciex(&primary),
+            destination_root: &destination_root,
+            conflict: ConflictPolicy::Fail,
+            intent: ConversionIntent::SHIPPED,
+        },
         &evidenced_capabilities(),
         &runner,
         None,
@@ -7055,9 +7247,12 @@ fn a_truncated_error_stream_publishes_no_member() {
         .declaring(&["a-S1.mzML"])
         .reporting_truncated_stderr();
     let run = run_admitted_multi_output_conversion(
-        &open_sciex(&primary),
-        &destination_root,
-        ConflictPolicy::Fail,
+        AdmittedSetRun {
+            source: &open_sciex(&primary),
+            destination_root: &destination_root,
+            conflict: ConflictPolicy::Fail,
+            intent: ConversionIntent::SHIPPED,
+        },
         &evidenced_capabilities(),
         &runner,
         None,
@@ -7091,9 +7286,12 @@ fn a_complete_sciex_acquisition_publishes_and_carries_its_evidence() {
     };
     let runner = FakeRunner::new(&act).declaring(&["a-S1.mzML", "a-S2.mzML", "a-S3.mzML"]);
     let run = run_admitted_multi_output_conversion(
-        &open_sciex(&primary),
-        &destination_root,
-        ConflictPolicy::Fail,
+        AdmittedSetRun {
+            source: &open_sciex(&primary),
+            destination_root: &destination_root,
+            conflict: ConflictPolicy::Fail,
+            intent: ConversionIntent::SHIPPED,
+        },
         &evidenced_capabilities(),
         &runner,
         None,
@@ -7191,9 +7389,12 @@ fn a_set_that_did_not_publish_whole_is_not_complete() {
     let convert = |conflict| {
         let runner = FakeRunner::new(&act).declaring(&["a-S1.mzML"]);
         run_admitted_multi_output_conversion(
-            &open_sciex(&primary),
-            &destination_root,
-            conflict,
+            AdmittedSetRun {
+                source: &open_sciex(&primary),
+                destination_root: &destination_root,
+                conflict,
+                intent: ConversionIntent::SHIPPED,
+            },
             &evidenced_capabilities(),
             &runner,
             None,

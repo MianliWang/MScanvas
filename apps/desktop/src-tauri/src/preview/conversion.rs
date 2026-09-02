@@ -22,11 +22,12 @@ use mscanvas_proteowizard::FinalizedOutput;
 use mscanvas_proteowizard::run_conversion;
 use mscanvas_proteowizard::{
     BackendDiagnosticText, BackendExecutionFailure, BackendRunFacts, CancellationFailure,
-    CancellationReport, ConflictPolicy, ConversionAttempt, ConversionCancellation, ConversionPlan,
-    ConversionPlanError, ConversionPolicy, ConversionRunFailure, ConversionRunOutcome,
-    ConversionRunReport, ConversionSource, ConversionSourceKind, InstalledHelpCapabilities,
-    IntegrityProperty, OpenFormat, StagingResidue, ValidationMode, conversion_output_file_name,
-    provider_build_is_evidenced, run_conversion_cancellable,
+    CancellationReport, ConflictPolicy, ConversionAttempt, ConversionCancellation,
+    ConversionIntent, ConversionPlan, ConversionPlanError, ConversionRunFailure,
+    ConversionRunOutcome, ConversionRunReport, ConversionSource, ConversionSourceKind,
+    InstalledHelpCapabilities, IntegrityProperty, OpenFormat, OutputFormat, StagingResidue,
+    ValidationMode, conversion_output_file_name, provider_build_is_evidenced,
+    run_conversion_cancellable,
 };
 // The private multi-output report is built only by the private coordinator,
 // which is itself compiled out of the shipped binary.
@@ -38,8 +39,9 @@ use mscanvas_proteowizard::{
 use super::backend::ConversionBackend;
 use super::dto::{
     ConversionBackendFactsDto, ConversionConflictPolicyDto, ConversionOutputDto,
-    ConversionOutputSetReportDto, ConversionPartialFinalizationDto, ConversionReportDto,
-    ConversionSampleCompletenessDto, ConversionValidationDto, PreviewErrorDto, ValidationModeDto,
+    ConversionOutputFormatDto, ConversionOutputSetReportDto, ConversionPartialFinalizationDto,
+    ConversionReportDto, ConversionSampleCompletenessDto, ConversionValidationDto, PreviewErrorDto,
+    ValidationModeDto,
 };
 use super::selection::{DatasetSourceKind, source_kind_dto};
 
@@ -981,13 +983,27 @@ pub(super) const fn conflict_policy(policy: ConversionConflictPolicyDto) -> Conf
     }
 }
 
-/// The compression every output of this workflow must carry.
+/// The compression the given intent asks every output of this workflow to
+/// carry.
 ///
-/// Read from the policy a plan is actually fixed with rather than restated, so
-/// a summary shown before a conversion and the contract applied after it cannot
-/// describe different things.
-pub(super) fn fixed_compression() -> &'static str {
-    ConversionPolicy::default().compression().stable_id()
+/// Read from the intent itself rather than restated, so a summary shown before
+/// a conversion and the contract applied after it cannot describe different
+/// things. It holds no opinion of its own about which intent that is; the
+/// caller names one, and the queue that runs the conversion names the same one.
+pub(super) fn fixed_compression(intent: ConversionIntent) -> &'static str {
+    intent.compression().stable_id()
+}
+
+/// The same, for the format.
+///
+/// A total match rather than a constant, so a second admitted output format
+/// could not be added to [`ConversionIntent`] without this refusing to compile.
+/// That is the only reason it exists: today the intent names one format and the
+/// wire names one format, and nothing keeps those two lists equal by itself.
+pub(super) const fn fixed_output_format(intent: ConversionIntent) -> ConversionOutputFormatDto {
+    match intent.format() {
+        OutputFormat::MzMl => ConversionOutputFormatDto::MzMl,
+    }
 }
 
 /// Which family this workflow can convert.
@@ -1129,12 +1145,17 @@ pub(super) fn refuse_unevidenced_build(
 }
 
 /// Plans one conversion, reporting a refusal by the plan error's own name.
+///
+/// The intent is carried in rather than chosen here. A planner that picked one
+/// would be a second place deciding what a conversion does, beside the queue
+/// that already bound one -- and the two could disagree.
 pub(super) fn plan_conversion(
     source: ConversionSource,
     destination_root: &Path,
     conflict: ConflictPolicy,
+    intent: ConversionIntent,
 ) -> Result<ConversionPlan, PreviewErrorDto> {
-    ConversionPlan::to_mzml(source, destination_root, conflict).map_err(not_plannable)
+    ConversionPlan::to_mzml(source, destination_root, conflict, intent).map_err(not_plannable)
 }
 
 /// How a refused plan is reported.

@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use mscanvas_proteowizard::{
     BackendDiagnosticText, CancellationFailure, CancellationReport, CancellationRequest,
-    FinalizedOutput, StagingResidue, Termination,
+    ConversionIntent, FinalizedOutput, StagingResidue, Termination,
 };
 
 use super::adoption::FinalizedOutputAdoptionTicket;
@@ -646,6 +646,15 @@ pub(super) struct ConversionQueue {
     /// issued to a replaced document cannot be claimed by its replacement.
     document_epoch: u64,
     conflict: ConversionConflictPolicyDto,
+    /// What every item of this queue is converted under.
+    ///
+    /// Bound once, when the queue is made, and never reassigned afterwards --
+    /// there is no setter and the field is private, so a retry re-reads this
+    /// same value rather than deciding again. That is the whole point of
+    /// keeping it here: a retry that re-derived an intent could convert the
+    /// second time under something the first attempt was never judged against,
+    /// and the user asked for one thing.
+    intent: ConversionIntent,
     items: Vec<QueueItem>,
     /// Which item is running, or how many have finished when none is.
     current: usize,
@@ -676,6 +685,7 @@ impl ConversionQueue {
     pub(super) fn new(
         document_epoch: u64,
         conflict: ConversionConflictPolicyDto,
+        intent: ConversionIntent,
         items: Vec<QueueItem>,
     ) -> Result<Self, PreviewErrorDto> {
         if items.is_empty() {
@@ -698,6 +708,7 @@ impl ConversionQueue {
         Ok(Self {
             document_epoch,
             conflict,
+            intent,
             items,
             current: 0,
             retry_round: 0,
@@ -710,6 +721,11 @@ impl ConversionQueue {
 
     pub(super) const fn conflict(&self) -> ConversionConflictPolicyDto {
         self.conflict
+    }
+
+    /// What this queue converts under, first attempt and every retry alike.
+    pub(super) const fn intent(&self) -> ConversionIntent {
+        self.intent
     }
 
     pub(super) fn destination(&self) -> Option<&AdmittedDestination> {

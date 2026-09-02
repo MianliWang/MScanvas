@@ -37,7 +37,7 @@ use std::time::{Duration, Instant};
 
 use mscanvas_proteowizard::{
     AvailabilityState, BackendRunFacts, CancellationRequest, CancellationToken, CommandSpec,
-    ConflictPolicy, ConversionAttempt, ConversionCancellation, ConversionPlan,
+    ConflictPolicy, ConversionAttempt, ConversionCancellation, ConversionIntent, ConversionPlan,
     ConversionRunOutcome, ConversionSource, ConversionSourceKind, ConversionSourceRejection,
     DiscoveryRequest, InstalledHelpCapabilities, MzmlScanLimits, OpenFormat, OutputEntryKind,
     ProcessError, ProcessOutput, ProcessRunner, SystemProcessRunner, Termination, discover,
@@ -1114,8 +1114,13 @@ fn fresh_destination(workspace: &Path, label: &str) -> Result<PathBuf, String> {
 
 fn plan_for(input: &Path, destination: &Path) -> Result<ConversionPlan, String> {
     let source = open_source(input)?;
-    ConversionPlan::to_mzml(source, destination, ConflictPolicy::Fail)
-        .map_err(|error| format!("the conversion could not be planned: {error}"))
+    ConversionPlan::to_mzml(
+        source,
+        destination,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .map_err(|error| format!("the conversion could not be planned: {error}"))
 }
 
 type SourcePosture =

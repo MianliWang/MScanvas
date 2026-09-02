@@ -45,6 +45,23 @@ const FLOAT_32: &[u8] = b"MS:1000521";
 const FLOAT_64: &[u8] = b"MS:1000523";
 const INTEGER_32: &[u8] = b"MS:1000519";
 const INTEGER_64: &[u8] = b"MS:1000522";
+const PEAK_PICKING: &[u8] = b"MS:1000035";
+
+/// The implementation name the admitted default picker writes for itself.
+///
+/// Build-qualified: M6.2 measured this exact string on the exact executable the
+/// evidence is bound to. It is compared, never stored.
+const DEFAULT_PICKER_NAME: &str = "local maximum peak picker";
+
+/// Implementation names this repository recognizes and has not admitted.
+///
+/// Recognizing a rejected algorithm matters as much as recognizing the admitted
+/// one: an output that says `cwt` ran when the default was asked for must fail
+/// with something better than "unrecognized".
+const KNOWN_OTHER_PICKER_NAMES: [&str; 2] = [
+    "CantWaiT (continuous wavelet transform) peak picker",
+    "vendor peak picking",
+];
 const ZLIB_COMPRESSION: &[u8] = b"MS:1000574";
 const NO_COMPRESSION: &[u8] = b"MS:1000576";
 const SCAN_START_TIME: &[u8] = b"MS:1000016";
@@ -106,6 +123,62 @@ pub enum RetentionTimeUnitMarker {
     Unrecognized,
     /// No unit accession was emitted, so the unit stays unknown.
     NotEmitted,
+}
+
+/// What a document says about the peak-picking algorithm that ran.
+///
+/// A bounded classification of an unbounded thing, and the boundedness is the
+/// point. M6.2 measured this build recording **every** picker under the same
+/// `MS:1000035 peak picking` accession, and naming the implementation only in a
+/// free-text `userParam` -- so the accession cannot identify an algorithm, and
+/// the free text must not become trusted domain state. What is retained is
+/// which of a small set of build-qualified strings was seen, never the string.
+///
+/// `Absent` is deliberately not `NoProcessing`. A document that records nothing
+/// has told us nothing, and reading silence as "no peaks were picked" is the
+/// inference the M6.2 record refuses to make.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ProcessingAlgorithmClaim {
+    /// No `peak picking` processing method was recorded at all.
+    #[default]
+    Absent,
+    /// The build's default local-maximum picker named itself.
+    DefaultLocalMaximum,
+    /// A picker this repository recognizes and has not admitted -- measured, and
+    /// measured failing.
+    KnownDifferentAlgorithm,
+    /// A `peak picking` method was recorded whose implementation name is not one
+    /// of the strings the evidence qualified.
+    Unrecognized,
+    /// More than one distinct algorithm was claimed for one document.
+    Conflicting,
+}
+
+impl ProcessingAlgorithmClaim {
+    #[must_use]
+    pub const fn stable_id(self) -> &'static str {
+        match self {
+            Self::Absent => "absent",
+            Self::DefaultLocalMaximum => "default_local_maximum",
+            Self::KnownDifferentAlgorithm => "known_different_algorithm",
+            Self::Unrecognized => "unrecognized",
+            Self::Conflicting => "conflicting",
+        }
+    }
+
+    /// Folds a second observation into the first.
+    ///
+    /// Two different named algorithms in one document is `Conflicting` and
+    /// cannot become anything else afterwards: a document that claims two
+    /// things has not claimed either.
+    const fn combine(self, observed: Self) -> Self {
+        match (self, observed) {
+            (Self::Conflicting, _) | (_, Self::Conflicting) => Self::Conflicting,
+            (Self::Absent, other) | (other, Self::Absent) => other,
+            (first, second) if matches!((first, second), (a, b) if a as u8 == b as u8) => first,
+            _ => Self::Conflicting,
+        }
+    }
 }
 
 /// Whether an explicit profile/centroid marker was emitted for one spectrum.
@@ -209,11 +282,31 @@ pub struct MzmlSpectrumRecord {
     native_identifier_recognized: bool,
     array_kinds: ArrayKindSet,
     precision: NumericPrecisionSet,
+    /// The encodings observed on arrays that declared themselves m/z arrays.
+    ///
+    /// Kept apart from `intensity_precision` because the shipped conversion
+    /// posture differs between them -- m/z at 64 bits, intensity at 32 -- and a
+    /// per-record union cannot say that. A union would report `{32, 64}` for a
+    /// correct document and for a broken one alike.
+    mz_precision: NumericPrecisionSet,
+    /// The same, for arrays that declared themselves intensity arrays.
+    intensity_precision: NumericPrecisionSet,
     compression: CompressionSet,
     representation: RepresentationMarker,
 }
 
 impl MzmlSpectrumRecord {
+    /// The encodings the m/z arrays of this spectrum declared.
+    #[must_use]
+    pub const fn mz_precision(&self) -> NumericPrecisionSet {
+        self.mz_precision
+    }
+
+    /// The encodings the intensity arrays of this spectrum declared.
+    #[must_use]
+    pub const fn intensity_precision(&self) -> NumericPrecisionSet {
+        self.intensity_precision
+    }
     /// The declared zero-based `index` attribute, if the writer emitted one.
     #[must_use]
     pub const fn index(&self) -> Option<u64> {
@@ -531,6 +624,8 @@ pub struct MzmlFacts {
     parameter_group_reference_observed: bool,
     first_identities: Vec<SpectrumIdentity>,
     last_identity: Option<SpectrumIdentity>,
+    /// What the document says was done to its peaks, classified.
+    processing_claim: ProcessingAlgorithmClaim,
     scanned_bytes: u64,
 }
 
@@ -583,6 +678,16 @@ impl MzmlFacts {
     #[must_use]
     pub fn observed_chromatogram_count(&self) -> u64 {
         self.chromatograms.len() as u64
+    }
+
+    /// What this document claims was done to its peaks.
+    ///
+    /// A claim to compare against a request, never proof on its own: every
+    /// picker this build ships records the same CV accession, and only a
+    /// free-text name distinguishes them.
+    #[must_use]
+    pub const fn processing_claim(&self) -> ProcessingAlgorithmClaim {
+        self.processing_claim
     }
 
     #[must_use]
@@ -799,6 +904,7 @@ impl<R: BufRead> BufRead for BoundedReader<R> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Scope {
+    ProcessingMethod,
     SpectrumList,
     Spectrum,
     ChromatogramList,
@@ -823,6 +929,8 @@ struct SpectrumBuilder {
     native_identifier_recognized: bool,
     array_kinds: ArrayKindSet,
     precision: NumericPrecisionSet,
+    mz_precision: NumericPrecisionSet,
+    intensity_precision: NumericPrecisionSet,
     compression: CompressionSet,
     representation: RepresentationMarker,
 }
@@ -867,6 +975,19 @@ struct ScanState {
     spectrum: Option<SpectrumBuilder>,
     chromatogram: Option<ChromatogramBuilder>,
     array: Option<ArrayBuilder>,
+    processing_method: Option<ProcessingMethodBuilder>,
+    processing_claim: ProcessingAlgorithmClaim,
+}
+
+/// One `processingMethod` element, while it is open.
+///
+/// Two facts and no text. Whether the method is a peak-picking one is a CV
+/// accession; which algorithm it names is a free-text `userParam` that is
+/// classified on sight and then discarded.
+#[derive(Debug, Default)]
+struct ProcessingMethodBuilder {
+    peak_picking: bool,
+    named: Option<ProcessingAlgorithmClaim>,
 }
 
 impl ScanState {
@@ -888,6 +1009,8 @@ impl ScanState {
             spectrum: None,
             chromatogram: None,
             array: None,
+            processing_method: None,
+            processing_claim: ProcessingAlgorithmClaim::Absent,
         }
     }
 
@@ -1028,8 +1151,16 @@ impl ScanState {
                 }
                 Ok(Scope::Other)
             }
+            b"processingMethod" => {
+                self.processing_method = Some(ProcessingMethodBuilder::default());
+                Ok(Scope::ProcessingMethod)
+            }
             b"cvParam" => {
                 self.apply_cv_param(parent, &attributes)?;
+                Ok(Scope::Other)
+            }
+            b"userParam" if parent == Some(Scope::ProcessingMethod) => {
+                self.apply_processing_user_param(attributes.name.as_deref());
                 Ok(Scope::Other)
             }
             _ => Ok(Scope::Other),
@@ -1112,6 +1243,14 @@ impl ScanState {
                 }
                 Ok(())
             }
+            Some(Scope::ProcessingMethod) => {
+                if accession == PEAK_PICKING
+                    && let Some(method) = self.processing_method.as_mut()
+                {
+                    method.peak_picking = true;
+                }
+                Ok(())
+            }
             Some(Scope::Scan) if accession == SCAN_START_TIME => {
                 if let Some(value) = attributes.value.as_deref() {
                     require_finite(value)?;
@@ -1140,6 +1279,7 @@ impl ScanState {
             Scope::Spectrum => self.finish_spectrum(),
             Scope::Chromatogram => self.finish_chromatogram(),
             Scope::BinaryDataArray => self.finish_array(),
+            Scope::ProcessingMethod => self.finish_processing_method(),
             Scope::SpectrumList
             | Scope::ChromatogramList
             | Scope::Binary
@@ -1147,6 +1287,48 @@ impl ScanState {
             | Scope::Scan
             | Scope::Other => {}
         }
+    }
+
+    /// Classifies one `userParam` name inside an open processing method.
+    ///
+    /// A method may carry several -- the measured scoped picker wrote its
+    /// algorithm and an `ms levels` parameter side by side -- so a name that
+    /// matches no known picker is ignored rather than treated as an unknown
+    /// algorithm. What decides `Unrecognized` is a peak-picking method that
+    /// named *no* picker this evidence qualified, and that is decided at close.
+    fn apply_processing_user_param(&mut self, name: Option<&str>) {
+        let Some(name) = name else {
+            return;
+        };
+        let Some(method) = self.processing_method.as_mut() else {
+            return;
+        };
+        let observed = if name == DEFAULT_PICKER_NAME {
+            ProcessingAlgorithmClaim::DefaultLocalMaximum
+        } else if KNOWN_OTHER_PICKER_NAMES.contains(&name) {
+            ProcessingAlgorithmClaim::KnownDifferentAlgorithm
+        } else {
+            return;
+        };
+        method.named = Some(match method.named {
+            Some(existing) => existing.combine(observed),
+            None => observed,
+        });
+    }
+
+    fn finish_processing_method(&mut self) {
+        let Some(method) = self.processing_method.take() else {
+            return;
+        };
+        if !method.peak_picking {
+            // A conversion method, a format method, anything else. It says
+            // nothing about picking and is not folded in as if it did.
+            return;
+        }
+        let observed = method
+            .named
+            .unwrap_or(ProcessingAlgorithmClaim::Unrecognized);
+        self.processing_claim = self.processing_claim.combine(observed);
     }
 
     fn finish_array(&mut self) {
@@ -1172,6 +1354,17 @@ impl ScanState {
                 .saturating_add(empty_payload);
             spectrum.array_kinds.merge(kinds);
             spectrum.precision.merge(array.precision);
+            // Attributed to the role the array declared for itself. An array
+            // that declared both roles, or neither, contributes to neither
+            // per-role set: the point of these two is to say what the m/z and
+            // intensity arrays are, and an ambiguous array cannot.
+            let mz = kinds.contains(ArrayKind::Mz);
+            let intensity = kinds.contains(ArrayKind::Intensity);
+            if mz && !intensity {
+                spectrum.mz_precision.merge(array.precision);
+            } else if intensity && !mz {
+                spectrum.intensity_precision.merge(array.precision);
+            }
             spectrum.compression.merge(array.compression);
         } else if let Some(chromatogram) = self.chromatogram.as_mut() {
             chromatogram.binary_array_count = chromatogram.binary_array_count.saturating_add(1);
@@ -1206,6 +1399,8 @@ impl ScanState {
             scan_number: spectrum.scan_number,
             native_identifier_recognized: spectrum.native_identifier_recognized,
             array_kinds: spectrum.array_kinds,
+            mz_precision: spectrum.mz_precision,
+            intensity_precision: spectrum.intensity_precision,
             precision: spectrum.precision,
             compression: spectrum.compression,
             representation: spectrum.representation,
@@ -1246,6 +1441,7 @@ impl ScanState {
             parameter_group_reference_observed: self.parameter_group_reference_observed,
             first_identities: self.first_identities,
             last_identity: self.last_identity,
+            processing_claim: self.processing_claim,
             scanned_bytes,
         })
     }
@@ -1271,6 +1467,7 @@ struct CapturedAttributes<'a> {
     default_array_length: Option<Cow<'a, str>>,
     count: Option<Cow<'a, str>>,
     accession: Option<Cow<'a, str>>,
+    name: Option<Cow<'a, str>>,
     value: Option<Cow<'a, str>>,
     unit_accession: Option<Cow<'a, str>>,
 }
@@ -1312,6 +1509,7 @@ fn capture_attributes<'a>(
             b"defaultArrayLength" => &mut captured.default_array_length,
             b"count" => &mut captured.count,
             b"accession" => &mut captured.accession,
+            b"name" => &mut captured.name,
             b"value" => &mut captured.value,
             b"unitAccession" => &mut captured.unit_accession,
             _ => continue,

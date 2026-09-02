@@ -17,15 +17,16 @@ use std::time::{Duration, SystemTime};
 
 use mscanvas_proteowizard::{
     AvailabilityState, BackendTool, CancellationToken, ConfiguredLocation,
-    ConversionIntegrityOutcome, ConversionOutputInspection, ConversionOutputRejection,
-    ConversionPolicy, ConversionSourceFacts, DiscoveredTool, DiscoveryRequest, FailureCondition,
-    FailureKind, InstalledHelpCapabilities, MAX_PREVIEW_TEXT_BYTES, MzmlScanLimits, OpenFormat,
-    OutputDirectorySnapshot, OutputEntryKind, PreviewInterpretError, PreviewOperation,
-    PreviewOutcome, PreviewOutputEntry, PreviewOutputManifest, PreviewValue, Redactor,
-    ReportableProcessOutput, Retryability, Sha256Digest, build_msaccess_command_with_capabilities,
-    build_msconvert_command_with_capabilities, capture_conversion_source, classify_process_failure,
-    conversion_output_file_name, discover, execute_cancellable, inspect_conversion_output,
-    interpret_preview, is_reparse_point, snapshot_output_directory, verify_mzml_conversion,
+    ConversionIntegrityOutcome, ConversionIntent, ConversionOutputInspection,
+    ConversionOutputRejection, ConversionSourceFacts, DiscoveredTool, DiscoveryRequest,
+    FailureCondition, FailureKind, InstalledHelpCapabilities, MAX_PREVIEW_TEXT_BYTES,
+    MzmlScanLimits, OpenFormat, OutputDirectorySnapshot, OutputEntryKind, PreviewInterpretError,
+    PreviewOperation, PreviewOutcome, PreviewOutputEntry, PreviewOutputManifest, PreviewValue,
+    Redactor, ReportableProcessOutput, Retryability, Sha256Digest,
+    build_msaccess_command_with_capabilities, build_msconvert_command_with_capabilities,
+    capture_conversion_source, classify_process_failure, conversion_output_file_name, discover,
+    execute_cancellable, inspect_conversion_output, interpret_preview, is_reparse_point,
+    snapshot_output_directory, verify_mzml_conversion,
 };
 
 const DIAGNOSTIC_PREVIEW_CHARS: usize = 4_096;
@@ -1406,12 +1407,21 @@ fn build_command(
             let output_file_name = conversion_output_file_name(input, format).ok_or_else(|| {
                 HarnessError::operation("the conversion input has no usable file stem")
             })?;
+            // The command builder is driven by a `ConversionIntent` now, and no
+            // intent names mzXML: M6.2 measured that output and recorded it
+            // rejected. The harness keeps parsing the option so the refusal is
+            // a stated one rather than an argument that quietly means mzML.
+            if !matches!(format, OpenFormat::MzMl) {
+                return Err(HarnessError::operation(
+                    "--format mzXML has no admitted conversion intent on this build",
+                ));
+            }
             build_msconvert_command_with_capabilities(
                 capabilities,
                 input,
                 output_dir,
                 &output_file_name,
-                format,
+                &ConversionIntent::SHIPPED,
             )
             .map(|command| (BackendTool::MsConvert, command))
         }
@@ -1706,7 +1716,7 @@ fn evaluate_conversion_integrity(
             source,
             output_directory,
             expected_file_name,
-            ConversionPolicy::default(),
+            ConversionIntent::SHIPPED,
             limits,
         )),
         None => ConversionIntegrityReport::OutputOnly(

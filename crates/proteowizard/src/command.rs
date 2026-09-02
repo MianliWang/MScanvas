@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::capability::{CapabilityRequirementError, InstalledHelpCapabilities, Sha256Digest};
+use crate::intent::{ConversionIntent, OutputFormat};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendTool {
@@ -12,6 +13,14 @@ pub enum BackendTool {
     MsAccess,
 }
 
+/// A provider-level output format.
+///
+/// The **argv spelling of a format lives with the lowering**, in
+/// [`ConversionIntent::lower`], beside every other flag a conversion emits.
+/// This enum is the capability and integrity layer's vocabulary: which formats
+/// the installed help declares, and which extension each requires. mzXML stays
+/// here, unreachable from a product intent, because closing or lifting its gate
+/// is M6.10's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpenFormat {
     MzMl,
@@ -19,10 +28,15 @@ pub enum OpenFormat {
 }
 
 impl OpenFormat {
-    fn argument(self) -> &'static str {
-        match self {
-            Self::MzMl => "--mzML",
-            Self::MzXml => "--mzXML",
+    /// The provider-level format a product intent asks for.
+    ///
+    /// One direction only, and deliberately. An intent cannot name mzXML at
+    /// all -- M6.2 measured it dropping spectra silently -- so there is nothing
+    /// to translate back, and the mzXML machinery below stays reachable from
+    /// the capability layer for M6.10 rather than from a plan.
+    pub(crate) const fn of_intent(format: OutputFormat) -> Self {
+        match format {
+            OutputFormat::MzMl => Self::MzMl,
         }
     }
 
@@ -650,30 +664,38 @@ impl PlanError {
     }
 }
 
+/// Lowers one conversion intent into one argv.
+///
+/// The argument order is fixed here and nowhere else: the source, then
+/// everything the intent asks for, then the destination. What the intent
+/// contributes is [`ConversionIntent::lower`]'s business and is deterministic
+/// on its own, so this function cannot reorder a semantic and no caller can
+/// hand it a format, a precision, a compression or a filter chosen apart from
+/// the intent -- there is no parameter for one.
 fn build_msconvert_command(
     executable: impl Into<PathBuf>,
     input: &Path,
     output_directory: &Path,
     output_file_name: &OsStr,
-    format: OpenFormat,
+    intent: &ConversionIntent,
     source_directory_boundary: Option<PathBuf>,
 ) -> Result<CommandSpec, PlanError> {
     let executable = executable.into();
     validate_paths(&executable, input, output_directory)?;
-    validate_output_file_name(output_file_name, format)?;
+    validate_output_file_name(output_file_name, OpenFormat::of_intent(intent.format()))?;
+
+    let mut arguments = Vec::with_capacity(6 + intent.lower().len());
+    arguments.push(input.as_os_str().to_owned());
+    arguments.extend(intent.lower());
+    arguments.push(OsString::from("--outdir"));
+    arguments.push(output_directory.as_os_str().to_owned());
+    arguments.push(OsString::from("--outfile"));
+    arguments.push(output_file_name.to_owned());
 
     Ok(CommandSpec::new(
         BackendTool::MsConvert,
         executable,
-        [
-            input.as_os_str().to_owned(),
-            OsString::from(format.argument()),
-            OsString::from("--zlib"),
-            OsString::from("--outdir"),
-            output_directory.as_os_str().to_owned(),
-            OsString::from("--outfile"),
-            output_file_name.to_owned(),
-        ],
+        arguments,
         output_directory,
     )
     .with_output_destination(
@@ -697,9 +719,10 @@ pub(crate) fn build_msconvert_set_command_for_source(
     capabilities: &InstalledHelpCapabilities,
     input: &Path,
     output_directory: &Path,
+    intent: &ConversionIntent,
     spelling: InputSpelling,
 ) -> Result<CommandSpec, PlanError> {
-    capabilities.require_conversion(OpenFormat::MzMl)?;
+    capabilities.require_conversion(OpenFormat::of_intent(intent.format()))?;
     let executable = capabilities.executable().to_path_buf();
     validate_paths(&executable, input, output_directory)?;
     // Fresh, not merely safe. Discovery afterwards attributes every member of
@@ -709,16 +732,19 @@ pub(crate) fn build_msconvert_set_command_for_source(
     // immediately before the spawn, exactly as the preview commands do.
     let safe_output = require_fresh_output_directory(input, output_directory)?;
     let canonical_input = backend_input_spelling(&safe_output.source_identity, spelling)?;
+    // The same lowering the single-output path uses, minus the planned output
+    // name this topology does not have. One intent, one set of flags: a second
+    // hand-written argument list here is how the two paths would come to
+    // convert differently.
+    let mut arguments = Vec::with_capacity(4 + intent.lower().len());
+    arguments.push(canonical_input.as_os_str().to_owned());
+    arguments.extend(intent.lower());
+    arguments.push(OsString::from("--outdir"));
+    arguments.push(safe_output.output_directory.as_os_str().to_owned());
     let command = CommandSpec::new(
         BackendTool::MsConvert,
         executable,
-        [
-            canonical_input.as_os_str().to_owned(),
-            OsString::from(OpenFormat::MzMl.argument()),
-            OsString::from("--zlib"),
-            OsString::from("--outdir"),
-            safe_output.output_directory.as_os_str().to_owned(),
-        ],
+        arguments,
         &safe_output.output_directory,
     )
     .with_fresh_output_directory(
@@ -741,14 +767,14 @@ pub fn build_msconvert_command_with_capabilities(
     input: &Path,
     output_directory: &Path,
     output_file_name: &OsStr,
-    format: OpenFormat,
+    intent: &ConversionIntent,
 ) -> Result<CommandSpec, PlanError> {
     build_msconvert_command_for_source(
         capabilities,
         input,
         output_directory,
         output_file_name,
-        format,
+        intent,
         InputSpelling::Canonical,
     )
 }
@@ -775,9 +801,14 @@ pub fn build_msconvert_command_for_source(
     input: &Path,
     output_directory: &Path,
     output_file_name: &OsStr,
-    format: OpenFormat,
+    intent: &ConversionIntent,
     spelling: InputSpelling,
 ) -> Result<CommandSpec, PlanError> {
+    // An intent cannot name mzXML, so the second arm is currently unreachable
+    // from here. It stays because the gate it holds is M6.10's to lift or
+    // close, and deleting a refusal because nothing can reach it today is how a
+    // format returns without one.
+    let format = OpenFormat::of_intent(intent.format());
     match format {
         OpenFormat::MzMl => {
             capabilities.require_conversion(format)?;
@@ -791,7 +822,7 @@ pub fn build_msconvert_command_for_source(
                 &canonical_input,
                 &safe_output.output_directory,
                 output_file_name,
-                format,
+                intent,
                 safe_output.source_directory_boundary,
             )?;
             require_output_destination_available(
@@ -1149,7 +1180,7 @@ mod tests {
             &input,
             &output,
             OsStr::new("样本 01.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
             None,
         )
         .expect("valid command");
@@ -1166,20 +1197,29 @@ mod tests {
         );
     }
 
+    /// mzXML has no argument spelling here any more, because it has no intent.
+    ///
+    /// This replaces a test that built an mzXML command and asserted it spelled
+    /// `--mzXML`. The builder is driven by a `ConversionIntent` now and no
+    /// intent names that format, so such a command is unconstructible rather
+    /// than merely unused -- and what survives is the stronger claim: nothing
+    /// the admitted table can produce reaches the legacy flag.
     #[test]
-    fn mzxml_is_an_explicit_legacy_format_argument() {
-        let command = build_msconvert_command(
-            test_path("msconvert.exe"),
-            &test_path("sample.raw"),
-            &test_path("converted"),
-            OsStr::new("sample.mzXML"),
-            OpenFormat::MzXml,
-            None,
-        )
-        .expect("valid command");
+    fn no_admitted_intent_produces_a_legacy_format_argument() {
+        for admitted in ConversionIntent::ADMITTED {
+            let command = build_msconvert_command(
+                test_path("msconvert.exe"),
+                &test_path("sample.raw"),
+                &test_path("converted"),
+                OsStr::new("sample.mzML"),
+                &admitted.intent(),
+                None,
+            )
+            .expect("valid command");
 
-        assert!(command.contains_argument("--mzXML"));
-        assert!(!command.contains_argument("--mzML"));
+            assert!(command.contains_argument("--mzML"));
+            assert!(!command.contains_argument("--mzXML"));
+        }
     }
 
     #[test]
@@ -1189,7 +1229,7 @@ mod tests {
             &test_path("sample.raw"),
             &test_path("converted"),
             OsStr::new("sample.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
             None,
         )
         .expect("valid command");
@@ -1258,7 +1298,7 @@ mod tests {
                 &input,
                 &output,
                 OsStr::new("sample.mzML"),
-                OpenFormat::MzMl,
+                &ConversionIntent::SHIPPED,
                 None,
             ),
             Err(PlanError::NonAbsoluteExecutable)
@@ -1269,7 +1309,7 @@ mod tests {
                 Path::new("sample.raw"),
                 &output,
                 OsStr::new("sample.mzML"),
-                OpenFormat::MzMl,
+                &ConversionIntent::SHIPPED,
                 None,
             ),
             Err(PlanError::NonAbsoluteInput)
@@ -1280,7 +1320,7 @@ mod tests {
                 &input,
                 Path::new("converted"),
                 OsStr::new("sample.mzML"),
-                OpenFormat::MzMl,
+                &ConversionIntent::SHIPPED,
                 None,
             ),
             Err(PlanError::NonAbsoluteOutputDirectory)

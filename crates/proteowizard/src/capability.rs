@@ -1173,6 +1173,7 @@ mod tests {
         PlanError, build_msaccess_command_with_capabilities,
         build_msconvert_command_with_capabilities,
     };
+    use crate::intent::ConversionIntent;
 
     const EMPTY_SHA256: Sha256Digest = Sha256Digest::from_bytes([
         0xE3, 0xB0, 0xC4, 0x42, 0x98, 0xFC, 0x1C, 0x14, 0x9A, 0xFB, 0xF4, 0xC8, 0x99, 0x6F, 0xB9,
@@ -1312,7 +1313,7 @@ msconvert data.RAW --mzXML
             &input,
             &conversion_output,
             OsStr::new("sample.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect("bound conversion command");
 
@@ -1821,6 +1822,20 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             .expect("mzXML grammar");
     }
 
+    /// The installed build still declares the mzXML grammar, and the public
+    /// planner still cannot be asked for it.
+    ///
+    /// What M6.3 moved is where that refusal lives. It used to be a runtime
+    /// `PlanError` returned *after* a caller named the format; a caller can no
+    /// longer name it, because the builder takes a `ConversionIntent` and no
+    /// intent carries mzXML -- M6.2 measured that output and recorded it
+    /// rejected. Asked over the whole admitted table rather than of one
+    /// intent, so a row added later cannot quietly reintroduce the format.
+    ///
+    /// The grammar assertion stays. This layer's job is to report what the
+    /// installed build declares, not to decide what this product converts to,
+    /// and conflating the two is how a capability check starts making product
+    /// decisions.
     #[test]
     fn mzxml_grammar_does_not_enable_public_conversion_planning() {
         let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
@@ -1829,16 +1844,32 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             .require_conversion(OpenFormat::MzXml)
             .expect("installed help recognizes the mzXML grammar");
 
-        let error = build_msconvert_command_with_capabilities(
-            &capabilities,
-            &test_path("sample.raw"),
-            &test_path("converted"),
-            OsStr::new("sample.mzXML"),
-            OpenFormat::MzXml,
-        )
-        .expect_err("mzXML must remain unavailable until its integrity gate is implemented");
+        let test_directory = TestDirectory::new();
+        let source = test_directory.path().join("sample.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::write(&source, b"source RAW").expect("write source RAW");
+        fs::create_dir(&output_directory).expect("create fresh output directory");
 
-        assert_eq!(error, PlanError::MzXmlIntegrityGateRequired);
+        for admitted in ConversionIntent::ADMITTED {
+            let command = build_msconvert_command_with_capabilities(
+                &capabilities,
+                &source,
+                &output_directory,
+                OsStr::new("sample.mzML"),
+                &admitted.intent(),
+            )
+            .expect("every admitted intent plans");
+            assert!(
+                command.args.iter().any(|argument| argument == "--mzML"),
+                "an admitted intent asked for something other than mzML: {:?}",
+                admitted.intent().stable_id()
+            );
+            assert!(
+                !command.args.iter().any(|argument| argument == "--mzXML"),
+                "an admitted intent reached the mzXML grammar: {:?}",
+                admitted.intent().stable_id()
+            );
+        }
     }
 
     #[test]
@@ -1863,7 +1894,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             &output_directory,
             OsStr::new("样本 01.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect("complete installed grammar permits mzML planning");
 
@@ -1901,7 +1932,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             &output_directory,
             OsStr::new("sample.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect_err("an existing default output must not produce a command specification");
 
@@ -1923,7 +1954,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             output_directory.path(),
             OsStr::new("converted.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect("a distinct exact target does not conflict with the source");
 
@@ -1938,7 +1969,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             output_directory.path(),
             OsStr::new("sample.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect_err("the exact source path must never be a conversion destination");
         assert_eq!(error, PlanError::OutputDestinationExists);
@@ -1963,7 +1994,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             &output_directory,
             OsStr::new("sample.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect("unrelated entries do not conflict with the exact destination");
 
@@ -1991,7 +2022,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &first_input,
             &output_directory,
             OsStr::new("first.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect("plan first item");
         fs::write(
@@ -2007,7 +2038,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &second_input,
             &output_directory,
             OsStr::new("second.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect("plan second item in the same output root");
         assert_eq!(
@@ -2032,7 +2063,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             &output_directory,
             OsStr::new("sample.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect_err("any object at the exact destination must fail closed");
 
@@ -2053,7 +2084,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             &missing_output,
             OsStr::new("sample.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect_err("an uninspectable output directory must fail closed");
 
@@ -2087,7 +2118,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 &input,
                 &output_directory,
                 OsStr::new("dataset.mzML"),
-                OpenFormat::MzMl,
+                &ConversionIntent::SHIPPED,
             )
             .expect_err("output inside a directory input must fail closed");
 
@@ -2114,7 +2145,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             &output_directory,
             OsStr::new("dataset.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect("a fresh sibling output directory is safe to plan");
 
@@ -2141,7 +2172,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &missing_input,
             &output_directory,
             OsStr::new("missing.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect_err("an uninspectable input must fail closed");
 
@@ -2181,7 +2212,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 &test_path("sample.raw"),
                 &test_path("converted"),
                 OsStr::new(output_file_name),
-                OpenFormat::MzMl,
+                &ConversionIntent::SHIPPED,
             )
             .expect_err("unsafe output names must fail before filesystem inspection");
             assert_eq!(error, PlanError::InvalidOutputFileName);
@@ -2193,7 +2224,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 &test_path("sample.raw"),
                 &test_path("converted"),
                 OsStr::new(output_file_name),
-                OpenFormat::MzMl,
+                &ConversionIntent::SHIPPED,
             )
             .expect_err("the exact output extension must match the selected format");
             assert_eq!(error, PlanError::OutputFileExtensionMismatch);
@@ -2218,7 +2249,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 &test_path("sample.raw"),
                 &test_path("converted"),
                 OsStr::new("sample.mzML"),
-                OpenFormat::MzMl,
+                &ConversionIntent::SHIPPED,
             )
             .expect_err("missing or optional outfile grammar must fail closed");
 
@@ -2247,7 +2278,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 &test_path("sample.raw"),
                 &test_path("converted"),
                 OsStr::new("sample.mzML"),
-                OpenFormat::MzMl,
+                &ConversionIntent::SHIPPED,
             )
             .expect_err("missing or changed zlib grammar must fail closed");
 

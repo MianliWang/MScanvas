@@ -49,14 +49,14 @@ use crate::command::{
 };
 use crate::compound_file;
 use crate::conversion::{
-    ConversionIntegrityOutcome, ConversionPolicy, ConversionSourceError, ConversionSourceFacts,
-    SourceObjectFacts, ValidConversion, VerifiedConversion, capture_conversion_source,
-    conversion_output_file_name, verify_mzml_conversion_retaining_output,
-    verify_vendor_conversion_retaining_output,
+    ConversionIntegrityOutcome, ConversionSourceError, ConversionSourceFacts, SourceObjectFacts,
+    ValidConversion, VerifiedConversion, capture_conversion_source, conversion_output_file_name,
+    verify_mzml_conversion_retaining_output, verify_vendor_conversion_retaining_output,
 };
 use crate::diagnostics::{BackendTextExcerpt, Redactor};
 use crate::finalized_output::FinalizedOutput;
 use crate::fs_guard::{self, OutputEntryKind, RegularFileError, snapshot_output_directory};
+use crate::intent::ConversionIntent;
 use crate::mzml::{MzmlFacts, MzmlScanError, MzmlScanLimits};
 use crate::process::{LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner, Termination};
 use crate::sciex_wiff;
@@ -1043,7 +1043,12 @@ pub struct ConversionPlan {
     destination_root_identity: SourceIdentity,
     output_file_name: OsString,
     conflict: ConflictPolicy,
-    compression: ConversionPolicy,
+    /// What this conversion was asked to do, fixed when the plan was formed.
+    ///
+    /// Not a compression policy any more, and not a format hard-coded further
+    /// down: one product semantic, bound here, lowered into argv from here and
+    /// compared against the output from here.
+    intent: ConversionIntent,
 }
 
 impl ConversionPlan {
@@ -1057,6 +1062,7 @@ impl ConversionPlan {
         source: ConversionSource,
         destination_root: &Path,
         conflict: ConflictPolicy,
+        intent: ConversionIntent,
     ) -> Result<Self, ConversionPlanError> {
         // Before a name is derived at all, because for these families there is
         // no name to derive: the backend chooses one per sample, and measured
@@ -1099,7 +1105,7 @@ impl ConversionPlan {
             destination_root_identity,
             output_file_name,
             conflict,
-            compression: ConversionPolicy::default(),
+            intent,
         })
     }
 
@@ -1115,9 +1121,12 @@ impl ConversionPlan {
     }
 
     /// The only output format a plan can carry.
+    ///
+    /// Still one format, and now for a stated reason rather than by
+    /// construction: [`ConversionIntent`] cannot name another one.
     #[must_use]
     pub const fn format(&self) -> OpenFormat {
-        OpenFormat::MzMl
+        OpenFormat::of_intent(self.intent.format())
     }
 
     #[must_use]
@@ -1125,9 +1134,14 @@ impl ConversionPlan {
         self.conflict
     }
 
+    /// What this plan asked the backend to do.
+    ///
+    /// The one authority for that question: the command is lowered from it, the
+    /// integrity comparison is made against it, and a retry runs the plan it is
+    /// already bound to rather than rebuilding one from whatever is current.
     #[must_use]
-    pub const fn compression_policy(&self) -> ConversionPolicy {
-        self.compression
+    pub const fn intent(&self) -> ConversionIntent {
+        self.intent
     }
 
     /// The scan limits that judge both the source baseline and the output.
@@ -1241,7 +1255,7 @@ impl fmt::Debug for ConversionPlan {
             .field("source", &self.source)
             .field("format", &OpenFormat::MzMl)
             .field("conflict", &self.conflict)
-            .field("compression", &self.compression)
+            .field("intent", &self.intent)
             .finish_non_exhaustive()
     }
 }
@@ -2888,7 +2902,7 @@ fn run_staged(
         plan.source.canonical_path(),
         staging,
         plan.output_file_name(),
-        OpenFormat::MzMl,
+        &plan.intent,
         plan.source.kind().input_spelling(),
     ) {
         Ok(command) => command,
@@ -3005,14 +3019,14 @@ fn run_staged(
             facts,
             staging,
             plan.output_file_name(),
-            plan.compression,
+            plan.intent,
             plan.scan_limits(),
         ),
         SourceBaseline::ObjectOnly(object) => verify_vendor_conversion_retaining_output(
             object,
             staging,
             plan.output_file_name(),
-            plan.compression,
+            plan.intent,
             plan.scan_limits(),
         ),
         // A bundle does not reach here: `ConversionPlan::to_mzml` refuses a
@@ -3025,7 +3039,7 @@ fn run_staged(
             &bundle.primary,
             staging,
             plan.output_file_name(),
-            plan.compression,
+            plan.intent,
             plan.scan_limits(),
         ),
     };

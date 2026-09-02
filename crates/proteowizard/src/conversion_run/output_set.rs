@@ -43,11 +43,11 @@ use crate::command::{
     CommandSpec, InputSpelling, PlanError, SourceIdentity, build_msconvert_set_command_for_source,
 };
 use crate::conversion::{
-    ConversionIntegrityOutcome, ConversionPolicy, IntegrityProperty, SourceObjectFacts,
-    ValidatedConversionOutput, ValidationMode, VerifiedConversion,
-    verify_staged_member_retaining_output,
+    ConversionIntegrityOutcome, IntegrityProperty, SourceObjectFacts, ValidatedConversionOutput,
+    ValidationMode, VerifiedConversion, verify_staged_member_retaining_output,
 };
 use crate::finalized_output::FinalizedOutput;
+use crate::intent::ConversionIntent;
 use crate::mzml::MzmlScanLimits;
 use crate::process::{ProcessRunner, Termination};
 use crate::sciex_completeness::{
@@ -1006,6 +1006,28 @@ pub enum OutputNamesClaimed {
     Already { index: usize },
 }
 
+/// What an admitted set run was asked to produce.
+///
+/// Four facts that only mean anything together: a destination and a conflict
+/// rule are about a source, and since M6.3 so is the intent -- what a
+/// conversion is asked to *do* travels with what it is asked to do it to,
+/// rather than being assumed by whatever ends up running it.
+///
+/// Grouped for the same reason [`SetRunSeam`] is. The two entry points below
+/// take the same four things, and taking them in the same named shape is what
+/// keeps a caller from handing one of them a different answer.
+#[derive(Clone, Copy)]
+pub struct AdmittedSetRun<'a> {
+    /// The acquisition, already admitted as a source.
+    pub source: &'a ConversionSource,
+    /// The folder the finished set is published into.
+    pub destination_root: &'a Path,
+    /// What to do about a name that is already taken.
+    pub conflict: ConflictPolicy,
+    /// What the conversion was asked to produce. See [`ConversionIntent`].
+    pub intent: ConversionIntent,
+}
+
 /// What a caller may contribute to one set run beyond its inputs.
 ///
 /// Two powers, kept apart because they are not the same kind of thing.
@@ -1113,6 +1135,10 @@ pub fn run_multi_output_conversion_evidence(
         SetRunRequest {
             destination_root,
             conflict,
+            // Stated rather than defaulted. This path has no queue to bind an
+            // intent, so it names the one the product ships and is measured
+            // against exactly that.
+            intent: ConversionIntent::SHIPPED,
             capabilities,
             runner,
             limits,
@@ -1151,9 +1177,7 @@ pub fn run_multi_output_conversion_evidence(
 /// queue, no command. What exists now is a boundary a later surface could be
 /// built on without loosening anything.
 pub fn run_admitted_multi_output_conversion(
-    source: &ConversionSource,
-    destination_root: &Path,
-    conflict: ConflictPolicy,
+    request: AdmittedSetRun<'_>,
     capabilities: &InstalledHelpCapabilities,
     runner: &dyn ProcessRunner,
     cancellation: Option<&ConversionCancellation>,
@@ -1164,9 +1188,7 @@ pub fn run_admitted_multi_output_conversion(
     let mut names_claimed = |_: &[String]| OutputNamesClaimed::None;
     let mut before_member_publication = |_: usize| {};
     run_admitted_multi_output_conversion_seamed(
-        source,
-        destination_root,
-        conflict,
+        request,
         capabilities,
         runner,
         cancellation,
@@ -1184,14 +1206,18 @@ pub fn run_admitted_multi_output_conversion(
 /// knows something the lifecycle must not: that another item has already
 /// promised one of these names to a different acquisition.
 pub fn run_admitted_multi_output_conversion_seamed(
-    source: &ConversionSource,
-    destination_root: &Path,
-    conflict: ConflictPolicy,
+    request: AdmittedSetRun<'_>,
     capabilities: &InstalledHelpCapabilities,
     runner: &dyn ProcessRunner,
     cancellation: Option<&ConversionCancellation>,
     seam: SetRunSeam<'_>,
 ) -> MultiOutputConversionRun {
+    let AdmittedSetRun {
+        source,
+        destination_root,
+        conflict,
+        intent,
+    } = request;
     if let Some(cancellation) = cancellation
         && cancellation.is_requested()
     {
@@ -1244,6 +1270,7 @@ pub fn run_admitted_multi_output_conversion_seamed(
         SetRunRequest {
             destination_root,
             conflict,
+            intent,
             capabilities,
             runner,
             limits: source.scan_limits(),
@@ -1289,6 +1316,9 @@ fn completeness_requirement(
 struct SetRunRequest<'a> {
     destination_root: &'a Path,
     conflict: ConflictPolicy,
+    /// What this run was asked to do. Carried rather than defaulted, so a set
+    /// and a single output cannot come to convert differently.
+    intent: ConversionIntent,
     capabilities: &'a InstalledHelpCapabilities,
     runner: &'a dyn ProcessRunner,
     limits: MzmlScanLimits,
@@ -1326,13 +1356,14 @@ fn run_bound_multi_output(
     let SetRunRequest {
         destination_root,
         conflict,
+        intent,
         capabilities,
         runner,
         limits,
         cancellation,
         requirement,
     } = request;
-    let policy = ConversionPolicy::default();
+
     let BoundSource {
         pins,
         facts,
@@ -1375,6 +1406,7 @@ fn run_bound_multi_output(
         capabilities,
         &canonical_source,
         &staging.output_directory(),
+        &intent,
         InputSpelling::PlainVerified,
     ) {
         Ok(command) => command,
@@ -1455,7 +1487,7 @@ fn run_bound_multi_output(
         },
         &destination,
         conflict,
-        policy,
+        intent,
         limits,
         seam,
     );
@@ -1788,7 +1820,7 @@ pub(crate) fn settle_staged_output_set_seamed(
     staged: StagedOutputSet<'_>,
     destination: &finalize::DestinationDirectory,
     conflict: ConflictPolicy,
-    policy: ConversionPolicy,
+    intent: ConversionIntent,
     limits: MzmlScanLimits,
     seam: SetRunSeam<'_>,
 ) -> SettledOutputSet {
@@ -1850,7 +1882,7 @@ pub(crate) fn settle_staged_output_set_seamed(
             staged_output_directory,
             member.name(),
             member.byte_length,
-            policy,
+            intent,
             limits,
         ) {
             VerifiedConversion::Valid(output) => {

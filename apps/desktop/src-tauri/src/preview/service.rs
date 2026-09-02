@@ -26,12 +26,12 @@ use super::chromatogram::{
 use super::conversion::conversion_source_kind;
 #[cfg(test)]
 use mscanvas_proteowizard::ConflictPolicy;
+use mscanvas_proteowizard::{
+    AdmittedSetRun, ConversionIntent, MAX_CONVERSION_OUTPUTS_PER_SOURCE, OutputNamesClaimed,
+    SetRunSeam, run_admitted_multi_output_conversion_seamed,
+};
 #[allow(clippy::wildcard_imports)]
 use mscanvas_proteowizard::{BackendRunFacts, ConversionAttempt, ConversionCancellation};
-use mscanvas_proteowizard::{
-    MAX_CONVERSION_OUTPUTS_PER_SOURCE, OutputNamesClaimed, SetRunSeam,
-    run_admitted_multi_output_conversion_seamed,
-};
 
 #[cfg(test)]
 use super::adoption::FinalizedOutputSetAdoptionTicket;
@@ -45,8 +45,9 @@ use super::conversion::WorkspaceMultiOutputConversionReport;
 #[cfg(test)]
 use super::conversion::run_planned_conversion;
 use super::conversion::{
-    ConvertedItem, WorkspaceConversionReport, conflict_policy, fixed_compression, plan_conversion,
-    refusal_is_retryable, refuse_unevidenced_build, run_planned_conversion_cancellable,
+    ConvertedItem, WorkspaceConversionReport, conflict_policy, fixed_compression,
+    fixed_output_format, plan_conversion, refusal_is_retryable, refuse_unevidenced_build,
+    run_planned_conversion_cancellable,
 };
 use super::destination::admit_destination_root;
 use super::diagnostics::OutputSetDiagnosticFacts;
@@ -68,19 +69,19 @@ use super::drop_ingestion::{
 use super::dto::queue_output_name_claimed;
 use super::dto::{
     AdoptionCandidateIdentityDto, BackendAvailabilityDto, BackendFailureDto,
-    ConversionConflictPolicyDto, ConversionOutputFormatDto, ConversionQueuePlanDto,
-    ConversionQueuePlanItemDto, DropIngestionResultDto, MAX_CONVERSION_QUEUE_ITEMS,
-    MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES, MAX_METADATA_LINE_CHARS, MAX_MS_LEVELS,
-    MAX_PRECURSORS, MAX_SPECTRUM_POINTS, MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto,
-    MsLevelCountDto, PrecursorDto, PreviewDto, PreviewErrorDto, RetentionTimeDto,
-    RetentionTimeRangeDto, RunSummaryDto, SelectedSpectrumDto, SelectedSpectrumOutcomeDto,
-    SpectrumRowDto, SpectrumTableDto, ValidationModeDto, WorkspaceAddOutcomeDto,
-    WorkspaceAddResultDto, WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto,
-    WorkspaceDropStateDto, WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
-    WorkspaceRemoveResultDto, WorkspaceRosterDto, bounded_text, conversion_busy,
-    dataset_not_previewable, invalid_conversion_reservation, queue_destination_changed,
-    queue_is_empty, queue_output_name_collision, queue_too_large, redact_absolute_paths,
-    require_finite, require_finite_option, workspace_full,
+    ConversionConflictPolicyDto, ConversionQueuePlanDto, ConversionQueuePlanItemDto,
+    DropIngestionResultDto, MAX_CONVERSION_QUEUE_ITEMS, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES,
+    MAX_METADATA_LINE_CHARS, MAX_MS_LEVELS, MAX_PRECURSORS, MAX_SPECTRUM_POINTS,
+    MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto, MsLevelCountDto, PrecursorDto,
+    PreviewDto, PreviewErrorDto, RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto,
+    SelectedSpectrumDto, SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto,
+    ValidationModeDto, WorkspaceAddOutcomeDto, WorkspaceAddResultDto,
+    WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto, WorkspaceDropStateDto,
+    WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
+    WorkspaceRosterDto, bounded_text, conversion_busy, dataset_not_previewable,
+    invalid_conversion_reservation, queue_destination_changed, queue_is_empty,
+    queue_output_name_collision, queue_too_large, redact_absolute_paths, require_finite,
+    require_finite_option, workspace_full,
 };
 use super::dto::{
     ChromatogramCopyOutcomeDto, ChromatogramExportOutcomeDto, ChromatogramRangeDto,
@@ -1301,8 +1302,11 @@ impl PreviewService {
                     output: item.output().to_dto(),
                 })
                 .collect(),
-            output_format: ConversionOutputFormatDto::MzMl,
-            compression: fixed_compression().to_owned(),
+            // Both read off the intent this queue will be bound to, so what
+            // the panel is told before the picker opens is the same fact the
+            // conversion is judged against afterwards.
+            output_format: fixed_output_format(ConversionIntent::SHIPPED),
+            compression: fixed_compression(ConversionIntent::SHIPPED).to_owned(),
             // Stated before the run rather than after it. A vendor acquisition
             // has no mzML reading, so nothing about any output can be compared
             // to a source model -- and a user deciding whether to convert a
@@ -1503,7 +1507,11 @@ impl PreviewService {
         if document_epoch != self.workspace_drop_document_epoch() {
             return Err(invalid_conversion_reservation());
         }
-        let queue = ConversionQueue::new(document_epoch, conflict, items)?;
+        // The one place a production conversion's intent is chosen. Everything
+        // downstream -- each item, each retry, the argv, the integrity
+        // comparison -- reads it back off the queue rather than deciding again.
+        let queue =
+            ConversionQueue::new(document_epoch, conflict, ConversionIntent::SHIPPED, items)?;
         let reservation = slot.begin(queue);
         self.publish_conversion_busy(&slot);
         // The previous queue's diagnostics go with the previous queue. Under
@@ -3872,7 +3880,8 @@ impl PreviewService {
             let file = revalidate(&remembered)?;
             let guard = lock_against_replacement(file.path())?;
             let source = open_conversion_source(&file)?;
-            let plan = plan_conversion(source, root, conflict_policy(conflict))?;
+            let plan =
+                plan_conversion(source, root, conflict_policy(conflict), run.queue.intent())?;
             // The one call that can be stopped. Everything above it is this
             // side's own revalidation, which is fast and produces nothing to
             // clean up; everything a stop has to be safe about is inside it.
@@ -3954,6 +3963,9 @@ impl PreviewService {
             destination,
             conflict,
         } = run;
+        // Read off the queue, once, before anything runs. A retry reaches this
+        // same line and reads the same field.
+        let queue_intent = queue.intent();
         let settled = (|| -> Result<SciexConversion, PreviewErrorDto> {
             let file = revalidate(&remembered)?;
             // Every member, held together for the whole run. A companion
@@ -3990,9 +4002,12 @@ impl PreviewService {
                 )
             };
             let run = run_admitted_multi_output_conversion_seamed(
-                &source,
-                destination.root(),
-                conflict_policy(conflict),
+                AdmittedSetRun {
+                    source: &source,
+                    destination_root: destination.root(),
+                    conflict: conflict_policy(conflict),
+                    intent: queue_intent,
+                },
                 &backend.capabilities,
                 backend.runner,
                 Some(cancellation),
@@ -5364,9 +5379,12 @@ impl PreviewService {
         let (destination_root, destination_identity, _held) =
             admit_destination_root(destination_root)?;
         let run = run_admitted_multi_output_conversion_seamed(
-            &source,
-            &destination_root,
-            conflict,
+            AdmittedSetRun {
+                source: &source,
+                destination_root: &destination_root,
+                conflict,
+                intent: ConversionIntent::SHIPPED,
+            },
             &backend.capabilities,
             backend.runner,
             None,
@@ -5539,7 +5557,12 @@ impl PreviewService {
         refuse_unevidenced_build(&backend.capabilities, kind)?;
         let guard = lock_against_replacement(file.path())?;
         let source = open_conversion_source(&file)?;
-        let plan = plan_conversion(source, destination_root, conflict)?;
+        let plan = plan_conversion(
+            source,
+            destination_root,
+            conflict,
+            ConversionIntent::SHIPPED,
+        )?;
         let report = run_planned_conversion(&plan, &backend);
         let generation = self.note_resolved(backend.installation.clone());
         drop(guard);

@@ -29,6 +29,7 @@ mod discovery;
 mod failure;
 mod finalized_output;
 mod fs_guard;
+mod intent;
 mod mzml;
 mod preview;
 mod process;
@@ -49,8 +50,8 @@ pub use command::{
     build_msconvert_command_with_capabilities,
 };
 pub use conversion::{
-    AdvisoryObservation, BinaryArrayMismatchKind, CompressionPolicy, ConversionIntegrityOutcome,
-    ConversionOutputInspection, ConversionOutputRejection, ConversionPolicy, ConversionSourceError,
+    AdvisoryObservation, BinaryArrayMismatchKind, ConversionIntegrityOutcome,
+    ConversionOutputInspection, ConversionOutputRejection, ConversionSourceError,
     ConversionSourceFacts, DocumentPart, DocumentSide, IntegrityProperty, SourceObjectFacts,
     ValidConversion, ValidationMode, capture_conversion_source, conversion_output_file_name,
     inspect_conversion_output, verify_mzml_conversion,
@@ -59,11 +60,11 @@ pub use conversion_run::artifact::{
     LocalFileWriteError, LocalFileWriteFailure, write_new_local_file,
 };
 pub use conversion_run::output_set::{
-    FinalizedOutputSet, MAX_CONVERSION_OUTPUTS_PER_SOURCE, MultiOutputConversionReport,
-    MultiOutputConversionRun, MultiOutputFailure, MultiOutputOutcome, OutputMemberReport,
-    OutputMemberState, OutputMemberValidation, OutputNamesClaimed, OutputSetRejection, SetRunSeam,
-    run_admitted_multi_output_conversion, run_admitted_multi_output_conversion_seamed,
-    run_multi_output_conversion_evidence,
+    AdmittedSetRun, FinalizedOutputSet, MAX_CONVERSION_OUTPUTS_PER_SOURCE,
+    MultiOutputConversionReport, MultiOutputConversionRun, MultiOutputFailure, MultiOutputOutcome,
+    OutputMemberReport, OutputMemberState, OutputMemberValidation, OutputNamesClaimed,
+    OutputSetRejection, SetRunSeam, run_admitted_multi_output_conversion,
+    run_admitted_multi_output_conversion_seamed, run_multi_output_conversion_evidence,
 };
 pub use conversion_run::{
     BackendDiagnosticText, BackendExecutionFailure, BackendRunFacts, BackendStream,
@@ -89,11 +90,15 @@ pub use fs_guard::{
     OutputDirectoryEntry, OutputDirectorySnapshot, OutputEntryKind, RegularFileError,
     is_reparse_point, snapshot_output_directory,
 };
+pub use intent::{
+    AdmittedIntent, CompressionIntent, ConversionIntent, NumericPrecision, OutputFormat,
+    ProcessingIntent, SpectrumPopulation,
+};
 pub use mzml::{
     ArrayKind, ArrayKindSet, CompressionMarker, CompressionSet, MzmlChromatogramRecord, MzmlFacts,
     MzmlLimitKind, MzmlMalformedKind, MzmlRoot, MzmlScanError, MzmlScanLimits, MzmlSpectrumRecord,
-    NumericPrecisionMarker, NumericPrecisionSet, RepresentationMarker, RetentionTimeUnitMarker,
-    UnsafeXmlKind, inspect_file, inspect_reader,
+    NumericPrecisionMarker, NumericPrecisionSet, ProcessingAlgorithmClaim, RepresentationMarker,
+    RetentionTimeUnitMarker, UnsafeXmlKind, inspect_file, inspect_reader,
 };
 pub use preview::{
     MAX_PREVIEW_TEXT_BYTES, MetadataEntry, MetadataResult, MetadataSection, MetadataSectionKind,
