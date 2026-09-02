@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Deterministic fixtures and an independent reader for `msconvert` evidence.
 
-Two jobs, and they are deliberately the same tool. `generate` writes the mzML
-sources an evidence slice measures against; `inspect` reads a document back and
-reports what is actually in it. Neither spawns a backend: the measurement itself
-is an operator running the exact argv the evidence record publishes, and this
-side of it stays a pure function of bytes so that what it says about an output
-cannot depend on how the output was produced.
+Three jobs, and they are deliberately the same tool. `generate` writes the mzML
+sources an evidence slice measures against; `cases` prints the measurement set as
+data; and `inspect` reads a document back and reports what is actually in it.
+
+**Nothing here spawns a backend.** The ledger below *describes* a measurement;
+running it is [`msconvert_evidence_run.py`](msconvert_evidence_run.py)'s job, and
+the split is the point. What this module says about an output has to be a pure
+function of that output's bytes, or it could not be used to check the thing that
+produced it -- so the description and the reader live on this side of the line
+and the process spawning lives on the other.
 
 **The decoder is the point.** A conversion that reports exit `0` has established
 nothing scientific, and a document that declares `64-bit float` in a `cvParam`
@@ -23,8 +27,8 @@ reported as `length_disagreement`. Truncating to the nearest whole value would
 let a torn array come back looking like a shorter healthy one, and every numeric
 claim an evidence record makes is a claim about what this function returned.
 
-Standard library only, and no network. Both fixtures are a pure function of the
-constants in this file, so the recorded SHA-256s are reproducible from the
+Standard library only, and no network. All three fixtures are a pure function of
+the constants in this file, so the recorded SHA-256s are reproducible from the
 repository rather than from an operator's directory.
 """
 
@@ -37,6 +41,7 @@ import struct
 import sys
 import zlib
 from pathlib import Path
+from typing import NamedTuple
 from xml.etree import ElementTree
 
 MZML_NS = "http://psi.hupo.org/ms/mzml"
@@ -333,6 +338,283 @@ def generate(out: Path) -> list[tuple[str, int]]:
     return written
 
 
+# ------------------------------------------------------------------- ledger
+#
+# The measurement set, as data rather than as prose.
+#
+# It exists because an evidence record that names its cases only in sentences
+# cannot be checked: M6.2 shipped a review round in which the record claimed six
+# mzXML runs against four, and named twenty-eight of twenty-nine cases, and
+# nothing failed. Counts stated here are derivable rather than asserted, and the
+# repository guard reads them from this tuple instead of from a paragraph.
+
+#: The fixtures, and the exact bytes each must regenerate to.
+#:
+#: Recorded here rather than only in the evidence document so a driver can refuse
+#: to measure against a fixture that is not the one the record describes.
+FIXTURE_IDENTITIES: dict[str, tuple[int, str]] = {
+    "m62-profile.mzML": (
+        10_669,
+        "3224327B4F6F06C4A6F1A25D1A764F6AE5CBABF9AC3B909EF7F5FA89F9DC9C12",
+    ),
+    "m62-multisource.mzML": (
+        11_009,
+        "8A0A1217B9BF48C7255E2AF822D1A2B1A817E589EAC9E0984AEECB73F400AE90",
+    ),
+    "m62-noflank.mzML": (
+        10_373,
+        "ACBB3345EAFA265A1E57C826469BC6231145726089934B7E40F4D4069F99068D",
+    ),
+}
+
+#: The exact executable the M6.2 evidence is bound to.
+#:
+#: Not a convenience: ADR 0002's rule is that scientific evidence transfers only
+#: to an executable identity the evidence covers, so a driver that measured a
+#: different binary would be producing something this record may not carry.
+EXECUTABLE_IDENTITY = {
+    "release": "3.0.26013 (47b13cf)",
+    "build_date": "Jan 13 2026 14:42:37",
+    "bytes": 12_687_872,
+    "sha256": "9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD",
+}
+
+
+class Case(NamedTuple):
+    """One measured conversion, described completely enough to re-run it."""
+
+    #: Short identity, unique across the ledger. What the evidence record cites.
+    case: str
+    #: Which question the case belongs to, so a family can be read as a group.
+    family: str
+    #: Which generated fixture it converts.
+    fixture: str
+    #: Every argv token between the source path and `--outdir`, in exact order.
+    #: A filter is one token, because that is how it crosses the boundary.
+    arguments: tuple[str, ...]
+    #: The format the arguments select. Declared *and* derivable, so a row that
+    #: renamed its format without changing its flags fails rather than reads.
+    output_format: str
+    #: The name passed to `--outfile`, or `None` where the backend names it.
+    output_name: str | None
+    #: What the run is expected to do at the process boundary. `"exit 0"` for
+    #: every case but one; recorded so a changed posture is visible as a change.
+    posture: str
+    #: What comparison this case supports. One line, in the record's own terms.
+    purpose: str
+
+
+#: Every case the M6.2 evidence rests on, in family order.
+CASES: tuple[Case, ...] = (
+    Case(
+        "D1", "baseline", "m62-profile.mzML", (),
+        "mzML", "out.mzML", "exit 0",
+        "The provider's own posture with no flag at all: the precision and "
+        "compression defaults every other case is read against.",
+    ),
+    Case(
+        "P1", "precision", "m62-profile.mzML", ("--mz64", "--inten64"),
+        "mzML", "out.mzML", "exit 0",
+        "Both arrays asked for 64-bit explicitly.",
+    ),
+    Case(
+        "P2", "precision", "m62-profile.mzML", ("--mz32", "--inten32"),
+        "mzML", "out.mzML", "exit 0",
+        "Both arrays asked for 32-bit explicitly.",
+    ),
+    Case(
+        "P3", "precision", "m62-profile.mzML", ("--32",),
+        "mzML", "out.mzML", "exit 0",
+        "The global 32-bit switch, against the per-array pair.",
+    ),
+    Case(
+        "P4", "precision", "m62-profile.mzML", ("--64",),
+        "mzML", "out.mzML", "exit 0",
+        "The global 64-bit switch, and the fixed precision every filter case "
+        "holds so that a filter's effect cannot be read as a precision effect.",
+    ),
+    Case(
+        "P5", "precision", "m62-profile.mzML", ("--mz32", "--inten64"),
+        "mzML", "out.mzML", "exit 0",
+        "The two arrays asked for opposite widths, which is what proves the "
+        "controls are independent rather than one control with two spellings.",
+    ),
+    Case(
+        "C1", "compression", "m62-profile.mzML", ("--64", "--zlib"),
+        "mzML", "out.mzML", "exit 0",
+        "Compression on at fixed precision.",
+    ),
+    Case(
+        "C2", "compression", "m62-profile.mzML", ("--64", "--zlib=off"),
+        "mzML", "out.mzML", "exit 0",
+        "Compression off at the same fixed precision, so only the encoding "
+        "differs and the decoded values can be compared directly.",
+    ),
+    Case(
+        "L1", "ms-level", "m62-profile.mzML", ("--64", "--filter", "msLevel 1"),
+        "mzML", "out.mzML", "exit 0",
+        "MS1 only.",
+    ),
+    Case(
+        "L2", "ms-level", "m62-profile.mzML", ("--64", "--filter", "msLevel 2"),
+        "mzML", "out.mzML", "exit 0",
+        "MS2 only.",
+    ),
+    Case(
+        "L3", "ms-level", "m62-profile.mzML", ("--64",),
+        "mzML", "out.mzML", "exit 0",
+        "All levels by omission, which is the baseline the explicit form is "
+        "compared against.",
+    ),
+    Case(
+        "L4", "ms-level", "m62-profile.mzML", ("--64", "--filter", "msLevel 1-"),
+        "mzML", "out.mzML", "exit 0",
+        "All levels stated explicitly, so `All` is a semantic rather than an "
+        "omission.",
+    ),
+    Case(
+        "K1", "peak-picking", "m62-profile.mzML", ("--64", "--filter", "peakPicking"),
+        "mzML", "out.mzML", "exit 0",
+        "The default picker, selected by writing no picker token.",
+    ),
+    Case(
+        "K2", "peak-picking", "m62-profile.mzML", ("--64", "--filter", "peakPicking cwt"),
+        "mzML", "out.mzML", "exit 0",
+        "The wavelet picker on input it accepts.",
+    ),
+    Case(
+        "K3", "peak-picking", "m62-profile.mzML", ("--64", "--filter", "peakPicking vendor"),
+        "mzML", "out.mzML", "exit 0",
+        "The vendor picker asked for on a source with no vendor reader, which "
+        "is what exposes the substitution.",
+    ),
+    Case(
+        "K4", "peak-picking", "m62-profile.mzML",
+        ("--64", "--filter", "peakPicking cwt msLevel=2"),
+        "mzML", "out.mzML", "exit 0",
+        "An MS-level scope with an explicit picker token before it.",
+    ),
+    Case(
+        "K5", "peak-picking", "m62-profile.mzML",
+        ("--64", "--filter", "peakPicking cwt", "--filter", "msLevel 2"),
+        "mzML", "out.mzML", "exit 0",
+        "Pick, then select. Half of the filter-order pair.",
+    ),
+    Case(
+        "K6", "peak-picking", "m62-profile.mzML",
+        ("--64", "--filter", "msLevel 2", "--filter", "peakPicking cwt"),
+        "mzML", "out.mzML", "exit 0",
+        "Select, then pick. The other half, so order is measured rather than "
+        "assumed irrelevant.",
+    ),
+    Case(
+        "K7", "peak-picking", "m62-noflank.mzML", ("--64", "--filter", "peakPicking cwt"),
+        "mzML", "out.mzML", "exit 1, unterminated partial output",
+        "The wavelet picker on input it refuses, which is the only way its "
+        "precondition and its failure mode can be measured at all.",
+    ),
+    Case(
+        "K8", "peak-picking", "m62-noflank.mzML", ("--64", "--filter", "peakPicking"),
+        "mzML", "out.mzML", "exit 0",
+        "The default picker on that same refused input, which is what makes "
+        "K7 a fact about the algorithm rather than about the fixture.",
+    ),
+    Case(
+        "K9", "peak-picking", "m62-noflank.mzML", ("--64",),
+        "mzML", "out.mzML", "exit 0",
+        "The unflanked fixture converted with no filter at all: the baseline "
+        "K7's partial output and K8's result are both sized against.",
+    ),
+    Case(
+        "K10", "peak-picking", "m62-profile.mzML",
+        ("--64", "--filter", "peakPicking cwt msLevel=1-2"),
+        "mzML", "out.mzML", "exit 0",
+        "The MS1+MS2 scope stated explicitly.",
+    ),
+    Case(
+        "K11", "peak-picking", "m62-profile.mzML",
+        ("--64", "--filter", "peakPicking msLevel=2"),
+        "mzML", "out.mzML", "exit 0",
+        "The scope written without a picker token, which is the form that "
+        "silently discards it.",
+    ),
+    Case(
+        "K12", "peak-picking", "m62-profile.mzML", ("--32", "--filter", "peakPicking"),
+        "mzML", "out.mzML", "exit 0",
+        "A precision choice composed with a filter that rewrites the arrays "
+        "the choice applies to.",
+    ),
+    Case(
+        "X1", "format", "m62-profile.mzML", ("--mzXML", "--64"),
+        "mzXML", "out.mzXML", "exit 0",
+        "mzXML from a single-source document.",
+    ),
+    Case(
+        "X2", "format", "m62-multisource.mzML", ("--mzXML", "--64"),
+        "mzXML", "out.mzXML", "exit 0",
+        "mzXML from a two-source document, which is the comparison CNV-002 is "
+        "gated on.",
+    ),
+    Case(
+        "X3", "format", "m62-multisource.mzML", ("--mzML", "--64"),
+        "mzML", "out.mzML", "exit 0",
+        "The control. The same two-source document to mzML, so a spectrum lost "
+        "in X2 is the writer's doing and not the reader's.",
+    ),
+    Case(
+        "X4", "format", "m62-profile.mzML", ("--mzXML", "--64"),
+        "mzXML", None, "exit 0",
+        "mzXML with no `--outfile`, so the backend names its own output and "
+        "the side-output question is asked of a directory it controls.",
+    ),
+    Case(
+        "X5", "format", "m62-profile.mzML", ("--mzXML", "--64", "--filter", "peakPicking"),
+        "mzXML", "out.mzXML", "exit 0",
+        "A processing intent carried into the second output format.",
+    ),
+)
+
+
+def mzxml_cases() -> tuple[str, ...]:
+    """Every case that produces mzXML, derived rather than counted by hand.
+
+    The count this returns is the one the evidence record may state. A record
+    that says six while this says four is the defect that made the ledger
+    necessary.
+    """
+    return tuple(case.case for case in CASES if case.output_format == "mzXML")
+
+
+def ledger_defects() -> list[str]:
+    """Everything structurally wrong with the ledger, or an empty list.
+
+    Returned rather than raised so both the driver and the repository guard can
+    report the same findings in their own voice.
+    """
+    found: list[str] = []
+    identities = [case.case for case in CASES]
+    repeated = sorted({name for name in identities if identities.count(name) > 1})
+    if repeated:
+        found.append(f"duplicate case id(s): {', '.join(repeated)}")
+    for case in CASES:
+        if case.fixture not in FIXTURE_IDENTITIES:
+            found.append(f"{case.case} names fixture {case.fixture!r}, which is not generated")
+        # Declared format against the flags that actually select one. A row that
+        # renamed its format without changing its arguments is the mutation this
+        # catches, and it is exactly how `X3` would stop being the control.
+        selected = "mzXML" if "--mzXML" in case.arguments else "mzML"
+        if selected != case.output_format:
+            found.append(
+                f"{case.case} declares {case.output_format} but its arguments select {selected}"
+            )
+        if case.output_name is not None and not case.output_name.endswith(case.output_format):
+            found.append(
+                f"{case.case} writes {case.output_name!r}, which does not name a "
+                f"{case.output_format} document"
+            )
+    return found
+
+
 # ---------------------------------------------------------------- inspection
 
 #: Accession to width in bits and `struct` code, for the two float encodings a
@@ -581,6 +863,8 @@ def main() -> int:
     made = sub.add_parser("generate", help="write the deterministic mzML fixtures")
     made.add_argument("--out", required=True, type=Path)
 
+    sub.add_parser("cases", help="print the measurement ledger as JSON")
+
     read = sub.add_parser("inspect", help="report what a converted document contains")
     read.add_argument("path", type=Path)
     read.add_argument(
@@ -594,6 +878,26 @@ def main() -> int:
         for name, size in generate(args.out):
             print(f"{name}\t{size}")
         return 0
+
+    if args.command == "cases":
+        defects = ledger_defects()
+        json.dump(
+            {
+                "case_count": len(CASES),
+                "mzxml_cases": list(mzxml_cases()),
+                "fixtures": {
+                    name: {"bytes": size, "sha256": digest}
+                    for name, (size, digest) in FIXTURE_IDENTITIES.items()
+                },
+                "executable": EXECUTABLE_IDENTITY,
+                "defects": defects,
+                "cases": [case._asdict() for case in CASES],
+            },
+            sys.stdout,
+            indent=2,
+        )
+        print()
+        return 1 if defects else 0
 
     facts = inspect(args.path)
     if not args.values:

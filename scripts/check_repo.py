@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import sys
@@ -1780,6 +1781,36 @@ M62_SIDE_OUTPUT_DISPOSITIONS: frozenset[str] = frozenset(
     }
 )
 
+# The measurement set M6.2's evidence *is*, pinned here so that changing it is a
+# deliberate act rather than an edit nobody notices.
+#
+# It is pinned because prose could not hold it. The first M6.2 record claimed six
+# mzXML runs where four exist, and named twenty-eight of twenty-nine cases, and
+# every table in the document was internally consistent throughout -- the counts
+# were sentences, and sentences agree with whatever is around them. These
+# constants and the committed ledger are two independent statements of the same
+# set, and the evidence document is checked against both.
+M62_EXPECTED_CASES: tuple[str, ...] = (
+    "D1",
+    "P1", "P2", "P3", "P4", "P5",
+    "C1", "C2",
+    "L1", "L2", "L3", "L4",
+    "K1", "K2", "K3", "K4", "K5", "K6", "K7", "K8", "K9", "K10", "K11", "K12",
+    "X1", "X2", "X3", "X4", "X5",
+)
+
+#: The cases that produce mzXML, and the one that is the mzML control.
+M62_EXPECTED_MZXML_CASES: tuple[str, ...] = ("X1", "X2", "X4", "X5")
+M62_MZML_CONTROL = "X3"
+
+#: The claim that shipped the miscount, refused as the assertion it was rather
+#: than as the words it used. A record has to be able to *describe* the error it
+#: corrected -- this one does, a few lines above its case table -- so the rule
+#: matches the sentence that asserts the wrong count and nothing else. The
+#: structural checks below would catch a wrong count anyway; this makes the
+#: specific regression unmistakable.
+M62_MISCOUNT = "six mzXML runs"
+
 
 def _column_index(header: list[str], name: str, where: str, errors: list[str]) -> int | None:
     """One named column of a table, or a failure saying it is not there."""
@@ -2168,6 +2199,155 @@ def _validate_the_matrix_covers_every_measured_candidate(
         )
 
 
+def _msconvert_ledger(errors: list[str]) -> object | None:
+    """The committed case ledger, imported rather than parsed.
+
+    It is Python beside this file, so reading it as data is both exact and
+    cheaper than re-describing it here. The module is pure -- it generates
+    fixtures and reads documents and spawns nothing -- so importing it from a
+    validator costs nothing and risks nothing.
+    """
+    source = ROOT / "scripts/msconvert_evidence.py"
+    if not source.is_file():
+        fail(
+            "scripts/msconvert_evidence.py is missing. It holds the M6.2 case ledger, and "
+            "the evidence record's counts are checked against it rather than against a "
+            "sentence",
+            errors,
+        )
+        return None
+    spec = importlib.util.spec_from_file_location("_m62_ledger", source)
+    if spec is None or spec.loader is None:  # pragma: no cover - defensive
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _validate_the_msconvert_case_ledger(spike_text: str, errors: list[str]) -> None:
+    """The measurement set is data, and the record agrees with it.
+
+    Three statements of one set, held equal: the constants above, the committed
+    ledger, and the evidence document's own case table. Any two agreeing while
+    the third drifts is exactly how a record comes to claim a run that never
+    happened, or to lose one that did.
+    """
+    ledger = _msconvert_ledger(errors)
+    if ledger is None:
+        return
+
+    defects = ledger.ledger_defects()
+    if defects:
+        for defect in defects:
+            fail(f"scripts/msconvert_evidence.py: the M6.2 case ledger is malformed -- {defect}", errors)
+        return
+
+    declared = tuple(case.case for case in ledger.CASES)
+    if declared != M62_EXPECTED_CASES:
+        missing = sorted(set(M62_EXPECTED_CASES) - set(declared))
+        extra = sorted(set(declared) - set(M62_EXPECTED_CASES))
+        detail = []
+        if missing:
+            detail.append("missing " + ", ".join(repr(name) for name in missing))
+        if extra:
+            detail.append("has " + ", ".join(repr(name) for name in extra))
+        if not detail:
+            detail.append("lists them in a different order")
+        fail(
+            f"scripts/msconvert_evidence.py: the M6.2 case ledger {'; '.join(detail)}. "
+            f"M6.2's evidence rests on exactly {len(M62_EXPECTED_CASES)} measured cases, and a "
+            "set that shrinks silently takes its conclusions with it",
+            errors,
+        )
+        return
+
+    produced = tuple(ledger.mzxml_cases())
+    if produced != M62_EXPECTED_MZXML_CASES:
+        fail(
+            f"scripts/msconvert_evidence.py: the ledger's mzXML-producing cases are "
+            f"{list(produced)}, not {list(M62_EXPECTED_MZXML_CASES)}. This is the count the "
+            "record got wrong once -- it said six against four -- so it is derived from the "
+            "ledger and pinned here rather than written in a sentence",
+            errors,
+        )
+        return
+
+    control = next(
+        (case for case in ledger.CASES if case.case == M62_MZML_CONTROL), None
+    )
+    if control is None or control.output_format != "mzML":
+        fail(
+            f"scripts/msconvert_evidence.py: `{M62_MZML_CONTROL}` is not an mzML case. It is "
+            "the control that makes a spectrum missing from `X2` the mzXML writer's doing "
+            "rather than the reader's, and a control that changed format would prove nothing",
+            errors,
+        )
+        return
+
+    if M62_MISCOUNT in spike_text:
+        fail(
+            f"{M62_SPIKE} says {M62_MISCOUNT!r} again. There are "
+            f"{len(M62_EXPECTED_MZXML_CASES)} mzXML-producing cases -- "
+            + ", ".join(f"`{name}`" for name in M62_EXPECTED_MZXML_CASES)
+            + " -- and the miscount it replaced was the defect that made this ledger "
+            "necessary",
+            errors,
+        )
+
+    table = _first_markdown_table(spike_text, "### The measured cases")
+    if table is None:
+        fail(
+            f"{M62_SPIKE} has no `### The measured cases` table. It is the record's copy of "
+            "the committed ledger, and without it every count in the document is a sentence "
+            "again",
+            errors,
+        )
+        return
+    header, body = _table_header_and_body(table)
+    at = _column_index(header, "Case", f"{M62_SPIKE} measured cases", errors)
+    format_at = _column_index(header, "Format", f"{M62_SPIKE} measured cases", errors)
+    if at is None or format_at is None:
+        return
+    listed = tuple(_bare(row[at]) for row in body if len(row) > at)
+    if listed != declared:
+        missing = sorted(set(declared) - set(listed))
+        extra = sorted(set(listed) - set(declared))
+        detail = []
+        if missing:
+            detail.append("omits " + ", ".join(repr(name) for name in missing))
+        if extra:
+            detail.append("adds " + ", ".join(repr(name) for name in extra))
+        if not detail:
+            detail.append("lists them in a different order")
+        fail(
+            f"{M62_SPIKE}: the measured-cases table {'; '.join(detail)} against the committed "
+            "ledger. The record named twenty-eight of twenty-nine cases once, and nothing "
+            "caught it because nothing compared the two",
+            errors,
+        )
+        return
+    formats = {
+        _bare(row[at]): _bare(row[format_at]) for row in body if len(row) > format_at
+    }
+    disagreed = sorted(
+        case.case
+        for case in ledger.CASES
+        if formats.get(case.case) != case.output_format
+    )
+    if disagreed:
+        fail(
+            f"{M62_SPIKE}: the measured-cases table gives "
+            + ", ".join(
+                f"`{name}` as {formats.get(name)!r} where the ledger says "
+                f"{next(c.output_format for c in ledger.CASES if c.case == name)!r}"
+                for name in disagreed
+            )
+            + ". The mzXML count is derived from these formats, so a row that disagrees "
+            "makes the count wrong wherever it is stated",
+            errors,
+        )
+
+
 def validate_the_msconvert_capability_evidence_is_closed(errors: list[str]) -> None:
     """M6.2's candidate set is finite, closed, and answered across one standard.
 
@@ -2203,6 +2383,7 @@ def validate_the_msconvert_capability_evidence_is_closed(errors: list[str]) -> N
     route_text = route_path.read_text(encoding="utf-8")
 
     _validate_the_msconvert_route_acceptance_is_current(route_text, errors)
+    _validate_the_msconvert_case_ledger(spike_text, errors)
 
     required = _first_markdown_table(route_text, "#### M6.2 candidate evidence dimensions")
     if required is None:

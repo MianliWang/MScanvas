@@ -2764,9 +2764,9 @@ mzML documents in these tests are generated in the test itself.
   measurement listed as required is the one way this section can mislead the
   slice that reads it. The narrower half that survived it — the same question for
   a **non-mzML output format** — was **measured by M6.2 on 2026-09-02**: across
-  twenty-nine runs into fresh empty directories, including six mzXML runs and one
-  that let the backend name its own output, every directory afterwards held
-  exactly its one output file. Nothing in this bullet is outstanding. See
+  twenty-nine cases into fresh empty directories — four of which produce mzXML,
+  `X1`, `X2`, `X4` and `X5`, one of them letting the backend name its own output
+  — every directory afterwards held exactly one entry. Nothing in this bullet is outstanding. See
   [M6.2's evidence document](docs/spikes/M6_MSCONVERT_CAPABILITY_EVIDENCE.md).
 
 ## First verified-bootstrap checklist
@@ -6375,12 +6375,18 @@ reads as the conditional it always was, and the guard refuses the old sentence.
 ### The conditional side-output obligation
 
 **Triggered, and measured.** mzXML remains a viable admission candidate for
-single-source inputs, so the condition holds. All **twenty-nine** runs went into
-fresh empty directories, and every directory afterwards held exactly its one
-output — no sidecar, index, log or scratch entry — including the six mzXML runs
-and the one that let the backend name its own output. The `cwt` failure case is
-the one to read carefully: it produced one file too, and that file was a
-**partial** document rather than an extra one.
+single-source inputs, so the condition holds. All **twenty-nine** cases went
+into fresh empty directories, and every directory afterwards held exactly one
+entry — no sidecar, index, log or scratch entry.
+
+**Four of the twenty-nine produce mzXML**: `X1`, `X2`, `X4` and `X5`, one of them
+letting the backend name its own output. `X3` is the mzML control and is not one
+of them. That count is derived from the committed case ledger rather than stated
+in a sentence — an earlier version of this paragraph said *six*, which no case
+list ever supported, and the guard now refuses a record that disagrees with the
+ledger. The `cwt` failure case is the one to read carefully: it produced one
+entry too, and that entry was the **unterminated partial** document rather than
+an extra file.
 
 ### One repair, from review
 
@@ -6466,6 +6472,46 @@ Two of the threads were resolved on the pull request before they had been read �
 a mistake, corrected by reopening both, dispositioning them, and replying with
 the classification before resolving them again. Recorded because a thread closed
 without being read is indistinguishable from one that was answered.
+
+### The correction, and the driver that makes it hold
+
+Review caught the record claiming **six** mzXML runs where four exist, and naming
+**28** of 29 cases. Both were true defects: the count was the sentence discharging
+the side-output obligation, and the missing case was `K9`, the no-filter baseline
+that makes `K7`'s partial output legible. Neither was reachable by any check,
+because the cases lived in prose.
+
+**The root fix is that the measurement set is now data and the data is
+executable.** `scripts/msconvert_evidence.py` gained a `CASES` ledger — 29 rows,
+each with its fixture, its exact argv tokens in order, its output format, its
+naming mode, its expected posture and what it is for — plus the fixture and
+executable identities the evidence is bound to. `scripts/msconvert_evidence_run.py`
+runs it: regenerate the three fixtures and check them against their recorded
+digests, check the installed executable against the bound identity, enumerate the
+ledger, execute each case as an argv **list** into a **fresh empty directory**,
+read the output back through the shared inspector, count directory entries,
+recheck the executable afterwards, and emit a normalized report carrying no
+absolute path. The working tree is a temporary directory and is removed once the
+facts are captured.
+
+**The whole set was re-run from it.** 29 cases, 29 directories each holding
+exactly one entry, executable byte length and digest and release and build date
+identical before and after, and **33 of 33 independent confirmations agreeing**
+with the record. No candidate classification changed. `X4` and `X2` and the
+fixtures reproduced byte-identically; the mzML outputs did not, and that is why
+sizes are now stated as relations — `msconvert` stamps its command line into an
+mzML document, so its byte count moves with the paths of the run that produced
+it. The record's absolute mzML sizes were replaced with the relations the rerun
+confirms.
+
+**And the counts are structural now.** The guard holds three independent
+statements of one set equal: pinned constants, the committed ledger, and the
+record's own measured-cases table. It refuses a deleted `K9`, a duplicated id, a
+thirtieth case, an `X3` that stops being the mzML control, a ledger row whose
+declared format its arguments do not select, a record row disagreeing with the
+ledger, a missing table, and the literal `six mzXML` regression. **Ten mutations
+were applied one at a time and all ten were caught**, on top of the twelve
+already covering the candidate closure.
 
 ### Repository guard
 

@@ -214,12 +214,68 @@ guessing at it.
 
 ## Measurements
 
-Twenty-nine runs, each into a **fresh empty directory** so that anything besides
+Twenty-nine cases, each into a **fresh empty directory** so that anything besides
 the requested output is visible rather than assumed absent. Paths are normalized:
 `<fixtures>` is the generator's output directory and `<outdir>` a per-case
 temporary directory, both removed after the facts below were captured. The
 committed record carries no absolute path, and none of the temporary output
 directories was a user destination.
+
+### The measured cases
+
+The set, as the repository holds it. This table is the evidence document's copy
+of [`CASES`](../../scripts/msconvert_evidence.py); repository validation requires
+the two to name the same cases with the same formats, so a case cannot leave one
+without leaving the other, and no count below is a sentence somebody typed.
+
+`python -B scripts/msconvert_evidence_run.py --report <file>` regenerates the
+three fixtures, checks them against their recorded digests, checks the installed
+executable against the identity this record is bound to, runs every row into its
+own fresh directory, reads each output back through the shared inspector, and
+rechecks the executable afterwards.
+
+| Case | Family | Fixture | Arguments between source and `--outdir` | Format | `--outfile` | Posture |
+| --- | --- | --- | --- | --- | --- | --- |
+| `D1` | baseline | `m62-profile.mzML` | *(none)* | mzML | `out.mzML` | exit 0 |
+| `P1` | precision | `m62-profile.mzML` | `--mz64` `--inten64` | mzML | `out.mzML` | exit 0 |
+| `P2` | precision | `m62-profile.mzML` | `--mz32` `--inten32` | mzML | `out.mzML` | exit 0 |
+| `P3` | precision | `m62-profile.mzML` | `--32` | mzML | `out.mzML` | exit 0 |
+| `P4` | precision | `m62-profile.mzML` | `--64` | mzML | `out.mzML` | exit 0 |
+| `P5` | precision | `m62-profile.mzML` | `--mz32` `--inten64` | mzML | `out.mzML` | exit 0 |
+| `C1` | compression | `m62-profile.mzML` | `--64` `--zlib` | mzML | `out.mzML` | exit 0 |
+| `C2` | compression | `m62-profile.mzML` | `--64` `--zlib=off` | mzML | `out.mzML` | exit 0 |
+| `L1` | ms-level | `m62-profile.mzML` | `--64` `--filter` `"msLevel 1"` | mzML | `out.mzML` | exit 0 |
+| `L2` | ms-level | `m62-profile.mzML` | `--64` `--filter` `"msLevel 2"` | mzML | `out.mzML` | exit 0 |
+| `L3` | ms-level | `m62-profile.mzML` | `--64` | mzML | `out.mzML` | exit 0 |
+| `L4` | ms-level | `m62-profile.mzML` | `--64` `--filter` `"msLevel 1-"` | mzML | `out.mzML` | exit 0 |
+| `K1` | peak-picking | `m62-profile.mzML` | `--64` `--filter` `peakPicking` | mzML | `out.mzML` | exit 0 |
+| `K2` | peak-picking | `m62-profile.mzML` | `--64` `--filter` `"peakPicking cwt"` | mzML | `out.mzML` | exit 0 |
+| `K3` | peak-picking | `m62-profile.mzML` | `--64` `--filter` `"peakPicking vendor"` | mzML | `out.mzML` | exit 0 |
+| `K4` | peak-picking | `m62-profile.mzML` | `--64` `--filter` `"peakPicking cwt msLevel=2"` | mzML | `out.mzML` | exit 0 |
+| `K5` | peak-picking | `m62-profile.mzML` | `--64` `--filter` `"peakPicking cwt"` `--filter` `"msLevel 2"` | mzML | `out.mzML` | exit 0 |
+| `K6` | peak-picking | `m62-profile.mzML` | `--64` `--filter` `"msLevel 2"` `--filter` `"peakPicking cwt"` | mzML | `out.mzML` | exit 0 |
+| `K7` | peak-picking | `m62-noflank.mzML` | `--64` `--filter` `"peakPicking cwt"` | mzML | `out.mzML` | exit 1, unterminated partial output |
+| `K8` | peak-picking | `m62-noflank.mzML` | `--64` `--filter` `peakPicking` | mzML | `out.mzML` | exit 0 |
+| `K9` | peak-picking | `m62-noflank.mzML` | `--64` | mzML | `out.mzML` | exit 0 |
+| `K10` | peak-picking | `m62-profile.mzML` | `--64` `--filter` `"peakPicking cwt msLevel=1-2"` | mzML | `out.mzML` | exit 0 |
+| `K11` | peak-picking | `m62-profile.mzML` | `--64` `--filter` `"peakPicking msLevel=2"` | mzML | `out.mzML` | exit 0 |
+| `K12` | peak-picking | `m62-profile.mzML` | `--32` `--filter` `peakPicking` | mzML | `out.mzML` | exit 0 |
+| `X1` | format | `m62-profile.mzML` | `--mzXML` `--64` | mzXML | `out.mzXML` | exit 0 |
+| `X2` | format | `m62-multisource.mzML` | `--mzXML` `--64` | mzXML | `out.mzXML` | exit 0 |
+| `X3` | format | `m62-multisource.mzML` | `--mzML` `--64` | mzML | `out.mzML` | exit 0 |
+| `X4` | format | `m62-profile.mzML` | `--mzXML` `--64` | mzXML | *backend-named* | exit 0 |
+| `X5` | format | `m62-profile.mzML` | `--mzXML` `--64` `--filter` `peakPicking` | mzXML | `out.mzXML` | exit 0 |
+
+**`X3` is the control, not a format case.** It is the only row whose arguments
+select `--mzML` from the multi-source fixture, and it exists so that a spectrum
+missing from `X2` is the mzXML writer's doing rather than the reader's.
+
+**`K9` is the baseline the two unflanked cases are read against.** `K7` and `K8`
+both convert `m62-noflank.mzML` with a picker; `K9` converts it with none, which
+is what makes `K7`'s truncated output legible as a partial document rather than
+a small valid one, and what shows the fixture itself converts cleanly: `K9`
+returns four spectra at their full lengths, all profile, with no picker
+recorded.
 
 ### Numeric precision
 
@@ -264,9 +320,12 @@ not decide it.
 
 Both compression cases are pinned at `--64` so that precision is held constant
 and only the encoding varies. **Every array of every spectrum decodes to the same
-numbers under both**, which is the claim; the file sizes (`12,651` compressed
-against `12,854` uncompressed) are recorded but prove nothing scientific and are
-not the basis.
+numbers under both**, which is the claim. The compressed output is smaller than
+the uncompressed one at the same precision, and that **relation** is the only
+size fact stated here: `msconvert` stamps its own command line into an mzML
+document, so an absolute mzML byte count moves with the length of the paths the
+operator happened to use and is not reproducible. It would prove nothing
+scientific in any case, and it is not the basis.
 
 **Compression is on by default.** `D1` passed no compression flag and its arrays
 are declared `zlib compression`. MSCanvas's unconditional `--zlib` therefore
@@ -339,10 +398,13 @@ silently centroid MS1 as well. **M6.3's argv mapping must always emit an explici
 **4. `cwt` has an input precondition and fails hard when it is unmet.** On the
 unflanked fixture, `K7` exited `1` with
 `[CwtPeakDetector::getScales] m/z profile data seems to lack flanking zeros between peak profiles`
-and left a **`3,882`-byte partial document** in the output directory against a
-`12,497`-byte baseline. That document is not merely short: it **does not parse**
-— `no element found: line 55, column 0` — so what a failed `cwt` run leaves
-behind is an unterminated XML file, not a smaller valid one. The default picker (`K8`) converted the same input
+and left a **partial document** in the output directory — under half the size of
+`K9`, the same fixture converted with no filter at all. That document is not
+merely short: it **does not parse** — `no element found` — so what a failed `cwt`
+run leaves behind is an unterminated XML file, not a smaller valid one. The
+comparison is stated as a relation rather than as two byte counts, because an
+mzML output carries its own command line and its absolute size therefore depends
+on the paths of the run that produced it. The default picker (`K8`) converted the same input
 without complaint. MSCanvas's own boundary contains this — ADR 0009 stages into a
 private directory and the integrity gate refuses a partial output — but the
 provider fact is that a user-selected algorithm can abort a conversion on data
@@ -478,13 +540,70 @@ non-mzML format still being a viable admission candidate, and mzXML remains one
 for single-source inputs, so the condition holds. It was then measured on every
 run rather than only the mzXML ones.
 
-**All twenty-nine runs produced exactly one file.** Every case ran into a fresh
-empty directory, and each directory afterwards held exactly its one output — no
-sidecar, no index file, no log, no scratch entry. This holds for the six mzXML
-runs specifically, including `X4`, which supplied no `--outfile` and let the
-backend name the output itself (`m62_profile.mzXML`). The `K7` failure case is
-the one to read carefully: it produced exactly one file too, and that file was a
-**partial** document rather than an extra one.
+**All twenty-nine cases produced exactly one directory entry.** Every case ran
+into a fresh empty directory, and each directory afterwards held exactly its one
+output — no sidecar, no index file, no log, no scratch entry.
+
+**Four of the twenty-nine produce mzXML: `X1`, `X2`, `X4` and `X5`.** That count
+is not a sentence any more. It is derived from the
+[case ledger](#the-measured-cases) by `output_format`, the driver reports it from
+the same source, and repository validation refuses a record that states a
+different number. `X3` is the **mzML control** and is deliberately not one of
+them. An earlier version of this section said *six*, which no case list ever
+supported; the ledger exists because prose could say that and nothing could
+contradict it.
+
+The four include `X4`, which supplied no `--outfile` and let the backend name the
+output itself (`m62_profile.mzXML`) — so the question was asked of a directory
+whose contents the backend chose.
+
+The `K7` failure case is the one to read carefully: it produced exactly one entry
+too, and that entry was the **unterminated partial** document, not an extra file.
+"One entry" there means one failed artifact, not one successful output.
+
+## The set was re-run from the committed driver
+
+The evidence above was first produced by an operator running the published argv.
+That is no longer the only way to reach it, and the difference matters: a record
+whose cases live in prose cannot be checked, and this one was not — it claimed
+six such runs against four and named twenty-eight of twenty-nine cases, and
+every table in it was internally consistent throughout.
+
+So the whole set was re-run from the repository:
+
+```text
+python -B scripts/msconvert_evidence_run.py --report <file>
+```
+
+| Step | Result |
+| --- | --- |
+| Fixtures regenerated and matched against their recorded digests | 3 / 3 exact |
+| Executable identity checked **before** the run | matches the identity above |
+| Cases enumerated from the committed ledger | `29`, all ids unique |
+| Cases executed, each into a fresh empty directory | `29` |
+| Directories holding exactly one entry afterwards | `29 / 29` |
+| mzXML-producing cases, derived from the ledger | `4` — `X1`, `X2`, `X4`, `X5` |
+| Outputs read back through the shared inspector | every one but `K7`, which does not parse |
+| Independent confirmations recomputed from this run | **33 / 33 agree** |
+| Executable identity checked **after** the run | byte length, digest, release and build date all unchanged |
+
+**No classification changed.** The thirty-three confirmations are the claims this
+record stands on, recomputed from the new run rather than copied: the mixed
+precision default per array, `--64` / `--32` / `--mz32 --inten64`, zlib's default
+and its off posture and their decoded equality, the three MS-level populations,
+`All` stated against `All` omitted, the default picker recovering every apex, `cwt`
+returning one peak of three, `vendor` producing the default picker's arrays and
+recording its name, the scope honoured with a picker token and discarded without
+one, `cwt`'s refusal and the default picker's acceptance of the same input, the
+mzXML single-source and multi-source spectrum counts with the mzML control, and
+the survivor identities. Every one agreed.
+
+**What is deliberately not stated as an absolute number.** `msconvert` stamps its
+own command line into an mzML output, so an mzML byte count moves with the length
+of the paths a run happened to use. Sizes appear here only as **relations** —
+compressed smaller than uncompressed, `K7`'s partial output under half of `K9`'s
+baseline — and those relations were reconfirmed by the rerun. The three fixture
+sizes and the mzXML output sizes are path-independent and did reproduce exactly.
 
 ## Candidate-standard matrix
 
@@ -499,7 +618,7 @@ located result or an explicit `NOT_APPLICABLE` with its reason.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `mzXML output` | `--mzXML` accepted | `X1`, `X2`, `X5` exit `0` | mzXML parsed with no malformed array and no per-scan length disagreement; `X2`'s **run-level** header declares `4` over `2` written | single-source faithful; multi-source **drops the non-default source file silently** | `X1` `4`/`4`; `X2` **`2`/`4`** with `scanCount="4"`; `X3` control `4`/`4` to mzML | `X1` arrays decode exactly equal to the source `float64` at `precision="64"` | `X1` declared `zlib`, decoded exactly | `X5` composed with `peakPicking`: `4` spectra, counts `4,1,7,1`, header honest | `X1`, `X2`, `X4`, `X5`: one file each; `X4` named by the backend |
 | `peakPicking default picker` | `peakPicking` accepted with no picker token | `K1`, `K8` exit `0` | mzML parsed | profile → centroid on every spectrum; every source peak recovered | `4`/`4` spectra preserved; entries `4,1,7,1` for source peaks `2,1,3,1`, the surplus being **zero-intensity padding** at `apex ± 0.04` | **every non-zero point is bit-identical to its source apex**, m/z and intensity, at `--64` | inherits the run's encoding; `K1` at `--64` declared `zlib` | `K11` shows the bare form silently discards `msLevel=`; `K12` composes with `--32`; `X5` composes with mzXML | `K1`, `K8`, `K12`: one file each |
-| `peakPicking cwt` | `peakPicking cwt` accepted | `K2`, `K10` exit `0`; `K7` exit **`1`** on unflanked input | `K2`/`K10` parse clean with no malformed array; `K7`'s `3,882`-byte output **does not parse at all** | profile → centroid, and the output names `CantWaiT …` — but on spectrum 2 **two of three source peaks are absent** | `4`/`4` spectra; entries `2,1,1,1`, all non-zero; the three-peak spectrum returns one | the points it does emit are bit-identical to their source apexes; the two it drops are unrecoverable | inherits the run's encoding | `K5`/`K6` order pair identical; `K10` composes with an MS-level scope | `K2`, `K7`, `K10`: one file each — `K7`'s is partial, not extra |
+| `peakPicking cwt` | `peakPicking cwt` accepted | `K2`, `K10` exit `0`; `K7` exit **`1`** on unflanked input | `K2`/`K10` parse clean with no malformed array; `K7`'s truncated output **does not parse at all**, against `K9`'s clean four-spectrum baseline on the same fixture | profile → centroid, and the output names `CantWaiT …` — but on spectrum 2 **two of three source peaks are absent** | `4`/`4` spectra; entries `2,1,1,1`, all non-zero; the three-peak spectrum returns one | the points it does emit are bit-identical to their source apexes; the two it drops are unrecoverable | inherits the run's encoding | `K5`/`K6` order pair identical; `K10` composes with an MS-level scope | `K2`, `K7`, `K10`: one file each — `K7`'s is partial, not extra |
 | `peakPicking vendor` | `peakPicking vendor` accepted | `K3` exit `0` | mzML parsed | **not observed** — the vendor path needs a vendor reader; the run produced the local-maximum picker's output and named it | `4`/`4` spectra, entries identical to `K1` including its zero-intensity padding | identical to `K1`'s, which is the evidence of substitution rather than of the vendor algorithm | inherits the run's encoding | `NOT_APPLICABLE` — nothing admitted here, so there is no composition to evidence | `K3`: one file |
 | `peakPicking MS-level scope` | `msLevel=<int_set>` accepted, positional after `<PickerType>` | `K4`, `K10`, `K11` exit `0` | mzML parsed | `K4` centroided MS2 only and left MS1 profile; `K10` centroided `1-2`; **`K11` without a picker token silently ignored the scope** | `K4` `14,1,21,1`; `K10` `2,1,1,1`; `K11` `4,1,7,1` across all levels | the MS1 spectra `K4` left alone are bit-identical to the source, so the scope excludes rather than merely re-picks | inherits the run's encoding | `K5`/`K6` measured in both orders with `msLevel` as a separate filter | `K4`, `K10`, `K11`: one file each |
 | `msLevel population filter` | `msLevel <int_set>` accepted; `1`, `2` and `1-` all parsed | `L1`–`L4` exit `0` | mzML parsed | exactly the requested spectra kept, by id | `L1` `scan=1,3`; `L2` `scan=2,4`; `L3`/`L4` all four; array lengths unchanged throughout | arrays carried through untouched at `--64` | inherits the run's encoding | `K5`/`K6` compose it with `peakPicking` in both orders | `L1`–`L4`: one file each |
@@ -507,8 +626,8 @@ located result or an explicit `NOT_APPLICABLE` with its reason.
 | `precision global` | `--64` / `--32` accepted | `P4`, `P3` exit `0` | mzML parsed | `--64` preserves both arrays; `--32` narrows both | `4`/`4` spectra, arrays unchanged in length | `P4` exact `float64` both arrays; `P3` exact `binary32` image both arrays | both declared `zlib` | `C1`/`C2` hold `--64` fixed while compression varies | `P3`, `P4`: one file each |
 | `precision m/z` | `--mz64` / `--mz32` accepted | `P1`, `P2`, `P5` exit `0` | mzML parsed | the m/z array follows the flag independently of intensity | `4`/`4` spectra, arrays unchanged in length | `P5` proves independence: m/z `binary32` image while intensity stays exact `float64` | all declared `zlib` | `K12` composes `--32` with `peakPicking`: same entry count as `K1`, and every value the exact `binary32` image of `K1`'s | `P1`, `P2`, `P5`: one file each |
 | `precision intensity` | `--inten64` / `--inten32` accepted | `P1`, `P2`, `P5` exit `0` | mzML parsed | the intensity array follows the flag independently of m/z | `4`/`4` spectra, arrays unchanged in length | `P1` exact `float64`; `P2` `binary32` image; `P5` exact while m/z narrows | all declared `zlib` | `K12` as above — a filter that rewrites the arrays does not defeat the precision choice | `P1`, `P2`, `P5`: one file each |
-| `compression zlib on` | `--zlib` accepted | `C1` exit `0` | mzML parsed | arrays declared `zlib compression` | `4`/`4` spectra, arrays unchanged in length | decoded values exactly equal to `C2`'s at the same `--64` | `MS:1000574 zlib compression`; `12,651` bytes | held at `--64` so precision cannot be mistaken for compression | `C1`: one file |
-| `compression zlib off` | `--zlib=off` accepted | `C2` exit `0` | mzML parsed | arrays declared `no compression` | `4`/`4` spectra, arrays unchanged in length | decoded values exactly equal to `C1`'s | `MS:1000576 no compression`; `12,854` bytes | same | `C2`: one file |
+| `compression zlib on` | `--zlib` accepted | `C1` exit `0` | mzML parsed | arrays declared `zlib compression` | `4`/`4` spectra, arrays unchanged in length | decoded values exactly equal to `C2`'s at the same `--64` | `MS:1000574 zlib compression`, and smaller than `C2` | held at `--64` so precision cannot be mistaken for compression | `C1`: one entry |
+| `compression zlib off` | `--zlib=off` accepted | `C2` exit `0` | mzML parsed | arrays declared `no compression` | `4`/`4` spectra, arrays unchanged in length | decoded values exactly equal to `C1`'s | `MS:1000576 no compression`, and larger than `C1` | same | `C2`: one entry |
 
 ## Evidence-blocked items, and who owns them
 
