@@ -709,21 +709,31 @@ one*, which this slice never needed and a later one might.
 strict base64 validation, a required-array check, and the run-level count read
 beside the per-spectrum ones — not four separate patches.
 
-### The driver checks less than it reads, too
+### `verify()` re-answers the required confirmations, not every basis
 
-Three more instances of the same property, in the runner rather than the
-inspector, found by review on the corrected head and recorded rather than fixed.
+**The distinction matters and is stated rather than left to be inferred.** The
+driver's thirty-three checks are the confirmations this slice was required to
+reproduce. They are not the complete set of facts the classifications rest on,
+and a reader who took `33/33 agree` as "every basis re-verified" would be reading
+more into it than it says.
 
-| Instance | What it does not do | Why no conclusion moves |
-| --- | --- | --- |
-| Process working directory | `subprocess.run` is given no `cwd`, so each conversion inherits the caller's directory and only `--outdir` is enumerated | Measured directly instead: the full set run from a directory created empty left only the driver's own report, and the worktree was unchanged |
-| Declared posture | `posture` is copied into the report; only `K7` and `K8` have their exit codes compared | Every case's exit was checked by hand against its declared posture for this run and all twenty-nine agreed |
-| Filter order | `K5` and `K6` both run, and `verify()` never compares them, so `33/33` does not cover the order claim | The comparison was made and is recorded under [interaction and ordering](#interaction-and-ordering); it is the check that is missing, not the result |
+Six gaps were found by review on the corrected head. **Every one is a missing
+check, not a wrong result**: each underlying fact was verified directly, and the
+verification is recorded beside the gap.
 
-**Owner: M6.10**, with the rest of the tooling-strictness family. The right shape
-is one pass over the runner — pin the working directory, compare every declared
-posture, and fold the order pair into the success condition — rather than three
-patches.
+| Gap in `verify()` | The fact, verified directly |
+| --- | --- |
+| No `cwd` is passed, so a conversion inherits the caller's directory while only `--outdir` is enumerated | The full set was re-run from a directory created empty; afterwards it held only the driver's own report, and the worktree was unchanged |
+| `posture` is copied into the report; only `K7` and `K8` have their exit codes compared | Every case's exit was compared to its declared posture: **29 / 29 agree** |
+| `K5` and `K6` both run and are never compared | The comparison was made and is recorded under [interaction and ordering](#interaction-and-ordering) |
+| The default-picker check reads only spectrum 2, and only m/z | All four spectra, **m/z and intensity**: every non-zero point is bit-identical to its source apex |
+| The MS-level checks compare spectrum ids and not arrays | Both surviving spectra of `L1` and of `L2` are **value-identical** to the source in both arrays, not merely equal in length |
+| `P1` and `P2` are run but never shaped | Both arrays of both cases, all spectra: `P1` exact `float64` at 64 bits, `P2` the exact `binary32` image at 32 bits |
+
+**Owner: M6.10**, with the rest of the tooling-strictness family, as one pass over
+the runner rather than six patches: pin the working directory, compare every
+declared posture, fold the order pair in, and widen the picker, MS-level and
+precision checks to every spectrum and both arrays.
 
 ## What this record does not do
 

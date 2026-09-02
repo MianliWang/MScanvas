@@ -6438,21 +6438,29 @@ healthy one, which this slice never needed.
 **P3. Owner: M6.10**, the next slice to measure a non-mzML format, as one change
 rather than five patches.
 
-**Three more of the same family, in the runner.** Review found them on the
-corrected head. The driver passes no `cwd`, so each conversion inherits the
-caller's directory while only `--outdir` is enumerated; `posture` is copied into
-the report rather than compared for twenty-seven of the twenty-nine cases; and
-`K5`/`K6` both run without `verify()` ever comparing them, so `33/33` does not
-cover the filter-order claim the matrix cites them for.
+**Six more of the same family, in the runner.** Review found them across two
+rounds on the corrected head, and they share one shape: **the driver's
+thirty-three checks are the confirmations this slice was required to reproduce,
+not every basis the classifications rest on.** No `cwd` is passed, so a
+conversion inherits the caller's directory; `posture` is copied rather than
+compared for twenty-seven cases; `K5`/`K6` run without being compared; the
+default-picker check reads one spectrum and one array; the MS-level checks
+compare ids and not arrays; `P1` and `P2` run without being shaped.
 
-None moves a conclusion, and the first was answered by measurement rather than by
-argument: the whole set was re-run from a directory created empty, and afterwards
-that directory held only the driver's own report — **`msconvert` wrote nothing to
+**Every one is a missing check, not a wrong result**, and each underlying fact
+was verified directly rather than argued. The whole set re-run from a directory
+created empty left only the driver's own report — **`msconvert` wrote nothing to
 its process working directory across all twenty-nine cases** — with the worktree
-unchanged. Every exit code was checked by hand against its declared posture and
-all twenty-nine agreed, and the order comparison is recorded in the evidence
-document. **P3. Owner: M6.10**, as one pass over the runner rather than three
-patches.
+unchanged. Every exit matched its declared posture, 29 / 29. All four spectra of
+`K1` have every non-zero point bit-identical to its source apex in **both** m/z
+and intensity. Both surviving spectra of `L1` and `L2` are **value-identical** to
+the source in both arrays, which is stronger than the length comparison the first
+analysis made. And `P1`/`P2` are exact `float64` and the exact `binary32` image
+respectively, both arrays, all spectra.
+
+**P3. Owner: M6.10**, as one pass over the runner rather than six patches. The
+evidence record now states the distinction in its own words, so `33/33 agree` is
+not read as "every basis re-verified".
 
 ### What the guard does not do, stated rather than left to be discovered
 
