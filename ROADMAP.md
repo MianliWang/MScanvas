@@ -448,12 +448,12 @@ claimed closed.
   and CNV-003's output-location choices.
 - Queue work beyond the current bounds, **measurement-gated, and neither an exit
   criterion nor a route requiring a disposition**: a re-evaluated queue bound and
-  per-item cancellation. A larger queue and a
-  per-item cancel are admitted only on M6.8's measurement of what an `msconvert`
-  run actually is **and on its ownership outcome** — a per-item cancel is refused
-  where the spawn-to-Job window stays open — the queue stays finitely bounded
-  whatever that measurement says, and removing an item from a queue already
-  running is refused outright — membership is bound when the queue is created. See
+  per-item cancellation. Both are admitted only on M6.8's measurement of what an
+  `msconvert` run actually is **and on its ownership outcome** — a per-item cancel
+  is refused where the spawn-to-Job window stays open. The queue stays finitely
+  bounded whatever that measurement says, and removing an item from a queue
+  already running is refused outright: membership is bound when the queue is
+  created. See
   [ADR 0043](docs/architecture/adr/0043-conversion-completion-route.md).
 - **Whether a further evidenced vendor family opens at all**, answered once as a
   single decision rather than family by family. This one *is* on the closed

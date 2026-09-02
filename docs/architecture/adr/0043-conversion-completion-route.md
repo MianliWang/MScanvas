@@ -658,8 +658,9 @@ measurement **and** the ownership outcome, and refused under
 `OWNERSHIP_UNCONFIRMED`) and **skip a queued item** (does not exist; admissible, and not a
 membership change) — with **remove a queued item** refused outright, because it
 is a membership change and membership is bound at `BEGIN`; a live measurement of
-what an `msconvert` process tree actually is for this build; and a capacity
-decision taken *after* that, with a stated basis.
+what an `msconvert` process tree actually is for this build; the terminal
+ownership outcome below; and a capacity decision taken *after both*, with a
+stated basis.
 
 *The measurement this slice owes.* Windows Job Objects, `TerminateJobObject` and
 an emptiness check via `QueryInformationJobObject` are implemented and correct in
@@ -1838,7 +1839,7 @@ expected to own it.
 | 4 | **Destination authority is explicit and safe.** A destination is a resolved directory object with the policy that chose it; source/destination **object aliasing** is refused on identity rather than on a path prefix; writing **inside a directory-shaped acquisition** fails closed; the **sibling folder of a file-shaped acquisition is admitted**, because that is what `source sibling` resolves to; and a retry revalidates by identity rather than by name. **Named exception, carried from CNV-D3:** where no admitted acquisition family is directory-shaped, the aliasing and vendor-dataset-root halves are met by each rule being stated, ordered ahead of the sibling admission, and implemented in a path a directory-shaped source would enter — rather than by an observed refusal, because nothing can currently trip either | **M6.5** |
 | 5 | **Selected and all are deterministic and bound.** Each scope has one stated meaning, a visible order, an explicit treatment of ineligible rows and of rows added after `BEGIN`, and a capacity refusal that arrives before the commit | **M6.7** |
 | 6 | **Conflict and destructive behaviour are explicit.** The conflict policy is resolved on the typed request before launch and identically for every entry path; any destructive option is explicit, scoped, bound to its plan and not inherited by retry; and where overwrite is refused, the refusal is recorded with its reason | **M6.6** |
-| 7 | **Cancellation states reflect measured process behaviour, and claim no more than the scope observed.** Every cancellation claim names the observation behind it; the process-tree claim rests on a real measurement of the installed build **and** on a structurally closed ownership window, and where ownership cannot be closed the path is classified `OWNERSHIP_UNCONFIRMED` and `Cancelled` is not claimed on it; an unconfirmed termination stays unconfirmed and keeps quarantining the session | **M6.8** |
+| 7 | **Cancellation states reflect measured process behaviour, and claim no more than the scope observed.** Every cancellation claim names the observation behind it; the process-tree claim rests on a real measurement of the installed build **and** on a structurally closed ownership window, and where ownership cannot be closed the path is classified `OWNERSHIP_UNCONFIRMED` and `Cancelled` is not claimed **on that basis** — the item state is retained for an owned-Job-empty observation, and what is withdrawn is the *tree* claim; an unconfirmed termination stays unconfirmed and keeps quarantining the session | **M6.8** |
 | 8 | **Progress contains no fabricated precision.** Item counts, per-state counts and the current item's state — and any finer signal only on a measurement that it can be counted honestly | **M6.8** |
 | 9 | **Process, finalization, integrity and adoption are distinct, and visibly so.** No surface, wire type or summary reduces an item to succeeded/failed, and a reader can tell "it ran" from "it was written" from "it was checked" from "it is in the workspace" | **M6.9** |
 | 10 | **Multi-output completion is truthful.** A backend-named set reports how many of what landed; a partial set is neither a success nor a failure; and a set's collisions and adoption are answered as a set rather than by a one-file rule | **M6.6**, **M6.9** |
@@ -1858,9 +1859,10 @@ Three milestone-wide conditions, on the pattern
 admitted mzXML; an admitted VIEW-007 re-entry; an admitted vendor-format direct
 preview; an admitted further vendor family; a visible XIC; a larger queue;
 per-item cancellation; a queued-item skip; and any part of M7 or M8. Each is excluded unconditionally. A
-measurement that *supports* per-item cancellation permits M6.8 to deliver it; it
-never turns it into a requirement, because no criterion above names it and a
-milestone whose completion turns on how a measurement lands is not a milestone.
+measurement that *supports* per-item cancellation, **together with an ownership
+outcome that permits it**, lets M6.8 deliver it; neither turns it into a
+requirement, because no criterion above names it and a milestone whose completion
+turns on how a measurement lands is not a milestone.
 
 **This is a list of capabilities, not of questions.** The **first four** are the
 *admitted forms* of criterion 11's four closed side routes — mzXML, VIEW-007's
