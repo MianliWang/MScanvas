@@ -250,9 +250,12 @@ document passes the integrity contract. CNV-002 stays unplannable. The only
 processing decisions that boundary expresses are CNV-004's no-peak-picking rule
 and zlib compression, which is unconditional rather than the explicit choice
 CNV-007 asks for; CNV-005 and CNV-006 are not expressible at all, and CNV-003's
-vendor-dataset-root rule is unreachable because no vendor acquisition is
-recognized. See
-[ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md).
+vendor-dataset-root rule is unexercisable because no admitted acquisition family
+is directory-shaped — Thermo RAW and Shimadzu LCD are single files, and a SCIEX
+acquisition is a `.wiff` bound to its `.wiff.scan` sibling. See
+[ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md), and
+[ADR 0043](../architecture/adr/0043-conversion-completion-route.md) for the M6
+route that owns closing these.
 
 ## Runs and recovery
 

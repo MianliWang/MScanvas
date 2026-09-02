@@ -380,7 +380,51 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 
 ## M6 — Conversion Completion
 
-**Next, not started.**
+**Started. The route is locked; M6.1 is the next implementation slice.**
+
+The route, the live conversion gap audit it was decided from, the nine product
+decisions it surfaces, the twelve exit criteria and the M7/M8 seams are in
+[ADR 0043](docs/architecture/adr/0043-conversion-completion-route.md). Twelve
+slices:
+
+- M6.0 — **complete** (route lock, documentation only).
+- M6.1 — conversion-lane authority. **Next.**
+- M6.2 — `msconvert` capability and evidence.
+- M6.3 — typed `ConversionIntent`.
+- M6.4 — visible settings, and a truthful plan.
+- M6.5 — destination authority.
+- M6.6 — destination and conflict UX, including the destructive question.
+- M6.7 — convert selected, convert all.
+- M6.8 — cancellation, capacity, and truthful progress.
+- M6.9 — output completion and adoption.
+- M6.10 — evidence-gated side routes.
+- M6.11 — closure.
+
+**M6.1 is first because the audit found the conversion lane has no single
+availability authority.** `convert` claims a ref as it dispatches while every
+rendered answer waits for the queue slot to be read back; the handler's own guard
+is strictly narrower than the rendered one, so the divergence runs in both
+directions; and an arriving read can lower a claim a handler just raised. Every
+later slice adds a control that must say truthfully whether pressing it will do
+something, so this is closed before settings, scope, destination or cancellation
+are built on it. The viewer already holds the answer pattern, in
+[ADR 0041](docs/architecture/adr/0041-viewer-selection-availability.md).
+
+**The audit also found the boundary beneath M6 is stronger than this backlog
+implied**, and the route is shaped accordingly: destinations are already admitted
+by Windows object identity and revalidated on retry, finalization is already
+handle-bound and taken only after the integrity contract passes, termination
+already uses an owned Job Object, progress already refuses a percentage, and
+conversion capability is already bound to an exact `msconvert.exe` digest per
+vendor family. Most of M6 is giving that boundary an honest product surface. The
+genuinely new work is measuring what the installed `msconvert` does with the
+settings this product wants to offer, and making one rule decide whether a
+conversion action may start.
+
+**Nothing in M6 is completed by a measurement going a particular way.** mzXML,
+vendor-format direct preview, a further vendor family and XIC re-entry each end in
+a stated disposition — admitted, refused with evidence, or evidence-blocked — and
+none of them is an M6 exit criterion.
 
 M5 hands it two things beyond the backlog below. The **capability-evidence
 discipline** M5.4 established — exact installed signature, exact executable

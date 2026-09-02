@@ -5825,3 +5825,154 @@ The third passing is what a focus-dependent clipboard case does rather than
 evidence that anything was fixed, and it is recorded as an observation rather
 than a repair. The four M5.7 real-shell cases pass. **No new failure.** The suite
 is not green and is not described as green.
+
+## M6.0 — Conversion Completion orientation and route lock, 2026-09-01
+
+The M6 route-lock slice. **Documentation only**: no production Rust, no
+frontend, no CSS, no dependency change, no new behaviour and no tests for new
+behaviour. The route record is
+[ADR 0043](docs/architecture/adr/0043-conversion-completion-route.md), which
+holds the gap audit, the twelve-slice graph, the nine decisions, the exit
+criteria and the M7/M8 seams; nothing is retold here.
+
+Baseline `0c23c59a9ba7ecba39ad6030fdd8c604c23a602b`, clean and level with
+`origin/main`.
+
+### The audit changed the shape of the milestone
+
+`ROADMAP.md`'s four M6 bullets were written without a live audit of the
+conversion code. Reading it changed the answer in both directions.
+
+**Stronger than the backlog implied**, and therefore not M6 work: destinations
+are admitted by Windows object identity — volume serial plus 128-bit file ID read
+from a held handle — with reparse points, non-directories and remote volumes
+refused before a plan exists, and a retry re-admits and refuses unless it reaches
+the same object; finalization is handle-bound and taken only after the integrity
+contract passes; termination is an owned Job Object with an emptiness check, not
+a `kill()`; the item vocabulary already has eight states including three
+different cancellation outcomes; progress already refuses a percentage in the DTO
+itself; and vendor-family conversion is already gated on an exact
+`msconvert.exe` digest by `EVIDENCED_PROVIDER_BUILDS`.
+
+**Seventeen gaps** are recorded in the ADR. The concentration is in two places:
+no `msconvert` capability has ever been measured beyond single- and multi-output
+mzML with `--zlib`, and the conversion lane has no single availability authority.
+
+### The M5 handoff still exists, and is worse than recorded
+
+The `convert` ref/render window is live. `busyRef` is raised synchronously in the
+click handler while `backendLaneBusy` and `busy` derive only from an arriving
+slot read, so the window opens at the click and closes when the first read
+carrying an owning status commits.
+
+Three things M5's record did not say. **The divergence runs both ways** — the
+handler guard is strictly narrower than the rendered `disabled` expression, so a
+quarantine, an installation check and an unsettled workspace mutation each
+disable the button while the handler would accept a dispatch. **A read can lower
+a claim** — `applyUpdate` assigns `busyRef` unconditionally from the arriving
+status. And **`canRetry` is computed and has no consumer**; the `Retry` control
+answers to `canConvert` instead.
+
+The defect is given one name here — **the conversion-lane availability
+divergence** — because it was carried under two across five documents and no
+tracking identity under either. **Owner: M6.1**, and M6.1 is first for that
+reason.
+
+### D-decisions, and where evidence is missing
+
+Nine decisions, `CNV-D1` to `CNV-D9`, anchored to the `CNV-*` identities
+`FEATURE_CATALOG.md` already carries. Statuses in the ADR. What matters for
+planning: **five of the nine cannot be closed without a measurement nobody has
+taken**, and two long-pending ones are now owned rather than orphaned — what
+`msconvert` does to an existing output, and whether it writes anything into its
+working directory besides its output. Both have sat in `Intentionally pending`
+since M3, and CNV-008's overwrite half depends on the first.
+
+One decision is neither open nor closed but **contested**: `ConversionPlan`'s
+conflict type says overwrite is excluded because ADR 0009 refuses to replace a
+file this boundary did not create, while CNV-008 says overwrite requires explicit
+confirmation and `PROJECT_PROPOSAL.md` §7.7 additionally lists an automatic
+rename that exists nowhere. Two accepted documents disagree; M6.0 records that
+rather than resolving it by preference. **Owner: M6.6**, after M6.2 measures.
+
+### Queue capacity, stated accurately
+
+`MAX_CONVERSION_QUEUE_ITEMS = 16` is a **wait-time judgement, not a memory
+limit**, and the code says so. Nothing in the repository measures memory,
+throughput or scaling against queue length. Its stated premise has gone stale —
+the doc comment justifies 16 on the queue having "no cancellation", and a
+queue-level stop has existed since ADR 0015. The queue stays finitely bounded
+whatever value M6 lands on, and re-evaluating it is **M6.8's**, after
+cancellation is understood.
+
+### Cancellation: a strong mechanism, and a measurement that has not been made
+
+Job Objects, `TerminateJobObject` and an emptiness check are implemented and
+correct in shape. What has **not** been established is that a real `msconvert`
+run is a *tree at all*: `surviving_processes == Some(0)` after termination is
+satisfied trivially by a one-process run, `max_active_processes` is measured by
+the crate but never published and never read by the evidence harness, and the
+only multi-process evidence is against a synthetic mock parent and grandchild —
+which [ADR 0014](docs/architecture/adr/0014-proteowizard-cancellation-evidence.md)
+states openly. Two code-level facts join it: the child is spawned *before* it is
+assigned to the Job, and an assignment failure degrades to a direct-child kill
+without being reclassified as unconfirmed. **Owner: M6.8**, before any surface
+claims a tree was terminated.
+
+### XIC: no new identity at this baseline
+
+The installed `msaccess.exe` hashes to `85681B20…D1F4` and the sibling
+`msconvert.exe` to `9BB6F5D5…D590BD` — both byte-identical to what the M5.4
+spike recorded, at the same 12,898,816 bytes for `msaccess`. **No new executable
+identity is observed, so the conditional re-entry does not fire here.** The
+trigger stays live for the rest of the milestone: the gate is the condition, not
+the date, and M6.2 and M6.10 each re-observe what they measure against. The
+formal Post-M6 XIC provider/runtime interlude is recorded in the ADR, is not an
+M6 exit criterion, and is not scheduled by it.
+
+### Residuals re-checked, and not absorbed
+
+Three historical items, checked against the live tree rather than assumed, and
+**none is M6-owned by any current authoritative document**. The `projection.rs`
+rustdoc P3 exists only as two back-references and was never stated, so it cannot
+be closed; the passing `validate_drawability_is_settled_in_one_place` guard over
+that file is a different thing. The retention-time viewport rounding is **open**
+with the placeholder owner "whichever slice next owns that planner", is still
+live in `viewportAction.ts`, and belongs to the chromatogram planner rather than
+to conversion. The spectrum `clipPath` is a deliberate implementation and the
+transient transform is a repaired defect recorded as a killed mutation — neither
+is a residual. M4.4's four P3s remain closed.
+
+### One current-status correction
+
+`FEATURE_CATALOG.md` said CNV-003's vendor-dataset-root rule is unexercisable
+"because no vendor acquisition is recognized". That clause was written before
+ADR 0010 admitted Thermo RAW and was carried unchanged through three vendor
+admissions. The conclusion was right and the reason had gone stale: the rule is
+unexercisable because **no admitted family is directory-shaped**. Corrected, and
+nothing else in that file changed.
+
+### Validation
+
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build`, `pnpm e2e:typecheck` and `git diff --check`, each run directly and
+each exiting zero. Rust **1,350**; frontend **1,378** across 49 files. Both counts
+are unchanged from M5.8, as a slice that touches no code should leave them.
+
+**`pnpm e2e:browser` did not run and is not described as green.** All nine spec
+files failed at session creation with `This version of ChromeDriver only supports
+Chrome version 152 / Current browser version is 151.0.7922.175` — zero specs
+executed, so no application code was reached. Reproduced on `main` with this
+slice stashed: identical failure, identical `0 passed, 9 failed`. It is a local
+toolchain mismatch that predates this slice, is unrelated to it, and is not run
+by CI, which executes lint, typecheck, unit tests, build, the Rust gates and
+`check_repo.py`. Recorded as an environment blocker for whoever next needs a
+rendered browser pass, which M6.1 will.
+
+### What this slice does not do
+
+It implements no M6 behaviour, admits no conversion setting, measures no backend
+capability beyond hashing the two installed executables, changes no test, and
+does not start M6.1.
