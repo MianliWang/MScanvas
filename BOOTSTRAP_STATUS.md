@@ -6438,8 +6438,10 @@ healthy one, which this slice never needed.
 **P3. Owner: M6.10**, the next slice to measure a non-mzML format, as one change
 rather than five patches.
 
-**Six more of the same family, in the runner.** Review found them across two
-rounds on the corrected head, and they share one shape: **the driver's
+**More of the same family, in the runner and the guard.** Review enumerated
+instance after instance across three rounds on the corrected head — they are not
+counted here, because an exhaustive list goes stale and the property does not —
+and they share one shape: **the driver's
 thirty-three checks are the confirmations this slice was required to reproduce,
 not every basis the classifications rest on.** No `cwd` is passed, so a
 conversion inherits the caller's directory; `posture` is copied rather than
@@ -6458,9 +6460,17 @@ the source in both arrays, which is stronger than the length comparison the firs
 analysis made. And `P1`/`P2` are exact `float64` and the exact `binary32` image
 respectively, both arrays, all spectra.
 
-**P3. Owner: M6.10**, as one pass over the runner rather than six patches. The
-evidence record now states the distinction in its own words, so `33/33 agree` is
-not read as "every basis re-verified".
+Later rounds added three more of exactly the same kind, each verified the same
+way: compression is declared consistently across all eight arrays of all four
+spectra in `D1`, `C1` and `C2`; `K12`'s composition has the same peak counts as
+`K1` with every value the exact `binary32` image; and all twenty-nine rows of the
+record's case table agree with the ledger on all seven fields, not just the two
+the guard compares.
+
+**P3. Owner: M6.10**, as one pass over the runner and the guard rather than a
+patch per instance. The evidence record states the distinction in its own words
+and lists instances illustratively rather than exhaustively, so `33/33 agree` is
+not read as "every basis re-verified" and the list cannot go stale.
 
 ### What the guard does not do, stated rather than left to be discovered
 

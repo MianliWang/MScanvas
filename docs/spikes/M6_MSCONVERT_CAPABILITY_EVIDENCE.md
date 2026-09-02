@@ -717,8 +717,11 @@ reproduce. They are not the complete set of facts the classifications rest on,
 and a reader who took `33/33 agree` as "every basis re-verified" would be reading
 more into it than it says.
 
-Six gaps were found by review on the corrected head. **Every one is a missing
-check, not a wrong result**: each underlying fact was verified directly, and the
+Review enumerated instance after instance of this on the corrected head, and
+they are not counted here on purpose — an exhaustive list would be stale the next
+time someone reads `verify()` closely, and the property is what a reader needs.
+The table below is **illustrative**. **Every instance found was a missing check,
+not a wrong result**: each underlying fact was verified directly, and the
 verification is recorded beside the gap.
 
 | Gap in `verify()` | The fact, verified directly |
@@ -729,11 +732,15 @@ verification is recorded beside the gap.
 | The default-picker check reads only spectrum 2, and only m/z | All four spectra, **m/z and intensity**: every non-zero point is bit-identical to its source apex |
 | The MS-level checks compare spectrum ids and not arrays | Both surviving spectra of `L1` and of `L2` are **value-identical** to the source in both arrays, not merely equal in length |
 | `P1` and `P2` are run but never shaped | Both arrays of both cases, all spectra: `P1` exact `float64` at 64 bits, `P2` the exact `binary32` image at 32 bits |
+| The compression check reads one array of one spectrum | All eight arrays of all four spectra: `D1` and `C1` declare `zlib` throughout, `C2` declares `no compression` throughout |
+| `K12` runs and is never compared | Same peak counts as `K1`, every value the exact `binary32` image of `K1`'s, `32`-bit declared, all four spectra centroided |
+| The guard compares the ledger's case and format, not its other fields | All twenty-nine rows of the record's table agree with the ledger on all seven fields — id, family, fixture, arguments, format, output name, posture |
 
 **Owner: M6.10**, with the rest of the tooling-strictness family, as one pass over
-the runner rather than six patches: pin the working directory, compare every
-declared posture, fold the order pair in, and widen the picker, MS-level and
-precision checks to every spectrum and both arrays.
+the runner and the guard rather than a patch per instance: pin the working
+directory, compare every declared posture, fold in the order pair and `K12`, and
+widen the picker, MS-level, precision and compression checks to every spectrum
+and both arrays — then have the guard compare every ledger field rather than two.
 
 ## What this record does not do
 
