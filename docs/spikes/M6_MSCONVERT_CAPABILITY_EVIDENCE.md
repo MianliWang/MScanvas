@@ -561,6 +561,16 @@ The `K7` failure case is the one to read carefully: it produced exactly one entr
 too, and that entry was the **unterminated partial** document, not an extra file.
 "One entry" there means one failed artifact, not one successful output.
 
+**And the question was also asked of the process's own working directory.**
+Counting entries in `--outdir` cannot see a file written beside the *caller*
+instead, which is a different place and an easy one to miss. So the whole
+twenty-nine-case set was run once more from a directory created empty for the
+purpose. Afterwards that directory held exactly one file: the driver's own
+report. **`msconvert` wrote nothing to its process working directory across all
+twenty-nine cases**, and the repository worktree was unchanged. The driver does
+not yet *pin* that directory — see the residual below — so this is recorded as
+the measurement it is rather than as a property the tooling enforces.
+
 ## The set was re-run from the committed driver
 
 The evidence above was first produced by an operator running the published argv.
@@ -698,6 +708,22 @@ one*, which this slice never needed and a later one might.
 **Owner: M6.10**, the next slice to measure a non-mzML format. The right shape is
 strict base64 validation, a required-array check, and the run-level count read
 beside the per-spectrum ones — not four separate patches.
+
+### The driver checks less than it reads, too
+
+Three more instances of the same property, in the runner rather than the
+inspector, found by review on the corrected head and recorded rather than fixed.
+
+| Instance | What it does not do | Why no conclusion moves |
+| --- | --- | --- |
+| Process working directory | `subprocess.run` is given no `cwd`, so each conversion inherits the caller's directory and only `--outdir` is enumerated | Measured directly instead: the full set run from a directory created empty left only the driver's own report, and the worktree was unchanged |
+| Declared posture | `posture` is copied into the report; only `K7` and `K8` have their exit codes compared | Every case's exit was checked by hand against its declared posture for this run and all twenty-nine agreed |
+| Filter order | `K5` and `K6` both run, and `verify()` never compares them, so `33/33` does not cover the order claim | The comparison was made and is recorded under [interaction and ordering](#interaction-and-ordering); it is the check that is missing, not the result |
+
+**Owner: M6.10**, with the rest of the tooling-strictness family. The right shape
+is one pass over the runner — pin the working directory, compare every declared
+posture, and fold the order pair into the success condition — rather than three
+patches.
 
 ## What this record does not do
 

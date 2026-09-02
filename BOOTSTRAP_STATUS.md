@@ -6438,6 +6438,22 @@ healthy one, which this slice never needed.
 **P3. Owner: M6.10**, the next slice to measure a non-mzML format, as one change
 rather than five patches.
 
+**Three more of the same family, in the runner.** Review found them on the
+corrected head. The driver passes no `cwd`, so each conversion inherits the
+caller's directory while only `--outdir` is enumerated; `posture` is copied into
+the report rather than compared for twenty-seven of the twenty-nine cases; and
+`K5`/`K6` both run without `verify()` ever comparing them, so `33/33` does not
+cover the filter-order claim the matrix cites them for.
+
+None moves a conclusion, and the first was answered by measurement rather than by
+argument: the whole set was re-run from a directory created empty, and afterwards
+that directory held only the driver's own report — **`msconvert` wrote nothing to
+its process working directory across all twenty-nine cases** — with the worktree
+unchanged. Every exit code was checked by hand against its declared posture and
+all twenty-nine agreed, and the order comparison is recorded in the evidence
+document. **P3. Owner: M6.10**, as one pass over the runner rather than three
+patches.
+
 ### What the guard does not do, stated rather than left to be discovered
 
 The guard's own limits, because a validator's reputation outruns it faster than
