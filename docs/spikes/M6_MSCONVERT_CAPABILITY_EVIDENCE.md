@@ -522,28 +522,41 @@ meeting the blocked list does not have to work out which is which.
 - **`msRun/@scanCount` on other paths.** The hollow count was measured on the
   multi-source mzXML case. Whether the same writer misdeclares on other inputs
   was not measured.
-- **The decoder checks alignment and declared length, and not base64
-  validity.** `base64.b64decode` discards characters outside the alphabet
-  unless asked not to, so a payload with a stray character that still decodes to
-  aligned bytes is reported as healthy — reproduced by inserting `$` into a
-  fixture array, which decoded fourteen values with no malformed flag. Every
-  output measured here was produced by `msconvert`, parsed as XML, and decoded to
-  values checked against independently computed references, so no conclusion
-  rests on the unchecked case; but the decoder's refusal is a refusal about
-  *width and length*, not about syntax. Found by review on the repaired head and
-  **not repaired** — this slice's one authorized repair pass was already spent.
-  **Severity P3. Owner: M6.10.**
-- **The hollow count was read from the output directly, not through the
-  committed inspector.** `inspect` reports an mzXML document's actual `<scan>`
-  count and each scan's `peaksCount` disagreement, but not the run-level
-  `msRun/@scanCount`, so re-running the harness reproduces `X2`'s **drop** and
-  not its **misdeclaration**. The classification does not depend on it — the
-  source-file drop alone fails CNV-002's gate, as recorded above — but a future
-  reader re-measuring a non-mzML format should add the run-level field rather
-  than assume the tool would surface it. Found by review on the repaired head and
-  **not repaired**: this slice's one authorized repair pass was already spent.
-  **Severity P3. Owner: M6.10**, which is the next slice to measure a non-mzML
-  format.
+
+## The harness is an inspector, not a validator
+
+Recorded as one item because it is one property, and because review found four
+instances of it after this slice's single authorized repair pass had been spent.
+`inspect` reports what a document contains; **its silence is not a certificate
+of validity**, and no conclusion in this record is drawn from that silence.
+
+| Instance | What it does not catch |
+| --- | --- |
+| base64 syntax | `b64decode` drops characters outside the alphabet, so a stray `$` in a payload that still decodes to aligned bytes reads as healthy |
+| a missing array | a spectrum with no intensity array at all is reported with no malformed flag and no length disagreement |
+| mzXML run-level count | `msRun/@scanCount` is not read, so `X2`'s **drop** reproduces through the harness and its **misdeclaration** does not |
+| anything else structural | duplicate arrays, absent units, wrong `cvParam`s — none is checked |
+
+**Why none of it is load-bearing here, verified rather than asserted.** Every
+numeric conclusion in this record is a *positive equality* against two
+independently computed references — the source `float64` value and its exact
+`binary32` image — and a document that is missing or wrong fails that comparison
+rather than passing it. Run against the fixture:
+
+| Document | malformed flag | length disagreement | the record's own equality check |
+| --- | --- | --- | --- |
+| healthy | none | none | **passes** |
+| intensity array removed | none | none | **fails** |
+| stray `$` in a payload | none | none | **passes**, and correctly — dropping the character leaves the decoded bytes, and therefore the values, unchanged |
+
+So the missing-array case would have been caught by the analysis regardless of
+the flag, and the stray-character case changes no value the record reports. What
+the gaps cost is the ability to *distinguish a corrupt document from a healthy
+one*, which this slice never needed and a later one might.
+
+**Owner: M6.10**, the next slice to measure a non-mzML format. The right shape is
+strict base64 validation, a required-array check, and the run-level count read
+beside the per-spectrum ones — not four separate patches.
 
 ## What this record does not do
 

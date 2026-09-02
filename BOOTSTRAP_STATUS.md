@@ -6393,46 +6393,33 @@ which is the one ending the obligation rules out. The record now declares an
 explicit `TRIGGERED_AND_MEASURED` or `NOT_TRIGGERED` token and the validator
 requires exactly one of them.
 
-### Three residuals, observed and not absorbed
+### Residuals: the harness is an inspector, not a validator
 
-All three were found by review **after** the single authorized repair pass had
-been spent, all three are in this slice's own tooling rather than in any measured
-conclusion, and all three are recorded rather than fixed. They share a shape
-worth naming: the harness and the guard are each less strict than a careless
-reader of them would assume, and none of that strictness was load-bearing for
-anything this slice concluded.
+Review found **four** instances of one property after the single authorized
+repair pass had been spent, so all four are recorded rather than fixed, and they
+are recorded as one item because they are one property. `inspect` reports what a
+document contains; its silence is not a certificate of validity. It does not
+validate base64 syntax, does not notice a spectrum missing an array entirely,
+does not read mzXML's run-level `msRun/@scanCount`, and checks nothing structural
+beyond width alignment and declared length. A fifth, in the guard rather than the
+harness: the side-output disposition is matched against the section's prose
+rather than against the declaration line, so `Disposition: PENDING` beside a
+later mention of the valid token would satisfy it.
 
-**The decoder does not validate base64.** `base64.b64decode` drops characters
-outside the alphabet unless told otherwise, so a payload with a stray character
-that still decodes to aligned bytes reads as healthy — reproduced by inserting
-`$` into a fixture array, which decoded fourteen values with no malformed flag.
-The repair hardened width alignment and declared length; syntax was not part of
-it. No conclusion rests on the unchecked case: every output measured was produced
-by `msconvert`, parsed as XML, and decoded to values checked against
-independently computed references. **P3. Owner: M6.10.**
+**None is load-bearing, and that was verified rather than asserted.** Every
+numeric conclusion is a positive equality against two independently computed
+references, and a wrong document fails that comparison rather than passing it.
+Run against the fixture: removing the intensity array leaves every flag clean and
+**fails** the record's own equality check, so the analysis catches it whatever the
+flag says; inserting a stray `$` leaves every flag clean and **passes**, correctly
+— dropping the character leaves the decoded bytes, and therefore the values,
+unchanged. What the gaps cost is the ability to tell a corrupt document from a
+healthy one, which this slice never needed.
 
-**The side-output disposition is still matched against the whole section.** The
-repair replaced a substring search for `triggered` with a closed two-token
-vocabulary and an exactly-one rule, which is stronger, but it scans the section's
-prose rather than the declaration line — so a record declaring `PENDING` while
-mentioning `TRIGGERED_AND_MEASURED` elsewhere would satisfy it. The record as
-committed declares the token correctly. **P3. Owner: M6.10.**
+**P3. Owner: M6.10**, the next slice to measure a non-mzML format, as one change
+rather than five patches.
 
-**The committed inspector does not report mzXML's run-level `scanCount`.** It
-reports the actual `<scan>` count and each scan's `peaksCount` disagreement, so
-re-running the harness reproduces `X2`'s spectrum **drop** but not its
-**misdeclaration** — the `scanCount="4"` over two written scans was read from the
-output directly. Found by review on the repaired head and **not repaired**: the
-slice's one authorized repair pass had been spent on the two findings above.
-
-Classified rather than argued: the `mzXML output` classification does not depend
-on it. The evidence record already states that the source-file drop alone fails
-the comparison CNV-002 is gated on, and the drop *is* reproducible through the
-harness. What is lost is one corroborating field in a convenience tool, and the
-record now says so in its own limitations. **Severity P3. Owner: M6.10**, the
-next slice to measure a non-mzML format, for whom it is a two-line addition.
-
-Two of the three were resolved on the pull request before they had been read —
+Two of the threads were resolved on the pull request before they had been read —
 a mistake, corrected by reopening both, dispositioning them, and replying with
 the classification before resolving them again. Recorded because a thread closed
 without being read is indistinguishable from one that was answered.
