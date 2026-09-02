@@ -522,6 +522,17 @@ meeting the blocked list does not have to work out which is which.
 - **`msRun/@scanCount` on other paths.** The hollow count was measured on the
   multi-source mzXML case. Whether the same writer misdeclares on other inputs
   was not measured.
+- **The decoder checks alignment and declared length, and not base64
+  validity.** `base64.b64decode` discards characters outside the alphabet
+  unless asked not to, so a payload with a stray character that still decodes to
+  aligned bytes is reported as healthy — reproduced by inserting `$` into a
+  fixture array, which decoded fourteen values with no malformed flag. Every
+  output measured here was produced by `msconvert`, parsed as XML, and decoded to
+  values checked against independently computed references, so no conclusion
+  rests on the unchecked case; but the decoder's refusal is a refusal about
+  *width and length*, not about syntax. Found by review on the repaired head and
+  **not repaired** — this slice's one authorized repair pass was already spent.
+  **Severity P3. Owner: M6.10.**
 - **The hollow count was read from the output directly, not through the
   committed inspector.** `inspect` reports an mzXML document's actual `<scan>`
   count and each scan's `peaksCount` disagreement, but not the run-level
