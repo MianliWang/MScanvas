@@ -199,7 +199,7 @@ offer. M6 is not a `msconvert` qualification project.
 | `peakPicking default picker` | `MEASURED_ADMISSIBLE` | Profile input became centroid output with **every source peak recovered at exactly its source m/z and exactly its source intensity**, spectrum population preserved, and the output names the algorithm that ran. |
 | `peakPicking cwt` | `MEASURED_REJECTED` | On a spectrum it accepted without error it returned **one of the three peaks the source contains**, silently, while the default picker on the same spectrum returned all three with their exact source m/z and intensity. It also aborts outright on input without flanking zeros, leaving an unterminated document that does not parse. |
 | `peakPicking vendor` | `EVIDENCE_BLOCKED` | The vendor path was never exercised. On an open source the request silently produced the local-maximum picker instead. Missing: a lawful vendor acquisition. |
-| `peakPicking MS-level scope` | `MEASURED_ADMISSIBLE` | `peakPicking <PickerType> msLevel=<set>` centroided exactly the named levels and left the others profile. Admissible **only in that form** — see the trap below. |
+| `peakPicking MS-level scope` | `MEASURED_ADMISSIBLE` | `peakPicking <PickerType> msLevel=<set>` centroided exactly the named levels and left the others profile. The *mechanism* is admitted; **it is not composable with anything admitted** — see below, because that consequence decides what M6.3 may build. |
 | `msLevel population filter` | `MEASURED_ADMISSIBLE` | All, MS1-only and MS2-only each returned exactly the requested spectra, with every array untouched. |
 | `precision provider default` | `MEASURED_ADMISSIBLE` | Measured as **mixed**: m/z preserved at 64 bits, intensity narrowed to its exact binary32 image. |
 | `precision global` | `MEASURED_ADMISSIBLE` | `--64` preserved both arrays exactly; `--32` narrowed both to their binary32 images. |
@@ -448,6 +448,28 @@ Three further compositions were measured:
 Anything else — a picker with `--mzXML` at `--32`, two filters other than this
 pair, an MS-level filter composed with a format change — remains unmeasured, and
 M6.3 may not claim it.
+
+### The consequence that decides what M6.3 may build
+
+**No scoped centroiding intent is constructible from admitted parts today**, and
+the record entails it rather than merely permitting it:
+
+1. `msLevel=` is positional after `<PickerType>`, and `K11` measured what happens
+   without one — the scope is silently discarded and every MS level is
+   centroided. So a scoped intent **must** name a picker.
+2. The installed grammar says `<PickerType>` "must be `cwt` or `vendor`". **There
+   is no token that selects the default picker**; it is what you get by writing
+   nothing, which is exactly the form step 1 rules out.
+3. `cwt` is `MEASURED_REJECTED` and `vendor` is `EVIDENCE_BLOCKED`. The only
+   `MEASURED_ADMISSIBLE` algorithm is the default one, which cannot be named.
+
+So the MS-level scope is admitted as a mechanism and is **unreachable in
+combination with any admitted algorithm**. M6.3 may type unscoped centroiding on
+the default picker, and may not type "centroid MS2 only" or "centroid MS1+MS2" at
+all — not by naming `cwt`, not by naming `vendor`, and not by omitting the picker
+and hoping the scope applies. Re-opening those two product presets needs the same
+thing `cwt`'s rejection needs: a representative profile acquisition, or a lawful
+vendor acquisition for the vendor path.
 
 ### Working-directory side output
 

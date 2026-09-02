@@ -6304,6 +6304,19 @@ A consequence worth carrying forward: **a point count is not a peak count.** An
 integrity check comparing output array lengths against an expected peak count
 would be wrong about a correct conversion.
 
+### The consequence M6.3 has to read
+
+**No scoped centroiding intent is constructible from admitted parts.** The scope
+argument is positional after `<PickerType>` and is silently discarded without
+one; the grammar admits only `cwt` or `vendor` as that token, and there is no
+token for the default picker; `cwt` is rejected and `vendor` is blocked. So the
+one admitted algorithm cannot be named, and the scope cannot be reached. M6.3 may
+type unscoped centroiding on the default picker and **may not type "centroid MS2
+only" or "centroid MS1+MS2" at all**. Both presets re-open on the same evidence
+`cwt` needs — a representative profile acquisition — or on a lawful vendor
+acquisition. Found by review; the record entailed it and did not say it, and now
+says it.
+
 ### Two things measured that a careless slice would have got wrong
 
 **`peakPicking msLevel=2` silently centroids every MS level.** `msLevel=` is
