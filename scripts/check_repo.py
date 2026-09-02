@@ -1769,6 +1769,17 @@ M62_ROUTE = "docs/architecture/adr/0043-conversion-completion-route.md"
 # order to withdraw them.
 M62_STALE_ACCEPTANCE = "The two pending measurements are performed"
 
+# The conditional side-output obligation has exactly two honest endings, and
+# they are required as tokens rather than as prose. A substring search for
+# "triggered" passes on "whether the condition was triggered is still pending",
+# which is the one answer the obligation rules out.
+M62_SIDE_OUTPUT_DISPOSITIONS: frozenset[str] = frozenset(
+    {
+        "TRIGGERED_AND_MEASURED",
+        "NOT_TRIGGERED",
+    }
+)
+
 
 def _column_index(header: list[str], name: str, where: str, errors: list[str]) -> int | None:
     """One named column of a table, or a failure saying it is not there."""
@@ -2291,14 +2302,22 @@ def validate_the_msconvert_capability_evidence_is_closed(errors: list[str]) -> N
             "its reason -- and a record that omits the section states neither",
             errors,
         )
-    elif "triggered" not in side_output.lower():
-        fail(
-            f"{M62_SPIKE}: the working-directory side-output section says neither that the "
-            "condition was triggered nor that it was not. It is conditional on a non-mzML "
-            "format still being a viable admission candidate, and which of those held is the "
-            "whole content of the answer",
-            errors,
+    else:
+        declared = sorted(
+            name for name in M62_SIDE_OUTPUT_DISPOSITIONS if name in side_output
         )
+        if len(declared) != 1:
+            fail(
+                f"{M62_SPIKE}: the working-directory side-output section declares "
+                f"{len(declared)} of the {len(M62_SIDE_OUTPUT_DISPOSITIONS)} dispositions it "
+                "may end in ("
+                + ", ".join(f"`{name}`" for name in sorted(M62_SIDE_OUTPUT_DISPOSITIONS))
+                + "). The obligation is conditional on a non-mzML format still being a viable "
+                "admission candidate, and which of those held is the whole content of the "
+                "answer -- prose that merely discusses whether it was triggered is the one "
+                "ending it rules out",
+                errors,
+            )
 
 
 def _validate_the_msconvert_route_acceptance_is_current(

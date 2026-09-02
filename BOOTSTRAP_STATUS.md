@@ -6369,6 +6369,30 @@ and the one that let the backend name its own output. The `cwt` failure case is
 the one to read carefully: it produced one file too, and that file was a
 **partial** document rather than an extra one.
 
+### One repair, from review
+
+Two P2 findings on the candidate head, both in this slice's own tooling and both
+taken under the single authorized repair pass.
+
+**The decoder truncated instead of refusing.** A binary payload that was not a
+whole number of values at its declared width was sliced to the nearest complete
+value, so a torn array would have come back looking like a shorter healthy one —
+and every numeric claim in the record is a claim about what that decoder
+returned. It now reports the payload as malformed and decodes nothing, checks the
+mzXML pairing as well, and reports any spectrum whose stored length disagrees
+with its declared length. Verified by truncating a fixture array by one byte
+(refused, `0` values decoded) and by mislabelling a declared length (reported),
+then re-reading all twenty-nine outputs: none malformed, none disagreeing. The
+one exception corroborates a finding rather than contradicting it — the failed
+`cwt` run's partial output **does not parse at all**, so what that failure leaves
+behind is an unterminated document rather than a smaller valid one.
+
+**The side-output disposition was checked by substring.** "Whether the condition
+was triggered is still pending" contained `triggered` and would have passed,
+which is the one ending the obligation rules out. The record now declares an
+explicit `TRIGGERED_AND_MEASURED` or `NOT_TRIGGERED` token and the validator
+requires exactly one of them.
+
 ### Repository guard
 
 `check_repo.py` gains one focused validator on the M5.4 precedent: the route owns

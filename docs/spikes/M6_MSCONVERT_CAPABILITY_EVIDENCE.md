@@ -84,6 +84,15 @@ None of the following was treated as evidence that an operation happened:
 Each of those decided *what to run*. Every classification below rests on decoded
 bytes of an output file produced by the digest above.
 
+**The decoder refuses rather than rounds.** A binary payload that is not a whole
+number of values at its declared width is reported as malformed and decodes to
+nothing, and a spectrum whose stored array length disagrees with the length it
+declares is reported as such. Truncating to the nearest whole value would let a
+torn array come back looking like a shorter healthy one, and every numeric claim
+here is a claim about what that decoder returned. No output measured below was
+malformed under either rule; the run-level count `X2` misdeclares is a different
+thing, and is reported where it is found.
+
 **Two of the help text's own claims turned out to be incomplete**, which is the
 concrete reason the rule exists. `--inten32` is marked `[default]` and `--64` is
 marked `[default]`, and both are true only under a reading the help does not
@@ -188,7 +197,7 @@ offer. M6 is not a `msconvert` qualification project.
 | --- | --- | --- |
 | `mzXML output` | `MEASURED_REJECTED` | On a two-source document it silently dropped both spectra of the non-default source — exit `0`, empty stderr — and wrote `msRun/@scanCount="4"` over the two `<scan>` elements it actually emitted. CNV-002 is gated on exactly this comparison. |
 | `peakPicking default picker` | `MEASURED_ADMISSIBLE` | Profile input became centroid output with **every source peak recovered at exactly its source m/z and exactly its source intensity**, spectrum population preserved, and the output names the algorithm that ran. |
-| `peakPicking cwt` | `MEASURED_REJECTED` | On a spectrum it accepted without error it returned **one of the three peaks the source contains**, silently, while the default picker on the same spectrum returned all three with their exact source m/z and intensity. It also aborts outright on input without flanking zeros, leaving a partial document. |
+| `peakPicking cwt` | `MEASURED_REJECTED` | On a spectrum it accepted without error it returned **one of the three peaks the source contains**, silently, while the default picker on the same spectrum returned all three with their exact source m/z and intensity. It also aborts outright on input without flanking zeros, leaving an unterminated document that does not parse. |
 | `peakPicking vendor` | `EVIDENCE_BLOCKED` | The vendor path was never exercised. On an open source the request silently produced the local-maximum picker instead. Missing: a lawful vendor acquisition. |
 | `peakPicking MS-level scope` | `MEASURED_ADMISSIBLE` | `peakPicking <PickerType> msLevel=<set>` centroided exactly the named levels and left the others profile. Admissible **only in that form** — see the trap below. |
 | `msLevel population filter` | `MEASURED_ADMISSIBLE` | All, MS1-only and MS2-only each returned exactly the requested spectra, with every array untouched. |
@@ -331,7 +340,9 @@ silently centroid MS1 as well. **M6.3's argv mapping must always emit an explici
 unflanked fixture, `K7` exited `1` with
 `[CwtPeakDetector::getScales] m/z profile data seems to lack flanking zeros between peak profiles`
 and left a **`3,882`-byte partial document** in the output directory against a
-`12,497`-byte baseline. The default picker (`K8`) converted the same input
+`12,497`-byte baseline. That document is not merely short: it **does not parse**
+— `no element found: line 55, column 0` — so what a failed `cwt` run leaves
+behind is an unterminated XML file, not a smaller valid one. The default picker (`K8`) converted the same input
 without complaint. MSCanvas's own boundary contains this — ADR 0009 stages into a
 private directory and the integrity gate refuses a partial output — but the
 provider fact is that a user-selected algorithm can abort a conversion on data
@@ -440,9 +451,10 @@ M6.3 may not claim it.
 
 ### Working-directory side output
 
-The conditional obligation. mzXML remains a viable admission candidate for
-single-source inputs, so the condition is **triggered**, and it was measured on
-every run rather than only the mzXML ones.
+**Disposition: `TRIGGERED_AND_MEASURED`.** The obligation is conditional on a
+non-mzML format still being a viable admission candidate, and mzXML remains one
+for single-source inputs, so the condition holds. It was then measured on every
+run rather than only the mzXML ones.
 
 **All twenty-nine runs produced exactly one file.** Every case ran into a fresh
 empty directory, and each directory afterwards held exactly its one output — no
@@ -463,9 +475,9 @@ located result or an explicit `NOT_APPLICABLE` with its reason.
 
 | Candidate | Expressibility | Execution | Output existence and readability | Requested semantic occurred | Cardinality / population | Numeric fidelity | Encoding / compression | Interaction / ordering | Working-directory side output |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `mzXML output` | `--mzXML` accepted | `X1`, `X2`, `X5` exit `0` | mzXML parsed; `X2`'s header declares `4` over `2` written | single-source faithful; multi-source **drops the non-default source file silently** | `X1` `4`/`4`; `X2` **`2`/`4`** with `scanCount="4"`; `X3` control `4`/`4` to mzML | `X1` arrays decode exactly equal to the source `float64` at `precision="64"` | `X1` declared `zlib`, decoded exactly | `X5` composed with `peakPicking`: `4` spectra, counts `4,1,7,1`, header honest | `X1`, `X2`, `X4`, `X5`: one file each; `X4` named by the backend |
+| `mzXML output` | `--mzXML` accepted | `X1`, `X2`, `X5` exit `0` | mzXML parsed with no malformed array and no per-scan length disagreement; `X2`'s **run-level** header declares `4` over `2` written | single-source faithful; multi-source **drops the non-default source file silently** | `X1` `4`/`4`; `X2` **`2`/`4`** with `scanCount="4"`; `X3` control `4`/`4` to mzML | `X1` arrays decode exactly equal to the source `float64` at `precision="64"` | `X1` declared `zlib`, decoded exactly | `X5` composed with `peakPicking`: `4` spectra, counts `4,1,7,1`, header honest | `X1`, `X2`, `X4`, `X5`: one file each; `X4` named by the backend |
 | `peakPicking default picker` | `peakPicking` accepted with no picker token | `K1`, `K8` exit `0` | mzML parsed | profile → centroid on every spectrum; every source peak recovered | `4`/`4` spectra preserved; entries `4,1,7,1` for source peaks `2,1,3,1`, the surplus being **zero-intensity padding** at `apex ± 0.04` | **every non-zero point is bit-identical to its source apex**, m/z and intensity, at `--64` | inherits the run's encoding; `K1` at `--64` declared `zlib` | `K11` shows the bare form silently discards `msLevel=`; `K12` composes with `--32`; `X5` composes with mzXML | `K1`, `K8`, `K12`: one file each |
-| `peakPicking cwt` | `peakPicking cwt` accepted | `K2`, `K10` exit `0`; `K7` exit **`1`** on unflanked input | mzML parsed for `K2`/`K10`; `K7` left a `3,882`-byte **partial** document | profile → centroid, and the output names `CantWaiT …` — but on spectrum 2 **two of three source peaks are absent** | `4`/`4` spectra; entries `2,1,1,1`, all non-zero; the three-peak spectrum returns one | the points it does emit are bit-identical to their source apexes; the two it drops are unrecoverable | inherits the run's encoding | `K5`/`K6` order pair identical; `K10` composes with an MS-level scope | `K2`, `K7`, `K10`: one file each — `K7`'s is partial, not extra |
+| `peakPicking cwt` | `peakPicking cwt` accepted | `K2`, `K10` exit `0`; `K7` exit **`1`** on unflanked input | `K2`/`K10` parse clean with no malformed array; `K7`'s `3,882`-byte output **does not parse at all** | profile → centroid, and the output names `CantWaiT …` — but on spectrum 2 **two of three source peaks are absent** | `4`/`4` spectra; entries `2,1,1,1`, all non-zero; the three-peak spectrum returns one | the points it does emit are bit-identical to their source apexes; the two it drops are unrecoverable | inherits the run's encoding | `K5`/`K6` order pair identical; `K10` composes with an MS-level scope | `K2`, `K7`, `K10`: one file each — `K7`'s is partial, not extra |
 | `peakPicking vendor` | `peakPicking vendor` accepted | `K3` exit `0` | mzML parsed | **not observed** — the vendor path needs a vendor reader; the run produced the local-maximum picker's output and named it | `4`/`4` spectra, entries identical to `K1` including its zero-intensity padding | identical to `K1`'s, which is the evidence of substitution rather than of the vendor algorithm | inherits the run's encoding | `NOT_APPLICABLE` — nothing admitted here, so there is no composition to evidence | `K3`: one file |
 | `peakPicking MS-level scope` | `msLevel=<int_set>` accepted, positional after `<PickerType>` | `K4`, `K10`, `K11` exit `0` | mzML parsed | `K4` centroided MS2 only and left MS1 profile; `K10` centroided `1-2`; **`K11` without a picker token silently ignored the scope** | `K4` `14,1,21,1`; `K10` `2,1,1,1`; `K11` `4,1,7,1` across all levels | the MS1 spectra `K4` left alone are bit-identical to the source, so the scope excludes rather than merely re-picks | inherits the run's encoding | `K5`/`K6` measured in both orders with `msLevel` as a separate filter | `K4`, `K10`, `K11`: one file each |
 | `msLevel population filter` | `msLevel <int_set>` accepted; `1`, `2` and `1-` all parsed | `L1`–`L4` exit `0` | mzML parsed | exactly the requested spectra kept, by id | `L1` `scan=1,3`; `L2` `scan=2,4`; `L3`/`L4` all four; array lengths unchanged throughout | arrays carried through untouched at `--64` | inherits the run's encoding | `K5`/`K6` compose it with `peakPicking` in both orders | `L1`–`L4`: one file each |

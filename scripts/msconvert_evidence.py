@@ -16,6 +16,13 @@ byte order -- and reports the numbers. An evidence record can then compare those
 numbers against values it computed independently, which is the only way to tell
 a preserved value from a re-declared one.
 
+**It refuses rather than rounds.** A payload that is not a whole number of values
+at its declared width is reported as `malformed` and decodes to nothing; a
+spectrum whose stored array length disagrees with the length it declares is
+reported as `length_disagreement`. Truncating to the nearest whole value would
+let a torn array come back looking like a shorter healthy one, and every numeric
+claim an evidence record makes is a claim about what this function returned.
+
 Standard library only, and no network. Both fixtures are a pure function of the
 constants in this file, so the recorded SHA-256s are reproducible from the
 repository rather than from an operator's directory.
@@ -360,10 +367,23 @@ def _decode_array(array: ElementTree.Element) -> dict[str, object]:
     if compression == "zlib":
         raw = zlib.decompress(raw)
     values: list[float] = []
-    if width is not None:
+    malformed: str | None = None
+    if width is None:
+        malformed = "no float-width cvParam"
+    else:
         bits, code = width
-        count = len(raw) // (bits // 8)
-        values = list(struct.unpack(f"<{count}{code}", raw[: count * (bits // 8)]))
+        stride = bits // 8
+        # Refused rather than rounded down. Slicing to the nearest whole value
+        # is how a truncated array comes back looking like a shorter healthy
+        # one, and every numeric-fidelity claim in an evidence record is a claim
+        # about what this function returned.
+        if len(raw) % stride:
+            malformed = (
+                f"{len(raw)} decoded bytes is not a whole number of {bits}-bit values"
+            )
+        else:
+            count = len(raw) // stride
+            values = list(struct.unpack(f"<{count}{code}", raw))
     return {
         "kind": kind,
         "bits": None if width is None else width[0],
@@ -371,6 +391,7 @@ def _decode_array(array: ElementTree.Element) -> dict[str, object]:
         "encoded_bytes": len((node.text or "").strip()) if node is not None else 0,
         "decoded_bytes": len(raw),
         "length": len(values),
+        "malformed": malformed,
         "values": values,
     }
 
@@ -411,11 +432,21 @@ def inspect_mzml(root: ElementTree.Element) -> dict[str, object]:
         scan = element.find(f"{{{MZML_NS}}}scanList/{{{MZML_NS}}}scan")
         if scan is not None:
             rt = _params(scan).get("MS:1000016")
+        declared = element.get("defaultArrayLength")
+        mismatched = [
+            array["kind"]
+            for array in arrays
+            if declared is not None and array["length"] != int(declared)
+        ]
         spectra.append(
             {
                 "index": element.get("index"),
                 "id": element.get("id"),
                 "ms_level": params.get("MS:1000511"),
+                # A spectrum that declares one length and stores another is the
+                # per-spectrum form of a document declaring a scan count it did
+                # not write. Reported rather than reconciled.
+                "length_disagreement": mismatched or None,
                 # MS:1000127 centroid spectrum, MS:1000128 profile spectrum.
                 "centroided": "MS:1000127" in params,
                 "profile": "MS:1000128" in params,
@@ -463,6 +494,7 @@ def inspect_mzxml(root: ElementTree.Element) -> dict[str, object]:
         values: list[float] = []
         bits = None
         compression = "none"
+        malformed: str | None = None
         if peaks is not None:
             bits = int(peaks.get("precision", "32"))
             compression = peaks.get("compressionType", "none")
@@ -470,16 +502,35 @@ def inspect_mzxml(root: ElementTree.Element) -> dict[str, object]:
             if compression == "zlib":
                 raw = zlib.decompress(raw)
             code = "d" if bits == 64 else "f"
-            count = len(raw) // (bits // 8)
-            # mzXML stores network byte order and interleaves m/z with intensity.
-            values = list(struct.unpack(f">{count}{code}", raw[: count * (bits // 8)]))
+            stride = bits // 8
+            # Refused rather than rounded down, and the pairing is checked as
+            # well: mzXML interleaves m/z with intensity, so an odd number of
+            # values is a torn spectrum however whole the byte count looks.
+            if len(raw) % stride:
+                malformed = (
+                    f"{len(raw)} decoded bytes is not a whole number of {bits}-bit values"
+                )
+            else:
+                count = len(raw) // stride
+                if count % 2:
+                    malformed = f"{count} values is not a whole number of m/z-intensity pairs"
+                else:
+                    # mzXML stores network byte order.
+                    values = list(struct.unpack(f">{count}{code}", raw))
+        declared = element.get("peaksCount")
+        mismatched = (
+            ["mz", "intensity"]
+            if declared is not None and len(values[0::2]) != int(declared)
+            else None
+        )
         spectra.append(
             {
                 "index": element.get("num"),
                 "id": element.get("num"),
                 "ms_level": element.get("msLevel"),
                 "centroided": element.get("centroided"),
-                "declared_length": element.get("peaksCount"),
+                "declared_length": declared,
+                "length_disagreement": mismatched,
                 "retention_time": element.get("retentionTime"),
                 "arrays": [
                     {
@@ -487,6 +538,7 @@ def inspect_mzxml(root: ElementTree.Element) -> dict[str, object]:
                         "bits": bits,
                         "compression": compression,
                         "length": len(values[0::2]),
+                        "malformed": malformed,
                         "values": values[0::2],
                     },
                     {
@@ -494,6 +546,7 @@ def inspect_mzxml(root: ElementTree.Element) -> dict[str, object]:
                         "bits": bits,
                         "compression": compression,
                         "length": len(values[1::2]),
+                        "malformed": malformed,
                         "values": values[1::2],
                     },
                 ],
