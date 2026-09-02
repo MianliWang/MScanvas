@@ -6419,6 +6419,36 @@ healthy one, which this slice never needed.
 **P3. Owner: M6.10**, the next slice to measure a non-mzML format, as one change
 rather than five patches.
 
+### What the guard does not do, stated rather than left to be discovered
+
+The guard's own limits, because a validator's reputation outruns it faster than
+anything else in a repository.
+
+**Two verified holes, both found by review and both P3.** A candidate deleted
+from *all three* of the inventory, the classification and the matrix passes,
+because those three are compared against each other and only precision is
+additionally required against the route — reproduced with
+`compression zlib off`. And the route outcome is checked for being one token
+from a closed set, not for agreeing with the states beneath it, so flipping it to
+`MSCONVERT_CAPABILITY_EVIDENCE_BLOCKED` while nine candidates remain
+`MEASURED_ADMISSIBLE` passes. Neither is reachable from the record as committed;
+both are things a later edit could do. **Owner: M6.10**, and the right shape is
+to structure the route's candidate list and compare it to the classification the
+way the dimension vocabulary already is, rather than special-casing a second
+candidate.
+
+**One obligation is deliberately not mechanised.** A guard against *describing
+help or source reading as measured installed-build execution evidence* is a claim
+about prose, and this repository's validators do not read prose — every one of
+them says so, in the same words: whether an answer is any good stays a matter for
+review. What is mechanised instead is the structure that claim lives in: the
+evidence record must keep its candidate inventory, its classification, its matrix
+and one route outcome, and the route must keep the candidate list and dimension
+vocabulary those are checked against. **The rule itself is enforced by review**,
+and it is written into the evidence record as its own section rather than into
+`check_repo.py`. Recorded here so that a reader does not mistake the guard's
+silence on it for coverage.
+
 Two of the threads were resolved on the pull request before they had been read —
 a mistake, corrected by reopening both, dispositioning them, and replying with
 the classification before resolving them again. Recorded because a thread closed
