@@ -80,7 +80,7 @@ surface over an existing boundary* rather than new boundary.
 | Capability-evidence binding | `EVIDENCED_PROVIDER_BUILDS` pins **(family, release, revision, `msconvert.exe` digest)** and `provider_build_is_evidenced` refuses an unevidenced family *before* a staging directory exists | `conversion_run.rs:305-391`, `:2528-2533` |
 | Bound plan | `ConversionQueue` fixes membership, order, conflict policy and document epoch at construction; no code path appends, removes or reorders afterwards, and a duplicate `DatasetId` is refused at creation | `operation.rs` `ConversionQueue::new` |
 | Destination authority | The chosen folder is admitted by **Windows object identity** — volume serial plus 128-bit file ID, read from a held handle — with reparse points, non-directories and remote volumes refused before any plan exists | `preview/destination.rs` `admit_destination_root`, `DestinationIdentity` |
-| Retry-time destination authority | A retry re-admits the folder and refuses with `queue_destination_changed` unless it resolves to **the same object**; it does not re-ask the user | `service.rs::retry_conversion_queue` |
+| Retry-time destination authority | A retry re-admits the folder and refuses with `queue_destination_changed` unless it resolves to **the same object**; it does not re-ask the user. Scoped to the one destination the queue holds today — M6.5 generalises the *rule* to every identity a retry will use, and does not weaken it | `service.rs::retry_conversion_queue` |
 | Serial execution | One `Mutex<()>` backend gate, claimed once per queue and held to terminal; ordering is the caller's list order and execution is index order | `service.rs::drain_queue`, `enter_backend` |
 | Process-tree termination **mechanism** | Windows **Job Objects** — `CreateJobObjectW`, `AssignProcessToJobObject`, `TerminateJobObject`, then `QueryInformationJobObject` to observe the job empty. **Mechanism only**: that a real `msconvert` run *is* a tree has never been observed, and the observation is scoped to the owned Job — see CNV-D7 | `process.rs:1000-1115` |
 | Cancellation states, distinguished | `Cancelled` (the owned Job was terminated and observed empty), `CancellationFailed` (termination unconfirmed, and it quarantines the session) and `NotRun` (never began) are three different item states; `Stopped` and `StopFailed` are two different terminal reasons | `dto.rs` `ConversionQueueItemStateDto`, `ConversionQueueTerminalReasonDto` |
@@ -235,15 +235,22 @@ inside the plan. The moment M6.3 makes an intent expressible and M6.4 makes it
 visible, **the intent joins the bound facts** — captured at `ConversionQueue::new`
 alongside the conflict policy, never re-read per item, and never re-read from a
 control the user may since have moved. Two further facts M6 adds have the same
-obligation: the **destination policy** M6.5 introduces is resolved once and bound
-(the resolved object identity is already bound; the *policy* that chose it must
-be too), and any **destructive authorization** M6.6 admits is bound to the plan
-that carried it rather than to the session.
+obligation: the **destination policy** M6.5 introduces is a bound plan fact, and
+so is every identity it resolves to — but those are not the same cardinality. The
+policy is one decision bound to the plan; a source-relative policy resolves to
+**one identity per item**, and a custom-folder policy may resolve every item to
+the same one. What is bound is *policy plus the resolved identity for each item
+it applies to*, and neither is re-derived afterwards. And any **destructive
+authorization** M6.6 admits is bound to the plan that carried it rather than to
+the session.
 
 **Per-queue facts and per-pass facts are different, and only the first are
 written once for the queue's life.** Membership, order, conflict policy, intent,
-destination policy and installation identity are per-queue: a retry is the same
-queue again, so it reuses them. A **destructive authorization is per-pass** — it
+destination **policy** and installation identity are per-queue: a retry is the
+same queue again, so it reuses them. The **resolved destination identities** are
+bound per applicable item under that policy, and a retry **revalidates every
+identity it will use** — it never re-resolves the policy into a different
+destination. A **destructive authorization is per-pass** — it
 authorizes one attempt at destroying named outputs, and a retry that would
 destroy again must be authorized again. That is not a plan mutation: the earlier
 pass's authorization is not edited, and a pass without a fresh one refuses rather
@@ -255,7 +262,7 @@ thereafter; a per-pass fact is written once per pass and never carried into the
 next. A control the user can still move is not a plan fact. A plan fact that can
 change after `BEGIN` is a defect, not a feature.
 
-### 2. The item outcome — four judgements, not one boolean
+### 2. The item outcome — five judgements, not one boolean
 
 The crate already refuses a success boolean. `ProcessOutput::success()` is
 `Exited && exit_code == Some(0)` and is deliberately not the answer;
@@ -264,17 +271,50 @@ two can disagree; `SkippedExistingDestination` is neither. What M6 freezes is th
 *shape*, so a widening surface cannot quietly re-collapse it.
 
 ```text
-process outcome        Termination { Exited, Cancelled, NotStarted } + exit code
+1 process outcome      Termination { Exited, Cancelled, NotStarted } + exit code
                        -- and Exited(0) is not a result
-staging/finalization   staged content observed, staging residue, the handle-bound
-                       rename taken only after validation
-integrity outcome      ValidationMode { SourceComparison, OutputOnly }, the three
+2 staged output        StagedContentObservation, and StagingResidue where teardown
+                       could not reclaim -- observed, never inferred from whether
+                       a final output appeared
+3 finalized output     the handle-bound rename, taken only after validation, and
+                       for a set which members took their names
+4 integrity            ValidationMode { SourceComparison, OutputOnly }, the three
                        IntegrityProperty sets -- verified, unverified,
                        inapplicable -- and the separately typed
                        AdvisoryObservation set beside them
-publication/adoption   the final name still resolving to the exact finalized
+5 adoption             the final name still resolving to the exact finalized
                        object holding the validated length and digest
 ```
+
+**Staged output is its own judgement, and these two must stay distinguishable:**
+
+```text
+process ended badly / something was staged / nothing published
+process ended badly / nothing was staged   / nothing published
+```
+
+**The boundary makes this judgement on some paths and not others, and M6.9 owes
+the difference.** `observe_staged_content` is called on the stop paths — an
+unconfirmed cancellation, and a non-ordinary termination that was actually
+requested — and on the multi-output set-stop. It is **not** called on an ordinary
+failure: a run that exits non-zero, or reports `BackendDidNotComplete`, settles
+without any staged-content observation being taken. `staging.discard()` runs on
+every path, but `StagingResidue` answers a different question — what teardown
+could not reclaim — and a clean teardown of a directory that held a half-written
+output returns the same `None` as one that held nothing.
+
+So judgement 2 is **partly modelled and partly absent**: the type
+(`StagedContentObservation`), the wire field (`partial_output_observed`) and the
+residue channel exist and are correct, and the observation is simply not taken
+where a conversion fails without being stopped. **M6.9 extends it to those
+paths** — which is a model addition, not a projection of something already
+answered, and this route says so rather than implying the work is already done.
+
+**Artifact facts are not one of the five.** Names, byte lengths, digests,
+observed spectrum and chromatogram counts and output-set membership are valuable
+evidence and they are M8-readiness material; they describe *what was produced*
+rather than *how far the lifecycle got*. Substituting them for the staged-output
+judgement is the same collapse in a different direction.
 
 **Multi-output and partial sets are first class.** A SCIEX acquisition is one
 item, one process and one row producing a backend-named set; three of five
@@ -283,8 +323,10 @@ success. `ItemState` has eight members for this reason — `Pending`, `Running`,
 `Finalized`, `Skipped`, `Failed`, `Cancelled`, `NotRun`, `CancellationFailed` —
 and the interface renders eight distinct labels.
 
-**One thing this audit found and M6.9 owns.** The four judgements are separated in
-the crate's vocabulary but the item's own visible state does not carry them:
+**Two things this audit found and M6.9 owns.** The judgements are separated in
+the crate's vocabulary but the item's own visible state does not carry them; and
+judgement 2 is not separated everywhere in the vocabulary either, because the
+staged-content observation is skipped on ordinary failures. Concretely:
 `finalized` renders as the bare word "Converted", and whether anything was
 compared is a queue-level disclosure rather than a per-item fact. Separation that
 a reader cannot see is separation the next surface will collapse.
@@ -545,20 +587,120 @@ cancellation change.
 ### M6.5 — Destination authority
 
 *Purpose:* a destination *policy* — source sibling, named subfolder, custom
-folder — resolved to the object identity the boundary already requires.
+folder — and its deterministic resolution to the object identity, or identities,
+the boundary already requires.
 
 *Prerequisites:* M6.4.
 
-*Establishes:* the policy vocabulary; resolution from a policy to an admitted
-directory object, keeping the existing reparse-point, non-directory and
-remote-volume refusals; **the vendor-dataset-root rule made real** rather than
-latent; source/destination aliasing decided by object identity rather than by the
-canonical-path prefix test that decides it today; **CNV-009's output-root half**,
-inherited from M6.4 because the root does not exist before a policy resolves one;
-and the retry-time revalidation contract stated where a reader meets the policy.
+*Establishes:* the policy vocabulary; **the resolution cardinality each policy
+implies**, and the per-item binding that follows from it; resolution from a
+policy to an admitted directory object, keeping the existing reparse-point,
+non-directory and remote-volume refusals; **the vendor-dataset-root rule made
+real** rather than latent; source/destination aliasing decided by object identity
+rather than by the canonical-path prefix test that decides it today;
+**CNV-009's output-root half**, inherited from M6.4 because no root exists before
+a policy resolves one; and the retry-time revalidation contract stated where a
+reader meets the policy.
 
-*Acceptance:* a destination is a folder object, never a path string. A resolved
-destination is bound to the plan and revalidated by identity on every later pass.
+**One policy, and as many resolved identities as it implies.** The queue holds a
+single `Option<AdmittedDestination>` today, and `ConversionQueue::new` requires
+only that the list is non-empty, within capacity and free of duplicates — it does
+**not** require the items to share a parent, and nothing in the accepted ADRs or
+the product documents requires a conversion scope to. So a queue may hold
+`C:/run-a/sample1.raw` beside `D:/run-b/sample2.raw`, and a queue-wide
+`source sibling` is then **two** destination objects, not one. Binding one
+resolved destination to the whole plan would either write the second item beside
+the first item's source or refuse a batch that is perfectly valid — and it would
+do so to preserve an implementation detail rather than a decided architecture.
+
+```text
+DestinationPolicy            one user decision, bound to the plan
+  source sibling             source-relative -- resolved and bound PER ITEM
+  named subfolder            source-relative -- resolved and bound per item,
+                             under the item's SIBLING folder, never inside the
+                             acquisition itself
+  custom local folder        one chosen folder -- every item may resolve to the
+                             SAME admitted DestinationIdentity, and that is the
+                             policy working rather than a special case
+```
+
+**`named subfolder` resolves under the sibling, not under the acquisition, and
+the difference is the whole vendor-dataset-root rule.** For a directory-shaped
+acquisition the logical acquisition root *is* the recognised vendor dataset root,
+so resolving a subfolder relative to it would land in exactly the place row 2
+below fails closed on — and CNV-003 states the same thing as a product
+requirement: sibling, subfolder and custom choices *never write inside recognised
+vendor dataset roots*. The subfolder is therefore a sibling of the acquisition,
+created beside it, and the containment order below is what enforces that rather
+than a promise made here.
+
+**This extends two accepted decisions, and says so.** It is not a limit nobody
+decided. [ADR 0013](0013-serial-conversion-queue.md) is accepted "into one local
+folder", carries a Decision section headed *One destination and one policy for
+the whole queue*, and states its retry rule as rerunning "against the same
+folder". [ADR 0020](0020-first-visible-shimadzu-lcd-workflow.md) restates it for
+the mixed-family queue this decision is widening: "One queue, one destination,
+one conflict policy, one serial backend lane."
+
+**So M6.5 is an explicit extension of both**, and this route says which — because
+it opens by promising exactly that: where a decision looks new it is either a
+product surface over an existing boundary or an explicit extension of one, and it
+names which. An earlier draft of this paragraph asserted that no ADR locked the
+count and that the widening contradicted nothing. That was false, and it skipped
+the extension notice this document's own rules require.
+
+**What the amendment changes is the count, and nothing else.** Everything
+ADR 0013 decided *about* a destination is preserved verbatim: admitted under
+ADR 0012's rules — local, a real directory, not a link, not UNC, not remote;
+retained as an **object** rather than a name, by volume serial and 128-bit file
+ID; a platform that will not answer with an identity read as a refusal; and the
+admission **held** for the length of the item rather than released the moment it
+answers. ADR 0013 already requires that proof "before **every item**, not once
+for the queue" — the per-item cadence is its own, and what M6.5 alters is only
+that the item may prove a *different* admitted object where the policy resolves
+to one.
+
+**Why the amendment is warranted rather than convenient.** ADR 0013 decided one
+folder for a queue of Thermo RAW rows under one conflict policy, and its status
+line gates every widening separately; the queue has since become family-plural by
+its own M3.9 amendment. A source-relative policy is the first thing that makes
+the count wrong rather than merely narrow — one folder cannot express
+`source sibling` for a queue whose items have different parents, and the choice
+is between amending the count and refusing a policy CNV-003 has carried since
+before the queue existed.
+
+**The queue-wide name-collision check becomes destination-aware, and M6.5 owes
+that too.** `plan_items` refuses a queue whose items fold to one output name, and
+its own comment gives the premise: "Two items writing one name into one folder is
+not a conflict with something that was already there." The check compares folded
+names with no destination in the comparison, which is exactly right while there
+is one folder. Under a source-relative policy it is not: `C:/run-a/sample.raw`
+and `D:/run-b/sample.raw` both plan `sample.mzML` into **different** destination
+objects and do not collide, yet the check as written refuses the queue outright.
+So the comparison becomes *(destination identity, folded name)* rather than
+folded name alone — the refusal stays exactly as strong where the pair really
+does collide, and stops refusing batches that never did. **This is the same
+widening as the cardinality change and belongs to the same slice**; CNV-D4 cites
+this check when it refuses automatic rename, and that refusal survives unchanged,
+because a policy that invents a name is a different thing from two names that
+were always distinct.
+
+**M6.5 owes ADR 0013 and ADR 0020 an amendment note when it lands.** M6.0 does
+not edit those documents: a route lock records the decision, and the slice that
+implements it annotates the ADRs it changed, exactly as M3.9 did to ADR 0013
+when the queue became family-plural.
+
+**And what ADR 0013 decided about retry is extended in the same direction, not
+relaxed.** "Against the same folder" becomes *against the same object for every
+identity the pass will use*: a retry still never re-asks the user, still never
+re-resolves the policy into a different destination, and now revalidates each
+bound identity rather than the single one.
+
+*Acceptance:* a destination is a folder object, never a path string. **The
+policy is a bound plan fact; the identity or identities it resolves to are bound
+deterministically to the item or items they apply to**, and every one of them is
+revalidated by identity on every later pass. Two runs of the same policy over the
+same bound membership resolve to the same identities.
 
 **Three containment questions, and they have three different answers.** They are
 separated here because collapsing them into one “the destination contains the
@@ -728,14 +870,46 @@ terminated — because the Job is the whole scope of what was observed.
 `CancellationFailed` keeps exactly the meaning and the quarantine consequence it
 has today, for exactly the condition it has today.
 
-**Three places currently make the tree claim**, and they are the finite list
-`OWNERSHIP_UNCONFIRMED` would have to withdraw it from, named here so criterion 7
-has something to check against rather than a general instruction:
-`ConversionQueueItemStateDto::Cancelled`'s rustdoc ("its owned process tree was
-confirmed gone"); `ConversionCancellationDto::tree_termination_confirmed`'s
-rustdoc ("the owned process tree was terminated and observed empty"); and that
-field's own name. **No code changes here** — M6.8 owns whether they are reworded
-or made true.
+**The claim has to be withdrawn everywhere it is made, and M6.0 does not pretend
+to know where that is.** An earlier draft of this route named three sites and
+called them the finite list criterion 7 could check against. That was wrong — the
+same semantic is propagated across item states, queue counts, cancellation facts,
+their mirrored wire fields, diagnostics payload keys, set-stop facts and the
+session quarantine reason — and it was wrong in the way that matters: a slice
+could have reworded the three named sites, passed the enumerated check, and left
+the rest asserting a confirmed process tree. A hand-maintained list of symbols is
+the wrong instrument for a semantic boundary, because it is correct only until
+the next surface is added.
+
+**The contract is semantic, not enumerative.** Under `OWNERSHIP_UNCONFIRMED`,
+**no code-facing name, wire contract, surface text, diagnostic fact, count
+description or documentation may assert that the whole process tree was confirmed
+gone on the strength of the owned-Job observation alone.** The `Cancelled` item
+state may still represent the observed owned-Job-empty result, as above; what may
+not survive is any claim whose *name or meaning reaches past the Job* to the
+tree. Under `OWNERSHIP_STRUCTURALLY_CLOSED` those tree-level claims may stand,
+but only where the structural guarantee actually makes them true.
+
+**And M6.8 must leave a guard, not a list.** The slice establishes an exhaustive
+repository check over that boundary — a focused test, a `check_repo.py`
+validator, or a search-backed policy, whichever fits the repository — so that
+closure does not depend on anyone having re-counted the sites. The form is
+M6.8's; what M6.0 fixes is that a guard exists and is exhaustive over the
+semantic rather than over a snapshot.
+
+**An audit baseline, explicitly non-exhaustive and non-authoritative.** These are
+representative families found while writing this route, offered so a reader
+recognises the shape — **not** a checklist, and satisfying them proves nothing:
+item-state descriptions (`ConversionQueueItemStateDto::Cancelled`); queue count
+descriptions (`cancelled_count`); cancellation facts and their field *names*
+(`tree_termination_confirmed`); the mirrored TypeScript contract
+(`treeTerminationConfirmed`); the diagnostics payload key; the multi-output
+set-stop facts; and the session quarantine reason. Two senses that are **not**
+this claim and must not be swept up with it: "there was no process tree to
+terminate" where nothing launched, and teardown's "deeper or wider than teardown
+will walk".
+
+**No code changes here** — M6.8 owns whether these are reworded or made true.
 
 **One further code-level fact belongs to the same slice**, and it is the same
 shape: an assignment failure degrades to a direct-child kill without being
@@ -750,7 +924,8 @@ stopping                 SlotState::Stopping
 owned job terminated     Termination::Cancelled AND final_active_processes == Some(0)
                          -- an observation about the JOB, which equals the tree
                          only under OWNERSHIP_STRUCTURALLY_CLOSED
-finalization reconciled  staging residue absent, observed rather than assumed
+staging reconciled       staging residue absent, observed rather than assumed
+                         -- a staging fact, not a finalization one
 terminal cancelled       ItemState::Cancelled -- as against CancellationFailed
 ```
 
@@ -763,10 +938,12 @@ can honestly count.
 claim reaches further than the scope of what was observed** — an empty Job is an
 empty Job, and is an empty *tree* only where ownership is structurally closed.
 The slice ends on one of the two terminal outcomes above, and where it ends on
-`OWNERSHIP_UNCONFIRMED` no surface says a process tree was terminated. An
-unconfirmed termination stays `CancellationFailed` and keeps quarantining the
-session. Any capacity change states the basis it was decided on, and the queue
-stays finitely bounded whatever that basis is.
+`OWNERSHIP_UNCONFIRMED` **no surface, wire field, field name, diagnostic key or
+document says a process tree was terminated** — proved by the exhaustive guard
+above rather than by a reviewer re-counting sites. An unconfirmed termination
+stays `CancellationFailed` and keeps quarantining the session. Any capacity
+change states the basis it was decided on, and the queue stays finitely bounded
+whatever that basis is.
 
 *Non-goals:* no parallelism, no pause/resume, no persistence.
 
@@ -775,21 +952,40 @@ stays finitely bounded whatever that basis is.
 ### M6.9 — Output completion and adoption
 
 *Purpose:* make what a conversion produced legible, per item and per queue, with
-the four judgements visible rather than merely modelled.
+all five judgements visible rather than merely modelled.
 
 *Prerequisites:* M6.8 — a completion summary must be able to say what a cancelled
 item is.
 
-*Establishes:* a per-item outcome projection carrying process, finalization,
-integrity and adoption separately; a completion summary for the queue; the
-multi-output partial case stated truthfully at the item; and the **stable facts
-M8 will need**, exposed as reads rather than as persistence.
+*Establishes:* a per-item outcome projection carrying **process, staged output,
+finalized output, integrity and adoption** separately — five, with staged output
+answerable whether or not anything was published; a completion summary for the
+queue; the multi-output partial case stated truthfully at the item; and the
+**stable facts M8 will need** — artifact and manifest facts among them, carried
+beside the five rather than standing in for one — exposed as reads rather than as
+persistence.
 
-*Acceptance:* an item's visible state distinguishes "the process exited"
-from "an output was finalized" from "it was checked" from "it is in the
-workspace". A partially finalized set says how many of what. A completion summary
-adds up to the queue and contains no fabricated total. Nothing here persists
-anything.
+*Acceptance:* a reader can distinguish all five, per item, without any of them
+being collapsed into success or failure:
+
+```text
+process         ran / did not run
+staged output   content exists / does not exist / unknown where applicable
+final output    published / not published / partially published
+integrity       established / not established / inapplicable, as typed
+adoption        adopted / not adopted
+```
+
+The discriminating case is provable, and it is stated in the terms judgement 2
+actually answers: **a failed item that staged something reads differently from a
+failed item that staged nothing**, and neither reads as a bare failure. Not
+"left residue" — residue is what teardown could not reclaim, and a clean teardown
+returns the same answer whether the directory held a half-written output or
+nothing at all. Proving this is what obliges M6.9 to take the observation on the
+ordinary-failure paths, where it is not taken today. A partially finalized set says how many of what. Artifact and
+manifest facts are readable beside the five, and never in place of one. A
+completion summary adds up to the queue and contains no fabricated total. Nothing
+here persists anything.
 
 *Non-goals:* no run history, no artifact store, no lineage graph, no
 cross-session identity. M6 leaves the seam; M8 builds the model.
@@ -978,7 +1174,16 @@ vendor-dataset-root rule `LOCKED` and recorded as currently unexercisable.**
 
 CNV-003's three choices — source sibling, named subfolder, custom local folder
 — are the vocabulary, and M6.5 resolves each to the thing the boundary already
-requires: **an admitted directory object**, not a path string. The existing
+requires: **an admitted directory object**, not a path string. **The policy is
+one decision; how many objects it resolves to is a property of the policy.** A
+source-relative choice resolves per item, and a queue may hold items from
+different parents because nothing requires it not to; a custom folder may resolve
+every item to the same admitted identity. **This amends [ADR 0013](0013-serial-conversion-queue.md)'s *One destination and
+one policy for the whole queue* and [ADR 0020](0020-first-visible-shimadzu-lcd-workflow.md)'s
+restatement of it for the mixed-family queue** — the count changes and nothing
+else does, and M6.5 annotates both when it lands. The policy is bound to the plan, each
+resolved identity is bound to the item or items it applies to, and a retry
+revalidates each of them rather than re-resolving the policy. The existing
 admission stays exactly as it is and is not weakened by adding a policy in front
 of it: reparse points, non-directories and remote volumes are refused before any
 plan exists; the directory is held open **for the whole of admission**; and its
@@ -1106,8 +1311,9 @@ here** rather than left unstatused, because unlike overwrite it needs no
 measurement to decide. A conversion's output name is a **bound plan fact**,
 derived from the source before the queue exists and shown to the user before they
 commit; a policy that invents a different name at write time would make the name
-on screen a guess, and would break the queue-wide name-collision check that runs
-before a destination is even chosen. Refusing a taken name and skipping it are
+on screen a guess, and would break the queue-wide name-collision check — which
+M6.5 makes destination-aware, and which still refuses two items that would write
+one name into one destination object. Refusing a taken name and skipping it are
 both answers the user can see coming. Silently writing `run (2).mzML` is not.
 If a later milestone wants it, it is a new decision against this reasoning, not
 an omission to be filled in.
@@ -1258,7 +1464,8 @@ stopping                  SlotState::Stopping -- its own state, because what a
 owned job terminated      Termination::Cancelled AND final_active_processes == Some(0)
                           -- an observation about the JOB, which equals the tree
                           only under OWNERSHIP_STRUCTURALLY_CLOSED
-finalization reconciled   staging residue observed absent, rather than assumed
+staging reconciled        staging residue observed absent, rather than assumed
+                          -- a staging fact, not a finalization one
 terminal cancelled        ItemState::Cancelled, as against CancellationFailed
 ```
 
@@ -1282,11 +1489,17 @@ for a descendant the Job never contained. [ADR 0014](0014-proteowizard-cancellat
 plainly, and this route restates it rather than letting a strong mechanism be
 mistaken for a strong measurement.
 
-**M6.8 therefore owes two different kinds of thing, and neither substitutes for
-the other.**
+**M6.8 therefore owes three different kinds of thing, and none substitutes for
+another.**
 
 **A measurement**, of the provider: publish the peak process count and observe it
 on a real vendor conversion of the installed build.
+
+**An exhaustive reconciliation**, of the claims. Every name, wire field, surface
+text, diagnostic key, count description and document whose meaning asserts a
+*confirmed process tree* must agree with the outcome below, and a repository
+guard must make that exhaustive over the semantic rather than over a list
+someone maintained by hand.
 
 **And a structural answer**, about ownership. The child is spawned before it is
 assigned to the Job, and an assignment failure degrades to a direct-child kill
@@ -1350,22 +1563,33 @@ produced an output, and M6.9 owes the reader the difference between that and
 Five separate judgements, none derivable from another:
 
 ```text
-process outcome        exit status and termination cause, which can disagree
-staging / finalization the handle-bound rename, taken only after validation
-integrity              ValidationMode and the IntegrityProperty set, including
+1 process outcome      exit status and termination cause, which can disagree
+2 staged output        what the staging area held, and what teardown could not
+                       reclaim -- answered even where nothing was published
+3 finalized output     the handle-bound rename, taken only after validation, and
+                       for a set which members took their names
+4 integrity            ValidationMode and the IntegrityProperty sets, including
                        what could not apply as against what was not verified
-artifact facts         byte length, SHA-256, observed spectrum and chromatogram
-                       counts, and for a set, which members landed
-adoption               the final name still resolving to the exact finalized
+5 adoption             the final name still resolving to the exact finalized
                        object holding the validated length and digest
 ```
+
+**Artifact facts sit beside these five, not among them.** Byte length, SHA-256,
+observed spectrum and chromatogram counts and output-set membership are what M8
+will need and what a reader wants to see; they are not a stage the item passed
+through, and an earlier draft of this decision listed them where the staged-output
+judgement belongs.
 
 Adoption stays **explicit** — a user action, per terminal queue — and stays
 partial-tolerant, with duplicates and refusals isolated.
 
-**What M6.9 adds is visibility, not model.** The judgements are separated in the
-crate and collapsed on screen: an item reads "Converted" whether or not anything
-was compared. M6.9 projects them per item.
+**What M6.9 adds is mostly visibility — with one exception.** Four of the five
+are separated in the crate's vocabulary and collapsed only on screen: an item
+reads "Converted" whether or not anything was compared, and M6.9 projects them
+per item. The exception is **judgement 2**, which is not fully separated in the
+vocabulary either — the staged-content observation is taken on stop paths and not
+on ordinary failures — so making a failed item's staged content legible is a
+model addition rather than a projection.
 
 **And what M6 leaves for M8 is a seam, not a system.** No persistence, no run
 history, no artifact store, no lineage graph and no cross-session identity are
@@ -1767,9 +1991,9 @@ The seams, each named with the slice that freezes it:
 | Command availability | One conversion-lane authority with a reason and a message, read identically by the operation and by every surface | M6.1 |
 | Conversion operation state | The slot's five states and three terminal reasons, on one sequence key that never rewinds | M6.1 (already true; stated) |
 | Bound plan facts | Membership, order, conflict policy, intent, destination policy and installation identity, fixed at `BEGIN` and readable — plus, per pass, any destructive authorization, if CNV-D4 admits one at all | M6.3, M6.4, M6.5, M6.6, M6.7 |
-| Destination identity | A resolved directory object and the policy that chose it — never a path on the wire | M6.5 |
+| Destination identity | The bound policy, plus the resolved directory object for each item it applies to — one identity per item under a source-relative policy, possibly one shared identity under a custom folder. Never a path on the wire | M6.5 |
 | Conversion intent | A typed value, projected for display, never re-derived from controls | M6.3, M6.4 |
-| Per-item outcome | Eight item states plus the four judgements separated per item | M6.9 |
+| Per-item outcome | Eight item states plus all five judgements separated per item — process, staged output, finalized output, integrity, adoption — with artifact facts readable beside them | M6.9 |
 | Completion summary | Per-state counts that add up to the queue, with no fabricated total | M6.9 |
 | Output manifest and integrity | Names, lengths, digests, observed counts, validation mode and the property set — including what could not apply | M6.9 |
 | Diagnostics and evidence | The existing redacted export, plus the capability evidence a setting traces to | M6.2, M6.9 |
@@ -1796,8 +2020,9 @@ re-running anything:
 | `ProviderIdentity` | Release, source revision and executable SHA-256, as measured at admission | exists — `InstalledHelpCapabilities`, `InstallationIdentity` |
 | `ConversionIntent` | The typed intent that produced the argv, and the argv itself | **M6.3** |
 | `OperationRunIdentity` | An identity minted **before the process starts**: opaque, not derived from the output filename or the queue, unique and never reused within the session, and carried on the wire beside the outcome. **Its form is persistable; M6 does not persist it and does not resolve it across sessions** | **M6.9** |
-| `DestinationIdentity` | The resolved directory object and the policy that chose it | **M6.5** |
-| `OutputArtifactManifest` | Per output: name, byte length, SHA-256, observed spectrum and chromatogram counts; for a set, which members landed | exists per item — **M6.9** makes it a manifest |
+| `DestinationIdentity` | The resolved directory object **for the item that wrote there**, plus the policy that chose it — so an output knows the destination object it actually landed in rather than having it inferred from a queue-shared folder | **M6.5** |
+| `StagedOutputEvidence` | What the staging area held, and what teardown could not reclaim — answerable whether or not anything was published, which is what makes a residue-leaving failure legible later | partly exists — `StagedContentObservation` and `StagingResidue` are there and the observation is taken on stop paths only; **M6.9** extends it to ordinary failures and projects it |
+| `OutputArtifactManifest` | Per output: name, byte length, SHA-256, observed spectrum and chromatogram counts; for a set, which members landed. **Evidence beside the five judgements, not one of them** | exists per item — **M6.9** makes it a manifest |
 | `IntegrityEvidence` | Validation mode plus the property set, keeping *inapplicable* distinct from *unverified* | exists — **M6.9** projects it |
 | `AdoptionRelation` | Which output was adopted, and against which identity check | exists — **M6.9** records the relation |
 | `Run`, `Artifact`, `Lineage`, `Provenance` | **not built.** M6 supplies the facts these would be assembled from | **M8** |
@@ -1836,12 +2061,12 @@ expected to own it.
 | 1 | **The conversion lane has one availability authority.** Every surface that offers a conversion action and the operation that performs it read the same rule; no surface offers an action the operation would refuse, and none withholds one it would accept. An unavailable action gives one truthful reason, once | **M6.1** |
 | 2 | **Every admitted conversion setting is evidence-backed and typed.** Each traces to an exact provider identity, a live measurement of that build, a stated product semantic and a deterministic argv mapping. No setting is visible because a flag exists | **M6.2**, **M6.3**, **M6.4** |
 | 3 | **The visible plan is the bound plan.** What the summary states before `BEGIN` is what the queue binds, and moving any control afterwards changes nothing about the running queue — across every fact M6 adds to the plan: intent, destination policy, any destructive authorization, and scope | **M6.3**, **M6.4**, **M6.5**, **M6.6**, **M6.7** |
-| 4 | **Destination authority is explicit and safe.** A destination is a resolved directory object with the policy that chose it; source/destination **object aliasing** is refused on identity rather than on a path prefix; writing **inside a directory-shaped acquisition** fails closed; the **sibling folder of a file-shaped acquisition is admitted**, because that is what `source sibling` resolves to; and a retry revalidates by identity rather than by name. **Named exception, carried from CNV-D3:** where no admitted acquisition family is directory-shaped, the aliasing and vendor-dataset-root halves are met by each rule being stated, ordered ahead of the sibling admission, and implemented in a path a directory-shaped source would enter — rather than by an observed refusal, because nothing can currently trip either | **M6.5** |
+| 4 | **Destination authority is explicit and safe.** A destination is a resolved directory object with the policy that chose it; source/destination **object aliasing** is refused on identity rather than on a path prefix; writing **inside a directory-shaped acquisition** fails closed; the **sibling folder of a file-shaped acquisition is admitted**, because that is what `source sibling` resolves to; and a retry revalidates **every identity it will use** by identity rather than by name, never re-resolving the policy into a different destination. **Named exception, carried from CNV-D3:** where no admitted acquisition family is directory-shaped, the aliasing and vendor-dataset-root halves are met by each rule being stated, ordered ahead of the sibling admission, and implemented in a path a directory-shaped source would enter — rather than by an observed refusal, because nothing can currently trip either | **M6.5** |
 | 5 | **Selected and all are deterministic and bound.** Each scope has one stated meaning, a visible order, an explicit treatment of ineligible rows and of rows added after `BEGIN`, and a capacity refusal that arrives before the commit | **M6.7** |
 | 6 | **Conflict and destructive behaviour are explicit.** The conflict policy is resolved on the typed request before launch and identically for every entry path; any destructive option is explicit, scoped, bound to its plan and not inherited by retry; and where overwrite is refused, the refusal is recorded with its reason | **M6.6** |
-| 7 | **Cancellation states reflect measured process behaviour, and claim no more than the scope observed.** Every cancellation claim names the observation behind it; the process-tree claim rests on a real measurement of the installed build **and** on a structurally closed ownership window, and where ownership cannot be closed the path is classified `OWNERSHIP_UNCONFIRMED` and `Cancelled` is not claimed **on that basis** — the item state is retained for an owned-Job-empty observation, and what is withdrawn is the *tree* claim; an unconfirmed termination stays unconfirmed and keeps quarantining the session | **M6.8** |
+| 7 | **Cancellation states reflect measured process behaviour, and claim no more than the scope observed.** Three things must agree: a **structural ownership outcome**, a **representative provider measurement**, and an **exhaustive reconciliation of every claim** whose name or meaning asserts confirmed process-tree termination — proved by a repository guard over that semantic, not by a hand-maintained list. Where ownership cannot be closed the path is classified `OWNERSHIP_UNCONFIRMED` and `Cancelled` is not claimed **on that basis**: the item state is retained for an owned-Job-empty observation, and what is withdrawn is the *tree* claim, wherever it is made. An unconfirmed termination stays unconfirmed and keeps quarantining the session | **M6.8** |
 | 8 | **Progress contains no fabricated precision.** Item counts, per-state counts and the current item's state — and any finer signal only on a measurement that it can be counted honestly | **M6.8** |
-| 9 | **Process, finalization, integrity and adoption are distinct, and visibly so.** No surface, wire type or summary reduces an item to succeeded/failed, and a reader can tell "it ran" from "it was written" from "it was checked" from "it is in the workspace" | **M6.9** |
+| 9 | **All five judgements are distinct, and visibly so — process, staged output, finalized output, integrity, adoption.** No surface, wire type or summary reduces an item to succeeded/failed, and a reader can tell "it ran" from "something was staged" from "an output was written" from "it was checked" from "it is in the workspace". Staged output is answerable independently of whether finalization happened — and on the ordinary-failure paths too, where the observation is not taken today — so a failure that **staged something** is distinguishable from one that staged nothing, which residue alone cannot tell apart; artifact and manifest facts sit beside the five and never substitute for one | **M6.9** |
 | 10 | **Multi-output completion is truthful.** A backend-named set reports how many of what landed; a partial set is neither a success nor a failure; and a set's collisions and adoption are answered as a set rather than by a one-file rule | **M6.6**, **M6.9** |
 | 11 | **Every conditional route has a terminal disposition.** Four routes, and the set is closed: mzXML; vendor-format direct preview; whether M6 opens any further vendor family at all, answered as one decision rather than per family; and VIEW-007's conditional re-entry. Each ends admitted, refused with evidence, or evidence-blocked with what is missing and who would supply it. **Reaching a disposition is required; being admitted is not** — M6 completes on any combination of the three outcomes, and on none of them being admitted | **M6.10** |
 | 12 | **M7 and M8 receive stable seams.** The reads listed above exist and are consumed by at least one current surface, so they are proved rather than declared — and no persistence, artifact store or lineage model was built to provide them | **M6.3**, **M6.5**, **M6.9**, **M6.11** |

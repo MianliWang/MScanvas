@@ -5938,12 +5938,18 @@ belongs to no Job — outside `TerminateJobObject` **and outside the count that
 reports the Job empty**. A sample cannot observe a process nothing was counting,
 so no number of representative runs closes it; the same holds for an assignment
 failure, which degrades to a direct-child kill without being reclassified as
-unconfirmed. The route therefore requires **both** a representative measurement
-**and** a structural answer, ending on one of two outcomes:
-`OWNERSHIP_STRUCTURALLY_CLOSED`, or `OWNERSHIP_UNCONFIRMED` in which
-process-tree termination is classified unconfirmed and `Cancelled` is not claimed
-on that basis. No implementation is prescribed. **Owner: M6.8**, before any
-surface claims a tree was terminated.
+unconfirmed. The route therefore requires **three** things to agree — a
+representative measurement, a structural ownership answer, and an **exhaustive
+reconciliation of every claim** that asserts confirmed process-tree termination —
+ending on one of two outcomes: `OWNERSHIP_STRUCTURALLY_CLOSED`, or
+`OWNERSHIP_UNCONFIRMED` in which process-tree termination is classified
+unconfirmed and `Cancelled` is not claimed on that basis. The third is a semantic
+contract with a repository guard behind it, not a list of symbols: the claim is
+propagated across item states, queue counts, cancellation facts, mirrored wire
+fields, diagnostics keys, set-stop facts and the quarantine reason, and an
+enumeration would be correct only until the next surface was added. No
+implementation is prescribed. **Owner: M6.8**, before any surface claims a tree
+was terminated.
 
 ### XIC: no new identity at this baseline
 
