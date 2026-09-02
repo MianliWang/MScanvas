@@ -5920,19 +5920,30 @@ queue-level stop has existed since ADR 0015. The queue stays finitely bounded
 whatever value M6 lands on, and re-evaluating it is **M6.8's**, after
 cancellation is understood.
 
-### Cancellation: a strong mechanism, and a measurement that has not been made
+### Cancellation: a strong mechanism, an unmade measurement, and an open window
 
 Job Objects, `TerminateJobObject` and an emptiness check are implemented and
 correct in shape. What has **not** been established is that a real `msconvert`
 run is a *tree at all*: `surviving_processes == Some(0)` after termination is
-satisfied trivially by a one-process run, `max_active_processes` is measured by
-the crate but never published and never read by the evidence harness, and the
-only multi-process evidence is against a synthetic mock parent and grandchild —
-which [ADR 0014](docs/architecture/adr/0014-proteowizard-cancellation-evidence.md)
-states openly. Two code-level facts join it: the child is spawned *before* it is
-assigned to the Job, and an assignment failure degrades to a direct-child kill
-without being reclassified as unconfirmed. **Owner: M6.8**, before any surface
-claims a tree was terminated.
+satisfied trivially by a one-process run, `max_active_processes` is printed by
+the M0 spike harness but recorded in no evidence document, absent from
+`BackendRunFacts` and not reported by the cancellation harness, and the only
+multi-process evidence is against a synthetic mock parent and grandchild — which
+[ADR 0014](docs/architecture/adr/0014-proteowizard-cancellation-evidence.md)
+states openly.
+
+**And a measurement would not be enough on its own.** The child is spawned
+*before* `AssignProcessToJobObject`, so a descendant created in that window
+belongs to no Job — outside `TerminateJobObject` **and outside the count that
+reports the Job empty**. A sample cannot observe a process nothing was counting,
+so no number of representative runs closes it; the same holds for an assignment
+failure, which degrades to a direct-child kill without being reclassified as
+unconfirmed. The route therefore requires **both** a representative measurement
+**and** a structural answer, ending on one of two outcomes:
+`OWNERSHIP_STRUCTURALLY_CLOSED`, or `OWNERSHIP_UNCONFIRMED` in which
+process-tree termination is classified unconfirmed and `Cancelled` is not claimed
+on that basis. No implementation is prescribed. **Owner: M6.8**, before any
+surface claims a tree was terminated.
 
 ### XIC: no new identity at this baseline
 

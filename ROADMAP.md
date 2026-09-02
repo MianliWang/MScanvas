@@ -422,9 +422,16 @@ settings this product wants to offer, and making one rule decide whether a
 conversion action may start.
 
 **Nothing in M6 is completed by a measurement going a particular way.** mzXML,
-vendor-format direct preview, a further vendor family and XIC re-entry each end in
-a stated disposition — admitted, refused with evidence, or evidence-blocked — and
-none of them is an M6 exit criterion.
+vendor-format direct preview, whether a further vendor family opens at all, and
+XIC re-entry each end in a stated disposition — admitted, refused with evidence,
+or evidence-blocked with the missing evidence and its owner named. **None of them
+has to be admitted for M6 to complete; each of them has to be answered.**
+Reaching a terminal disposition is exit criterion 11; being admitted is not a
+criterion at all. The two backlog bullets below that call vendor-format direct
+preview and VIEW-007 re-measurement “not an exit criterion” are about admission
+in exactly that sense, and are read under this distinction — as is VIEW-007's
+“closed by that fact”, which is a refusal carried with evidence rather than a
+fourth kind of ending.
 
 M5 hands it two things beyond the backlog below. The **capability-evidence
 discipline** M5.4 established — exact installed signature, exact executable
@@ -439,14 +446,19 @@ claimed closed.
 - Widen the typed conversion settings the interface can actually express:
   CNV-002's mzXML gate, CNV-004 to CNV-007's processing and compression choices,
   and CNV-003's output-location choices.
-- Queue and output work beyond the current bounds, **each measurement-gated and
-  none of them an exit criterion**: a re-evaluated queue bound, per-item
-  cancellation and further evidenced vendor families. A larger queue and a
+- Queue work beyond the current bounds, **measurement-gated, and neither an exit
+  criterion nor a route requiring a disposition**: a re-evaluated queue bound and
+  per-item cancellation. A larger queue and a
   per-item cancel are admitted only on M6.8's measurement of what an `msconvert`
-  run actually is, the queue stays finitely bounded whatever that measurement
-  says, and removing an item from a queue already running is refused outright —
-  membership is bound when the queue is created. See
+  run actually is **and on its ownership outcome** — a per-item cancel is refused
+  where the spawn-to-Job window stays open — the queue stays finitely bounded
+  whatever that measurement says, and removing an item from a queue already
+  running is refused outright — membership is bound when the queue is created. See
   [ADR 0043](docs/architecture/adr/0043-conversion-completion-route.md).
+- **Whether a further evidenced vendor family opens at all**, answered once as a
+  single decision rather than family by family. This one *is* on the closed
+  side-route set, so it must reach a terminal disposition before M6 closes; what
+  it need not do is end admitted.
 - **Vendor-format direct preview**, behind its own evidence slice. Deferred from
   M5 with a recorded reason: `open_preview` refuses a non-mzML row today, and
   conversion support is not direct-preview support — the conversion evidence

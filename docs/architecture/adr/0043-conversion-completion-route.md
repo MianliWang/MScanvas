@@ -557,12 +557,40 @@ canonical-path prefix test that decides it today; **CNV-009's output-root half**
 inherited from M6.4 because the root does not exist before a policy resolves one;
 and the retry-time revalidation contract stated where a reader meets the policy.
 
-*Acceptance:* a destination is a folder object, never a path string. Writing
-inside a recognised vendor dataset root **fails closed** — and where no admitted
-family is directory-shaped, that is recorded as the reason the rule is currently
-unexercisable rather than as the rule being absent. A resolved destination is
-bound to the plan and revalidated by identity on every later pass. A destination
-that is or contains the source is refused.
+*Acceptance:* a destination is a folder object, never a path string. A resolved
+destination is bound to the plan and revalidated by identity on every later pass.
+
+**Three containment questions, and they have three different answers.** They are
+separated here because collapsing them into one “the destination contains the
+source” rule would refuse the `source sibling` policy this route just locked —
+for a file-shaped acquisition the sibling folder *is* the file's parent, so it
+contains the source by construction, and that is the policy working rather than a
+violation.
+
+**They are ordered, not parallel**, because rows 2 and 3 can match the same
+destination and something has to say which wins:
+
+| # | Case | Answer |
+| --- | --- | --- |
+| 1 | **Object aliasing.** The resolved destination object *is* the source object | **Refused**, on object identity rather than on a path prefix. Like row 2, **currently unexercisable**: every admitted source is a regular file and every destination is a directory object, so the two cannot be the same object today |
+| 2 | **Output inside a directory-shaped acquisition.** The destination is the recognised vendor dataset root, or lies under it | **Fails closed**, unchanged and not weakened by anything below it. Also **currently unexercisable**, because no admitted family is directory-shaped — recorded as the reason, rather than as the rule being absent |
+| 3 | **Sibling of a file-shaped acquisition**, reached only where neither 1 nor 2 matched. The destination is the parent folder of a single-file source, or of a bundle's members | **Admitted.** This is `source sibling`, and it is one of CNV-003's three policies |
+
+**Order is what makes row 3 safe.** It is not an assertion that a source's parent
+is never a dataset root — that is true for every family admitted today and would
+stop being true the moment a directory-shaped one is, and a rule resting on it
+would fail silently at exactly that point. Row 3 is safe because rows 1 and 2 are
+asked first: where the source *is* a directory, its parent is not reached as a
+sibling, because the directory-root question has already answered.
+
+**And each row states its own mechanism.** Row 1 is an **object-identity
+comparison**, replacing the canonical-path prefix test that stands in for it
+today. Row 2 is an **ancestry walk from the destination's admitted object up to
+the acquisition root, compared by identity at each step** — not a string prefix,
+which is what fails over links, substituted drives and mount points. Row 3 needs
+no comparison at all: it is what a resolved policy produced, admitted because the
+two rows above it declined. What M6.5 must not do is decide *any* of the three by
+asking whether one canonical path happens to begin with another.
 
 *Non-goals:* no conflict UX, no overwrite. It resolves where output goes, not
 what happens when something is already there.
@@ -625,8 +653,9 @@ and only then reconsider how large a queue may be.
 *Prerequisites:* M6.7.
 
 *Establishes:* the distinction between **stop the whole queue** (exists),
-**cancel the current item and continue** (does not exist; admissible only on
-measurement) and **skip a queued item** (does not exist; admissible, and not a
+**cancel the current item and continue** (does not exist; admissible only on the
+measurement **and** the ownership outcome, and refused under
+`OWNERSHIP_UNCONFIRMED`) and **skip a queued item** (does not exist; admissible, and not a
 membership change) — with **remove a queued item** refused outright, because it
 is a membership change and membership is bound at `BEGIN`; a live measurement of
 what an `msconvert` process tree actually is for this build; and a capacity
@@ -642,19 +671,84 @@ states openly. The peak count is not simply missing, and the precise position
 matters: `max_active_processes` **is** read and printed by the M0 spike harness
 through `ReportableProcessOutput`, but it appears in **no evidence document**, it
 is **absent from `BackendRunFacts`** so no product or diagnostics surface can see
-it, and the **cancellation** evidence harness does not report it at all. M6.8 must publish the peak count and observe it on a real vendor
-conversion before any surface claims a tree was terminated. Two further code-level
-facts belong to the same slice: the child is spawned *before* it is assigned to
-the Job, so a descendant created in that window is outside every termination
-path; and an assignment failure degrades to a direct-child kill without being
-reclassified as an unconfirmed cancellation.
+it, and the **cancellation** evidence harness does not report it at all. So M6.8
+must publish the peak count and observe it on a real vendor conversion.
+
+**But measurement alone cannot license the claim, and this is the part the route
+states as a contract rather than as a task.** The child is spawned *before* it is
+assigned to the Job — `spawn()` returns a running process, and
+`AssignProcessToJobObject` follows it — and the code names that window
+"documented, unavoidable" for what stable `std::process` permits. A descendant
+created inside it belongs to no Job, so it is outside `TerminateJobObject` **and
+outside the `QueryInformationJobObject` count that reports the job empty**. A
+sample that shows a tree and then shows the job empty is therefore consistent
+with an escapee having survived: it observes the processes ownership *did*
+capture, and says nothing about one it never held. **No number of representative
+runs closes a structural hole**, because the hole is in what is being counted.
+
+**M6.8 must therefore satisfy both, and they are different kinds of thing:**
+
+1. **A structurally closed ownership mechanism** — execution cannot proceed
+   through the escape window before Job ownership is established — **or**, where
+   that cannot be established, a **fail-closed classification** of the path.
+2. **A representative measurement** of the installed `msconvert` build, which is
+   the separate question of what that provider actually does at run time.
+
+**One of two terminal architectural outcomes, and no third:**
+
+```text
+OWNERSHIP_STRUCTURALLY_CLOSED   nothing the child spawns can begin outside the
+                                Job, so an empty Job is an empty tree, and
+                                Cancelled may be claimed on it
+OWNERSHIP_UNCONFIRMED           the window remains open, so process-tree
+                                termination is classified unconfirmed and
+                                Cancelled is NOT claimed on that basis
+```
+
+**The route prescribes neither implementation.** Closing the window structurally
+is a process-boundary decision, and the process boundary already records its own
+constraint — "Stable std does not expose suspended CreateProcess/job-list
+attributes", with the race carried as a production follow-up — so the cost is
+real and M6.8 weighs it. What the route fixes is the *disjunction*: close it, or
+stop claiming what it undermines. What the route refuses is the third answer, in
+which a measurement is treated as having closed it.
+
+**What `OWNERSHIP_UNCONFIRMED` withdraws is the wording, not the state — and this
+has to be exact, because the other reading would break a shipped control.**
+`CancellationFailed` fires today when the Job did **not** empty
+(`tree_termination_confirmed == false`), and it is what quarantines the session.
+If `OWNERSHIP_UNCONFIRMED` were read as "never settle an item `Cancelled`", every
+successful stop would land in `CancellationFailed` and quarantine, and `Stop
+queue` would become unusable on its ordinary path. That is not the rule.
+
+**The rule is:** `ItemState::Cancelled` is retained for an owned-Job-empty
+observation, and what is withdrawn is the claim that a **process tree** was
+terminated — because the Job is the whole scope of what was observed.
+`CancellationFailed` keeps exactly the meaning and the quarantine consequence it
+has today, for exactly the condition it has today.
+
+**Three places currently make the tree claim**, and they are the finite list
+`OWNERSHIP_UNCONFIRMED` would have to withdraw it from, named here so criterion 7
+has something to check against rather than a general instruction:
+`ConversionQueueItemStateDto::Cancelled`'s rustdoc ("its owned process tree was
+confirmed gone"); `ConversionCancellationDto::tree_termination_confirmed`'s
+rustdoc ("the owned process tree was terminated and observed empty"); and that
+field's own name. **No code changes here** — M6.8 owns whether they are reworded
+or made true.
+
+**One further code-level fact belongs to the same slice**, and it is the same
+shape: an assignment failure degrades to a direct-child kill without being
+reclassified as an unconfirmed cancellation — a path where ownership was never
+established at all, and which must reach the same disjunction.
 
 *The states that must stay distinct:*
 
 ```text
 cancellation requested   CancellationToken / stop_requested
 stopping                 SlotState::Stopping
-tree terminated          Termination::Cancelled AND final_active_processes == Some(0)
+owned job terminated     Termination::Cancelled AND final_active_processes == Some(0)
+                         -- an observation about the JOB, which equals the tree
+                         only under OWNERSHIP_STRUCTURALLY_CLOSED
 finalization reconciled  staging residue absent, observed rather than assumed
 terminal cancelled       ItemState::Cancelled -- as against CancellationFailed
 ```
@@ -664,7 +758,11 @@ percentage, no estimate, no fraction of one item. Where finer progress is wanted
 it is admitted only on a measurement showing `msconvert` emits something a caller
 can honestly count.
 
-*Acceptance:* every cancellation claim names the observation behind it. An
+*Acceptance:* every cancellation claim names the observation behind it, **and no
+claim reaches further than the scope of what was observed** — an empty Job is an
+empty Job, and is an empty *tree* only where ownership is structurally closed.
+The slice ends on one of the two terminal outcomes above, and where it ends on
+`OWNERSHIP_UNCONFIRMED` no surface says a process tree was terminated. An
 unconfirmed termination stays `CancellationFailed` and keeps quarantining the
 session. Any capacity change states the basis it was decided on, and the queue
 stays finitely bounded whatever that basis is.
@@ -704,16 +802,23 @@ them open.
 
 *Prerequisites:* M6.2.
 
-*Establishes:* the terminal disposition of each side route — CNV-002 mzXML;
-vendor-format direct preview; **whether M6 opens any further vendor family at
-all**, answered once as a single yes-or-no rather than family by family, and only
-then enumerated; and the conditional
-VIEW-007 re-entry.
+*Establishes:* the terminal disposition of each of the four side routes —
+CNV-002 mzXML; vendor-format direct preview; **whether M6 opens any further
+vendor family at all**, answered once as a single yes-or-no rather than family by
+family, and only then enumerated; and VIEW-007's conditional re-entry.
 
 *Acceptance:* each side route ends in a stated outcome with its evidence:
-admitted, refused, or evidence-blocked with what is missing and who would supply
-it. **No side route is an M6 exit criterion**, and M6 completion does not depend
-on any of them being admitted.
+admitted, refused with evidence, or evidence-blocked with what is missing and who
+would supply it.
+
+**Two things are true at once here, and they are easy to run together.** **No
+capability on this list is required to be *admitted* for M6 to complete** — M6
+finishes on any combination of outcomes, including all four refused. But **every
+route in the closed set is required to reach a terminal disposition**, and that
+requirement *is* exit criterion 11. Leaving a branch open is not a neutral
+outcome; it is the one result this slice exists to prevent, because an
+undisposed route is a question the next milestone inherits without knowing it
+has.
 
 *Non-goals:* does not open a route the evidence refuses, and does not implement
 XIC.
@@ -910,14 +1015,34 @@ is. So today the containment rule is a path-string comparison that never fires,
 and the earlier statement that MSCanvas decides aliasing by identity would have
 been a claim about a mechanism this boundary does not have.
 
-**M6.5 owes both halves**: an aliasing decision made on object identity rather
-than on a prefix of a canonicalized string, and one that applies to a
-single-file source as well as a directory-shaped one. A prefix test over
-canonical paths is a reasonable containment heuristic and it is not an identity
-comparison; on Windows the two differ exactly where it matters, over links,
-substituted drives and volume mount points, which is why the destination
-admission already refuses reparse points rather than reasoning about their
-targets.
+**M6.5 owes an aliasing decision made on object identity** rather than on a
+prefix of a canonicalized string. A prefix test over canonical paths is a
+reasonable containment heuristic and it is not an identity comparison; on Windows
+the two differ exactly where it matters, over links, substituted drives and
+volume mount points, which is why the destination admission already refuses
+reparse points rather than reasoning about their targets.
+
+**And it owes the separation that the prefix test conceals.** “Inside the
+source” and “beside the source” are different facts, and only the first is a
+refusal:
+
+1. **the destination object is the source object** — refused, on an identity
+   comparison; currently unexercisable, because a destination is a directory
+   object and every admitted source is a regular file;
+2. **the destination is a directory-shaped acquisition's root, or lies under it**
+   — fails closed, on an ancestry walk compared by identity at each step. This
+   is the vendor-dataset-root rule, unweakened, and it is asked *before* the
+   next one;
+3. **the destination is the parent folder of a file-shaped acquisition**, reached
+   only where neither of the above matched — **admitted**, because that is
+   exactly what CNV-003's `source sibling` resolves to for every family this
+   build admits.
+
+The last case is why a universal “destination contains the source” refusal
+cannot be the rule: it would refuse one of the three policies this decision
+locks, for all three admitted families, on the strength of a path relationship
+that is a property of the policy rather than a hazard. **The hazard is the
+acquisition's shape**, and M6.5 keys on that.
 
 **Three things recorded and not closed**, because M6.5 will touch the code they
 live in and a reader should meet them there rather than rediscover them:
@@ -1088,9 +1213,12 @@ it is why M6.7 comes first.
 ### CNV-D7 — cancellation
 
 **Status: the state vocabulary `LOCKED`. The process-tree claim
-`EVIDENCE_REQUIRED`, owner M6.8. Per-item cancel `PROVISIONAL_PENDING_MEASUREMENT`,
-owner M6.8. Queued-item *skip* `PROVISIONAL_PENDING_MEASUREMENT`, owner M6.8.
-Queued-item *removal* `REFUSED`, here.**
+`EVIDENCE_REQUIRED` **and** `ARCHITECTURE_DECISION_REQUIRED` — a measurement and
+an ownership decision, and the measurement alone cannot settle it — owner M6.8,
+terminal on `OWNERSHIP_STRUCTURALLY_CLOSED` or `OWNERSHIP_UNCONFIRMED`. Per-item
+cancel `PROVISIONAL_PENDING_MEASUREMENT` **and** conditional on that ownership
+outcome, owner M6.8. Queued-item *skip* `PROVISIONAL_PENDING_MEASUREMENT`, owner
+M6.8. Queued-item *removal* `REFUSED`, here.**
 
 **Four different promises, and M6 must not blur them** — least of all the last
 two, which read as one request and are not:
@@ -1126,7 +1254,9 @@ The state vocabulary that must stay distinct, and mostly already is:
 cancellation requested    CancellationToken / ConversionSlot::stop_requested
 stopping                  SlotState::Stopping -- its own state, because what a
                           reader may do differs from Running
-tree terminated           Termination::Cancelled AND final_active_processes == Some(0)
+owned job terminated      Termination::Cancelled AND final_active_processes == Some(0)
+                          -- an observation about the JOB, which equals the tree
+                          only under OWNERSHIP_STRUCTURALLY_CLOSED
 finalization reconciled   staging residue observed absent, rather than assumed
 terminal cancelled        ItemState::Cancelled, as against CancellationFailed
 ```
@@ -1151,13 +1281,26 @@ for a descendant the Job never contained. [ADR 0014](0014-proteowizard-cancellat
 plainly, and this route restates it rather than letting a strong mechanism be
 mistaken for a strong measurement.
 
-**M6.8 therefore owes three things before any surface claims a tree was
-terminated:** publish the peak process count; observe it on a real vendor
-conversion of the installed build; and answer two code-level facts the audit
-found — that the child is spawned *before* it is assigned to the Job, so a
-descendant created in that window is outside every termination path, and that an
-assignment failure degrades to a direct-child kill without being reclassified as
-an unconfirmed cancellation.
+**M6.8 therefore owes two different kinds of thing, and neither substitutes for
+the other.**
+
+**A measurement**, of the provider: publish the peak process count and observe it
+on a real vendor conversion of the installed build.
+
+**And a structural answer**, about ownership. The child is spawned before it is
+assigned to the Job, and an assignment failure degrades to a direct-child kill
+without being reclassified as unconfirmed — two paths on which a process can
+exist that the Job never held. M6.8 ends on one of exactly two outcomes:
+**`OWNERSHIP_STRUCTURALLY_CLOSED`**, where nothing the child spawns can begin
+outside the Job and an empty Job is therefore an empty tree; or
+**`OWNERSHIP_UNCONFIRMED`**, where the window stays open, process-tree
+termination is classified unconfirmed, and **`Cancelled` is not claimed on that
+basis**. The route prescribes neither implementation — the repository's own
+comment records that stable `std::process` exposes no suspended-create-and-resume
+or job-list attribute, so structural closure is not free —
+but it refuses the third answer in which a measurement is treated as having
+closed a structural hole. **A sample cannot observe a process nothing was
+counting.**
 
 **`CancellationFailed` keeps quarantining the session**, and that stays. It is
 the one state where MSCanvas cannot say whether a converter process of its own
@@ -1524,7 +1667,10 @@ VIEW-007's re-entry to M6 with a stated trigger: **a different measured
 `msaccess` executable identity.** Where M6 measures one — for a direct-preview
 slice, for a widened distribution, or because the installation changed — the
 spike's three-part gate runs in full. Where M6 measures none, the item is closed
-by that fact and no XIC work is owed.
+by that fact and no XIC work is owed — and in criterion 11's vocabulary that
+closure is a **refusal carried with evidence**, the evidence being a measured
+identity match to the build M5.4 already refused, rather than a fourth kind of
+ending.
 
 **At this baseline, no new identity exists.** The installed `msaccess.exe`
 hashes to `85681B20…D1F4` — byte-identical to the digest
@@ -1689,14 +1835,14 @@ expected to own it.
 | 1 | **The conversion lane has one availability authority.** Every surface that offers a conversion action and the operation that performs it read the same rule; no surface offers an action the operation would refuse, and none withholds one it would accept. An unavailable action gives one truthful reason, once | **M6.1** |
 | 2 | **Every admitted conversion setting is evidence-backed and typed.** Each traces to an exact provider identity, a live measurement of that build, a stated product semantic and a deterministic argv mapping. No setting is visible because a flag exists | **M6.2**, **M6.3**, **M6.4** |
 | 3 | **The visible plan is the bound plan.** What the summary states before `BEGIN` is what the queue binds, and moving any control afterwards changes nothing about the running queue — across every fact M6 adds to the plan: intent, destination policy, any destructive authorization, and scope | **M6.3**, **M6.4**, **M6.5**, **M6.6**, **M6.7** |
-| 4 | **Destination authority is explicit and safe.** A destination is a resolved directory object with the policy that chose it; writing inside a recognised vendor dataset root fails closed; source/destination aliasing is decided by identity rather than by a path prefix; and a retry revalidates by identity rather than by name. **Named exception, carried from CNV-D3:** where no admitted acquisition family is directory-shaped, the vendor-dataset-root half is met by the rule being stated, reachable and refused-by-construction rather than by an observed refusal, because nothing can currently trip it | **M6.5** |
+| 4 | **Destination authority is explicit and safe.** A destination is a resolved directory object with the policy that chose it; source/destination **object aliasing** is refused on identity rather than on a path prefix; writing **inside a directory-shaped acquisition** fails closed; the **sibling folder of a file-shaped acquisition is admitted**, because that is what `source sibling` resolves to; and a retry revalidates by identity rather than by name. **Named exception, carried from CNV-D3:** where no admitted acquisition family is directory-shaped, the aliasing and vendor-dataset-root halves are met by each rule being stated, ordered ahead of the sibling admission, and implemented in a path a directory-shaped source would enter — rather than by an observed refusal, because nothing can currently trip either | **M6.5** |
 | 5 | **Selected and all are deterministic and bound.** Each scope has one stated meaning, a visible order, an explicit treatment of ineligible rows and of rows added after `BEGIN`, and a capacity refusal that arrives before the commit | **M6.7** |
 | 6 | **Conflict and destructive behaviour are explicit.** The conflict policy is resolved on the typed request before launch and identically for every entry path; any destructive option is explicit, scoped, bound to its plan and not inherited by retry; and where overwrite is refused, the refusal is recorded with its reason | **M6.6** |
-| 7 | **Cancellation states reflect measured process behaviour.** Every cancellation claim names the observation behind it; the process-tree claim rests on a real measurement of the installed build rather than on a mechanism; an unconfirmed termination stays unconfirmed | **M6.8** |
+| 7 | **Cancellation states reflect measured process behaviour, and claim no more than the scope observed.** Every cancellation claim names the observation behind it; the process-tree claim rests on a real measurement of the installed build **and** on a structurally closed ownership window, and where ownership cannot be closed the path is classified `OWNERSHIP_UNCONFIRMED` and `Cancelled` is not claimed on it; an unconfirmed termination stays unconfirmed and keeps quarantining the session | **M6.8** |
 | 8 | **Progress contains no fabricated precision.** Item counts, per-state counts and the current item's state — and any finer signal only on a measurement that it can be counted honestly | **M6.8** |
 | 9 | **Process, finalization, integrity and adoption are distinct, and visibly so.** No surface, wire type or summary reduces an item to succeeded/failed, and a reader can tell "it ran" from "it was written" from "it was checked" from "it is in the workspace" | **M6.9** |
 | 10 | **Multi-output completion is truthful.** A backend-named set reports how many of what landed; a partial set is neither a success nor a failure; and a set's collisions and adoption are answered as a set rather than by a one-file rule | **M6.6**, **M6.9** |
-| 11 | **Every conditional route has a terminal disposition.** Four routes, and the set is closed: mzXML; vendor-format direct preview; whether M6 opens any further vendor family at all, answered as one decision rather than per family; and VIEW-007's conditional re-entry. Each ends admitted, refused with evidence, or evidence-blocked with what is missing and who would supply it. **None of them is a condition of M6 completing** | **M6.10** |
+| 11 | **Every conditional route has a terminal disposition.** Four routes, and the set is closed: mzXML; vendor-format direct preview; whether M6 opens any further vendor family at all, answered as one decision rather than per family; and VIEW-007's conditional re-entry. Each ends admitted, refused with evidence, or evidence-blocked with what is missing and who would supply it. **Reaching a disposition is required; being admitted is not** — M6 completes on any combination of the three outcomes, and on none of them being admitted | **M6.10** |
 | 12 | **M7 and M8 receive stable seams.** The reads listed above exist and are consumed by at least one current surface, so they are proved rather than declared — and no persistence, artifact store or lineage model was built to provide them | **M6.3**, **M6.5**, **M6.9**, **M6.11** |
 
 Three milestone-wide conditions, on the pattern
@@ -1708,13 +1854,27 @@ Three milestone-wide conditions, on the pattern
   three responsive targets;
 - **C** — the local gate set passes unchanged.
 
-**What is explicitly not an exit criterion:** an admitted mzXML; a visible XIC;
-vendor-format direct preview; a further vendor family; a larger queue; per-item
-cancellation; a queued-item skip; and any part of M7 or M8. Each is excluded
-unconditionally. A measurement that *supports* per-item cancellation permits M6.8
-to deliver it; it never turns it into a requirement, because no criterion above
-names it and a milestone whose completion turns on how a measurement lands is not
-a milestone.
+**What is explicitly not an exit criterion — as a *delivered capability*:** an
+admitted mzXML; an admitted VIEW-007 re-entry; an admitted vendor-format direct
+preview; an admitted further vendor family; a visible XIC; a larger queue;
+per-item cancellation; a queued-item skip; and any part of M7 or M8. Each is excluded unconditionally. A
+measurement that *supports* per-item cancellation permits M6.8 to deliver it; it
+never turns it into a requirement, because no criterion above names it and a
+milestone whose completion turns on how a measurement lands is not a milestone.
+
+**This is a list of capabilities, not of questions.** The **first four** are the
+*admitted forms* of criterion 11's four closed side routes — mzXML, VIEW-007's
+conditional re-entry, vendor-format direct preview, and whether a further vendor
+family opens — and criterion 11 requires each of those **routes** to reach a
+terminal disposition before M6 closes. What is excluded is the obligation to
+*admit* one; what is required is the obligation to *answer* it.
+
+The **remaining five** are on no route and in no criterion. A **visible XIC** is
+listed among them deliberately: it is the Post-M6 interlude's possible
+deliverable, not VIEW-007's M6 form — even a re-entry M6 admitted would schedule
+a viewer slice rather than produce a trace — so it is neither excluded-as-a-route
+nor owed a disposition here. A larger queue, per-item cancellation, a queued-item
+skip and any part of M7 or M8 are simply unnamed by every criterion.
 
 ## Questions this route cannot answer, and does not pretend to
 
@@ -1769,6 +1929,11 @@ whether a conversion action may start.**
 Three things this ADR deliberately refuses to do. It does not admit a setting on
 the strength of a flag or a source reading, however clear the source. It does not
 resolve the ADR 0009 / CNV-008 conflict by preferring one document. And it does
-not make XIC, mzXML, direct preview or a further vendor family a condition of M6
-completing — because a milestone whose completion depends on a measurement going
-a particular way is not a milestone, it is a hope.
+not make an **admitted** VIEW-007 re-entry, mzXML, direct preview or further
+vendor family a condition of M6 completing — because a milestone whose completion
+depends on a measurement going a particular way is not a milestone, it is a hope.
+
+**Answering each of them, however, is required.** Criterion 11 is the one place
+those four are obligations, and what it obliges is a terminal disposition rather
+than an admission. The distinction is the whole difference between a route that
+ends and a route that is left open.
