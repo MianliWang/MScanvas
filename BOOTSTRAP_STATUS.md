@@ -5889,11 +5889,20 @@ reason.
 
 Nine decisions, `CNV-D1` to `CNV-D9`, anchored to the `CNV-*` identities
 `FEATURE_CATALOG.md` already carries. Statuses in the ADR. What matters for
-planning: **five of the nine cannot be closed without a measurement nobody has
-taken**, and the one genuinely long-pending measurement is now owned rather than
-orphaned: what `msconvert` does to an existing output, which
-[ADR 0009](docs/architecture/adr/0009-mzml-conversion-execution-boundary.md)
-records as never observed and on which CNV-008's overwrite half depends.
+planning: **four of the nine cannot be closed without a measurement nobody has
+taken**, and one more turns on an architecture decision rather than on evidence.
+
+**CNV-D4 is that one, and an earlier draft of this record had it wrong.** It said
+the destructive question waited on measuring what `msconvert` does to an existing
+output. It does not, and cannot: ADR 0009 sends the provider only into a private
+staging directory, finalization is MSCanvas's own no-clobber rename, and where
+the final target already exists **the backend never runs** — so the provider
+never meets that file and no measurement of it could authorize a destructive
+product decision. The real question is MSCanvas's: how an already-validated
+object replaces an existing destination object without a failure losing the old
+one. **Owner: M6.6**, terminal on `OVERWRITE_ADMITTED` or `OVERWRITE_REFUSED`,
+and admitted only on a tested finalization contract. The provider fact stays
+recorded but non-authoritative and off the critical path.
 
 **Its sibling turned out to be closed, and the audit corrected itself.**
 `## Intentionally pending` still lists "whether `msconvert` writes anything into
@@ -5908,7 +5917,9 @@ conflict type says overwrite is excluded because ADR 0009 refuses to replace a
 file this boundary did not create, while CNV-008 says overwrite requires explicit
 confirmation and `PROJECT_PROPOSAL.md` §7.7 additionally lists an automatic
 rename that exists nowhere. Two accepted documents disagree; M6.0 records that
-rather than resolving it by preference. **Owner: M6.6**, after M6.2 measures.
+rather than resolving it by preference. **Owner: M6.6**, and it waits on no
+provider measurement — only on whether the Rust finalization contract can justify
+a destructive publication.
 
 ### Queue capacity, stated accurately
 
@@ -5942,8 +5953,14 @@ unconfirmed. The route therefore requires **three** things to agree — a
 representative measurement, a structural ownership answer, and an **exhaustive
 reconciliation of every claim** that asserts confirmed process-tree termination —
 ending on one of two outcomes: `OWNERSHIP_STRUCTURALLY_CLOSED`, or
-`OWNERSHIP_UNCONFIRMED` in which process-tree termination is classified
-unconfirmed and `Cancelled` is not claimed on that basis. The third is a semantic
+`OWNERSHIP_UNCONFIRMED` in which **a stop of a launched conversion does not
+settle as a successful `Cancelled` at all** — it settles `CancellationFailed`,
+the queue settles `StopFailed`, and the session is quarantined. An earlier draft
+kept the success state and withdrew only the wording, on the grounds that the
+alternative makes `Stop queue` less useful; that is a consequence, not evidence,
+and [ADR 0014](docs/architecture/adr/0014-proteowizard-cancellation-evidence.md)
+had already decided that a run which cannot establish the tree is gone gets
+`CancellationFailed`. `NotStarted` is unaffected. The third is a semantic
 contract with a repository guard behind it, not a list of symbols: the claim is
 propagated across item states, queue counts, cancellation facts, mirrored wire
 fields, diagnostics keys, set-stop facts and the quarantine reason, and an

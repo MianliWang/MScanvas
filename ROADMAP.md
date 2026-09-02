@@ -427,7 +427,10 @@ XIC re-entry each end in a stated disposition — admitted, refused with evidenc
 or evidence-blocked with the missing evidence and its owner named. **None of them
 has to be admitted for M6 to complete; each of them has to be answered.**
 Reaching a terminal disposition is exit criterion 11; being admitted is not a
-criterion at all. The two backlog bullets below that call vendor-format direct
+criterion at all. **The other eleven criteria are core product truths and must
+each be proved `PASS`** — deferred, refused or evidence-blocked is not a way to
+close one of those, and where a core criterion cannot be proved, M6 is not
+complete. The two backlog bullets below that call vendor-format direct
 preview and VIEW-007 re-measurement “not an exit criterion” are about admission
 in exactly that sense, and are read under this distinction — as is VIEW-007's
 “closed by that fact”, which is a refusal carried with evidence rather than a
@@ -450,7 +453,11 @@ claimed closed.
   criterion nor a route requiring a disposition**: a re-evaluated queue bound and
   per-item cancellation. Both are admitted only on M6.8's measurement of what an
   `msconvert` run actually is **and on its ownership outcome** — a per-item cancel
-  is refused where the spawn-to-Job window stays open. The queue stays finitely
+  is refused where the spawn-to-Job window stays open. Under that outcome a stop
+  of a launched conversion does not settle as a successful cancellation at all:
+  it settles `CancellationFailed` / `StopFailed` and quarantines the session,
+  because an empty Job is not an empty tree while a descendant can be created
+  before ownership exists. The queue stays finitely
   bounded whatever that measurement says, and removing an item from a queue
   already running is refused outright: membership is bound when the queue is
   created. See
