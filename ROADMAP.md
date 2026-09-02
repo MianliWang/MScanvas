@@ -380,8 +380,9 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 
 ## M6 — Conversion Completion
 
-**Started. The route is locked and the conversion lane has one availability
-authority; M6.2 is the next slice.**
+**Started. The route is locked, the conversion lane has one availability
+authority, and the installed `msconvert` has been measured against M6's finite
+candidate set; M6.3 is the next slice.**
 
 The route, the live conversion gap audit it was decided from, the nine product
 decisions it surfaces, the twelve exit criteria and the M7/M8 seams are in
@@ -390,8 +391,8 @@ slices:
 
 - M6.0 — **complete** (route lock, documentation only).
 - M6.1 — conversion-lane authority. **complete.**
-- M6.2 — `msconvert` capability and evidence. **Next.**
-- M6.3 — typed `ConversionIntent`.
+- M6.2 — `msconvert` capability and evidence. **complete.**
+- M6.3 — typed `ConversionIntent`. **Next.**
 - M6.4 — visible settings, and a truthful plan.
 - M6.5 — destination authority.
 - M6.6 — destination and conflict UX, including the destructive question.
@@ -412,6 +413,24 @@ it — on the pattern the viewer proved in
 [ADR 0041](docs/architecture/adr/0041-viewer-selection-availability.md). Every
 later slice adds a control that must say truthfully whether pressing it will do
 something, and each of them now has one rule to ask.
+
+**M6.2 measured the installed build rather than reading its help.** Twelve
+candidates, twelve terminal states: nine admitted on a decoded output, two
+refused on a decoded output, one evidence-blocked with what is missing and who
+owns it. Four findings change what later slices may assume. The provider's precision default is
+**mixed** — m/z at 64 bits, intensity narrowed to 32 — so every conversion this
+product has performed has silently narrowed its intensities, and M6.3 types that
+decision rather than inheriting it. `--zlib` is **already the default**, so the
+"compression" control M6.4 was going to offer would have changed nothing unless
+it could also turn compression off. And mzXML **drops the spectra of a
+non-default source file silently and then declares the count it did not write**,
+which is the comparison CNV-002 is gated on. And the wavelet picker `cwt`
+**silently returned one of three source peaks** on a spectrum it accepted without
+error, where the default picker recovered all three bit-exactly — a rejection
+scoped to this evidence and re-openable only by a representative profile
+acquisition. The record is
+[M6.2's evidence document](docs/spikes/M6_MSCONVERT_CAPABILITY_EVIDENCE.md); the
+disposition remains M6.10's.
 
 **The audit also found the boundary beneath M6 is stronger than this backlog
 implied**, and the route is shaped accordingly: destinations are already admitted

@@ -524,7 +524,18 @@ inventory with exact installed signatures, a final classification with one state
 per candidate, a candidate-standard matrix with every intersection filled, and one
 declared route outcome. Candidates are the settings M6 might admit: mzXML output;
 `peakPicking` with its algorithm selector and MS-level argument; MS-level
-selection; and compression on and off.
+selection; **numeric precision**; and compression on and off.
+
+**Precision is on that list, and an earlier draft of it was wrong to omit it.**
+The omission was not cosmetic: this ADR's own CNV-D2 establishes that precision
+is a separate and prior decision from compression, that the provider's defaults
+keep m/z at 64 bits while writing intensities at 32, and that MSCanvas therefore
+ships a precision policy it has never stated. A finite inventory that leaves it
+out lets M6.3 type an intent whose precision half nobody measured, and lets
+M6.4's "compression" control quietly carry a second decision. The inventory must
+name the provider's no-flag default *and* every explicit precision mode the
+installed grammar exposes, and must record m/z and intensity separately, because
+the default treats them differently.
 
 **What `msconvert` does to an existing output is deliberately not a candidate
 here.** It was one in an earlier draft, gating CNV-D4. It cannot: ADR 0009 sends
@@ -548,8 +559,22 @@ half as open, and M6.0 corrects that bullet where it lives.
 *Acceptance:* every candidate reaches a terminal state with a basis. Every
 admission names an exact executable identity and a measured observation of the
 *output*, not of the exit code. Every refusal is stated with what was measured.
-No candidate is admitted on help text. The two pending measurements are performed
-or explicitly re-deferred with an owner.
+No candidate is admitted on help text. And the non-mzML side-output measurement
+is owed **only if a non-mzML format is still a viable admission candidate** when
+the slice closes; where none is, the condition is recorded as not triggered, with
+the reason.
+
+**There is no "two pending measurements" requirement, and an earlier draft of
+this acceptance said there was.** It counted two: what `msconvert` does to an
+existing output, and whether it writes anything besides its output. The first is
+not a candidate and not a prerequisite — ADR 0009 sends the provider only into
+private staging and refuses before launch where the final target exists, so the
+provider never meets that file and no measurement of it could authorize a
+destructive product decision; it stays an unobserved provider fact, off the
+critical path, and CNV-D4 does not reopen on it. The second was measured on
+2026-08-07 and again on 2026-08-10, and what remains of it is the narrower
+conditional above. Counting them as two outstanding gates made M6.2 look blocked
+on work that is either done or not M6.2's.
 
 *Non-goals:* implements no setting, changes no argv builder, admits nothing into
 the product by itself.
@@ -559,6 +584,44 @@ D4's** — the destructive question is answered by MSCanvas's own finalization
 boundary, which no provider measurement can settle. **Not D7's** either:
 cancellation's evidence half is measured inside M6.8, against a running
 conversion, and cannot be taken by a capability slice.
+
+#### M6.2 candidate evidence dimensions
+
+The standard is this finite list, on the shape
+[ADR 0037](0037-viewer-completion-route.md#m54-candidate-evidence-dimensions)
+set for M5.4. It is the dimension vocabulary the M6.2 evidence record's
+candidate-standard matrix must use, and repository validation requires the two to
+name exactly the same dimensions — so a dimension added here is unanswerable
+until the evidence owner classifies it for every candidate.
+
+The order is the order a claim has to survive: a semantic that cannot be
+expressed is never executed, one that never executed produced no output, and an
+output that exists still says nothing until its numbers are read.
+
+| # | Dimension |
+| --- | --- |
+| 1 | Expressibility |
+| 2 | Execution |
+| 3 | Output existence and readability |
+| 4 | Requested semantic occurred |
+| 5 | Cardinality / population |
+| 6 | Numeric fidelity |
+| 7 | Encoding / compression |
+| 8 | Interaction / ordering |
+| 9 | Working-directory side output |
+
+**Dimension 4 is the one that carries the slice.** Exit `0` is dimension 2 and
+proves only that a process ended; a `cvParam` naming an encoding is dimension 3
+and proves only what a document declares. Whether the operation the argv asked
+for actually happened has to be read out of the output's own numbers or its own
+processing record, and where a processing record is the only witness it is a
+claim to compare against the request rather than proof — [OpenMS's placeholder
+`dataProcessing` is the standing reason](#openms-and-toppview--the-machine-readable-declaration-and-its-ceiling).
+
+**Dimension 8 exists so composition is not inferred.** The provider applies
+filters in the order they are listed and says so in its own help. Two operations
+each measured alone do not establish the pair, and where the pair is not measured
+M6.3 may not represent it as evidenced.
 
 ### M6.3 — Typed `ConversionIntent`
 
