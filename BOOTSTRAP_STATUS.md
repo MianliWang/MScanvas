@@ -6175,7 +6175,28 @@ itself on the next Chrome restart**, and the repository configuration is
 deliberately left alone: pinning a machine-specific binary path in the tree would
 be wrong, and CI does not run this suite.
 
-### One residual, observed and not absorbed
+### Two residuals, observed and not absorbed
+
+**The dispatch window can end early against a slot this document has never
+read.** `stateRef` starts at `idle`, so a conversion dispatched before the
+mount-time slot read lands records `replacing: null` -- and the read that then
+arrives carrying a *restored* queue has an operation identifier that is not
+`null`, so the claim is marked reported and the panel shows that restored queue
+instead of "Starting the conversion…" for the length of the destination picker.
+Found by review on the repaired head, and **not repaired**: this slice's one
+authorized repair pass was spent on the finding above it.
+
+Measured rather than argued, against the exact head: no M6.1 invariant breaks.
+The claim itself is untouched, so `laneClaimed` stays true and the start control
+stays withdrawn; the rerun control is offered and **refused**, carrying the
+lane's own `conversion-running` sentence; and nothing further crosses the
+boundary. The cost is one wrong sentence in a race, and it is still an
+improvement on `main`, where that same window offered an *enabled* `Convert`.
+**Severity P3.** **Owner: M6.4**, the first slice downstream that adds a control
+needing this rule. The fix is one lane fact rather than a new mechanism -- a
+conversion may not start against a lane this document has not observed, which is
+the same rule this slice already applies to every other fact, with
+`installedSequence` as its synchronous half.
 
 **`Retry`'s display twin has the same shape and is not M6.1's.** `retrying` is
 read by the panel and the live region as `retrying && state.status ===
