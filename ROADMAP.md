@@ -380,7 +380,61 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 
 ## M6 — Conversion Completion
 
-**Next, not started.**
+**Started. The route is locked; M6.1 is the next implementation slice.**
+
+The route, the live conversion gap audit it was decided from, the nine product
+decisions it surfaces, the twelve exit criteria and the M7/M8 seams are in
+[ADR 0043](docs/architecture/adr/0043-conversion-completion-route.md). Twelve
+slices:
+
+- M6.0 — **complete** (route lock, documentation only).
+- M6.1 — conversion-lane authority. **Next.**
+- M6.2 — `msconvert` capability and evidence.
+- M6.3 — typed `ConversionIntent`.
+- M6.4 — visible settings, and a truthful plan.
+- M6.5 — destination authority.
+- M6.6 — destination and conflict UX, including the destructive question.
+- M6.7 — convert selected, convert all.
+- M6.8 — cancellation, capacity, and truthful progress.
+- M6.9 — output completion and adoption.
+- M6.10 — evidence-gated side routes.
+- M6.11 — closure.
+
+**M6.1 is first because the audit found the conversion lane has no single
+availability authority.** `convert` claims a ref as it dispatches while every
+rendered answer waits for the queue slot to be read back; the handler's own guard
+is strictly narrower than the rendered one, so the divergence runs in both
+directions; and an arriving read can lower a claim a handler just raised. Every
+later slice adds a control that must say truthfully whether pressing it will do
+something, so this is closed before settings, scope, destination or cancellation
+are built on it. The viewer already holds the answer pattern, in
+[ADR 0041](docs/architecture/adr/0041-viewer-selection-availability.md).
+
+**The audit also found the boundary beneath M6 is stronger than this backlog
+implied**, and the route is shaped accordingly: destinations are already admitted
+by Windows object identity and revalidated on retry, finalization is already
+handle-bound and taken only after the integrity contract passes, termination
+already uses an owned Job Object, progress already refuses a percentage, and
+conversion capability is already bound to an exact `msconvert.exe` digest per
+vendor family. Most of M6 is giving that boundary an honest product surface. The
+genuinely new work is measuring what the installed `msconvert` does with the
+settings this product wants to offer, and making one rule decide whether a
+conversion action may start.
+
+**Nothing in M6 is completed by a measurement going a particular way.** mzXML,
+vendor-format direct preview, whether a further vendor family opens at all, and
+XIC re-entry each end in a stated disposition — admitted, refused with evidence,
+or evidence-blocked with the missing evidence and its owner named. **None of them
+has to be admitted for M6 to complete; each of them has to be answered.**
+Reaching a terminal disposition is exit criterion 11; being admitted is not a
+criterion at all. **The other eleven criteria are core product truths and must
+each be proved `PASS`** — deferred, refused or evidence-blocked is not a way to
+close one of those, and where a core criterion cannot be proved, M6 is not
+complete. The two backlog bullets below that call vendor-format direct
+preview and VIEW-007 re-measurement “not an exit criterion” are about admission
+in exactly that sense, and are read under this distinction — as is VIEW-007's
+“closed by that fact”, which is a refusal carried with evidence rather than a
+fourth kind of ending.
 
 M5 hands it two things beyond the backlog below. The **capability-evidence
 discipline** M5.4 established — exact installed signature, exact executable
@@ -395,8 +449,23 @@ claimed closed.
 - Widen the typed conversion settings the interface can actually express:
   CNV-002's mzXML gate, CNV-004 to CNV-007's processing and compression choices,
   and CNV-003's output-location choices.
-- Queue and output work beyond the current bounds: more than sixteen items,
-  per-item cancellation, and further evidenced vendor families.
+- Queue work beyond the current bounds, **measurement-gated, and neither an exit
+  criterion nor a route requiring a disposition**: a re-evaluated queue bound and
+  per-item cancellation. Both are admitted only on M6.8's measurement of what an
+  `msconvert` run actually is **and on its ownership outcome** — a per-item cancel
+  is refused where the spawn-to-Job window stays open. Under that outcome a stop
+  of a launched conversion does not settle as a successful cancellation at all:
+  it settles `CancellationFailed` / `StopFailed` and quarantines the session,
+  because an empty Job is not an empty tree while a descendant can be created
+  before ownership exists. The queue stays finitely
+  bounded whatever that measurement says, and removing an item from a queue
+  already running is refused outright: membership is bound when the queue is
+  created. See
+  [ADR 0043](docs/architecture/adr/0043-conversion-completion-route.md).
+- **Whether a further evidenced vendor family opens at all**, answered once as a
+  single decision rather than family by family. This one *is* on the closed
+  side-route set, so it must reach a terminal disposition before M6 closes; what
+  it need not do is end admitted.
 - **Vendor-format direct preview**, behind its own evidence slice. Deferred from
   M5 with a recorded reason: `open_preview` refuses a non-mzML row today, and
   conversion support is not direct-preview support — the conversion evidence
