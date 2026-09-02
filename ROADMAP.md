@@ -439,8 +439,14 @@ claimed closed.
 - Widen the typed conversion settings the interface can actually express:
   CNV-002's mzXML gate, CNV-004 to CNV-007's processing and compression choices,
   and CNV-003's output-location choices.
-- Queue and output work beyond the current bounds: more than sixteen items,
-  per-item cancellation, and further evidenced vendor families.
+- Queue and output work beyond the current bounds, **each measurement-gated and
+  none of them an exit criterion**: a re-evaluated queue bound, per-item
+  cancellation and further evidenced vendor families. A larger queue and a
+  per-item cancel are admitted only on M6.8's measurement of what an `msconvert`
+  run actually is, the queue stays finitely bounded whatever that measurement
+  says, and removing an item from a queue already running is refused outright —
+  membership is bound when the queue is created. See
+  [ADR 0043](docs/architecture/adr/0043-conversion-completion-route.md).
 - **Vendor-format direct preview**, behind its own evidence slice. Deferred from
   M5 with a recorded reason: `open_preview` refuses a non-mzML row today, and
   conversion support is not direct-preview support — the conversion evidence

@@ -229,7 +229,7 @@ kept: the file is the user's, and replacing the queue drops this session's memor
 of having written one. See
 [ADR 0017](../architecture/adr/0017-redacted-conversion-diagnostics-export.md).
 
-The named limits: at most **16** items per queue, two named vendor families,
+The named limits: at most **16** items per queue, three named vendor families,
 regular files only, one folder, no overwrite, one queue-level stop and no per-item
 cancellation, no percentage, no
 parallelism, and no queue that survives closing the application. A diagnostics

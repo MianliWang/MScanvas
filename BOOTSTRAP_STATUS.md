@@ -2753,11 +2753,18 @@ mzML documents in these tests are generated in the test itself.
   own overwrite behavior has never been observed. The M3.0 conversion boundary
   does not depend on it — the backend only ever writes into a private staging
   directory — and must not start depending on it.
-- Measure whether `msconvert` writes anything into its working directory besides
+- ~~Measure whether `msconvert` writes anything into its working directory besides
   the output it was asked for. The M3.0 boundary requires the staging directory
   to hold exactly one planned entry, so a scratch or sidecar file would reject a
   faithful conversion. Required before that boundary is reachable from the
-  product.
+  product.~~ **Measured 2026-08-07 (M3.0.3), and again 2026-08-10 (M3.10) for the
+  multi-output case**, on the installed build; the record is
+  [ADR 0009](docs/architecture/adr/0009-mzml-conversion-execution-boundary.md)'s
+  struck-through gate. Left standing here until M6.0's audit found it: a closed
+  measurement listed as required is the one way this section can mislead the
+  slice that reads it. **Still open, and narrower than the original:** the same
+  question for a **non-mzML output format**, which only arises if CNV-D1 admits
+  one. See [ADR 0043](docs/architecture/adr/0043-conversion-completion-route.md).
 
 ## First verified-bootstrap checklist
 
@@ -5883,10 +5890,18 @@ reason.
 Nine decisions, `CNV-D1` to `CNV-D9`, anchored to the `CNV-*` identities
 `FEATURE_CATALOG.md` already carries. Statuses in the ADR. What matters for
 planning: **five of the nine cannot be closed without a measurement nobody has
-taken**, and two long-pending ones are now owned rather than orphaned — what
-`msconvert` does to an existing output, and whether it writes anything into its
-working directory besides its output. Both have sat in `Intentionally pending`
-since M3, and CNV-008's overwrite half depends on the first.
+taken**, and the one genuinely long-pending measurement is now owned rather than
+orphaned: what `msconvert` does to an existing output, which
+[ADR 0009](docs/architecture/adr/0009-mzml-conversion-execution-boundary.md)
+records as never observed and on which CNV-008's overwrite half depends.
+
+**Its sibling turned out to be closed, and the audit corrected itself.**
+`## Intentionally pending` still lists "whether `msconvert` writes anything into
+its working directory besides the output it was asked for" as required, but
+M3.0.3 measured it on 2026-08-07 and M3.10 measured the multi-output case on
+2026-08-10, both recorded in ADR 0009's own struck-through gate. What remains
+open there is only a **non-mzML output format**, which makes it a consequence of
+CNV-D1 rather than a standing debt. The stale bullet is corrected in place.
 
 One decision is neither open nor closed but **contested**: `ConversionPlan`'s
 conflict type says overwrite is excluded because ADR 0009 refuses to replace a
@@ -5949,8 +5964,10 @@ is a residual. M4.4's four P3s remain closed.
 "because no vendor acquisition is recognized". That clause was written before
 ADR 0010 admitted Thermo RAW and was carried unchanged through three vendor
 admissions. The conclusion was right and the reason had gone stale: the rule is
-unexercisable because **no admitted family is directory-shaped**. Corrected, and
-nothing else in that file changed.
+unexercisable because **no admitted family is directory-shaped**. Corrected —
+along with one further stale count found beside it, the same section's "named
+limits" sentence saying *two* named vendor families where three are admitted and
+evidenced. Nothing else in that file changed.
 
 ### Validation
 

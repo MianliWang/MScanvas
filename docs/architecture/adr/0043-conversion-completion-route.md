@@ -24,10 +24,11 @@ Related: [0002](0002-external-proteowizard.md),
 ## What this ADR is, and what it is not
 
 It is a route lock. [ADR 0042](0042-viewer-completion-closure-and-handoff.md)
-closed M5 on the `XIC_SOURCE_REFUSED` branch and handed M6 four things by name:
+closed M5 on the `XIC_SOURCE_REFUSED` branch and handed M6 five things by name:
 the capability-evidence discipline M5.4 established, the viewer/conversion lane
-boundary M5.7 froze, the `convert` ref/render window handed over open, and
-VIEW-007's conditional re-entry. `ROADMAP.md` describes M6 as four backlog
+boundary M5.7 froze, the `convert` ref/render window handed over open,
+VIEW-007's conditional re-entry, and vendor-format direct preview behind its own
+evidence slice. `ROADMAP.md` describes M6 as four backlog
 bullets. **Nothing in this repository says what M6 is, what order its work
 happens in, or when it is finished** — the M5 equivalents lived in
 [ADR 0037](0037-viewer-completion-route.md), and there was no M6 counterpart.
@@ -81,12 +82,12 @@ surface over an existing boundary* rather than new boundary.
 | Destination authority | The chosen folder is admitted by **Windows object identity** — volume serial plus 128-bit file ID, read from a held handle — with reparse points, non-directories and remote volumes refused before any plan exists | `preview/destination.rs` `admit_destination_root`, `DestinationIdentity` |
 | Retry-time destination authority | A retry re-admits the folder and refuses with `queue_destination_changed` unless it resolves to **the same object**; it does not re-ask the user | `service.rs::retry_conversion_queue` |
 | Serial execution | One `Mutex<()>` backend gate, claimed once per queue and held to terminal; ordering is the caller's list order and execution is index order | `service.rs::drain_queue`, `enter_backend` |
-| Process-tree termination | Windows **Job Objects** — `CreateJobObjectW`, `AssignProcessToJobObject`, `TerminateJobObject`, then `QueryInformationJobObject` to observe the job empty | `process.rs:1000-1115` |
-| Cancellation states, distinguished | `Cancelled` (tree confirmed gone), `CancellationFailed` (termination unconfirmed, and it quarantines the session) and `NotRun` (never began) are three different item states; `Stopped` and `StopFailed` are two different terminal reasons | `dto.rs` `ConversionQueueItemStateDto`, `ConversionQueueTerminalReasonDto` |
-| Outcome separation | `OutcomeClass`, `ItemOutcome`, `ValidationMode`, `IntegrityProperty` and adoption are separate judgements, and `SkippedExistingDestination` is explicitly "not a failure, and deliberately not a success" | `conversion_run.rs`, `operation.rs`, `adoption.rs` |
+| Process-tree termination **mechanism** | Windows **Job Objects** — `CreateJobObjectW`, `AssignProcessToJobObject`, `TerminateJobObject`, then `QueryInformationJobObject` to observe the job empty. **Mechanism only**: that a real `msconvert` run *is* a tree has never been observed, and the observation is scoped to the owned Job — see CNV-D7 | `process.rs:1000-1115` |
+| Cancellation states, distinguished | `Cancelled` (the owned Job was terminated and observed empty), `CancellationFailed` (termination unconfirmed, and it quarantines the session) and `NotRun` (never began) are three different item states; `Stopped` and `StopFailed` are two different terminal reasons | `dto.rs` `ConversionQueueItemStateDto`, `ConversionQueueTerminalReasonDto` |
+| Outcome separation | `OutcomeClass`, `ItemOutcome`, `ValidationMode`, `IntegrityProperty` and adoption are separate judgements, and `OutcomeClass::Skipped` is explicitly "not a failure, and deliberately not a success" | `preview/conversion.rs`, `preview/operation.rs`, `proteowizard/conversion.rs`, `preview/adoption.rs` |
 | Staging and finalization | The backend writes only into a staging directory MSCanvas owns; the final name is taken atomically, handle-bound, after the integrity contract passes | ADR 0009 and its M3.0.1 / M3.0.2 amendments |
 | Multi-output | A SCIEX acquisition is **one item, one process, one row** producing a backend-named set, with per-member validation and a partial-finalization report | ADR 0021, ADR 0025; `conversion_run/output_set.rs` |
-| Truthful progress | `current_index` and `item_count`, plus separate finalized / skipped / failed / retryable / cancelled / not-run / cancellation-failed counts. The DTO says it: "There is deliberately no completed fraction: what is measured is how many items are done, and nothing measures a fraction of one" | `dto.rs` `ConversionQueueDto` |
+| Truthful progress | `current_index` and `item_count`, plus separate finalized / skipped / failed / retryable-failed / non-retryable-failed / cancelled / not-run / cancellation-failed counts. The DTO says it: `ConversionQueueDto.current_index` is "Always a count of items, never a fraction of one", and `WorkspaceConversionStateDto::Running` adds "There is deliberately no completed fraction: what is measured is how many items are done, and nothing measures a fraction of one" | `dto.rs` `ConversionQueueDto`, `WorkspaceConversionStateDto::Running` |
 | Adoption | Explicit, per terminal queue, and admitted only where the final name still resolves to the exact finalized object holding the validated byte length and digest | ADR 0016, ADR 0025; `preview/adoption.rs` |
 
 **Six of the nine decisions this route has to record therefore start from an
@@ -109,11 +110,12 @@ surface, not about building the boundary.
 | G9 | No admitted acquisition family is **directory-shaped**, so the vendor-dataset-root rule CNV-003 states has never been exercisable. `ProcessError::OutputDirectoryInsideDirectoryInput` and `BackendExecutionFailure::OutputInsideSource` exist and are unreachable for conversion today | latent safety rule | **M6.5** |
 | G10 | CNV-008's overwrite half is unimplemented **and unmeasured**: `## Intentionally pending` still records that the backend's own overwrite behaviour has never been observed | product and evidence gap | **M6.2**, **M6.6** |
 | G11 | No `Convert all`. `scope` is derived — `selection` where any convertible row is selected, else `focused` — and there is no scope control; WSP-008 is recorded as partially implemented for exactly this reason | product surface | **M6.7** |
-| G12 | Queue capacity is `16` with a **wait-time** rationale whose stated premise is stale: the doc comment justifies it on the queue having "no cancellation", and a queue-level stop has existed since ADR 0015 | stale rationale | **M6.8**, then **M6.7** |
-| G13 | No per-item cancel and no queued-item removal. `request_stop` takes an operation id and no index, and the module records the omission as deliberate | product surface | **M6.8** |
+| G12 | Queue capacity is `16` with a **wait-time** rationale whose stated premise is stale: the doc comment justifies it on the queue having "no cancellation", and a queue-level stop has existed since ADR 0015 | stale rationale | **M6.7** surfaces it, **M6.8** re-decides it |
+| G13 | No per-item cancel and no queued-item **skip**. `request_stop` takes an operation id and no index, and the module records the omission as deliberate. Queued-item *removal* is a different request and is refused — see CNV-D7 | product surface | **M6.8** |
 | G14 | Capacity is never surfaced proactively — a seventeen-row selection learns the limit from a failed plan read | product surface | **M6.7** |
 | G15 | No conversion result carries an identity that outlives its queue. `SlotState::Terminal` holds exactly one queue and is "not a history" | M8 readiness seam | **M6.9** |
-| G16 | The staging-ownership marker is **forgeable** by anything that can write into the destination root, recorded as open and unowned | known limit | **M6.5** records it; closing it is not M6's |
+| G16 | The staging-ownership marker is **forgeable** by anything that can write into the destination root | `DEFERRED_WITH_OWNER` | **M6.5** records it where the destination contract lives; closing it is **M8's**, with the artifact-identity work — it is an authenticated-ownership question, not a conversion-surface one |
+| G18 | `reclaim_staging_area` is reachable only from tests, so a staging name wedged by a failed cleanup has no application-reachable remedy | `DEFERRED_WITH_OWNER` | **M6.5** records it; a recovery path is **M7's**, with the diagnostics and error-recovery surfaces |
 | G17 | The same defect is named two ways across five documents — the `convert` ref/render window in `BOOTSTRAP_STATUS.md` and [ADR 0041](0041-viewer-selection-availability.md), the conversion lane's dispatch race in `ROADMAP.md`, [ADR 0037](0037-viewer-completion-route.md) and [ADR 0042](0042-viewer-completion-closure-and-handoff.md) — and carries no tracking identity under either | record defect | **M6.0**, here |
 
 ### The M5 handoff, characterised exactly
@@ -238,10 +240,20 @@ obligation: the **destination policy** M6.5 introduces is resolved once and boun
 be too), and any **destructive authorization** M6.6 admits is bound to the plan
 that carried it rather than to the session.
 
-**The rule, stated so it can be broken visibly.** A queue's plan facts are
-written once, at creation or at first destination admission, and read thereafter.
-A control the user can still move is not a plan fact. A plan fact that can change
-after `BEGIN` is a defect, not a feature.
+**Per-queue facts and per-pass facts are different, and only the first are
+written once for the queue's life.** Membership, order, conflict policy, intent,
+destination policy and installation identity are per-queue: a retry is the same
+queue again, so it reuses them. A **destructive authorization is per-pass** — it
+authorizes one attempt at destroying named outputs, and a retry that would
+destroy again must be authorized again. That is not a plan mutation: the earlier
+pass's authorization is not edited, and a pass without a fresh one refuses rather
+than inheriting.
+
+**The rule, stated so it can be broken visibly.** A queue's per-queue plan facts
+are written once, at creation or at first destination admission, and read
+thereafter; a per-pass fact is written once per pass and never carried into the
+next. A control the user can still move is not a plan fact. A plan fact that can
+change after `BEGIN` is a defect, not a feature.
 
 ### 2. The item outcome — four judgements, not one boolean
 
@@ -256,9 +268,10 @@ process outcome        Termination { Exited, Cancelled, NotStarted } + exit code
                        -- and Exited(0) is not a result
 staging/finalization   staged content observed, staging residue, the handle-bound
                        rename taken only after validation
-integrity outcome      ValidationMode { SourceComparison, OutputOnly } and the
-                       IntegrityProperty set -- required, advisory, unverified,
-                       inapplicable
+integrity outcome      ValidationMode { SourceComparison, OutputOnly }, the three
+                       IntegrityProperty sets -- verified, unverified,
+                       inapplicable -- and the separately typed
+                       AdvisoryObservation set beside them
 publication/adoption   the final name still resolving to the exact finalized
                        object holding the validated length and digest
 ```
@@ -329,35 +342,33 @@ slice established, or measures something a later slice may not assume.
                     |                                 |
             M6.1 lane authority              M6.2 msconvert evidence
                     |                                 |
-                    |                        M6.3 typed ConversionIntent
-                    |                                 |
-                    +----------------+----------------+
-                                     |
-                             M6.4 visible settings
-                                     |
-                             M6.5 destination authority
-                                     |
-                             M6.6 destination / conflict UX
-                                     |
-                             M6.7 convert selected / all
-                                     |
-                             M6.8 cancellation and progress
-                                     |
-                             M6.9 output completion / adoption
-                                     |
-                    +----------------+----------------+
-                    |                                 |
-          M6.10 evidence-gated side routes            |
-                    |                                 |
-                    +----------------+----------------+
-                                     |
-                              M6.11 closure
+                    |                 +---------------+---------------+
+                    |                 |               |               |
+                    |        M6.3 ConversionIntent    |               |
+                    |                 |               |               |
+                    +--------+--------+               |               |
+                             |                        |               |
+                     M6.4 visible settings            |               |
+                             |                        |               |
+                     M6.5 destination authority       |               |
+                             |                        |               |
+                     M6.6 destination / conflict UX --+               |
+                             |                                        |
+                     M6.7 convert selected / all                      |
+                             |                        M6.10 evidence-gated
+                     M6.8 cancellation and progress      side routes
+                             |                                        |
+                     M6.9 output completion / adoption                |
+                             |                                        |
+                             +------------------+---------------------+
+                                                |
+                                         M6.11 closure
 ```
 
-The diagram draws the spine. Two further edges leave M6.2 and are listed below
-rather than drawn, because drawing them would obscure the spine: M6.2 also feeds
-**M6.6** (the destructive question needs the backend's own overwrite behaviour)
-and **M6.10** (every side route is opened or closed by a measurement).
+Every edge in the diagram appears in the table below, and every edge in the table
+appears in the diagram. **M6.2 has three children** — M6.3, M6.6 and M6.10 — and
+M6.10 descends from M6.2 alone: it is a measurement branch, not a stage of the
+M6.4-to-M6.9 chain, and it converges only at closure.
 
 Read as edges, with the reason each exists:
 
@@ -371,14 +382,15 @@ Read as edges, with the reason each exists:
 | M6.4 -> M6.5 | The plan the destination is admitted for must already be truthful |
 | M6.2 -> M6.6 | The destructive question cannot be decided before the backend's own overwrite behaviour is observed |
 | M6.5 -> M6.6 | Conflict and destructive UX act on a resolved destination |
-| M6.6 -> M6.7 | Scope multiplies conflicts; the conflict answer must exist first |
-| M6.7 -> M6.8 | Cancellation semantics depend on how large a bound plan may be |
+| M6.6 -> M6.7 | A scope control must display, per row, the destination policy and conflict vocabulary M6.6 establishes — a plan of many rows cannot show what each will do before that exists |
+| M6.7 -> M6.8 | Per-item cancel and queued-item skip are operations *on a plan's membership*, so what membership means has to be settled before what may be done to it is |
 | M6.8 -> M6.9 | A completion summary must be able to say what a cancelled item is |
 | M6.2 -> M6.10 | Every side route is opened or closed by a measurement |
 | M6.9, M6.10 -> M6.11 | Closure answers criteria the two of them settle |
 
 M6.1 and M6.2 are independent of each other and may run in either order or
-together. Everything from M6.4 onward is a chain.
+together. **M6.4 through M6.9 are a chain**; M6.10 needs only M6.2 and may run
+any time after it.
 
 ### M6.0 — Conversion Completion orientation and route lock
 
@@ -438,9 +450,21 @@ per candidate, a candidate-standard matrix with every intersection filled, and o
 declared route outcome. Candidates are the settings M6 might admit: mzXML output;
 `peakPicking` with its algorithm selector and MS-level argument; MS-level
 selection; compression on and off; and, separately, **what `msconvert` does to an
-existing output** and **whether it writes anything into its working directory
-besides what it was asked for** — the two measurements
-`## Intentionally pending` has carried unowned since M3.
+existing output**, which
+[ADR 0009](0009-mzml-conversion-execution-boundary.md) records as never measured
+because the M0 case was refused before launch.
+
+**Its sibling is not still open, and the route corrects itself here.** Whether
+`msconvert` writes anything besides its output **was measured on 2026-08-07** and
+again for the multi-output case on 2026-08-10, on the installed build: a default
+mzML conversion of a Thermo RAW acquisition and of an mzML acquisition each
+produced exactly one file with no sidecar, index, log or scratch entry, and a
+SCIEX acquisition's backend-named set was measured and modelled. What ADR 0009
+leaves open is narrower and lands squarely on M6: **a non-mzML output format has
+never been measured for it**. So M6.2 owes the question only for a format it
+admits, and only where it admits one — which makes it a consequence of CNV-D1
+rather than a standing debt. `## Intentionally pending` still carries the closed
+half as open, and M6.0 corrects that bullet where it lives.
 
 *Acceptance:* every candidate reaches a terminal state with a basis. Every
 admission names an exact executable identity and a measured observation of the
@@ -451,7 +475,9 @@ or explicitly re-deferred with an owner.
 *Non-goals:* implements no setting, changes no argv builder, admits nothing into
 the product by itself.
 
-*Downstream:* M6.3, M6.6, M6.10, and D1, D2, D4 and D7's evidence halves.
+*Downstream:* M6.3, M6.6, M6.10, and D1, D2 and D4's evidence halves. **Not
+D7's** — cancellation's evidence half is measured inside M6.8, against a running
+conversion, and cannot be taken by a capability slice.
 
 ### M6.3 — Typed `ConversionIntent`
 
@@ -462,7 +488,10 @@ do, and a deterministic mapping from it to argv.
 measured performing.
 
 *Establishes:* a `ConversionIntent` in the domain layer covering output format,
-processing intent and compression as *product semantics*; its deterministic argv
+processing intent, **numeric precision** and compression as *product semantics*
+— precision belongs here because CNV-D2 establishes that it is a separate and
+prior decision from compression, and a decision nothing types is one the
+provider's default takes; its deterministic argv
 mapping including **filter order**, which is a property of the intent and not of
 the order controls happen to sit in; and its capture into `ConversionQueue`'s
 bound facts.
@@ -471,7 +500,10 @@ bound facts.
 order is deterministic and pinned by test for every admitted combination. The
 same intent produces the same argv on repeated planning. No intent is expressible
 that would insert a peak-picking filter where the product says no additional
-centroiding.
+centroiding. **And where a processing intent is admitted at all**, an output
+whose own processing record names a different algorithm from the one asked for
+fails the integrity contract rather than finalizing — read as a claim compared
+against the request, never as proof, with absence recorded as unverified.
 
 *Non-goals:* no UI, no new visible capability, no relaxation of the no-implicit-
 centroiding rule.
@@ -487,17 +519,26 @@ describe the plan that will actually be bound.
 projects a typed intent).
 
 *Establishes:* the visible controls for whatever M6.2 admitted; CNV-009's
-natural-language summary widened from item count and ordered list to format,
-processing and output root; and the binding of the chosen intent into the queue
-at `BEGIN`.
+natural-language summary widened from item count and ordered list to **format
+and processing**; and the binding of the chosen intent into the queue at `BEGIN`.
+
+**CNV-009's output-root half is not M6.4's, and cannot be.** In the live flow the
+destination is chosen *after* the queue is created — the slot passes through
+`awaitingDestination` and `ConversionQueue::new` constructs with
+`destination: None` — so at summary time there is no root to name, and
+`ConversionQueuePlanDto` carries none. It lands with the destination policy in
+**M6.5** and its visible form in **M6.6**. Until then the summary says the
+destination is chosen next, which is what the panel says today and is true.
 
 *Acceptance:* every visible setting traces to an evidence row. A setting the
 installed build does not support is absent or refused with a reason, never shown
-inert. The summary on screen names the plan that is bound, and moving a control
-after `BEGIN` changes nothing about the running queue. A lossy processing choice
-is marked lossy where the user chooses it.
+inert. **Of the plan facts that exist before dispatch** — membership, order,
+conflict policy and intent — the summary names the ones that will be bound, and
+moving a control after `BEGIN` changes nothing about the running queue. A lossy
+processing choice is marked lossy where the user chooses it.
 
-*Non-goals:* no destination choice, no scope control, no cancellation change.
+*Non-goals:* no destination choice, no destination display, no scope control, no
+cancellation change.
 
 *Downstream:* M6.5.
 
@@ -511,9 +552,10 @@ folder — resolved to the object identity the boundary already requires.
 *Establishes:* the policy vocabulary; resolution from a policy to an admitted
 directory object, keeping the existing reparse-point, non-directory and
 remote-volume refusals; **the vendor-dataset-root rule made real** rather than
-latent; source/destination aliasing decided by object identity rather than by
-path string; and the retry-time revalidation contract stated where a reader meets
-the policy.
+latent; source/destination aliasing decided by object identity rather than by the
+canonical-path prefix test that decides it today; **CNV-009's output-root half**,
+inherited from M6.4 because the root does not exist before a policy resolves one;
+and the retry-time revalidation contract stated where a reader meets the policy.
 
 *Acceptance:* a destination is a folder object, never a path string. Writing
 inside a recognised vendor dataset root **fails closed** — and where no admitted
@@ -554,8 +596,8 @@ the refusal is a recorded decision with its evidence, not an omission.
 *Purpose:* make the scope of a conversion a decision the user takes and can see,
 rather than one derived from what happens to be selected.
 
-*Prerequisites:* M6.6 — scope multiplies conflicts, so the conflict answer must
-exist first.
+*Prerequisites:* M6.6 — a scope shows many rows at once, and what each row will
+do cannot be shown before the destination policy and conflict vocabulary exist.
 
 *Establishes:* the scope vocabulary — eligible rows, selected rows, the rows a
 filter is currently showing, and the ordering each implies — and its binding
@@ -583,19 +625,24 @@ and only then reconsider how large a queue may be.
 *Prerequisites:* M6.7.
 
 *Establishes:* the distinction between **stop the whole queue** (exists),
-**cancel the current item and continue** (does not) and **remove or skip a queued
-item** (does not); a live measurement of what an `msconvert` process tree
-actually is for this build; and a capacity decision taken *after* that, with a
-stated basis.
+**cancel the current item and continue** (does not exist; admissible only on
+measurement) and **skip a queued item** (does not exist; admissible, and not a
+membership change) — with **remove a queued item** refused outright, because it
+is a membership change and membership is bound at `BEGIN`; a live measurement of
+what an `msconvert` process tree actually is for this build; and a capacity
+decision taken *after* that, with a stated basis.
 
 *The measurement this slice owes.* Windows Job Objects, `TerminateJobObject` and
 an emptiness check via `QueryInformationJobObject` are implemented and correct in
 shape. What has **not** been measured is that a real `msconvert` run is a *tree*:
 `surviving_processes == Some(0)` after termination is satisfied trivially by a
-one-process run, `max_active_processes` is never published or read by the
-harness, and the only multi-process evidence is against a synthetic mock parent
-and grandchild — which [ADR 0014](0014-proteowizard-cancellation-evidence.md)
-states openly. M6.8 must publish the peak count and observe it on a real vendor
+one-process run, and the only multi-process evidence is against a synthetic mock
+parent and grandchild — which [ADR 0014](0014-proteowizard-cancellation-evidence.md)
+states openly. The peak count is not simply missing, and the precise position
+matters: `max_active_processes` **is** read and printed by the M0 spike harness
+through `ReportableProcessOutput`, but it appears in **no evidence document**, it
+is **absent from `BackendRunFacts`** so no product or diagnostics surface can see
+it, and the **cancellation** evidence harness does not report it at all. M6.8 must publish the peak count and observe it on a real vendor
 conversion before any surface claims a tree was terminated. Two further code-level
 facts belong to the same slice: the child is spawned *before* it is assigned to
 the Job, so a descendant created in that window is outside every termination
@@ -658,7 +705,9 @@ them open.
 *Prerequisites:* M6.2.
 
 *Establishes:* the terminal disposition of each side route — CNV-002 mzXML;
-vendor-format direct preview; any further vendor family; and the conditional
+vendor-format direct preview; **whether M6 opens any further vendor family at
+all**, answered once as a single yes-or-no rather than family by family, and only
+then enumerated; and the conditional
 VIEW-007 re-entry.
 
 *Acceptance:* each side route ends in a stated outcome with its evidence:
@@ -761,8 +810,10 @@ quietly wrong.
 
 **Locked without measurement:** MSCanvas inserts no peak-picking filter unless
 the user asked for one, and no default, preset or convenience may do so. This is
-already true — the argv builder emits no `--filter` at all, and a unit test pins
-that no argument contains `peakPicking`.
+already true — the **msconvert** argv builder emits no `--filter` at all, and a
+unit test pins that no argument contains `peakPicking`. (The only `--filter` this
+crate can emit is the msaccess MS-level selector, on a preview path no production
+caller issues, and it is not a peak-picking filter.)
 
 **Locked, and new: MSCanvas cannot delegate its fail-closed guarantee to the
 provider.** A reading of current pwiz sources for this route found that
@@ -793,6 +844,12 @@ obligations**, and these are locked now because they shape M6.3's types:
    fail-closed mzML scanner that recognises controlled-vocabulary terms by
    accession. An admitted centroiding intent must be checked against what the
    document says was done, and a substitution must refuse rather than adopt.
+   **Owner: M6.3**, which types the intent, extends the integrity comparison to
+   carry the check, and owns the acceptance that an intent whose output records a
+   different algorithm fails the integrity contract rather than finalizing. Read
+   with the OpenMS caveat below: a processing record is a claim to check, its
+   absence is *unverified* rather than "nothing happened", and neither may be
+   read as proof.
 
 **Compression and precision are two settings, not one.** The same source reading
 found `--zlib` is lossless and applied last, while numeric precision is a
@@ -818,9 +875,12 @@ CNV-003's three choices — source sibling, named subfolder, custom local folder
 requires: **an admitted directory object**, not a path string. The existing
 admission stays exactly as it is and is not weakened by adding a policy in front
 of it: reparse points, non-directories and remote volumes are refused before any
-plan exists; the directory is held open for the queue's life; identity is a
-volume serial plus a 128-bit file ID read from that handle; and a retry re-admits
-and refuses with `queue_destination_changed` unless it reaches the same object.
+plan exists; the directory is held open **for the whole of admission**; and its
+identity — a volume serial plus a 128-bit file ID read from that handle — is what
+is retained for the queue's life and re-proved on every later pass, with a retry
+re-admitting and refusing with `queue_destination_changed` unless it reaches the
+same object. **The handle itself is not retained**; see the third recorded item
+below.
 
 **Writing inside a recognised vendor dataset root fails closed.** The mechanism
 partly exists — `ProcessError::OutputDirectoryInsideDirectoryInput` and
@@ -835,23 +895,43 @@ rule is enforced or deleting it because nothing currently trips it.
 `FEATURE_CATALOG.md` currently gives a different and now-false reason for the
 same unexercisability — "because no vendor acquisition is recognized" — written
 before ADR 0010 admitted Thermo RAW and carried unchanged through three vendor
-admissions since. **M6.0 corrects that clause** and nothing else in that file:
-the conclusion was right and the reason had gone stale.
+admissions since. **M6.0 corrects that clause**: the conclusion was right and the
+reason had gone stale. It corrects one further stale count found beside it — the
+same section's "named limits" sentence said *two* named vendor families where
+three are admitted and evidenced — and nothing else in that file.
 
-**Source/destination aliasing is decided by object identity**, never by
-comparing path strings, and a destination that is or contains the source is
-refused. Both follow from the admission that already exists; M6.5 states them
-where a reader meets the policy rather than leaving them implicit in the crate.
+**Source/destination aliasing is an M6.5 obligation, not a current property, and
+the difference matters.** The *destination root* is admitted by object identity,
+as above. But the check that a destination is not inside its source is a
+**canonical-path prefix test** — `canonical_output.starts_with(source_identity.canonical_path())`
+in the planner, repeated pre-spawn as `reject_output_inside_source` — and it runs
+only where `source_identity.is_directory()`, which no admitted conversion family
+is. So today the containment rule is a path-string comparison that never fires,
+and the earlier statement that MSCanvas decides aliasing by identity would have
+been a claim about a mechanism this boundary does not have.
+
+**M6.5 owes both halves**: an aliasing decision made on object identity rather
+than on a prefix of a canonicalized string, and one that applies to a
+single-file source as well as a directory-shaped one. A prefix test over
+canonical paths is a reasonable containment heuristic and it is not an identity
+comparison; on Windows the two differ exactly where it matters, over links,
+substituted drives and volume mount points, which is why the destination
+admission already refuses reparse points rather than reasoning about their
+targets.
 
 **Three things recorded and not closed**, because M6.5 will touch the code they
 live in and a reader should meet them there rather than rediscover them:
 
 - the **staging-ownership marker is forgeable** by anything that can write into
-  the destination root. A known limit with no owner; making it unforgeable is an
-  authenticated-ownership decision, and it is not M6's;
+  the destination root. Making it unforgeable is an authenticated-ownership
+  decision rather than a conversion-surface one, so it is
+  **`DEFERRED_WITH_OWNER`: M8**, alongside the artifact-identity work that would
+  give it something to authenticate against;
 - **`reclaim_staging_area` is reachable only from tests.** No Tauri command,
   service method or recovery path calls it, so a staging name wedged by a failed
-  cleanup has no application-reachable remedy;
+  cleanup has no application-reachable remedy. Offering one is an error-recovery
+  surface, so it is **`DEFERRED_WITH_OWNER`: M7**, with the diagnostics and
+  recovery work that milestone already owns;
 - **the queue's destination hold is dropped between admission and the slot
   transition.** In `run_claimed_conversion` the hold is bound inside a match arm
   and released before `start_running`; on the retry path it is held for the whole
@@ -868,7 +948,8 @@ those two.
 ### CNV-D4 — conflict and overwrite
 
 **Status: Fail/Skip `LOCKED`. Overwrite `ARCHITECTURE_DECISION_REQUIRED`, and
-`EVIDENCE_REQUIRED` before that decision can be taken. Owner M6.2 then M6.6.**
+`EVIDENCE_REQUIRED` before that decision can be taken. Owner M6.2 then M6.6.
+Automatic rename `REFUSED`, here.**
 
 `ConversionConflictPolicyDto` has two members and the type says why: "overwrite
 is not one of them. ADR 0009 refuses to replace a file this boundary did not
@@ -877,7 +958,7 @@ preference."
 
 **`FEATURE_CATALOG.md`'s CNV-008 says the opposite** — "Default is fail/skip;
 overwrite requires explicit confirmation" — as does `PROJECT_PROPOSAL.md` §7.7,
-which additionally lists an automatic-rename policy that exists nowhere. This is
+which lists "fail/skip/automatic rename" plus a confirmed overwrite. This is
 not a gap; it is **two accepted documents disagreeing**, and M6.0 records it as
 such rather than resolving it by picking the one it prefers. The decision M6.6
 must take is explicit: either amend ADR 0009's no-clobber guarantee with a
@@ -885,14 +966,28 @@ stated scope, or refuse CNV-008's overwrite half and say so in the catalogue.
 This route takes neither, because taking it silently is exactly how a guarantee
 becomes a preference.
 
-**And it cannot be taken yet.** `## Intentionally pending` has recorded since M3
-that "the backend's own overwrite behavior has never been observed" — the M0
+**And it cannot be taken yet.** Both `## Intentionally pending` and
+[ADR 0009](0009-mzml-conversion-execution-boundary.md)'s open-gate list record
+that the backend's own overwrite behaviour has **never been observed** — the M0
 existing-output case was refused by MSCanvas before launch, so nobody knows what
 `msconvert` does to a file already at its output path. That measurement is
-M6.2's, alongside its sibling: whether `msconvert` writes anything into its
-working directory besides the output it was asked for.
+M6.2's, and unlike its former sibling it really is outstanding: the
+sidecar question beside it was measured in 2026 and is corrected in M6.2's
+section above.
 
-Whatever is decided, the route locks four properties of any destructive option:
+**Automatic rename is the third policy the proposal names, and it is refused
+here** rather than left unstatused, because unlike overwrite it needs no
+measurement to decide. A conversion's output name is a **bound plan fact**,
+derived from the source before the queue exists and shown to the user before they
+commit; a policy that invents a different name at write time would make the name
+on screen a guess, and would break the queue-wide name-collision check that runs
+before a destination is even chosen. Refusing a taken name and skipping it are
+both answers the user can see coming. Silently writing `run (2).mzML` is not.
+If a later milestone wants it, it is a new decision against this reasoning, not
+an omission to be filled in.
+
+Whatever is decided about overwrite, the route locks four properties of any
+destructive option:
 
 1. **Explicit and never default.** A destructive authorization is an act, not a
    setting that happens to be on.
@@ -949,12 +1044,13 @@ The locked semantics:
 
 ### CNV-D6 — queue capacity
 
-**Status: `PROVISIONAL_PENDING_MEASUREMENT`. Bounded-ness is `LOCKED`. Owner
-M6.8, then M6.7.**
+**Status: `PROVISIONAL_PENDING_MEASUREMENT`. Bounded-ness is `LOCKED`. M6.7
+surfaces the bound; M6.8 re-decides it.**
 
 The current value is `MAX_CONVERSION_QUEUE_ITEMS = 16`, enforced twice and
-carried to the interface as `ConversionQueuePlanDto.capacity` so the interface
-states the limit Rust enforces rather than one of its own.
+carried to the interface as `ConversionQueuePlanDto.capacity`, **which no surface
+reads today** (G14), so that when M6.7 surfaces it the interface states the limit
+Rust enforces rather than one of its own.
 
 **The rationale is a wait-time judgement, not a machine fact, and the code says
 so**: "at a realistic minute or three per acquisition, sixteen is something like
@@ -978,28 +1074,51 @@ no stated basis is refused.
 
 **M6.7 and M6.8 do not depend on each other circularly**, and the distinction is
 worth stating because it looks as though they might. M6.7 surfaces **the capacity
-the queue enforces**, reading the value the plan already carries, and does so
-before a scope is committed rather than after a failed read. It does not decide
-the number and does not need to know it. M6.8 may later change the number, and
-nothing in M6.7 changes when it does. The dependency runs one way — M6.7 before
-M6.8 — because cancellation semantics depend on how large a bound plan may be,
-not the reverse.
+the queue enforces**, reading `ConversionQueuePlanDto.capacity` — a field that
+already crosses the wire and that no surface reads today, which is G14 — before a
+scope is committed rather than after a failed plan read. It does not decide the
+number, does not encode one, and does not need to know it; a later change by M6.8
+flows through the same field without reopening M6.7.
+
+The one-way dependency is about **membership, not size**. Per-item cancel and
+queued-item skip are operations on a bound plan's membership, so what membership
+means has to be settled before what may be done to it can be. That is M6.7's, and
+it is why M6.7 comes first.
 
 ### CNV-D7 — cancellation
 
 **Status: the state vocabulary `LOCKED`. The process-tree claim
-`EVIDENCE_REQUIRED`, owner M6.8. Per-item cancel and queued-item removal
-`PROVISIONAL_PENDING_MEASUREMENT`, owner M6.8.**
+`EVIDENCE_REQUIRED`, owner M6.8. Per-item cancel `PROVISIONAL_PENDING_MEASUREMENT`,
+owner M6.8. Queued-item *skip* `PROVISIONAL_PENDING_MEASUREMENT`, owner M6.8.
+Queued-item *removal* `REFUSED`, here.**
 
-Three different promises, and M6 must not blur them:
+**Four different promises, and M6 must not blur them** — least of all the last
+two, which read as one request and are not:
 
 ```text
 Stop queue              exists. Ends the whole queue: the running attempt is asked
                         to end, no later item begins, finished outputs are retained
 Cancel current item     does not exist. Would end one attempt and continue the queue
-Remove / skip queued    does not exist. Would change a bound plan's membership, and
-                        so needs an answer to what a bound plan is
+Skip a queued item      does not exist. Would settle one item terminally without
+                        running it -- the plan still holds it, and says what
+                        became of it, exactly as NotRun already does
+Remove a queued item    REFUSED. Would take an item OUT of a bound plan, which is
+                        the one thing the bound-plan contract forbids
 ```
+
+**Removal is refused on the contract, not on a pending measurement.** §1 states
+that a plan fact which can change after `BEGIN` is a defect rather than a
+feature, and membership is the first fact it freezes. A user who wants a queued
+item not to run is asking for an *outcome* for that item, and `skip` gives them
+one the plan can still account for: the queue continues to say what it was asked
+to do and what happened to each thing it was asked about. Removal deletes the
+question along with the answer, and it is also the request most likely to be
+asked for, which is why it is refused explicitly here rather than left to be
+absorbed later as an obvious convenience.
+
+The corollary for M6.8: `skip` is admissible and needs a truthful terminal state
+rather than a new membership operation, and the existing `NotRun` — "no process
+was launched and nothing was created" — is very close to the state it needs.
 
 The state vocabulary that must stay distinct, and mostly already is:
 
@@ -1018,10 +1137,17 @@ implementation is stronger than a `kill()`: a Windows Job Object with
 `QueryInformationJobObject`. What has **not** been established is that a real
 `msconvert` run is a *tree at all*. `surviving_processes == Some(0)` after
 termination is satisfied trivially by a one-process run; the peak count
-(`max_active_processes`) is measured by the crate but never published, never read
-by the evidence harness and absent from `BackendRunFacts`; and the only
-multi-process evidence in the repository is against a synthetic mock parent and
-grandchild. [ADR 0014](0014-proteowizard-cancellation-evidence.md) states this
+(`max_active_processes`) is measured by the crate and printed by the M0 spike
+harness, but recorded in no evidence document, absent from `BackendRunFacts`, and
+not reported by the cancellation harness at all; and the only multi-process
+evidence in the repository is against a synthetic mock parent and grandchild.
+
+**And the emptiness observation is scoped to the owned Job**, which is the whole
+extent of the claim. A process created between `spawn()` and
+`AssignProcessToJobObject` is outside that Job -- so it is outside the
+termination path *and* outside the observation that reports the tree gone. An
+unconfirmed-termination path exists for a Job that will not empty; there is none
+for a descendant the Job never contained. [ADR 0014](0014-proteowizard-cancellation-evidence.md) states this
 plainly, and this route restates it rather than letting a strong mechanism be
 mistaken for a strong measurement.
 
@@ -1062,9 +1188,12 @@ says the same where a diagnostics export could have invented one. Anything finer
 is admitted only on a measurement showing that `msconvert` emits something a
 caller can honestly count, and that measurement has not been taken.
 
-**A phase MSCanvas cannot measure is named, not numbered.** While a conversion
-process runs there is no honest fraction, and the truthful thing to show is what
-is happening, not a number standing in for it.
+**A phase MSCanvas cannot measure is named, not numbered** — and a named phase
+may name only a transition **MSCanvas itself performed or observed**: staging
+created, process launched, process exited, output inspected, final name taken.
+While a conversion process runs there is no honest fraction, and the truthful
+thing to show is which of MSCanvas's own steps it is between. Nothing about the
+backend's internal progress may be named, because nothing observes it.
 
 **A count is not a claim about validity.** `finalized_count` counts items that
 produced an output, and M6.9 owes the reader the difference between that and
@@ -1261,8 +1390,11 @@ authority" with "it failed". Both are exactly what CNV-D7 keeps apart.
   artifact are permanently disjoint. The cheap move that avoids the trap is to
   record a stable run identity *and* the observed output facts in the same place.
 - **The bulk path leaves no record at all** — history was wired into one entry
-  point and batch runs bypass it. M6 must write its record inside the shared
-  submit path that single, selected and all conversions funnel through.
+  point and batch runs bypass it. M6 writes no record, so this is not an M6
+  obligation; what it argues for is the *shape* M6.7 already owes, a single
+  submit path that focused, selected and all conversions funnel through. When
+  **M8** builds a record, it writes it there, and inherits the coverage rather
+  than having to establish it.
 - **The GDAL provider reports the requested destination back as the produced
   result**, with no existence, size or integrity check — the exact conflation the
   five-judgement lifecycle forbids.
@@ -1360,7 +1492,10 @@ Consulted narrowly, and the useful findings are mostly boundaries:
 identity is *process-lifetime scoped* and *lazily minted* — allocated only if
 someone reads it. Adopting either would satisfy M6's tests and guarantee M8 has
 to redesign. M6 mints its conversion identity **before the process starts**, and
-scopes it to outlive the session.
+gives it a **form M8 could persist unchanged** — opaque, minted eagerly, and
+never derived from the output's filename or from the queue that produced it.
+**M6 does not persist it**, and does not resolve it across sessions; what
+transfers from napari is the shape of the identity, not a store to keep it in.
 
 Also rejected: ambient context-variable provenance stamping, which fails **open**
 — anything constructed inside the block inherits the origin whether or not it
@@ -1468,7 +1603,8 @@ than a decision:
 +---------------+------------------------------+--------------+
 | Workspace     | Scientific Canvas            | Inspector    |
 | Navigator     |                              |              |
-| acquisitions  | chromatogram / XIC           | Context      |
+| acquisitions  | chromatogram (XIC only if    | Context      |
+|               | the interlude admits one)    |              |
 | outputs       | scan table                   | Settings     |
 | future runs   | selected spectrum            | Export       |
 |               |                              | Evidence     |
@@ -1483,7 +1619,7 @@ The seams, each named with the slice that freezes it:
 | --- | --- | --- |
 | Command availability | One conversion-lane authority with a reason and a message, read identically by the operation and by every surface | M6.1 |
 | Conversion operation state | The slot's five states and three terminal reasons, on one sequence key that never rewinds | M6.1 (already true; stated) |
-| Bound plan facts | Membership, order, conflict policy, intent, destination policy and installation identity, fixed at `BEGIN` and readable | M6.3, M6.4, M6.5, M6.7 |
+| Bound plan facts | Membership, order, conflict policy, intent, destination policy and installation identity, fixed at `BEGIN` and readable — plus, per pass, any destructive authorization, if CNV-D4 admits one at all | M6.3, M6.4, M6.5, M6.6, M6.7 |
 | Destination identity | A resolved directory object and the policy that chose it — never a path on the wire | M6.5 |
 | Conversion intent | A typed value, projected for display, never re-derived from controls | M6.3, M6.4 |
 | Per-item outcome | Eight item states plus the four judgements separated per item | M6.9 |
@@ -1512,7 +1648,7 @@ re-running anything:
 | `SourceIdentity` | The dataset's admitted identity, including companion members for a bundle | exists — `FileIdentity`, `DatasetId`, member digests |
 | `ProviderIdentity` | Release, source revision and executable SHA-256, as measured at admission | exists — `InstalledHelpCapabilities`, `InstallationIdentity` |
 | `ConversionIntent` | The typed intent that produced the argv, and the argv itself | **M6.3** |
-| `OperationRunIdentity` | An identity minted **before the process starts**, stable beyond the queue that produced it | **M6.9** |
+| `OperationRunIdentity` | An identity minted **before the process starts**: opaque, not derived from the output filename or the queue, unique and never reused within the session, and carried on the wire beside the outcome. **Its form is persistable; M6 does not persist it and does not resolve it across sessions** | **M6.9** |
 | `DestinationIdentity` | The resolved directory object and the policy that chose it | **M6.5** |
 | `OutputArtifactManifest` | Per output: name, byte length, SHA-256, observed spectrum and chromatogram counts; for a set, which members landed | exists per item — **M6.9** makes it a manifest |
 | `IntegrityEvidence` | Validation mode plus the property set, keeping *inapplicable* distinct from *unverified* | exists — **M6.9** projects it |
@@ -1529,8 +1665,11 @@ the reference audit:
    the settings actually used. A later reader cannot reconstruct them.
 3. **Origin facts are write-once.** Once stamped, nothing downstream overwrites
    them.
-4. **Identity is durable, not session-scoped**, and lineage is an
-   identity-to-identity relation rather than a live handle.
+4. **The identity's form is persistable, and M6 does not persist it.** It is
+   opaque, stable for the run it names, and not derived from a filename or from
+   the queue — so M8 can store it unchanged. M6 neither writes it to disk nor
+   resolves it across sessions, and lineage is an identity-to-identity relation
+   rather than a live handle **when M8 builds one**.
 
 And one caveat carried from the audit, because it changes what M6 may *claim*
 from a converted file: a `dataProcessing` record inside an mzML document is a
@@ -1549,16 +1688,16 @@ expected to own it.
 | --- | --- | --- |
 | 1 | **The conversion lane has one availability authority.** Every surface that offers a conversion action and the operation that performs it read the same rule; no surface offers an action the operation would refuse, and none withholds one it would accept. An unavailable action gives one truthful reason, once | **M6.1** |
 | 2 | **Every admitted conversion setting is evidence-backed and typed.** Each traces to an exact provider identity, a live measurement of that build, a stated product semantic and a deterministic argv mapping. No setting is visible because a flag exists | **M6.2**, **M6.3**, **M6.4** |
-| 3 | **The visible plan is the bound plan.** What the summary states before `BEGIN` is what the queue binds, and moving any control afterwards changes nothing about the running queue | **M6.4**, **M6.7** |
-| 4 | **Destination authority is explicit and safe.** A destination is a resolved directory object with the policy that chose it; writing inside a recognised vendor dataset root fails closed; source/destination aliasing is decided by identity; and a retry revalidates by identity rather than by name | **M6.5** |
+| 3 | **The visible plan is the bound plan.** What the summary states before `BEGIN` is what the queue binds, and moving any control afterwards changes nothing about the running queue — across every fact M6 adds to the plan: intent, destination policy, any destructive authorization, and scope | **M6.3**, **M6.4**, **M6.5**, **M6.6**, **M6.7** |
+| 4 | **Destination authority is explicit and safe.** A destination is a resolved directory object with the policy that chose it; writing inside a recognised vendor dataset root fails closed; source/destination aliasing is decided by identity rather than by a path prefix; and a retry revalidates by identity rather than by name. **Named exception, carried from CNV-D3:** where no admitted acquisition family is directory-shaped, the vendor-dataset-root half is met by the rule being stated, reachable and refused-by-construction rather than by an observed refusal, because nothing can currently trip it | **M6.5** |
 | 5 | **Selected and all are deterministic and bound.** Each scope has one stated meaning, a visible order, an explicit treatment of ineligible rows and of rows added after `BEGIN`, and a capacity refusal that arrives before the commit | **M6.7** |
 | 6 | **Conflict and destructive behaviour are explicit.** The conflict policy is resolved on the typed request before launch and identically for every entry path; any destructive option is explicit, scoped, bound to its plan and not inherited by retry; and where overwrite is refused, the refusal is recorded with its reason | **M6.6** |
 | 7 | **Cancellation states reflect measured process behaviour.** Every cancellation claim names the observation behind it; the process-tree claim rests on a real measurement of the installed build rather than on a mechanism; an unconfirmed termination stays unconfirmed | **M6.8** |
 | 8 | **Progress contains no fabricated precision.** Item counts, per-state counts and the current item's state — and any finer signal only on a measurement that it can be counted honestly | **M6.8** |
 | 9 | **Process, finalization, integrity and adoption are distinct, and visibly so.** No surface, wire type or summary reduces an item to succeeded/failed, and a reader can tell "it ran" from "it was written" from "it was checked" from "it is in the workspace" | **M6.9** |
 | 10 | **Multi-output completion is truthful.** A backend-named set reports how many of what landed; a partial set is neither a success nor a failure; and a set's collisions and adoption are answered as a set rather than by a one-file rule | **M6.6**, **M6.9** |
-| 11 | **Every conditional route has a terminal disposition.** mzXML, vendor-format direct preview, any further vendor family and VIEW-007's conditional re-entry each end admitted, refused with evidence, or evidence-blocked with what is missing and who would supply it. **None of them is a condition of M6 completing** | **M6.10** |
-| 12 | **M7 and M8 receive stable seams.** The reads listed above exist and are consumed by at least one current surface, so they are proved rather than declared — and no persistence, artifact store or lineage model was built to provide them | **M6.9**, **M6.11** |
+| 11 | **Every conditional route has a terminal disposition.** Four routes, and the set is closed: mzXML; vendor-format direct preview; whether M6 opens any further vendor family at all, answered as one decision rather than per family; and VIEW-007's conditional re-entry. Each ends admitted, refused with evidence, or evidence-blocked with what is missing and who would supply it. **None of them is a condition of M6 completing** | **M6.10** |
+| 12 | **M7 and M8 receive stable seams.** The reads listed above exist and are consumed by at least one current surface, so they are proved rather than declared — and no persistence, artifact store or lineage model was built to provide them | **M6.3**, **M6.5**, **M6.9**, **M6.11** |
 
 Three milestone-wide conditions, on the pattern
 [ADR 0037](0037-viewer-completion-route.md) used:
@@ -1571,7 +1710,11 @@ Three milestone-wide conditions, on the pattern
 
 **What is explicitly not an exit criterion:** an admitted mzXML; a visible XIC;
 vendor-format direct preview; a further vendor family; a larger queue; per-item
-cancellation, if the measurement does not support it; and any part of M7 or M8.
+cancellation; a queued-item skip; and any part of M7 or M8. Each is excluded
+unconditionally. A measurement that *supports* per-item cancellation permits M6.8
+to deliver it; it never turns it into a requirement, because no criterion above
+names it and a milestone whose completion turns on how a measurement lands is not
+a milestone.
 
 ## Questions this route cannot answer, and does not pretend to
 
@@ -1580,17 +1723,19 @@ Recorded so a later slice inherits a question rather than an assumption.
 1. **What `msconvert` does to an existing output** has never been observed — the
    only test was refused by MSCanvas before launch. CNV-D4 cannot be closed
    without it. Owner **M6.2**.
-2. **Whether `msconvert` writes anything into its working directory besides the
-   output it was asked for.** Recorded as pending since M3, unowned until now.
-   Owner **M6.2**.
+2. **Whether `msconvert` writes anything besides its output _for a format other
+   than mzML_.** The mzML and multi-output cases were measured in M3.0.3 and
+   M3.10 and are not open; only a non-mzML format is, which makes this a
+   consequence of CNV-D1 rather than a standing debt. Owner **M6.2**, and only
+   if a second format is admitted.
 3. **Whether a real `msconvert` run is a process tree at all.** The termination
    mechanism is right; the evidence is about one process. Owner **M6.8**.
 4. **Whether overwrite is admissible at all**, given ADR 0009's no-clobber
    guarantee and CNV-008's "overwrite requires explicit confirmation". Two
    accepted documents disagree, and a person decides. Owner **M6.6**.
 5. **What numeric precision MSCanvas means to ship.** The provider's default is
-   currently answering a question MSCanvas has never asked. Owner **M6.2**, then
-   **M6.4**.
+   currently answering a question MSCanvas has never asked. Owner **M6.2** to
+   measure, **M6.3** to type, **M6.4** to show.
 6. **What queue capacity should be**, once cancellation is understood. The current
    number is a wait-time judgement whose stated premise has gone stale. Owner
    **M6.8**.
