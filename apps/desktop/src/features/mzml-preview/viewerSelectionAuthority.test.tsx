@@ -868,7 +868,7 @@ describe("what a scan step says it can do", () => {
 
     // The panel is busy, and the lane is not.
     expect(result.current.conversion.busy).toBe(true);
-    expect(result.current.conversion.backendLaneBusy).toBe(false);
+    expect(result.current.conversion.lane.laneClaimed).toBe(false);
     expect(result.current.spectrumSelection).toEqual({ status: "available" });
     expect(result.current.canSelectNextScan).toBe(true);
 
@@ -886,7 +886,7 @@ describe("what a scan step says it can do", () => {
   it("goes unavailable the moment a retry is dispatched, before the slot moves", async () => {
     /*
      * The one conversion-panel activity that does own the guarded lane. `retry`
-     * sets `busyRef` itself, and Rust reads `terminal` for the whole rerun -- it
+     * claims it itself, and Rust reads `terminal` for the whole rerun -- it
      * answers once, when the serial rerun is over -- so the slot's status never
      * reports it. A rendered lane derived from the status alone would advertise
      * a selection here and the operation would drop it silently, which is the
@@ -903,7 +903,7 @@ describe("what a scan step says it can do", () => {
       expect(result.current.spectrum.status).toBe("loaded");
     });
     await waitFor(() => {
-      expect(result.current.conversion.canRetry).toBe(true);
+      expect(result.current.conversion.retryAvailability.status).toBe("available");
     });
 
     act(() => {
@@ -915,7 +915,7 @@ describe("what a scan step says it can do", () => {
 
     // The slot still says terminal, and the lane is held anyway.
     expect(result.current.conversion.state.status).toBe("terminal");
-    expect(result.current.conversion.backendLaneBusy).toBe(true);
+    expect(result.current.conversion.lane.laneClaimed).toBe(true);
     expect(result.current.spectrumSelection.status).toBe("unavailable");
     expect(
       result.current.spectrumSelection.status === "unavailable" &&

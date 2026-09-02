@@ -3415,10 +3415,63 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   // than racing them -- the same reason acquiring waits for the others.
   const workspaceSettling =
     pickerBusy || workspaceBusy || folderBusy || dropBusy || folderReservationPending;
+  /**
+   * Whether the backend is positively known to be usable.
+   *
+   * Read here rather than beside the viewer's lane below because the conversion
+   * lane needs it first: this is one of the four facts that decide whether a
+   * conversion may start, and the operation is created on the next line.
+   */
+  const backendUsable =
+    backend.status === "resolved" && backend.availability.state === "available";
+  /**
+   * The conversion lane's facts that this hook owns, as a render sees them.
+   *
+   * Memoized because the operation builds its rendered lane from it and two
+   * surfaces project decisions from that lane; a new object every render would
+   * defeat both of them on a document that re-renders whenever the pointer
+   * crosses from one scan to the next.
+   */
+  const conversionEnvironment = useMemo(
+    () => ({
+      backendUsable,
+      backendChanging: backendBusy,
+      previewReading: previewBackendBusy,
+      workspaceSettling,
+    }),
+    [backendBusy, backendUsable, previewBackendBusy, workspaceSettling],
+  );
+  /**
+   * The same four facts, from the refs each of them is written beside.
+   *
+   * The operation asks this at dispatch, where the rendered struct would be
+   * whatever was true when the click handler's closure was made. Each is the
+   * synchronous half of the state above it -- `backendUsable` and
+   * `backendUsableRef` written together in `showBackend`, `backendBusy` and
+   * `backendBusyRef` in `markBackendBusy`, and so on -- so the two readings are
+   * the same fact rather than two facts that resemble each other.
+   */
+  const readConversionEnvironment = useCallback(
+    () => ({
+      backendUsable: backendUsableRef.current,
+      backendChanging: backendBusyRef.current,
+      // A count rather than a flag, so a stale read settling never clears the
+      // marker a newer one is relying on.
+      previewReading: viewerRequests.current > 0,
+      workspaceSettling:
+        pickerBusyRef.current ||
+        workspaceBusyRef.current ||
+        folderBusyRef.current ||
+        dropBusyRef.current ||
+        folderReservationPendingRef.current,
+    }),
+    [],
+  );
   const conversion = useConversionOperation(
     reconcileConversionGeneration,
     adoptOutputs,
-    workspaceSettling,
+    conversionEnvironment,
+    readConversionEnvironment,
   );
   // A stop that could not be confirmed makes this session's backend unusable
   // without changing the installation, so nothing about it advances the
@@ -3443,7 +3496,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   // Read by the spectrum guard below. A conversion owns the one backend lane,
   // and Rust refuses a spectrum while it does; this is what stops the interface
   // asking and leaving a panel loading for the length of a conversion.
-  const conversionBusyRef = conversion.busyRef;
+  const conversionBusyRef = conversion.laneClaimedRef;
 
   /**
    * The same lane rule, from the facts a render can see.
@@ -3465,17 +3518,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * Narrower is the safe direction: a control may refuse where the operation
    * would have accepted, and the reverse is the defect this rule exists for.
    *
-   * One edge is not covered, and is named rather than glossed. `convert` claims
-   * the conversion lane in a ref the moment it dispatches, and the rendered
-   * busy follows only when the slot is read back -- so between those two there
-   * is a window in which the operation refuses and this says available. It is
-   * the same window every conversion-gated control in this interface has,
-   * `Preview focused` included, and closing it belongs to the conversion lane's
-   * own contract rather than to this adapter.
+   * The edge this comment used to name is closed. `convert` claimed the lane in
+   * a ref the moment it dispatched while the rendered busy followed only when
+   * the slot was read back, leaving a window in which the operation refused and
+   * this said available. The conversion lane now raises both halves of that
+   * claim together, so `laneClaimed` is true from the click; closing it there
+   * rather than here is what M6.1 means by the lane owning its own contract.
    */
   const hasLoadedPreview = preview.status === "loaded";
-  const backendUsable =
-    backend.status === "resolved" && backend.availability.state === "available";
   /*
    * Memoized on the four facts it is made of, and not because building it is
    * expensive.
@@ -3499,9 +3549,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         // there would take away a selection the operation would have made, and
         // would say a conversion was running while a text file finished being
         // written.
-        conversionBusy: conversion.backendLaneBusy,
+        conversionBusy: conversion.lane.laneClaimed,
       }),
-    [backendBusy, backendUsable, conversion.backendLaneBusy, hasLoadedPreview],
+    [backendBusy, backendUsable, conversion.lane.laneClaimed, hasLoadedPreview],
   );
   const spectrumSelectionAvailable = spectrumSelection.status === "available";
 

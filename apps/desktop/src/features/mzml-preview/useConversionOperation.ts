@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { usePreviewApi } from "./api";
+import type { ConversionAvailability, ConversionLane } from "./conversionAvailability";
+import {
+  canRetryConversion,
+  canStartConversion,
+  conversionAvailability,
+} from "./conversionAvailability";
 import type {
   ConversionConflictPolicy,
   ConversionDiagnosticsExport,
@@ -80,30 +86,30 @@ export interface ConversionOperation {
   readonly busy: boolean;
 
   /**
-   * Whether anything owns the one backend lane, readable from a handler.
+   * Whether a conversion owns the one backend lane, readable from a handler.
    *
    * **Narrower than `busy`, deliberately.** `busy` additionally covers an
    * adoption and a diagnostics export, and neither launches a backend process
    * or touches the preview -- each sets its own flag rather than this one, and
-   * says so where it does. What this reports is what actually owns the lane: the
-   * queue slot, and a retry this document has dispatched. Every gate that means
-   * *the backend is occupied* has to read it, and its rendered twin is
-   * {@link backendLaneBusy}.
+   * says so where it does. What this reports is what actually owns the lane:
+   * the queue slot, and a dispatch this document has made and not been answered
+   * on. Every gate that means *the backend is occupied* has to read it, and its
+   * rendered twin is `lane.laneClaimed`.
    *
    * A click handler that read a rendered value could start work inside a render
    * that has not committed the transition yet, which is why this is a ref.
    */
-  readonly busyRef: { readonly current: boolean };
+  readonly laneClaimedRef: { readonly current: boolean };
 
   /**
-   * The same answer as `busyRef`, for the interface.
+   * Every lane fact, as a render can see them.
    *
-   * One predicate with two readers, so a control cannot come to disagree with
-   * the operation it advertises. Used by the selection lane, whose whole
-   * contract is that what a surface says and what the operation does are the
-   * same rule.
+   * The rendered half of what the two guards below read from refs, and the
+   * whole of what a surface needs to decide whether to offer a conversion
+   * action. Surfaces project a decision from this with
+   * {@link conversionAvailability}; they do not assemble one of their own.
    */
-  readonly backendLaneBusy: boolean;
+  readonly lane: ConversionLane;
   readonly plan: ConversionPlanState;
   /** A request that never reached Rust's slot, kept apart from a conversion's own outcome. */
   readonly error: PreviewError | null;
@@ -114,8 +120,17 @@ export interface ConversionOperation {
   readonly convert: (handles: readonly string[]) => void;
   /** Reruns every retryable failure of the terminal queue. */
   readonly retry: () => void;
-  /** Whether the terminal queue has anything worth retrying. */
-  readonly canRetry: boolean;
+  /**
+   * Whether this queue's failures may be rerun, and what to say when not.
+   *
+   * The retry control's own decision, evaluated from the same lane a start is
+   * and from this queue's own retryable count. It is a different question from
+   * whether a *new* conversion may start -- a finished queue with nothing
+   * retryable in it refuses a rerun and accepts a start -- and it exists here,
+   * beside the operation, because the operation asks the same question at
+   * dispatch.
+   */
+  readonly retryAvailability: ConversionAvailability;
   /**
    * Whether this document has dispatched a retry and has not been answered.
    *
@@ -124,6 +139,20 @@ export interface ConversionOperation {
    * way reads this rather than deriving it, and they cannot come to disagree.
    */
   readonly retrying: boolean;
+  /**
+   * Whether this document has dispatched a conversion the slot has not shown yet.
+   *
+   * The rendered twin of the claim `convert` raises, and it exists for exactly
+   * the reason {@link retrying} does: the slot cannot report a queue Rust has
+   * not reserved, so between the click and the first read that sees it, this is
+   * the only thing that knows. Without it the panel went on offering the
+   * control that had already been pressed.
+   *
+   * Reported with the slot check already applied -- true only while the claim
+   * is held *and* the slot has not moved -- so the panel and the live region
+   * describe the same window rather than each deciding where it ends.
+   */
+  readonly converting: boolean;
   /** Every row a live queue holds, so a roster can pin them. */
   readonly busyHandles: readonly string[];
   readonly dismissError: () => void;
@@ -238,11 +267,64 @@ function ownsTheBackendLane(status: WorkspaceConversionState["status"]): boolean
   return status === "awaitingDestination" || status === "running" || status === "stopping";
 }
 
+/**
+ * The lane facts this operation does not own.
+ *
+ * Everything in {@link ConversionLane} that belongs to the backend banner, the
+ * viewer or the workspace. They arrive as one struct rather than as four
+ * arguments so that the rendered half and the handler half are visibly the same
+ * shape, and so that adding a lane fact is one change here rather than one per
+ * caller.
+ */
+/**
+ * What a rerun of this slot would act on, whichever half is asking.
+ *
+ * A free function over the state rather than a value derived in the hook,
+ * because the rendered decision and the dispatch guard read two different
+ * copies of that state -- the render's, and the ref's -- and deriving the
+ * target twice is how the two would come to describe different queues.
+ */
+function retryTargetOf(state: WorkspaceConversionState): {
+  readonly retryableFailureCount: number;
+  readonly queueCompleted: boolean;
+} {
+  return state.status === "terminal" && state.reason === "completed"
+    ? { retryableFailureCount: state.queue.retryableFailedCount, queueCompleted: true }
+    : { retryableFailureCount: 0, queueCompleted: false };
+}
+
+export type ConversionEnvironment = Pick<
+  ConversionLane,
+  "backendUsable" | "backendChanging" | "previewReading" | "workspaceSettling"
+>;
+
+/**
+ * A conversion this document has dispatched and has not been answered on.
+ *
+ * One claim rather than a flag per action: what matters to every reader is that
+ * the lane is taken, and what matters to the roster is which rows went with it.
+ * Raised synchronously at the click, lowered only by the dispatch's own
+ * outcome -- never by an arriving read, which is how a reply describing a slot
+ * that had not yet seen the dispatch used to clear it.
+ */
+type ConversionDispatch =
+  | { readonly kind: "convert"; readonly handles: readonly string[] }
+  | { readonly kind: "retry" };
+
 export function useConversionOperation(
   onInstallationGeneration: (generation: number) => void,
   onOutputsAdopted: AdoptedOutputsSink,
-  /** Whether a workspace mutation of the user's has been asked for and not settled. */
-  workspaceSettling: boolean,
+  /** The lane facts this operation does not own, as a render sees them. */
+  environment: ConversionEnvironment,
+  /**
+   * The same facts, as they stand now.
+   *
+   * A dispatch guard that read the rendered struct would decide from whatever
+   * was true when the closure was made, which for a click arriving during an
+   * installation change is exactly the wrong answer. The caller reads its own
+   * refs here; this operation reads its own.
+   */
+  readEnvironment: () => ConversionEnvironment,
 ): ConversionOperation {
   const api = usePreviewApi();
   const [state, setState] = useState<WorkspaceConversionState>({ status: "idle" });
@@ -271,17 +353,54 @@ export function useConversionOperation(
   // Paired with the state below it, and read by every guard: a click handler
   // that read the rendered value could start a second conversion inside the
   // render that has not committed the first one yet.
-  const busyRef = useRef(false);
-  // Whether this document is inside a retry it dispatched and has not been
-  // answered for. Rendered, unlike `busyRef`, because the interface has to stop
-  // offering actions for the whole of that window.
-  const [retrying, setRetrying] = useState(false);
+  const laneClaimedRef = useRef(false);
+  // The authoritative slot where a handler can read it. `setState` renders;
+  // this decides. Written beside it rather than derived in an effect, which
+  // would leave a dispatch guard one commit behind the queue it is asking
+  // about.
+  const stateRef = useRef<WorkspaceConversionState>({ status: "idle" });
+  /**
+   * What this document has dispatched onto the lane and not been answered on.
+   *
+   * Rendered as well as held in a ref, and both halves are load-bearing. The
+   * ref is what a second activation inside the same commit reads; the state is
+   * what stops the interface offering that activation at all from the next
+   * commit onwards. `retrying` and `converting` are projections of it, so a
+   * reader cannot come to disagree with the guard.
+   */
+  const [dispatch, setDispatch] = useState<ConversionDispatch | null>(null);
+  const dispatchRef = useRef<ConversionDispatch | null>(null);
+  /**
+   * Raises or lowers the claim, in both halves at once.
+   *
+   * The ref first and always, because the guard that reads it runs before any
+   * commit. Every write to the claim goes through here: a second way to set one
+   * half is how the two come apart.
+   *
+   * Releasing it hands the lane back to the authoritative slot rather than to
+   * `false`. A claim released while the queue it started is still running would
+   * otherwise report a free lane -- and a release whose reply the sequence
+   * guard discarded, which happens whenever a poll installed the same
+   * transition first, would leave the claim raised for the life of the session.
+   */
+  const claimLane = useCallback((claim: ConversionDispatch | null) => {
+    dispatchRef.current = claim;
+    laneClaimedRef.current = claim !== null || ownsTheBackendLane(stateRef.current.status);
+    setDispatch(claim);
+  }, []);
+  // The two windows the rest of this file names, each one projection of the
+  // single claim above rather than a flag of its own.
+  const retrying = dispatch?.kind === "retry";
   // Whether this document has dispatched a stop and has not seen the queue
   // settle. Rendered, because Stop queue has to stop being offered for the
   // whole of that window rather than only once Rust answers.
   const [stopRequested, setStopRequested] = useState(false);
   // The session's own verdict on the backend, which outlives any one queue.
   const [backendQuarantined, setBackendQuarantined] = useState(false);
+  // The same verdict where a dispatch guard can read it. A quarantined session
+  // refuses every conversion outright, so the guard has to see it in the same
+  // commit the read that set it arrives in.
+  const backendQuarantinedRef = useRef(false);
   // Whether this document is inside an adoption it dispatched. Rendered,
   // because every workspace action has to stop being offered for the whole of
   // that window rather than only once Rust answers.
@@ -307,6 +426,10 @@ export function useConversionOperation(
   // Paired with the state above and read by the handler, like every other gate
   // here: two activations inside one render both see the rendered value false.
   const exportRequestedRef = useRef(false);
+  // Rust's own half of the same fact, for a guard. An export another document
+  // started is one this one must refuse a conversion against, and the rendered
+  // `diagnostics.exporting` cannot be read from a handler that predates it.
+  const backendExportingRef = useRef(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -326,8 +449,25 @@ export function useConversionOperation(
     // "not terminal any more" is not a test that catches it.
     setAdoption((previous) => (previous === null || describes(previous, update) ? previous : null));
     installedSequence.current = update.sequence;
-    busyRef.current = ownsTheBackendLane(update.state.status);
+    // **Raises the claim, and never lowers one this document is holding.**
+    //
+    // The sequence guard above orders reads against each other; it cannot order
+    // a read against a dispatch, because a dispatch moves no sequence -- only
+    // Rust does, and only once it has seen the request. So a read issued before
+    // the click and answered after it is *newer* than everything installed and
+    // still describes a slot that has not heard of the conversion. Assigning
+    // this from the arriving status alone is what let that reply clear a claim
+    // the handler had raised a moment earlier, reopening a control for the one
+    // window in which pressing it would start a second conversion.
+    //
+    // The claim is settled by the dispatch's own outcome instead: its reply,
+    // or its failure. An observation may confirm the lane is taken; only the
+    // operation that took it may say it is free.
+    laneClaimedRef.current =
+      ownsTheBackendLane(update.state.status) || dispatchRef.current !== null;
+    stateRef.current = update.state;
     setState(update.state);
+    backendExportingRef.current = update.diagnostics.exporting;
     setDiagnostics(update.diagnostics);
     // Cleared from the authoritative state rather than from the reply, because
     // a reload has no reply to read. Rust is the one that knows an export has
@@ -340,6 +480,7 @@ export function useConversionOperation(
     // that lowered it on a later read would be claiming something the session
     // does not know.
     if (update.backendQuarantined) {
+      backendQuarantinedRef.current = true;
       setBackendQuarantined(true);
     }
     // The queue is over, so this document is no longer inside a stop it asked
@@ -440,23 +581,74 @@ export function useConversionOperation(
   // asked and is waiting, which is the same thing `pickerBusy` and `folderBusy`
   // report elsewhere. The authoritative queue arrives on the first poll and
   // takes over from there.
-  // What owns the one backend lane: the slot, and a retry this document has
-  // dispatched and not been answered on.
+  // What owns the one backend lane: the slot, and a dispatch this document has
+  // made and not been answered on.
   //
-  // The retry belongs here and the other two do not, and the difference is
-  // written into this file. `retry` sets `busyRef` -- the ref
+  // The dispatch belongs here and the other two do not, and the difference is
+  // written into this file. `convert` and `retry` claim the lane -- the claim
   // `canStartSpectrumSelection` is guarded with -- while `adopt` and
-  // `exportDiagnostics` each say "its own flag, and deliberately not `busyRef`".
-  // `retrying` is the rendered twin of that claim, and exists because Rust reads
-  // `terminal` throughout a rerun, so the slot's own status cannot report one.
+  // `exportDiagnostics` each say "its own flag, and deliberately not the lane".
+  // The claim is what makes this the rendered twin of `laneClaimedRef`: both
+  // read the same two facts, so the surface and the operation cannot come to
+  // disagree in the window between a click and the read that reflects it.
   //
   // Leaving it out would put the mismatch in the direction that hurts: a surface
-  // advertising a selection the operation then silently drops.
-  const backendLaneBusy = ownsTheBackendLane(state.status) || retrying;
+  // advertising a conversion the operation then silently drops.
+  const laneClaimed = ownsTheBackendLane(state.status) || dispatch !== null;
+  // A dispatched conversion the slot has not shown yet. Carried to its readers
+  // with the status check already applied, because the panel and the live
+  // region both need exactly this window and each deriving it would be two
+  // answers to one question again.
+  const converting = dispatch?.kind === "convert" && !ownsTheBackendLane(state.status);
   // And this panel's own notion of having work in flight, wider on purpose: an
   // adoption and a diagnostics export are things this surface must not offer
   // twice, and neither owns the backend.
-  const busy = adopting || exportRequested || diagnostics.exporting || backendLaneBusy;
+  const busy = adopting || exportRequested || diagnostics.exporting || laneClaimed;
+
+  /**
+   * The lane a render sees.
+   *
+   * Half the caller's facts, half this operation's own, and no third source.
+   * Memoized because two surfaces project decisions from it and a new object
+   * every render would defeat both of them.
+   */
+  const lane = useMemo<ConversionLane>(
+    () => ({
+      ...environment,
+      backendQuarantined,
+      laneClaimed,
+      adopting,
+      exportingDiagnostics: exportRequested || diagnostics.exporting,
+    }),
+    [
+      adopting,
+      backendQuarantined,
+      diagnostics.exporting,
+      environment,
+      exportRequested,
+      laneClaimed,
+    ],
+  );
+
+  /**
+   * The same lane, as it stands now.
+   *
+   * Every fact from the ref written beside the state it renders, so a guard
+   * running before a commit reads the truth rather than the last render's copy
+   * of it. This is the half that closes the dispatch window: the claim raised
+   * one line into `convert` is visible to the very next activation, whether or
+   * not React has committed anything.
+   */
+  const readLane = useCallback(
+    (): ConversionLane => ({
+      ...readEnvironment(),
+      backendQuarantined: backendQuarantinedRef.current,
+      laneClaimed: laneClaimedRef.current,
+      adopting: adoptingRef.current,
+      exportingDiagnostics: exportRequestedRef.current || backendExportingRef.current,
+    }),
+    [readEnvironment],
+  );
 
   // A retry this document dispatched, for a slot that has not been seen to move
   // yet. It is the one window in this workflow where the authoritative state is
@@ -519,16 +711,24 @@ export function useConversionOperation(
 
   const convert = useCallback(
     (handles: readonly string[]) => {
-      // The adoption and export claims as well. A new queue replaces the
-      // terminal one both of them are reading, so all three are exclusive for
-      // the same reason a retry and an adoption are.
-      if (busyRef.current || adoptingRef.current || exportRequestedRef.current) {
+      // The one rule, re-read at dispatch from the facts as they stand.
+      //
+      // Not a second expression that resembles the control's: the same function
+      // the control projects its `disabled` from, over the same struct. What
+      // differs is only where the facts come from -- refs here, because this
+      // handler may be several commits older than the truth, and for a click
+      // that arrives during an installation change that is exactly the wrong
+      // answer. VS Code ships the opposite choice and says so in its own schema;
+      // for something that claims a backend lane and spawns a process, an
+      // explicit refusal is the only safe end of that window.
+      if (!canStartConversion(readLane(), handles.length)) {
         return;
       }
       // Claimed before the request leaves, so a second activation inside the
       // same commit cannot start a second conversion. Rust refuses one anyway;
-      // this is what stops the interface asking.
-      busyRef.current = true;
+      // this is what stops the interface asking. The rows go with it: the
+      // roster must not offer to remove a row this queue is already holding.
+      claimLane({ kind: "convert", handles });
       setError(null);
       api
         .convertDatasets(handles, conflictPolicy, () => {
@@ -538,20 +738,28 @@ export function useConversionOperation(
           readState();
         })
         .then((update) => {
+          // The state first, the claim second. This is the reply to the very
+          // dispatch that raised the claim, so it is the one observation
+          // entitled to lower it -- and lowering it only once the slot it
+          // describes is installed is what stops the release reading a lane
+          // from before its own queue existed. Both commit together.
           applyUpdate(update);
+          if (mounted.current) {
+            claimLane(null);
+          }
         })
         .catch((cause: unknown) => {
           if (!mounted.current) {
             return;
           }
-          busyRef.current = false;
+          claimLane(null);
           setError(toPreviewError(cause));
           // The request failed on the way to the slot, so what the slot holds
           // is still authoritative and this document has to go and look.
           readState();
         });
     },
-    [api, applyUpdate, conflictPolicy, readState],
+    [api, applyUpdate, claimLane, conflictPolicy, readLane, readState],
   );
 
   // Every row a live queue holds, not only the one running: a queued row
@@ -570,11 +778,17 @@ export function useConversionOperation(
     // go. Without this the window between the click and the first poll would
     // offer `Remove selected` over the very failures being rerun, and the only
     // outcome would be a workspace error nobody needed to see.
-    if (retrying && state.status === "terminal") {
+    if (dispatch?.kind === "retry" && state.status === "terminal") {
       return state.queue.items.map((item) => item.datasetHandle);
     }
+    // And a dispatched conversion holds the rows it was dispatched with, for
+    // the same window and the same reason. The slot cannot name them yet --
+    // Rust has not reserved the queue -- so the claim carries them.
+    if (dispatch?.kind === "convert") {
+      return dispatch.handles;
+    }
     return [];
-  }, [state, retrying]);
+  }, [state, dispatch]);
 
   // This document's own claim and Rust's answer, together. They cover
   // different windows: the claim covers the press until the first read that
@@ -595,22 +809,39 @@ export function useConversionOperation(
     diagnostics.available &&
     !exportingDiagnostics &&
     !adopting &&
-    !retrying;
+    // The whole lane claim, which is what the guard below reads. A dispatched
+    // conversion holds it before any read reports one, and offering an export
+    // in that window could only end in a refusal.
+    !laneClaimed;
 
-  // Only a queue that ran to its own end. A stopped queue is a decision the
-  // user made about the whole batch, and a queue whose stop could not be
-  // confirmed must launch nothing at all -- Rust refuses both, and this is what
-  // stops the interface offering them.
-  // Not while an adoption is under way. A retry replaces the very results an
-  // adoption is reading, so the two are offered apart even though both act on
-  // the same terminal queue.
-  const canRetry =
-    state.status === "terminal" &&
-    state.reason === "completed" &&
-    state.queue.retryableFailedCount > 0 &&
-    !adopting &&
-    !exportingDiagnostics &&
-    !backendQuarantined;
+  /**
+   * What a rerun of this slot would act on.
+   *
+   * Only a queue that ran to its own end. A stopped queue is a decision the
+   * user made about the whole batch, and a queue whose stop could not be
+   * confirmed must launch nothing at all -- Rust refuses both, and this is what
+   * stops the interface offering them.
+   *
+   * Written once and read by both halves: the decision below, and the guard in
+   * `retry`, which reads the same shape out of `stateRef` instead.
+   */
+  const retryTarget = retryTargetOf(state);
+
+  /**
+   * Whether a rerun may start, and what to say when it may not.
+   *
+   * The same lane a start is judged against, and this queue's own target. It
+   * replaces a `canRetry` boolean that was computed here, consumed by nothing,
+   * and answered on screen by the start control's rule instead -- two rules for
+   * one question, and the one that shipped was the wrong one. A second boolean
+   * beside this decision would be the same shape again with nothing to read it,
+   * so there is not one: `Retry` reads this, and the guard in `retry` reads
+   * `canRetryConversion` over the same evaluator.
+   */
+  const retryAvailability = conversionAvailability(lane, {
+    kind: "retry",
+    ...retryTarget,
+  });
 
   // A running queue, and one this document has not already asked to stop.
   // stopping covers both the window before Rust answers and the state Rust
@@ -647,33 +878,33 @@ export function useConversionOperation(
   }, [api, applyUpdate, readState, state]);
 
   const retry = useCallback(() => {
-    // The adoption and export flags as well as its own. All three act on one
-    // terminal queue, and each has to see the others' claims or two dispatch
-    // against it.
-    if (busyRef.current || adoptingRef.current || exportRequestedRef.current) {
+    // Retry availability, not the start control's. The lane is the same and the
+    // target is not: this asks the one authority about a rerun of the slot as
+    // it stands, from the same refs `convert` reads and from the same slot the
+    // rendered decision was made against.
+    const target = retryTargetOf(stateRef.current);
+    if (!canRetryConversion(readLane(), target.retryableFailureCount, target.queueCompleted)) {
       return;
     }
-    busyRef.current = true;
-    setRetrying(true);
+    claimLane({ kind: "retry" });
     setError(null);
     api
       .retryConversions()
       .then((update) => {
-        if (mounted.current) {
-          setRetrying(false);
-        }
         applyUpdate(update);
+        if (mounted.current) {
+          claimLane(null);
+        }
       })
       .catch((cause: unknown) => {
         if (!mounted.current) {
           return;
         }
-        busyRef.current = false;
-        setRetrying(false);
+        claimLane(null);
         setError(toPreviewError(cause));
         readState();
       });
-  }, [api, applyUpdate, readState]);
+  }, [api, applyUpdate, claimLane, readLane, readState]);
 
   // How many output *files* this terminal queue would offer to add.
   //
@@ -707,7 +938,10 @@ export function useConversionOperation(
     state.status === "terminal" &&
     eligibleOutputCount > 0 &&
     !adopting &&
-    !retrying &&
+    // The whole lane claim rather than a dispatched retry alone: `adopt` guards
+    // itself with the claim, and a surface narrower than its own guard offers
+    // work that will not happen.
+    !laneClaimed &&
     // An export is reading the same terminal queue. Neither changes it, but
     // Rust refuses to run them together -- an adoption commits under the
     // workspace gate and an export can be sitting in a modal dialog -- so the
@@ -717,7 +951,7 @@ export function useConversionOperation(
     // that committed in Rust can still have a reply in flight, and an adoption
     // installing its roster first would leave that reply installing a list the
     // adopted rows are missing from.
-    !workspaceSettling;
+    !environment.workspaceSettling;
 
   const adopt = useCallback(() => {
     // The ref, not the rendered flag. Two activations inside one render both
@@ -725,19 +959,20 @@ export function useConversionOperation(
     // count for a request Rust is about to refuse -- which would then make the
     // first one's reply look superseded and install nothing, losing rows that
     // were actually committed.
-    // `busyRef` as well as this operation's own flag. A retry activated in the
+    // The lane claim as well as this operation's own flag. A conversion or a
+    // retry activated in the
     // same render has already claimed that one, and dispatching both against a
     // single terminal queue means one is refused -- with the losing adoption
     // having already moved the workspace decision count.
     if (
       state.status !== "terminal" ||
       adoptingRef.current ||
-      busyRef.current ||
+      laneClaimedRef.current ||
       exportRequestedRef.current
     ) {
       return;
     }
-    // Its own flag, and deliberately not `busyRef`. Setting that one would make
+    // Its own flag, and deliberately not the lane claim. Claiming that would make
     // every read wait -- a spectrum selection, the preview action -- and an
     // adoption launches nothing and touches no preview. Reading it is what
     // gives the mutual exclusion with a retry; writing it would take something
@@ -787,11 +1022,11 @@ export function useConversionOperation(
       state.status !== "terminal" ||
       exportRequestedRef.current ||
       adoptingRef.current ||
-      busyRef.current
+      laneClaimedRef.current
     ) {
       return;
     }
-    // Its own flag, and deliberately not `busyRef`. Setting that one would make
+    // Its own flag, and deliberately not the lane claim. Claiming that would make
     // a preview read and a spectrum selection wait, and an export launches
     // nothing and touches neither. Reading it is what gives the mutual
     // exclusion; writing it would take something else away.
@@ -825,12 +1060,13 @@ export function useConversionOperation(
   return {
     state,
     busy,
-    backendLaneBusy,
+    lane,
     busyHandles,
-    busyRef,
-    canRetry,
+    laneClaimedRef,
+    retryAvailability,
     retry,
     retrying,
+    converting,
     plan,
     error,
     conflictPolicy,

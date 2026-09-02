@@ -180,10 +180,23 @@ Where each of those is owned, and why, is fixed by
   scan table point at that one explanation. Neither is disabled: hover, zoom,
   pan, the range controls, the trace toggles, scrolling and keyboard row
   navigation keep working, because none of them asks the backend for anything.
-  One window is knowingly left open and belongs to the conversion lane rather
-  than the viewer: `convert` claims the backend lane as it dispatches and the
-  rendered state follows only when the queue slot is read back. See
-  [ADR 0041](../architecture/adr/0041-viewer-selection-availability.md).
+  The one window M5 knowingly left open — `convert` claiming the backend lane as
+  it dispatched while the rendered state followed only when the queue slot was
+  read back — belonged to the conversion lane rather than the viewer, and M6.1
+  closed it there. See
+  [ADR 0041](../architecture/adr/0041-viewer-selection-availability.md) and
+  [ADR 0043](../architecture/adr/0043-conversion-completion-route.md).
+- **Telling a conversion control that a conversion cannot start** was M6.1, and
+  is delivered. One lane decides — a session that has lost a converter process,
+  an installation check, a backend resolved unavailable, a conversion already
+  holding the lane, a run being read, an adoption, a diagnostics export, a change
+  to the file list, and what the action itself would act on — and the operation
+  and every control read the same rule. `Convert` and `Retry` are different
+  operations over that lane and answer to their own targets, so a finished queue
+  with nothing worth rerunning refuses a rerun and still offers a start. A
+  refused control says why, once, and two controls refused by one fact share the
+  sentence. Nothing backend-free is disabled by it: search, sort, keyboard
+  navigation and the viewer keep their own authorities.
 
 ## Conversion
 

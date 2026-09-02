@@ -380,7 +380,8 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 
 ## M6 — Conversion Completion
 
-**Started. The route is locked; M6.1 is the next implementation slice.**
+**Started. The route is locked and the conversion lane has one availability
+authority; M6.2 is the next slice.**
 
 The route, the live conversion gap audit it was decided from, the nine product
 decisions it surfaces, the twelve exit criteria and the M7/M8 seams are in
@@ -388,8 +389,8 @@ decisions it surfaces, the twelve exit criteria and the M7/M8 seams are in
 slices:
 
 - M6.0 — **complete** (route lock, documentation only).
-- M6.1 — conversion-lane authority. **Next.**
-- M6.2 — `msconvert` capability and evidence.
+- M6.1 — conversion-lane authority. **complete.**
+- M6.2 — `msconvert` capability and evidence. **Next.**
 - M6.3 — typed `ConversionIntent`.
 - M6.4 — visible settings, and a truthful plan.
 - M6.5 — destination authority.
@@ -400,15 +401,17 @@ slices:
 - M6.10 — evidence-gated side routes.
 - M6.11 — closure.
 
-**M6.1 is first because the audit found the conversion lane has no single
-availability authority.** `convert` claims a ref as it dispatches while every
-rendered answer waits for the queue slot to be read back; the handler's own guard
-is strictly narrower than the rendered one, so the divergence runs in both
-directions; and an arriving read can lower a claim a handler just raised. Every
+**M6.1 was first because the audit found the conversion lane had no single
+availability authority**, and it is now closed. `convert` claimed a ref as it
+dispatched while every rendered answer waited for the queue slot to be read back;
+the handler's own guard was strictly narrower than the rendered one, so the
+divergence ran in both directions; and an arriving read could lower a claim a
+handler had just raised. One typed lane now decides, with a reason and a message,
+and the operation and every control that offers a conversion read projections of
+it — on the pattern the viewer proved in
+[ADR 0041](docs/architecture/adr/0041-viewer-selection-availability.md). Every
 later slice adds a control that must say truthfully whether pressing it will do
-something, so this is closed before settings, scope, destination or cancellation
-are built on it. The viewer already holds the answer pattern, in
-[ADR 0041](docs/architecture/adr/0041-viewer-selection-availability.md).
+something, and each of them now has one rule to ask.
 
 **The audit also found the boundary beneath M6 is stronger than this backlog
 implied**, and the route is shaped accordingly: destinations are already admitted
@@ -443,8 +446,10 @@ refusal — applies directly to widening `msconvert`, and evidence does not
 transfer between executables because help text looks identical. And the
 **viewer/conversion lane boundary** M5.7 froze: the queue slot and a dispatched
 retry own the one backend lane, an adoption and a diagnostics export do not, and
-the `convert` ref/render window is handed over open and described rather than
-claimed closed.
+the `convert` ref/render window was handed over open and described rather than
+claimed closed. M6.1 closed that window, and widened the lane's first half by one
+fact: a dispatched *conversion* owns it too, which is what the viewer's selection
+guard had been unable to see.
 
 - Widen the typed conversion settings the interface can actually express:
   CNV-002's mzXML gate, CNV-004 to CNV-007's processing and compression choices,

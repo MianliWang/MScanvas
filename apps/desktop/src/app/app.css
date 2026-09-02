@@ -560,6 +560,27 @@ button:disabled {
 
 /* Wraps rather than clipping, so the one primary action stays reachable at
    every width this workspace supports. */
+/* Why a conversion control cannot be used.
+
+   Mounted for the life of the panel and empty until there is something to say,
+   for the same reason the viewer's notice is: a live region that arrives in the
+   same commit as its text is not being watched when the text arrives.
+
+   Collapsed the way `visually-hidden` collapses rather than with `display:
+   none`, which would take it out of the accessibility tree and so be the same
+   thing as not having mounted it. */
+.conversion-availability:empty {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .conversion-actions {
   display: flex;
   flex-wrap: wrap;

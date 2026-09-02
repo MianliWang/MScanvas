@@ -6027,3 +6027,149 @@ rendered browser pass, which M6.1 will.
 It implements no M6 behaviour, admits no conversion setting, measures no backend
 capability beyond hashing the two installed executables, changes no test, and
 does not start M6.1.
+
+## M6.1 — Conversion-lane authority, 2026-09-02
+
+The first M6 implementation slice, closing the **conversion-lane availability
+divergence** — G1 to G4 of the ADR 0043 audit, which are one defect under four
+descriptions. The route record is
+[ADR 0043](docs/architecture/adr/0043-conversion-completion-route.md); the shape
+this slice applies is the one
+[ADR 0041](docs/architecture/adr/0041-viewer-selection-availability.md) proved
+for the viewer's selection lane.
+
+Baseline `d471f5f31fa8f65c91941d6c86e34f3c33b0edac`, clean and level with
+`origin/main`.
+
+### One question had four answers
+
+"May this conversion action execute now?" was decided in four places that could
+not agree. `canConvert` in `PreviewWorkspace.tsx` was an ad-hoc conjunction of
+five workspace facts; the guard inside `convert` read three refs and was
+**strictly narrower**, so a quarantined backend, an installation check in flight
+and an unsettled workspace mutation each greyed the control while the operation
+itself would have accepted a dispatch that reached it another way. `busyRef` was
+a third answer no render could see. `canRetry` was a fourth, computed and
+consumed by nothing while `Retry` answered to `canConvert`.
+
+**One `ConversionLane` now decides**, in `conversionAvailability.ts`: eight
+authoritative facts — a session that has lost a converter process, an
+installation check, a settled backend verdict, a conversion holding the lane, a
+run being read, an adoption, a diagnostics export, an unsettled change to the
+file list — and one `ConversionAction` discriminated by what the action would act
+on. The result is `Available` or `Unavailable` with one of eleven stable reasons
+and one message each. Precedence names the fact that decides rather than the
+longest-lived one: a lost converter process first, because it is the only one
+waiting does not clear; then a check, above usability rather than below it; then
+the verdict; then the four things that end by themselves; and the target last,
+because "select something to convert" said while a conversion is running is a
+true sentence about the wrong problem.
+
+`canStartConversion` and `canRetryConversion` are projections of that decision,
+and both the operation and every control consume them. `canConvert` is gone.
+
+### The ref/render window, and why a rendered flag alone could not close it
+
+`busyRef` and `retrying` became one `ConversionDispatch` claim carrying the rows
+it was dispatched with. `claimLane` writes the ref and the state together, so the
+operation and the interface stop offering in the same commit as the click rather
+than one of them waiting for a slot read that arrives only after Rust has
+reserved the queue — which, for a conversion, is across a native folder picker.
+The claim is the rendered twin a dispatched `convert` had never had, and
+`retrying` and `converting` are projections of it rather than flags beside it.
+
+Both halves are load-bearing and neither is sufficient. A rendered `disabled`
+cannot close the interval between two activations inside one commit, because
+nothing commits between them; a ref alone leaves the control advertising work the
+operation will drop. VS Code ships the opposite choice and says so in its own
+schema — enablement "does not prevent executing the command by other means" — and
+for something that claims a backend lane and spawns a process, an explicit
+refusal at dispatch is the only safe end of that window.
+
+### A read may raise the lane; only a dispatch may free it
+
+The sequence guard orders reads against each other and **cannot order a read
+against a dispatch**, because a dispatch moves no sequence: only Rust advances
+one, and only once it has seen the request. A read issued before the click and
+answered after it is therefore newer than everything installed while still
+describing a slot that has not heard of the conversion, and `applyUpdate`
+assigned the claim from that status unconditionally.
+
+The rule is now explicit and one-directional. An arriving update may raise the
+lane from its status, and may never lower a claim this document is holding; a
+claim is settled only by its own dispatch's reply or its failure. Releasing it
+hands the lane back to the authoritative slot rather than to `false`, so a
+release whose reply the sequence guard discarded — which happens whenever a poll
+installed the same transition first — cannot leave the claim raised for the life
+of the session.
+
+### `Retry` is not `Convert` under another name
+
+They share a lane and not a target. `retryAvailability` is evaluated from the
+same lane and from this queue's own retryable count, and the control reads it.
+`canRetry` is gone rather than rewired: a boolean sitting beside the decision
+with nothing reading it is the shape G4 was. The two genuinely disagree in both directions: a
+session holding no convertible row refuses a start and offers a rerun of the
+queue that failed, and a finished queue whose failures another attempt would not
+change refuses a rerun while a start is offered. Both are pinned, so accidental
+equivalence cannot silently return from either side.
+
+### What the reader is told
+
+A refused control says why, once, in one live region the panel mounts before it
+has anything to say and collapses out of flow — not out of the accessibility
+tree — while it is empty. One element per *reason* rather than per control: the
+two controls share a lane, so where one fact refuses both they point at one
+sentence, and where the reasons genuinely differ each names its own. Nothing
+backend-free is disabled by any of it; search, sort, keyboard row navigation and
+every viewer interaction keep their own authorities.
+
+The viewer's selection lane gained one fact for free. Its adapter carried a
+comment naming the `convert` window as knowingly uncovered; the claim now covers
+it, so a spectrum selection is refused during a dispatched conversion instead of
+being advertised and silently dropped.
+
+### Validation
+
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build`, `pnpm e2e:typecheck` and `git diff --check`, each run directly on
+the implementation head and each exiting zero. Rust **1,350**, unchanged — this
+slice touches no Rust. Frontend **1,397** across 51 files, up from 1,378 across
+49: `conversionAvailability.test.ts` adds 9 and `conversionLaneAuthority.test.tsx`
+adds 10.
+
+**Rendered QA ran and passed: 208 browser tests across all 10 spec files**,
+including the 9 of the new `m6.1-conversion-availability.browser.e2e.ts`. The
+four regressions the slice exists for were each confirmed to **fail** against the
+mechanism they pin — the claim's synchronous half, the stale-read rule, the
+retry decision and the dispatch guard were reverted one at a time and the
+matching test failed each time — so the suite proves the production wiring rather
+than its own mocks.
+
+**On the browser environment.** M6.0 recorded `pnpm e2e:browser` as blocked by
+`ChromeDriver only supports Chrome version 152 / Current browser version is
+151.0.7922.175`. Re-observed live rather than inherited, and it is a **pending
+Chrome update on the workstation**, not a toolchain mismatch: `152.0.7977.66/`
+and `new_chrome.exe` are both fully present under
+`C:\Program Files\Google\Chrome\Application`, while the launcher `chrome.exe`
+is still `151.0.7922.175` because Chrome finalizes the swap only once every
+Chrome process has exited, and this machine had an open browser session.
+ChromeDriver resolves against the registry, sees 152, and refuses the 151
+launcher. The suite was therefore run against the installed 152 binary through a
+throwaway configuration that imports `e2e/wdio.browser.conf.ts` and overrides one
+field — the browser binary — and which was deleted before the commit; no
+repository file, dependency or spec was changed for it. **The blocker clears by
+itself on the next Chrome restart**, and the repository configuration is
+deliberately left alone: pinning a machine-specific binary path in the tree would
+be wrong, and CI does not run this suite.
+
+### What this slice does not do
+
+It adds no setting and no `ConversionIntent`, no command and no queue-model
+change; it changes no destination semantics, no queue membership or scope, no
+cancellation behaviour, no conversion scientific semantics and no provider
+evidence. It builds no generic command or permission framework — the lane is
+conversion's own, not a registry — and it changes no viewer planner. It does not
+start M6.2.
