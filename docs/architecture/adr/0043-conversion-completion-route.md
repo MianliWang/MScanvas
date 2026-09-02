@@ -506,9 +506,10 @@ precedence and the two directions in which `start` and `retry` disagree.
 `conversionLaneAuthority.test.tsx` pins the wiring through `App` and
 `usePreviewWorkspace`: two activations inside one commit start one conversion;
 a newer non-owning read arriving after a dispatch does not reopen the lane; the
-operation refuses every lane fact the control refuses; and `Retry` stays offered
-where a start is refused. Each of the four was confirmed to fail against the
-mechanism it pins, restored one at a time.
+operation refuses every lane fact the control refuses; `Retry` stays offered
+where a start is refused; and a queue stopped while its command is still
+outstanding is not described as one that is starting. Each was confirmed to fail
+against the mechanism it pins, restored one at a time.
 `e2e/specs/m6.1-conversion-availability.browser.e2e.ts` is the rendered pass.
 
 ### M6.2 — `msconvert` capability and evidence

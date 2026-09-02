@@ -385,6 +385,70 @@ describe("the conversion lane's one authority, as it ships", () => {
     ).toBeVisible();
   });
 
+  it("stops calling a settled queue one that is starting", async () => {
+    /*
+     * The window "before the slot can report one" ends when the slot reports
+     * that queue, and not when it stops owning the lane. A conversion command
+     * answers once, when the whole queue is over, so a queue stopped from the
+     * running state leaves the claim held over a terminal slot -- and a window
+     * defined by the status alone reopens there and describes the stopped
+     * result as a conversion that is starting.
+     */
+    const finished = deferred<WorkspaceConversionState>();
+    const running: WorkspaceConversionState = {
+      status: "running",
+      operationId: "7",
+      queue: queueOf([
+        queueItem(vendorRow.handle, vendorRow.fileName, { state: "running", attempts: 1 }),
+      ]),
+    };
+    const stopped: WorkspaceConversionState = {
+      status: "terminal",
+      operationId: "7",
+      reason: "stopped",
+      queue: queueOf([
+        queueItem(vendorRow.handle, vendorRow.fileName, { state: "cancelled", attempts: 1 }),
+      ]),
+    };
+    const api = createFakePreviewApi({
+      initialDatasets: [vendorRow],
+      availability: availableBackend,
+      // Reports the queue, then waits: Rust answers the conversion once, when
+      // the whole queue is over.
+      conversion: (_request, publish) => {
+        publish(running);
+        return finished.promise;
+      },
+      stop: async () => stopped,
+    });
+    renderApp(api);
+
+    const panel = await conversionPanel();
+    const convert = await convertControl();
+    await waitFor(() => {
+      expect(convert).toBeEnabled();
+    });
+    fireEvent.click(convert);
+
+    // The slot reports the queue, so the window is over even though the command
+    // has not answered.
+    const stop = await within(panel).findByRole("button", { name: "Stop queue" });
+    expect(within(panel).queryByText("Starting the conversion…")).toBeNull();
+
+    fireEvent.click(stop);
+    await waitFor(() => {
+      expect(within(panel).getByText("Queue stopped")).toBeVisible();
+    });
+    // And it stays stopped. The claim is still held -- the conversion command
+    // has still not answered -- and that is no longer a reason to say anything
+    // about starting.
+    expect(within(panel).queryByText("Starting the conversion…")).toBeNull();
+    expect(document.querySelector("[data-live-region='conversion']")?.textContent).toContain(
+      "Queue stopped",
+    );
+    finished.resolve(stopped);
+  });
+
   it("makes the operation refuse everything the control refuses", async () => {
     /*
      * The direction the audit found and the older record did not: the guard was

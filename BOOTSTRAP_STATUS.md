@@ -6078,6 +6078,16 @@ reserved the queue — which, for a conversion, is across a native folder picker
 The claim is the rendered twin a dispatched `convert` had never had, and
 `retrying` and `converting` are projections of it rather than flags beside it.
 
+The window that claim describes ends when the slot **reports the queue the
+dispatch made**, and deliberately not when the slot stops owning the lane. Those
+are different moments: the conversion command answers once, when the whole queue
+is over, so a queue stopped from `running` leaves the claim held over a terminal
+slot. Defined by the status alone the window reopened there and described a
+stopped result as a conversion that was starting. The claim therefore records
+which queue it replaces -- Rust names every queue, and a new queue is a new name
+-- and the first read carrying a different name closes it. Found by review on the
+candidate head, repaired under the slice's one authorized repair, and pinned.
+
 Both halves are load-bearing and neither is sufficient. A rendered `disabled`
 cannot close the interval between two activations inside one commit, because
 nothing commits between them; a ref alone leaves the control advertising work the
@@ -6136,9 +6146,9 @@ being advertised and silently dropped.
 `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
 `pnpm build`, `pnpm e2e:typecheck` and `git diff --check`, each run directly on
 the implementation head and each exiting zero. Rust **1,350**, unchanged — this
-slice touches no Rust. Frontend **1,397** across 51 files, up from 1,378 across
+slice touches no Rust. Frontend **1,398** across 51 files, up from 1,378 across
 49: `conversionAvailability.test.ts` adds 9 and `conversionLaneAuthority.test.tsx`
-adds 10.
+adds 11.
 
 **Rendered QA ran and passed: 208 browser tests across all 10 spec files**,
 including the 9 of the new `m6.1-conversion-availability.browser.e2e.ts`. The
@@ -6164,6 +6174,21 @@ repository file, dependency or spec was changed for it. **The blocker clears by
 itself on the next Chrome restart**, and the repository configuration is
 deliberately left alone: pinning a machine-specific binary path in the tree would
 be wrong, and CI does not run this suite.
+
+### One residual, observed and not absorbed
+
+**`Retry`'s display twin has the same shape and is not M6.1's.** `retrying` is
+read by the panel and the live region as `retrying && state.status ===
+"terminal"`, and the retry command likewise answers once, when the whole rerun is
+over -- so a poll that installs the *finished* rerun before that command answers
+leaves the panel saying "Retrying the failures…" over a queue that is done. It
+predates this slice, is unchanged by it, and is a **progress-truthfulness**
+defect rather than an availability one: the lane is correctly claimed throughout
+and no control is offered that would be refused. The signal that would close it
+is a different one from the conversion claim's -- a rerun keeps its queue's name
+and advances `retryRound` -- so it is a separate fix, not a free ride on this
+one. **Owner: M6.8**, which ADR 0043 gives truthful progress. Severity: P3, cosmetic
+and self-clearing within one command round trip.
 
 ### What this slice does not do
 

@@ -308,8 +308,39 @@ export type ConversionEnvironment = Pick<
  * that had not yet seen the dispatch used to clear it.
  */
 type ConversionDispatch =
-  | { readonly kind: "convert"; readonly handles: readonly string[] }
+  | {
+      readonly kind: "convert";
+      readonly handles: readonly string[];
+      /**
+       * The queue the slot held when this was dispatched, or `null` for an idle
+       * slot.
+       *
+       * How an arriving read is told apart from the one this dispatch replaces.
+       * Rust names every queue, and a new queue is a new name, so a state
+       * carrying a different one is this dispatch's own.
+       */
+      readonly replacing: string | null;
+      /**
+       * Whether the slot has since reported the queue this dispatch made.
+       *
+       * The window "before the slot can report one" ends here, and not when the
+       * slot stops owning the lane. Those are different moments: a queue that is
+       * stopped, or that finishes before its own command answers, leaves the
+       * slot terminal while this claim is still held, and a window defined by
+       * the status alone would reopen and describe a settled queue as one that
+       * is starting.
+       */
+      readonly reported: boolean;
+    }
   | { readonly kind: "retry" };
+
+/** Whether an arriving state describes a queue that is not the one named. */
+function reportsAQueueOtherThan(
+  state: WorkspaceConversionState,
+  replacing: string | null,
+): boolean {
+  return state.status !== "idle" && state.operationId !== replacing;
+}
 
 export function useConversionOperation(
   onInstallationGeneration: (generation: number) => void,
@@ -467,6 +498,18 @@ export function useConversionOperation(
       ownsTheBackendLane(update.state.status) || dispatchRef.current !== null;
     stateRef.current = update.state;
     setState(update.state);
+    // The first sight of the queue a dispatched conversion made. Recorded on the
+    // claim rather than derived from the status, because the status returns to
+    // a non-owning value the moment that queue settles and the claim outlives
+    // it -- the conversion command answers once, when the whole queue is over.
+    const claimed = dispatchRef.current;
+    if (
+      claimed?.kind === "convert" &&
+      !claimed.reported &&
+      reportsAQueueOtherThan(update.state, claimed.replacing)
+    ) {
+      claimLane({ ...claimed, reported: true });
+    }
     backendExportingRef.current = update.diagnostics.exporting;
     setDiagnostics(update.diagnostics);
     // Cleared from the authoritative state rather than from the reply, because
@@ -515,7 +558,7 @@ export function useConversionOperation(
       ];
       onInstallationGeneration(Math.max(...generations));
     }
-  }, [onInstallationGeneration]);
+  }, [claimLane, onInstallationGeneration]);
 
   const readState = useCallback(() => {
     // One at a time. The token below lets only the newest read install, so two
@@ -595,11 +638,11 @@ export function useConversionOperation(
   // Leaving it out would put the mismatch in the direction that hurts: a surface
   // advertising a conversion the operation then silently drops.
   const laneClaimed = ownsTheBackendLane(state.status) || dispatch !== null;
-  // A dispatched conversion the slot has not shown yet. Carried to its readers
-  // with the status check already applied, because the panel and the live
+  // A dispatched conversion the slot has not reported yet. Carried to its
+  // readers with the check already applied, because the panel and the live
   // region both need exactly this window and each deriving it would be two
   // answers to one question again.
-  const converting = dispatch?.kind === "convert" && !ownsTheBackendLane(state.status);
+  const converting = dispatch?.kind === "convert" && !dispatch.reported;
   // And this panel's own notion of having work in flight, wider on purpose: an
   // adoption and a diagnostics export are things this surface must not offer
   // twice, and neither owns the backend.
@@ -728,7 +771,12 @@ export function useConversionOperation(
       // same commit cannot start a second conversion. Rust refuses one anyway;
       // this is what stops the interface asking. The rows go with it: the
       // roster must not offer to remove a row this queue is already holding.
-      claimLane({ kind: "convert", handles });
+      claimLane({
+        kind: "convert",
+        handles,
+        replacing: stateRef.current.status === "idle" ? null : stateRef.current.operationId,
+        reported: false,
+      });
       setError(null);
       api
         .convertDatasets(handles, conflictPolicy, () => {
@@ -783,8 +831,10 @@ export function useConversionOperation(
     }
     // And a dispatched conversion holds the rows it was dispatched with, for
     // the same window and the same reason. The slot cannot name them yet --
-    // Rust has not reserved the queue -- so the claim carries them.
-    if (dispatch?.kind === "convert") {
+    // Rust has not reserved the queue -- so the claim carries them. Only until
+    // it has: once the queue is reported the slot is the better answer, and a
+    // queue that has since settled holds no rows at all.
+    if (dispatch?.kind === "convert" && !dispatch.reported) {
       return dispatch.handles;
     }
     return [];
