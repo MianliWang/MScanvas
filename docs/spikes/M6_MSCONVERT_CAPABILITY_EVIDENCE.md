@@ -522,6 +522,17 @@ meeting the blocked list does not have to work out which is which.
 - **`msRun/@scanCount` on other paths.** The hollow count was measured on the
   multi-source mzXML case. Whether the same writer misdeclares on other inputs
   was not measured.
+- **The hollow count was read from the output directly, not through the
+  committed inspector.** `inspect` reports an mzXML document's actual `<scan>`
+  count and each scan's `peaksCount` disagreement, but not the run-level
+  `msRun/@scanCount`, so re-running the harness reproduces `X2`'s **drop** and
+  not its **misdeclaration**. The classification does not depend on it — the
+  source-file drop alone fails CNV-002's gate, as recorded above — but a future
+  reader re-measuring a non-mzML format should add the run-level field rather
+  than assume the tool would surface it. Found by review on the repaired head and
+  **not repaired**: this slice's one authorized repair pass was already spent.
+  **Severity P3. Owner: M6.10**, which is the next slice to measure a non-mzML
+  format.
 
 ## What this record does not do
 

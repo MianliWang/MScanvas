@@ -6393,6 +6393,22 @@ which is the one ending the obligation rules out. The record now declares an
 explicit `TRIGGERED_AND_MEASURED` or `NOT_TRIGGERED` token and the validator
 requires exactly one of them.
 
+### One residual, observed and not absorbed
+
+**The committed inspector does not report mzXML's run-level `scanCount`.** It
+reports the actual `<scan>` count and each scan's `peaksCount` disagreement, so
+re-running the harness reproduces `X2`'s spectrum **drop** but not its
+**misdeclaration** — the `scanCount="4"` over two written scans was read from the
+output directly. Found by review on the repaired head and **not repaired**: the
+slice's one authorized repair pass had been spent on the two findings above.
+
+Classified rather than argued: the `mzXML output` classification does not depend
+on it. The evidence record already states that the source-file drop alone fails
+the comparison CNV-002 is gated on, and the drop *is* reproducible through the
+harness. What is lost is one corroborating field in a convenience tool, and the
+record now says so in its own limitations. **Severity P3. Owner: M6.10**, the
+next slice to measure a non-mzML format, for whom it is a two-line addition.
+
 ### Repository guard
 
 `check_repo.py` gains one focused validator on the M5.4 precedent: the route owns
