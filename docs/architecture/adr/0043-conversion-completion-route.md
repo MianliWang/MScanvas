@@ -99,10 +99,10 @@ surface, not about building the boundary.
 
 | # | Gap | Class | Owner slice |
 | --- | --- | --- | --- |
-| G1 | Conversion has **no shared availability authority**. `canConvert` is an ad-hoc boolean in `PreviewWorkspace.tsx`, the handler guard in `useConversionOperation.ts` is a strictly narrower expression, and there is no reason, no message and no explanation for a disabled `Convert` | authority defect | **M6.1** |
-| G2 | The `convert` **ref/render window**: `busyRef` is raised synchronously at dispatch while every rendered value derives only from an arriving slot read, so the operation refuses while the surface still says available | authority defect | **M6.1** |
-| G3 | `applyUpdate` assigns `busyRef` unconditionally from the arriving status, so a read installing a non-owning status can **lower a claim a handler just raised** | authority defect | **M6.1** |
-| G4 | `ConversionOperation.canRetry` is computed and **has no consumer**; the `Retry` button answers to `canConvert` instead — two rules that can drift | authority defect | **M6.1** |
+| G1 | Conversion has **no shared availability authority**. `canConvert` is an ad-hoc boolean in `PreviewWorkspace.tsx`, the handler guard in `useConversionOperation.ts` is a strictly narrower expression, and there is no reason, no message and no explanation for a disabled `Convert` | authority defect | **M6.1 — closed.** `conversionAvailability.ts` |
+| G2 | The `convert` **ref/render window**: `busyRef` is raised synchronously at dispatch while every rendered value derives only from an arriving slot read, so the operation refuses while the surface still says available | authority defect | **M6.1 — closed.** One claim, raised in both halves |
+| G3 | `applyUpdate` assigns `busyRef` unconditionally from the arriving status, so a read installing a non-owning status can **lower a claim a handler just raised** | authority defect | **M6.1 — closed.** A read may raise the lane, never lower a claim |
+| G4 | `ConversionOperation.canRetry` is computed and **has no consumer**; the `Retry` button answers to `canConvert` instead — two rules that can drift | authority defect | **M6.1 — closed.** `Retry` reads `retryAvailability` |
 | G5 | No `msconvert` **capability measurement** exists beyond single- and multi-output mzML with `--zlib`. No `--filter`, no filter ordering, no `peakPicking`, no MS-level selection and no compression choice has ever been executed through this boundary | evidence gap | **M6.2** |
 | G6 | There is **no typed conversion intent**. `OpenFormat::MzMl` is hard-coded in the planner and `ConversionPolicy::default()` fixes zlib, so `ConversionQueue` binds no intent because there is none to bind | model gap | **M6.3** |
 | G7 | CNV-002 mzXML is unplannable at the product boundary. `OpenFormat::MzXml` and `require_conversion(OpenFormat::MzXml)` exist in the crate, and a test pins that the mzXML grammar **does not** enable public conversion planning | gated by evidence | **M6.2**, then **M6.10** |
@@ -483,6 +483,34 @@ Everything backend-free stays available while the lane says no.
 change. This slice makes an existing set of controls truthful.
 
 *Downstream:* M6.4, and every slice that adds a control.
+
+*Delivered.* `conversionAvailability.ts` holds one `ConversionLane` of eight
+facts, one `ConversionAction` discriminated by `start` and `retry`, and one
+`ConversionAvailability` carrying eleven stable reasons with a message each.
+`useConversionOperation` exposes the lane a render sees and reads the same lane
+from refs at dispatch, so `convert` and `retry` are projections of the authority
+rather than expressions beside it; the ad-hoc `canConvert` is gone from
+`PreviewWorkspace.tsx` and the panel projects a decision per control. The
+`busyRef`/`retrying` pair became one `ConversionDispatch` claim raised
+synchronously in both halves, which is the rendered twin a dispatched `convert`
+lacked, and `applyUpdate` may now raise the lane from an arriving status but
+never lower a claim this document is holding — a claim is settled only by its own
+dispatch's reply or failure. `canRetry` is gone rather than rewired: a boolean
+beside the decision would be the same unconsumed shape again, so `Retry` reads
+`retryAvailability` and the guard in `retry` reads the same evaluator. The reason is said once per distinct reason in
+one live region the panel mounts before it has anything to say, and both controls
+point at the sentence that applies to them.
+
+*Proof.* `conversionAvailability.test.ts` covers the decision table, the
+precedence and the two directions in which `start` and `retry` disagree.
+`conversionLaneAuthority.test.tsx` pins the wiring through `App` and
+`usePreviewWorkspace`: two activations inside one commit start one conversion;
+a newer non-owning read arriving after a dispatch does not reopen the lane; the
+operation refuses every lane fact the control refuses; `Retry` stays offered
+where a start is refused; and a queue stopped while its command is still
+outstanding is not described as one that is starting. Each was confirmed to fail
+against the mechanism it pins, restored one at a time.
+`e2e/specs/m6.1-conversion-availability.browser.e2e.ts` is the rendered pass.
 
 ### M6.2 — `msconvert` capability and evidence
 

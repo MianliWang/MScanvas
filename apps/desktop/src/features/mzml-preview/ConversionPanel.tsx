@@ -10,6 +10,11 @@ import type {
   DatasetSourceKind,
 } from "./contracts";
 import { conversionJudgedAnyOutput, SOURCE_KIND_LABEL } from "./contracts";
+import type {
+  ConversionAvailability,
+  ConversionUnavailableReason,
+} from "./conversionAvailability";
+import { conversionAvailability, conversionNoticeId } from "./conversionAvailability";
 import { formatByteLength, formatCount, formatDuration } from "./format";
 import type { ConversionOperation } from "./useConversionOperation";
 
@@ -194,8 +199,6 @@ export interface ConversionPanelProps {
   readonly handles: readonly string[];
   /** How many selected rows are not convertible and are therefore excluded. */
   readonly excludedSelectedCount: number;
-  /** Whether anything else is already occupying the one backend lane. */
-  readonly canConvert: boolean;
 }
 
 /**
@@ -213,10 +216,45 @@ export function ConversionPanel({
   scope,
   handles,
   excludedSelectedCount,
-  canConvert,
 }: ConversionPanelProps): ReactElement | null {
   const { state, plan } = conversion;
   const terminal = state.status === "terminal";
+
+  // The two decisions this panel offers, each projected from the one lane the
+  // operation is guarded with. Not a boolean handed down from the workspace:
+  // that boolean was wider than the guard in one direction and narrower in the
+  // other, and `Retry` answered to it as well.
+  //
+  // The start's target is the panel's to supply, because the rows are. The
+  // rerun's target belongs to the slot, so the operation carries that decision
+  // whole.
+  const startAvailability = conversionAvailability(conversion.lane, {
+    kind: "start",
+    targetCount: handles.length,
+  });
+  const { retryAvailability } = conversion;
+
+  /*
+   * Which of the two controls is on screen at all.
+   *
+   * Decided once, here, and handed down. `Retry` is *removed* rather than
+   * disabled while an adoption or an export is reading the queue it would
+   * replace -- an action that is coming back is a different thing from one that
+   * is refused -- and the explanation below must not name a control the reader
+   * cannot see. Deriving this a second time inside the branch that renders it
+   * is how the sentence and the button would come to disagree.
+   */
+  const startOffered = !conversion.busy && plan.status === "loaded";
+  const retryOffered =
+    state.status === "terminal" &&
+    state.reason === "completed" &&
+    state.queue.retryableFailedCount > 0 &&
+    !conversion.adopting &&
+    !conversion.exportingDiagnostics &&
+    // A dispatch of either kind takes the whole finished-queue block with it,
+    // so neither the control nor a sentence about it is on screen to explain.
+    !conversion.retrying &&
+    !conversion.converting;
 
   // Nothing to say. The panel is not a permanent fixture: with no convertible
   // row focused and no operation to report, it would be a heading over an empty
@@ -256,8 +294,17 @@ export function ConversionPanel({
         </div>
       )}
 
+      <AvailabilityNotice
+        retry={retryOffered ? retryAvailability : null}
+        start={startOffered ? startAvailability : null}
+      />
+
       {conversion.busy || terminal ? (
-        <QueueState canConvert={canConvert} conversion={conversion} />
+        <QueueState
+          conversion={conversion}
+          retryAvailability={retryAvailability}
+          retryOffered={retryOffered}
+        />
       ) : null}
       {/* Not while a queue is under way. The plan is an ordered list of file to
           output and so is the running queue, and two of them one above the other
@@ -267,16 +314,73 @@ export function ConversionPanel({
           converts something else, so it stays. */}
       {conversion.busy || plan.status === "none" ? null : (
         <PlanState
-          canConvert={canConvert}
           conversion={conversion}
           excludedSelectedCount={excludedSelectedCount}
           handles={handles}
           repeating={terminal}
           scope={scope}
+          startAvailability={startAvailability}
         />
       )}
     </section>
   );
+}
+
+/**
+ * Why a conversion control cannot be used, said once each.
+ *
+ * The region is mounted for the life of the panel and the sentences arrive
+ * inside it, so a reader is watching when one appears rather than meeting a
+ * region that arrived with its text.
+ *
+ * One element per *reason*, not per control. The two controls share a lane, so
+ * when both are refused by the same fact they are described by one sentence and
+ * a screen reader that has no way to know it is the same sentence does not read
+ * it twice. Where the reasons genuinely differ -- a clear lane with nothing
+ * selected, beside a finished queue with nothing worth rerunning -- each names
+ * its own, which is the case that made a single shared notice untruthful.
+ */
+function AvailabilityNotice({
+  start,
+  retry,
+}: {
+  /** The start decision, or `null` where no start control is on screen. */
+  readonly start: ConversionAvailability | null;
+  /** The rerun decision, or `null` where no rerun control is on screen. */
+  readonly retry: ConversionAvailability | null;
+}): ReactElement {
+  const said = new Map<ConversionUnavailableReason, string>();
+  for (const decision of [start, retry]) {
+    if (decision !== null && decision.status === "unavailable") {
+      said.set(decision.reason, decision.message);
+    }
+  }
+  return (
+    <div
+      aria-live="polite"
+      className="conversion-availability"
+      data-live-region="conversion-availability"
+    >
+      {[...said].map(([reason, message]) => (
+        <p className="notice notice-warning" id={conversionNoticeId(reason)} key={reason}>
+          {message}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * What a control points at, once the id only exists while there is a sentence.
+ *
+ * A described-by target with no text is a promise of an explanation that is not
+ * there, so an available control describes itself with its own copy and nothing
+ * else.
+ */
+function describedBy(base: string, availability: ConversionAvailability): string {
+  return availability.status === "available"
+    ? base
+    : `${base} ${conversionNoticeId(availability.reason)}`;
 }
 
 /**
@@ -486,14 +590,15 @@ function PlanState({
   conversion,
   handles,
   excludedSelectedCount,
-  canConvert,
+  startAvailability,
   repeating,
   scope,
 }: {
   readonly conversion: ConversionOperation;
   readonly handles: readonly string[];
   readonly excludedSelectedCount: number;
-  readonly canConvert: boolean;
+  /** Whether a conversion of these rows may start, and what to say when not. */
+  readonly startAvailability: ConversionAvailability;
   readonly scope: "selection" | "focused";
   /** Whether a previous result is on screen above this plan. */
   readonly repeating: boolean;
@@ -607,9 +712,16 @@ function PlanState({
 
       <div className="conversion-actions">
         <button
-          aria-describedby="conversion-plan-summary conversion-validation-disclosure"
+          aria-describedby={describedBy(
+            "conversion-plan-summary conversion-validation-disclosure",
+            startAvailability,
+          )}
           className="primary-button"
-          disabled={!canConvert || handles.length === 0}
+          // The one rule, and the whole of it. The empty-row case is inside it
+          // rather than beside it: a second clause here is exactly how this
+          // control came to answer a different question from the operation it
+          // starts.
+          disabled={startAvailability.status !== "available"}
           onClick={() => {
             conversion.convert(handles);
           }}
@@ -634,13 +746,32 @@ function PlanState({
  */
 function QueueState({
   conversion,
-  canConvert,
+  retryAvailability,
+  retryOffered,
 }: {
   readonly conversion: ConversionOperation;
-  /** Whether anything else is already occupying the one backend lane. */
-  readonly canConvert: boolean;
+  /** Whether this queue's failures may be rerun, and what to say when not. */
+  readonly retryAvailability: ConversionAvailability;
+  /** Whether the rerun control is on screen at all, decided by the panel. */
+  readonly retryOffered: boolean;
 }): ReactElement | null {
   const state = conversion.state;
+  // A conversion this document dispatched, for a slot that has not been seen to
+  // move yet. Rust has no queue to report until it has reserved one, so without
+  // this the press goes unacknowledged for a round trip -- and from a finished
+  // queue the panel would answer it with the *previous* run's items.
+  //
+  // It replaces the block rather than sitting above it, which is exactly what a
+  // dispatched retry already does: an ordered list of what just happened, read
+  // under a sentence saying something is starting, is the panel describing two
+  // queues in one shape.
+  if (conversion.converting) {
+    return (
+      <div className="conversion-running">
+        <p>Starting the conversion…</p>
+      </div>
+    );
+  }
   if (state.status === "idle") {
     return null;
   }
@@ -873,26 +1004,30 @@ function QueueState({
               results the adoption is reading, so the two are never both live.
               Removed rather than disabled: an action that is coming back is a
               different thing from one that is refused. */}
-          {state.reason !== "completed" ||
-          conversion.adopting ||
-          conversion.exportingDiagnostics ? null : queue.retryableFailedCount === 0 ? (
-            queue.nonRetryableFailedCount === 0 ? null : (
+          {!retryOffered ? (
+            state.reason === "completed" &&
+            queue.retryableFailedCount === 0 &&
+            queue.nonRetryableFailedCount !== 0 &&
+            !conversion.adopting &&
+            !conversion.exportingDiagnostics ? (
               <p className="quiet-text" role="note">
                 Those failures would not change on another attempt with the same acquisitions,
                 folder and settings.
               </p>
-            )
+            ) : null
           ) : (
             <div className="conversion-actions">
               <button
-                aria-describedby="conversion-retry-scope"
+                aria-describedby={describedBy("conversion-retry-scope", retryAvailability)}
                 className="secondary-button"
-                // The same gate the primary action answers to. A retry is a
-                // conversion, so an unavailable ProteoWizard, a recheck in
-                // flight or a preview still holding the lane refuse it for the
-                // same reasons -- and offering it anyway would buy a certain
-                // error or a long silent wait.
-                disabled={!canConvert}
+                // Retry availability, and deliberately not the start control's.
+                // A retry is a conversion, so an unavailable ProteoWizard, a
+                // recheck in flight or a preview still holding the lane refuse
+                // it for the same reasons -- but what it would act on is this
+                // queue's failures rather than the roster's selection, and this
+                // control answered to the other target for as long as it
+                // existed.
+                disabled={retryAvailability.status !== "available"}
                 onClick={conversion.retry}
                 type="button"
               >

@@ -210,10 +210,12 @@ export function PreviewWorkspace() {
     !workspace.previewBackendBusy &&
     (!workspace.conversion.busy || workspace.conversion.adopting) &&
     !workspace.conversion.backendQuarantined;
-  // Converting needs the same backend a preview does, and the same free lane --
-  // plus the terminal queue an adoption is reading, which it would replace.
-  const canConvert =
-    canPreview && !workspace.workspaceBusy && !workspace.conversion.adopting;
+  // There is deliberately no `canConvert` here any more. Converting had an
+  // expression of its own on this line, strictly wider than the guard the
+  // operation applied, and the panel's `Retry` answered to it as well -- three
+  // readings of one question. The conversion lane now carries every fact that
+  // decides it, and each control projects its own decision from that lane; see
+  // `conversionAvailability.ts`.
 
   // The row the keyboard is on. Deliberately not `activeDataset`: the preview
   // and the conversion panel may describe different rows, and this slice's whole
@@ -634,7 +636,6 @@ export function PreviewWorkspace() {
             state={roster}
           />
           <ConversionPanel
-            canConvert={canConvert}
             conversion={workspace.conversion}
             excludedSelectedCount={excludedSelectedCount}
             handles={queueHandlesToConvert}
@@ -884,6 +885,14 @@ const DROP_REJECTION_STATUS: Readonly<Record<WorkspaceDropRejectionReason, strin
  */
 function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): string {
   const state = workspace.conversion.state;
+  // Before the slot, and for the same reason the retry sentence is: a dispatched
+  // conversion is not in the slot yet -- Rust has not reserved the queue -- so a
+  // region reading the status alone stays silent through the whole reservation
+  // and then, from a terminal queue, reads the *previous* result back at
+  // someone who has just pressed Convert.
+  if (workspace.conversion.converting) {
+    return "Starting the conversion.";
+  }
   if (state.status === "idle") {
     return "";
   }
