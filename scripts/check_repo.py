@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import sys
@@ -1736,6 +1737,80 @@ XIC_CANDIDATE_FINAL_STATES: frozenset[str] = frozenset(
 # it is what "was measured" means.
 MEASURED_STATES: frozenset[str] = XIC_CANDIDATE_FINAL_STATES - {"EXCLUDED_BY_SIGNATURE"}
 
+# M6.2's own vocabulary. Deliberately a different set from M5.4's, because the
+# question is different: M5.4 could close a candidate on its declared signature
+# alone, and a capability slice cannot -- an option that parses has established
+# nothing about what it did. So there is no signature-only state here, and
+# `EVIDENCE_BLOCKED` exists in its place for the case M5.4 never met: an
+# operation whose measurement needs an input this repository may not lawfully
+# hold.
+M62_CANDIDATE_FINAL_STATES: frozenset[str] = frozenset(
+    {
+        "MEASURED_ADMISSIBLE",
+        "MEASURED_REJECTED",
+        "EVIDENCE_BLOCKED",
+    }
+)
+
+# Two outcomes, and no third. Either the slice measured the installed build
+# against its candidates, or it could not and says so.
+M62_ROUTE_OUTCOMES: frozenset[str] = frozenset(
+    {
+        "MSCONVERT_CAPABILITY_MEASURED",
+        "MSCONVERT_CAPABILITY_EVIDENCE_BLOCKED",
+    }
+)
+
+M62_SPIKE = "docs/spikes/M6_MSCONVERT_CAPABILITY_EVIDENCE.md"
+M62_ROUTE = "docs/architecture/adr/0043-conversion-completion-route.md"
+
+# The exact sentence M6.0 left behind, which counted a measured question and a
+# non-candidate as two outstanding gates. Matched as the requirement it was, not
+# as the phrase: the corrected acceptance has to be able to say the words in
+# order to withdraw them.
+M62_STALE_ACCEPTANCE = "The two pending measurements are performed"
+
+# The conditional side-output obligation has exactly two honest endings, and
+# they are required as tokens rather than as prose. A substring search for
+# "triggered" passes on "whether the condition was triggered is still pending",
+# which is the one answer the obligation rules out.
+M62_SIDE_OUTPUT_DISPOSITIONS: frozenset[str] = frozenset(
+    {
+        "TRIGGERED_AND_MEASURED",
+        "NOT_TRIGGERED",
+    }
+)
+
+# The measurement set M6.2's evidence *is*, pinned here so that changing it is a
+# deliberate act rather than an edit nobody notices.
+#
+# It is pinned because prose could not hold it. The first M6.2 record claimed six
+# mzXML runs where four exist, and named twenty-eight of twenty-nine cases, and
+# every table in the document was internally consistent throughout -- the counts
+# were sentences, and sentences agree with whatever is around them. These
+# constants and the committed ledger are two independent statements of the same
+# set, and the evidence document is checked against both.
+M62_EXPECTED_CASES: tuple[str, ...] = (
+    "D1",
+    "P1", "P2", "P3", "P4", "P5",
+    "C1", "C2",
+    "L1", "L2", "L3", "L4",
+    "K1", "K2", "K3", "K4", "K5", "K6", "K7", "K8", "K9", "K10", "K11", "K12",
+    "X1", "X2", "X3", "X4", "X5",
+)
+
+#: The cases that produce mzXML, and the one that is the mzML control.
+M62_EXPECTED_MZXML_CASES: tuple[str, ...] = ("X1", "X2", "X4", "X5")
+M62_MZML_CONTROL = "X3"
+
+#: The claim that shipped the miscount, refused as the assertion it was rather
+#: than as the words it used. A record has to be able to *describe* the error it
+#: corrected -- this one does, a few lines above its case table -- so the rule
+#: matches the sentence that asserts the wrong count and nothing else. The
+#: structural checks below would catch a wrong count anyway; this makes the
+#: specific regression unmistakable.
+M62_MISCOUNT = "six mzXML runs"
+
 
 def _column_index(header: list[str], name: str, where: str, errors: list[str]) -> int | None:
     """One named column of a table, or a failure saying it is not there."""
@@ -2124,6 +2199,601 @@ def _validate_the_matrix_covers_every_measured_candidate(
         )
 
 
+def _msconvert_ledger(errors: list[str]) -> object | None:
+    """The committed case ledger, imported rather than parsed.
+
+    It is Python beside this file, so reading it as data is both exact and
+    cheaper than re-describing it here. The module is pure -- it generates
+    fixtures and reads documents and spawns nothing -- so importing it from a
+    validator costs nothing and risks nothing.
+    """
+    source = ROOT / "scripts/msconvert_evidence.py"
+    if not source.is_file():
+        fail(
+            "scripts/msconvert_evidence.py is missing. It holds the M6.2 case ledger, and "
+            "the evidence record's counts are checked against it rather than against a "
+            "sentence",
+            errors,
+        )
+        return None
+    spec = importlib.util.spec_from_file_location("_m62_ledger", source)
+    if spec is None or spec.loader is None:  # pragma: no cover - defensive
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _validate_the_msconvert_case_ledger(spike_text: str, errors: list[str]) -> None:
+    """The measurement set is data, and the record agrees with it.
+
+    Three statements of one set, held equal: the constants above, the committed
+    ledger, and the evidence document's own case table. Any two agreeing while
+    the third drifts is exactly how a record comes to claim a run that never
+    happened, or to lose one that did.
+    """
+    ledger = _msconvert_ledger(errors)
+    if ledger is None:
+        return
+
+    defects = ledger.ledger_defects()
+    if defects:
+        for defect in defects:
+            fail(f"scripts/msconvert_evidence.py: the M6.2 case ledger is malformed -- {defect}", errors)
+        return
+
+    declared = tuple(case.case for case in ledger.CASES)
+    if declared != M62_EXPECTED_CASES:
+        missing = sorted(set(M62_EXPECTED_CASES) - set(declared))
+        extra = sorted(set(declared) - set(M62_EXPECTED_CASES))
+        detail = []
+        if missing:
+            detail.append("missing " + ", ".join(repr(name) for name in missing))
+        if extra:
+            detail.append("has " + ", ".join(repr(name) for name in extra))
+        if not detail:
+            detail.append("lists them in a different order")
+        fail(
+            f"scripts/msconvert_evidence.py: the M6.2 case ledger {'; '.join(detail)}. "
+            f"M6.2's evidence rests on exactly {len(M62_EXPECTED_CASES)} measured cases, and a "
+            "set that shrinks silently takes its conclusions with it",
+            errors,
+        )
+        return
+
+    produced = tuple(ledger.mzxml_cases())
+    if produced != M62_EXPECTED_MZXML_CASES:
+        fail(
+            f"scripts/msconvert_evidence.py: the ledger's mzXML-producing cases are "
+            f"{list(produced)}, not {list(M62_EXPECTED_MZXML_CASES)}. This is the count the "
+            "record got wrong once -- it said six against four -- so it is derived from the "
+            "ledger and pinned here rather than written in a sentence",
+            errors,
+        )
+        return
+
+    control = next(
+        (case for case in ledger.CASES if case.case == M62_MZML_CONTROL), None
+    )
+    if control is None or control.output_format != "mzML":
+        fail(
+            f"scripts/msconvert_evidence.py: `{M62_MZML_CONTROL}` is not an mzML case. It is "
+            "the control that makes a spectrum missing from `X2` the mzXML writer's doing "
+            "rather than the reader's, and a control that changed format would prove nothing",
+            errors,
+        )
+        return
+
+    if M62_MISCOUNT in spike_text:
+        fail(
+            f"{M62_SPIKE} says {M62_MISCOUNT!r} again. There are "
+            f"{len(M62_EXPECTED_MZXML_CASES)} mzXML-producing cases -- "
+            + ", ".join(f"`{name}`" for name in M62_EXPECTED_MZXML_CASES)
+            + " -- and the miscount it replaced was the defect that made this ledger "
+            "necessary",
+            errors,
+        )
+
+    table = _first_markdown_table(spike_text, "### The measured cases")
+    if table is None:
+        fail(
+            f"{M62_SPIKE} has no `### The measured cases` table. It is the record's copy of "
+            "the committed ledger, and without it every count in the document is a sentence "
+            "again",
+            errors,
+        )
+        return
+    header, body = _table_header_and_body(table)
+    at = _column_index(header, "Case", f"{M62_SPIKE} measured cases", errors)
+    format_at = _column_index(header, "Format", f"{M62_SPIKE} measured cases", errors)
+    if at is None or format_at is None:
+        return
+    listed = tuple(_bare(row[at]) for row in body if len(row) > at)
+    if listed != declared:
+        missing = sorted(set(declared) - set(listed))
+        extra = sorted(set(listed) - set(declared))
+        detail = []
+        if missing:
+            detail.append("omits " + ", ".join(repr(name) for name in missing))
+        if extra:
+            detail.append("adds " + ", ".join(repr(name) for name in extra))
+        if not detail:
+            detail.append("lists them in a different order")
+        fail(
+            f"{M62_SPIKE}: the measured-cases table {'; '.join(detail)} against the committed "
+            "ledger. The record named twenty-eight of twenty-nine cases once, and nothing "
+            "caught it because nothing compared the two",
+            errors,
+        )
+        return
+    formats = {
+        _bare(row[at]): _bare(row[format_at]) for row in body if len(row) > format_at
+    }
+    disagreed = sorted(
+        case.case
+        for case in ledger.CASES
+        if formats.get(case.case) != case.output_format
+    )
+    if disagreed:
+        fail(
+            f"{M62_SPIKE}: the measured-cases table gives "
+            + ", ".join(
+                f"`{name}` as {formats.get(name)!r} where the ledger says "
+                f"{next(c.output_format for c in ledger.CASES if c.case == name)!r}"
+                for name in disagreed
+            )
+            + ". The mzXML count is derived from these formats, so a row that disagrees "
+            "makes the count wrong wherever it is stated",
+            errors,
+        )
+
+
+def validate_the_msconvert_capability_evidence_is_closed(errors: list[str]) -> None:
+    """M6.2's candidate set is finite, closed, and answered across one standard.
+
+    The same split M5.4 uses: the route decides what a candidate must be
+    measured across, and the spike holds the answers. What is new is why the
+    closure needs guarding at all. M6.0 shipped this route with **numeric
+    precision missing from the finite inventory**, and nothing failed -- the
+    remaining candidates were all present, every cell was filled, and the table
+    looked complete. A reader planning M6.3 from it would have typed an intent
+    whose precision half nobody had measured, and the provider's default would
+    have gone on answering a question MSCanvas never asked.
+
+    So precision is required by name rather than left to the inventory's own
+    good sense, and the rest of the closure is checked the way M5.4's is:
+    inventory and classification held equal as sets, states drawn from a closed
+    vocabulary, one row per candidate in the matrix, and no blank intersection.
+
+    Two further rules exist because M6.0 also found the route asserting work
+    that was either done or not M6.2's. The stale two-pending-measurements
+    acceptance may not return, and existing-output overwrite may not reappear as
+    a candidate -- ADR 0009 sends the provider only into private staging, so no
+    measurement of it could authorize a destructive product decision, and
+    CNV-D4 does not wait on one.
+
+    Nothing here reads what a cell argues. That a pair was answered is
+    structure; whether the answer is any good stays a matter for review.
+    """
+    spike_path = ROOT / M62_SPIKE
+    route_path = ROOT / M62_ROUTE
+    if not spike_path.is_file() or not route_path.is_file():
+        return
+    spike_text = spike_path.read_text(encoding="utf-8")
+    route_text = route_path.read_text(encoding="utf-8")
+
+    _validate_the_msconvert_route_acceptance_is_current(route_text, errors)
+    _validate_the_msconvert_case_ledger(spike_text, errors)
+
+    required = _first_markdown_table(route_text, "#### M6.2 candidate evidence dimensions")
+    if required is None:
+        fail(
+            f"{M62_ROUTE} has no `#### M6.2 candidate evidence dimensions` table. It is the "
+            "route's own statement of what a capability candidate must be measured across, "
+            "and the evidence record's matrix is checked against it",
+            errors,
+        )
+        return
+    _, required_body = _table_header_and_body(required)
+    dimensions = [row[1] for row in required_body if len(row) > 1]
+
+    matrix = _first_markdown_table(spike_text, "## Candidate-standard matrix")
+    if matrix is None:
+        fail(
+            f"{M62_SPIKE} has no `## Candidate-standard matrix` table. The route's acceptance "
+            "is discharged by that matrix rather than by prose, so it has to exist",
+            errors,
+        )
+        return
+    header, body = _table_header_and_body(matrix)
+    # M6.2's matrix is the transpose of M5.4's: one row per candidate, one
+    # column per dimension, because twelve candidates across nine dimensions is
+    # unreadable the other way round. The obligation is identical.
+    answered = [_bare(cell) for cell in header[1:]]
+
+    for label, values, where in (
+        ("the route", dimensions, M62_ROUTE),
+        ("the evidence matrix", answered, M62_SPIKE),
+    ):
+        if not values or not all(values):
+            fail(
+                f"{where}: the M6.2 candidate-dimension vocabulary has an empty entry. An "
+                "empty vocabulary would let the other side say anything",
+                errors,
+            )
+            return
+        repeated = sorted({value for value in values if values.count(value) > 1})
+        if repeated:
+            fail(
+                f"{where}: {label} names {', '.join(repr(value) for value in repeated)} more "
+                "than once. A dimension answered twice is two answers with nothing deciding "
+                "between them",
+                errors,
+            )
+            return
+
+    missing = sorted(set(dimensions) - set(answered))
+    if missing:
+        fail(
+            f"{M62_SPIKE}: the candidate-standard matrix does not answer "
+            f"{', '.join(repr(value) for value in missing)}, which {M62_ROUTE} requires of "
+            "every M6.2 candidate. An unanswered dimension is not discharged by the matrix, "
+            "whatever the route outcome says",
+            errors,
+        )
+    extra = sorted(set(answered) - set(dimensions))
+    if extra:
+        fail(
+            f"{M62_SPIKE}: the candidate-standard matrix answers "
+            f"{', '.join(repr(value) for value in extra)}, which {M62_ROUTE} does not define "
+            "as an M6.2 candidate evidence dimension. Columns the standard never asked for "
+            "make the matrix look complete while a required one is missing",
+            errors,
+        )
+    if missing or extra:
+        return
+
+    classified = _validate_every_msconvert_candidate_has_one_final_state(spike_text, errors)
+    if classified is not None:
+        _validate_the_msconvert_matrix_covers_every_candidate(classified, header, body, errors)
+
+    outcomes = re.findall(r"\*\*Route outcome: `([A-Z_][A-Z0-9_]*)`\.\*\*", spike_text)
+    if len(outcomes) != 1:
+        fail(
+            f"{M62_SPIKE} declares {len(outcomes)} route outcomes, not 1. The evidence record "
+            "is where the measurement lives, so it states exactly one answer",
+            errors,
+        )
+    elif outcomes[0] not in M62_ROUTE_OUTCOMES:
+        fail(
+            f"{M62_SPIKE} declares route outcome `{outcomes[0]}`, which is not one of the "
+            f"{len(M62_ROUTE_OUTCOMES)} M6.2 defines ("
+            + ", ".join(f"`{name}`" for name in sorted(M62_ROUTE_OUTCOMES))
+            + "). A token that resembles an outcome is not one",
+            errors,
+        )
+
+    # The conditional obligation has exactly two honest dispositions, and
+    # "pending" is neither.
+    side_output = _section(spike_text, "### Working-directory side output")
+    if side_output is None:
+        fail(
+            f"{M62_SPIKE} has no `### Working-directory side output` section. The non-mzML "
+            "side-output question is owed a disposition -- measured, or not triggered with "
+            "its reason -- and a record that omits the section states neither",
+            errors,
+        )
+    else:
+        declared = sorted(
+            name for name in M62_SIDE_OUTPUT_DISPOSITIONS if name in side_output
+        )
+        if len(declared) != 1:
+            fail(
+                f"{M62_SPIKE}: the working-directory side-output section declares "
+                f"{len(declared)} of the {len(M62_SIDE_OUTPUT_DISPOSITIONS)} dispositions it "
+                "may end in ("
+                + ", ".join(f"`{name}`" for name in sorted(M62_SIDE_OUTPUT_DISPOSITIONS))
+                + "). The obligation is conditional on a non-mzML format still being a viable "
+                "admission candidate, and which of those held is the whole content of the "
+                "answer -- prose that merely discusses whether it was triggered is the one "
+                "ending it rules out",
+                errors,
+            )
+
+
+def _validate_the_msconvert_route_acceptance_is_current(
+    route_text: str, errors: list[str]
+) -> None:
+    """The two corrections M6.0 handed M6.2, held closed."""
+    if M62_STALE_ACCEPTANCE in route_text:
+        fail(
+            f"{M62_ROUTE}: the M6.2 acceptance requires "
+            f"{M62_STALE_ACCEPTANCE!r} again. It counted two outstanding gates where there "
+            "were none: what `msconvert` does to an existing output is not a candidate and "
+            "authorizes no product decision, and the side-output question was measured on "
+            "2026-08-07 and 2026-08-10. Only the non-mzML half survives, and only "
+            "conditionally",
+            errors,
+        )
+    section = _section(route_text, "### M6.2 — `msconvert` capability and evidence")
+    if section is None:
+        fail(
+            f"{M62_ROUTE} has no `### M6.2` slice section, so its candidate list and "
+            "acceptance cannot be checked",
+            errors,
+        )
+        return
+    # The candidate sentence itself, not the section. The section will always
+    # mention precision -- the paragraph explaining why it was missing is right
+    # underneath -- so a section-wide search would pass over the exact deletion
+    # this guard exists for.
+    marker = "Candidates are the settings M6 might admit:"
+    at = section.find(marker)
+    listed = "" if at < 0 else section[at : section.find("\n\n", at)]
+    if at < 0:
+        fail(
+            f"{M62_ROUTE}: the M6.2 slice no longer states which settings M6 might admit. "
+            "That sentence is the finite inventory the evidence record is checked against",
+            errors,
+        )
+    elif "precision" not in listed.lower():
+        fail(
+            f"{M62_ROUTE}: the M6.2 slice's candidate list no longer names numeric "
+            "precision. It was missing once already, and the consequence is not cosmetic: "
+            "CNV-D2 makes precision a separate and prior decision from compression, so a "
+            "list without it lets M6.3 type an intent whose precision half nobody measured",
+            errors,
+        )
+
+
+def _validate_every_msconvert_candidate_has_one_final_state(
+    spike_text: str, errors: list[str]
+) -> set[str] | None:
+    """Every declared candidate is classified once, in a state M6.2 defines.
+
+    Inventory and classification are held equal as sets, so a candidate cannot
+    leave the record while its measurements stay, and one cannot appear that
+    nothing measured. Precision is additionally required by name, because that
+    is the omission this guard exists for.
+    """
+    inventory = _first_markdown_table(spike_text, "## Live candidate inventory")
+    if inventory is None:
+        fail(
+            f"{M62_SPIKE} has no `## Live candidate inventory` table. It is the record of "
+            "what the measured build declares, and the classification is checked against it",
+            errors,
+        )
+        return None
+    inventory_header, inventory_rows = _table_header_and_body(inventory)
+    at = _column_index(
+        inventory_header, "Candidate", f"{M62_SPIKE} live candidate inventory", errors
+    )
+    if at is None:
+        return None
+    declared = [_bare(row[at]) for row in inventory_rows if len(row) > at]
+    if len(declared) != len(inventory_rows) or not all(declared):
+        fail(
+            f"{M62_SPIKE}: the live candidate inventory has a row with no candidate. A row "
+            "that names nothing cannot be classified",
+            errors,
+        )
+        return None
+    repeated = sorted({value for value in declared if declared.count(value) > 1})
+    if repeated:
+        fail(
+            f"{M62_SPIKE}: the live candidate inventory declares "
+            f"{', '.join(repr(value) for value in repeated)} more than once. A candidate "
+            "named twice is two candidates or none",
+            errors,
+        )
+        return None
+
+    # The M6.0 omission, guarded by name. Three because the route requires the
+    # provider's no-flag default *and* the explicit modes, and because the
+    # default treats m/z and intensity differently -- one row could not carry
+    # that.
+    precision = [name for name in declared if "precision" in name.lower()]
+    if len(precision) < 3:
+        fail(
+            f"{M62_SPIKE}: the live candidate inventory names {len(precision)} numeric "
+            "precision candidate(s). M6.2 owes the provider's no-flag default and every "
+            "explicit precision mode the installed grammar exposes, recorded separately for "
+            "m/z and for intensity -- the default is mixed, and one row cannot say so",
+            errors,
+        )
+        return None
+    if not any("default" in name.lower() for name in precision):
+        fail(
+            f"{M62_SPIKE}: no numeric precision candidate names the provider's default. "
+            "MSCanvas issues no precision flag, so the default is the semantic it actually "
+            "ships, and an inventory of explicit modes alone measures everything except what "
+            "the product does",
+            errors,
+        )
+        return None
+    forbidden = [name for name in declared if "overwrite" in name.lower()]
+    if forbidden:
+        fail(
+            f"{M62_SPIKE}: the live candidate inventory declares "
+            f"{', '.join(repr(value) for value in forbidden)}. What `msconvert` does to an "
+            "existing output is not an M6.2 candidate: ADR 0009 sends the provider only into "
+            "private staging and refuses before launch where the final target exists, so the "
+            "provider never meets that file and the answer could not authorize CNV-D4",
+            errors,
+        )
+        return None
+
+    classification = _first_markdown_table(spike_text, "## Final classification")
+    if classification is None:
+        fail(
+            f"{M62_SPIKE} has no `## Final classification` table. It is where a candidate's "
+            "state is recorded, and the matrix's rows are checked against it",
+            errors,
+        )
+        return None
+    header, rows = _table_header_and_body(classification)
+    where = f"{M62_SPIKE} final classification"
+    columns = {
+        name: _column_index(header, name, where, errors)
+        for name in ("Candidate", "State", "Basis")
+    }
+    if any(index is None for index in columns.values()):
+        return None
+    ragged = [row for row in rows if len(row) != len(header)]
+    if ragged:
+        fail(
+            f"{M62_SPIKE}: {len(ragged)} row(s) of the final classification have a cell count "
+            f"the header's {len(header)} does not match. A ragged row shifts a candidate's "
+            "state onto the wrong column",
+            errors,
+        )
+        return None
+    blank = [
+        (_bare(row[columns["Candidate"]]) or "<unnamed>", name)
+        for row in rows
+        for name in ("Candidate", "State", "Basis")
+        if not row[columns[name]].strip()
+    ]
+    if blank:
+        fail(
+            f"{M62_SPIKE}: the final classification leaves "
+            + ", ".join(f"{candidate} without a {name}" for candidate, name in blank)
+            + ". A candidate is classified by naming it, its state, and why",
+            errors,
+        )
+        return None
+
+    classified = [_bare(row[columns["Candidate"]]) for row in rows]
+    repeated = sorted({value for value in classified if classified.count(value) > 1})
+    if repeated:
+        fail(
+            f"{M62_SPIKE}: the final classification lists "
+            f"{', '.join(repr(value) for value in repeated)} more than once. A candidate with "
+            "two states has no state",
+            errors,
+        )
+        return None
+
+    states = {_bare(row[columns["Candidate"]]): _bare(row[columns["State"]]) for row in rows}
+    invalid = sorted(
+        (candidate, state)
+        for candidate, state in states.items()
+        if state not in M62_CANDIDATE_FINAL_STATES
+    )
+    if invalid:
+        fail(
+            f"{M62_SPIKE}: the final classification ends "
+            + ", ".join(f"{candidate} in `{state}`" for candidate, state in invalid)
+            + f", which is not one of the {len(M62_CANDIDATE_FINAL_STATES)} states an M6.2 "
+            "candidate may end in ("
+            + ", ".join(f"`{name}`" for name in sorted(M62_CANDIDATE_FINAL_STATES))
+            + "). A capability candidate has no signature-only exit: an option that parses "
+            "has established nothing about what it did",
+            errors,
+        )
+        return None
+
+    unclassified = sorted(set(declared) - set(classified))
+    if unclassified:
+        fail(
+            f"{M62_SPIKE}: the live candidate inventory declares "
+            f"{', '.join(repr(value) for value in unclassified)} with no final "
+            "classification. A candidate left in no state is exactly what "
+            "`EVIDENCE_BLOCKED` exists to avoid having to fake",
+            errors,
+        )
+        return None
+    undeclared = sorted(set(classified) - set(declared))
+    if undeclared:
+        fail(
+            f"{M62_SPIKE}: the final classification records "
+            f"{', '.join(repr(value) for value in undeclared)}, which the live candidate "
+            "inventory does not declare. A state for something the build never declared is a "
+            "claim about an option that is not there",
+            errors,
+        )
+        return None
+    return set(classified)
+
+
+def _validate_the_msconvert_matrix_covers_every_candidate(
+    classified: set[str],
+    header: list[str],
+    body: list[list[str]],
+    errors: list[str],
+) -> None:
+    """The matrix's rows are the candidates the classification records.
+
+    Every one of them, with no signature-only exemption: an M6.2 candidate is
+    answered across the standard whatever state it ends in, because
+    `EVIDENCE_BLOCKED` is a conclusion about a measurement and still owes the
+    dimensions it could answer.
+    """
+    rows = [_bare(row[0]) for row in body if row]
+    if not rows or not all(rows):
+        fail(
+            f"{M62_SPIKE}: the candidate-standard matrix has a row that names no candidate. "
+            "A row for nothing answers nothing",
+            errors,
+        )
+        return
+    duplicated = sorted({value for value in rows if rows.count(value) > 1})
+    if duplicated:
+        fail(
+            f"{M62_SPIKE}: the candidate-standard matrix has "
+            f"{', '.join(repr(value) for value in duplicated)} in more than one row. Two rows "
+            "for one candidate are two answers with nothing deciding between them",
+            errors,
+        )
+        return
+
+    absent = sorted(classified - set(rows))
+    if absent:
+        fail(
+            f"{M62_SPIKE}: the candidate-standard matrix has no row for "
+            f"{', '.join(repr(value) for value in absent)}, which the final classification "
+            "records. A classified candidate that leaves the matrix takes its unanswered "
+            "dimensions with it, and the column count still looks right",
+            errors,
+        )
+    unclassified = sorted(set(rows) - classified)
+    if unclassified:
+        fail(
+            f"{M62_SPIKE}: the candidate-standard matrix has a row for "
+            f"{', '.join(repr(value) for value in unclassified)}, which the final "
+            "classification does not record. A row nothing classified is a claim the evidence "
+            "does not carry",
+            errors,
+        )
+    if absent or unclassified:
+        return
+
+    for row in body:
+        if len(row) != len(header):
+            fail(
+                f"{M62_SPIKE}: the candidate-standard matrix row {row[0]!r} has {len(row)} "
+                f"cells where the header has {len(header)}. A ragged row silently shifts "
+                "every answer after the gap onto the wrong dimension",
+                errors,
+            )
+            return
+    dimensions = [_bare(cell) for cell in header[1:]]
+    blank = [
+        (_bare(row[0]), dimensions[position])
+        for row in body
+        for position, cell in enumerate(row[1:])
+        if not cell.strip()
+    ]
+    if blank:
+        fail(
+            f"{M62_SPIKE}: the candidate-standard matrix leaves "
+            + ", ".join(f"{candidate} on {dimension!r}" for candidate, dimension in blank)
+            + " unanswered. Every candidate is answered on every required dimension, as a "
+            "located result or an explicit `NOT_APPLICABLE` with its reason",
+            errors,
+        )
+
+
 def _section(text: str, heading: str) -> str | None:
     """One `##` section of a markdown document, heading included."""
     start = text.find(heading)
@@ -2253,6 +2923,7 @@ def main() -> int:
         validate_a_spectrum_range_is_resolved_in_one_place(errors)
         validate_the_xic_route_outcome_has_one_answer(errors)
         validate_one_candidate_evidence_dimension_vocabulary(errors)
+        validate_the_msconvert_capability_evidence_is_closed(errors)
         validate_current_status_documents_describe_the_shipped_product(errors)
 
     if errors:

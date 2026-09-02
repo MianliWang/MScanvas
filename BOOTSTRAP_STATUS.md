@@ -2762,9 +2762,12 @@ mzML documents in these tests are generated in the test itself.
   [ADR 0009](docs/architecture/adr/0009-mzml-conversion-execution-boundary.md)'s
   struck-through gate. Left standing here until M6.0's audit found it: a closed
   measurement listed as required is the one way this section can mislead the
-  slice that reads it. **Still open, and narrower than the original:** the same
-  question for a **non-mzML output format**, which only arises if CNV-D1 admits
-  one. See [ADR 0043](docs/architecture/adr/0043-conversion-completion-route.md).
+  slice that reads it. The narrower half that survived it — the same question for
+  a **non-mzML output format** — was **measured by M6.2 on 2026-09-02**: across
+  twenty-nine cases into fresh empty directories — four of which produce mzXML,
+  `X1`, `X2`, `X4` and `X5`, one of them letting the backend name its own output
+  — every directory afterwards held exactly one entry. Nothing in this bullet is outstanding. See
+  [M6.2's evidence document](docs/spikes/M6_MSCONVERT_CAPABILITY_EVIDENCE.md).
 
 ## First verified-bootstrap checklist
 
@@ -6219,3 +6222,389 @@ cancellation behaviour, no conversion scientific semantics and no provider
 evidence. It builds no generic command or permission framework — the lane is
 conversion's own, not a registry — and it changes no viewer planner. It does not
 start M6.2.
+
+## M6.2 — `msconvert` capability and evidence, 2026-09-02
+
+The milestone's evidence slice. **It implements nothing**: no setting, no
+control, no argv change, no `ConversionIntent`, no new provider admission. What
+it produces is one durable record of what the installed build was observed doing,
+so that M6.3 can type only measured semantics. The record is
+[M6.2's evidence document](docs/spikes/M6_MSCONVERT_CAPABILITY_EVIDENCE.md);
+nothing is retold here that lives there.
+
+Baseline `db4c48e5cc72ec6692aeb2fea74d3fe197d25b72`, clean and level with
+`origin/main`.
+
+### Route outcome
+
+`MSCONVERT_CAPABILITY_MEASURED`. Twelve candidates, twelve terminal states, none
+pending: nine `MEASURED_ADMISSIBLE`, two `MEASURED_REJECTED`, one
+`EVIDENCE_BLOCKED` with what is missing and who owns it, plus one further item
+blocked inside a candidate rather than as one of its own. **Two rejections and a
+block are a complete outcome, not a failed one.** M6.2's job was to close the
+candidate set honestly, and a candidate the build cannot be shown performing is
+closed by saying so.
+
+### The executable, and what does not transfer
+
+`msconvert` release `3.0.26013 (47b13cf)`, build date `Jan 13 2026 14:42:37`,
+`12,687,872` bytes, SHA-256 `9BB6F5D5…D590BD` — re-verified byte length, digest
+and self-reported footer **after** the last measurement, so no binary that
+replaced this one mid-run could have produced the observations. It is the same
+digest `EVIDENCED_PROVIDER_BUILDS` already carries for three vendor families, and
+**that changes nothing about what transfers**: those rows are evidence that this
+build converted those acquisitions, not evidence about precision, centroiding or
+mzXML. No row was added, removed or relaxed, and no production provider admission
+changed.
+
+### Three findings that change what later slices may assume
+
+**The precision default is mixed, and nothing in this repository said so.**
+Measured by decoding the output arrays and comparing them against two
+independently computed references — the source `float64` value and its exact
+`binary32` image. With no precision flag, m/z comes back exactly equal to the
+source and intensity comes back exactly equal to its `binary32` image. The help
+marks `--64` `[default]` and `--inten32` `[default]` in the same list, and a
+reader taking either marker alone would have the wrong answer for one array.
+**MSCanvas issues no precision flag, so every conversion this product has
+performed has narrowed its intensities to 32 bits.** That is now a decision M6.3
+types rather than one the provider's default takes.
+
+**`--zlib` is already the default.** A run with no compression flag produces
+arrays declared `zlib compression`. The unconditional `--zlib` in the argv
+builder therefore selects what would have happened anyway, and `--zlib=off` is
+what changes it. Compression and precision stayed separable under measurement:
+holding `--64` fixed, zlib on and off decode to identical values across every
+array of every spectrum, while the default and `--64` differ in intensity at the
+same compression.
+
+**mzXML fails the comparison CNV-002 is gated on.** On a document whose spectra
+carry two source files, the mzXML writer kept only the two attributed to the
+run's default source file — exit `0`, empty stderr, no counter — and then wrote
+`msRun/@scanCount="4"` above the two `<scan>` elements it emitted. A consumer
+trusting the declared count would read a two-spectrum document as a complete
+four-spectrum conversion. The same document to mzML kept all four and preserved
+their attribution, which is the control that makes this the writer's behaviour
+rather than the reader's. **The disposition remains M6.10's**; M6.2 hands it a
+measured refusal.
+
+**`cwt` silently dropped real peaks.** Reading the decoded intensities beside the
+m/z values separates two things a point count cannot. The default picker returned
+every source peak apex **bit-identical in m/z and in intensity**, plus
+zero-intensity padding entries at `apex ± 0.04` that carry no signal. `cwt`
+emitted no padding and, on the three-peak spectrum, returned **one peak** — exit
+`0`, empty stderr, no counter, on an input it had accepted. An algorithm that
+discards signal a second algorithm recovers exactly, on the same input, has not
+performed the operation that was asked for, and candidate 3 is rejected on that.
+The rejection is **scoped to this evidence**: synthetic peaks seven points wide
+may simply fall outside the wavelet detector's scales, so re-opening it needs a
+representative profile acquisition rather than an argument.
+
+A consequence worth carrying forward: **a point count is not a peak count.** An
+integrity check comparing output array lengths against an expected peak count
+would be wrong about a correct conversion.
+
+### A fourth correction, narrower than the three authorized ones
+
+Review found the candidate-standard matrix citing `K12` for the **per-array**
+precision candidates' interaction dimension. `K12` carries `--32`, the global
+switch, and **no case in the ledger composes a per-array flag with any filter** —
+`--mz32`, `--mz64`, `--inten32` and `--inten64` appear only in `P1`, `P2` and
+`P5`, none of which runs one. So two cells read as answered on evidence that
+belongs to a different candidate.
+
+Corrected by **narrowing rather than measuring**: those two cells now say
+`NOT_MEASURED` with the reason, `K12`'s entry names the global switch explicitly,
+and the downstream consequence states that **M6.3 may not represent a per-array
+precision choice composed with any processing intent** while it may represent the
+global one. No measurement was added, no classification moved, and the ledger is
+unchanged.
+
+It is recorded as a fourth item because the authorized scope named three. It was
+taken under the same principle as the first — *narrow the conclusion to what the
+evidence establishes* — and it removes a claim rather than adding one, so it
+cannot make the record overstate anything. Leaving it would have let M6.3 type a
+composition nothing measured, which is the one harm this slice exists to prevent.
+
+### The consequence M6.3 has to read
+
+**No scoped centroiding intent is constructible from admitted parts.** The scope
+argument is positional after `<PickerType>` and is silently discarded without
+one; the grammar admits only `cwt` or `vendor` as that token, and there is no
+token for the default picker; `cwt` is rejected and `vendor` is blocked. So the
+one admitted algorithm cannot be named, and the scope cannot be reached. M6.3 may
+type unscoped centroiding on the default picker and **may not type "centroid MS2
+only" or "centroid MS1+MS2" at all**. Both presets re-open on the same evidence
+`cwt` needs — a representative profile acquisition — or on a lawful vendor
+acquisition. Found by review; the record entailed it and did not say it, and now
+says it.
+
+### Two things measured that a careless slice would have got wrong
+
+**`peakPicking msLevel=2` silently centroids every MS level.** `msLevel=` is
+positional after `<PickerType>`, so with no picker token the argument is consumed
+as the picker name, the build falls back to its local-maximum algorithm, and the
+scope is discarded — while exiting `0`. The output records
+`local maximum peak picker` and, unlike the correctly-scoped runs, carries no
+`ms levels` userParam. **M6.3's argv mapping must always emit an explicit
+`<PickerType>` before `msLevel=`.**
+
+**`peakPicking vendor` substituted silently.** On an open source there is no
+vendor reader; the request exited `0`, warned nothing, and produced output
+identical to the default picker's in every respect except the recorded command
+line. The substitution is invisible at the process boundary and visible only in
+the output's own `userParam`, which names the implementation in **free text
+rather than by CV accession** — all three selectors share `MS:1000035 peak
+picking`. That is the channel M6.3's integrity comparison has to use, and it is
+weaker than an accession.
+
+### Fixtures, and why they are what they are
+
+Three generated mzML documents, no acquisition, nothing proprietary, nothing
+downloaded, and no absolute path committed. They are a pure function of
+[`scripts/msconvert_evidence.py`](scripts/msconvert_evidence.py)'s constants and
+were verified to regenerate byte-identically to the recorded SHA-256s.
+
+The design decisions are the evidence's load-bearing part. Peak centres and
+heights are **deliberately inexact in binary32**, because a measurement taken on
+`500.0` would pass whatever the encoder did. The second source file is attributed
+to **one MS1 and one MS2 spectrum**, because putting it on both MS2 spectra would
+have made "drops by source file" and "drops by MS level" delete the same two
+spectra and each look like proof of the other. And the third fixture exists
+because the first version of the profile fixture had no flanking zeros, which
+made ProteoWizard's wavelet picker refuse it — a fixture that could measure
+nothing about `cwt` except that `cwt` rejected it. Every fixture was converted at
+`--64 --mz64 --inten64` and decoded back **bit-identical** before any
+transformation was judged against it.
+
+### The two inherited P2 residuals, closed
+
+**Numeric precision was missing from the route's finite candidate inventory.**
+Closed: ADR 0043's M6.2 slice now names it, the evidence record measures the
+provider default plus every explicit mode separately for m/z and intensity, and
+`check_repo.py` refuses an inventory that carries fewer than three precision
+candidates or none naming the default.
+
+**The stale "two pending measurements" acceptance.** Closed: it counted a
+non-candidate and a measured question as two outstanding gates. Existing-output
+overwrite is **not a candidate, not a prerequisite, not a CNV-D4 authority and
+not an M6.2 completion condition** — ADR 0009 sends the provider only into
+private staging, so no measurement of it could authorize a destructive product
+decision, and CNV-D4 is not reopened. The side-output half was measured in
+M3.0.3 and M3.10; the non-mzML remainder was measured here. The acceptance now
+reads as the conditional it always was, and the guard refuses the old sentence.
+
+### The conditional side-output obligation
+
+**Triggered, and measured.** mzXML remains a viable admission candidate for
+single-source inputs, so the condition holds. All **twenty-nine** cases went
+into fresh empty directories, and every directory afterwards held exactly one
+entry — no sidecar, index, log or scratch entry.
+
+**Four of the twenty-nine produce mzXML**: `X1`, `X2`, `X4` and `X5`, one of them
+letting the backend name its own output. `X3` is the mzML control and is not one
+of them. That count is derived from the committed case ledger rather than stated
+in a sentence — an earlier version of this paragraph said *six*, which no case
+list ever supported, and the guard now refuses a record that disagrees with the
+ledger. The `cwt` failure case is the one to read carefully: it produced one
+entry too, and that entry was the **unterminated partial** document rather than
+an extra file.
+
+### One repair, from review
+
+Two P2 findings on the candidate head, both in this slice's own tooling and both
+taken under the single authorized repair pass.
+
+**The decoder truncated instead of refusing.** A binary payload that was not a
+whole number of values at its declared width was sliced to the nearest complete
+value, so a torn array would have come back looking like a shorter healthy one —
+and every numeric claim in the record is a claim about what that decoder
+returned. It now reports the payload as malformed and decodes nothing, checks the
+mzXML pairing as well, and reports any spectrum whose stored length disagrees
+with its declared length. Verified by truncating a fixture array by one byte
+(refused, `0` values decoded) and by mislabelling a declared length (reported),
+then re-reading all twenty-nine outputs: none malformed, none disagreeing. The
+one exception corroborates a finding rather than contradicting it — the failed
+`cwt` run's partial output **does not parse at all**, so what that failure leaves
+behind is an unterminated document rather than a smaller valid one.
+
+**The side-output disposition was checked by substring.** "Whether the condition
+was triggered is still pending" contained `triggered` and would have passed,
+which is the one ending the obligation rules out. The record now declares an
+explicit `TRIGGERED_AND_MEASURED` or `NOT_TRIGGERED` token and the validator
+requires exactly one of them.
+
+### Residuals: the harness is an inspector, not a validator
+
+Review found **four** instances of one property after the single authorized
+repair pass had been spent, so all four are recorded rather than fixed, and they
+are recorded as one item because they are one property. `inspect` reports what a
+document contains; its silence is not a certificate of validity. It does not
+validate base64 syntax, does not notice a spectrum missing an array entirely,
+does not read mzXML's run-level `msRun/@scanCount`, and checks nothing structural
+beyond width alignment and declared length. A fifth, in the guard rather than the
+harness: the side-output disposition is matched against the section's prose
+rather than against the declaration line, so `Disposition: PENDING` beside a
+later mention of the valid token would satisfy it.
+
+**None is load-bearing, and that was verified rather than asserted.** Every
+numeric conclusion is a positive equality against two independently computed
+references, and a wrong document fails that comparison rather than passing it.
+Run against the fixture: removing the intensity array leaves every flag clean and
+**fails** the record's own equality check, so the analysis catches it whatever the
+flag says; inserting a stray `$` leaves every flag clean and **passes**, correctly
+— dropping the character leaves the decoded bytes, and therefore the values,
+unchanged. What the gaps cost is the ability to tell a corrupt document from a
+healthy one, which this slice never needed.
+
+**P3. Owner: M6.10**, the next slice to measure a non-mzML format, as one change
+rather than five patches.
+
+**More of the same family, in the runner and the guard.** Review enumerated
+instance after instance across three rounds on the corrected head — they are not
+counted here, because an exhaustive list goes stale and the property does not —
+and they share one shape: **the driver's
+thirty-three checks are the confirmations this slice was required to reproduce,
+not every basis the classifications rest on.** No `cwd` is passed, so a
+conversion inherits the caller's directory; `posture` is copied rather than
+compared for twenty-seven cases; `K5`/`K6` run without being compared; the
+default-picker check reads one spectrum and one array; the MS-level checks
+compare ids and not arrays; `P1` and `P2` run without being shaped.
+
+**Every one is a missing check, not a wrong result**, and each underlying fact
+was verified directly rather than argued. The whole set re-run from a directory
+created empty left only the driver's own report — **`msconvert` wrote nothing to
+its process working directory across all twenty-nine cases** — with the worktree
+unchanged. Every exit matched its declared posture, 29 / 29. All four spectra of
+`K1` have every non-zero point bit-identical to its source apex in **both** m/z
+and intensity. Both surviving spectra of `L1` and `L2` are **value-identical** to
+the source in both arrays, which is stronger than the length comparison the first
+analysis made. And `P1`/`P2` are exact `float64` and the exact `binary32` image
+respectively, both arrays, all spectra.
+
+Later rounds added three more of exactly the same kind, each verified the same
+way: compression is declared consistently across all eight arrays of all four
+spectra in `D1`, `C1` and `C2`; `K12`'s composition has the same peak counts as
+`K1` with every value the exact `binary32` image; and all twenty-nine rows of the
+record's case table agree with the ledger on all seven fields, not just the two
+the guard compares.
+
+**P3. Owner: M6.10**, as one pass over the runner and the guard rather than a
+patch per instance. The evidence record states the distinction in its own words
+and lists instances illustratively rather than exhaustively, so `33/33 agree` is
+not read as "every basis re-verified" and the list cannot go stale.
+
+### What the guard does not do, stated rather than left to be discovered
+
+The guard's own limits, because a validator's reputation outruns it faster than
+anything else in a repository.
+
+**Two verified holes, both found by review and both P3.** A candidate deleted
+from *all three* of the inventory, the classification and the matrix passes,
+because those three are compared against each other and only precision is
+additionally required against the route — reproduced with
+`compression zlib off`. And the route outcome is checked for being one token
+from a closed set, not for agreeing with the states beneath it, so flipping it to
+`MSCONVERT_CAPABILITY_EVIDENCE_BLOCKED` while nine candidates remain
+`MEASURED_ADMISSIBLE` passes. Neither is reachable from the record as committed;
+both are things a later edit could do. **Owner: M6.10**, and the right shape is
+to structure the route's candidate list and compare it to the classification the
+way the dimension vocabulary already is, rather than special-casing a second
+candidate.
+
+**One obligation is deliberately not mechanised.** A guard against *describing
+help or source reading as measured installed-build execution evidence* is a claim
+about prose, and this repository's validators do not read prose — every one of
+them says so, in the same words: whether an answer is any good stays a matter for
+review. What is mechanised instead is the structure that claim lives in: the
+evidence record must keep its candidate inventory, its classification, its matrix
+and one route outcome, and the route must keep the candidate list and dimension
+vocabulary those are checked against. **The rule itself is enforced by review**,
+and it is written into the evidence record as its own section rather than into
+`check_repo.py`. Recorded here so that a reader does not mistake the guard's
+silence on it for coverage.
+
+Two of the threads were resolved on the pull request before they had been read —
+a mistake, corrected by reopening both, dispositioning them, and replying with
+the classification before resolving them again. Recorded because a thread closed
+without being read is indistinguishable from one that was answered.
+
+### The correction, and the driver that makes it hold
+
+Review caught the record claiming **six** mzXML runs where four exist, and naming
+**28** of 29 cases. Both were true defects: the count was the sentence discharging
+the side-output obligation, and the missing case was `K9`, the no-filter baseline
+that makes `K7`'s partial output legible. Neither was reachable by any check,
+because the cases lived in prose.
+
+**The root fix is that the measurement set is now data and the data is
+executable.** `scripts/msconvert_evidence.py` gained a `CASES` ledger — 29 rows,
+each with its fixture, its exact argv tokens in order, its output format, its
+naming mode, its expected posture and what it is for — plus the fixture and
+executable identities the evidence is bound to. `scripts/msconvert_evidence_run.py`
+runs it: regenerate the three fixtures and check them against their recorded
+digests, check the installed executable against the bound identity, enumerate the
+ledger, execute each case as an argv **list** into a **fresh empty directory**,
+read the output back through the shared inspector, count directory entries,
+recheck the executable afterwards, and emit a normalized report carrying no
+absolute path. The working tree is a temporary directory and is removed once the
+facts are captured.
+
+**The whole set was re-run from it.** 29 cases, 29 directories each holding
+exactly one entry, executable byte length and digest and release and build date
+identical before and after, and **33 of 33 independent confirmations agreeing**
+with the record. No candidate classification changed. `X4` and `X2` and the
+fixtures reproduced byte-identically; the mzML outputs did not, and that is why
+sizes are now stated as relations — `msconvert` stamps its command line into an
+mzML document, so its byte count moves with the paths of the run that produced
+it. The record's absolute mzML sizes were replaced with the relations the rerun
+confirms.
+
+**And the counts are structural now.** The guard holds three independent
+statements of one set equal: pinned constants, the committed ledger, and the
+record's own measured-cases table. It refuses a deleted `K9`, a duplicated id, a
+thirtieth case, an `X3` that stops being the mzML control, a ledger row whose
+declared format its arguments do not select, a record row disagreeing with the
+ledger, a missing table, and the literal `six mzXML` regression. **Ten mutations
+were applied one at a time and all ten were caught**, on top of the twelve
+already covering the candidate closure.
+
+### Repository guard
+
+`check_repo.py` gains one focused validator on the M5.4 precedent: the route owns
+the dimension vocabulary, the evidence record holds the answers, and the two are
+held equal as sets. It refuses a dropped precision candidate, a missing default,
+a candidate with no state or a state outside M6.2's three, a candidate that
+leaves the matrix, a blank intersection, a second or undefined route outcome, a
+reintroduced overwrite candidate, a missing side-output disposition, and the
+stale acceptance sentence. **Twelve mutations were applied one at a time and all
+twelve were caught**, each with its own message.
+
+An earlier run of that mutation suite reported twelve catches falsely: a lost
+backslash had left `check_repo.py` unparseable, so every mutation "failed" for
+the same unrelated reason. Recorded because a green mutation suite that is green
+for the wrong reason is worse than none.
+
+### Validation
+
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build`, `pnpm e2e:typecheck` and `git diff --check`, each run directly on
+the final head and each exiting zero. Rust **1,350** and frontend **1,398**,
+both unchanged — a slice that touches no product code should move neither.
+
+**Browser E2E was not run, and is not described as green.** This slice changes no
+frontend file, no CSS and no rendered behaviour; the changed paths are one
+evidence document, one evidence harness, one repository validator and four
+records. `apps/desktop/AGENTS.md` requires a browser pass for *rendered UI work*,
+and there is none here. Running it would have produced a number with nothing
+behind it.
+
+### What this slice does not do
+
+It admits no setting, exposes no control, changes no argv builder, no DTO, no
+wire vocabulary, no destination or cancellation behaviour, and no dependency or
+lockfile. It does not decide MSCanvas's precision policy, does not make the mzXML
+disposition, does not absorb M6.8's cancellation evidence, and does not start
+M6.3.
