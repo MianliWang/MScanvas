@@ -502,14 +502,25 @@ Three further compositions were measured:
 
 | Case | Composition | Result |
 | --- | --- | --- |
-| `K12` | `--32` with `peakPicking` | same entry count as `K1` at `--64`, and every value the exact `binary32` image of `K1`'s — a filter that rewrites the arrays does not defeat the precision choice |
+| `K12` | **global** `--32` with `peakPicking` | same entry count as `K1` at `--64`, and every value the exact `binary32` image of `K1`'s — a filter that rewrites the arrays does not defeat a *global* precision choice |
 | `X5` | `--mzXML` with `peakPicking` | `4` spectra, entries `4,1,7,1`, `centroided="1"`, header count honest |
 | `K4`, `K10` | a picker with an MS-level scope | the named levels centroided, the others left bit-identical to the source |
 
-**Every composition M6.3 may represent as evidenced is limited to these four.**
+**Every composition M6.3 may represent as evidenced is limited to these four**,
+and the first of them is narrower than it first reads. `K12` carries `--32`, the
+**global** switch. **No case in the ledger composes a per-array precision flag
+with any filter** — every filtered case carries `--32` or `--64`, and `--mz32`,
+`--mz64`, `--inten32` and `--inten64` appear only in `P1`, `P2` and `P5`, which
+run no filter. So "precision survives a filter" is evidenced for the *global*
+control and **not** for the per-array ones, and the matrix says `NOT_MEASURED`
+in those two cells rather than borrowing `K12`.
+
+**M6.3 may not represent a per-array precision choice composed with any
+processing intent.** It may represent the global one, on this evidence.
+
 Anything else — a picker with `--mzXML` at `--32`, two filters other than this
-pair, an MS-level filter composed with a format change — remains unmeasured, and
-M6.3 may not claim it.
+pair, an MS-level filter composed with a format change — likewise remains
+unmeasured, and M6.3 may not claim it.
 
 ### The consequence that decides what M6.3 may build
 
@@ -634,8 +645,8 @@ located result or an explicit `NOT_APPLICABLE` with its reason.
 | `msLevel population filter` | `msLevel <int_set>` accepted; `1`, `2` and `1-` all parsed | `L1`–`L4` exit `0` | mzML parsed | exactly the requested spectra kept, by id | `L1` `scan=1,3`; `L2` `scan=2,4`; `L3`/`L4` all four; array lengths unchanged throughout | arrays carried through untouched at `--64` | inherits the run's encoding | `K5`/`K6` compose it with `peakPicking` in both orders | `L1`–`L4`: one file each |
 | `precision provider default` | no flag required | `D1` exit `0` | mzML parsed | **mixed**: m/z 64, intensity 32 | `4`/`4` spectra, arrays unchanged in length | m/z exactly the source `float64`; intensity exactly the source's `binary32` image, every value of every spectrum | declared `zlib` with no flag given | `D1` is the baseline the compression pair is read against | `D1`: one file |
 | `precision global` | `--64` / `--32` accepted | `P4`, `P3` exit `0` | mzML parsed | `--64` preserves both arrays; `--32` narrows both | `4`/`4` spectra, arrays unchanged in length | `P4` exact `float64` both arrays; `P3` exact `binary32` image both arrays | both declared `zlib` | `C1`/`C2` hold `--64` fixed while compression varies | `P3`, `P4`: one file each |
-| `precision m/z` | `--mz64` / `--mz32` accepted | `P1`, `P2`, `P5` exit `0` | mzML parsed | the m/z array follows the flag independently of intensity | `4`/`4` spectra, arrays unchanged in length | `P5` proves independence: m/z `binary32` image while intensity stays exact `float64` | all declared `zlib` | `K12` composes `--32` with `peakPicking`: same entry count as `K1`, and every value the exact `binary32` image of `K1`'s | `P1`, `P2`, `P5`: one file each |
-| `precision intensity` | `--inten64` / `--inten32` accepted | `P1`, `P2`, `P5` exit `0` | mzML parsed | the intensity array follows the flag independently of m/z | `4`/`4` spectra, arrays unchanged in length | `P1` exact `float64`; `P2` `binary32` image; `P5` exact while m/z narrows | all declared `zlib` | `K12` as above — a filter that rewrites the arrays does not defeat the precision choice | `P1`, `P2`, `P5`: one file each |
+| `precision m/z` | `--mz64` / `--mz32` accepted | `P1`, `P2`, `P5` exit `0` | mzML parsed | the m/z array follows the flag independently of intensity | `4`/`4` spectra, arrays unchanged in length | `P5` proves independence: m/z `binary32` image while intensity stays exact `float64` | all declared `zlib` | **`NOT_MEASURED`** — no case composes a *per-array* flag with any filter. `K12` composes the **global** `--32`, which is candidate 8's evidence and not this one's | `P1`, `P2`, `P5`: one file each |
+| `precision intensity` | `--inten64` / `--inten32` accepted | `P1`, `P2`, `P5` exit `0` | mzML parsed | the intensity array follows the flag independently of m/z | `4`/`4` spectra, arrays unchanged in length | `P1` exact `float64`; `P2` `binary32` image; `P5` exact while m/z narrows | all declared `zlib` | **`NOT_MEASURED`** — same reason: every filtered case in the ledger carries `--32` or `--64`, never `--inten32` or `--inten64` | `P1`, `P2`, `P5`: one file each |
 | `compression zlib on` | `--zlib` accepted | `C1` exit `0` | mzML parsed | arrays declared `zlib compression` | `4`/`4` spectra, arrays unchanged in length | decoded values exactly equal to `C2`'s at the same `--64` | `MS:1000574 zlib compression`, and smaller than `C2` | held at `--64` so precision cannot be mistaken for compression | `C1`: one entry |
 | `compression zlib off` | `--zlib=off` accepted | `C2` exit `0` | mzML parsed | arrays declared `no compression` | `4`/`4` spectra, arrays unchanged in length | decoded values exactly equal to `C1`'s | `MS:1000576 no compression`, and larger than `C1` | same | `C2`: one entry |
 

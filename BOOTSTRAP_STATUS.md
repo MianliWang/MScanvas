@@ -6304,6 +6304,28 @@ A consequence worth carrying forward: **a point count is not a peak count.** An
 integrity check comparing output array lengths against an expected peak count
 would be wrong about a correct conversion.
 
+### A fourth correction, narrower than the three authorized ones
+
+Review found the candidate-standard matrix citing `K12` for the **per-array**
+precision candidates' interaction dimension. `K12` carries `--32`, the global
+switch, and **no case in the ledger composes a per-array flag with any filter** —
+`--mz32`, `--mz64`, `--inten32` and `--inten64` appear only in `P1`, `P2` and
+`P5`, none of which runs one. So two cells read as answered on evidence that
+belongs to a different candidate.
+
+Corrected by **narrowing rather than measuring**: those two cells now say
+`NOT_MEASURED` with the reason, `K12`'s entry names the global switch explicitly,
+and the downstream consequence states that **M6.3 may not represent a per-array
+precision choice composed with any processing intent** while it may represent the
+global one. No measurement was added, no classification moved, and the ledger is
+unchanged.
+
+It is recorded as a fourth item because the authorized scope named three. It was
+taken under the same principle as the first — *narrow the conclusion to what the
+evidence establishes* — and it removes a claim rather than adding one, so it
+cannot make the record overstate anything. Leaving it would have let M6.3 type a
+composition nothing measured, which is the one harm this slice exists to prevent.
+
 ### The consequence M6.3 has to read
 
 **No scoped centroiding intent is constructible from admitted parts.** The scope
