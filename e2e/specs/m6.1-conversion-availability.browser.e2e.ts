@@ -82,8 +82,9 @@ const RETRYABLE_QUEUE = {
       }),
     ]),
   },
-  diagnostics: { available: false, itemCount: 0, exporting: false, lastExport: null },
+  diagnostics: { available: false, eligibleItemCount: 0, exporting: false, lastExport: null },
   backendQuarantined: false,
+  installationGeneration: 0,
 };
 
 /**

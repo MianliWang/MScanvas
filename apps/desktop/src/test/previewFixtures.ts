@@ -921,6 +921,23 @@ export interface FakePreviewApi extends PreviewApi {
    * in place, first seen by whichever operation happened to resolve next.
    */
   readonly noteInstallationObserved: () => void;
+  /**
+   * Which installation this fake's session is currently on.
+   *
+   * The same counter every verdict and every slot read is stamped with, so a
+   * test that has to answer *about the installation the session is on* -- a
+   * catalog, most of all -- reads it from here rather than keeping a second
+   * copy that could drift from it.
+   */
+  readonly installationGeneration: () => number;
+  /**
+   * How many times the one conversion slot has been read.
+   *
+   * What makes a negative about polling mean something. "No backend process was
+   * launched" is only worth stating beside evidence that the readings which
+   * could have launched one actually happened.
+   */
+  readonly conversionStateReads: () => number;
   /** Every operation identifier a stop was asked for, in order. */
   readonly stopRequests: readonly string[];
   /** Every operation identifier a diagnostics export was asked for, in order. */
@@ -1439,6 +1456,11 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     ),
   });
 
+  // Counted at the boundary rather than through the wrapper below, because the
+  // slot read is not one of the wrapped commands: it is answered from memory
+  // and launches nothing, which is exactly why it can be polled.
+  let conversionStateReads = 0;
+
   const deliveredVerdicts: BackendAvailability[] = [];
   // Counted here as the service counts it: a change advances it, a plain
   // reading does not. A fake that returned a fixed number would make the
@@ -1542,6 +1564,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     noteInstallationObserved: () => {
       generation += 1;
     },
+    installationGeneration: () => generation,
+    conversionStateReads: () => conversionStateReads,
     quarantineBackend,
     stopRequests,
     diagnosticsExportRequests,
@@ -1702,13 +1726,18 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         conflictPolicy,
         validationMode: "output_only",
         capacity: 16,
-        installationGeneration: 0,
+        // The session's own counter, like every other stamped answer here. A
+        // plan is read against one installation, and a fixture that answered
+        // with a fixed number would let a plan describing a replaced build go
+        // on satisfying the identity check that exists to refuse it.
+        installationGeneration: generation,
       });
     },
     // Answered after whatever round trip the test models, and reading the slot
     // only once that has elapsed -- so a slow read carries the state as it was
     // when it *arrived*, exactly as a slow IPC reply does.
     getConversionState: async () => {
+      conversionStateReads += 1;
       if (options.stateReadLatency !== undefined) {
         await options.stateReadLatency();
       }

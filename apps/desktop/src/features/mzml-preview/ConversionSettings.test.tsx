@@ -517,11 +517,9 @@ describe("choosing what a conversion will do", () => {
     const wide = intentFor({ precision: "mz64Intensity64" });
     const stale = deferred<ReturnType<typeof intentCatalog>>();
     let reads = 0;
-    let generation = 0;
     const api = createFakePreviewApi({
       initialDatasets: [VENDOR_ROW],
-      availability: () =>
-        Promise.resolve({ ...availableBackend, installationGeneration: generation }),
+      availability: availableBackend,
       conversionIntents: () => {
         reads += 1;
         // The first read describes the installation that is about to be
@@ -543,8 +541,11 @@ describe("choosing what a conversion will do", () => {
       expect(reads).toBe(1);
     });
 
-    // The installation changes, and the catalog for the new one installs.
-    generation = 1;
+    // The installation changes, and the catalog for the new one installs. The
+    // change is made where a change is actually made -- the session's one
+    // counter, which stamps the verdict and the catalog alike -- rather than
+    // by a check merely having run.
+    api.noteInstallationObserved();
     act(() => {
       rendered.result.current.checkBackend();
     });
@@ -572,8 +573,9 @@ describe("choosing what a conversion will do", () => {
     let generation = 0;
     const api = createFakePreviewApi({
       initialDatasets: [VENDOR_ROW],
-      availability: () =>
-        Promise.resolve({ ...availableBackend, installationGeneration: generation }),
+      // Stamped by the fake from the session's own counter, exactly as Rust
+      // stamps a verdict. `noteInstallationObserved` below is what moves it.
+      availability: availableBackend,
       conversionIntents: () =>
         Promise.resolve(intentCatalog({ installationGeneration: generation })),
       // Every plan answers with the installation it was read at, exactly as
@@ -612,6 +614,7 @@ describe("choosing what a conversion will do", () => {
     // The installation changes. The plan on screen was an answer about the one
     // that is gone, so it is asked again -- without anybody pressing anything.
     generation = 1;
+    api.noteInstallationObserved();
     act(() => {
       rendered.result.current.checkBackend();
     });
@@ -637,8 +640,7 @@ describe("choosing what a conversion will do", () => {
     let reads = 0;
     const api = createFakePreviewApi({
       initialDatasets: [VENDOR_ROW],
-      availability: () =>
-        Promise.resolve({ ...availableBackend, installationGeneration: generation }),
+      availability: availableBackend,
       conversionIntents: () => {
         reads += 1;
         return reads === 1
@@ -677,6 +679,7 @@ describe("choosing what a conversion will do", () => {
 
     // The installation changes, and its catalog has not answered yet.
     generation = 1;
+    api.noteInstallationObserved();
     act(() => {
       rendered.result.current.checkBackend();
     });
@@ -712,9 +715,8 @@ describe("choosing what a conversion will do", () => {
       .intents.map((option) => option.intent.id)
       .filter((id) => id !== SHIPPED_INTENT.id);
     let generation = 0;
-    const { panel } = await openTheSettings({
-      availability: () =>
-        Promise.resolve({ ...availableBackend, installationGeneration: generation }),
+    const { api, panel } = await openTheSettings({
+      availability: availableBackend,
       conversionIntents: () =>
         Promise.resolve(
           generation === 0
@@ -738,8 +740,10 @@ describe("choosing what a conversion will do", () => {
     expect(chosen.id).not.toBe(SHIPPED_INTENT.id);
 
     // The installation is replaced by one that can run only what MSCanvas
-    // ships, through the control a reader actually has.
+    // ships, through the control a reader actually has. The build changes
+    // first; the press is what makes this session find out.
     generation = 1;
+    api.noteInstallationObserved();
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
 
     const recover = await within(panel).findByRole("button", {
@@ -766,6 +770,60 @@ describe("choosing what a conversion will do", () => {
     expect(
       within(panel).queryByRole("button", { name: "Use the settings MSCanvas ships" }),
     ).toBeNull();
+  });
+
+  it("keeps the settings and the plan on screen across a check of the same installation", async () => {
+    // G1, where a reader meets it. Pressing Check again on a healthy, unchanged
+    // installation used to take the four fieldsets and the plan off screen and
+    // then buy them back with a second msconvert help probe. Nothing about the
+    // installation changed, so nothing about what it offers may move.
+    let catalogs = 0;
+    let checks = 0;
+    const recheck = deferred<typeof availableBackend>();
+    const { api, panel } = await openTheSettings({
+      availability: () => {
+        checks += 1;
+        return checks === 1 ? Promise.resolve(availableBackend) : recheck.promise;
+      },
+      conversionIntents: () => {
+        catalogs += 1;
+        return Promise.resolve(intentCatalog());
+      },
+    });
+    await waitFor(() => {
+      expect(convertButton(panel)).toBeEnabled();
+    });
+    expect(catalogs).toBe(1);
+    const precision = planFact(panel, "Numeric precision");
+
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+
+    // While the check runs the settings stay, the plan stays, and Convert is
+    // refused for the reason that is true.
+    await waitFor(() => {
+      expect(convertButton(panel)).toBeDisabled();
+    });
+    expect(choice(panel, "Peak processing", "No additional centroiding").checked).toBe(true);
+    expect(within(panel).getByRole("group", { name: "Numeric precision" })).toBeVisible();
+    expect(planFact(panel, "Numeric precision")).toBe(precision);
+    expect(describedText(convertButton(panel))).toContain(
+      "unavailable while the installed ProteoWizard backend is being checked",
+    );
+    expect(catalogs).toBe(1);
+
+    // It resolves, naming the installation that was already bound.
+    await act(async () => {
+      recheck.resolve(availableBackend);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(convertButton(panel)).toBeEnabled();
+    });
+    // Nothing was re-read, and the backend was asked exactly twice: once on
+    // mount, once because the user asked.
+    expect(catalogs).toBe(1);
+    expect(api.calls().filter((command) => command === "inspectBackend")).toHaveLength(2);
+    expect(planFact(panel, "Numeric precision")).toBe(precision);
   });
 
   it("drops the catalog when this session stops having a usable backend", async () => {
@@ -958,6 +1016,7 @@ describe("choosing what a conversion will do", () => {
       expect(rendered.result.current.conversion.planIsCurrent).toBe(true);
     });
     const catalogsBefore = catalogs;
+    const probesBefore = api.calls().filter((command) => command === "inspectBackend").length;
 
     act(() => {
       rendered.result.current.conversion.convert([VENDOR_ROW.handle]);
@@ -984,6 +1043,18 @@ describe("choosing what a conversion will do", () => {
     expect(settings.status === "ready" && settings.selectedId).toBe(wide.id);
     expect(rendered.result.current.conversion.settingsReadiness).toBe("unsupported");
     expect(rendered.result.current.conversion.state.status).toBe("idle");
+    // **Once, and once only.** The slot read that carried the news is one of a
+    // stream of readings that all carry it, so what makes this a reconciliation
+    // rather than a stream of blocked backend processes is that the observation
+    // is counted rather than acted on each time it arrives.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(api.calls().filter((command) => command === "inspectBackend")).toHaveLength(
+      probesBefore + 1,
+    );
+    expect(catalogs).toBe(catalogsBefore + 1);
   });
 
   it("does not reconcile when a dispatch fails without the installation moving", async () => {
@@ -1081,7 +1152,7 @@ describe("choosing what a conversion will do", () => {
       .intents.map((option) => option.intent.id)
       .filter((id) => id !== SHIPPED_INTENT.id);
     let replaced = false;
-    const { panel } = await openTheSettings({
+    const { api, panel } = await openTheSettings({
       availability: availableBackend,
       conversionIntents: () =>
         Promise.resolve(
@@ -1099,6 +1170,7 @@ describe("choosing what a conversion will do", () => {
     });
 
     replaced = true;
+    api.noteInstallationObserved();
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
     // The chosen semantic is preserved and now truthfully refused. It stays
     // *checked* rather than disabled -- a radio showing what you chose is not a
@@ -1133,7 +1205,7 @@ describe("choosing what a conversion will do", () => {
       .intents.map((option) => option.intent.id)
       .filter((id) => id !== SHIPPED_INTENT.id);
     let replaced = false;
-    const { panel } = await openTheSettings({
+    const { api, panel } = await openTheSettings({
       availability: availableBackend,
       conversionIntents: () =>
         Promise.resolve(
@@ -1158,6 +1230,7 @@ describe("choosing what a conversion will do", () => {
     });
 
     replaced = true;
+    api.noteInstallationObserved();
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
 
     const recover = await within(panel).findByRole("button", {

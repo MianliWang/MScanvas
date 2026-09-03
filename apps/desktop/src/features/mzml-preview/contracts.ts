@@ -1264,7 +1264,13 @@ export interface WorkspaceConversionUpdate {
    * queue — and the pre-picker capability gate is such a refusal, and is often
    * the first thing to resolve a build replaced in place. Read on mount, while
    * work is under way, and immediately after a dispatch that failed, so the
-   * answer reaches the reconciler without a second notification protocol.
+   * answer reaches the session without a second notification protocol.
+   *
+   * **It is a fact, not a request.** Every poll of a running queue carries it,
+   * so the receiver raises a monotonic observation and nothing else; whether
+   * that observation is worth a backend check is decided once, elsewhere, and
+   * counted. Reading this as "go and look now" is what made a ten-minute queue
+   * able to stack one blocked `inspect_backend` per two-second tick.
    */
   readonly installationGeneration: number;
 }

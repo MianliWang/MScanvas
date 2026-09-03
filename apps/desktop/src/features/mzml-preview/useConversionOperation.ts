@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { usePreviewApi } from "./api";
+import type { SettledBackendBinding } from "./backendBinding";
+import { backendBindingIdentity } from "./backendBinding";
 import type {
   ConversionAvailability,
   ConversionLane,
@@ -439,7 +441,19 @@ function reportsAQueueOtherThan(
 }
 
 export function useConversionOperation(
-  onInstallationGeneration: (generation: number) => void,
+  /**
+   * Says where the installation sequence stands, as a fact rather than a
+   * request.
+   *
+   * **Reporting a generation is not asking for anything.** This operation reads
+   * the one slot every two seconds while a queue runs, and every one of those
+   * replies carries the counter; a sink that treated each of them as a reason
+   * to go and look would launch a backend process per poll behind a lane the
+   * queue already holds. So this raises a monotonic observation and nothing
+   * else — what to do about a generation nobody has reconciled yet is the
+   * workspace's, because the workspace is where the authoritative verdict is.
+   */
+  onInstallationObserved: (generation: number) => void,
   onOutputsAdopted: AdoptedOutputsSink,
   /** The lane facts this operation does not own, as a render sees them. */
   environment: ConversionEnvironment,
@@ -453,15 +467,22 @@ export function useConversionOperation(
    */
   readEnvironment: () => ConversionEnvironment,
   /**
-   * Which installation the session has applied a verdict for.
+   * Which installation a **settled** verdict has bound this session to.
    *
-   * The signal to read the catalog again, and the only honest one: which
+   * The signal to read the catalog again, and the only honest one. Which
    * semantics are offered is an answer about one executable, so the question is
-   * re-asked exactly when the executable is known to have changed. A recheck
-   * that resolves to the same installation does not advance it and costs no
-   * further probe.
+   * re-asked exactly when the bound executable changes — and a binding changes
+   * only when a verdict settles.
+   *
+   * Deliberately not `backendUsable`. That flag is false for the duration of
+   * *any* probe, because a check reports `checking` before it awaits, so keying
+   * the catalog on it read every healthy recheck as a disappearance: the four
+   * fieldsets were revoked, a good read still in flight was cancelled, and the
+   * returning verdict — naming the same installation at the same generation —
+   * spent a second `msconvert --help` probe putting back what was already
+   * correct. `checking` is activity; this is binding.
    */
-  installationGeneration: number,
+  backendBinding: SettledBackendBinding,
 ): ConversionOperation {
   const api = usePreviewApi();
   const [state, setState] = useState<WorkspaceConversionState>({ status: "idle" });
@@ -505,6 +526,32 @@ export function useConversionOperation(
    * backend verdict, applied to the one other reading bound to an installation.
    */
   const catalogGeneration = useRef(-1);
+  /**
+   * Which installation the catalog **now on screen** describes, or `null` when
+   * there is not one.
+   *
+   * Deliberately not `catalogGeneration`, and the difference is the point. That
+   * one is a high-water mark that never rewinds, because its job is to refuse a
+   * reply about a build that has already been replaced. This one falls to
+   * `null` the moment a catalog is revoked, because its job is to answer a
+   * different question: *does this session already hold the catalog for the
+   * installation it is now bound to?*
+   *
+   * That question is what lets a catalog read be the first operation to notice
+   * an installation change without paying for the discovery twice. The reply
+   * describes generation H, the workspace reconciles to H, the binding becomes
+   * H -- and the answer for H is already on screen, so nothing is re-read.
+   */
+  const installedCatalogGeneration = useRef<number | null>(null);
+  /**
+   * The binding this lane has already acted on, as the identity that named it.
+   *
+   * Not a second "the catalog needs refreshing" boolean. A boolean would be a
+   * fact of its own, free to disagree with the binding, and the disagreement is
+   * the whole family of defects here. The binding already answers the question:
+   * either this lane has served it or it has not.
+   */
+  const servedBinding = useRef<string | null>(null);
   /**
    * The semantic the user last chose, across catalogs.
    *
@@ -643,11 +690,14 @@ export function useConversionOperation(
     // is at least every number that maximum could produce, so it is strictly
     // more current as well as strictly simpler.
     //
-    // Safe outside the guard because the reconciler acts only on a strict
-    // increase over what this document has applied, and the counter only rises:
-    // a reply stale about the slot cannot be stale in a way that overstates the
-    // build. Nothing here inspects what failed, or whether anything failed.
-    onInstallationGeneration(update.installationGeneration);
+    // **Reporting it costs nothing, which is what makes reporting it on every
+    // read correct.** This is a fact arriving, not a request being made: the
+    // sink raises a monotonic observation, and a generation already observed is
+    // a no-op there. A poll of a long-running queue carries the same number
+    // every two seconds, and the hundredth of them asks for exactly as much
+    // work as the first — none. Nothing here inspects what failed, or whether
+    // anything failed.
+    onInstallationObserved(update.installationGeneration);
     if (update.sequence <= installedSequence.current) {
       return;
     }
@@ -714,7 +764,7 @@ export function useConversionOperation(
     if (update.state.status === "terminal" || update.state.status === "idle") {
       setStopRequested(false);
     }
-  }, [claimLane, onInstallationGeneration]);
+  }, [claimLane, onInstallationObserved]);
 
   /**
    * Reads which semantics this installation offers, and installs the answer if
@@ -745,6 +795,11 @@ export function useConversionOperation(
    */
   const revokeCatalog = useCallback((standing: ConversionSettings) => {
     catalogToken.current += 1;
+    // There is no catalog on screen after this, so there is no installation one
+    // describes. Cleared here rather than at each caller for the same reason the
+    // token is advanced here: the three facts move together or they are wrong,
+    // and this is the only place any of them may move.
+    installedCatalogGeneration.current = null;
     setSettings(standing);
     return catalogToken.current;
   }, []);
@@ -773,6 +828,7 @@ export function useConversionOperation(
           return;
         }
         catalogGeneration.current = catalog.installationGeneration;
+        installedCatalogGeneration.current = catalog.installationGeneration;
         const selectedId = reselect(catalog, chosenIntentId.current);
         chosenIntentId.current = selectedId;
         setSettings({ status: "ready", catalog, selectedId });
@@ -780,10 +836,16 @@ export function useConversionOperation(
         // first thing to notice the installation changed -- exactly as a
         // conversion report can. Without this the banner and everything read
         // from the replaced installation would stay on screen beside settings
-        // that describe its successor. Reported through the one reconciler that
-        // knows how to discard them, which re-reads only when this is actually
-        // newer and therefore cannot loop.
-        onInstallationGeneration(catalog.installationGeneration);
+        // that describe its successor.
+        //
+        // Raised as an observation, which is what makes it safe to raise here.
+        // The workspace reconciles it once, the verdict that follows binds this
+        // session to the installation this reply already describes, and the
+        // effect below recognises that the standing catalog *is* the answer for
+        // that binding -- so the news costs one backend verdict and no second
+        // help probe. Reporting it as "go and read the catalog again" is what
+        // would loop.
+        onInstallationObserved(catalog.installationGeneration);
       })
       .catch((cause: unknown) => {
         if (!mounted.current || token !== catalogToken.current) {
@@ -794,24 +856,57 @@ export function useConversionOperation(
         // could not be established is a conversion that cannot start.
         setSettings({ status: "failed", error: toPreviewError(cause) });
       });
-  }, [api, onInstallationGeneration, revokeCatalog]);
+  }, [api, onInstallationObserved, revokeCatalog]);
 
-  // Once per installation, and once more when this session first has a usable
-  // one.
-  //
-  // Not once per plan: reading it probes the installed msconvert help, which is
-  // a process on the one backend lane, and a probe behind every change of focus
-  // would make choosing a row expensive. Keyed on the applied generation rather
-  // than on a check having run, because a recheck that resolves to the same
-  // installation has learned nothing about what it offers -- and a flag that
-  // rose and fell inside one commit would not be a signal at all.
-  //
-  // Not asked while this session has no usable backend: the lane refuses a
-  // conversion for that first, and asking would add a refusal nobody needed.
+  /**
+   * The catalog lifecycle, and the one thing it is keyed on.
+   *
+   * **A catalog belongs to a binding.** Reading it probes the installed
+   * `msconvert --help`, which is a process on the one serialized backend lane,
+   * so the question is asked exactly once per installation this session becomes
+   * bound to and never for any other reason -- not once per plan, not once per
+   * focused row, and not once per check.
+   *
+   * Every transition is written out here rather than left to be inferred from
+   * two booleans, because inferring it is what went wrong:
+   *
+   * ```text
+   * unresolved                     -> no catalog yet, and nothing probed
+   * available G, none for G        -> read it, once
+   * available G, already have G    -> nothing; the answer is on screen
+   * available H after G            -> revoke G with its request, read H once
+   * settled unavailable            -> revoke the catalog with its request
+   * ```
+   *
+   * And, by construction, the transition that is *not* in that list: a check
+   * beginning, a check resolving to the same installation, and a check failing
+   * without producing a verdict all leave the binding where it was, so none of
+   * them reaches this effect at all. The catalog, the plan read against it and
+   * the user's chosen semantic stand throughout; `backendChanging` is what
+   * refuses the conversion for as long as the check runs, which is a sentence
+   * about a check rather than about an executable.
+   *
+   * Guarded on the binding it last served rather than on the effect having run.
+   * An effect running is a fact about React; a binding changing is a fact about
+   * the installed build, and only the second one is a reason to launch a
+   * process. Recording the identity is what makes the two impossible to
+   * confuse, whatever causes this to be evaluated again.
+   */
   useEffect(() => {
-    if (!environment.backendUsable) {
-      // And the catalog goes with the backend -- the one on screen *and* any
-      // still on its way. It described an executable this session can no longer
+    const binding = backendBindingIdentity(backendBinding);
+    if (servedBinding.current === binding) {
+      return;
+    }
+    servedBinding.current = binding;
+    if (backendBinding.status === "unresolved") {
+      // No verdict has settled, so there is no installation to ask about. The
+      // session opens here and leaves it once, and asking anything now would be
+      // asking about a build nobody has established exists.
+      return;
+    }
+    if (backendBinding.status === "unavailable") {
+      // The catalog goes with the backend -- the one on screen *and* any still
+      // on its way. It described an executable this session can no longer
       // launch, after a folder change that resolved to nothing or discovery
       // losing what it had found, so keeping either would leave the controls
       // offering availability marks for a build that is not installed, beside a
@@ -821,8 +916,18 @@ export function useConversionOperation(
       revokeCatalog({ status: "noBackend" });
       return;
     }
+    if (installedCatalogGeneration.current === backendBinding.installationGeneration) {
+      // The standing catalog already *is* the answer for this binding. This is
+      // the case where a catalog read was the first operation to resolve the
+      // replacement build: it installed the answer for H and reported H, the
+      // workspace reconciled, and the verdict has now bound the session to the
+      // installation this catalog already describes. Throwing it away to ask
+      // the same executable the same question would be a probe spent proving
+      // what is on screen.
+      return;
+    }
     readCatalog();
-  }, [environment.backendUsable, installationGeneration, readCatalog, revokeCatalog]);
+  }, [backendBinding, readCatalog, revokeCatalog]);
 
   const readState = useCallback(() => {
     // One at a time. The token below lets only the newest read install, so two

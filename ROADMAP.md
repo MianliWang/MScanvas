@@ -382,7 +382,8 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 
 **Started. The route is locked, the conversion lane has one availability
 authority, the installed `msconvert` has been measured against M6's finite
-candidate set, and what a conversion is asked to do is now a type; M6.4 is the
+candidate set, what a conversion is asked to do is now a type, and the nine
+admitted semantics are selectable with a truthful plan behind them; M6.5 is the
 next slice.**
 
 The route, the live conversion gap audit it was decided from, the nine product
@@ -394,8 +395,8 @@ slices:
 - M6.1 — conversion-lane authority. **complete.**
 - M6.2 — `msconvert` capability and evidence. **complete.**
 - M6.3 — typed `ConversionIntent`. **complete.**
-- M6.4 — visible settings, and a truthful plan. **implemented, unmerged.**
-- M6.5 — destination authority.
+- M6.4 — visible settings, and a truthful plan. **complete.**
+- M6.5 — destination authority. **next, not started.**
 - M6.6 — destination and conflict UX, including the destructive question.
 - M6.7 — convert selected, convert all.
 - M6.8 — cancellation, capacity, and truthful progress.
@@ -459,12 +460,17 @@ declares the exact invocation each intent emits, rather than trusting that M6.2'
 executable and today's are the same build. Nothing visible changed: the product
 still converts under the shipped intent and still emits the same two flags.
 
-**M6.4 is implemented and still not published.** It has stopped twice: once on
-three findings, which a bounded correction closed, and again when the fresh
-review of that corrected head found two more — a backend *check* being read as
-"no backend", and a running queue polling a stream of backend probes that cannot
-answer. Both are recorded in `BOOTSTRAP_STATUS.md`; neither is on `main`, which
-is unchanged. The paragraph below describes what the branch does.
+**M6.4 stopped twice before it was published, and both stops were about the
+same kind of mistake.** Three findings stopped it first, which a bounded
+correction closed; the fresh review of that corrected head found two more — a
+backend *check* being read as "no backend", and a running queue polling a stream
+of backend probes that could not answer while it held the lane. A second bounded
+correction closed those by answering one question rather than patching two
+paths: a conversion catalog belongs to a **settled backend binding**, which a
+check in progress does not move, and an installation generation arriving is an
+**observation** rather than a request, so one newly observed build costs one
+reconciliation however many readings carry it. All three rounds are recorded in
+`BOOTSTRAP_STATUS.md`.
 
 **M6.4 made the nine admitted semantics selectable without letting the
 interface re-invent the graph.** The controls a user meets are four scientific
@@ -494,8 +500,9 @@ this document has never read is not an idle slot**, and a conversion may not
 start against one. It took two review rounds and one stop to get there, and what
 the later rounds found were edges rather than the graph: a catalog request
 outliving the state it produced, an installation observation lost because the
-operation that made it was refused, and a way-out affordance claiming there was
-no ordinary way out while an enabled control offered one.
+operation that made it was refused, a way-out affordance claiming there was no
+ordinary way out while an enabled control offered one, and — twice over — a
+signal read from a proxy that resembled it.
 
 **The audit also found the boundary beneath M6 is stronger than this backlog
 implied**, and the route is shaped accordingly: destinations are already admitted
@@ -537,11 +544,9 @@ guard had been unable to see.
 
 - Widen the typed conversion settings the interface can actually express.
   CNV-004 to CNV-007's processing, population, precision and compression choices
-  are visible on M6.4's branch, in the nine combinations M6.2 measured and no
-  others, and are **not on `main`** — that slice is implemented and unmerged.
-  What remains here beyond publishing it is CNV-002's mzXML gate, whose
-  disposition is M6.10's, and CNV-003's output-location choices, which are
-  M6.5's and M6.6's.
+  are visible since M6.4, in the nine combinations M6.2 measured and no others.
+  What remains here is CNV-002's mzXML gate, whose disposition is M6.10's, and
+  CNV-003's output-location choices, which are M6.5's and M6.6's.
 - Queue work beyond the current bounds, **measurement-gated, and neither an exit
   criterion nor a route requiring a disposition**: a re-evaluated queue bound and
   per-item cancellation. Both are admitted only on M6.8's measurement of what an

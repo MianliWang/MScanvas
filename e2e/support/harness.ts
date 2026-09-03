@@ -37,6 +37,18 @@ export const IPC_TABLE_KEY = TABLE;
 /** Where the browser-side console ledger lives. */
 const CONSOLE_LOG = "__mscanvasConsole__";
 
+/**
+ * Where replies this run is deliberately holding open live.
+ *
+ * A rendered claim about a *stale* reply needs the window in which the reply is
+ * outstanding, and that window is otherwise a race: this boundary answers on
+ * the microtask after the call, so anything a test wanted to change during it
+ * had already missed it. Holding a command parks its promise here, by command
+ * name, until the test releases it -- the same shape the unit suites get from a
+ * deferred, at the boundary the rendered run actually crosses.
+ */
+const HELD = `${TABLE}Held`;
+
 export interface IpcCall {
   readonly command: string;
   readonly args: Record<string, unknown>;
@@ -63,11 +75,15 @@ export async function installIpcBoundary(table: Record<string, unknown>): Promis
       consoleLog: string,
       seeded: string,
     ) => {
+      // Derived rather than passed: `addInitScript` takes a bounded number of
+      // arguments, and one more key is not worth a wrapper object.
+      const heldKey = `${tableKey}Held`;
       const target = window as unknown as Record<string, unknown>;
       target["__MSCANVAS_DOCUMENT_AUTHORITY__"] = authority;
       target[callLog] = [];
       target[tableKey] = JSON.parse(seeded) as Record<string, unknown>;
       target[consoleLog] = [];
+      target[heldKey] = {};
 
       // The console ledger. Captured by patching rather than by reading a
       // driver log, so an entry can be attributed to a level and read back
@@ -115,6 +131,17 @@ export async function installIpcBoundary(table: Record<string, unknown>): Promis
           if (answer !== null && typeof answer === "object" && "__reject" in answer) {
             return Promise.reject((answer as { __reject: unknown }).__reject);
           }
+          if (answer !== null && typeof answer === "object" && "__hold" in answer) {
+            return new Promise((resolve, reject) => {
+              const held = target[heldKey] as Record<
+                string,
+                { resolve: (value: unknown) => void; reject: (cause: unknown) => void }[]
+              >;
+              const queue = held[command] ?? [];
+              queue.push({ resolve, reject });
+              held[command] = queue;
+            });
+          }
           return Promise.resolve(answer);
         },
         transformCallback: (callback: unknown) => callback,
@@ -128,6 +155,53 @@ export async function installIpcBoundary(table: Record<string, unknown>): Promis
     TABLE,
     CONSOLE_LOG,
     JSON.stringify(table),
+  );
+}
+
+/**
+ * Makes one command hang until {@link releaseInvokeHold} answers it.
+ *
+ * What this buys is the only thing a rendered run cannot otherwise state: what
+ * the interface does *while* an authoritative read is outstanding, and what it
+ * does when that read finally lands after the world has moved on.
+ */
+export async function holdInvoke(command: string): Promise<void> {
+  await setInvokeResult(command, { __hold: true });
+}
+
+/**
+ * Answers every call of one command this run is holding, and stops holding it.
+ *
+ * The answer replaces the hold in the table too, so a command released once
+ * behaves ordinarily afterwards rather than parking the next caller for ever.
+ */
+export async function releaseInvokeHold(command: string, answer: unknown): Promise<void> {
+  await browser.execute(
+    (heldKey: string, tableKey: string, name: string, value: string) => {
+      const target = window as unknown as Record<string, unknown>;
+      const parsed = JSON.parse(value) as unknown;
+      (target[tableKey] as Record<string, unknown>)[name] = parsed;
+      const held = target[heldKey] as Record<string, { resolve: (given: unknown) => void }[]>;
+      const waiting = held[name] ?? [];
+      held[name] = [];
+      for (const call of waiting) {
+        call.resolve(parsed);
+      }
+    },
+    HELD,
+    TABLE,
+    command,
+    JSON.stringify(answer),
+  );
+}
+
+/** How many calls of one command this run is currently holding open. */
+export async function heldInvokeCount(command: string): Promise<number> {
+  return browser.execute(
+    (heldKey: string, name: string) =>
+      ((window as unknown as Record<string, Record<string, unknown[]>>)[heldKey][name] ?? []).length,
+    HELD,
+    command,
   );
 }
 

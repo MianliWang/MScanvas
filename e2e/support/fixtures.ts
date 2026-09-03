@@ -228,8 +228,14 @@ export function ipcTable(
     get_workspace_conversion_state: {
       sequence: 0,
       state: { status: "idle" },
-      diagnostics: { available: false, itemCount: 0, exporting: false, lastExport: null },
+      diagnostics: { available: false, eligibleItemCount: 0, exporting: false, lastExport: null },
       backendQuarantined: false,
+      // Where the installation sequence stands. Rust always serializes it and
+      // the contract requires it, so a static answer that omitted it was a
+      // shape this boundary never sends -- harmless while nothing rendered read
+      // it, and a trap for the first case that drives a reconciliation through
+      // a slot read. Which is now one of them.
+      installationGeneration: 0,
     },
     open_mzml_preview: buildPreview(6),
     load_selected_spectrum: { outcome: "spectrum", spectrum },

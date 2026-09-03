@@ -18,9 +18,12 @@ import {
   ALLOWED_CONSOLE_SUBSTRINGS,
   boxOf,
   consoleEntries,
+  heldInvokeCount,
+  holdInvoke,
   horizontalOverflow,
   installIpcBoundary,
   ipcCalls,
+  releaseInvokeHold,
   setInvokeResult,
 } from "../support/harness";
 import { ipcTable, VENDOR_ROW } from "../support/fixtures";
@@ -28,7 +31,10 @@ import {
   availableBackend,
   intentCatalog,
   intentFor,
+  queueItem,
+  queueOf,
   SHIPPED_INTENT,
+  unavailableBackend,
 } from "../../apps/desktop/src/test/previewFixtures";
 
 const VIEWPORTS = [
@@ -143,6 +149,45 @@ async function recheckTheBackend(): Promise<void> {
     }
   }
   throw new Error("the backend banner offers no Check again");
+}
+
+/** How many times one command has crossed the boundary. */
+async function callsOf(command: string): Promise<number> {
+  return (await ipcCalls()).filter((call) => call.command === command).length;
+}
+
+/** Every backend process this session has asked Rust to launch. */
+async function backendProbes(): Promise<number> {
+  return callsOf("inspect_backend");
+}
+
+/** Every `msconvert --help` this session has spent on reading the catalog. */
+async function catalogProbes(): Promise<number> {
+  return callsOf("get_workspace_conversion_intents");
+}
+
+/** One conversion slot answer, as Rust serializes it. */
+function slot(
+  state: unknown,
+  options: { readonly sequence: number; readonly installationGeneration: number },
+) {
+  return {
+    sequence: options.sequence,
+    state,
+    diagnostics: { available: false, eligibleItemCount: 0, exporting: false, lastExport: null },
+    backendQuarantined: false,
+    installationGeneration: options.installationGeneration,
+  };
+}
+
+/** The build every case above runs on, offering only what MSCanvas ships. */
+function narrowedCatalog(installationGeneration: number) {
+  return intentCatalog({
+    unsupported: intentCatalog()
+      .intents.map((option) => option.intent.id)
+      .filter((id) => id !== SHIPPED_INTENT.id),
+    installationGeneration,
+  });
 }
 
 async function unexpectedConsole(): Promise<string[]> {
@@ -457,6 +502,246 @@ describe("M6.4 — visible conversion settings, rendered", () => {
       PANEL,
     );
     expect(rendered).not.toContain("no single change to one of them reaches");
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("keeps the settings and the plan through a check of the same installation", async () => {
+    // A backend check is activity, not a verdict about a build. Held open on
+    // purpose, because the whole of this claim lives inside the window in which
+    // the check is running -- which the boundary otherwise closes on the
+    // microtask after the press.
+    await openTheSettings();
+    const action = `${PANEL} button.primary-button`;
+    await browser.waitUntil(async () => browser.$(action).isEnabled(), {
+      timeout: 30_000,
+      timeoutMsg: "Convert never became available",
+    });
+    const catalogsBefore = await catalogProbes();
+    const plansBefore = await callsOf("describe_workspace_conversion_queue");
+    const planBefore = await planFact("Numeric precision");
+
+    await holdInvoke("inspect_backend");
+    await recheckTheBackend();
+    await browser.waitUntil(async () => (await heldInvokeCount("inspect_backend")) === 1, {
+      timeout: 30_000,
+      timeoutMsg: "the recheck never reached the boundary",
+    });
+
+    // Convert is refused while the check runs -- and the settings it would run
+    // are still on screen, still showing what the reader chose.
+    await browser.waitUntil(async () => !(await browser.$(action).isEnabled()), {
+      timeout: 30_000,
+      timeoutMsg: "Convert stayed available across a backend check",
+    });
+    expect(await describedText(action)).toContain(
+      "unavailable while the installed ProteoWizard backend is being checked",
+    );
+    expect(await browser.$(SETTINGS).isDisplayed()).toBe(true);
+    expect(
+      await browser.execute(
+        (selector: string) => document.querySelectorAll(`${selector} fieldset`).length,
+        SETTINGS,
+      ),
+    ).toBe(4);
+    expect(await isChecked(radio("precision", "mz64Intensity32"))).toBe(true);
+    expect(await planFact("Numeric precision")).toBe(planBefore);
+
+    // It answers, naming the installation the session was already bound to.
+    await releaseInvokeHold("inspect_backend", availableBackend);
+    await browser.waitUntil(async () => browser.$(action).isEnabled(), {
+      timeout: 30_000,
+      timeoutMsg: "Convert never came back after a healthy recheck",
+    });
+
+    // Nothing was re-read. This is the finding: a healthy recheck of an
+    // unchanged installation costs one backend verdict and nothing else.
+    expect(await catalogProbes()).toBe(catalogsBefore);
+    expect(await callsOf("describe_workspace_conversion_queue")).toBe(plansBefore);
+    expect(await planFact("Numeric precision")).toBe(planBefore);
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("clears the settings when the backend really goes, and a late reply cannot put them back", async () => {
+    // The other half of the same rule, and the one a transient check must not
+    // be confused with. A *settled* disappearance revokes the catalog and the
+    // request that would install one -- so the read still on its way about the
+    // build that is gone lands with no authority to resurrect anything.
+    await openTheSettings();
+    await browser.waitUntil(async () => browser.$(SETTINGS).isDisplayed(), {
+      timeout: 30_000,
+      timeoutMsg: "the settings never appeared",
+    });
+
+    // A different installation arrives, and its catalog read is held open.
+    await holdInvoke("get_workspace_conversion_intents");
+    await setInvokeResult("inspect_backend", {
+      ...availableBackend,
+      installationGeneration: 1,
+    });
+    await recheckTheBackend();
+    await browser.waitUntil(
+      async () => (await heldInvokeCount("get_workspace_conversion_intents")) === 1,
+      { timeout: 30_000, timeoutMsg: "the new installation never provoked a catalog read" },
+    );
+    const catalogsAfterRead = await catalogProbes();
+
+    // Before it answers, the session loses its ProteoWizard outright.
+    await setInvokeResult("inspect_backend", {
+      ...unavailableBackend,
+      installationGeneration: 2,
+    });
+    await recheckTheBackend();
+    await browser.waitUntil(async () => !(await browser.$(SETTINGS).isExisting()), {
+      timeout: 30_000,
+      timeoutMsg: "the settings survived a settled backend disappearance",
+    });
+
+    // The held read lands. It describes a build this session can no longer
+    // launch, and its request no longer has the authority to install it.
+    await releaseInvokeHold("get_workspace_conversion_intents", narrowedCatalog(1));
+    await browser.pause(500);
+    expect(await browser.$(SETTINGS).isExisting()).toBe(false);
+    const reason = await browser.execute(
+      () =>
+        document.querySelector("[data-live-region='conversion-availability']")?.textContent ?? "",
+    );
+    expect(reason).toContain("no usable backend");
+    // And nothing went looking for a catalog there is no backend to read.
+    expect(await catalogProbes()).toBe(catalogsAfterRead);
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("does not stack backend probes behind a running queue, and reconciles once when it lets go", async () => {
+    // The slot is read every two seconds while a queue runs, and every one of
+    // those readings carries where the installation sequence stands. A queue
+    // that has itself seen a replacement therefore reports a newer generation
+    // on every tick -- and each of those used to be a fresh `inspect_backend`,
+    // blocking on the very gate the queue holds.
+    await browser.setWindowSize(1_366, 768);
+    const running = (installationGeneration: number) =>
+      slot(
+        {
+          status: "running",
+          operationId: "1",
+          queue: queueOf([
+            queueItem(VENDOR_ROW.handle, VENDOR_ROW.fileName, { state: "running", attempts: 1 }),
+          ]),
+        },
+        { sequence: 1, installationGeneration },
+      );
+    await installIpcBoundary({
+      ...ipcTable(),
+      describe_workspace_conversion_queue: planFor(SHIPPED_INTENT),
+      // The queue is already running when this document loads, on the
+      // installation the session is about to settle on. The replacement happens
+      // below, under the running queue, so nothing here depends on which of the
+      // two mount reads answers first.
+      get_workspace_conversion_state: running(0),
+    });
+    await browser.url("/");
+    await browser.$(VENDOR).waitForDisplayed({ timeout: 60_000 });
+    await browser.$(VENDOR).click();
+    await browser.$(PANEL).waitForDisplayed({ timeout: 60_000 });
+    // The verdict has settled and the catalog for it has been read, so what
+    // follows is measured against a session that is fully established.
+    await browser.waitUntil(async () => (await catalogProbes()) === 1, {
+      timeout: 30_000,
+      timeoutMsg: "the session never read the catalog of its own installation",
+    });
+    const probesBefore = await backendProbes();
+
+    // The build is replaced under the running queue. Every poll from here
+    // reports it, and the slot sequence never moves.
+    await setInvokeResult("get_workspace_conversion_state", running(1));
+    const readsBefore = await callsOf("get_workspace_conversion_state");
+    await browser.waitUntil(
+      async () => (await callsOf("get_workspace_conversion_state")) >= readsBefore + 4,
+      { timeout: 30_000, timeoutMsg: "the running queue was never polled" },
+    );
+
+    // **Four readings of one observation, and not one backend process.**
+    expect(await backendProbes()).toBe(probesBefore);
+    expect(await catalogProbes()).toBe(1);
+
+    // The queue finishes and releases the lane, and the replacement build is
+    // what a check now finds.
+    await setInvokeResult("inspect_backend", {
+      ...availableBackend,
+      installationGeneration: 1,
+    });
+    await setInvokeResult("get_workspace_conversion_intents", narrowedCatalog(1));
+    await setInvokeResult(
+      "get_workspace_conversion_state",
+      slot(
+        {
+          status: "terminal",
+          operationId: "1",
+          reason: "completed",
+          queue: queueOf([
+            queueItem(VENDOR_ROW.handle, VENDOR_ROW.fileName, { state: "finalized", attempts: 1 }),
+          ]),
+        },
+        { sequence: 2, installationGeneration: 1 },
+      ),
+    );
+
+    // **Exactly one reconciliation, for the one observation.**
+    await browser.waitUntil(async () => (await catalogProbes()) === 2, {
+      timeout: 30_000,
+      timeoutMsg: "the released lane never reconciled the observed installation",
+    });
+    await browser.pause(2_500);
+    expect(await backendProbes()).toBe(probesBefore + 1);
+    expect(await catalogProbes()).toBe(2);
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("reconciles once when a refused conversion is the first thing to resolve a replacement", async () => {
+    // The pre-picker capability gate resolves the installed build before it
+    // refuses, so a refusal that creates no queue at all can still be this
+    // session's first sight of a replacement. Refusing must not unlearn that --
+    // and learning it must cost one check, not one per reading that carries it.
+    await openTheSettings();
+    const action = `${PANEL} button.primary-button`;
+    await browser.waitUntil(async () => browser.$(action).isEnabled(), {
+      timeout: 30_000,
+      timeoutMsg: "Convert never became available",
+    });
+    const probesBefore = await backendProbes();
+    const catalogsBefore = await catalogProbes();
+
+    // BEGIN resolves the replacement, records it, and then refuses the semantic
+    // that build cannot express. The slot read that follows carries the news.
+    await setInvokeResult("begin_workspace_conversion_queue", {
+      __reject: {
+        kind: "conversion_intent_unsupported",
+        summary: "The installed ProteoWizard build does not offer that conversion option.",
+        detail: null,
+        retryable: false,
+      },
+    });
+    await setInvokeResult(
+      "get_workspace_conversion_state",
+      slot({ status: "idle" }, { sequence: 0, installationGeneration: 1 }),
+    );
+    await setInvokeResult("inspect_backend", {
+      ...availableBackend,
+      installationGeneration: 1,
+    });
+    await setInvokeResult("get_workspace_conversion_intents", narrowedCatalog(1));
+    await browser.$(action).click();
+
+    // The catalog now describes the build that is actually installed.
+    await browser.waitUntil(async () => (await catalogProbes()) === catalogsBefore + 1, {
+      timeout: 30_000,
+      timeoutMsg: "the refusal never reconciled the installation it resolved",
+    });
+    await browser.pause(1_000);
+    // Once. Not once per reading of the slot.
+    expect(await backendProbes()).toBe(probesBefore + 1);
+    expect(await catalogProbes()).toBe(catalogsBefore + 1);
+    // Nothing was started, and no destination was ever asked for.
+    expect(await callsOf("choose_workspace_conversion_destination")).toBe(0);
     expect(await unexpectedConsole()).toEqual([]);
   });
 
