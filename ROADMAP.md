@@ -446,11 +446,18 @@ variant carries a picker name or a scope, and no admitted row composes
 centroiding with an MS-level filter, because that pair was never run. The two
 policy types that used to answer the same question a second time are gone, the
 queue binds one intent and a retry re-reads it, and integrity now asks the
-output whether it did *what was asked* — per array width, compression in both
-directions, the exact requested population, and the output's own processing
-claim compared against the request, with silence recorded as unverified rather
-than as proof. Nothing visible changed: the product still converts under the
-shipped intent and still emits the same two flags.
+output whether it did *what was asked* — per array width across both record
+lists, compression established per array in both directions, the exact requested
+population, and the processing each spectrum's own `dataProcessing` reference
+selects, compared against what the source already carried. Two rounds of
+exact-head review shaped that contract: a requested transformation must not be
+rejected for doing what the evidence says it does, a comparison the request put
+outside the question must not be recorded as one that passed, and silence — an
+absent record, an unresolved reference, a history merely copied through — is
+unverified rather than proof. The planner also proves the *live* executable
+declares the exact invocation each intent emits, rather than trusting that M6.2's
+executable and today's are the same build. Nothing visible changed: the product
+still converts under the shipped intent and still emits the same two flags.
 
 **The audit also found the boundary beneath M6 is stronger than this backlog
 implied**, and the route is shaped accordingly: destinations are already admitted

@@ -6762,18 +6762,31 @@ it is reporting a coverage it does not have.
 
 ### The mechanisms, proved load-bearing
 
-**Eleven** M6.3 mechanisms were reverted one at a time and the test that pins
-each was confirmed to fail: the admitted table returning every combination; the
-capability check ignoring what the intent emits; a digit-led option name being
-dropped again; one array's compression marker answering for the record it is in;
-the chromatogram precision loop removed; representation verifying on no mismatch
-rather than on comparability; the source history not subtracted from the output's
-claims; precision read as a per-record union again; the source never projected
-through the intent; a representation change judged without the intent; and a
-retry re-deriving the intent instead of re-reading it.
+**Nineteen** M6.3 mechanisms were reverted one at a time and the test that pins
+each was confirmed to fail: the admitted table returning every combination;
+spectrum length equality required under centroiding; a skipped length comparison
+recorded as established; unreferenced processing definitions counted again; an
+unresolved reference read as no processing; a spectrum reference no longer
+overriding the list default; processing history collapsed back to class
+presence; the two rejected pickers sharing one identity; the source history not
+subtracted from the output's claims; filter capability reduced to a name; the
+capability check ignoring what the intent emits; a digit-led option name dropped
+again; one array's compression marker answering for the record it is in; the
+chromatogram precision loop removed; representation verifying on no mismatch
+rather than on comparability; precision read as a per-record union again; the
+source never projected through the intent; a representation change judged without
+the intent; and a retry re-deriving the intent instead of re-reading it.
 
-The whole set was re-run after the correction, on a tree the runner verified
-clean against `HEAD` before it started and again after it restored.
+The whole set was re-run after each round, on a tree the runner verified clean
+against `HEAD` before it started and again after it restored.
+
+**One of them passed on the first attempt, and again the test was wrong rather
+than the mechanism.** Reverting the unresolved-reference rule to "read it as an
+empty history" still left the request unverified, because subtracting nothing
+from an output's history still finds the requested picker missing. What separates
+the two is a *source* whose reference dangles while the output resolves and
+carries the picker: the real rule attributes nothing, the mutation attributes
+everything. That case is now the assertion.
 
 **The union mutation passed on the first attempt, and the test was wrong rather
 than the mechanism.** The swapped-roles document a union check also refuses — for
@@ -6916,17 +6929,110 @@ refusing on it would be a new production refusal resting on a copy-through
 generalization M6.2 did not qualify. It is used only to remove a false rejection.
 
 
+
+### The stabilization, and the three invariants it was really about
+
+The exact-head review of the corrected candidate returned one P1 and three P2.
+Four findings, three root causes, and the useful part of the round was refusing
+to fix them where they surfaced.
+
+**N1 — P1. A requested transformation was rejected for doing what it does.**
+`compare_spectra` required source and output `defaultArrayLength` to be equal
+whatever the intent asked for, while this repository's own M6.2 record states the
+admitted default picker turns source peaks `2,1,3,1` into entries `4,1,7,1`, the
+surplus being zero-intensity padding. A faithful `UnscopedDefaultCentroiding`
+conversion of an mzML source was refused as `BinaryArrayMismatch::Length` before
+the requested-processing judgement could run. Reachable through the same public
+source-comparison API as the previous round's F5.
+
+The correction's own centroiding fixtures never caught it because they kept both
+sides the same length — which is not what centroiding does. The regression now
+uses the measured counts.
+
+**Skipping the check would have been the wrong repair.** A comparison the intent
+put outside the question is not a comparison that passed, and one aggregate
+`BinaryArrayLengths` could not say "spectrum lengths do not apply here, and
+chromatogram lengths still do" without lying about one of them. The property is
+split, the spectrum half is **inapplicable** under centroiding, the chromatogram
+half stays compared — spectrum processing does not excuse chromatogram structure
+— and under `NoAdditionalCentroiding` an unexpected length change is still a
+defect.
+
+**N2 and N3 — P2. Processing history was neither reference-resolved nor lossless
+enough to compare.** These were one problem wearing two labels, and the previous
+round's repair had improved a document-wide *fold* into a document-wide *set*
+without noticing that both answer questions the comparison does not ask.
+
+The scanner now models what mzML actually says. `dataProcessing/@id` names a
+definition; `spectrumList/@defaultDataProcessingRef` selects one for the list;
+`spectrum/@dataProcessingRef` overrides it; and each spectrum carries the history
+its *effective* reference selects. A definition nothing references is inert. A
+reference that cannot be resolved — a missing target, an absent or repeated
+identity — is `Unresolved`, never a guess and never read as "no processing".
+
+History is a **multiset of distinguishable identities**. `cwt` and `vendor` are
+separate, so a second rejected picker added beside an inherited one is visible
+rather than subtracted away by a shared presence bit; occurrences are counted, so
+a second application of the requested picker is visible too. And the comparison
+runs per spectrum, so a picker attached to one cannot establish the request for
+another.
+
+**What the model cannot do is stated where it is paid.** Two unknown
+implementations are indistinguishable, because the free text is not retained as
+domain state. So where the source already carried an unknown method, the delta
+over unknowns is not establishable and the request is neither verified nor
+refused on that axis. The alternative — a retained opaque fingerprint — was
+available and not taken: it buys precision for a case no admitted intent reaches
+today, at the cost of carrying provider text through the scanner.
+
+**N4 — P2. Capability admission checked a name, not an invocation.** A build that
+made `peakPicking`'s picker token mandatory, or gave `msLevel` a second required
+argument, declares everything a name check asks for and would still reject the
+argv. The previous round's justification for stopping at the name — that pinning
+a signature would need a new measurement — was answering the wrong question: the
+gate is not asking whether the grammar matches M6.2's help, but whether the
+*currently installed* grammar accepts the invocation this product emits.
+
+The lowering now carries a typed invocation shape, and the capability check reads
+the parsed declaration structurally: required and optional positional
+placeholders, and whether every declared parameter the invocation omits is
+optional. A grammar that widens with an extra optional parameter still plans.
+Nothing is measured; the installed help already says it.
+
+### The audit, and the fifth thing it found
+
+Three tables were walked rather than spot-checked: every integrity property this
+slice touches against both processing postures, the processing provenance states
+the model claims to distinguish, and every provider feature the nine admitted
+rows emit.
+
+It found one further class of false claim. A document that gives a property
+nothing to inspect was recording it **verified** — a chromatogram-only conversion
+established "spectrum representation unchanged" through an empty loop, which is
+the same defect as F3 with the arrays removed. Those now record `inapplicable`,
+which is the honest third answer and, unlike `unverified`, does not stop a
+faithful LabSolutions conversion being fully verified.
+
+### What is still not taken
+
+The deferred stronger rule. The per-run delta now exists in both directions, so
+"the output carries a picker the source did not" is available for
+`NoAdditionalCentroiding` — and refusing on it would still be a new production
+refusal resting on a copy-through generalization M6.2 did not qualify. The delta
+removes false rejections; it creates none.
+
+
 ### Validation
 
 `cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
 --all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
 `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
 `pnpm build`, `pnpm e2e:typecheck` and `git diff --check`, each run directly on
-the corrected head and each exiting zero. Rust **1,381** and frontend **1,398** —
-thirty-one Rust tests added across the slice and its correction, none removed or
-weakened, and the frontend unchanged, which is what a slice that touches no
-frontend file should do. The green CI on the stopped head was not inherited: the
-correction produced a new exact head and the whole set was re-run on it.
+the stabilized head and each exiting zero. Rust **1,388** and frontend **1,398** —
+thirty-eight Rust tests added across the slice and its two corrections, none
+removed or weakened, and the frontend unchanged, which is what a slice that
+touches no frontend file should do. No result was inherited from an earlier head:
+each correction produced a new exact head and the whole set was re-run on it.
 
 **Browser E2E was not run, and is not described as green.** This slice changes no
 frontend file, no CSS, no DTO field and no rendered behaviour. `apps/desktop/AGENTS.md`
