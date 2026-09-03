@@ -705,6 +705,18 @@ underneath it: the help parser required an option name to begin with a letter, s
 names may now begin with a digit; filter names and grammar parameters keep the
 stricter rule.
 
+**A declared name is not a declared invocation.** A build that made
+`peakPicking`'s picker token mandatory, or gave `msLevel` a second required
+argument, declares everything a name check asks for and would still reject the
+argv. The lowering therefore carries a typed *invocation* — the filter name, how
+many positional arguments follow it, and which `name=` parameters it supplies —
+and the capability gate reads the parsed grammar structurally: required and
+optional positional placeholders, and whether every declared parameter the
+invocation omits is optional. Structural rather than textual, so a build that
+widens the grammar with an extra *optional* parameter still plans. This is a
+capability check, not a version pin, and it needs no measurement: the installed
+help already says it.
+
 Integrity became intent-aware in four places, each answering a different
 question. Numeric precision is read **per array role and across both record
 lists**, which is why the mzML scanner gained per-role encoding sets: a
@@ -720,7 +732,23 @@ sibling. Population is the exact requested subset: the source is projected
 through the intent before any comparison runs, so a requested `msLevel` filter is
 not reported as a spectrum-count defect, and a narrowing request over a source
 holding a spectrum of unstated MS level is refused rather than sorted onto a
-side. And the processing history is compared against the request.
+side. And the processing history is compared against the request, at the scope
+mzML says it applies to.
+
+**A requested transformation is not a defect, and skipping a comparison is not
+establishing it.** M6.2 measured the admitted default picker turning source peaks
+`2,1,3,1` into entries `4,1,7,1`, so under `UnscopedDefaultCentroiding` a
+spectrum's point count is *expected* to change — and an unconditional
+source/output length equality refused exactly the operation the intent exists to
+express. The aggregate length property is therefore split: the spectrum half is
+**inapplicable** under centroiding, a question that conversion never asked, while
+the chromatogram half stays compared, because spectrum processing does not excuse
+chromatogram structure. Under `NoAdditionalCentroiding` an unexpected length
+change remains a defect. The same three-way answer covers a document that gives a
+property nothing to inspect at all: a chromatogram-only conversion records the
+spectrum-scoped properties as inapplicable rather than establishing them through
+an empty loop, and — unlike `unverified` — that does not stop a faithful
+conversion being fully verified.
 
 **Verified means the comparison was possible, not that no mismatch was seen.**
 The two came apart on representation: a source that emitted no profile/centroid
@@ -730,19 +758,36 @@ property verified, so `NoAdditionalCentroiding` — which rests on that comparis
 property now verifies only where both sides stated a marker. The hard refusal for
 a proved profile-to-centroid change is unchanged.
 
-**The processing comparison is deliberately asymmetric, and the asymmetry is the
-OpenMS caveat applied.** Asking for the default picker makes the claim the
-question — but the question is about *this* conversion. The measured build copies
-an incoming `dataProcessing` list into its output, so a source already carrying
-another picker appears in the output beside the requested one; a document-level
-fold read that as two contradictory algorithms and rejected a faithful run. The
-scanner therefore keeps a bounded **set** of claimed algorithms rather than a
-fold, and what is compared is the algorithms the output carries that the source
-did not. A genuinely new unrequested algorithm still refuses. Asking to add
-nothing does not make the claim a refusal channel at all, for the same
+**Processing is read by reference, per spectrum, and without losing what the
+comparison needs.** mzML says which processing applies to a spectrum:
+`dataProcessing/@id` names a definition, `spectrumList/@defaultDataProcessingRef`
+selects one for the list, and `spectrum/@dataProcessingRef` overrides it. A
+definition nothing references applies to nothing, and counting it would let a
+picker that never ran establish or refuse a request. A reference that cannot be
+resolved — a missing target, an absent or repeated identity — is *unresolved*,
+never a guess and never "no processing"; the property degrades instead. The
+comparison runs per spectrum, so a picker attached to one cannot answer for
+another.
+
+What it compares is a **multiset of distinguishable identities**, not a set of
+classes. The measured build copies an incoming `dataProcessing` list into its
+output, so a source already carrying another picker appears beside the requested
+one; a document-level fold read that as two contradictory algorithms and rejected
+a faithful run, and a class-presence set then hid a *second* rejected picker
+added beside an inherited one. `cwt` and `vendor` are therefore separate
+identities and occurrences are counted, so an added second application is
+visible. What the model cannot distinguish is two *unknown* implementations from
+one another, and that limit is stated where it is paid: where the source already
+carried an unknown method the delta over unknowns is not establishable, and the
+request is neither verified nor refused on that axis.
+
+**The comparison is deliberately asymmetric, and the asymmetry is the OpenMS
+caveat applied.** A genuinely new unrequested algorithm refuses. Asking to add
+nothing does not make the history a refusal channel at all, for the same
 copy-through reason; what guards that direction is the representation comparison,
-and only where it was possible. An absent claim, and an unchanged history, are
-`unverified` under both — never "no peaks were picked".
+and only where it was possible. An absent record, an unresolved reference, and a
+history the output merely repeats are all `unverified` — never "no peaks were
+picked".
 
 **The stronger rule is still not taken.** The source/output delta above makes
 "the output carries a picker the source did not" available for
@@ -751,12 +796,17 @@ path every production conversion runs, resting on a copy-through generalization
 M6.2 did not qualify. The delta is used only to remove a false rejection, never
 to create a new one.
 
-*Proof.* `intent.rs` pins the table itself: forty-eight against nine, exactly the
-admitted combinations constructible, no row listed twice, every row naming its
-evidence, no scoped picker nameable, and the shipped intent lowering to today's
-two flags — and that every argument an admitted intent emits is covered by a
-stated capability requirement, with nothing required that is not emitted.
-`capability.rs` pins that removing one declaration at a time refuses the intent
+*Proof.* The centroiding regression uses the counts M6.2 measured —
+`2,1,3,1` in, `4,1,7,1` out — rather than a fixture whose lengths happen to
+match, because a matching fixture proves nothing about this. `intent.rs` pins the
+table itself: forty-eight against nine, exactly the admitted combinations
+constructible, no row listed twice, every row naming its evidence, no scoped
+picker nameable, and the shipped intent lowering to today's two flags — and that
+every argument an admitted intent emits is covered by a stated capability
+requirement, with nothing required that is not emitted. `capability.rs` pins that
+a grammar keeping the filter's name while changing its required shape is refused
+before a command exists, that an added optional parameter is not, and that
+removing one declaration at a time refuses the intent
 that needs it, as a `PlanError` rather than a backend failure, while the shipped
 intent still plans on a build declaring only what it uses. `conversion.rs` pins the judgement: one byte-identical output document
 that is valid under the intent it was produced under and a

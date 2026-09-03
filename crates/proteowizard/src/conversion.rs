@@ -4284,6 +4284,28 @@ mod tests {
             "a repeated processing identity still resolved"
         );
 
+        // The discriminating case: the *source* reference dangles while the
+        // output resolves and carries exactly what was asked for. Reading an
+        // unresolved reference as an empty history would subtract nothing, find
+        // the requested picker added, and establish the request over a source
+        // whose processing nobody could determine.
+        let dangling_source = source.replace(
+            &format!(r#"defaultDataProcessingRef="{APPLIED_PROCESSING}""#),
+            r#"defaultDataProcessingRef="absent""#,
+        );
+        assert!(
+            verify_under(
+                &dangling_source,
+                &claiming_pickers(&intensity_at_64(&output_document(&PICKED, 1)), &[DEFAULT],),
+                centroiding,
+            )
+            .valid()
+            .expect("an unresolved source reference is not a contradiction")
+            .unverified()
+            .contains(&IntegrityProperty::RequestedProcessing),
+            "a source whose processing could not be resolved still attributed the picker"
+        );
+
         // And a resolved definition that records no peak picking at all says
         // nothing about picking, rather than saying none happened.
         assert!(
