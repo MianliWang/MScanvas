@@ -104,8 +104,8 @@ surface, not about building the boundary.
 | G3 | `applyUpdate` assigns `busyRef` unconditionally from the arriving status, so a read installing a non-owning status can **lower a claim a handler just raised** | authority defect | **M6.1 — closed.** A read may raise the lane, never lower a claim |
 | G4 | `ConversionOperation.canRetry` is computed and **has no consumer**; the `Retry` button answers to `canConvert` instead — two rules that can drift | authority defect | **M6.1 — closed.** `Retry` reads `retryAvailability` |
 | G5 | No `msconvert` **capability measurement** exists beyond single- and multi-output mzML with `--zlib`. No `--filter`, no filter ordering, no `peakPicking`, no MS-level selection and no compression choice has ever been executed through this boundary | evidence gap | **M6.2** |
-| G6 | There is **no typed conversion intent**. `OpenFormat::MzMl` is hard-coded in the planner and `ConversionPolicy::default()` fixes zlib, so `ConversionQueue` binds no intent because there is none to bind | model gap | **M6.3** |
-| G7 | CNV-002 mzXML is unplannable at the product boundary. `OpenFormat::MzXml` and `require_conversion(OpenFormat::MzXml)` exist in the crate, and a test pins that the mzXML grammar **does not** enable public conversion planning | gated by evidence | **M6.2**, then **M6.10** |
+| G6 | There is **no typed conversion intent**. `OpenFormat::MzMl` is hard-coded in the planner and `ConversionPolicy::default()` fixes zlib, so `ConversionQueue` binds no intent because there is none to bind | model gap | **M6.3 — closed.** `ConversionIntent`, admitted by table, bound at `ConversionQueue::new` |
+| G7 | CNV-002 mzXML is unplannable at the product boundary. `OpenFormat::MzXml` and `require_conversion(OpenFormat::MzXml)` exist in the crate, and a test pins that the mzXML grammar **does not** enable public conversion planning. Since **M6.3** that refusal is a type rather than a runtime `PlanError`: no `ConversionIntent` names the format, so the command is unconstructible and the `MzXmlIntegrityGateRequired` arm is unreachable — kept, because deleting a refusal because nothing reaches it today is how a format returns without one | gated by evidence | **M6.2**, then **M6.10** |
 | G8 | CNV-003 exposes no location *choice*. There is one Rust-owned folder picker and no sibling / named-subfolder / custom vocabulary | product surface | **M6.5**, **M6.6** |
 | G9 | No admitted acquisition family is **directory-shaped**, so the vendor-dataset-root rule CNV-003 states has never been exercisable. `ProcessError::OutputDirectoryInsideDirectoryInput` and `BackendExecutionFailure::OutputInsideSource` exist and are unreachable for conversion today | latent safety rule | **M6.5** |
 | G10 | CNV-008's overwrite half is unimplemented, and what is missing is a **destructive-finalization contract on the Rust side** — how an already-validated new object replaces an existing destination object without a failure losing the old one. The backend's own overwrite behaviour is *not* the gap: ADR 0009 sends the provider only into private staging and refuses before launch where the final target exists | product and architecture gap | **M6.6** |
@@ -229,12 +229,13 @@ destination object — not a new queue made of what is left.
 re-searching the roster changes what the user is looking at, not what the queue
 does; removing a row a live queue holds is refused with `conversion_busy()`.
 
-**What M6 must add.** The queue binds no *conversion intent*, because there is
-none to bind: the format is hard-coded and the compression is a fixed policy
-inside the plan. The moment M6.3 makes an intent expressible and M6.4 makes it
-visible, **the intent joins the bound facts** — captured at `ConversionQueue::new`
-alongside the conflict policy, never re-read per item, and never re-read from a
-control the user may since have moved. Two further facts M6 adds have the same
+**What M6 must add.** The queue bound no *conversion intent*, because there was
+none to bind: the format was hard-coded and the compression was a fixed policy
+inside the plan. **M6.3 made the intent expressible and joined it to the bound
+facts** — captured at `ConversionQueue::new` alongside the conflict policy, never
+re-read per item, and never re-read from a control the user may since have moved.
+M6.4 makes it visible, which changes where the bound value comes from and not
+what happens to it afterwards. Two further facts M6 adds have the same
 obligation: the **destination policy** M6.5 introduces is a bound plan fact, and
 so is every identity it resolves to — but those are not the same cardinality. The
 policy is one decision bound to the plan; a source-relative policy resolves to
@@ -653,6 +654,84 @@ against the request, never as proof, with absence recorded as unverified.
 centroiding rule.
 
 *Downstream:* M6.4.
+
+*Delivered.* `crates/proteowizard/src/intent.rs` holds five closed enums and one
+`ConversionIntent` whose five fields are private and whose only constructor is
+`admitted(..)`. That constructor is a lookup in `ConversionIntent::ADMITTED` —
+nine rows, each naming the M6.2 case that measured it — so the compatibility rule
+*is* the table and there is no second implementation of it to drift from.
+`SHIPPED` is row one and lowers to exactly `--mzML --zlib`, which is the argv the
+product already emitted.
+
+**The type expresses the graph M6.2 produced, not the axes it has.** Five axes
+span forty-eight combinations; nine are constructible. Everything M6.2 measured
+and rejected or could not reach is unnameable rather than merely unused: `mzXML`
+has no `OutputFormat` variant, no `ProcessingIntent` variant carries a picker
+name or an `msLevel` scope, and no admitted row composes centroiding with a
+population filter — because that pair was never measured, which is dimension 8 of
+this slice's own evidence order.
+
+The three centroiding obligations locked above are met as follows. Obligation 2
+is met by construction and vacuously: the only admitted algorithm cannot be
+named as a token and the scope cannot be reached, so `UnscopedDefaultCentroiding`
+has no parameters to misplace. Obligation 1 — *ordered sequence, never a set* —
+is met in effect rather than in shape: no admitted combination lowers to more
+than one filter, so no order between two filters is expressible today, and the
+one total order `lower()` fixes (processing before population) is straight-line
+code that nothing outside can influence. **The obligation becomes structural
+again the moment the evidence admits a two-filter composition**, and a widened
+table that leaves the lowering a struct would be the defect this obligation
+names.
+
+`ConversionPolicy` and `CompressionPolicy` are gone rather than wrapped. Both
+were second answers to what a conversion had asked for — a policy the integrity
+check was allowed to assume, constructible alone, beside a hard-coded format in
+the planner and an unconditional `--zlib` in the builder. `ConversionPlan` now
+carries the intent it was planned under, `ConversionQueue` binds one at
+construction and exposes it read-only, and every attempt — first and retry alike
+— re-reads that field rather than deciding again.
+
+Integrity became intent-aware in four places, each answering a different
+question. Numeric precision is read **per array role**, which is why the mzML
+scanner gained a per-role encoding set: a per-record union reports `{32, 64}` for
+a correct mixed-precision output and for one with the roles swapped, so it cannot
+answer the question the intent asks. Compression is checked in both directions,
+and under `NoCompression` a record holding arrays must *state* `no compression`
+rather than merely omit `zlib`. Population is the exact requested subset: the
+source is projected through the intent before any comparison runs, so a requested
+`msLevel` filter is not reported as a spectrum-count defect, and a narrowing
+request over a source holding a spectrum of unstated MS level is refused rather
+than sorted onto a side. And the processing claim is classified into five states
+and compared against the request.
+
+**The processing comparison is deliberately asymmetric, and the asymmetry is the
+OpenMS caveat applied.** Asking for the default picker makes the claim the
+question: a recognized-but-different algorithm, an unrecognized one, or two
+claimed at once all refuse. Asking to add nothing does *not* make it a refusal
+channel, because the measured build copies an incoming `dataProcessing` list into
+its output — so a picker claim in the output can be the source's own history, and
+refusing it would refuse legitimate already-centroided inputs. What guards that
+direction is the source/output representation comparison, which is about this
+conversion. An absent claim is `unverified` under both, never "no peaks were
+picked".
+
+*Proof.* `intent.rs` pins the table itself: forty-eight against nine, exactly the
+admitted combinations constructible, no row listed twice, every row naming its
+evidence, no scoped picker nameable, and the shipped intent lowering to today's
+two flags. `conversion.rs` pins the judgement: one byte-identical output document
+that is valid under the intent it was produced under and a
+`NumericPrecisionMismatch` under a different admitted one; the two array roles
+held to their own widths, proved with a document whose roles are swapped and
+whose per-record union is unchanged; compression failing in both directions;
+a narrowed population read as the requested subset under one intent, as an
+excluded level surviving under another, and as a plain count loss under `All`;
+every arm of the processing classification, including the absent claim that is
+unverified rather than either answer; and profile-to-centroid read as the
+requested result under one intent and as `RepresentationChange` under the other.
+`capability.rs` pins that no admitted intent reaches the mzXML grammar, and
+`preview/tests.rs` pins that a queue keeps the intent it was bound to across a
+retry — asserted with an intent that is deliberately not `SHIPPED`, so a
+re-derivation would be visible rather than accidentally right.
 
 ### M6.4 — Visible settings, and a truthful plan
 

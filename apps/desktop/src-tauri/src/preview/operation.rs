@@ -366,7 +366,7 @@ pub(super) fn item_output_topology(
         });
     }
     Ok(ItemOutputTopology::KnownSingle {
-        basename: super::conversion::planned_output_name(file_name)
+        basename: super::conversion::planned_output_name(file_name, ConversionIntent::SHIPPED)
             .ok_or_else(super::dto::dataset_not_convertible)?,
     })
 }

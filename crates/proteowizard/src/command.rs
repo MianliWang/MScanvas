@@ -34,7 +34,8 @@ impl OpenFormat {
     /// all -- M6.2 measured it dropping spectra silently -- so there is nothing
     /// to translate back, and the mzXML machinery below stays reachable from
     /// the capability layer for M6.10 rather than from a plan.
-    pub(crate) const fn of_intent(format: OutputFormat) -> Self {
+    #[must_use]
+    pub const fn of_intent(format: OutputFormat) -> Self {
         match format {
             OutputFormat::MzMl => Self::MzMl,
         }

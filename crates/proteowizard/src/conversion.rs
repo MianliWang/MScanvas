@@ -908,6 +908,14 @@ pub enum ConversionIntegrityOutcome {
     /// against, because a comparison would already have found the counts
     /// disagreeing.
     OutputContainsNoRecords,
+    /// The output does not hold as many spectra as the source was expected to
+    /// contribute.
+    ///
+    /// `source` is that expectation, not the source's own count. Under an
+    /// intent carrying every spectrum the two are the same number; under one
+    /// that narrows the population it is the size of the requested subset,
+    /// because comparing against the whole source would report the requested
+    /// filtering as a loss.
     SpectrumCountMismatch {
         source: u64,
         output: u64,
@@ -2265,6 +2273,14 @@ fn stores_exactly(observed: NumericPrecisionSet, bits: u8) -> bool {
 /// the roles appear *somewhere* in the record, and an array claiming both roles
 /// leaves both per-role sets empty. Failing here is the fail-closed reading of
 /// a gap that check documents and cannot close.
+///
+/// The readability argument passed in is the *document pair's*, not the
+/// output's alone, in the comparison path. That is deliberately the same
+/// condition [`check_compression_policy`] degrades on: both are questions about
+/// the output, and answering one of them while the other stands down would make
+/// two requested properties disagree about how much an indirected vocabulary
+/// costs. It is conservative in one direction only -- an unreadable source
+/// leaves this unverified rather than asserted.
 fn check_requested_precision(
     after: &MzmlFacts,
     intent: ConversionIntent,
@@ -3032,6 +3048,23 @@ mod tests {
     #[test]
     fn each_array_role_is_held_to_the_width_its_own_request_named() {
         let source = source_document(&TWO_SPECTRA, 1);
+
+        // The correct document first, and it is half the proof: a per-record
+        // union of the encodings this output declares is {32, 64}, which is the
+        // same set the swapped document below declares. A check reading the
+        // union refuses this one, so passing here and failing there is what
+        // shows the two roles are read apart.
+        assert!(
+            verify_under(
+                &source,
+                &output_document(&TWO_SPECTRA, 1),
+                ConversionIntent::SHIPPED,
+            )
+            .valid()
+            .is_some(),
+            "the correctly encoded output was refused"
+        );
+
         let swapped = output_document(&TWO_SPECTRA, 1)
             .replace(
                 r#"<cvParam accession="MS:1000514"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000523"/>"#,

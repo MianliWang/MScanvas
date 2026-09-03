@@ -6608,3 +6608,189 @@ wire vocabulary, no destination or cancellation behaviour, and no dependency or
 lockfile. It does not decide MSCanvas's precision policy, does not make the mzXML
 disposition, does not absorb M6.8's cancellation evidence, and does not start
 M6.3.
+
+## M6.3 — Typed `ConversionIntent`, 2026-09-02
+
+The first slice to build on M6.2's record. What it adds is not a setting and not
+a control: it is a **type boundary around an incomplete composition graph**.
+
+Baseline `5ae1b150e4f850f6b60a874fb49995a940c36fc3`, clean and level with
+`origin/main`.
+
+### What M6.2 actually produced, and why a list of options would have been wrong
+
+M6.2 measured twelve candidates and closed each to a state. Read as a list of
+supported options it says: mzML yes, mzXML no, four precision modes yes,
+compression both ways yes, MS-level selection yes, the default picker yes, `cwt`
+no, vendor blocked. Typed from that list, `ConversionIntent` would have been five
+independent enum fields — and the free cross-product of those five spans **48
+combinations, of which 9 were measured**.
+
+The gap between 48 and 9 is the asset. *Individual capability supported* is not
+the same claim as *arbitrary composition supported*, and M6.2's own dimension 8
+says so in the evidence order it was measured under: two operations each measured
+alone do not establish the pair. Nothing in the repository said so until this
+slice.
+
+**So the table is the type.** `ConversionIntent` has five private fields and no
+public constructor. `admitted(..)` looks five values up in
+`ConversionIntent::ADMITTED` — nine rows, each naming the M6.2 case that measured
+it — and answers `None` for the other thirty-nine. There is no second
+implementation of the compatibility rule to disagree with, because there is no
+first one: the rule *is* the array. `SHIPPED` is row one and lowers to exactly
+`--mzML --zlib`, which is the argv the product already emitted.
+
+What the evidence rejected or could not reach is **unnameable** rather than
+merely unused. `OutputFormat` has one variant. No `ProcessingIntent` variant
+carries a picker token or an `msLevel` scope — M6.2 measured that the one
+admitted algorithm has no token and that a scope without one is silently
+discarded while exiting 0. And no admitted row composes centroiding with a
+population filter, because that pair was never run.
+
+### The four second answers this removes
+
+`ConversionPolicy` and `CompressionPolicy` are deleted rather than wrapped. Both
+were second answers to what a conversion had asked for: a policy the integrity
+check was *allowed to assume*, constructible on its own, sitting beside a
+hard-coded `OpenFormat::MzMl` in the planner, an unconditional `--zlib` in the
+command builder, and a provider precision default nothing in the repository had
+ever named. Those are four places that answered one question. There is now one.
+
+`ConversionPlan` carries the intent it was planned under. `ConversionQueue` binds
+one when it is made and exposes it read-only; there is no setter, and
+`begin_retry` clones the queue rather than rebuilding it, so a retry re-reads the
+field. Every argv, every integrity comparison and every plan summary reads back
+from there.
+
+### Integrity became a question about what was asked
+
+Four checks, each answering something the old contract could not ask.
+
+**Precision, per array role.** The shipped posture is m/z at 64 bits and
+intensity at 32, so a per-record union of the encodings a scanner saw reports
+`{32, 64}` for a correct output *and* for one with the two roles swapped. The
+union cannot answer the question, so the mzML scanner gained two per-role sets
+and the check reads them apart. An array that declares both roles or neither
+contributes to neither set and therefore fails, which closes — fail-closed — the
+gap the record-level role check documents and cannot close itself.
+
+**Compression, in both directions.** Under `NoCompression` a record holding
+arrays must *state* `no compression`; omitting `zlib` is not a claim of absence.
+
+**Population, as the exact requested subset.** The source is projected through
+the intent before any comparison runs, so a requested `msLevel` filter is not
+reported as a spectrum-count defect. A narrowing request over a source holding a
+spectrum that never said which level it is is refused rather than sorted onto a
+side.
+
+**The processing claim, classified and asymmetric.** Five states: absent, the
+default local-maximum picker, a recognized-but-different algorithm, an
+unrecognized one, and two claimed at once. Asking for the default picker makes
+the claim the question and the last three refuse. Asking to add nothing does not
+make it a refusal channel — the measured build copies an incoming
+`dataProcessing` list into its output, so a picker claim there can be the
+source's own history, and refusing it would refuse legitimate already-centroided
+inputs. What guards that direction is the source/output representation
+comparison, which is about this conversion. **An absent claim is `unverified`
+under both and never "no peaks were picked"**, which is the rule M6.2 recorded
+and the OpenMS caveat ADR 0043 locks.
+
+The consequence a reader should take from this: the same pair of documents is now
+judged differently by two admitted intents. Profile becoming centroid is the
+requested result under one and `RepresentationChange` under the other.
+
+### The obligation that is met in effect rather than in shape
+
+ADR 0043 locks three structural obligations for any admitted centroiding, and one
+of them says **the intent is an ordered sequence, never a set**, because the
+provider's filter chain is a decorator stack in command-line order.
+
+`ConversionIntent` is a struct of five enums, not a sequence. It satisfies the
+obligation's *purpose* — no display decision can reorder anything, because
+`lower()` is straight-line code with no map, no set and no sort — and it
+satisfies it **only because no admitted combination lowers to more than one
+filter**, which is pinned by test. The moment the evidence admits a two-filter
+composition, the ordered sequence becomes structurally required and a struct
+would be the defect the obligation names. Recorded here rather than left for a
+later reader to discover.
+
+### Repository guard
+
+`check_repo.py` gains one validator holding the Rust table and the Python case
+ledger against each other. Rust enforces the *shape* of "an intent may only name
+a semantic the build was measured performing" and cannot enforce its content:
+nothing stops a row citing a case that measured something else. So every row must
+name at least one case; every named case must exist in the ledger, have produced
+mzML and have exited zero; and **every case a row cites** must have been run with
+argv consistent with the combination claimed — required tokens present,
+contradicting tokens absent. A `NoCompression` row citing a `--zlib` run is not a
+typo; it is the composition graph widening by assertion.
+
+**Sixteen mutations were applied one at a time and all sixteen were caught**,
+each with its own message: a dropped row, an array length that disagrees with the
+rows, evidence naming a case that does not exist, evidence naming nothing, a
+`NoCompression` row citing a `--zlib` run, a `Zlib` row citing the one run that
+turned compression off, a population claim on a case that filtered nothing, a
+default-precision claim on a case that stated a width, a centroiding claim on a
+case that named a picker token, a centroiding claim on a case that picked
+nothing, a row admitted on the one run that did not complete, a row admitted on a
+case that produced mzXML, one combination admitted twice, the same duplicate at
+an unchanged row count, an unknown axis value, and a precision claim on a case
+that stated a different width.
+
+Two of them exist because the first attempt was caught by the wrong rule. The
+duplicate-row mutation also changed the array length, so the row-count rule
+caught it and the duplicate rule was never exercised; the compression mutation
+was caught by a precision rule for an unrelated reason. Both were restated so
+each fails the rule it is named for, and both forms are kept. **A mutation caught
+by the wrong rule is a rule that has not been tested**, and a suite that counts
+it is reporting a coverage it does not have.
+
+### The mechanisms, proved load-bearing
+
+Seven M6.3 mechanisms were reverted one at a time and the test that pins each was
+confirmed to fail: the admitted table returning every combination, precision read
+as a per-record union again, compression checked in one direction only, the
+source never projected through the intent, an absent processing claim read as
+established, a representation change judged without the intent, and a retry
+re-deriving the intent instead of re-reading it.
+
+**The union mutation passed on the first attempt, and the test was wrong rather
+than the mechanism.** The swapped-roles document a union check also refuses — for
+the wrong reason — so refusing it proved nothing. What a union cannot do is
+accept the *correct* document, whose per-record encoding set is the same `{32,
+64}`. The test now asserts both, and the mutation fails it.
+
+**The harness left mutations in the tree twice, and both runs were discarded.**
+Windows intermittently refused a write to `conversion.rs` moments after `cargo`
+had read it, and the failing write was a *restore* — so the file kept a mutation
+nobody meant to be there, and an unrelated validation run was taken over it. The
+runner now retries every write and the suites are never run concurrently, since a
+second suite mutating the same file makes both results meaningless. Every number
+reported here was produced on a tree verified against `HEAD` immediately before
+the run. Recorded for the same reason M6.2 recorded its false green: a
+measurement is only worth what the state it was taken on is known to be.
+
+### Validation
+
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build`, `pnpm e2e:typecheck` and `git diff --check`, each run directly on
+the final head and each exiting zero. Rust **1,373** and frontend **1,398** —
+twenty-three Rust tests added and none removed or weakened, and the frontend
+unchanged, which is what a slice that touches no frontend file should do.
+
+**Browser E2E was not run, and is not described as green.** This slice changes no
+frontend file, no CSS, no DTO field and no rendered behaviour. `apps/desktop/AGENTS.md`
+requires a browser pass for *rendered UI work*, and there is none here.
+
+### What this slice does not do
+
+It adds no visible setting and no control: nothing in the interface can name an
+intent, and the product converts under `SHIPPED` exactly as it did before. It
+does not widen what the build is admitted to do — the nine rows are M6.2's nine
+and no new measurement was taken. It changes no destination, conflict or
+cancellation behaviour, no wire vocabulary beyond the integrity property and
+outcome names the new checks required, no dependency and no lockfile. It does not
+decide the mzXML disposition, which remains M6.10's, and it does not start M6.4.

@@ -1049,9 +1049,11 @@ pub(super) const fn is_convertible(kind: DatasetSourceKind) -> bool {
 /// chosen and before anything is created.
 ///
 /// Nothing here touches a path. What an output is called is decided by what its
-/// source is called.
-pub(super) fn planned_output_name(file_name: &str) -> Option<String> {
-    conversion_output_file_name(Path::new(file_name), OpenFormat::MzMl)
+/// source is called and by the format the intent asks for -- read off the intent
+/// rather than restated, because a name that disagreed with the plan's format
+/// would be a promise the conversion does not keep.
+pub(super) fn planned_output_name(file_name: &str, intent: ConversionIntent) -> Option<String> {
+    conversion_output_file_name(Path::new(file_name), OpenFormat::of_intent(intent.format()))
         .map(|name| name.to_string_lossy().into_owned())
 }
 

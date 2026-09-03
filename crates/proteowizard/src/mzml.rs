@@ -175,7 +175,10 @@ impl ProcessingAlgorithmClaim {
         match (self, observed) {
             (Self::Conflicting, _) | (_, Self::Conflicting) => Self::Conflicting,
             (Self::Absent, other) | (other, Self::Absent) => other,
-            (first, second) if matches!((first, second), (a, b) if a as u8 == b as u8) => first,
+            // Compared as discriminants because `PartialEq` is not const here.
+            // Two methods claiming the same algorithm are one claim; two
+            // claiming different ones are no claim at all.
+            (first, second) if first as u8 == second as u8 => first,
             _ => Self::Conflicting,
         }
     }
