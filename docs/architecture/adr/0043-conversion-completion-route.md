@@ -855,14 +855,20 @@ cancellation change.
 
 *Downstream:* M6.5.
 
-*Implemented, and not published.* One backend-owned catalog, one selected
-identity, and a plan that is Rust's answer rather than the interface's summary of
-its own controls — on `feat/m6.4-visible-conversion-settings`, which review
-stopped rather than merged. Three truthfulness defects were found on the head
-that passed every gate, after the one bounded repair pass this route authorizes
-had been spent, so the slice ends `STOP — M6.4_NOT_PUBLISHABLE`. They are
-recorded in `BOOTSTRAP_STATUS.md`, none is a safety defect, and none is on
-`main`. What follows describes that branch.
+*Delivered, after two review rounds and one stop.* One backend-owned catalog,
+one selected identity, and a plan that is Rust's answer rather than the
+interface's summary of its own controls.
+
+The stop is part of the record. A second review of the head that had passed every
+gate found three further truthfulness defects once the route's single repair pass
+was spent, so the slice halted rather than self-authorizing another; an explicit
+new authorization then closed them. All three were the same shape of mistake in
+different places — a fact and the thing that carries it coming apart — and none
+was in the composition graph this slice was mostly about: a catalog request that
+outlived the state it produced, an installation observation lost because the
+operation that made it was refused, and a way-out affordance that claimed there
+was no ordinary way out while an enabled control offered one. They are recorded
+in `BOOTSTRAP_STATUS.md`.
 
 **The graph stays where the evidence is.**
 `apps/desktop/src-tauri/src/preview/intent_catalog.rs` projects
@@ -922,14 +928,19 @@ running and terminal surfaces read it, so moving a control afterwards changes
 what the *next* conversion would be and nothing about this one, through every
 retry.
 
-Two consequences of those rules were found by review and repaired. A preserved
+Three consequences of those rules were found by review and repaired. A preserved
 semantic whose every one-axis neighbour is refused is a dead end, so there is one
-**labelled** way out — offered only while the chosen semantic cannot run, and
-only ever selecting the semantic Rust names as shipped, which is a deliberate
-choice rather than the silent fallback this design refuses. And a catalog is an
-answer about one executable, so a session that loses its ProteoWizard loses the
-catalog with it rather than offering that build's availability marks beside a
-banner saying none is installed.
+**labelled** way out — offered only where no ordinary one-axis choice is
+selectable, decided through the very `axisChoices` call the fieldsets make rather
+than a second scan, and only ever selecting the semantic Rust names as shipped.
+A catalog is an answer about one executable, so a session that loses its
+ProteoWizard loses the catalog with it — the rendered state **and** any request
+still in flight, which are revoked together because either alone lets the other
+undo it. And resolving an executable is an observation that is complete when it
+succeeds: the pre-picker gate records the identity it saw before any refusal can
+return, and the ordinary slot read carries where the sequence stands, so a
+refusal reconciles through the path a conversion report already used instead of
+through a second protocol keyed on what failed.
 
 **And the M6.1 initial-unread-slot residual is closed here**, as its record said
 it should be: one lane fact rather than a new mechanism. `slotUnread` is the

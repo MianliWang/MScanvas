@@ -1209,7 +1209,11 @@ impl PreviewService {
         let slot = self.conversion_slot();
         let quarantined = self.backend_is_quarantined();
         let diagnostics = self.diagnostics_read();
-        slot.read(quarantined, diagnostics)
+        slot.read(
+            quarantined,
+            diagnostics,
+            self.installation_generation.load(Ordering::Relaxed),
+        )
     }
 
     /// Whether this session has stopped trusting the backend.
@@ -1261,7 +1265,11 @@ impl PreviewService {
         }
         let accepted = slot.request_stop(operation)?;
         self.publish_conversion_busy(&slot);
-        let update = slot.read(self.backend_is_quarantined(), self.diagnostics_read());
+        let update = slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.installation_generation.load(Ordering::Relaxed),
+        );
         drop(slot);
 
         if let StopAccepted::Requested(Some(request)) = accepted {
@@ -1548,6 +1556,24 @@ impl PreviewService {
         // is staged.
         if let Some(running) = self.try_enter_backend() {
             let backend = self.provider.conversion_backend()?;
+            // **Resolving an executable is an observation, and it is complete
+            // the moment it succeeds.**
+            //
+            // Recorded here rather than after the checks below, because whether
+            // this queue is admitted is a different question from which build
+            // this session is looking at. An executable replaced in place --
+            // same location, different build -- is very often first seen right
+            // here, and if the refusals below returned first, the session would
+            // go on describing the build that is gone: the banner, the catalog
+            // the settings answer from, and the availability marks beside every
+            // control. The user would then be told this build does not offer
+            // the option while the controls still said it did.
+            //
+            // Nothing is manufactured. Resolution failing returns above without
+            // reaching this, the generation moves only when the resolved
+            // identity actually differs, and an operation failing never moves
+            // it by itself.
+            self.note_resolved(backend.installation.clone());
             for kind in preflight_families {
                 refuse_unevidenced_build(&backend.capabilities, kind)?;
             }
@@ -1641,7 +1667,11 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.cancel(operation);
         self.publish_conversion_busy(&slot);
-        slot.read(self.backend_is_quarantined(), self.diagnostics_read())
+        slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.installation_generation.load(Ordering::Relaxed),
+        )
     }
 
     /// Runs one claimed queue into one chosen folder.
@@ -3790,7 +3820,11 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.finish(operation, None, reason);
         self.publish_conversion_busy(&slot);
-        let update = slot.read(self.backend_is_quarantined(), self.diagnostics_read());
+        let update = slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.installation_generation.load(Ordering::Relaxed),
+        );
         drop(slot);
         update
     }
@@ -4160,7 +4194,11 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.refuse(operation, error);
         self.publish_conversion_busy(&slot);
-        slot.read(self.backend_is_quarantined(), self.diagnostics_read())
+        slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.installation_generation.load(Ordering::Relaxed),
+        )
     }
 
     /// Reserves the right to claim the workspace's next state without opening

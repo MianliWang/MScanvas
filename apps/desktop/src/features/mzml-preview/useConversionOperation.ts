@@ -624,7 +624,31 @@ export function useConversionOperation(
   }, []);
 
   const applyUpdate = useCallback((update: WorkspaceConversionUpdate) => {
-    if (!mounted.current || update.sequence <= installedSequence.current) {
+    if (!mounted.current) {
+      return;
+    }
+    // Where the installation sequence stands, reported **before** the sequence
+    // guard, because the sequence does not order this.
+    //
+    // That guard orders slot *states* against each other, and this is not one:
+    // it rides on the same read the way the quarantine flag does. The reading
+    // that matters most here carries no new slot state at all — a conversion
+    // refused before a queue exists leaves the slot exactly where it was, so
+    // its sequence is unchanged and the guard below drops the reply. Reporting
+    // after it would discard the one observation that refusal produced, which
+    // is the whole of what this field is for.
+    //
+    // It replaces a maximum taken over the queue's own reading and its items'
+    // reports, which could only be computed where a queue existed. This number
+    // is at least every number that maximum could produce, so it is strictly
+    // more current as well as strictly simpler.
+    //
+    // Safe outside the guard because the reconciler acts only on a strict
+    // increase over what this document has applied, and the counter only rises:
+    // a reply stale about the slot cannot be stale in a way that overstates the
+    // build. Nothing here inspects what failed, or whether anything failed.
+    onInstallationGeneration(update.installationGeneration);
+    if (update.sequence <= installedSequence.current) {
       return;
     }
     // A result belongs to one settling of one queue. Anything that produces a
@@ -690,32 +714,6 @@ export function useConversionOperation(
     if (update.state.status === "terminal" || update.state.status === "idle") {
       setStopRequested(false);
     }
-    // A conversion is a backend operation like any other, and it can be the
-    // first to notice that the installed ProteoWizard changed. Without this the
-    // banner and a preview read from the replaced installation would stay on
-    // screen beside a conversion done by its successor, until some later
-    // backend operation happened to reconcile them.
-    if (update.state.status === "terminal") {
-      // Once for the queue, not once per item. Every item of one queue ran on
-      // one installation, so their generations agree -- and reporting each of
-      // them separately would start a backend probe per item before any of them
-      // had answered, which for a full queue is sixteen serial help probes with
-      // preview and conversion disabled throughout.
-      const generations = [
-        // The queue's own reading first. A pass refused for running on a
-        // different installation produced no item, so the reports alone would
-        // leave the banner naming the installation the earlier results came
-        // from until the user rechecked by hand.
-        update.state.queue.installationGeneration,
-        // Whichever cardinality the item's latest attempt had. Both reports
-        // carry the sequence they ran under, and an item is never described by
-        // both at once.
-        ...update.state.queue.items
-          .map((item) => item.result?.report.installationGeneration)
-          .filter((generation): generation is number => generation !== undefined),
-      ];
-      onInstallationGeneration(Math.max(...generations));
-    }
   }, [claimLane, onInstallationGeneration]);
 
   /**
@@ -727,11 +725,34 @@ export function useConversionOperation(
    * scientific request, and replacing it with the shipped posture because an
    * installation changed would convert something else without saying so.
    */
-  const readCatalog = useCallback(() => {
+  /**
+   * Revokes every outstanding catalog answer, and says what stands in its place.
+   *
+   * **Two things move together, because either one alone is a defect.** Setting
+   * the state without advancing the token leaves an earlier request
+   * authoritative: its reply resolves afterwards, passes a token check that
+   * still matches, and puts back the catalog of an executable the session has
+   * just lost. Advancing the token without setting the state leaves that
+   * executable's catalog on screen with nothing coming to replace it. The pair
+   * cannot come apart here because there is no way to do one of them.
+   *
+   * Every transition that makes an in-flight answer obsolete goes through this,
+   * and the token it returns is the only authority a request may hold.
+   *
+   * It deliberately leaves `catalogGeneration` alone. That guard orders replies
+   * against each other by the installation they describe, and rewinding it
+   * would let a genuinely superseded reply install after this.
+   */
+  const revokeCatalog = useCallback((standing: ConversionSettings) => {
     catalogToken.current += 1;
-    const token = catalogToken.current;
+    setSettings(standing);
+    return catalogToken.current;
+  }, []);
+
+  const readCatalog = useCallback(() => {
     // The catalog on screen described the installation that has just been
-    // replaced, so it stops being an answer the moment this read begins.
+    // replaced, so it stops being an answer the moment this read begins -- and
+    // so does any reply still on its way about that installation.
     //
     // **Keeping it would leave a plan startable against a build that is gone.**
     // The plan carries the installation it was read at and is checked against
@@ -739,7 +760,7 @@ export function useConversionOperation(
     // agree about a number neither still describes. Going back to `loading`
     // refuses the conversion for the true reason -- MSCanvas is reading what
     // this ProteoWizard offers -- for exactly as long as that is true.
-    setSettings({ status: "loading" });
+    const token = revokeCatalog({ status: "loading" });
     api
       .conversionIntents()
       .then((catalog) => {
@@ -773,7 +794,7 @@ export function useConversionOperation(
         // could not be established is a conversion that cannot start.
         setSettings({ status: "failed", error: toPreviewError(cause) });
       });
-  }, [api, onInstallationGeneration]);
+  }, [api, onInstallationGeneration, revokeCatalog]);
 
   // Once per installation, and once more when this session first has a usable
   // one.
@@ -789,17 +810,19 @@ export function useConversionOperation(
   // conversion for that first, and asking would add a refusal nobody needed.
   useEffect(() => {
     if (!environment.backendUsable) {
-      // And the catalog goes with the backend. It described an executable this
-      // session can no longer launch -- after a folder change that resolved to
-      // nothing, or discovery losing what it had found -- so keeping it would
-      // leave the controls offering availability marks for a build that is not
-      // installed, beside a banner saying none is. Nothing is probed to
-      // establish that; there is nothing to probe.
-      setSettings({ status: "noBackend" });
+      // And the catalog goes with the backend -- the one on screen *and* any
+      // still on its way. It described an executable this session can no longer
+      // launch, after a folder change that resolved to nothing or discovery
+      // losing what it had found, so keeping either would leave the controls
+      // offering availability marks for a build that is not installed, beside a
+      // banner saying none is. Revoked rather than merely replaced: a request
+      // issued a moment ago would otherwise resolve into this state and undo it.
+      // Nothing is probed to establish any of that; there is nothing to probe.
+      revokeCatalog({ status: "noBackend" });
       return;
     }
     readCatalog();
-  }, [environment.backendUsable, installationGeneration, readCatalog]);
+  }, [environment.backendUsable, installationGeneration, readCatalog, revokeCatalog]);
 
   const readState = useCallback(() => {
     // One at a time. The token below lets only the newest read install, so two

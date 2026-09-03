@@ -3379,13 +3379,21 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     visibleTraces,
   ]);
 
-  // A conversion's report carries the installation sequence it ran at. If it is
-  // newer than what this document has applied, the banner and everything read
-  // from the previous installation are stale -- so the backend is re-read
-  // through the one path that knows how to discard them.
+  // The conversion lane carries the installation sequence it last resolved at.
+  // If it is newer than what this document has applied, the banner and
+  // everything read from the previous installation are stale -- so the backend
+  // is re-read through the one path that knows how to discard them.
+  //
+  // `>= 0` is the same idiom `applyVerdict` uses two screens up, and it is what
+  // makes this a reconciliation rather than a duplicate of the mount check.
+  // Before any verdict has been applied there is nothing to reconcile *to*: the
+  // check that will establish the first one is already in flight, and firing a
+  // second probe beside it would cost a help probe on every mount whose slot
+  // read answered first -- which, a slot read being memory and a probe being a
+  // process, is nearly all of them.
   const reconcileConversionGeneration = useCallback(
     (generation: number) => {
-      if (generation > appliedGeneration.current) {
+      if (appliedGeneration.current >= 0 && generation > appliedGeneration.current) {
         checkBackend();
       }
     },

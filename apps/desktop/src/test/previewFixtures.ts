@@ -910,6 +910,17 @@ export interface FakePreviewApi extends PreviewApi {
   readonly publishConversion: (state: WorkspaceConversionState) => void;
   /** Puts the session into backend quarantine, as an unconfirmed stop does. */
   readonly quarantineBackend: () => void;
+  /**
+   * Records that an operation resolved a *different* installation, as
+   * `note_resolved` does when the identity it sees has changed.
+   *
+   * The session counter is what both a backend verdict and a slot read are
+   * stamped with, so advancing it here models the one thing that actually
+   * happens: some operation looked at the installed build and found another
+   * one. A test uses it where no chooser was involved — an executable replaced
+   * in place, first seen by whichever operation happened to resolve next.
+   */
+  readonly noteInstallationObserved: () => void;
   /** Every operation identifier a stop was asked for, in order. */
   readonly stopRequests: readonly string[];
   /** Every operation identifier a diagnostics export was asked for, in order. */
@@ -1364,6 +1375,11 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     state: conversion,
     diagnostics: diagnosticsState(),
     backendQuarantined,
+    // The session's own counter, which is where Rust reads this from too: one
+    // number, stamped onto a backend verdict and onto a slot read alike. A
+    // second source for it here would be the very defect this field exists to
+    // close.
+    installationGeneration: generation,
   });
   const defaultDiagnosticsExport = (operationId: string): ConversionDiagnosticsExport => ({
     operationId,
@@ -1523,6 +1539,9 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     datasets,
     deliveredVerdicts,
     publishConversion,
+    noteInstallationObserved: () => {
+      generation += 1;
+    },
     quarantineBackend,
     stopRequests,
     diagnosticsExportRequests,

@@ -311,24 +311,28 @@ describe("the conversion wire contract", () => {
         state: { status: "idle" },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
       {
         sequence: 1,
         state: { status: "awaitingDestination", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
       {
         sequence: 2,
         state: { status: "running", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
       {
         sequence: 3,
         state: { status: "stopping", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
       {
         sequence: 4,
@@ -340,6 +344,7 @@ describe("the conversion wire contract", () => {
         },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
       {
         sequence: 5,
@@ -351,12 +356,14 @@ describe("the conversion wire contract", () => {
         },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: true,
+    installationGeneration: 0,
       },
       {
         sequence: 6,
         state: { status: "terminal", operationId: "1", reason: "completed", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
     ] as const satisfies readonly WorkspaceConversionUpdate[];
 
@@ -366,6 +373,7 @@ describe("the conversion wire contract", () => {
       "state",
       "diagnostics",
       "backendQuarantined",
+      "installationGeneration",
     ]);
     expect(updates.map((update) => update.state.status)).toEqual([
       "idle",
@@ -393,18 +401,21 @@ describe("the conversion wire contract", () => {
         state: { status: "awaitingDestination", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
       {
         sequence: 2,
         state: { status: "running", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
       {
         sequence: 3,
         state: { status: "stopping", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
     ] as const satisfies readonly WorkspaceConversionUpdate[]) {
       expect(Object.keys(update.state).sort()).toEqual(["operationId", "queue", "status"]);

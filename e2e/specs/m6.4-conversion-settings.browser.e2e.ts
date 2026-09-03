@@ -133,6 +133,18 @@ function describedIntents(calls: { command: string; args?: Record<string, unknow
     .map((call) => call.args?.["intentId"]);
 }
 
+/** Re-reads the backend the way a reader can: the banner's own control. */
+async function recheckTheBackend(): Promise<void> {
+  const buttons = await browser.$$("button.link-button");
+  for (const button of buttons) {
+    if ((await button.getText()).trim() === "Check again") {
+      await button.click();
+      return;
+    }
+  }
+  throw new Error("the backend banner offers no Check again");
+}
+
 async function unexpectedConsole(): Promise<string[]> {
   return (await consoleEntries())
     .filter((entry) => !ALLOWED_CONSOLE_SUBSTRINGS.some((allowed) => entry.text.includes(allowed)))
@@ -383,13 +395,7 @@ describe("M6.4 — visible conversion settings, rendered", () => {
       ...availableBackend,
       installationGeneration: 1,
     });
-    const rechecks = await browser.$$("button.link-button");
-    for (const button of rechecks) {
-      if ((await button.getText()).trim() === "Check again") {
-        await button.click();
-        break;
-      }
-    }
+    await recheckTheBackend();
 
     const recover = `${SETTINGS} .conversion-settings-recovery button`;
     await browser.$(recover).waitForExist({ timeout: 30_000 });
@@ -413,6 +419,44 @@ describe("M6.4 — visible conversion settings, rendered", () => {
     });
     // And it goes with the need for it.
     expect(await browser.$(recover).isExisting()).toBe(false);
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("leaves an unrunnable choice to the controls where one of them still reaches a runnable row", async () => {
+    // The recovery block claims that no single change reaches a runnable
+    // combination. A preserved 64/64 that a narrower build cannot run is one
+    // enabled precision step from the shipped posture, so that claim would be
+    // false -- and this is the rendered proof it is not made.
+    await openTheSettings();
+    const wide = intentFor({ precision: "mz64Intensity64" });
+    await setInvokeResult("describe_workspace_conversion_queue", planFor(wide));
+    await browser.$(radio("precision", "mz64Intensity64")).click();
+    await browser.waitUntil(async () => isChecked(radio("precision", "mz64Intensity64")), {
+      timeout: 30_000,
+      timeoutMsg: "the wider precision was never selected",
+    });
+
+    // The installation is replaced by one that runs only what MSCanvas ships.
+    const everythingElse = intentCatalog()
+      .intents.map((option) => option.intent.id)
+      .filter((id) => id !== SHIPPED_INTENT.id);
+    await setInvokeResult("get_workspace_conversion_intents", {
+      ...intentCatalog({ unsupported: everythingElse, installationGeneration: 1 }),
+    });
+    await setInvokeResult("inspect_backend", { ...availableBackend, installationGeneration: 1 });
+    await recheckTheBackend();
+
+    // The ordinary route is enabled, so nothing announces a dead end.
+    await browser.waitUntil(async () => browser.$(radio("precision", "mz64Intensity32")).isEnabled(), {
+      timeout: 30_000,
+      timeoutMsg: "the shipped precision never became selectable",
+    });
+    expect(await browser.$(`${SETTINGS} .conversion-settings-recovery`).isExisting()).toBe(false);
+    const rendered = await browser.execute(
+      (target: string) => document.querySelector(target)?.textContent ?? "",
+      PANEL,
+    );
+    expect(rendered).not.toContain("no single change to one of them reaches");
     expect(await unexpectedConsole()).toEqual([]);
   });
 

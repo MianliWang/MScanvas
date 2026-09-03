@@ -228,6 +228,10 @@ describe("what a conversion settings control may offer", () => {
       installationGeneration: 1,
     });
     expect(reselect(onlyShipped, chosen.id)).toBe(chosen.id);
+    // Every one-axis neighbour refused, which is what makes this a dead end
+    // rather than merely an unrunnable selection -- and it is the same call the
+    // fieldsets make, so the affordance and the controls cannot disagree about
+    // whether a route exists.
     for (const axis of CONVERSION_AXES) {
       for (const { value, state } of axisChoices(onlyShipped, chosen, axis)) {
         expect(canChoose(state), `${axis} to ${String(value)}`).toBe(false);
@@ -257,6 +261,70 @@ describe("what a conversion settings control may offer", () => {
     ).toBeNull();
     expect(recoveryIntent({ status: "loading" })).toBeNull();
     expect(recoveryIntent({ status: "noBackend" })).toBeNull();
+  });
+
+  it("leaves an unrunnable selection to the controls where one of them can still reach a runnable row", () => {
+    // The claim the recovery block makes is that NO single change reaches a
+    // runnable combination. An unrunnable selection is not by itself that
+    // state, and treating it as one put a false sentence beside a working
+    // control.
+    //
+    // A build declaring only what the shipped intent emits leaves the preserved
+    // 64/64 posture unrunnable -- and one precision step from the shipped 64/32,
+    // which that build runs.
+    const chosen = intentFor({ precision: "mz64Intensity64" });
+    const onlyShipped = intentCatalog({
+      unsupported: CATALOG.intents
+        .map((option) => option.intent.id)
+        .filter((id) => id !== SHIPPED_INTENT.id),
+    });
+    const settings = { status: "ready" as const, catalog: onlyShipped, selectedId: chosen.id };
+
+    expect(catalogRow(onlyShipped, chosen.id)?.availability).toEqual({
+      kind: "unsupportedByInstallation",
+    });
+    // The ordinary route is right there, offered and takeable.
+    expect(choiceState(onlyShipped, chosen, "precision", "mz64Intensity32")).toEqual({
+      status: "selectable",
+      intentId: SHIPPED_INTENT.id,
+    });
+    // So there is nothing for the dead-end affordance to say.
+    expect(recoveryIntent(settings)).toBeNull();
+  });
+
+  it("leaves it to the controls even where the ordinary route is the better one", () => {
+    // Sharper than the case above, because here the atomic reset would have
+    // been actively worse than the route it denied. A build that declares
+    // `--filter` but no `peakPicking` grammar cannot centroid, so both
+    // centroided rows are unrunnable while every other row is fine.
+    //
+    // From centroiding at 64/64, dropping the processing axis keeps the 64-bit
+    // intensity the user chose. The reset would have moved them to the shipped
+    // 32-bit posture instead -- a second axis silently changed, by the one
+    // affordance allowed to change more than one.
+    const centroided = intentFor({
+      processing: "unscopedDefaultCentroiding",
+      precision: "mz64Intensity64",
+    });
+    const noPicker = intentCatalog({
+      unsupported: CATALOG.intents
+        .map((option) => option.intent.id)
+        .filter((id) => id.includes("unscoped_default_centroiding")),
+    });
+    const settings = {
+      status: "ready" as const,
+      catalog: noPicker,
+      selectedId: centroided.id,
+    };
+
+    expect(catalogRow(noPicker, centroided.id)?.availability).toEqual({
+      kind: "unsupportedByInstallation",
+    });
+    expect(choiceState(noPicker, centroided, "processing", "noAdditionalCentroiding")).toEqual({
+      status: "selectable",
+      intentId: intentFor({ precision: "mz64Intensity64" }).id,
+    });
+    expect(recoveryIntent(settings)).toBeNull();
   });
 
   it("has no selected semantic until a catalog says which are selectable", () => {

@@ -809,6 +809,375 @@ describe("choosing what a conversion will do", () => {
     });
   });
 
+  it("revokes a catalog request when the backend goes, so a late reply cannot resurrect it", async () => {
+    // The half the first repair did not cover. Dropping the catalog on screen
+    // and revoking the read that produced it are one act; doing only the first
+    // leaves an earlier reply authoritative, and it lands afterwards and puts
+    // the lost executable's catalog back.
+    //
+    // Deterministic by construction: the first read is held open and released
+    // by hand, after the loss, rather than raced against a timer.
+    const held = deferred<ReturnType<typeof intentCatalog>>();
+    let reads = 0;
+    let usable = true;
+    let generation = 0;
+    const api = createFakePreviewApi({
+      initialDatasets: [VENDOR_ROW],
+      availability: () =>
+        Promise.resolve(
+          usable
+            ? { ...availableBackend, installationGeneration: generation }
+            : { ...unavailableBackend, installationGeneration: generation },
+        ),
+      conversionIntents: () => {
+        reads += 1;
+        return reads === 1
+          ? held.promise
+          : Promise.resolve(intentCatalog({ installationGeneration: generation }));
+      },
+    });
+    const rendered = renderHook(() => usePreviewWorkspace(), {
+      wrapper: ({ children }) =>
+        createElement(
+          WorkspaceDropTransportProvider,
+          { value: createFakeWorkspaceDropTransport() },
+          createElement(PreviewApiProvider, { value: api }, children),
+        ),
+    });
+    await waitFor(() => {
+      expect(reads).toBe(1);
+    });
+    expect(rendered.result.current.conversion.settings.status).toBe("loading");
+
+    // The session loses its ProteoWizard while that read is still outstanding.
+    usable = false;
+    generation = 1;
+    act(() => {
+      rendered.result.current.checkBackend();
+    });
+    await waitFor(() => {
+      expect(rendered.result.current.conversion.settings.status).toBe("noBackend");
+    });
+
+    // The held reply lands. It describes a build this session can no longer
+    // launch, and its request no longer has the authority to install it.
+    await act(async () => {
+      held.resolve(intentCatalog({ installationGeneration: 0 }));
+      await Promise.resolve();
+    });
+    expect(rendered.result.current.conversion.settings.status).toBe("noBackend");
+    expect(rendered.result.current.conversion.settingsReadiness).toBe("unavailable");
+    // And no further read was provoked by it either.
+    expect(reads).toBe(1);
+
+    // A usable installation returns, and the catalog comes back on its own.
+    usable = true;
+    generation = 2;
+    act(() => {
+      rendered.result.current.checkBackend();
+    });
+    await waitFor(() => {
+      const { settings } = rendered.result.current.conversion;
+      expect(settings.status === "ready" && settings.catalog.installationGeneration).toBe(2);
+    });
+    expect(reads).toBe(2);
+  });
+
+  it("reconciles the installation a refused conversion was the first to resolve", async () => {
+    // The pre-picker capability gate resolves the installed build and can be
+    // the first thing in a session to see it replaced in place. Refusing does
+    // not unlearn that: Rust records the identity it resolved, and the ordinary
+    // slot read this document already makes after a failed dispatch carries
+    // where the sequence now stands.
+    //
+    // Nothing here inspects what the refusal said. The document reconciles
+    // because the number moved, not because an error was classified.
+    const wide = intentFor({ precision: "mz64Intensity64" });
+    let replaced = false;
+    let catalogs = 0;
+    let api!: FakePreviewApi;
+    api = createFakePreviewApi({
+      initialDatasets: [VENDOR_ROW],
+      availability: availableBackend,
+      conversionIntents: () => {
+        catalogs += 1;
+        return Promise.resolve(
+          // Build A runs everything; the build that replaces it runs only what
+          // MSCanvas ships.
+          replaced
+            ? intentCatalog({
+                unsupported: intentCatalog()
+                  .intents.map((option) => option.intent.id)
+                  .filter((id) => id !== SHIPPED_INTENT.id),
+                installationGeneration: 1,
+              })
+            : intentCatalog(),
+        );
+      },
+      conversion: () => {
+        // BEGIN resolves the installed build, and what it resolves is a
+        // different one. Recording that is what `note_resolved` does, and it
+        // happens whether or not the request that provoked it is admitted --
+        // which is the whole of this finding. Then the semantic that build
+        // cannot express is refused.
+        replaced = true;
+        api.noteInstallationObserved();
+        return Promise.reject({
+          kind: "conversion_intent_unsupported",
+          summary: "The installed ProteoWizard build does not offer that conversion option.",
+          detail: null,
+          retryable: false,
+        });
+      },
+    });
+    const rendered = renderHook(() => usePreviewWorkspace(), {
+      wrapper: ({ children }) =>
+        createElement(
+          WorkspaceDropTransportProvider,
+          { value: createFakeWorkspaceDropTransport() },
+          createElement(PreviewApiProvider, { value: api }, children),
+        ),
+    });
+    act(() => {
+      rendered.result.current.conversion.describe([VENDOR_ROW.handle]);
+    });
+    await waitFor(() => {
+      expect(rendered.result.current.conversion.planIsCurrent).toBe(true);
+    });
+    act(() => {
+      rendered.result.current.conversion.chooseIntent(wide.id);
+    });
+    await waitFor(() => {
+      const { settings } = rendered.result.current.conversion;
+      expect(settings.status === "ready" && settings.selectedId).toBe(wide.id);
+    });
+    expect(rendered.result.current.conversion.settingsReadiness).toBe("ready");
+    // The plan is re-read for the semantic just chosen, and a conversion may
+    // only start the plan the user was shown.
+    await waitFor(() => {
+      expect(rendered.result.current.conversion.planIsCurrent).toBe(true);
+    });
+    const catalogsBefore = catalogs;
+
+    act(() => {
+      rendered.result.current.conversion.convert([VENDOR_ROW.handle]);
+    });
+
+    // The refusal is shown, and the document goes and looks -- which is what
+    // tells it the sequence has moved.
+    await waitFor(() => {
+      expect(rendered.result.current.conversion.error?.kind).toBe(
+        "conversion_intent_unsupported",
+      );
+    });
+    await waitFor(() => {
+      expect(catalogs).toBeGreaterThan(catalogsBefore);
+    });
+    await waitFor(() => {
+      const { settings } = rendered.result.current.conversion;
+      expect(settings.status === "ready" && settings.catalog.installationGeneration).toBe(1);
+    });
+
+    // The chosen semantic survived the change and is now truthfully refused,
+    // rather than being silently replaced by the shipped posture.
+    const { settings } = rendered.result.current.conversion;
+    expect(settings.status === "ready" && settings.selectedId).toBe(wide.id);
+    expect(rendered.result.current.conversion.settingsReadiness).toBe("unsupported");
+    expect(rendered.result.current.conversion.state.status).toBe("idle");
+  });
+
+  it("does not reconcile when a dispatch fails without the installation moving", async () => {
+    // The other half of the same rule. A refusal is not evidence that anything
+    // about the build changed, and a document that re-read its settings after
+    // every failed press would be paying a help probe for a filename clash.
+    let catalogs = 0;
+    const api = createFakePreviewApi({
+      initialDatasets: [VENDOR_ROW],
+      availability: availableBackend,
+      conversionIntents: () => {
+        catalogs += 1;
+        return Promise.resolve(intentCatalog());
+      },
+      conversion: () =>
+        Promise.reject({
+          kind: "queue_output_name_collision",
+          summary: "Two of those acquisitions would write the same file name.",
+          detail: null,
+          retryable: false,
+        }),
+    });
+    const rendered = renderHook(() => usePreviewWorkspace(), {
+      wrapper: ({ children }) =>
+        createElement(
+          WorkspaceDropTransportProvider,
+          { value: createFakeWorkspaceDropTransport() },
+          createElement(PreviewApiProvider, { value: api }, children),
+        ),
+    });
+    act(() => {
+      rendered.result.current.conversion.describe([VENDOR_ROW.handle]);
+    });
+    await waitFor(() => {
+      expect(rendered.result.current.conversion.planIsCurrent).toBe(true);
+    });
+    const catalogsBefore = catalogs;
+
+    act(() => {
+      rendered.result.current.conversion.convert([VENDOR_ROW.handle]);
+    });
+    await waitFor(() => {
+      expect(rendered.result.current.conversion.error?.kind).toBe(
+        "queue_output_name_collision",
+      );
+    });
+    // The slot was read, because the slot is authoritative about what happened.
+    // The settings were not, because nothing said they had changed.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(catalogs).toBe(catalogsBefore);
+    expect(rendered.result.current.conversion.settings.status).toBe("ready");
+  });
+
+  it("never puts the choices back when the backend went while their read was pending", async () => {
+    // The same revocation, watched on screen rather than in the state. A reader
+    // who saw the controls vanish must not see them return -- offering
+    // availability marks for a build this session has said it cannot launch.
+    const held = deferred<ReturnType<typeof intentCatalog>>();
+    let usable = true;
+    let reads = 0;
+    const { panel } = await openTheSettings({
+      availability: () => Promise.resolve(usable ? availableBackend : unavailableBackend),
+      conversionIntents: () => {
+        reads += 1;
+        return reads === 1 ? held.promise : Promise.resolve(intentCatalog());
+      },
+    });
+    await waitFor(() => {
+      expect(reads).toBe(1);
+    });
+
+    usable = false;
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => {
+      expect(within(panel).queryByRole("group", { name: "Peak processing" })).toBeNull();
+    });
+
+    // The held reply lands, describing the build that has gone.
+    await act(async () => {
+      held.resolve(intentCatalog());
+      await Promise.resolve();
+    });
+    expect(within(panel).queryByRole("group", { name: "Peak processing" })).toBeNull();
+    expect(within(panel).queryByRole("radio", { name: /64-bit/u })).toBeNull();
+    expect(convertButton(panel)).toBeDisabled();
+  });
+
+  it("shows the ordinary control, and no way-out block, where one axis still reaches a runnable row", async () => {
+    // The false sentence, on screen. A preserved 64/64 that this build cannot
+    // run is one enabled precision step from the shipped posture, so there is
+    // no dead end to announce.
+    const everythingElse = intentCatalog()
+      .intents.map((option) => option.intent.id)
+      .filter((id) => id !== SHIPPED_INTENT.id);
+    let replaced = false;
+    const { panel } = await openTheSettings({
+      availability: availableBackend,
+      conversionIntents: () =>
+        Promise.resolve(
+          replaced
+            ? intentCatalog({ unsupported: everythingElse, installationGeneration: 1 })
+            : intentCatalog(),
+        ),
+    });
+    await waitFor(() => {
+      expect(choice(panel, "Numeric precision", /64-bit · intensity 64-bit/u)).toBeEnabled();
+    });
+    fireEvent.click(choice(panel, "Numeric precision", /64-bit · intensity 64-bit/u));
+    await waitFor(() => {
+      expect(choice(panel, "Numeric precision", /64-bit · intensity 64-bit/u).checked).toBe(true);
+    });
+
+    replaced = true;
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    // The chosen semantic is preserved and now truthfully refused. It stays
+    // *checked* rather than disabled -- a radio showing what you chose is not a
+    // claim that you may choose it again -- and the refusal is said once, where
+    // the action is.
+    await waitFor(() => {
+      expect(
+        within(panel).getByText(
+          /installed ProteoWizard build does not offer the conversion settings you chose/u,
+        ),
+      ).toBeVisible();
+    });
+    expect(choice(panel, "Numeric precision", /64-bit · intensity 64-bit/u).checked).toBe(true);
+
+    // The route out is an ordinary control, offered and takeable.
+    const shipped = choice(panel, "Numeric precision", /64-bit · intensity 32-bit/u);
+    expect(shipped).toBeEnabled();
+    // So nothing claims there is no such route.
+    expect(
+      within(panel).queryByRole("button", { name: "Use the settings MSCanvas ships" }),
+    ).toBeNull();
+    expect(panel.textContent ?? "").not.toContain("no single change to one of them reaches");
+
+    fireEvent.click(shipped);
+    await waitFor(() => {
+      expect(choice(panel, "Numeric precision", /64-bit · intensity 32-bit/u).checked).toBe(true);
+    });
+  });
+
+  it("takes the way out from the keyboard where there really is no other route", async () => {
+    const everythingElse = intentCatalog()
+      .intents.map((option) => option.intent.id)
+      .filter((id) => id !== SHIPPED_INTENT.id);
+    let replaced = false;
+    const { panel } = await openTheSettings({
+      availability: availableBackend,
+      conversionIntents: () =>
+        Promise.resolve(
+          replaced
+            ? intentCatalog({ unsupported: everythingElse, installationGeneration: 1 })
+            : intentCatalog(),
+        ),
+    });
+    // Centroiding at 32/32, reached in two explicit steps while a build offers
+    // it. Every one-axis neighbour of it needs an option the narrow build will
+    // not declare.
+    await waitFor(() => {
+      expect(choice(panel, "Numeric precision", /32-bit · intensity 32-bit/u)).toBeEnabled();
+    });
+    fireEvent.click(choice(panel, "Numeric precision", /32-bit · intensity 32-bit/u));
+    await waitFor(() => {
+      expect(choice(panel, "Peak processing", "Centroid all MS levels")).toBeEnabled();
+    });
+    fireEvent.click(choice(panel, "Peak processing", "Centroid all MS levels"));
+    await waitFor(() => {
+      expect(choice(panel, "Peak processing", "Centroid all MS levels").checked).toBe(true);
+    });
+
+    replaced = true;
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+
+    const recover = await within(panel).findByRole("button", {
+      name: "Use the settings MSCanvas ships",
+    });
+    // A real button, reachable and activatable without a pointer.
+    recover.focus();
+    expect(document.activeElement).toBe(recover);
+    fireEvent.keyDown(recover, { key: "Enter" });
+    fireEvent.click(recover);
+
+    await waitFor(() => {
+      expect(choice(panel, "Peak processing", "No additional centroiding").checked).toBe(true);
+    });
+    expect(choice(panel, "Numeric precision", /64-bit · intensity 32-bit/u).checked).toBe(true);
+    expect(
+      within(panel).queryByRole("button", { name: "Use the settings MSCanvas ships" }),
+    ).toBeNull();
+  });
+
   it("says why it will not convert when the catalog cannot be established", async () => {
     const { api, panel } = await openTheSettings({
       conversionIntents: () =>

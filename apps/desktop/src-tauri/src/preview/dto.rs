@@ -1223,6 +1223,21 @@ pub struct WorkspaceConversionUpdateDto {
     /// reload recovers the quarantine with the queue that caused it rather
     /// than needing a second question.
     pub backend_quarantined: bool,
+    /// Where the sequence of installation changes stood when this was read.
+    ///
+    /// The same reasoning that put this on the queue, one level up, and for the
+    /// case the queue-level field cannot cover. That one exists because a pass
+    /// refused for running on a different installation produces no *item*; this
+    /// one exists because a request refused before a queue exists produces no
+    /// *queue* — and the pre-picker capability gate is exactly such a refusal,
+    /// and is very often the first thing to resolve a build replaced in place.
+    ///
+    /// It rides on the conversion read for the reason the quarantine flag does:
+    /// a document already asks for this on mount, while work is under way, and
+    /// immediately after a dispatch that failed. So the answer reaches the one
+    /// reconciler that knows how to discard what the previous installation
+    /// produced, without a second notification protocol to keep in step.
+    pub installation_generation: u64,
 }
 
 /// The complete conversion-state vocabulary exposed to the webview.

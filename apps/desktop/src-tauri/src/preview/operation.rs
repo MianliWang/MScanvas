@@ -2079,10 +2079,16 @@ impl ConversionSlot {
     }
 
     /// The current state, as the webview reads it.
+    ///
+    /// `installation_generation` is the session's, not the slot's: the slot may
+    /// hold nothing at all and the answer still has to say which build this
+    /// session is looking at, because a refusal that created no queue is
+    /// precisely when that matters.
     pub(super) fn read(
         &self,
         backend_quarantined: bool,
         diagnostics: ConversionDiagnosticsStateDto,
+        installation_generation: u64,
     ) -> WorkspaceConversionUpdateDto {
         let operation_id = self.operation.to_string();
         let state = match &self.state {
@@ -2117,6 +2123,7 @@ impl ConversionSlot {
                 ..diagnostics
             },
             backend_quarantined,
+            installation_generation,
         }
     }
 

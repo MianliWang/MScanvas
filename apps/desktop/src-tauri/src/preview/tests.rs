@@ -13136,7 +13136,7 @@ fn a_stopped_retry_keeps_the_failures_it_had_not_reached() {
     ));
     slot.finish(operation, None, TerminalReason::Stopped);
 
-    let update = slot.read(false, ConversionDiagnosticsStateDto::default());
+    let update = slot.read(false, ConversionDiagnosticsStateDto::default(), 0);
     let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
         panic!("the queue reaches a terminal state");
     };
@@ -13283,7 +13283,7 @@ fn a_stop_accepted_while_a_queue_settles_is_not_overwritten_by_completion() {
     ));
     slot.finish(operation, None, TerminalReason::Completed);
 
-    let update = slot.read(false, ConversionDiagnosticsStateDto::default());
+    let update = slot.read(false, ConversionDiagnosticsStateDto::default(), 0);
     assert_eq!(
         terminal_reason(&update),
         ConversionQueueTerminalReasonDto::Stopped,
@@ -13502,7 +13502,7 @@ fn test_destination() -> AdmittedDestination {
 
 /// The reservation the slot currently holds, as the webview would return it.
 fn reservation_handle(slot: &ConversionSlot) -> String {
-    let update = slot.read(false, ConversionDiagnosticsStateDto::default());
+    let update = slot.read(false, ConversionDiagnosticsStateDto::default(), 0);
     match update.state {
         WorkspaceConversionStateDto::AwaitingDestination { operation_id, .. } => {
             format!("conversion-reservation-{operation_id}")
@@ -15344,7 +15344,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
     );
     assert!(!rendered.contains("one.raw"), "{rendered}");
     assert_eq!(
-        slot.read(false, ConversionDiagnosticsStateDto::default())
+        slot.read(false, ConversionDiagnosticsStateDto::default(), 0)
             .diagnostics
             .eligible_item_count,
         1
@@ -15399,7 +15399,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
     let _ = slot.begin(replacement).expect("reservation");
     assert!(slot.terminal_diagnostics(operation).is_none());
     assert_eq!(
-        slot.read(false, ConversionDiagnosticsStateDto::default())
+        slot.read(false, ConversionDiagnosticsStateDto::default(), 0)
             .diagnostics
             .eligible_item_count,
         0
@@ -25150,5 +25150,131 @@ fn a_queue_binds_the_chosen_semantic_and_keeps_it_through_a_retry() {
         rerun.iter().any(|argument| argument == "--zlib=off")
             && rerun.iter().any(|argument| argument == "--64"),
         "a retry sends the semantic the queue holds, not the one the settings now show: {rerun:?}"
+    );
+}
+
+/// A refused `BEGIN` still tells the session which build it resolved.
+///
+/// The pre-picker capability gate resolves the installed executable, and on a
+/// machine where one was replaced in place it is very often the first thing to
+/// see the replacement. Whether *this* queue is admitted is a different
+/// question from which build this session is looking at, and recording the
+/// second only on the way to a reservation is how a refusal here leaves the
+/// sequence naming a build that is gone -- with the catalog the interface
+/// answers from never re-read, and the refusal repeating for ever.
+///
+/// Observed through `conversion_state`, which reads the counter and resolves
+/// nothing. Asking `conversion_intent_catalog` or `inspect_backend` instead
+/// would advance the sequence by asking, and could not tell the fix from its
+/// absence.
+#[test]
+fn a_begin_refused_for_the_installed_build_still_records_the_build_it_saw() {
+    let fixture = TestFile::new("begin-observes-replacement");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    // The narrow grammar: `--64` is not declared, so the 64-bit posture is
+    // admitted by the evidence and unrunnable on this build.
+    let provider = ConvertingProvider::new(evidenced_capabilities(), runner);
+    let installation = provider.installation_label();
+    let service = PreviewService::new(Box::new(provider));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+    let document = current_document(&service);
+    // One reading establishes which installation this session is on, so what
+    // follows is a *change* rather than a first look.
+    let _ = service.conversion_intent_catalog();
+    let before = service.conversion_state().installation_generation;
+
+    // The executable is replaced where it stands: same location, different
+    // build. Nothing has looked at it yet.
+    *installation.lock().expect("the label") = String::from("replaced-msconvert");
+
+    let error = service
+        .begin_conversion_with_intent(
+            &handle,
+            ConversionConflictPolicyDto::Fail,
+            "mzml+no_additional_centroiding+all+mz64_intensity64+zlib",
+            document,
+        )
+        .expect_err("this build declares no 64-bit option");
+
+    assert_eq!(error.kind, "conversion_intent_unsupported");
+    // Refused before a picker, a reservation and a process, exactly as before.
+    assert_eq!(launches.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        service.conversion_state().state,
+        WorkspaceConversionStateDto::Idle
+    ));
+    // And the observation survived the refusal.
+    assert_eq!(
+        service.conversion_state().installation_generation,
+        before + 1,
+        "a refusal must not unlearn which build it resolved"
+    );
+}
+
+/// The same rule from the other side: failing is not evidence of a change.
+///
+/// A sequence that advanced because an operation went wrong would make every
+/// refusal look like a new installation, and every reader that discards what
+/// the previous one produced would do so for nothing.
+#[test]
+fn a_begin_refused_on_the_same_build_advances_no_installation_sequence() {
+    let fixture = TestFile::new("begin-same-build");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    // A build with no recorded vendor evidence, so the preflight resolves it
+    // successfully and then refuses for a reason that is not about identity.
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        conversion_capabilities("3.0.99999", Some("deadbee"), EVIDENCED_EXECUTABLE_SHA256),
+        runner,
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+    let document = current_document(&service);
+    let _ = service.conversion_intent_catalog();
+    let before = service.conversion_state().installation_generation;
+
+    let error = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect_err("no evidence for this family on this build");
+
+    assert_eq!(error.kind, "provider_build_not_evidenced");
+    assert_eq!(launches.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        service.conversion_state().installation_generation,
+        before,
+        "the identity did not change, so nothing about it may have moved"
+    );
+}
+
+/// Every reading carries where the sequence stands, including an idle one.
+///
+/// The field exists for the answer that has no queue in it: a request refused
+/// before a queue exists produces none, and the queue-level number cannot be
+/// read from a slot that holds nothing.
+#[test]
+fn an_idle_slot_still_says_which_installation_this_session_is_on() {
+    let fixture = TestFile::new("idle-carries-generation");
+    let provider = ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::Convert),
+    );
+    let installation = provider.installation_label();
+    let service = PreviewService::new(Box::new(provider));
+    let _ = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+
+    let idle = service.conversion_state();
+    assert!(matches!(idle.state, WorkspaceConversionStateDto::Idle));
+    let before = idle.installation_generation;
+
+    let _ = service.conversion_intent_catalog();
+    *installation.lock().expect("the label") = String::from("another-msconvert");
+    let _ = service.conversion_intent_catalog();
+
+    let after = service.conversion_state();
+    assert!(matches!(after.state, WorkspaceConversionStateDto::Idle));
+    assert_eq!(
+        after.installation_generation,
+        before + 1,
+        "a slot that holds nothing still answers for the session it belongs to"
     );
 }

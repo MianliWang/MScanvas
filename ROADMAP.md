@@ -394,8 +394,8 @@ slices:
 - M6.1 — conversion-lane authority. **complete.**
 - M6.2 — `msconvert` capability and evidence. **complete.**
 - M6.3 — typed `ConversionIntent`. **complete.**
-- M6.4 — visible settings, and a truthful plan. **implemented, unmerged.**
-- M6.5 — destination authority.
+- M6.4 — visible settings, and a truthful plan. **complete.**
+- M6.5 — destination authority. **Next.**
 - M6.6 — destination and conflict UX, including the destructive question.
 - M6.7 — convert selected, convert all.
 - M6.8 — cancellation, capacity, and truthful progress.
@@ -459,13 +459,6 @@ declares the exact invocation each intent emits, rather than trusting that M6.2'
 executable and today's are the same build. Nothing visible changed: the product
 still converts under the shipped intent and still emits the same two flags.
 
-**M6.4 is implemented and not published.** Review of the head that passed every
-gate found three further truthfulness defects after the one bounded repair pass
-the route authorizes had been spent, so it ends `STOP — M6.4_NOT_PUBLISHABLE`
-and stays on its branch. The paragraph below describes what that branch does;
-the three open findings are in `BOOTSTRAP_STATUS.md`, and **none of them is on
-`main`**, which is unchanged.
-
 **M6.4 made the nine admitted semantics selectable without letting the
 interface re-invent the graph.** The controls a user meets are four scientific
 dimensions, and every one of them is a projection of a single backend catalog:
@@ -491,7 +484,11 @@ if the installation changed. The queue keeps what it bound through every retry,
 and the running surface reads the queue's intent rather than the controls. M6.4
 also closed the M6.1 initial-unread-slot residual with one lane fact: **a slot
 this document has never read is not an idle slot**, and a conversion may not
-start against one.
+start against one. It took two review rounds and one stop to get there, and what
+the later rounds found were edges rather than the graph: a catalog request
+outliving the state it produced, an installation observation lost because the
+operation that made it was refused, and a way-out affordance claiming there was
+no ordinary way out while an enabled control offered one.
 
 **The audit also found the boundary beneath M6 is stronger than this backlog
 implied**, and the route is shaped accordingly: destinations are already admitted
@@ -533,11 +530,9 @@ guard had been unable to see.
 
 - Widen the typed conversion settings the interface can actually express.
   CNV-004 to CNV-007's processing, population, precision and compression choices
-  are visible on M6.4's branch, in the nine combinations M6.2 measured and no
-  others, and are **not on `main`** — that slice is implemented and unmerged.
-  What remains here beyond publishing it is CNV-002's mzXML gate, whose
-  disposition is M6.10's, and CNV-003's output-location choices, which are
-  M6.5's and M6.6's.
+  are **visible since M6.4**, in the nine combinations M6.2 measured and no
+  others; what remains here is CNV-002's mzXML gate, whose disposition is
+  M6.10's, and CNV-003's output-location choices, which are M6.5's and M6.6's.
 - Queue work beyond the current bounds, **measurement-gated, and neither an exit
   criterion nor a route requiring a disposition**: a re-evaluated queue bound and
   per-item cancellation. Both are admitted only on M6.8's measurement of what an

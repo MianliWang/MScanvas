@@ -120,28 +120,60 @@ export type ConversionSettings =
     };
 
 /**
- * The semantic to offer as a way out, or `null` where none is needed.
+ * The semantic to offer as a way out, or `null` where the controls are already
+ * the way out.
  *
- * **A dead end is reachable without this, and it is the cost of two rules that
- * are each right.** A choice survives an installation change, because it is a
- * scientific request rather than a property of a catalog; and a control moves
- * one axis, because a control that moved two would change something the user
- * did not ask about. Put together, a preserved semantic whose every one-axis
- * neighbour is unqualified or undeclared leaves every control refused, with the
- * shipped posture sitting available and unreachable.
+ * **A dead end is reachable, and it is the cost of two rules that are each
+ * right.** A choice survives an installation change, because it is a scientific
+ * request rather than a property of a catalog; and a control moves one axis,
+ * because a control that moved two would change something the user did not ask
+ * about. Put together, a preserved semantic whose every one-axis neighbour is
+ * unqualified or undeclared leaves every control refused, with the shipped
+ * posture sitting available and unreachable.
  *
- * So the way out is an explicit, labelled, atomic choice rather than a silent
- * rewrite: offered only while the current selection cannot run, and only when
- * the semantic Rust names as shipped can. Where even that cannot run, nothing
- * is offered — inventing a route to whichever row happens to be available would
- * be the silent fallback this design exists to refuse.
+ * **But only then.** An unrunnable selection is not by itself a dead end, and
+ * this used to treat it as one: a preserved 64/64 that a narrower build cannot
+ * run still has the shipped 64/32 one precision step away, offered and enabled.
+ * Claiming otherwise put a false sentence beside a working control, on the
+ * surface this milestone added to stop the interface saying false things. So
+ * the ordinary route is looked for first, and it is looked for **through the
+ * very choices the controls render** — `axisChoices` over `CONVERSION_AXES`,
+ * the same call each fieldset makes — rather than through a second scan of the
+ * catalog. A separate predicate answering "is any neighbour reachable?" would be
+ * a second compatibility calculation, which is the one thing this module exists
+ * not to have.
+ *
+ * Where it really is a dead end the way out is explicit, labelled and atomic
+ * rather than a silent rewrite, and it selects only the semantic Rust names as
+ * shipped. Where even that cannot run, nothing is offered: inventing a route to
+ * whichever row happens to be available would be the silent fallback this
+ * design refuses.
+ *
+ * "Shipped differs from the current selection" is not tested separately because
+ * it follows. The two conditions below require the current row to be unrunnable
+ * and the shipped row to be runnable, and one row cannot be both.
  */
 export function recoveryIntent(settings: ConversionSettings): ConversionIntentOption | null {
   if (settings.status !== "ready") {
     return null;
   }
   const chosen = catalogRow(settings.catalog, settings.selectedId);
-  if (chosen !== null && chosen.availability.kind === "available") {
+  // No current semantic at all. `reselect` makes this unreachable — a selection
+  // the catalog does not hold falls back when that catalog installs — and the
+  // settings surface has its own sentence for it, so a labelled reset offered
+  // underneath that sentence would be a second answer to one question.
+  if (chosen === null) {
+    return null;
+  }
+  if (chosen.availability.kind === "available") {
+    return null;
+  }
+  // An ordinary control can already reach a runnable combination, so the
+  // controls *are* the recovery and there is nothing here to say.
+  const ordinaryRouteExists = CONVERSION_AXES.some((axis) =>
+    axisChoices(settings.catalog, chosen.intent, axis).some((choice) => canChoose(choice.state)),
+  );
+  if (ordinaryRouteExists) {
     return null;
   }
   const shipped = catalogRow(settings.catalog, settings.catalog.shippedIntentId);

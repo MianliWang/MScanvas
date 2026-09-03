@@ -7048,16 +7048,18 @@ cancellation behaviour, no wire vocabulary beyond the integrity property and
 outcome names the new checks required, no dependency and no lockfile. It does not
 decide the mzXML disposition, which remains M6.10's, and it does not start M6.4.
 
-## M6.4 — Visible conversion settings, and a truthful plan — NOT PUBLISHED, 2026-09-03
+## M6.4 — Visible conversion settings, and a truthful plan, 2026-09-03
 
-**This slice is implemented, validated and unmerged.** Review of the exact head
-that passed final confirmation found three further defects, after the one
-bounded repair pass this route authorizes had been spent — so the verdict is
-`STOP — M6.4_NOT_PUBLISHABLE`, and the work stays on
-`feat/m6.4-visible-conversion-settings` / PR #95 rather than on `main`. What
-follows describes what that branch contains; the three open findings are
-recorded at the end, and the second of them makes one claim below narrower than
-it reads. Nothing here is a statement about `main`, which is untouched.
+This slice took **two** review rounds and stopped once in between. The first
+round found two defects and spent the route's one repair pass on them; a second
+round on the repaired head found three more, so the slice stopped at
+`STOP — M6.4_NOT_PUBLISHABLE` rather than self-authorizing another. It was then
+given an explicit new authorization for one bounded correction, which is what
+closed F1, F2 and F3 below. That history is recorded rather than tidied away:
+what it says about this design is that the hard part was never the nine-row
+graph, it was the *edges* — a request that outlives the state it produced, an
+observation lost because the operation it belonged to failed, and an affordance
+that claimed more than it knew.
 
 The first M6 slice that puts the conversion semantics on screen. M6.2 measured
 nine combinations of five axes; M6.3 made those nine the only constructible ones
@@ -7308,12 +7310,29 @@ ADR 0043's M6.4 delivery note.
 --all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
 `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
 `pnpm build`, `pnpm e2e:typecheck`, `pnpm e2e:browser` and `git diff --check`,
-each run directly on the final candidate head and each exiting zero. Rust
-**1,397** and frontend **1,429** — nine Rust tests and thirty-one frontend tests
-added, none removed or weakened. Browser E2E: **11 spec files, 219 tests**,
-including the new eleven-case M6.4 spec, three of whose cases run at 1920×1080,
-1366×768 and 960×640. Every gate was re-run on the repaired head; nothing is
-inherited from the published one.
+each run directly on the final corrected head and each exiting zero. Rust
+**1,400** and frontend **1,437**. Browser E2E: **11 spec files, 220 tests**,
+including the twelve-case M6.4 spec, three of whose cases run at 1920×1080,
+1366×768 and 960×640. Nothing is inherited from either earlier head.
+
+Each of the three mechanisms was reverted once, on its own, and the regression
+that names it was shown to fail for the intended reason: the late reply putting
+`ready` back where `noBackend` was expected; the refused `BEGIN` reporting
+generation 0 where 1 was expected, under the message *a refusal must not unlearn
+which build it resolved*; the reconciliation never happening when the report is
+moved back below the sequence guard; and the recovery being offered where an
+ordinary route exists. The catalog-fixture guard was re-proved the same way, by
+deleting one admitted row and watching `check_repo.py` name it.
+
+**Repeated back-to-back full frontend runs flake on this machine, and it is not
+this branch.** Five consecutive runs of the corrected head produced one failure;
+five consecutive runs of the stopped head, immediately afterwards and with the
+correction stashed, produced one failure too — each time in a different,
+unrelated file (`LinkedViewer`, `App`, `ChromatogramExport`, `LinkedFigureExport`),
+each a five-second `waitFor` under sustained load, and none reproducible when
+the file is run on its own six times over. Recorded rather than papered over: a
+single clean run is what every gate above reports, and the attribution was
+measured rather than assumed.
 
 **The browser run needed the same machine-specific workaround M6.1 recorded, for
 the same reason.** Chrome finalizes a staged update only once every Chrome
@@ -7323,7 +7342,7 @@ a throwaway configuration that imports `e2e/wdio.browser.conf.ts` and overrides
 one field — the browser binary — deleted before the commit. No repository file,
 dependency or spec was changed for it, and CI does not run this suite.
 
-### Three existing tests were changed, and none was weakened
+### Four existing tests were changed, and none was weakened
 
 `capability_evidence_from_the_wrong_tool_cannot_convert` now asserts an **earlier**
 refusal. The pre-picker capability gate asks whether the resolved build declares
@@ -7339,6 +7358,13 @@ M6.1 established — one sentence, both controls present and refused, nothing
 crossing the boundary — is unchanged; what changed is that the panel no longer
 claims to be reading a plan it cannot ask for.
 
+One conversion panel case waited for `Convert` to be *visible* before pressing
+it. Since this slice the control is on screen while the plan behind it is still
+being read — a refused action has to say why, so it cannot vanish — and a
+conversion may only start the plan the user was shown, so visibility stopped
+implying the press would land. It now waits for the control to be **enabled**,
+which is what the rest of the file already did.
+
 The two panel path sweeps banned a bare `/`. The precision labels render `m/z`,
 which is a scientific unit rather than a path separator, so the sweeps now remove
 exactly that token first and ban everything else — a real path could not survive
@@ -7346,53 +7372,88 @@ the replacement. The colon ban became a drive-letter pattern for the same reason
 and with both separators still banned a Windows path cannot reach that line
 anyway.
 
-### Three open findings, and why they stopped publication
+### The three findings that stopped it, and how each was closed
 
-Raised by review against `04e0942ee39f01e165f95dba6c82b54de1351e00` — the head on
-which every gate and all three CI jobs passed — and each confirmed by reading the
-code rather than accepted on the report. The route authorizes **one** bounded
-repair pass, which the two findings above had already used, and it says
-explicitly that a new release-blocking P2 after that pass ends in
-`STOP — M6.4_NOT_PUBLISHABLE` rather than in another round. None of the three is
-a safety defect: Rust refuses at every gate, and no conversion can run under a
-semantic the evidence does not admit or the installed build cannot express. All
-three are **truthfulness** defects, which is the standard this slice exists to
-meet.
+Raised against `04e0942ee39f01e165f95dba6c82b54de1351e00` — the head on which
+every gate and all three CI jobs passed — and each reproduced by reading the code
+before it was touched. None was a safety defect: Rust refused at every gate
+throughout, and no conversion could run under a semantic the evidence does not
+admit or the installed build cannot express. All three were **truthfulness**
+defects, which is the standard this slice exists to meet, and each turned out to
+be the same shape of mistake in a different place — a fact and the thing that
+carries it coming apart.
 
-**F1 — an in-flight catalog can undo the `noBackend` state. P2.** The branch that
-drops the catalog when the session loses its backend sets the state but does not
-advance `catalogToken`. A read issued a moment earlier therefore resolves
-afterwards, passes both its guards — the token still matches, and its generation
-is not lower than the one installed — and puts `ready` back with the catalog of
-the executable that has just gone. It reinstates, in a narrower window, exactly
-the defect the repair above announces as closed, which also makes that
-paragraph's "no catalog, no controls" claim true only outside this race. The fix
-is one line in the same branch: invalidate the outstanding request as well as the
-rendered state.
+**F1 — invalidating a catalog must invalidate its request.** Dropping the catalog
+when the session loses its backend set the rendered state but did not advance
+`catalogToken`, so a read issued a moment earlier resolved afterwards, passed a
+token check that still matched, and put `ready` back with the catalog of the
+executable that had just gone. The generation guard could not refuse it: that
+guard is a strict `<` asking *which build does this reply describe*, and it must
+stay strict, because a read is legitimately re-issued at an unchanged generation
+whenever a usable backend returns. Revocation is a different question, and it is
+the token's.
 
-**F2 — the `BEGIN` preflight can be the first to see a replaced build, and
-reconciles nothing. P2.** `begin_queue` resolves the backend for its preflight
-and refuses with `conversion_intent_unsupported` without calling `note_resolved`,
-so an executable replaced *in place* — same location, different build — advances
-no installation sequence and prompts no catalog re-read. The user is told this
-build does not offer the option while the controls, answering from the previous
-catalog, still mark it available; pressing `Convert` again fails the same way
-until they recheck the backend by hand. Recoverable, and disagreeing with itself
-while it lasts.
+So the two halves became one act. `revokeCatalog(standing)` advances the token
+and sets the state, returns the token the read must hold, and is the only way to
+do either — the loss path and `readCatalog` both go through it, and there is no
+way to perform one half. It deliberately leaves `catalogGeneration` alone:
+rewinding that would let a genuinely superseded reply install afterwards, which
+is the ordinary staleness rule this correction must not weaken.
 
-**F3 — the way out is offered where an ordinary choice already exists, and says
-something false. P2.** `recoveryIntent` returns the shipped semantic for *every*
-unsupported selection without asking whether a one-axis move is already
-available. Preserved 64/64 becoming unsupported while the shipped 64/32 stays
-available is the reachable case: the precision radio offers that single step and
-is enabled, and beside it the recovery block says "no single change to one of
-them reaches a combination it can". That sentence is false in that state, on the
-surface this slice added to stop the interface saying false things. The fix is to
-consult the axis choices before declaring a dead end.
+**F2 — an observation must survive the operation that made it.** The pre-picker
+capability gate resolves the installed executable and, on a machine where one was
+replaced in place, is very often the first thing to see it. `begin_queue`
+recorded nothing: it resolved the build and then returned a refusal, so the
+session went on naming a build that was gone, the catalog was never re-read, and
+the refusal repeated while the controls still marked the intent available.
 
-**Owner: the next M6.4 attempt**, which should take these three and re-run the
-route from its review step. The implementation, the tests and the evidence below
-stand; what is missing is a publishable head.
+**Resolving an executable is an observation, and it is complete the moment it
+succeeds.** `note_resolved` is now called immediately after
+`conversion_backend()` returns and before any refusal can — after the `?`, so a
+resolution that itself failed still manufactures nothing, and through the same
+helper that advances the sequence only where the identity actually differs, so a
+refusal on the same build moves nothing.
+
+The frontend half is where this could have gone wrong. Two shapes were proposed
+in review and both were declined: keying a catalog re-read off an allowlist of
+error kinds, and keying it off `!failure.retryable`. The first is a hand-kept
+list two files from the refusals it names, and it silently misses the next one;
+the second fires a help probe when a user picks two files that would write one
+name. Both put a second authority about installations on the interface, and both
+are the "refresh the UI after an error" patch this correction was told to avoid.
+
+What was missing instead was that **the ordinary post-refusal read carried no
+such fact at all**. It does now: `WorkspaceConversionUpdateDto` says where the
+installation sequence stands, which is the same reasoning that already put a
+generation on the queue, one level up, and for the case the queue-level field
+structurally cannot cover — a request refused before a queue exists produces no
+queue. `applyUpdate` reports it through the reconciler a conversion report
+already used, and nothing anywhere inspects what failed.
+
+That report sits **before** the sequence guard, and finding out why is the part
+worth recording: the sequence orders slot *states*, and a refused `BEGIN` leaves
+the slot exactly where it was, so its sequence is unchanged and the guard drops
+the very reply carrying the news. It is safe outside the guard because the
+reconciler acts only on a strict increase and the counter only rises. The
+reconciler gained the `>= 0` idiom `applyVerdict` already uses beside it, so the
+mount read does not fire a second probe next to the check already in flight.
+
+**F3 — a way out is only a way out of somewhere there is no other way out of.**
+`recoveryIntent` offered the shipped semantic for every unrunnable selection,
+while the sentence beside it claimed no single change could reach a runnable
+combination. A preserved 64/64 that a narrower build cannot run is one *enabled*
+precision step from the shipped 64/32, so that sentence was false in a reachable
+state. Worse in one case found while fixing it: a build declaring `--filter` but
+no `peakPicking` grammar leaves centroiding at 64/64 unrunnable with the
+processing axis offering a step that **keeps** the 64-bit intensity, while the
+reset would have moved the user to the 32-bit posture — an atomic affordance
+quietly costing them a second axis, which is the one thing it exists not to do.
+
+The predicate now looks for the ordinary route first, and looks for it **through
+the very choices the controls render** — `axisChoices` over `CONVERSION_AXES`,
+the same call each fieldset makes. A separate scan for "is any neighbour
+reachable?" would have been a second compatibility calculation, which is the one
+thing this module exists not to have.
 
 ### Residuals
 

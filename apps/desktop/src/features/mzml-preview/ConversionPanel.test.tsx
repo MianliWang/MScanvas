@@ -255,8 +255,12 @@ describe("queueing selected Thermo RAW conversions", () => {
     fireEvent.keyDown(screen.getByRole("listbox", { name: "Workspace" }), { key: "ArrowUp" });
 
     const panel = await screen.findByRole("region", { name: "Convert" });
+    // Enabled, not merely visible. Since M6.4 the control is on screen while the
+    // plan behind it is still being read -- a refused action has to say why, so
+    // it cannot vanish -- and a conversion may only start the plan the user was
+    // shown. Waiting for visibility alone leaves the click racing that read.
     await waitFor(() => {
-      expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeVisible();
+      expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeEnabled();
     });
     expect(within(panel).queryByRole("button", { name: "Convert focused…" })).toBeNull();
 

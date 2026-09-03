@@ -1256,6 +1256,17 @@ export interface WorkspaceConversionUpdate {
    * ended.
    */
   readonly backendQuarantined: boolean;
+  /**
+   * Where the sequence of installation changes stood when this was read.
+   *
+   * The same fact the queue carries, one level up, for the case the queue-level
+   * one cannot cover: a request refused before a queue exists produces no
+   * queue — and the pre-picker capability gate is such a refusal, and is often
+   * the first thing to resolve a build replaced in place. Read on mount, while
+   * work is under way, and immediately after a dispatch that failed, so the
+   * answer reaches the reconciler without a second notification protocol.
+   */
+  readonly installationGeneration: number;
 }
 
 /** One row of a queue plan. */
