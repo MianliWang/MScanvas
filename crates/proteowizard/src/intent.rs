@@ -214,10 +214,31 @@ pub enum ProviderFeature {
     ZlibOption,
     /// The generic `--filter` option, which takes a required argument.
     FilterOption,
-    /// A named spectrum-list filter, by the name the help declares. Separate
-    /// from [`Self::FilterOption`] because the option existing does not imply
-    /// the named grammar existing.
-    Filter(&'static str),
+    /// One exact spectrum-list filter invocation. Separate from
+    /// [`Self::FilterOption`] because the option existing does not imply the
+    /// named grammar existing, and the name existing does not imply that
+    /// grammar accepting the shape this product sends.
+    Filter(FilterInvocation),
+}
+
+/// The exact filter invocation one intent lowers to.
+///
+/// Carried as a shape rather than reconstructed from the argv string later. The
+/// tokens and this description come out of the same segment, so what the
+/// capability gate proves admissible is what the command actually sends -- and
+/// a second hand-written grammar table beside the lowering cannot drift from it,
+/// because there is no second table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FilterInvocation {
+    /// The filter name, as the installed help declares it.
+    pub name: &'static str,
+    /// How many positional arguments follow the name in the emitted argument.
+    /// `peakPicking` sends none; `msLevel 1` sends one.
+    pub positional_arguments: usize,
+    /// The `name=` parameters the invocation supplies. Empty for every admitted
+    /// intent: the one scoped form the provider offers is the one M6.2 measured
+    /// silently discarding its scope.
+    pub named_arguments: &'static [&'static str],
 }
 
 impl ProviderFeature {
@@ -227,7 +248,7 @@ impl ProviderFeature {
             Self::Flag(_) => "flag",
             Self::ZlibOption => "zlib_option",
             Self::FilterOption => "filter_option",
-            Self::Filter(_) => "named_filter",
+            Self::Filter(_) => "filter_invocation",
         }
     }
 }
@@ -243,6 +264,13 @@ struct LoweredSegment {
     features: &'static [ProviderFeature],
     tokens: &'static [&'static str],
 }
+
+/// The population filter's invocation shape, which both levels share.
+const MS_LEVEL_INVOCATION: FilterInvocation = FilterInvocation {
+    name: "msLevel",
+    positional_arguments: 1,
+    named_arguments: &[],
+};
 
 /// One conversion's complete product semantics.
 ///
@@ -561,7 +589,11 @@ impl ConversionIntent {
             ProcessingIntent::UnscopedDefaultCentroiding => LoweredSegment {
                 features: &[
                     ProviderFeature::FilterOption,
-                    ProviderFeature::Filter("peakPicking"),
+                    ProviderFeature::Filter(FilterInvocation {
+                        name: "peakPicking",
+                        positional_arguments: 0,
+                        named_arguments: &[],
+                    }),
                 ],
                 tokens: &["--filter", "peakPicking"],
             },
@@ -574,14 +606,14 @@ impl ConversionIntent {
             SpectrumPopulation::Ms1Only => LoweredSegment {
                 features: &[
                     ProviderFeature::FilterOption,
-                    ProviderFeature::Filter("msLevel"),
+                    ProviderFeature::Filter(MS_LEVEL_INVOCATION),
                 ],
                 tokens: &["--filter", "msLevel 1"],
             },
             SpectrumPopulation::Ms2Only => LoweredSegment {
                 features: &[
                     ProviderFeature::FilterOption,
-                    ProviderFeature::Filter("msLevel"),
+                    ProviderFeature::Filter(MS_LEVEL_INVOCATION),
                 ],
                 tokens: &["--filter", "msLevel 2"],
             },
@@ -852,16 +884,21 @@ mod tests {
                 if token == "--filter" {
                     expected.push(ProviderFeature::FilterOption);
                     let argument = tokens.next().expect("a filter carries its grammar");
-                    let named = argument
-                        .to_str()
-                        .expect("every lowered token is UTF-8")
-                        .split(' ')
-                        .next()
-                        .expect("a filter names a grammar");
-                    expected.push(ProviderFeature::Filter(match named {
-                        "peakPicking" => "peakPicking",
-                        "msLevel" => "msLevel",
-                        other => panic!("{other} reached argv with no requirement rule"),
+                    // The invocation shape is read back out of the emitted
+                    // argument, so what the capability gate is told to prove is
+                    // measured against what is actually sent.
+                    let argument = argument.to_str().expect("every lowered token is UTF-8");
+                    let mut words = argument.split(' ');
+                    let named = words.next().expect("a filter names a grammar");
+                    let positional_arguments = words.count();
+                    expected.push(ProviderFeature::Filter(FilterInvocation {
+                        name: match named {
+                            "peakPicking" => "peakPicking",
+                            "msLevel" => "msLevel",
+                            other => panic!("{other} reached argv with no requirement rule"),
+                        },
+                        positional_arguments,
+                        named_arguments: &[],
                     }));
                 } else if token.starts_with("--zlib") {
                     expected.push(ProviderFeature::ZlibOption);

@@ -91,14 +91,15 @@ pub use fs_guard::{
     is_reparse_point, snapshot_output_directory,
 };
 pub use intent::{
-    AdmittedIntent, CompressionIntent, ConversionIntent, NumericPrecision, OutputFormat,
-    ProcessingIntent, SpectrumPopulation,
+    AdmittedIntent, CompressionIntent, ConversionIntent, FilterInvocation, NumericPrecision,
+    OutputFormat, ProcessingIntent, ProviderFeature, SpectrumPopulation,
 };
 pub use mzml::{
-    ArrayKind, ArrayKindSet, CompressionMarker, CompressionSet, MzmlChromatogramRecord, MzmlFacts,
-    MzmlLimitKind, MzmlMalformedKind, MzmlRoot, MzmlScanError, MzmlScanLimits, MzmlSpectrumRecord,
-    NumericPrecisionMarker, NumericPrecisionSet, ProcessingAlgorithm, ProcessingAlgorithmSet,
-    RepresentationMarker, RetentionTimeUnitMarker, UnsafeXmlKind, inspect_file, inspect_reader,
+    ArrayKind, ArrayKindSet, CompressionMarker, CompressionSet, EffectiveProcessing,
+    MzmlChromatogramRecord, MzmlFacts, MzmlLimitKind, MzmlMalformedKind, MzmlRoot, MzmlScanError,
+    MzmlScanLimits, MzmlSpectrumRecord, NumericPrecisionMarker, NumericPrecisionSet,
+    ProcessingAlgorithm, ProcessingHistory, RepresentationMarker, RetentionTimeUnitMarker,
+    UnsafeXmlKind, inspect_file, inspect_reader,
 };
 pub use preview::{
     MAX_PREVIEW_TEXT_BYTES, MetadataEntry, MetadataResult, MetadataSection, MetadataSectionKind,

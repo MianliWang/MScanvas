@@ -53,14 +53,22 @@ const PEAK_PICKING: &[u8] = b"MS:1000035";
 /// evidence is bound to. It is compared, never stored.
 const DEFAULT_PICKER_NAME: &str = "local maximum peak picker";
 
-/// Implementation names this repository recognizes and has not admitted.
+/// Implementation names this repository recognizes and has not admitted, each
+/// kept as its own identity.
 ///
 /// Recognizing a rejected algorithm matters as much as recognizing the admitted
-/// one: an output that says `cwt` ran when the default was asked for must fail
-/// with something better than "unrecognized".
-const KNOWN_OTHER_PICKER_NAMES: [&str; 2] = [
-    "CantWaiT (continuous wavelet transform) peak picker",
-    "vendor peak picking",
+/// one, and telling the rejected ones apart matters too: an output that gains a
+/// `vendor` method over a source that already carried `cwt` has gained an
+/// algorithm, and one identity covering both would subtract it away.
+const KNOWN_OTHER_PICKER_NAMES: [(&str, ProcessingAlgorithm); 2] = [
+    (
+        "CantWaiT (continuous wavelet transform) peak picker",
+        ProcessingAlgorithm::WaveletCantWait,
+    ),
+    (
+        "vendor peak picking",
+        ProcessingAlgorithm::VendorPeakPicking,
+    ),
 ];
 const ZLIB_COMPRESSION: &[u8] = b"MS:1000574";
 const NO_COMPRESSION: &[u8] = b"MS:1000576";
@@ -138,12 +146,19 @@ pub enum RetentionTimeUnitMarker {
 pub enum ProcessingAlgorithm {
     /// The build's default local-maximum picker named itself.
     DefaultLocalMaximum = 0,
-    /// A picker this repository recognizes and has not admitted -- measured, and
-    /// measured failing.
-    KnownDifferentAlgorithm = 1,
+    /// The continuous-wavelet picker, which M6.2 measured and rejected.
+    WaveletCantWait = 1,
+    /// The vendor picker, which M6.2 could not reach and left blocked.
+    VendorPeakPicking = 2,
     /// A `peak picking` method was recorded whose implementation name is not one
     /// of the strings the evidence qualified.
-    Unrecognized = 2,
+    ///
+    /// One variant for every such string, deliberately: the free text is not
+    /// retained, so two different unknown implementations are indistinguishable
+    /// here. What that costs is stated where it is paid --
+    /// [`ProcessingHistory::unknown_delta_is_establishable`] -- rather than
+    /// hidden behind a comparison that would silently treat them as equal.
+    Unrecognized = 3,
 }
 
 impl ProcessingAlgorithm {
@@ -151,10 +166,118 @@ impl ProcessingAlgorithm {
     pub const fn stable_id(self) -> &'static str {
         match self {
             Self::DefaultLocalMaximum => "default_local_maximum",
-            Self::KnownDifferentAlgorithm => "known_different_algorithm",
+            Self::WaveletCantWait => "wavelet_cant_wait",
+            Self::VendorPeakPicking => "vendor_peak_picking",
             Self::Unrecognized => "unrecognized",
         }
     }
+
+    /// Every identity, so a comparison can iterate them without a second list.
+    pub const ALL: [Self; 4] = [
+        Self::DefaultLocalMaximum,
+        Self::WaveletCantWait,
+        Self::VendorPeakPicking,
+        Self::Unrecognized,
+    ];
+}
+
+/// How many times each peak-picking implementation appears in one processing
+/// history.
+///
+/// A multiset rather than a set, because the comparison this feeds asks what a
+/// conversion *added*. A source carrying one default-picker method and an output
+/// carrying two differ by one occurrence, and a set cannot say that; two
+/// distinct rejected pickers collapsing into one presence bit is the same defect
+/// wearing different clothes, which is why the identities above are separate.
+///
+/// Counts saturate. A document claiming more than `u16::MAX` occurrences of one
+/// algorithm has said something this comparison cannot be more precise about,
+/// and saturation keeps the fact bounded rather than wrapping it into a wrong
+/// small number.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProcessingHistory {
+    counts: [u16; 4],
+}
+
+impl ProcessingHistory {
+    /// How many methods claimed this implementation.
+    #[must_use]
+    pub const fn count(&self, algorithm: ProcessingAlgorithm) -> u16 {
+        self.counts[algorithm as usize]
+    }
+
+    /// Whether the history records no peak-picking method at all.
+    ///
+    /// Silence, not a claim that none ran.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        let mut index = 0;
+        while index < self.counts.len() {
+            if self.counts[index] != 0 {
+                return false;
+            }
+            index += 1;
+        }
+        true
+    }
+
+    /// The occurrences this history holds that `inherited` does not.
+    ///
+    /// Per identity and per occurrence, so an added second copy of an algorithm
+    /// the source already carried is visible.
+    #[must_use]
+    pub const fn added_over(&self, inherited: Self) -> Self {
+        let mut added = Self { counts: [0; 4] };
+        let mut index = 0;
+        while index < self.counts.len() {
+            added.counts[index] = self.counts[index].saturating_sub(inherited.counts[index]);
+            index += 1;
+        }
+        added
+    }
+
+    /// Whether a delta over [`ProcessingAlgorithm::Unrecognized`] can be trusted.
+    ///
+    /// Unknown implementations are not distinguished from one another, so a
+    /// source carrying one unknown method and an output carrying a *different*
+    /// unknown method subtract to nothing. The delta is only meaningful where
+    /// the inherited side carried no unknown method at all, and every caller
+    /// that would otherwise conclude something from it has to ask this first.
+    #[must_use]
+    pub const fn unknown_delta_is_establishable(inherited: Self) -> bool {
+        inherited.count(ProcessingAlgorithm::Unrecognized) == 0
+    }
+
+    fn record(&mut self, algorithm: ProcessingAlgorithm) {
+        let slot = &mut self.counts[algorithm as usize];
+        *slot = slot.saturating_add(1);
+    }
+
+    fn merge(&mut self, other: Self) {
+        for (slot, count) in self.counts.iter_mut().zip(other.counts) {
+            *slot = slot.saturating_add(count);
+        }
+    }
+}
+
+/// What processing a spectrum's effective `dataProcessing` reference selects.
+///
+/// mzML says which processing applies to a spectrum by reference:
+/// `spectrumList/@defaultDataProcessingRef` names one for the list and
+/// `spectrum/@dataProcessingRef` overrides it. A definition nothing references
+/// is inert, and counting it would let a picker that never ran verify or refuse
+/// a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectiveProcessing {
+    /// The reference resolved, and this is what it selects. An empty history is
+    /// a resolved reference to processing that records no peak picking.
+    Resolved(ProcessingHistory),
+    /// No reference was available, or the one named could not be resolved.
+    ///
+    /// Never read as "no processing": an unresolved reference is a fact the
+    /// document declined to establish, and the integrity contract degrades
+    /// rather than guessing a target.
+    Unresolved,
 }
 
 /// Whether an explicit profile/centroid marker was emitted for one spectrum.
@@ -259,13 +382,6 @@ marker_set!(
     CompressionMarker,
     "The set of compression markers observed. An empty set means none was emitted."
 );
-marker_set!(
-    ProcessingAlgorithmSet,
-    ProcessingAlgorithm,
-    "Every peak-picking implementation one document claims ran on it. An empty \
-     set means the document recorded no peak-picking method at all -- which is \
-     silence, not a claim that none ran."
-);
 
 /// Compact per-spectrum facts. No raw scientific value is retained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -280,6 +396,9 @@ pub struct MzmlSpectrumRecord {
     precursor_count: u32,
     scan_number: Option<u64>,
     native_identifier_recognized: bool,
+    /// The peak-picking history the spectrum's effective `dataProcessing`
+    /// reference selects, resolved at scan time.
+    effective_processing: EffectiveProcessing,
     array_kinds: ArrayKindSet,
     precision: NumericPrecisionSet,
     /// The encodings observed on arrays that declared themselves m/z arrays.
@@ -296,6 +415,16 @@ pub struct MzmlSpectrumRecord {
 }
 
 impl MzmlSpectrumRecord {
+    /// What processing applies to this spectrum, by its effective reference.
+    ///
+    /// Resolved rather than aggregated: mzML says which `dataProcessing` a
+    /// spectrum is under, and a definition the document holds but never
+    /// references applies to nothing.
+    #[must_use]
+    pub const fn effective_processing(&self) -> EffectiveProcessing {
+        self.effective_processing
+    }
+
     /// The encodings the m/z arrays of this spectrum declared.
     #[must_use]
     pub const fn mz_precision(&self) -> NumericPrecisionSet {
@@ -492,6 +621,7 @@ pub struct MzmlScanLimits {
     max_attribute_value_bytes: usize,
     max_spectra: u64,
     max_chromatograms: u64,
+    max_data_processing_definitions: usize,
     identity_sample_limit: usize,
 }
 
@@ -507,6 +637,11 @@ impl Default for MzmlScanLimits {
             max_attribute_value_bytes: 64 * 1024,
             max_spectra: 1_000_000,
             max_chromatograms: 100_000,
+            // Retained by identity so a spectrum's reference can be resolved,
+            // which means the count is bounded rather than streamed. Real
+            // documents declare a handful; a document declaring thousands is
+            // refused rather than allowed to grow this map.
+            max_data_processing_definitions: 256,
             identity_sample_limit: 256,
         }
     }
@@ -599,6 +734,7 @@ pub enum MzmlLimitKind {
     AttributeValueBytes,
     Spectra,
     Chromatograms,
+    DataProcessingDefinitions,
 }
 
 impl MzmlLimitKind {
@@ -614,6 +750,7 @@ impl MzmlLimitKind {
             Self::AttributeValueBytes => "attribute_value_bytes",
             Self::Spectra => "spectra",
             Self::Chromatograms => "chromatograms",
+            Self::DataProcessingDefinitions => "data_processing_definitions",
         }
     }
 }
@@ -660,8 +797,6 @@ pub struct MzmlFacts {
     parameter_group_reference_observed: bool,
     first_identities: Vec<SpectrumIdentity>,
     last_identity: Option<SpectrumIdentity>,
-    /// Every peak-picking implementation the document claims ran on it.
-    processing_claims: ProcessingAlgorithmSet,
     scanned_bytes: u64,
 }
 
@@ -714,16 +849,6 @@ impl MzmlFacts {
     #[must_use]
     pub fn observed_chromatogram_count(&self) -> u64 {
         self.chromatograms.len() as u64
-    }
-
-    /// What this document claims was done to its peaks.
-    ///
-    /// A claim to compare against a request, never proof on its own: every
-    /// picker this build ships records the same CV accession, and only a
-    /// free-text name distinguishes them.
-    #[must_use]
-    pub const fn processing_claims(&self) -> ProcessingAlgorithmSet {
-        self.processing_claims
     }
 
     #[must_use]
@@ -940,6 +1065,7 @@ impl<R: BufRead> BufRead for BoundedReader<R> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Scope {
+    DataProcessing,
     ProcessingMethod,
     SpectrumList,
     Spectrum,
@@ -964,6 +1090,8 @@ struct SpectrumBuilder {
     precursor_count: u32,
     scan_number: Option<u64>,
     native_identifier_recognized: bool,
+    /// `spectrum/@dataProcessingRef`, overriding the list default where present.
+    data_processing_ref: Option<String>,
     array_kinds: ArrayKindSet,
     precision: NumericPrecisionSet,
     mz_precision: NumericPrecisionSet,
@@ -1015,7 +1143,28 @@ struct ScanState {
     chromatogram: Option<ChromatogramBuilder>,
     array: Option<ArrayBuilder>,
     processing_method: Option<ProcessingMethodBuilder>,
-    processing_claims: ProcessingAlgorithmSet,
+    /// The `dataProcessing` element currently open, by the identity it declared.
+    data_processing: Option<DataProcessingBuilder>,
+    /// Every `dataProcessing` definition, by `@id`.
+    ///
+    /// Retained by identity because a spectrum names one, and an unreferenced
+    /// definition must be able to sit here without participating in anything.
+    data_processing_definitions: BTreeMap<String, ProcessingHistory>,
+    /// A definition whose `@id` was absent or repeated.
+    ///
+    /// Recorded rather than dropped: a document with an unidentifiable
+    /// definition is one whose references cannot be resolved with confidence,
+    /// and that has to reach the integrity contract as a fact.
+    data_processing_identity_unusable: bool,
+    /// `spectrumList/@defaultDataProcessingRef`.
+    default_data_processing_ref: Option<String>,
+}
+
+/// One `dataProcessing` element, while it is open.
+#[derive(Debug, Default)]
+struct DataProcessingBuilder {
+    id: Option<String>,
+    history: ProcessingHistory,
 }
 
 /// One `processingMethod` element, while it is open.
@@ -1026,7 +1175,7 @@ struct ScanState {
 #[derive(Debug, Default)]
 struct ProcessingMethodBuilder {
     peak_picking: bool,
-    named: ProcessingAlgorithmSet,
+    named: ProcessingHistory,
 }
 
 impl ScanState {
@@ -1049,7 +1198,10 @@ impl ScanState {
             chromatogram: None,
             array: None,
             processing_method: None,
-            processing_claims: ProcessingAlgorithmSet::default(),
+            data_processing: None,
+            data_processing_definitions: BTreeMap::new(),
+            data_processing_identity_unusable: false,
+            default_data_processing_ref: None,
         }
     }
 
@@ -1140,6 +1292,10 @@ impl ScanState {
         match local {
             b"spectrumList" => {
                 self.declared_spectrum_count = optional_u64(attributes.count.as_deref())?;
+                self.default_data_processing_ref = attributes
+                    .default_data_processing_ref
+                    .as_deref()
+                    .map(str::to_owned);
                 Ok(Scope::SpectrumList)
             }
             b"chromatogramList" => {
@@ -1190,6 +1346,20 @@ impl ScanState {
                 }
                 Ok(Scope::Other)
             }
+            b"dataProcessing" => {
+                if self.data_processing_definitions.len()
+                    >= self.limits.max_data_processing_definitions
+                {
+                    return Err(MzmlScanError::LimitExceeded(
+                        MzmlLimitKind::DataProcessingDefinitions,
+                    ));
+                }
+                self.data_processing = Some(DataProcessingBuilder {
+                    id: attributes.id.as_deref().map(str::to_owned),
+                    history: ProcessingHistory::default(),
+                });
+                Ok(Scope::DataProcessing)
+            }
             b"processingMethod" => {
                 self.processing_method = Some(ProcessingMethodBuilder::default());
                 Ok(Scope::ProcessingMethod)
@@ -1228,6 +1398,7 @@ impl ScanState {
             default_array_length: optional_u64(attributes.default_array_length.as_deref())?,
             scan_number,
             native_identifier_recognized: scan_number.is_some(),
+            data_processing_ref: attributes.data_processing_ref.as_deref().map(str::to_owned),
             ..SpectrumBuilder::default()
         });
         Ok(())
@@ -1318,6 +1489,7 @@ impl ScanState {
             Scope::Spectrum => self.finish_spectrum(),
             Scope::Chromatogram => self.finish_chromatogram(),
             Scope::BinaryDataArray => self.finish_array(),
+            Scope::DataProcessing => self.finish_data_processing(),
             Scope::ProcessingMethod => self.finish_processing_method(),
             Scope::SpectrumList
             | Scope::ChromatogramList
@@ -1344,12 +1516,61 @@ impl ScanState {
         };
         let observed = if name == DEFAULT_PICKER_NAME {
             ProcessingAlgorithm::DefaultLocalMaximum
-        } else if KNOWN_OTHER_PICKER_NAMES.contains(&name) {
-            ProcessingAlgorithm::KnownDifferentAlgorithm
+        } else if let Some((_, known)) = KNOWN_OTHER_PICKER_NAMES
+            .iter()
+            .find(|(known, _)| *known == name)
+        {
+            *known
         } else {
             return;
         };
-        method.named.insert(observed);
+        method.named.record(observed);
+    }
+
+    /// The processing a spectrum is under, from its own reference or the list
+    /// default.
+    ///
+    /// Resolved here rather than in the integrity contract because the document
+    /// is what says it, and resolved at spectrum close because mzML places
+    /// `dataProcessingList` before `run`. A reference this scanner cannot
+    /// resolve -- a missing target, a definition whose identity was absent or
+    /// repeated, or no reference at all -- is `Unresolved` rather than a guess
+    /// or an empty history, so nothing downstream can read it as "no
+    /// processing".
+    fn resolve_processing(&self, reference: Option<&str>) -> EffectiveProcessing {
+        if self.data_processing_identity_unusable {
+            return EffectiveProcessing::Unresolved;
+        }
+        let Some(reference) = reference.or(self.default_data_processing_ref.as_deref()) else {
+            return EffectiveProcessing::Unresolved;
+        };
+        self.data_processing_definitions
+            .get(reference)
+            .copied()
+            .map_or(EffectiveProcessing::Unresolved, |history| {
+                EffectiveProcessing::Resolved(history)
+            })
+    }
+
+    fn finish_data_processing(&mut self) {
+        let Some(definition) = self.data_processing.take() else {
+            return;
+        };
+        // A definition with no identity, or one repeating an identity already
+        // seen, cannot be referred to unambiguously. Neither is dropped
+        // silently: the document's references stop being resolvable, and the
+        // integrity contract is told so rather than left to pick a target.
+        let Some(id) = definition.id else {
+            self.data_processing_identity_unusable = true;
+            return;
+        };
+        if self
+            .data_processing_definitions
+            .insert(id, definition.history)
+            .is_some()
+        {
+            self.data_processing_identity_unusable = true;
+        }
     }
 
     fn finish_processing_method(&mut self) {
@@ -1364,11 +1585,15 @@ impl ScanState {
         // A peak-picking method that named no picker this evidence qualified is
         // one unrecognized algorithm, not an absence: something ran and the
         // document declined to say what.
-        if method.named.is_empty() {
-            self.processing_claims
-                .insert(ProcessingAlgorithm::Unrecognized);
-        } else {
-            self.processing_claims.merge(method.named);
+        let mut observed = method.named;
+        if observed.is_empty() {
+            observed.record(ProcessingAlgorithm::Unrecognized);
+        }
+        // Attributed to the definition that holds it, never to the document. A
+        // method inside a `dataProcessing` nothing references applies to no
+        // spectrum.
+        if let Some(definition) = self.data_processing.as_mut() {
+            definition.history.merge(observed);
         }
     }
 
@@ -1433,6 +1658,7 @@ impl ScanState {
             .ms_level_distribution
             .entry(spectrum.ms_level)
             .or_default() += 1;
+        let effective_processing = self.resolve_processing(spectrum.data_processing_ref.as_deref());
         self.spectra.push(MzmlSpectrumRecord {
             index: spectrum.index,
             ms_level: spectrum.ms_level,
@@ -1444,6 +1670,7 @@ impl ScanState {
             precursor_count: spectrum.precursor_count,
             scan_number: spectrum.scan_number,
             native_identifier_recognized: spectrum.native_identifier_recognized,
+            effective_processing,
             array_kinds: spectrum.array_kinds,
             mz_precision: spectrum.mz_precision,
             intensity_precision: spectrum.intensity_precision,
@@ -1489,7 +1716,6 @@ impl ScanState {
             parameter_group_reference_observed: self.parameter_group_reference_observed,
             first_identities: self.first_identities,
             last_identity: self.last_identity,
-            processing_claims: self.processing_claims,
             scanned_bytes,
         })
     }
@@ -1516,6 +1742,8 @@ struct CapturedAttributes<'a> {
     count: Option<Cow<'a, str>>,
     accession: Option<Cow<'a, str>>,
     name: Option<Cow<'a, str>>,
+    default_data_processing_ref: Option<Cow<'a, str>>,
+    data_processing_ref: Option<Cow<'a, str>>,
     value: Option<Cow<'a, str>>,
     unit_accession: Option<Cow<'a, str>>,
 }
@@ -1558,6 +1786,8 @@ fn capture_attributes<'a>(
             b"count" => &mut captured.count,
             b"accession" => &mut captured.accession,
             b"name" => &mut captured.name,
+            b"defaultDataProcessingRef" => &mut captured.default_data_processing_ref,
+            b"dataProcessingRef" => &mut captured.data_processing_ref,
             b"value" => &mut captured.value,
             b"unitAccession" => &mut captured.unit_accession,
             _ => continue,

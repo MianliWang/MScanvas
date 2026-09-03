@@ -7125,7 +7125,12 @@ fn a_thermo_dataset_converts_through_its_handle_and_is_judged_on_the_output_alon
         "the acquisition itself is still bound and rechecked; got {:?}",
         validation.verified
     );
-    for comparison in ["spectrum_count", "binary_array_lengths", "precursor_counts"] {
+    for comparison in [
+        "spectrum_count",
+        "spectrum_array_lengths",
+        "chromatogram_array_lengths",
+        "precursor_counts",
+    ] {
         assert!(
             validation
                 .inapplicable

@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use crate::command::{BackendTool, OpenFormat, PreviewOperation};
 use crate::discovery::{BoundHelpProbe, DiscoveredTool};
-use crate::intent::{ConversionIntent, ProviderFeature};
+use crate::intent::{ConversionIntent, FilterInvocation, ProviderFeature};
 use crate::sha256::{Sha256Error, digest_bytes, digest_file};
 
 /// A SHA-256 digest supplied by the component that captured the complete raw
@@ -165,6 +165,14 @@ impl OptionDeclaration {
 pub struct NamedGrammarDeclaration {
     normalized_signature: String,
     parameters: BTreeMap<String, ParameterGrammar>,
+    /// Positional placeholders the declaration states outside any `[...]`.
+    ///
+    /// `msLevel <mslevels>` declares one; the measured
+    /// `peakPicking [<PickerType>] [msLevel=<ms levels>]` declares none, which
+    /// is exactly what makes the bare invocation legal on this build.
+    required_positionals: usize,
+    /// Positional placeholders the declaration marks optional.
+    optional_positionals: usize,
 }
 
 impl NamedGrammarDeclaration {
@@ -192,6 +200,46 @@ impl NamedGrammarDeclaration {
     #[must_use]
     pub fn parameter_is_optional(&self, name: &str) -> Option<bool> {
         self.parameters.get(name).map(|grammar| grammar.optional)
+    }
+
+    #[must_use]
+    pub const fn required_positionals(&self) -> usize {
+        self.required_positionals
+    }
+
+    #[must_use]
+    pub const fn optional_positionals(&self) -> usize {
+        self.optional_positionals
+    }
+
+    /// Whether this declaration accepts an invocation of exactly the shape
+    /// given: that many positional arguments after the name, and those `name=`
+    /// parameters and no others.
+    ///
+    /// Structural rather than textual. The question is whether the *currently
+    /// installed* grammar accepts the invocation MSCanvas will emit, not whether
+    /// it is byte-identical to the help M6.2 measured -- so a build that adds an
+    /// unrelated optional parameter or an extra optional positional still
+    /// accepts what this product sends, and a build that makes a placeholder
+    /// mandatory does not.
+    #[must_use]
+    pub fn accepts_invocation(&self, positional_arguments: usize, named: &[&str]) -> bool {
+        if positional_arguments < self.required_positionals
+            || positional_arguments > self.required_positionals + self.optional_positionals
+        {
+            return false;
+        }
+        // Anything the declaration requires and this invocation omits makes the
+        // invocation incomplete.
+        if self
+            .parameters
+            .iter()
+            .any(|(name, grammar)| !grammar.optional && !named.contains(&name.as_str()))
+        {
+            return false;
+        }
+        // And anything supplied has to exist.
+        named.iter().all(|name| self.parameters.contains_key(*name))
     }
 }
 
@@ -616,7 +664,9 @@ impl InstalledHelpCapabilities {
                 ProviderFeature::FilterOption => {
                     self.require_option("filter", OptionArgument::Required)?;
                 }
-                ProviderFeature::Filter(name) => self.require_spectrum_filter(name)?,
+                ProviderFeature::Filter(invocation) => {
+                    self.require_filter_invocation(&invocation)?;
+                }
             }
         }
         Ok(())
@@ -647,19 +697,35 @@ impl InstalledHelpCapabilities {
         }
     }
 
-    /// Whether the installed help declares a named spectrum-list filter.
+    /// Whether the installed help declares a spectrum-list filter that accepts
+    /// the exact invocation an intent will emit.
     ///
-    /// `--filter` existing is a different fact from the filter an intent names
-    /// existing, and the first does not imply the second: the option is generic
-    /// and the grammar is per name.
-    fn require_spectrum_filter(
+    /// Three separate facts, and the name is only the first. `--filter` existing
+    /// does not imply this filter existing, and this filter existing does not
+    /// imply it accepting the shape MSCanvas sends: a build that made
+    /// `peakPicking`'s picker token mandatory, or gave `msLevel` a second
+    /// required argument, would still declare the name while rejecting the
+    /// invocation. Establishing only the name leaves that failure to the
+    /// backend, which is what this gate exists to prevent.
+    ///
+    /// Read structurally from the parsed declaration rather than against a
+    /// remembered signature string, so a build that widens the grammar with an
+    /// extra *optional* parameter still plans.
+    fn require_filter_invocation(
         &self,
-        name: &'static str,
+        invocation: &FilterInvocation,
     ) -> Result<(), CapabilityRequirementError> {
-        if self.spectrum_filter(name).is_some() {
+        let declaration = self
+            .spectrum_filter(invocation.name)
+            .ok_or(CapabilityRequirementError::Missing(invocation.name))?;
+        if declaration
+            .accepts_invocation(invocation.positional_arguments, invocation.named_arguments)
+        {
             Ok(())
         } else {
-            Err(CapabilityRequirementError::Missing(name))
+            Err(CapabilityRequirementError::GrammarRejectsInvocation(
+                invocation.name,
+            ))
         }
     }
 
@@ -810,6 +876,11 @@ pub enum CapabilityRequirementError {
     },
     #[error("installed help does not confirm required grammar: {0}")]
     Missing(&'static str),
+    /// The named grammar exists and does not accept the invocation this product
+    /// emits. A different failure from an absent declaration, and worth its own
+    /// identity: the build supports the feature and not the way it is used.
+    #[error("installed help declares {0} with a grammar that rejects the planned invocation")]
+    GrammarRejectsInvocation(&'static str),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1036,13 +1107,91 @@ fn parse_named_grammar_declaration(
         return None;
     }
 
+    let (required_positionals, optional_positionals) = parse_positionals(signature);
     Some((
         name.to_owned(),
         NamedGrammarDeclaration {
             normalized_signature: signature.to_owned(),
             parameters: parse_parameters(signature),
+            required_positionals,
+            optional_positionals,
         },
     ))
+}
+
+/// How many positional placeholders a signature declares, and how many of those
+/// it marks optional.
+///
+/// A positional placeholder is a `<...>` group that is not the value of a
+/// `name=` parameter, so this walks the same shapes [`parse_parameters`] does
+/// and counts what that scan skips. Depth inside `[...]` is what makes a
+/// placeholder optional, exactly as it does for a named parameter.
+fn parse_positionals(signature: &str) -> (usize, usize) {
+    let bytes = signature.as_bytes();
+    let mut required = 0_usize;
+    let mut optional = 0_usize;
+    let mut index = 0;
+    let mut optional_depth = 0_u32;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'[' => {
+                optional_depth = optional_depth.saturating_add(1);
+                index += 1;
+            }
+            b']' => {
+                optional_depth = optional_depth.saturating_sub(1);
+                index += 1;
+            }
+            b'<' => {
+                if optional_depth > 0 {
+                    optional = optional.saturating_add(1);
+                } else {
+                    required = required.saturating_add(1);
+                }
+                index += 1;
+                while index < bytes.len() && bytes[index] != b'>' {
+                    index += 1;
+                }
+                index = index.saturating_add(1);
+            }
+            byte if is_identifier_start(byte) => {
+                let start = index;
+                index += 1;
+                while index < bytes.len() && is_identifier_continue(bytes[index]) {
+                    index += 1;
+                }
+                if bytes.get(index) != Some(&b'=') {
+                    continue;
+                }
+                // A `name=` parameter. Its value belongs to the parameter, not
+                // to the positional list, so it is consumed here rather than
+                // counted above.
+                let _ = start;
+                index += 1;
+                if let Some(open) = bytes
+                    .get(index)
+                    .copied()
+                    .filter(|byte| matches!(byte, b'[' | b'<'))
+                {
+                    let close = if open == b'[' { b']' } else { b'>' };
+                    index += 1;
+                    while index < bytes.len() && bytes[index] != close {
+                        index += 1;
+                    }
+                    index = index.saturating_add(1);
+                } else {
+                    while index < bytes.len()
+                        && !bytes[index].is_ascii_whitespace()
+                        && !matches!(bytes[index], b']' | b'|')
+                    {
+                        index += 1;
+                    }
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    (required, optional)
 }
 
 fn parse_parameters(signature: &str) -> BTreeMap<String, ParameterGrammar> {
@@ -2084,6 +2233,146 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 "{label} produced {error:?} rather than a capability refusal"
             );
         }
+    }
+
+    /// Declaring the filter's name is not declaring that it accepts what this
+    /// product sends.
+    ///
+    /// The gate's claim is that the current executable can express the exact
+    /// typed invocation, so each case below keeps the name and changes only the
+    /// grammar around it. A build that made `peakPicking`'s picker token
+    /// mandatory, or gave `msLevel` a second required argument, declares
+    /// everything a name check asks for and would still reject the argv.
+    ///
+    /// The last case is the other direction: a grammar that grows an *optional*
+    /// parameter still accepts the same invocation, and refusing it would make
+    /// this gate a version pin rather than a capability check.
+    #[test]
+    fn a_filter_grammar_must_accept_the_exact_invocation_the_intent_emits() {
+        let test_directory = TestDirectory::new();
+        let source = test_directory.path().join("sample.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::write(&source, b"source RAW").expect("write source RAW");
+        fs::create_dir(&output_directory).expect("create fresh output directory");
+
+        let intent = |population, processing| {
+            ConversionIntent::admitted(
+                OutputFormat::MzMl,
+                processing,
+                population,
+                NumericPrecision::Mz64Intensity64,
+                CompressionIntent::Zlib,
+            )
+            .expect("an admitted combination")
+        };
+        let centroiding = intent(
+            SpectrumPopulation::All,
+            ProcessingIntent::UnscopedDefaultCentroiding,
+        );
+        let survey_only = intent(
+            SpectrumPopulation::Ms1Only,
+            ProcessingIntent::NoAdditionalCentroiding,
+        );
+
+        let plan = |help: &str, intent: &ConversionIntent| {
+            let capabilities = parse_capabilities(BackendTool::MsConvert, capture(help))
+                .expect("a changed filter grammar is still parseable");
+            build_msconvert_command_with_capabilities(
+                &capabilities,
+                &source,
+                &output_directory,
+                OsStr::new("sample.mzML"),
+                intent,
+            )
+        };
+
+        // The picker token becomes mandatory. The bare invocation this product
+        // emits is no longer expressible.
+        let mandatory_picker = MSCONVERT_FULL_HELP.replace(
+            "peakPicking [<PickerType>] [msLevel=<ms levels>]",
+            "peakPicking <PickerType> [msLevel=<ms levels>]",
+        );
+        assert!(
+            matches!(
+                plan(&mandatory_picker, &centroiding),
+                Err(PlanError::InstalledHelpCapability(
+                    CapabilityRequirementError::GrammarRejectsInvocation("peakPicking")
+                ))
+            ),
+            "a mandatory picker token still admitted the bare invocation"
+        );
+
+        // The population filter grows a second required argument.
+        let second_required =
+            MSCONVERT_FULL_HELP.replace("msLevel <mslevels>", "msLevel <mslevels> <combination>");
+        assert!(
+            matches!(
+                plan(&second_required, &survey_only),
+                Err(PlanError::InstalledHelpCapability(
+                    CapabilityRequirementError::GrammarRejectsInvocation("msLevel")
+                ))
+            ),
+            "a second required argument still admitted a one-argument invocation"
+        );
+
+        // A required *named* parameter is the same refusal by another shape:
+        // this product supplies none.
+        let required_named = MSCONVERT_FULL_HELP.replace(
+            "peakPicking [<PickerType>] [msLevel=<ms levels>]",
+            "peakPicking [<PickerType>] msLevel=<ms levels>",
+        );
+        assert!(
+            matches!(
+                plan(&required_named, &centroiding),
+                Err(PlanError::InstalledHelpCapability(
+                    CapabilityRequirementError::GrammarRejectsInvocation("peakPicking")
+                ))
+            ),
+            "a required named parameter still admitted an invocation supplying none"
+        );
+
+        // Optional widening is not a refusal. The same invocation is still
+        // accepted, so the plan stands.
+        let widened = MSCONVERT_FULL_HELP.replace(
+            "msLevel <mslevels>",
+            "msLevel <mslevels> [<combination>] [mode=<union|intersection>]",
+        );
+        plan(&widened, &survey_only)
+            .expect("an added optional parameter refused an unchanged invocation");
+
+        // And the grammar as measured admits both.
+        plan(MSCONVERT_FULL_HELP, &centroiding).expect("the measured grammar plans centroiding");
+        plan(MSCONVERT_FULL_HELP, &survey_only).expect("the measured grammar plans a filter");
+    }
+
+    /// The structural facts the invocation check reads.
+    ///
+    /// Pinned directly, because every refusal above depends on the signature
+    /// parser telling a bracketed placeholder from a bare one, and on a `name=`
+    /// value not being counted as a positional argument of its own.
+    #[test]
+    fn a_filter_signature_is_read_as_positional_and_named_structure() {
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_FULL_HELP))
+            .expect("valid full msconvert fixture");
+
+        let picker = capabilities
+            .spectrum_filter("peakPicking")
+            .expect("the fixture declares peakPicking");
+        assert_eq!(picker.required_positionals(), 0);
+        assert_eq!(picker.optional_positionals(), 1);
+        assert_eq!(picker.parameter_is_optional("msLevel"), Some(true));
+        assert!(picker.accepts_invocation(0, &[]));
+        assert!(picker.accepts_invocation(1, &[]));
+        assert!(!picker.accepts_invocation(2, &[]));
+        assert!(!picker.accepts_invocation(0, &["notADeclaredParameter"]));
+
+        let levels = capabilities
+            .spectrum_filter("msLevel")
+            .expect("the fixture declares msLevel");
+        assert_eq!(levels.required_positionals(), 1);
+        assert_eq!(levels.optional_positionals(), 0);
+        assert!(levels.accepts_invocation(1, &[]));
+        assert!(!levels.accepts_invocation(0, &[]));
     }
 
     /// The global precision switches are options this model can hold.
