@@ -7047,3 +7047,274 @@ and no new measurement was taken. It changes no destination, conflict or
 cancellation behaviour, no wire vocabulary beyond the integrity property and
 outcome names the new checks required, no dependency and no lockfile. It does not
 decide the mzXML disposition, which remains M6.10's, and it does not start M6.4.
+
+## M6.4 — Visible conversion settings, and a truthful plan, 2026-09-03
+
+The first M6 slice that puts the conversion semantics on screen. M6.2 measured
+nine combinations of five axes; M6.3 made those nine the only constructible ones
+and left them unreachable, because nothing visible could name an intent. This
+slice makes them selectable — and the whole of its difficulty is that a user
+interface with four controls is the most natural place in this repository for a
+second compatibility matrix to appear.
+
+Baseline `3fca4b134652fc72b275983ae3bd5a79ada37cbd`, clean and level with
+`origin/main`.
+
+### The interface holds no compatibility matrix
+
+`ConversionIntent::ADMITTED` is nine rows out of the forty-eight a free
+cross-product of the five axes would allow. Any settings surface has to answer
+two questions constantly — *does this combination exist?* and *may I offer this
+value?* — and the obvious way to answer them on the frontend is a table. A table
+there would be a second authority over what the measured evidence admits, free to
+be right today and wrong after the next measurement.
+
+So there is not one. `preview/intent_catalog.rs` projects the admitted table,
+in its own order, and marks each row with what the **installed** executable
+declares — asked through `require_conversion_intent`, which is the same gate
+`build_msconvert_command_for_source` applies before it emits argv, so the catalog
+cannot come to hold a second opinion about what this build can run. A Rust test
+asserts that agreement row by row rather than listing which rows are narrow.
+
+The frontend receives that list and looks things up in it.
+`conversionIntentSelection.ts` composes nothing: a choice is the current
+semantic with one dimension replaced, and either the catalog holds it or the
+choice is refused. It does not even enumerate the *values* of a dimension —
+those are read out of the catalog in first-appearance order, which is why the
+precision group reads 64/32, 64/64, 32/32, 32/64 without a display-order table
+saying so. **There is no TypeScript from which a nine-row graph could be
+rebuilt**, so the thirty-nine rejected combinations are unreachable by any
+sequence of activations rather than refused after one.
+
+The identity is the crossing point. `ConversionIntent::stable_id` composes the
+five values' identities in one place; the catalog sends it, the webview sends it
+back, and `intent_from_id` resolves it **against the admitted table** rather than
+parsing it into parts. A string naming a combination the evidence does not admit
+resolves to nothing, so `conversion_intent_not_admitted` is what a hand-made IPC
+call gets — there is no partially valid request to inspect or run.
+
+**The suites' fixture is held against the table.** The frontend and browser
+runs drive an independently written statement of the nine rows rather than a
+re-derivation of the code under test, which is what makes a rendered pass mean
+anything — and also what lets it drift. `check_repo.py` now compares that
+fixture with `ConversionIntent::ADMITTED` in both directions and in order, so
+widening the crate and forgetting the fixture fails the repository rather than
+leaving the new row untested while everything goes on passing. Only membership
+and order are checked; what a row means stays the crate's, and whether the
+evidence supports it stays the older validator's.
+
+### One axis moves, and only that axis
+
+The defect this shape exists to prevent is the helpful one: a control asked for a
+value its current combination cannot take, going to look for some other admitted
+row that contains it. The user asks about compression and their precision
+changes. Nothing here searches. From the shipped posture, compression off, MS1
+only, MS2 only and centroiding are each refused — none of those four was
+measured beside a 32-bit intensity — and each becomes available one explicit step
+later, from the 64-bit posture where M6.2 actually measured it.
+
+That leaves every admitted row reachable, which is a property rather than a
+hope: a frontend test walks the graph from `SHIPPED` through single-axis choices
+and asserts it reaches all nine. A row that were in the evidence and unreachable
+on screen would be a row not shipped, said less honestly.
+
+### Two refusals, because they call for different responses
+
+*Not qualified* means no admitted row names the combination, and no ProteoWizard
+changes that. *The installed build does not offer this option* means the row
+exists and this executable declares neither the option nor the filter grammar it
+emits. Collapsing them into one inert disabled state would tell a user with an
+old ProteoWizard that their science is unqualified, and a user asking for
+something unmeasured that a reinstall might help.
+
+Both reach the reader the same way: the value stays on screen, disabled, with the
+sentence in the document and associated with the control through
+`aria-describedby`. Not a `title`, not a hover, and not colour — the rendered
+suite asserts the sentence has a box and that the control carries no `title` at
+all. A refused value is refused to the pointer, to the keyboard and to a
+hand-made `chooseIntent` call alike; the last is checked separately, because a
+disabled attribute is the browser's answer and not the application's.
+
+### What the controls say
+
+Format is **stated, not offered**. mzML is the one admitted format, so there is
+nothing to choose between, and mzXML is deliberately not a disabled control: a
+disabled control advertises a route, and M6.2 measured that route dropping the
+spectra of a non-default source file and then declaring a count it had not
+written. Its disposition stays M6.10's.
+
+Centroiding is marked **lossy where it is chosen**, not after it is taken, and it
+is named for what the evidence supports: the build's default local-maximum peak
+picker, across every MS level, which cannot be scoped. It is not called vendor
+centroiding, not called high quality, and the rendered suite asserts those words
+are absent. An MS-level choice says which spectra are **left out of the converted
+file** rather than implying they are processed differently — a population filter
+is not a centroiding scope, and this repository keeps the two apart in its types
+for that reason. A 32-bit posture says what it **rounds** and is never described
+as lossless; the mixed posture says it is the precision MSCanvas converts with
+today, which is a fact about this product rather than a claim that a provider
+default is a product decision. Compression says the numbers written are the same
+either way, which is what M6.2 measured when precision is held constant.
+
+### The plan is Rust's answer, not the panel's summary of its own controls
+
+`ConversionQueuePlanDto` used to carry a format constant and a compression
+string. It now carries the **reconstructed intent**, the conflict policy it was
+read under, and the installation generation it was read at, beside its ordered
+membership. Every visible fact about format, processing, population, precision
+and compression is read from that intent; the family sentence that used to say
+"will be converted to mzML" from local knowledge now says what the plan's format
+is.
+
+That makes the plan's identity checkable rather than remembered. `planAnswers`
+compares the **answer with the question** — ordered handles, intent, policy,
+installation — rather than comparing two copies of the question, so a slow reply
+for one semantic that lands after the user has moved to another fails on its own
+content, whatever a request token did. Changing any of the four re-reads the
+plan; until the new one arrives the control is refused with *MSCanvas is
+rereading the conversion plan for the settings you changed*, and a plan that
+answered the old question cannot start anything.
+
+An installation change takes the catalog with it. The catalog on screen
+described the build that has just been replaced, so it stops being an answer the
+moment the re-read begins — keeping it would leave the plan and the catalog
+agreeing about an installation neither still describes, and a plan read against
+a build that is gone would stay startable. It goes back to *loading*, which
+refuses the conversion for the true reason for exactly as long as that reason
+holds, and the user's chosen semantic outlives the gap: it is held apart from
+the settings state, and `reselect` restores it into the new catalog wherever
+that catalog still holds it.
+
+The destination is still described as **chosen next**, and the summary names no
+folder — not a sibling, not a remembered one, not a placeholder. At summary time
+there is no destination to name, which is CNV-009's output-root half and is
+M6.5's and M6.6's to answer.
+
+### `BEGIN` binds the plan that was shown
+
+`begin_workspace_conversion_queue` now takes the identity. Rust resolves it
+through the admitted table before anything else happens, and the pre-picker gate
+asks the freshly resolved build for `require_conversion_intent` on that exact
+intent — so an installation that changed between reading the summary and pressing
+`Convert` produces `conversion_intent_unsupported` **before a picker opens and
+before a process launches**, rather than a backend failure afterwards. The
+authoritative per-item gate in the command builder is unchanged and still
+refuses fail-closed.
+
+`ConversionQueueDto` carries the queue's bound intent, and the running and
+terminal surfaces read it. A Rust test begins a queue under a non-shipped
+semantic, proves the launched process received `--64 --zlib=off`, reads a plan
+for the shipped posture in between, and shows the queue and its retry unchanged.
+The rendered suite does the same from the other side: the settings and the plan
+disappear with the press, and the queue states its own semantic.
+
+### The M6.1 initial-unread-slot residual, closed
+
+M6.1 recorded it as a P3 owned by this slice, and named the fix: one lane fact,
+not a new mechanism. `slotUnread` is now the ninth fact of `ConversionLane`, the
+rendered half of `installedSequence`, and it ranks above every fact that would
+describe what the slot holds — because until a read has committed, none of them
+is known. **A slot this document has never read is not an idle slot**: `idle` is
+where the operation starts, and the slot may already hold a queue a replaced
+document began. The refusal says *MSCanvas is checking the current conversion
+state*, which is a wait rather than a fault.
+
+### One panel change that was not in the plan, and why it was necessary
+
+`PlanState` used to return early whenever the plan was not loaded, which put the
+settings, the conflict control and `Convert` on screen only once a plan had
+arrived. That was safe while a plan needed nothing but handles. It is not safe
+now: a plan needs a semantic, a semantic needs a catalog, and a catalog can be
+absent — so the early return would have taken the refused control and its
+explanation off screen exactly when the reader needed them, undoing M6.1's own
+rule. The block now renders whenever rows are selected, and the availability
+decision disables the control and supplies the sentence. Under a finished result
+the *pending text* is still suppressed, which is what the original rule was
+about.
+
+### Fail closed on an unestablished catalog
+
+A catalog that cannot be read produces `settings: unavailable`, no plan read at
+all, and a refused `Convert` that says so. Nothing manufactures `SHIPPED` from a
+failed read, nothing keeps an older catalog, and nothing silently selects the
+first available row. An installation change **preserves the user's semantic**
+wherever the new catalog still holds it — including where it now holds it as
+unsupported, because the request is a scientific one and replacing it with the
+shipped posture would convert something nobody asked for.
+
+### Changed paths
+
+Rust: `preview/intent_catalog.rs` (new), `preview/dto.rs`, `preview/service.rs`,
+`preview/operation.rs`, `preview/conversion.rs`, `preview/mod.rs`,
+`preview/tests.rs`, `src-tauri/src/lib.rs`.
+
+Frontend: `conversionIntentSelection.ts` (new), `ConversionSettings.tsx` (new),
+`conversionAvailability.ts`, `useConversionOperation.ts`, `usePreviewWorkspace.ts`,
+`ConversionPanel.tsx`, `contracts.ts`, `api.ts`, `app/app.css`, and the test
+support and suites that follow them.
+
+E2E: `e2e/specs/m6.4-conversion-settings.browser.e2e.ts` (new),
+`e2e/support/fixtures.ts`, `e2e/specs/m6.1-conversion-availability.browser.e2e.ts`.
+
+Repository validation: `scripts/check_repo.py`, for the fixture guard above.
+
+Documentation: this section, `ROADMAP.md`, `docs/product/FEATURE_CATALOG.md` and
+ADR 0043's M6.4 delivery note.
+
+### Validation
+
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build`, `pnpm e2e:typecheck`, `pnpm e2e:browser` and `git diff --check`,
+each run directly on the final candidate head and each exiting zero. Rust
+**1,397** and frontend **1,426** — nine Rust tests and twenty-eight frontend
+tests added, none removed or weakened. Browser E2E: **11 spec files, 218 tests**,
+including the new ten-case M6.4 spec, three of whose cases run at 1920×1080,
+1366×768 and 960×640.
+
+**The browser run needed the same machine-specific workaround M6.1 recorded, for
+the same reason.** Chrome finalizes a staged update only once every Chrome
+process has exited; ChromeDriver resolves against the registry, sees 152, and
+refuses the 151 launcher. The suite was run against the staged 152 binary through
+a throwaway configuration that imports `e2e/wdio.browser.conf.ts` and overrides
+one field — the browser binary — deleted before the commit. No repository file,
+dependency or spec was changed for it, and CI does not run this suite.
+
+### Two existing tests were changed, and neither was weakened
+
+`capability_evidence_from_the_wrong_tool_cannot_convert` now asserts an **earlier**
+refusal. The pre-picker capability gate asks whether the resolved build declares
+what the chosen intent emits, and `msaccess` help declares no `--mzML` — so the
+queue is refused before a reservation exists rather than after a destination has
+been chosen. The property is unchanged and slightly stronger: this binding
+converts nothing, and now it opens no picker either.
+
+The two panel path sweeps banned a bare `/`. The precision labels render `m/z`,
+which is a scientific unit rather than a path separator, so the sweeps now remove
+exactly that token first and ban everything else — a real path could not survive
+the replacement. The colon ban became a drive-letter pattern for the same reason,
+and with both separators still banned a Windows path cannot reach that line
+anyway.
+
+### Residuals
+
+**A recheck that resolves to the same installation does not re-read the
+catalog.** The read is keyed on the applied installation generation, which
+advances only when the resolved identity differs — so a user who reinstalls
+ProteoWizard *in place*, at the same location, with a build that declares
+different options, keeps the catalog they had until something advances the
+generation. It is the same identity rule the rest of the session already uses,
+and the alternative — a help probe per recheck — was rejected as a cost with no
+established benefit. Severity **P3**. **Owner: M6.11**, or whichever slice next
+re-decides how an installation identity is compared.
+
+### What this slice does not do
+
+It chooses no destination, displays none and names none: the summary says the
+folder is chosen next, which is what M6.5 and M6.6 own. It adds no scope control,
+surfaces no queue capacity, changes no cancellation or stop semantics, and takes
+no new provider measurement — the nine rows are M6.2's nine, unchanged, and the
+composition boundary is exactly as wide as it was. It adds no dependency and no
+lockfile change, does not decide the mzXML disposition, which remains M6.10's,
+and it does not start M6.5.

@@ -25,9 +25,8 @@ use mscanvas_proteowizard::{
     CancellationReport, ConflictPolicy, ConversionAttempt, ConversionCancellation,
     ConversionIntent, ConversionPlan, ConversionPlanError, ConversionRunFailure,
     ConversionRunOutcome, ConversionRunReport, ConversionSource, ConversionSourceKind,
-    InstalledHelpCapabilities, IntegrityProperty, OpenFormat, OutputFormat, StagingResidue,
-    ValidationMode, conversion_output_file_name, provider_build_is_evidenced,
-    run_conversion_cancellable,
+    InstalledHelpCapabilities, IntegrityProperty, OpenFormat, StagingResidue, ValidationMode,
+    conversion_output_file_name, provider_build_is_evidenced, run_conversion_cancellable,
 };
 // The private multi-output report is built only by the private coordinator,
 // which is itself compiled out of the shipped binary.
@@ -39,9 +38,8 @@ use mscanvas_proteowizard::{
 use super::backend::ConversionBackend;
 use super::dto::{
     ConversionBackendFactsDto, ConversionConflictPolicyDto, ConversionOutputDto,
-    ConversionOutputFormatDto, ConversionOutputSetReportDto, ConversionPartialFinalizationDto,
-    ConversionReportDto, ConversionSampleCompletenessDto, ConversionValidationDto, PreviewErrorDto,
-    ValidationModeDto,
+    ConversionOutputSetReportDto, ConversionPartialFinalizationDto, ConversionReportDto,
+    ConversionSampleCompletenessDto, ConversionValidationDto, PreviewErrorDto, ValidationModeDto,
 };
 use super::selection::{DatasetSourceKind, source_kind_dto};
 
@@ -980,29 +978,6 @@ pub(super) const fn conflict_policy(policy: ConversionConflictPolicyDto) -> Conf
     match policy {
         ConversionConflictPolicyDto::Fail => ConflictPolicy::Fail,
         ConversionConflictPolicyDto::Skip => ConflictPolicy::Skip,
-    }
-}
-
-/// The compression the given intent asks every output of this workflow to
-/// carry.
-///
-/// Read from the intent itself rather than restated, so a summary shown before
-/// a conversion and the contract applied after it cannot describe different
-/// things. It holds no opinion of its own about which intent that is; the
-/// caller names one, and the queue that runs the conversion names the same one.
-pub(super) fn fixed_compression(intent: ConversionIntent) -> &'static str {
-    intent.compression().stable_id()
-}
-
-/// The same, for the format.
-///
-/// A total match rather than a constant, so a second admitted output format
-/// could not be added to [`ConversionIntent`] without this refusing to compile.
-/// That is the only reason it exists: today the intent names one format and the
-/// wire names one format, and nothing keeps those two lists equal by itself.
-pub(super) const fn fixed_output_format(intent: ConversionIntent) -> ConversionOutputFormatDto {
-    match intent.format() {
-        OutputFormat::MzMl => ConversionOutputFormatDto::MzMl,
     }
 }
 

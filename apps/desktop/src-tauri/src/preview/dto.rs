@@ -1037,6 +1037,136 @@ pub enum ConversionOutputFormatDto {
     MzMl,
 }
 
+/// What a conversion is asked to do to the peaks, on the wire.
+///
+/// One member per [`ProcessingIntent`](mscanvas_proteowizard::ProcessingIntent),
+/// mapped by a total match rather than by a string, so a processing value added
+/// to the crate has to be given a product surface here before anything can show
+/// it.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ConversionProcessingDto {
+    /// MSCanvas inserts no peak-picking filter.
+    NoAdditionalCentroiding,
+    /// The build's default local-maximum picker, across every MS level, because
+    /// that picker cannot be scoped.
+    UnscopedDefaultCentroiding,
+}
+
+/// Which spectra the output is asked to contain.
+///
+/// An output *population*, deliberately not a centroiding scope. The two share
+/// the provider's `msLevel` vocabulary and mean entirely different things, and
+/// the crate keeps them apart as separate types for that reason.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ConversionSpectrumPopulationDto {
+    All,
+    Ms1Only,
+    Ms2Only,
+}
+
+/// The width each stored array is asked to carry.
+///
+/// Paired postures rather than two independent widths, because that is what the
+/// evidence measured and what the crate types. Splitting them into two controls
+/// on the wire would create a cross-product this side has no authority over.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ConversionNumericPrecisionDto {
+    Mz64Intensity32,
+    Mz64Intensity64,
+    Mz32Intensity32,
+    Mz32Intensity64,
+}
+
+/// How the stored arrays are asked to be encoded.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ConversionCompressionDto {
+    Zlib,
+    None,
+}
+
+/// One conversion's complete product semantics, projected for display.
+///
+/// The five dimensions the crate types and nothing else: no argv, no provider
+/// spelling and no evidence text. It is a projection of one admitted
+/// `ConversionIntent` rather than five independently valid fields — every value
+/// that crosses this wire came out of the admitted table together with the
+/// other four.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionIntentDto {
+    /// The intent's own stable identity, and what a caller sends back to ask
+    /// for this exact combination.
+    ///
+    /// Never parsed into its parts on the way in. It is looked up in the
+    /// admitted table, so an identity naming a combination the evidence does
+    /// not admit resolves to nothing rather than to a partially valid request.
+    pub id: String,
+    pub format: ConversionOutputFormatDto,
+    pub processing: ConversionProcessingDto,
+    pub population: ConversionSpectrumPopulationDto,
+    pub precision: ConversionNumericPrecisionDto,
+    pub compression: ConversionCompressionDto,
+}
+
+/// Whether the installed build can actually run one admitted intent.
+///
+/// Two states, and the second is not a softer first. Everything in the catalog
+/// is admitted by the M6.2 evidence — that is what being in the catalog means —
+/// so the only question left is whether the executable installed on this
+/// machine declares everything the intent lowers to. A combination the evidence
+/// does not admit is not in the catalog at all, which is a materially different
+/// thing to tell a user and is said by absence rather than by a third member
+/// here.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ConversionIntentAvailabilityDto {
+    Available,
+    /// The installed ProteoWizard's own help does not declare an option, or a
+    /// filter grammar, this intent emits. A planning refusal rather than a
+    /// backend failure, reported here so the choice can be refused where it is
+    /// made.
+    UnsupportedByInstallation,
+}
+
+/// One selectable conversion semantic, and what the installed build can do
+/// about it.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionIntentOptionDto {
+    pub intent: ConversionIntentDto,
+    pub availability: ConversionIntentAvailabilityDto,
+}
+
+/// Every conversion semantic this product may be asked for, and which of them
+/// the installed executable can express right now.
+///
+/// **The whole selectable graph, projected once from one authority.** The rows
+/// are `ConversionIntent::ADMITTED` and nothing else, in the order that table
+/// lists them, so the interface never enumerates a combination of its own — it
+/// looks one up. A combination absent from `intents` is absent because the
+/// evidence does not admit it, and there is no second place that decides.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionIntentCatalogDto {
+    pub intents: Vec<ConversionIntentOptionDto>,
+    /// The identity of the semantic the product converts under unless the user
+    /// chooses otherwise.
+    ///
+    /// Named by Rust rather than assumed by the interface, which would be a
+    /// second statement of what MSCanvas ships and could drift from the first.
+    pub shipped_intent_id: String,
+    /// Which installation this catalog was evaluated against.
+    ///
+    /// A catalog is an answer about one executable, so a reply carrying a lower
+    /// generation than one already applied describes a build that has since been
+    /// replaced and must not be rendered beside its successor.
+    pub installation_generation: u64,
+}
+
 /// How a conversion output was judged.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -1173,6 +1303,13 @@ pub struct ConversionQueueDto {
     /// How many times `Retry failed` has run. Zero for a queue's first pass.
     pub retry_round: u64,
     pub conflict_policy: ConversionConflictPolicyDto,
+    /// What this queue converts under, first attempt and every retry alike.
+    ///
+    /// The queue's own bound value, projected. Read by every surface that
+    /// describes a queue that already exists, so that moving a settings control
+    /// afterwards changes what the *next* conversion would be and nothing about
+    /// this one.
+    pub intent: ConversionIntentDto,
     pub finalized_count: usize,
     pub skipped_count: usize,
     pub failed_count: usize,
@@ -1310,14 +1447,32 @@ pub struct ConversionCancellationDto {
 #[serde(rename_all = "camelCase")]
 pub struct ConversionQueuePlanDto {
     pub items: Vec<ConversionQueuePlanItemDto>,
-    pub output_format: ConversionOutputFormatDto,
-    /// The compression every binary array in every output must carry, taken
-    /// from the policy the plans are fixed with.
-    pub compression: String,
+    /// The exact semantic this plan was resolved for, and the one `BEGIN` will
+    /// bind.
+    ///
+    /// Read back off the intent Rust reconstructed from the request rather than
+    /// echoed from what the caller sent, so a plan can only ever describe a
+    /// combination the admitted table contains. Everything the summary says
+    /// about format, processing, population, precision and compression is read
+    /// from here; there is no second projection of those five facts.
+    pub intent: ConversionIntentDto,
+    /// The policy this plan was read under.
+    ///
+    /// Part of the plan rather than of the interface's memory, because it is a
+    /// fact about what would be bound: a plan loaded before the user changed
+    /// the policy is visibly not a plan for what they would start now.
+    pub conflict_policy: ConversionConflictPolicyDto,
     pub validation_mode: ValidationModeDto,
     /// The most items one queue may hold, carried with the plan so the
     /// interface states the limit Rust enforces rather than one of its own.
     pub capacity: usize,
+    /// Where the sequence of installation changes stood when this plan was read.
+    ///
+    /// Part of the plan's identity for the same reason the intent is. An
+    /// installation that has since been replaced may no longer declare what the
+    /// chosen semantic emits, which makes this an answer about a build that is
+    /// gone.
+    pub installation_generation: u64,
 }
 
 /// One row of a queue plan.
@@ -1620,6 +1775,40 @@ pub fn queue_is_empty() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "queue_is_empty",
         "Select at least one Thermo RAW row to convert.",
+        false,
+    )
+}
+
+/// What a request naming a conversion semantic the evidence does not admit
+/// answers with.
+///
+/// Reached only where a caller sends an identity no row of
+/// `ConversionIntent::ADMITTED` carries. It is not an interface state a user
+/// can steer into — an unavailable choice is refused at the control, and the
+/// combinations a control can name come from the catalog — so this is the
+/// boundary refusing to trust a value merely because it arrived from the
+/// webview.
+pub fn conversion_intent_not_admitted() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_intent_not_admitted",
+        "MSCanvas has not qualified that combination of conversion settings.",
+        false,
+    )
+}
+
+/// What a request for an admitted semantic the installed build cannot express
+/// answers with.
+///
+/// A different fact from the one above, and deliberately a different code: the
+/// combination is qualified, and this ProteoWizard does not declare an option
+/// or a filter grammar it needs. Re-established at `BEGIN` rather than trusted
+/// from the catalog the summary was read against, because an installation can
+/// change in between.
+pub fn conversion_intent_unsupported() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_intent_unsupported",
+        "The installed ProteoWizard build does not offer that conversion option. \
+         Choose different conversion settings, or install a build that declares it.",
         false,
     )
 }

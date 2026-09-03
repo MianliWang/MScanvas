@@ -855,6 +855,74 @@ cancellation change.
 
 *Downstream:* M6.5.
 
+*Delivered.* One backend-owned catalog, one selected identity, and a plan that is
+Rust's answer rather than the interface's summary of its own controls.
+
+**The graph stays where the evidence is.**
+`apps/desktop/src-tauri/src/preview/intent_catalog.rs` projects
+`ConversionIntent::ADMITTED` — all nine rows, in that table's own order — and
+marks each with what the *installed* executable declares, asked through
+`require_conversion_intent`, which is the same gate the command builder applies
+before it emits argv. So the interface receives bounded product semantics and no
+compatibility rule: a combination the evidence does not admit is **absent from
+the catalog**, and its absence is the answer. `conversionIntentSelection.ts`
+looks combinations up and never composes one; it does not even list the values of
+a dimension, reading each axis's vocabulary out of the catalog in
+first-appearance order. There is therefore no TypeScript from which a second
+nine-row graph could be built, and the thirty-nine rejected combinations are
+unreachable by any sequence of activations rather than refused after one.
+
+**Two refusals, kept apart because they call for different responses.** *Not
+qualified* means no admitted row names the combination, and no ProteoWizard
+changes that. *Unsupported by this installation* means the row exists and this
+build declares neither the option nor the filter grammar it emits, which a
+different build would. Each is a sentence beside the control, associated with it
+programmatically, and a refused value is refused to the pointer, to the keyboard
+and to a hand-made call alike.
+
+**One axis moves, and only that axis.** A choice is the current semantic with
+exactly one dimension replaced; if the catalog holds it the choice selects it,
+and otherwise the choice is refused. Nothing searches for another admitted row
+that happens to contain the requested value — which is what would silently change
+a precision the user had chosen while they were deciding about compression, and
+would hide the shape of the evidence inside the interaction. All nine rows stay
+reachable through explicit single-axis steps from the shipped posture, which is a
+proved property rather than an observation.
+
+**The plan is an answer to one exact request.** `ConversionQueuePlanDto` carries
+the reconstructed intent, the conflict policy it was read under and the
+installation generation it was read at, beside its ordered membership — so
+whether a loaded plan still answers what the user is asking is decided by
+comparing the answer with the question, rather than by a request token alone.
+Change the rows, the semantic, the policy or the installation and the plan is
+re-read; a slow reply for one semantic landing after the user has moved to
+another is neither rendered nor startable. An installation change also takes the
+catalog with it rather than leaving the old one beside the new build — otherwise
+the plan and the catalog would agree about an installation neither still
+describes — while the user's chosen semantic outlives the gap and is restored
+into the new catalog wherever it still holds it. Every visible fact about format,
+processing, population, precision and compression is read from that intent, and
+the destination is still described as chosen next, because at summary time there
+is none.
+
+**`BEGIN` binds the plan that was shown.** The webview sends the identity Rust
+issued and never five loose values; `begin_conversion_queue` resolves it through
+the admitted table before anything else happens, and the pre-picker gate asks the
+freshly resolved build for `require_conversion_intent` on that exact intent — so
+a semantic that was runnable when the summary was read is refused, before a
+picker opens and before a process launches, if the installation changed in
+between. `ConversionQueueDto` now carries the queue's bound intent, and the
+running and terminal surfaces read it, so moving a control afterwards changes
+what the *next* conversion would be and nothing about this one, through every
+retry.
+
+**And the M6.1 initial-unread-slot residual is closed here**, as its record said
+it should be: one lane fact rather than a new mechanism. `slotUnread` is the
+rendered half of `installedSequence`, and a conversion may not start against a
+slot this document has never read — because `idle` is where the operation starts,
+not something it has observed, and the slot may already hold a queue a replaced
+document began.
+
 ### M6.5 — Destination authority
 
 *Purpose:* a destination *policy* — source sibling, named subfolder, custom

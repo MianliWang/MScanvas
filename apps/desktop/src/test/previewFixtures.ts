@@ -26,7 +26,13 @@ import type {
   ConversionDiagnosticsState,
   ConversionOutputSetReport,
   ConversionQueuePlan,
+  ConversionCompression,
+  ConversionIntent,
+  ConversionIntentCatalog,
+  ConversionNumericPrecision,
+  ConversionProcessing,
   ConversionQueueItem,
+  ConversionSpectrumPopulation,
   FolderDiscoverySummary,
   FolderIngestionResult,
   Preview,
@@ -741,7 +747,19 @@ export interface FakePreviewApiOptions {
   /** What the conversion slot holds when the webview mounts. */
   readonly initialConversion?: WorkspaceConversionState;
   /** What `describeConversion` answers. Defaults to a plan for the named row. */
-  readonly conversionPlan?: (handles: readonly string[]) => Promise<ConversionQueuePlan>;
+  readonly conversionPlan?: (
+    handles: readonly string[],
+    intentId: string,
+    conflictPolicy: ConversionConflictPolicy,
+  ) => Promise<ConversionQueuePlan>;
+  /**
+   * Which semantics this installation offers.
+   *
+   * Absent means the whole admitted catalog on a build that declares every
+   * option, which is what most tests want: the settings exist, everything is
+   * selectable, and the test is about something else.
+   */
+  readonly conversionIntents?: () => Promise<ConversionIntentCatalog>;
   /**
    * What one conversion does.
    *
@@ -900,12 +918,43 @@ export interface FakePreviewApi extends PreviewApi {
   readonly adoptionRequests: readonly string[];
   /** Every conversion this fake was asked to start, in order. */
   readonly conversionRequests: readonly ConversionRequest[];
+  /**
+   * Every plan read, in order.
+   *
+   * A plan is an answer to a question, so a test about staleness has to be able
+   * to see which questions were asked and in which order.
+   */
+  readonly conversionPlanRequests: readonly ConversionPlanRequestRecord[];
 }
 
 /** One conversion the fake was asked for. */
 export interface ConversionRequest {
   readonly handles: readonly string[];
   readonly conflictPolicy: ConversionConflictPolicy;
+  /** The exact semantic the caller asked the queue to be bound to. */
+  readonly intentId: string;
+}
+
+/** One plan read, as the fake boundary received it. */
+export interface ConversionPlanRequestRecord {
+  readonly handles: readonly string[];
+  readonly intentId: string;
+  readonly conflictPolicy: ConversionConflictPolicy;
+}
+
+/**
+ * The admitted semantic one identity names, for the fake boundary.
+ *
+ * Refuses an identity the catalog does not hold rather than inventing one, so a
+ * test that sends a combination no measurement supports fails as loudly as Rust
+ * would refuse it.
+ */
+export function intentById(intentId: string): ConversionIntent {
+  const found = intentCatalog().intents.find((option) => option.intent.id === intentId);
+  if (found === undefined) {
+    throw new Error(`no admitted intent named ${intentId}`);
+  }
+  return found.intent;
 }
 
 /** One Shimadzu LabSolutions LCD roster row, as Rust would report it. */
@@ -1020,6 +1069,160 @@ export function outputFileNamesOf(
 }
 
 /** A whole queue from its items, with the counts Rust would derive. */
+/**
+ * The nine conversion semantics the M6.2 evidence admits, as Rust projects
+ * them.
+ *
+ * Written out here rather than generated from four value lists, deliberately.
+ * A generator would be a cross-product, and a cross-product is the one thing
+ * this catalog exists to say does not hold: these nine rows and no others, in
+ * the order the evidence record presents them. A test driving a combination
+ * that is not here is driving something no measurement supports.
+ *
+ * Each row is `mzml+<processing>+<population>+<precision>+<compression>`, which
+ * is the identity the crate composes.
+ */
+const ADMITTED_INTENTS: readonly {
+  readonly processing: ConversionProcessing;
+  readonly population: ConversionSpectrumPopulation;
+  readonly precision: ConversionNumericPrecision;
+  readonly compression: ConversionCompression;
+}[] = [
+  {
+    processing: "noAdditionalCentroiding",
+    population: "all",
+    precision: "mz64Intensity32",
+    compression: "zlib",
+  },
+  {
+    processing: "noAdditionalCentroiding",
+    population: "all",
+    precision: "mz64Intensity64",
+    compression: "zlib",
+  },
+  {
+    processing: "noAdditionalCentroiding",
+    population: "all",
+    precision: "mz32Intensity32",
+    compression: "zlib",
+  },
+  {
+    processing: "noAdditionalCentroiding",
+    population: "all",
+    precision: "mz32Intensity64",
+    compression: "zlib",
+  },
+  {
+    processing: "noAdditionalCentroiding",
+    population: "all",
+    precision: "mz64Intensity64",
+    compression: "none",
+  },
+  {
+    processing: "noAdditionalCentroiding",
+    population: "ms1Only",
+    precision: "mz64Intensity64",
+    compression: "zlib",
+  },
+  {
+    processing: "noAdditionalCentroiding",
+    population: "ms2Only",
+    precision: "mz64Intensity64",
+    compression: "zlib",
+  },
+  {
+    processing: "unscopedDefaultCentroiding",
+    population: "all",
+    precision: "mz64Intensity64",
+    compression: "zlib",
+  },
+  {
+    processing: "unscopedDefaultCentroiding",
+    population: "all",
+    precision: "mz32Intensity32",
+    compression: "zlib",
+  },
+];
+
+/** How the crate composes one semantic identity, mirrored for the fixtures. */
+const STABLE_ID: Record<string, string> = {
+  noAdditionalCentroiding: "no_additional_centroiding",
+  unscopedDefaultCentroiding: "unscoped_default_centroiding",
+  all: "all",
+  ms1Only: "ms1_only",
+  ms2Only: "ms2_only",
+  mz64Intensity32: "mz64_intensity32",
+  mz64Intensity64: "mz64_intensity64",
+  mz32Intensity32: "mz32_intensity32",
+  mz32Intensity64: "mz32_intensity64",
+  zlib: "zlib",
+  none: "none",
+};
+
+function intentOf(row: (typeof ADMITTED_INTENTS)[number]): ConversionIntent {
+  return {
+    id: [
+      "mzml",
+      STABLE_ID[row.processing],
+      STABLE_ID[row.population],
+      STABLE_ID[row.precision],
+      STABLE_ID[row.compression],
+    ].join("+"),
+    format: "mzML",
+    ...row,
+  };
+}
+
+/** The semantic the product converts under unless the user chooses another. */
+export const SHIPPED_INTENT: ConversionIntent = intentOf(ADMITTED_INTENTS[0]);
+
+/**
+ * The catalog a build declaring every option answers with.
+ *
+ * `unsupported` names the identities this build cannot express, so a test about
+ * a narrow installation says which rows are narrow rather than rebuilding the
+ * list.
+ */
+export function intentCatalog(
+  options: {
+    readonly unsupported?: readonly string[];
+    readonly installationGeneration?: number;
+  } = {},
+): ConversionIntentCatalog {
+  const unsupported = options.unsupported ?? [];
+  return {
+    intents: ADMITTED_INTENTS.map((row) => {
+      const intent = intentOf(row);
+      return {
+        intent,
+        availability: unsupported.includes(intent.id)
+          ? ({ kind: "unsupportedByInstallation" } as const)
+          : ({ kind: "available" } as const),
+      };
+    }),
+    shippedIntentId: SHIPPED_INTENT.id,
+    installationGeneration: options.installationGeneration ?? 0,
+  };
+}
+
+/** One admitted semantic by its dimensions, for a test that names one. */
+export function intentFor(
+  dimensions: Partial<Omit<ConversionIntent, "id" | "format">>,
+): ConversionIntent {
+  const wanted = { ...ADMITTED_INTENTS[0], ...dimensions };
+  const row = ADMITTED_INTENTS.find(
+    (candidate) =>
+      candidate.processing === wanted.processing &&
+      candidate.population === wanted.population &&
+      candidate.precision === wanted.precision &&
+      candidate.compression === wanted.compression,
+  );
+  if (row === undefined) {
+    throw new Error(`no admitted intent for ${JSON.stringify(wanted)}`);
+  }
+  return intentOf(row);
+}
+
 export function queueOf(items: readonly ConversionQueueItem[]) {
   const count = (state: ConversionQueueItem["state"]) =>
     items.filter((item) => item.state === state).length;
@@ -1038,6 +1241,7 @@ export function queueOf(items: readonly ConversionQueueItem[]) {
     itemCount: items.length,
     retryRound: 0,
     conflictPolicy: "fail" as const,
+    intent: SHIPPED_INTENT,
     finalizedCount: count("finalized"),
     skippedCount: count("skipped"),
     failedCount: failed,
@@ -1109,6 +1313,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   let conversion: WorkspaceConversionState = options.initialConversion ?? { status: "idle" };
   let conversionSequence = options.initialConversion === undefined ? 0 : 1;
   const conversionRequests: ConversionRequest[] = [];
+  const conversionPlanRequests: ConversionPlanRequestRecord[] = [];
   const stopRequests: string[] = [];
   const adoptionRequests: string[] = [];
   const diagnosticsExportRequests: string[] = [];
@@ -1323,6 +1528,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     diagnosticsExportRequests,
     adoptionRequests,
     conversionRequests,
+    conversionPlanRequests,
     inspectBackend: () =>
       // A quarantined session answers every backend question the same way and
       // launches nothing to do it, exactly as Rust does. Modelled here rather
@@ -1440,9 +1646,14 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         ? Promise.resolve({ outcome: "spectrum", spectrum: buildSpectrum(index, 12) })
         : options.spectrum(index);
     },
-    describeConversion: (handles) => {
+    conversionIntents: () =>
+      options.conversionIntents === undefined
+        ? Promise.resolve(intentCatalog())
+        : options.conversionIntents(),
+    describeConversion: (handles, intentId, conflictPolicy) => {
+      conversionPlanRequests.push({ handles, intentId, conflictPolicy });
       if (options.conversionPlan !== undefined) {
-        return options.conversionPlan(handles);
+        return options.conversionPlan(handles, intentId, conflictPolicy);
       }
       const rows = handles.map((handle) =>
         snapshot().datasets.find((dataset) => dataset.handle === handle),
@@ -1465,10 +1676,14 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
             fileName: plannedOutputName(row!.fileName),
           },
         })),
-        outputFormat: "mzML",
-        compression: "zlib",
+        // The plan echoes what it was asked for, exactly as Rust does. A
+        // fixture that answered with the shipped posture whatever it was given
+        // would let a stale-plan defect pass unnoticed.
+        intent: intentById(intentId),
+        conflictPolicy,
         validationMode: "output_only",
         capacity: 16,
+        installationGeneration: 0,
       });
     },
     // Answered after whatever round trip the test models, and reading the slot
@@ -1485,8 +1700,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       publishConversion(settled);
       return conversionUpdate();
     },
-    convertDatasets: async (handles, conflictPolicy, onReserved) => {
-      const request = { handles, conflictPolicy };
+    convertDatasets: async (handles, conflictPolicy, intentId, onReserved) => {
+      const request = { handles, conflictPolicy, intentId };
       conversionRequests.push(request);
       // A new queue replaces the previous one, and this session's memory of
       // having exported its diagnostics goes with it. The file does not.

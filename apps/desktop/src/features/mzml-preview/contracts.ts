@@ -792,6 +792,96 @@ export interface PreviewError {
 export type ConversionOutputFormat = "mzML";
 
 /**
+ * What a conversion is asked to do to the peaks.
+ *
+ * `unscopedDefaultCentroiding` is the build's default local-maximum picker,
+ * applied to every MS level because that picker cannot be scoped. It is a
+ * lossy transformation of the recorded data and is disclosed as one wherever
+ * it is offered.
+ */
+export type ConversionProcessing = "noAdditionalCentroiding" | "unscopedDefaultCentroiding";
+
+/**
+ * Which spectra the output is asked to contain.
+ *
+ * An output population, not a centroiding scope. `ms1Only` and `ms2Only` omit
+ * every other spectrum from the converted document.
+ */
+export type ConversionSpectrumPopulation = "all" | "ms1Only" | "ms2Only";
+
+/**
+ * The width each stored array is asked to carry.
+ *
+ * Paired postures, never two free controls: which pairs exist is a measured
+ * fact, and splitting them here would invent combinations nothing established.
+ */
+export type ConversionNumericPrecision =
+  | "mz64Intensity32"
+  | "mz64Intensity64"
+  | "mz32Intensity32"
+  | "mz32Intensity64";
+
+/** How the stored arrays are asked to be encoded. */
+export type ConversionCompression = "zlib" | "none";
+
+/**
+ * One conversion's complete product semantics.
+ *
+ * The five dimensions together, and the identity that names them as one. The
+ * identity is what crosses back to Rust: this side never assembles a
+ * combination out of five separately chosen values and asks for it, because it
+ * has no authority to say which combinations exist.
+ */
+export interface ConversionIntent {
+  readonly id: string;
+  readonly format: ConversionOutputFormat;
+  readonly processing: ConversionProcessing;
+  readonly population: ConversionSpectrumPopulation;
+  readonly precision: ConversionNumericPrecision;
+  readonly compression: ConversionCompression;
+}
+
+/**
+ * Whether the installed build can run one admitted semantic.
+ *
+ * Two states, and the absence of a row is a third fact of its own. Everything
+ * in the catalog is qualified by measured evidence; `unsupportedByInstallation`
+ * says this ProteoWizard does not declare an option or a filter grammar the
+ * semantic needs. A combination that was never qualified is not in the catalog
+ * at all, which is a different thing to tell a reader.
+ */
+export type ConversionIntentAvailability =
+  | { readonly kind: "available" }
+  | { readonly kind: "unsupportedByInstallation" };
+
+/** One selectable conversion semantic, and what this build can do about it. */
+export interface ConversionIntentOption {
+  readonly intent: ConversionIntent;
+  readonly availability: ConversionIntentAvailability;
+}
+
+/**
+ * Every conversion semantic that may be chosen, as Rust projects them.
+ *
+ * **This is the compatibility graph, and this side does not hold another one.**
+ * The rows are the admitted table; a combination absent from `intents` is
+ * absent because the measured evidence does not admit it. Nothing here
+ * enumerates combinations, and nothing here decides which values compose:
+ * every question of that kind is a lookup in this list.
+ */
+export interface ConversionIntentCatalog {
+  readonly intents: readonly ConversionIntentOption[];
+  /** The semantic the product converts under unless the user chooses another. */
+  readonly shippedIntentId: string;
+  /**
+   * Which installation this catalog was evaluated against. A reply carrying a
+   * lower generation than one already applied describes a build that has since
+   * been replaced.
+   */
+  readonly installationGeneration: number;
+}
+
+/**
  * How a conversion output was judged.
  *
  * `output_only` means nothing was compared: the source has no mzML reading, so
@@ -1016,6 +1106,15 @@ export interface ConversionQueue {
   readonly itemCount: number;
   readonly retryRound: number;
   readonly conflictPolicy: ConversionConflictPolicy;
+  /**
+   * What this queue converts under, first attempt and every retry alike.
+   *
+   * Read by every surface that describes a queue that already exists. Moving a
+   * settings control afterwards changes what the next conversion would be and
+   * nothing about this one, and reading the controls here is how that would
+   * stop being true on screen.
+   */
+  readonly intent: ConversionIntent;
   readonly finalizedCount: number;
   readonly skippedCount: number;
   readonly failedCount: number;
@@ -1176,11 +1275,23 @@ export interface ConversionQueuePlanItem {
 /** What the interface shows before a queue is started. */
 export interface ConversionQueuePlan {
   readonly items: readonly ConversionQueuePlanItem[];
-  readonly outputFormat: ConversionOutputFormat;
-  readonly compression: string;
+  /**
+   * The exact semantic this plan was resolved for, and the one Convert binds.
+   *
+   * Everything the summary says about format, processing, population,
+   * precision and compression is read from here. The controls are edited
+   * separately and are not consulted when the summary is drawn: a summary
+   * composed from them would describe what the user is asking for rather than
+   * what Rust answered.
+   */
+  readonly intent: ConversionIntent;
+  /** The policy this plan was read under, and the one Convert would bind. */
+  readonly conflictPolicy: ConversionConflictPolicy;
   readonly validationMode: ValidationMode;
   /** The most items one queue may hold, as Rust enforces it. */
   readonly capacity: number;
+  /** Where the sequence of installation changes stood when this was read. */
+  readonly installationGeneration: number;
 }
 
 /**

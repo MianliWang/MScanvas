@@ -41,6 +41,19 @@ export interface ConversionLane {
    * until it is restarted.
    */
   readonly backendQuarantined: boolean;
+  /**
+   * Whether this document has yet read the session's one conversion slot.
+   *
+   * **Not yet observed is not idle.** The operation starts from a local `idle`
+   * object because it has to start from something, and a conversion dispatched
+   * before the first authoritative read lands would be dispatched against a
+   * slot this document has never seen -- which may already hold a queue a
+   * replaced document started. It is the same rule every other fact here
+   * follows: a decision is taken from what is known, and this is the fact that
+   * says nothing is known yet. Its synchronous half is the installed sequence,
+   * which is negative until a read commits.
+   */
+  readonly slotUnread: boolean;
   /** Whether a run or a scan is being read over the one backend lane. */
   readonly previewReading: boolean;
   /**
@@ -75,6 +88,24 @@ export type ConversionAction =
       readonly kind: "start";
       /** How many convertible rows the queue would hold. */
       readonly targetCount: number;
+      /**
+       * Whether the chosen conversion semantic is settled and runnable.
+       *
+       * Settings are not permission to run, and their absence is not a reason
+       * to invent one: a catalog that has not arrived, one that failed, and a
+       * choice this build cannot express are three different situations and
+       * each gets its own sentence.
+       */
+      readonly settings: ConversionSettingsReadiness;
+      /**
+       * Whether the loaded plan is a plan for this exact request.
+       *
+       * A plan answers one question: these rows, this semantic, this policy,
+       * this installation. Change any of them and the plan on screen describes
+       * something the user is no longer asking for, so it cannot be started --
+       * and saying so is better than starting the older one.
+       */
+      readonly planIsCurrent: boolean;
     }
   | {
       readonly kind: "retry";
@@ -90,17 +121,32 @@ export type ConversionAction =
       readonly queueCompleted: boolean;
     };
 
+/**
+ * Whether the chosen conversion semantic can be run.
+ *
+ * `unsupported` is deliberately apart from `unavailable`: the first says this
+ * ProteoWizard cannot express what the user chose, which they can act on by
+ * choosing differently; the second says MSCanvas could not establish what is
+ * choosable at all.
+ */
+export type ConversionSettingsReadiness = "ready" | "loading" | "unavailable" | "unsupported";
+
 /** Why a conversion action cannot start, named for what the reader can do. */
 export type ConversionUnavailableReason =
   | "backend-quarantined"
   | "backend-changing"
   | "backend-unavailable"
+  | "conversion-state-unknown"
   | "conversion-running"
   | "preview-running"
   | "adoption-running"
   | "diagnostics-exporting"
   | "workspace-settling"
   | "no-convertible-target"
+  | "settings-loading"
+  | "settings-unavailable"
+  | "intent-unsupported"
+  | "plan-superseded"
   | "queue-not-retryable"
   | "nothing-to-retry";
 
@@ -144,6 +190,7 @@ const CONVERSION_MESSAGES: Record<ConversionUnavailableReason, string> = {
   "backend-unavailable":
     "Converting needs ProteoWizard, and this session has no usable backend. " +
     "See the backend status above.",
+  "conversion-state-unknown": "MSCanvas is checking the current conversion state.",
   "conversion-running": "Converting is unavailable while a conversion is running.",
   "preview-running": "Converting is unavailable while a run is being read.",
   "adoption-running":
@@ -152,6 +199,14 @@ const CONVERSION_MESSAGES: Record<ConversionUnavailableReason, string> = {
     "Converting is unavailable while failure diagnostics are being saved.",
   "workspace-settling": "Converting is unavailable while the file list is being changed.",
   "no-convertible-target": "Select or focus a supported vendor acquisition to convert.",
+  "settings-loading": "MSCanvas is reading which conversion settings this ProteoWizard offers.",
+  "settings-unavailable":
+    "MSCanvas could not read which conversion settings this ProteoWizard offers, " +
+    "so it will not start a conversion.",
+  "intent-unsupported":
+    "The installed ProteoWizard build does not offer the conversion settings you chose. " +
+    "Choose different settings to convert.",
+  "plan-superseded": "MSCanvas is rereading the conversion plan for the settings you changed.",
   "queue-not-retryable":
     "A stopped queue is not rerun in place. Convert those acquisitions again from the list.",
   "nothing-to-retry": "Nothing in this queue would change on another attempt.",
@@ -177,8 +232,15 @@ const CONVERSION_MESSAGES: Record<ConversionUnavailableReason, string> = {
  * 4. the four things that end by themselves, longest first: a conversion, a
  *    run being read, an adoption, a diagnostics export, a change to the file
  *    list;
- * 5. the target. Last, because "select something to convert" said while a
- *    conversion is running is a true sentence about the wrong problem.
+ * 5. the target, and then what a start of that target still needs: a settled
+ *    semantic, and a plan that answers the request as it now stands. Last,
+ *    because "select something to convert" said while a conversion is running
+ *    is a true sentence about the wrong problem.
+ *
+ * The unread slot sits above the four that end by themselves, and says so here
+ * rather than being ordered by accident: until the one slot has been read,
+ * whether a conversion is running is not known, so naming any of them would be
+ * a guess dressed as a reason.
  *
  * There is no message for `available`, because a control that can be used has
  * nothing to explain and an explanation shown beside a working control is a
@@ -206,6 +268,9 @@ function unavailableReason(
   }
   if (!lane.backendUsable) {
     return "backend-unavailable";
+  }
+  if (lane.slotUnread) {
+    return "conversion-state-unknown";
   }
   if (lane.laneClaimed) {
     return "conversion-running";
@@ -235,7 +300,23 @@ function unavailableReason(
 function targetReason(action: ConversionAction): ConversionUnavailableReason | null {
   switch (action.kind) {
     case "start":
-      return action.targetCount === 0 ? "no-convertible-target" : null;
+      if (action.targetCount === 0) {
+        return "no-convertible-target";
+      }
+      // The semantic before the plan, because a plan is an answer *about* one:
+      // "the plan is being reread" said while the settings themselves could not
+      // be established would name the symptom rather than the cause.
+      switch (action.settings) {
+        case "loading":
+          return "settings-loading";
+        case "unavailable":
+          return "settings-unavailable";
+        case "unsupported":
+          return "intent-unsupported";
+        case "ready":
+          break;
+      }
+      return action.planIsCurrent ? null : "plan-superseded";
     case "retry":
       if (!action.queueCompleted) {
         return "queue-not-retryable";
@@ -251,8 +332,11 @@ function targetReason(action: ConversionAction): ConversionUnavailableReason | n
  * that offers it evaluate the same code rather than two expressions that
  * merely looked alike.
  */
-export function canStartConversion(lane: ConversionLane, targetCount: number): boolean {
-  return conversionAvailability(lane, { kind: "start", targetCount }).status === "available";
+export function canStartConversion(
+  lane: ConversionLane,
+  target: Omit<Extract<ConversionAction, { kind: "start" }>, "kind">,
+): boolean {
+  return conversionAvailability(lane, { kind: "start", ...target }).status === "available";
 }
 
 /**

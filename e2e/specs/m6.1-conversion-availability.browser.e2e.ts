@@ -29,6 +29,7 @@ import {
   availableBackend,
   queueItem,
   queueOf,
+  SHIPPED_INTENT,
   unavailableBackend,
 } from "../../apps/desktop/src/test/previewFixtures";
 
@@ -59,10 +60,11 @@ const PLAN = {
       output: { kind: "knownSingle", fileName: "sample-9.mzML" },
     },
   ],
-  outputFormat: "mzML",
-  compression: "zlib",
+  intent: SHIPPED_INTENT,
+  conflictPolicy: "fail",
   validationMode: "output_only",
   capacity: 16,
+  installationGeneration: 0,
 };
 
 /** A finished queue holding one failure another attempt could change. */

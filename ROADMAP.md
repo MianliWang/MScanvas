@@ -394,8 +394,8 @@ slices:
 - M6.1 — conversion-lane authority. **complete.**
 - M6.2 — `msconvert` capability and evidence. **complete.**
 - M6.3 — typed `ConversionIntent`. **complete.**
-- M6.4 — visible settings, and a truthful plan. **Next.**
-- M6.5 — destination authority.
+- M6.4 — visible settings, and a truthful plan. **complete.**
+- M6.5 — destination authority. **Next.**
 - M6.6 — destination and conflict UX, including the destructive question.
 - M6.7 — convert selected, convert all.
 - M6.8 — cancellation, capacity, and truthful progress.
@@ -459,6 +459,33 @@ declares the exact invocation each intent emits, rather than trusting that M6.2'
 executable and today's are the same build. Nothing visible changed: the product
 still converts under the shipped intent and still emits the same two flags.
 
+**M6.4 made the nine admitted semantics selectable without letting the
+interface re-invent the graph.** The controls a user meets are four scientific
+dimensions, and every one of them is a projection of a single backend catalog:
+Rust sends `ConversionIntent::ADMITTED` with each row marked for what the
+*installed* executable declares, and the frontend looks combinations up rather
+than composing them. Nothing on that side enumerates a dimension's values either
+— they are read out of the catalog in first-appearance order — so the
+thirty-nine combinations the evidence does not admit are unreachable by any
+sequence of activations. Changing one control never silently moves another: a
+choice either names the admitted row that differs in exactly that dimension, or
+it is refused, and the two refusals stay apart because a reader can act on one of
+them and not the other — *not qualified* against *this build does not declare
+it*. The plan is now Rust's answer to one exact request — rows, semantic,
+conflict policy, installation — and carries the intent it resolved, so the
+summary states format, processing, population, precision and compression from
+what the backend said rather than from the controls; centroiding is marked lossy
+at the choice, a population filter says which spectra are omitted, a 32-bit
+posture says what it rounds, and the destination is still described as chosen
+next, because at summary time there is none. `BEGIN` sends that identity and
+Rust resolves it through the admitted table again and re-asks the live
+executable, so a semantic that was runnable when the summary was read is refused
+if the installation changed. The queue keeps what it bound through every retry,
+and the running surface reads the queue's intent rather than the controls. M6.4
+also closed the M6.1 initial-unread-slot residual with one lane fact: **a slot
+this document has never read is not an idle slot**, and a conversion may not
+start against one.
+
 **The audit also found the boundary beneath M6 is stronger than this backlog
 implied**, and the route is shaped accordingly: destinations are already admitted
 by Windows object identity and revalidated on retry, finalization is already
@@ -497,9 +524,11 @@ claimed closed. M6.1 closed that window, and widened the lane's first half by on
 fact: a dispatched *conversion* owns it too, which is what the viewer's selection
 guard had been unable to see.
 
-- Widen the typed conversion settings the interface can actually express:
-  CNV-002's mzXML gate, CNV-004 to CNV-007's processing and compression choices,
-  and CNV-003's output-location choices.
+- Widen the typed conversion settings the interface can actually express.
+  CNV-004 to CNV-007's processing, population, precision and compression choices
+  are **visible since M6.4**, in the nine combinations M6.2 measured and no
+  others; what remains here is CNV-002's mzXML gate, whose disposition is
+  M6.10's, and CNV-003's output-location choices, which are M6.5's and M6.6's.
 - Queue work beyond the current bounds, **measurement-gated, and neither an exit
   criterion nor a route requiring a disposition**: a re-evaluated queue bound and
   per-item cancellation. Both are admitted only on M6.8's measurement of what an

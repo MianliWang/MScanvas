@@ -996,6 +996,15 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    */
   const appliedGeneration = useRef(-1);
   /**
+   * The same number where a render can see it.
+   *
+   * Written beside the ref at every site that advances it, like every other
+   * paired fact here. The conversion lane reads it: which semantics an
+   * installation offers is an answer about that installation, so a change to it
+   * is the signal to ask again -- and a ref cannot be an effect dependency.
+   */
+  const [appliedGenerationState, setAppliedGenerationState] = useState(-1);
+  /**
    * How many installation changes are outstanding.
    *
    * A ref rather than state because it is read inside promise handlers, where
@@ -1243,6 +1252,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       }
       const changed = generation > appliedGeneration.current && appliedGeneration.current >= 0;
       appliedGeneration.current = generation;
+      setAppliedGenerationState(generation);
       showBackend({ status: "resolved", availability });
       // Not while an open is in flight. That open has already emptied the
       // screen and is about to fill it, and its reply is judged on its own
@@ -1536,6 +1546,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           const noticedAChange = loaded.installationGeneration > appliedGeneration.current;
           if (noticedAChange) {
             appliedGeneration.current = loaded.installationGeneration;
+            setAppliedGenerationState(loaded.installationGeneration);
           }
           setPreview({ status: "loaded", preview: loaded });
           dispatchRoster({ type: "rowStateChanged", handle, state: "loaded" });
@@ -3472,6 +3483,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     adoptOutputs,
     conversionEnvironment,
     readConversionEnvironment,
+    appliedGenerationState,
   );
   // A stop that could not be confirmed makes this session's backend unusable
   // without changing the installation, so nothing about it advances the

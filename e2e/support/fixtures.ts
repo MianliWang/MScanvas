@@ -12,6 +12,7 @@ import {
   availableBackend,
   buildPreview,
   buildSpectrum,
+  intentCatalog,
   selectedFile,
   shimadzuDataset,
 } from "../../apps/desktop/src/test/previewFixtures";
@@ -220,6 +221,10 @@ export function ipcTable(
       capacity: FAKE_WORKSPACE_CAPACITY,
     },
     subscribe_workspace_drop_updates: null,
+    // Which conversion semantics this installation offers. Built from the same
+    // fixture the unit suite uses, so a rendered run drives the shape Rust
+    // actually sends rather than a hand-typed one that could drift from it.
+    get_workspace_conversion_intents: intentCatalog(),
     get_workspace_conversion_state: {
       sequence: 0,
       state: { status: "idle" },

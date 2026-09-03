@@ -810,6 +810,17 @@ describe("what a scan step says it can do", () => {
     });
     const revision = result.current.viewerInteraction.selection?.revision ?? 0;
 
+    // The sequence the panel takes: describe the rows, wait for the plan that
+    // answers *this* request, then convert. Since M6.4 a dispatch is guarded on
+    // that plan -- a conversion may only start the queue the user was shown --
+    // so a hook-level test that skipped the description would be exercising a
+    // path the interface never takes.
+    act(() => {
+      result.current.conversion.describe([VENDOR_ROW.handle]);
+    });
+    await waitFor(() => {
+      expect(result.current.conversion.planIsCurrent).toBe(true);
+    });
     act(() => {
       result.current.conversion.convert([VENDOR_ROW.handle]);
     });

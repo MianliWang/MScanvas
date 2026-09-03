@@ -252,6 +252,16 @@ describe("the conversion lane's one authority, as it ships", () => {
     await waitFor(() => {
       expect(workspace.result.current.conversion.retryAvailability.status).toBe("available");
     });
+    // The sequence the panel takes. Since M6.4 a dispatch is guarded on the
+    // plan that answers this exact request, so the rows have to be described
+    // before one can be started -- which is what the interface does, and what a
+    // hook-level test has to do to reach the window this case is about.
+    act(() => {
+      workspace.result.current.conversion.describe([vendorRow.handle]);
+    });
+    await waitFor(() => {
+      expect(workspace.result.current.conversion.planIsCurrent).toBe(true);
+    });
 
     // The slot advances past what this document holds, still terminal and still
     // without a queue of this dispatch's.

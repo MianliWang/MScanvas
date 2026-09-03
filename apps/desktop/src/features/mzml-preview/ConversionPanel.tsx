@@ -2,9 +2,11 @@ import type { ReactElement } from "react";
 
 import type {
   ConversionConflictPolicy,
+  ConversionIntent,
   ConversionOutputSetReport,
   ConversionQueue,
   ConversionQueueItem,
+  ConversionQueuePlan,
   ConversionQueuePlanItem,
   ConversionReport,
   DatasetSourceKind,
@@ -14,7 +16,13 @@ import type {
   ConversionAvailability,
   ConversionUnavailableReason,
 } from "./conversionAvailability";
+import type { ConversionPlanState } from "./useConversionOperation";
 import { conversionAvailability, conversionNoticeId } from "./conversionAvailability";
+import {
+  CONVERSION_VALUE_LABEL,
+  ConversionSettings,
+  conversionIntentDisclosures,
+} from "./ConversionSettings";
 import { formatByteLength, formatCount, formatDuration } from "./format";
 import type { ConversionOperation } from "./useConversionOperation";
 
@@ -49,8 +57,16 @@ const OUTPUT_ONLY_DISCLOSURE =
  * plan order, so the sentence stays true for whatever combination the closed
  * vocabulary allows -- there is deliberately no generic vendor wording that a
  * new family could hide inside.
+ *
+ * The format is the plan's, not a word written here. It used to say "mzML"
+ * because this file knew that was the answer; since M6.4 the plan carries the
+ * intent Rust resolved, and a sentence that stated the format from local
+ * knowledge would be a second authority on what the conversion will produce.
  */
-function describeQueueFamilies(items: readonly ConversionQueuePlanItem[]): string {
+function describeQueueFamilies(
+  items: readonly ConversionQueuePlanItem[],
+  format: ConversionIntent["format"],
+): string {
   const counts = new Map<DatasetSourceKind, number>();
   for (const item of items) {
     counts.set(item.sourceKind, (counts.get(item.sourceKind) ?? 0) + 1);
@@ -60,13 +76,13 @@ function describeQueueFamilies(items: readonly ConversionQueuePlanItem[]): strin
   if (counts.size === 1 && first !== undefined) {
     const family = SOURCE_KIND_LABEL[first.sourceKind];
     return count === 1
-      ? `One ${family} acquisition will be converted to mzML.`
-      : `${String(count)} ${family} acquisitions will be converted to mzML, one after another, in the order below.`;
+      ? `One ${family} acquisition will be converted to ${format}.`
+      : `${String(count)} ${family} acquisitions will be converted to ${format}, one after another, in the order below.`;
   }
   const perFamily = [...counts.entries()]
     .map(([kind, familyCount]) => `${String(familyCount)} ${SOURCE_KIND_LABEL[kind]}`)
     .join(" · ");
-  return `${String(count)} supported vendor acquisitions will be converted to mzML, one after another, in the order below. ${perFamily}.`;
+  return `${String(count)} supported vendor acquisitions will be converted to ${format}, one after another, in the order below. ${perFamily}.`;
 }
 
 /**
@@ -231,6 +247,11 @@ export function ConversionPanel({
   const startAvailability = conversionAvailability(conversion.lane, {
     kind: "start",
     targetCount: handles.length,
+    // Read from the operation rather than re-derived. Whether the chosen
+    // semantic is runnable, and whether the plan on screen answers the request
+    // as it now stands, are decided once beside the plan that answers them.
+    settings: conversion.settingsReadiness,
+    planIsCurrent: conversion.planIsCurrent,
   });
   const { retryAvailability } = conversion;
 
@@ -244,7 +265,11 @@ export function ConversionPanel({
    * cannot see. Deriving this a second time inside the branch that renders it
    * is how the sentence and the button would come to disagree.
    */
-  const startOffered = !conversion.busy && plan.status === "loaded";
+  // Offered whenever there is something to convert, whether or not the plan
+  // has arrived. A refused control that explains itself is the M6.1 rule; a
+  // control that vanishes while its plan is read is a sentence with nothing
+  // beside it.
+  const startOffered = !conversion.busy && plan.status !== "none";
   const retryOffered =
     state.status === "terminal" &&
     state.reason === "completed" &&
@@ -378,9 +403,10 @@ function AvailabilityNotice({
  * else.
  */
 function describedBy(base: string, availability: ConversionAvailability): string {
-  return availability.status === "available"
-    ? base
-    : `${base} ${conversionNoticeId(availability.reason)}`;
+  const reason = availability.status === "available" ? "" : conversionNoticeId(availability.reason);
+  // Joined rather than concatenated, so a control with no description of its own
+  // does not point at an empty identifier beside the reason it is refused for.
+  return [base, reason].filter((each) => each !== "").join(" ");
 }
 
 /**
@@ -604,20 +630,6 @@ function PlanState({
   readonly repeating: boolean;
 }): ReactElement | null {
   const { plan } = conversion;
-  // With a result above it, silence is better than a second empty state.
-  if (repeating && plan.status !== "loaded") {
-    return null;
-  }
-  if (plan.status === "loading") {
-    return <div className="empty-state">Reading the conversion plan…</div>;
-  }
-  if (plan.status === "failed") {
-    return (
-      <div className="empty-state">
-        <span>{plan.error.summary}</span>
-      </div>
-    );
-  }
   if (plan.status === "none") {
     return (
       <div className="empty-state">
@@ -625,13 +637,114 @@ function PlanState({
       </div>
     );
   }
-
-  const summary = plan.plan;
-  const count = summary.items.length;
+  // Everything from here down is on screen whether or not the plan itself has
+  // arrived.
+  //
+  // It used to return early, so a plan that could not be read took the settings
+  // and the `Convert` control with it -- and a refused conversion became a
+  // sentence with no control beside it. Since M6.4 a plan can be waiting on the
+  // settings that decide what to ask for, which is a state the user is in
+  // whenever an installation is being checked, so the block that explains the
+  // refusal has to survive it. The availability rule is what disables the
+  // control; the absence of a control was never the rule.
+  const summary = plan.status === "loaded" ? plan.plan : null;
+  const count = summary === null ? handles.length : summary.items.length;
+  /*
+   * What the action points at, which is whatever is actually on screen.
+   *
+   * A description that named an element the branch above did not render would
+   * be a reference a screen reader resolves to nothing, so this follows the
+   * three states rather than assuming the loaded one: the plan and its
+   * validation note, the pending sentence alone, or -- under a finished result,
+   * where the pending sentence is deliberately silent -- nothing but the
+   * refusal the availability rule adds.
+   */
+  const planDescription =
+    summary !== null
+      ? "conversion-plan-summary conversion-validation-disclosure"
+      : repeating
+        ? ""
+        : "conversion-plan-summary";
   return (
     <div className="conversion-plan">
+      {/* Above the plan, because the plan is their consequence: the summary
+          below is Rust's answer to whatever is selected here. */}
+      <ConversionSettings onChoose={conversion.chooseIntent} settings={conversion.settings} />
+      {/* With a result above it, silence is better than a second empty state --
+          but only for the *text*. The settings and the control stay, because a
+          conversion that cannot start has to say why wherever it is refused,
+          and the earlier form of this rule took the explanation away with the
+          plan. */}
+      {plan.status === "loaded" ? (
+        <PlanDetail excludedSelectedCount={excludedSelectedCount} summary={plan.plan} />
+      ) : repeating ? null : (
+        <PlanPending plan={plan} />
+      )}
+
+      <fieldset className="conversion-conflict">
+        <legend>If an output name is taken</legend>
+        {CONFLICT_POLICIES.map((policy) => (
+          <label key={policy}>
+            <input
+              checked={conversion.conflictPolicy === policy}
+              name="conversion-conflict-policy"
+              onChange={() => {
+                conversion.setConflictPolicy(policy);
+              }}
+              type="radio"
+              value={policy}
+            />
+            {CONFLICT_POLICY_LABEL[policy]}
+          </label>
+        ))}
+      </fieldset>
+
+      <div className="conversion-actions">
+        <button
+          aria-describedby={describedBy(planDescription, startAvailability)}
+          className="primary-button"
+          // The one rule, and the whole of it. The empty-row case is inside it
+          // rather than beside it: a second clause here is exactly how this
+          // control came to answer a different question from the operation it
+          // starts.
+          disabled={startAvailability.status !== "available"}
+          onClick={() => {
+            conversion.convert(handles);
+          }}
+          type="button"
+        >
+          {scope === "focused" ? "Convert focused…" : `Convert ${String(count)} selected…`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** A plan that is still being read, or one that could not be. */
+function PlanPending({
+  plan,
+}: {
+  readonly plan: Extract<ConversionPlanState, { status: "loading" | "failed" }>;
+}): ReactElement {
+  return (
+    <div className="empty-state" id="conversion-plan-summary">
+      {plan.status === "loading" ? "Reading the conversion plan…" : plan.error.summary}
+    </div>
+  );
+}
+
+/** The plan itself: what will run, in what order, and under what semantics. */
+function PlanDetail({
+  summary,
+  excludedSelectedCount,
+}: {
+  readonly summary: ConversionQueuePlan;
+  readonly excludedSelectedCount: number;
+}): ReactElement {
+  return (
+    <>
       <p id="conversion-plan-summary">
-        {describeQueueFamilies(summary.items)}
+        {describeQueueFamilies(summary.items, summary.intent.format)}
         {excludedSelectedCount === 0
           ? ""
           : ` ${String(excludedSelectedCount)} selected ${
@@ -672,65 +785,95 @@ function PlanState({
         ))}
       </ol>
 
-      <dl className="metadata-list">
+      {/* Every fact read off the plan Rust answered with, and none of them
+          read off the controls above. The controls are what the user is asking
+          for; this is what MSCanvas said it would do, and a summary composed
+          from the request could not tell the difference between the two. */}
+      <dl className="metadata-list" data-plan-facts="intent">
         <div>
           <dt>Output</dt>
-          <dd>{summary.outputFormat}</dd>
+          <dd>{summary.intent.format}</dd>
         </div>
         <div>
-          <dt>Compression</dt>
-          <dd>{summary.compression}</dd>
+          <dt>Peak processing</dt>
+          <dd>{CONVERSION_VALUE_LABEL.processing[summary.intent.processing]}</dd>
         </div>
+        <div>
+          <dt>Spectra</dt>
+          <dd>{CONVERSION_VALUE_LABEL.population[summary.intent.population]}</dd>
+        </div>
+        <div>
+          <dt>Numeric precision</dt>
+          <dd>{CONVERSION_VALUE_LABEL.precision[summary.intent.precision]}</dd>
+        </div>
+        <div>
+          <dt>Array compression</dt>
+          <dd>{CONVERSION_VALUE_LABEL.compression[summary.intent.compression]}</dd>
+        </div>
+        <div>
+          <dt>If an output name is taken</dt>
+          <dd>{CONFLICT_POLICY_LABEL[summary.conflictPolicy]}</dd>
+        </div>
+        {/* No path, and no guess at one. The destination is chosen after this
+            summary is read, so naming a folder here -- a sibling, a remembered
+            one, a placeholder -- would be a claim about something that does not
+            exist yet. */}
         <div>
           <dt>Destination</dt>
           <dd>One folder, chosen next</dd>
         </div>
       </dl>
 
+      <PlanDisclosures intent={summary.intent} />
+
       <p className="quiet-text" id="conversion-validation-disclosure" role="note">
         {OUTPUT_ONLY_DISCLOSURE} They run one at a time, and Stop queue ends the whole queue rather
         than one item.
       </p>
+    </>
+  );
+}
 
-      <fieldset className="conversion-conflict">
-        <legend>If an output name is taken</legend>
-        {CONFLICT_POLICIES.map((policy) => (
-          <label key={policy}>
-            <input
-              checked={conversion.conflictPolicy === policy}
-              name="conversion-conflict-policy"
-              onChange={() => {
-                conversion.setConflictPolicy(policy);
-              }}
-              type="radio"
-              value={policy}
-            />
-            {CONFLICT_POLICY_LABEL[policy]}
-          </label>
-        ))}
-      </fieldset>
+/**
+ * What the chosen semantic costs, listed only where it costs something.
+ *
+ * Built from the plan's own intent through the same sentences the controls
+ * carry, so what a reader is told beside a radio and what they are told beside
+ * the plan are one claim rather than two that could drift. A semantic that
+ * reduces nothing renders nothing: there is no reassuring sentence, because the
+ * absence of a disclosure is the honest form of that answer.
+ */
+function PlanDisclosures({ intent }: { readonly intent: ConversionIntent }): ReactElement | null {
+  const disclosures = conversionIntentDisclosures(intent);
+  if (disclosures.length === 0) {
+    return null;
+  }
+  return (
+    <ul className="conversion-plan-disclosures" data-plan-facts="disclosures">
+      {disclosures.map((disclosure) => (
+        <li key={disclosure}>{disclosure}</li>
+      ))}
+    </ul>
+  );
+}
 
-      <div className="conversion-actions">
-        <button
-          aria-describedby={describedBy(
-            "conversion-plan-summary conversion-validation-disclosure",
-            startAvailability,
-          )}
-          className="primary-button"
-          // The one rule, and the whole of it. The empty-row case is inside it
-          // rather than beside it: a second clause here is exactly how this
-          // control came to answer a different question from the operation it
-          // starts.
-          disabled={startAvailability.status !== "available"}
-          onClick={() => {
-            conversion.convert(handles);
-          }}
-          type="button"
-        >
-          {scope === "focused" ? "Convert focused…" : `Convert ${String(count)} selected…`}
-        </button>
-      </div>
-    </div>
+/**
+ * What the queue on screen converts under.
+ *
+ * Read from the queue, never from the controls. The queue bound its semantic
+ * when it was created and holds it through every retry, so a settings change
+ * made while it runs must not change one word of this -- and the only way to
+ * guarantee that on screen is to read the bound value rather than the current
+ * one.
+ */
+function QueueIntent({ intent }: { readonly intent: ConversionIntent }): ReactElement {
+  return (
+    <p className="quiet-text" data-queue-intent={intent.id}>
+      Converting to {intent.format} · {CONVERSION_VALUE_LABEL.processing[intent.processing]} ·{" "}
+      {CONVERSION_VALUE_LABEL.population[intent.population]} ·{" "}
+      {CONVERSION_VALUE_LABEL.precision[intent.precision]} ·{" "}
+      {CONVERSION_VALUE_LABEL.compression[intent.compression]}
+    </p>
   );
 }
 
@@ -784,6 +927,10 @@ function QueueState({
   const retrying = conversion.retrying && state.status === "terminal";
   return (
     <div className="conversion-running">
+      {/* The semantic this queue holds, above whatever it is doing. Read from
+          the queue rather than from the settings, which by now may describe the
+          next conversion instead of this one. */}
+      <QueueIntent intent={queue.intent} />
       {retrying ? (
         <>
           <p>Retrying the failures…</p>
