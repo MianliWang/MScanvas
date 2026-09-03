@@ -225,7 +225,14 @@ process and a single row of the plan. Items convert one at a time in
 the order shown. One file's failure marks that file and the queue continues,
 and `Retry N failed` reruns only the failures Rust marks retryable.
 
-**The conversion semantics are chosen rather than fixed.** Four
+**M6.4's conversion settings are implemented and not published.** They are on
+`feat/m6.4-visible-conversion-settings` and not on `main`: that slice has stopped
+three times in review and its latest head carries one release-blocking finding,
+recorded in `BOOTSTRAP_STATUS.md`. What the rest of this section describes is
+therefore what that branch delivers, and `main` still converts under one fixed
+intent with no visible control naming it.
+
+**On that branch, the conversion semantics are chosen rather than fixed.** Four
 native radio groups — peak processing, spectra included, numeric precision and
 array compression — edit one selection, which opens on the posture the product
 has always shipped: mzML, no additional centroiding, every spectrum, m/z at 64
@@ -244,8 +251,9 @@ MS-level choice says which spectra are left out of the file rather than implying
 they are processed differently. A 32-bit posture says what it rounds and is never
 called lossless. Compression says the numbers written are the same either way.
 
-Reachable that far and no further. CNV-001, CNV-008's fail/skip half, CNV-004,
-CNV-005, CNV-006 and CNV-007 are reachable, each in the combinations the evidence
+Reachable that far and no further. On `main`, CNV-001 and CNV-008's fail/skip
+half are reachable and CNV-004 to CNV-007 are not; on M6.4's branch CNV-004,
+CNV-005, CNV-006 and CNV-007 join them, each in the combinations the evidence
 admits and no others — there is no free cross-product, and in particular no
 uncompressed output except at 64-bit m/z and intensity, no MS-level filter except
 there, and no centroiding except at 64/64 or 32/32. CNV-009's summary now states
@@ -292,8 +300,8 @@ That intent is how the boundary now expresses every processing decision it makes
 It is not five independent settings: nine combinations of output format,
 centroiding, MS-level population, numeric precision and compression are
 constructible, each admitted by a named M6.2 measurement, and the other
-thirty-nine of the forty-eight the axes span are unconstructible. Since **M6.4**
-those nine are also *selectable*, through one backend-owned catalog rather than
+thirty-nine of the forty-eight the axes span are unconstructible. On **M6.4's
+unmerged branch** those nine are also *selectable*, through one backend-owned catalog rather than
 through a second list on the interface side: the webview names a semantic by the
 identity Rust issued, Rust resolves it through the same admitted table before a
 plan exists and again before a queue does, and re-asks the live executable in

@@ -855,14 +855,16 @@ cancellation change.
 
 *Downstream:* M6.5.
 
-*Implemented and published.* One backend-owned catalog, one selected
+*Implemented, and not published.* One backend-owned catalog, one selected
 identity, and a plan that is Rust's answer rather than the interface's summary of
 its own controls — delivered on `feat/m6.4-visible-conversion-settings`, which
-review stopped three times before it was publishable. Three findings stopped it
-first and a bounded correction closed them; the fresh review of that corrected
-head found two more, in the seam the correction itself had just widened; a second
-bounded correction closed those, and the record of all three rounds is in
-`BOOTSTRAP_STATUS.md`.
+review has now stopped three times. Three findings stopped it first and a bounded
+correction closed them; the fresh review of that corrected head found two more,
+in the seam the correction itself had just widened; a second bounded correction
+closed those and was in turn stopped by a defect it introduced — a catalog read
+that fails once can no longer be retried, because the recovery had been living on
+the very conflation the correction removed. Every round is recorded in
+`BOOTSTRAP_STATUS.md`, and none of it is on `main`.
 
 The stops are part of the record. A second review of the head that had passed every
 gate found three further truthfulness defects once the route's single repair pass
@@ -901,6 +903,11 @@ wanted. That was half right, and the half it missed is why this needed a third
 round: a generation alone cannot say whether the executable it names is one this
 session can launch, and a number arriving cannot say whether anyone has yet acted
 on it. Both facts had to be carried with their verdicts.
+
+What the fourth round has to answer is narrower and is not a retreat from that
+model: **a read that failed is not a state the binding can clear.** Retrying it
+belongs to the lane that failed, or to the reader asking explicitly — never to
+an installation identity that has not changed.
 
 **The graph stays where the evidence is.**
 `apps/desktop/src-tauri/src/preview/intent_catalog.rs` projects
