@@ -6784,6 +6784,17 @@ and a slice that deletes `ConversionPolicy` for being a second answer while
 leaving four more is arguing with itself. Every one now derives from
 `intent.format()`.
 
+**A stronger processing rule exists and was not taken.** Where a source was
+read, its own processing claim is available, and a picker claim in the output
+that the source did not carry would be something *this* conversion added --
+which a request to add nothing could refuse on. It is not taken, because it
+would be a new refusal on the path every production conversion runs, resting on
+copy-through behaviour that one measured fixture showed. That is an evidence
+question of exactly the kind M6.2 answers, and settling it by adding a rule and
+hoping is the failure this milestone is built to avoid. The omission is written
+into the code beside the rule it would strengthen, so it reads as a decision
+rather than an oversight.
+
 **Two accessors have no production caller.** `ConversionIntent::stable_id` and
 `ConversionIntent::evidence` are read only by tests, because nothing visible
 names an intent yet. They are kept rather than deferred, and the reason is now

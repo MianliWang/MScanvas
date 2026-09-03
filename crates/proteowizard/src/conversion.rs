@@ -2399,6 +2399,15 @@ fn check_requested_population(
 /// source/output representation comparison, which is about this conversion; with
 /// no source to compare against, the property is simply unverified.
 ///
+/// **A stronger rule exists and is deliberately not taken here.** Where a source
+/// was read, the claim it carries is available too, and a claim appearing in the
+/// output that the source did not carry would be something *this* conversion
+/// added. Refusing on that would be a new refusal on the path every production
+/// conversion takes, and it rests on the copy-through behaviour being exactly
+/// what one measured fixture showed. That is an evidence question with an owner
+/// -- the same kind M6.2 answers -- and not one to settle by adding a rule and
+/// hoping. Stated so the omission is a decision rather than an oversight.
+///
 /// [`ProcessingIntent::UnscopedDefaultCentroiding`] asks for one specific
 /// algorithm, and there the claim is exactly the question. A different
 /// *recognized* algorithm, an unrecognized one, or two claimed at once all
