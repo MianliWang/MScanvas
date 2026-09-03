@@ -855,8 +855,14 @@ cancellation change.
 
 *Downstream:* M6.5.
 
-*Delivered.* One backend-owned catalog, one selected identity, and a plan that is
-Rust's answer rather than the interface's summary of its own controls.
+*Implemented, and not published.* One backend-owned catalog, one selected
+identity, and a plan that is Rust's answer rather than the interface's summary of
+its own controls — on `feat/m6.4-visible-conversion-settings`, which review
+stopped rather than merged. Three truthfulness defects were found on the head
+that passed every gate, after the one bounded repair pass this route authorizes
+had been spent, so the slice ends `STOP — M6.4_NOT_PUBLISHABLE`. They are
+recorded in `BOOTSTRAP_STATUS.md`, none is a safety defect, and none is on
+`main`. What follows describes that branch.
 
 **The graph stays where the evidence is.**
 `apps/desktop/src-tauri/src/preview/intent_catalog.rs` projects

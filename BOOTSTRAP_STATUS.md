@@ -7048,7 +7048,16 @@ cancellation behaviour, no wire vocabulary beyond the integrity property and
 outcome names the new checks required, no dependency and no lockfile. It does not
 decide the mzXML disposition, which remains M6.10's, and it does not start M6.4.
 
-## M6.4 — Visible conversion settings, and a truthful plan, 2026-09-03
+## M6.4 — Visible conversion settings, and a truthful plan — NOT PUBLISHED, 2026-09-03
+
+**This slice is implemented, validated and unmerged.** Review of the exact head
+that passed final confirmation found three further defects, after the one
+bounded repair pass this route authorizes had been spent — so the verdict is
+`STOP — M6.4_NOT_PUBLISHABLE`, and the work stays on
+`feat/m6.4-visible-conversion-settings` / PR #95 rather than on `main`. What
+follows describes what that branch contains; the three open findings are
+recorded at the end, and the second of them makes one claim below narrower than
+it reads. Nothing here is a statement about `main`, which is untouched.
 
 The first M6 slice that puts the conversion semantics on screen. M6.2 measured
 nine combinations of five axes; M6.3 made those nine the only constructible ones
@@ -7336,6 +7345,54 @@ exactly that token first and ban everything else — a real path could not survi
 the replacement. The colon ban became a drive-letter pattern for the same reason,
 and with both separators still banned a Windows path cannot reach that line
 anyway.
+
+### Three open findings, and why they stopped publication
+
+Raised by review against `04e0942ee39f01e165f95dba6c82b54de1351e00` — the head on
+which every gate and all three CI jobs passed — and each confirmed by reading the
+code rather than accepted on the report. The route authorizes **one** bounded
+repair pass, which the two findings above had already used, and it says
+explicitly that a new release-blocking P2 after that pass ends in
+`STOP — M6.4_NOT_PUBLISHABLE` rather than in another round. None of the three is
+a safety defect: Rust refuses at every gate, and no conversion can run under a
+semantic the evidence does not admit or the installed build cannot express. All
+three are **truthfulness** defects, which is the standard this slice exists to
+meet.
+
+**F1 — an in-flight catalog can undo the `noBackend` state. P2.** The branch that
+drops the catalog when the session loses its backend sets the state but does not
+advance `catalogToken`. A read issued a moment earlier therefore resolves
+afterwards, passes both its guards — the token still matches, and its generation
+is not lower than the one installed — and puts `ready` back with the catalog of
+the executable that has just gone. It reinstates, in a narrower window, exactly
+the defect the repair above announces as closed, which also makes that
+paragraph's "no catalog, no controls" claim true only outside this race. The fix
+is one line in the same branch: invalidate the outstanding request as well as the
+rendered state.
+
+**F2 — the `BEGIN` preflight can be the first to see a replaced build, and
+reconciles nothing. P2.** `begin_queue` resolves the backend for its preflight
+and refuses with `conversion_intent_unsupported` without calling `note_resolved`,
+so an executable replaced *in place* — same location, different build — advances
+no installation sequence and prompts no catalog re-read. The user is told this
+build does not offer the option while the controls, answering from the previous
+catalog, still mark it available; pressing `Convert` again fails the same way
+until they recheck the backend by hand. Recoverable, and disagreeing with itself
+while it lasts.
+
+**F3 — the way out is offered where an ordinary choice already exists, and says
+something false. P2.** `recoveryIntent` returns the shipped semantic for *every*
+unsupported selection without asking whether a one-axis move is already
+available. Preserved 64/64 becoming unsupported while the shipped 64/32 stays
+available is the reachable case: the precision radio offers that single step and
+is enabled, and beside it the recovery block says "no single change to one of
+them reaches a combination it can". That sentence is false in that state, on the
+surface this slice added to stop the interface saying false things. The fix is to
+consult the axis choices before declaring a dead end.
+
+**Owner: the next M6.4 attempt**, which should take these three and re-run the
+route from its review step. The implementation, the tests and the evidence below
+stand; what is missing is a publishable head.
 
 ### Residuals
 
