@@ -7048,7 +7048,16 @@ cancellation behaviour, no wire vocabulary beyond the integrity property and
 outcome names the new checks required, no dependency and no lockfile. It does not
 decide the mzXML disposition, which remains M6.10's, and it does not start M6.4.
 
-## M6.4 — Visible conversion settings, and a truthful plan, 2026-09-03
+## M6.4 — Visible conversion settings, and a truthful plan — NOT PUBLISHED, 2026-09-03
+
+**This slice is implemented, validated and still unmerged.** It has now stopped
+twice. The correction below closed the three findings that stopped it the first
+time, and the fresh whole-diff review of the corrected head found two more —
+after the correction's own authorization said there would be no further repair
+pass. So the verdict is `STOP — M6.4_CORRECTION_NOT_PUBLISHABLE`, the work stays
+on `feat/m6.4-visible-conversion-settings` / PR #95, and **`main` is untouched**.
+The two new findings are at the end of this section. Everything else here
+describes what that branch contains.
 
 This slice took **two** review rounds and stopped once in between. The first
 round found two defects and spent the route's one repair pass on them; a second
@@ -7310,7 +7319,9 @@ ADR 0043's M6.4 delivery note.
 --all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
 `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
 `pnpm build`, `pnpm e2e:typecheck`, `pnpm e2e:browser` and `git diff --check`,
-each run directly on the final corrected head and each exiting zero. Rust
+each run directly on the corrected head `5e6f21b` and each exiting zero, with all
+three CI jobs green on that same SHA. That head is nevertheless **not
+publishable** — see the two findings below, which no gate is shaped to catch. Rust
 **1,400** and frontend **1,437**. Browser E2E: **11 spec files, 220 tests**,
 including the twelve-case M6.4 spec, three of whose cases run at 1920×1080,
 1366×768 and 960×640. Nothing is inherited from either earlier head.
@@ -7372,7 +7383,7 @@ the replacement. The colon ban became a drive-letter pattern for the same reason
 and with both separators still banned a Windows path cannot reach that line
 anyway.
 
-### The three findings that stopped it, and how each was closed
+### The three findings that stopped it the first time, and how each was closed
 
 Raised against `04e0942ee39f01e165f95dba6c82b54de1351e00` — the head on which
 every gate and all three CI jobs passed — and each reproduced by reading the code
@@ -7455,7 +7466,74 @@ the same call each fieldset makes. A separate scan for "is any neighbour
 reachable?" would have been a second compatibility calculation, which is the one
 thing this module exists not to have.
 
+### Two further findings, and why they stopped it again
+
+Found by the fresh whole-diff review the correction's own authorization
+required, on `5e6f21b01f5aba9784a09ebc0e8261a58f34cfa9` — the head on which every
+local gate and all three CI jobs passed. Both were confirmed by reading the code
+rather than accepted on the report, and that authorization was explicit that
+there is no further repair pass after it. Neither is a safety defect; both are
+the kind of untruth this slice exists to remove, and the first makes a sentence
+*in this correction's own source* false, which is precisely what disqualifies it
+from being recorded as a residual and left.
+
+**G1 — every backend check is read as "no backend". P2.** The catalog effect is
+keyed on `environment.backendUsable`, and that flag is
+`backend.status === "resolved" && availability.state === "available"` — false for
+the whole duration of *any* probe, because `checkBackend` sets
+`showBackend({ status: "checking" })` synchronously before awaiting. So an
+ordinary recheck of a healthy, unchanged installation drives the settings through
+`revokeCatalog({ status: "noBackend" })`: the four fieldsets and the format line
+disappear, a loaded plan is wiped back to loading, and — since the correction
+made this path revoke as well as replace — a good catalog read still in flight is
+cancelled. When the verdict returns naming the same installation at the same
+generation, the false→true edge re-runs the effect and spends a second
+`msconvert --help` probe on the one serialized backend lane.
+
+Nothing false is *displayed* — the refusal correctly reads "unavailable while the
+installed ProteoWizard backend is being checked", Convert stays refused, and the
+chosen semantic survives. What is false is the code's own account of itself. This
+correction added two comments asserting the opposite invariant: the
+`installationGeneration` parameter says *a recheck that resolves to the same
+installation does not advance it and costs no further probe*, and the effect
+header says it is *keyed on the applied generation rather than on a check having
+run*. Keying on `backendUsable` **is** keying on a check having run. The blanking
+predates the correction; the revocation of good in-flight reads and the false
+comments do not.
+
+**G2 — a running queue can now poll a stream of backend probes that cannot
+answer. P2.** F2 moved the generation report above the sequence guard, which is
+correct for the refusal it was written for, but it also made every 2-second slot
+read during a running queue report the generation. Where that number has moved —
+an installation replaced under a running queue, or a queue whose own start
+observed a replacement — `reconcileConversionGeneration` fires `checkBackend()`
+on *every* poll. `checkBackend` has no in-flight guard, and `inspect_backend`
+blocks on the backend gate that `drain_queue` holds for the whole queue, so a ten
+minute queue can queue several hundred blocked probes behind it. Before this
+correction the report was terminal-only and this stream did not exist, so it is
+introduced here rather than uncovered here.
+
+**What a next attempt should weigh.** The two are one design question, not two
+patches: *what exactly is the signal that the catalog must be re-read?* Keying it
+on `backendUsable` conflates "no backend" with "asking about the backend", and
+keying the report on every read conflates "a reading arrived" with "something was
+observed". The applied installation generation is the fact both wanted; what is
+missing is a state that distinguishes *checking* from *absent*, and a report that
+fires on an observation rather than on a poll.
+
 ### Residuals
+
+**The browser IPC boundary's conversion-slot answer omits
+`installationGeneration`.** `WorkspaceConversionUpdateDto` always serializes it
+and the TypeScript contract requires it, but `e2e/support/fixtures.ts` and the
+M6.1 spec's `RETRYABLE_QUEUE` literal predate the field and do not supply it.
+Verified harmless at this head: the value is read in exactly one place and only
+ever compared with `>`, and the honest value the static mock would carry is `0`,
+which is indistinguishable from `undefined` under that comparison — so no
+rendered run behaves differently. It is a trap for a future browser case that
+tries to drive the reconciliation through the slot read, not a defect in what
+runs today. Severity **P3**. **Owner: the next M6.4 attempt**, alongside the
+adjacent `itemCount` / `eligibleItemCount` drift in the same literal.
 
 **A recheck that resolves to the same installation does not re-read the
 catalog.** The read is keyed on the applied installation generation, which

@@ -855,11 +855,15 @@ cancellation change.
 
 *Downstream:* M6.5.
 
-*Delivered, after two review rounds and one stop.* One backend-owned catalog,
-one selected identity, and a plan that is Rust's answer rather than the
-interface's summary of its own controls.
+*Implemented, and not published.* One backend-owned catalog, one selected
+identity, and a plan that is Rust's answer rather than the interface's summary of
+its own controls — on `feat/m6.4-visible-conversion-settings`, which review has
+now stopped twice. Three findings stopped it first and a bounded correction
+closed them; the fresh review of that corrected head found two more, in the
+seam the correction itself had just widened. Neither is on `main`, and both are
+recorded in `BOOTSTRAP_STATUS.md`. What follows describes that branch.
 
-The stop is part of the record. A second review of the head that had passed every
+The stops are part of the record. A second review of the head that had passed every
 gate found three further truthfulness defects once the route's single repair pass
 was spent, so the slice halted rather than self-authorizing another; an explicit
 new authorization then closed them. All three were the same shape of mistake in
@@ -867,8 +871,16 @@ different places — a fact and the thing that carries it coming apart — and n
 was in the composition graph this slice was mostly about: a catalog request that
 outlived the state it produced, an installation observation lost because the
 operation that made it was refused, and a way-out affordance that claimed there
-was no ordinary way out while an enabled control offered one. They are recorded
-in `BOOTSTRAP_STATUS.md`.
+was no ordinary way out while an enabled control offered one.
+
+The two that followed are the same lesson a third time, and are worth stating as
+a design question rather than as two patches: **what exactly is the signal that
+the catalog must be re-read?** Keying it on whether the backend is *usable*
+conflates having no ProteoWizard with asking about one, so an ordinary recheck
+blanks the settings and spends a second help probe; keying the installation
+report on every slot read conflates a reading arriving with something being
+observed, so a running queue can poll a stream of probes that cannot answer while
+it holds the lane. The applied installation generation is the fact both wanted.
 
 **The graph stays where the evidence is.**
 `apps/desktop/src-tauri/src/preview/intent_catalog.rs` projects

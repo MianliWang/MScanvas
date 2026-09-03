@@ -394,8 +394,8 @@ slices:
 - M6.1 — conversion-lane authority. **complete.**
 - M6.2 — `msconvert` capability and evidence. **complete.**
 - M6.3 — typed `ConversionIntent`. **complete.**
-- M6.4 — visible settings, and a truthful plan. **complete.**
-- M6.5 — destination authority. **Next.**
+- M6.4 — visible settings, and a truthful plan. **implemented, unmerged.**
+- M6.5 — destination authority.
 - M6.6 — destination and conflict UX, including the destructive question.
 - M6.7 — convert selected, convert all.
 - M6.8 — cancellation, capacity, and truthful progress.
@@ -458,6 +458,13 @@ unverified rather than proof. The planner also proves the *live* executable
 declares the exact invocation each intent emits, rather than trusting that M6.2's
 executable and today's are the same build. Nothing visible changed: the product
 still converts under the shipped intent and still emits the same two flags.
+
+**M6.4 is implemented and still not published.** It has stopped twice: once on
+three findings, which a bounded correction closed, and again when the fresh
+review of that corrected head found two more — a backend *check* being read as
+"no backend", and a running queue polling a stream of backend probes that cannot
+answer. Both are recorded in `BOOTSTRAP_STATUS.md`; neither is on `main`, which
+is unchanged. The paragraph below describes what the branch does.
 
 **M6.4 made the nine admitted semantics selectable without letting the
 interface re-invent the graph.** The controls a user meets are four scientific
@@ -530,9 +537,11 @@ guard had been unable to see.
 
 - Widen the typed conversion settings the interface can actually express.
   CNV-004 to CNV-007's processing, population, precision and compression choices
-  are **visible since M6.4**, in the nine combinations M6.2 measured and no
-  others; what remains here is CNV-002's mzXML gate, whose disposition is
-  M6.10's, and CNV-003's output-location choices, which are M6.5's and M6.6's.
+  are visible on M6.4's branch, in the nine combinations M6.2 measured and no
+  others, and are **not on `main`** — that slice is implemented and unmerged.
+  What remains here beyond publishing it is CNV-002's mzXML gate, whose
+  disposition is M6.10's, and CNV-003's output-location choices, which are
+  M6.5's and M6.6's.
 - Queue work beyond the current bounds, **measurement-gated, and neither an exit
   criterion nor a route requiring a disposition**: a re-evaluated queue bound and
   per-item cancellation. Both are admitted only on M6.8's measurement of what an
