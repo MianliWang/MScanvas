@@ -13,10 +13,12 @@ use std::time::Duration;
 
 use mscanvas_proteowizard::{
     BackendTool, CancellationToken, CapturedHelpStream, CommandSpec, CompleteHelpCapture,
-    ConflictPolicy, ConversionCancellation, ConversionSourceKind, EstablishedSampleCompleteness,
-    InstalledHelpCapabilities, MAX_CONVERSION_OUTPUTS_PER_SOURCE, PreviewOperation, PreviewOutcome,
-    PreviewOutputEntry, PreviewOutputManifest, ProcessError, ProcessOutput, ProcessRunner,
-    SciexSampleCompleteness, Sha256Digest, Termination, interpret_preview,
+    CompressionIntent, ConflictPolicy, ConversionCancellation, ConversionIntent,
+    ConversionSourceKind, EstablishedSampleCompleteness, InstalledHelpCapabilities,
+    MAX_CONVERSION_OUTPUTS_PER_SOURCE, NumericPrecision, OutputFormat, PreviewOperation,
+    PreviewOutcome, PreviewOutputEntry, PreviewOutputManifest, ProcessError, ProcessOutput,
+    ProcessRunner, ProcessingIntent, SciexSampleCompleteness, Sha256Digest, SpectrumPopulation,
+    Termination, interpret_preview,
 };
 
 use super::backend::{ConversionBackend, OperationAttempt, PreviewProvider, interpretation_error};
@@ -6543,7 +6545,16 @@ fn thermo_raw_bytes() -> Vec<u8> {
 /// precision. The fixtures differ in exactly those ways, so a comparison that
 /// passes is passing on the real contract rather than on a byte copy.
 fn mzml_document(spectra: u32, indexed: bool) -> String {
-    let precision = if indexed { "MS:1000521" } else { "MS:1000523" };
+    // Per array role on the converted side, because the shipped intent asks per
+    // array role: M6.2 measured this build writing m/z at 64 bits and intensity
+    // at 32 when asked for nothing in particular. The two documents therefore
+    // still disagree about the intensity encoding, which is the legal
+    // re-encoding a faithful conversion is allowed to make.
+    let (mz_precision, intensity_precision) = if indexed {
+        ("MS:1000523", "MS:1000521")
+    } else {
+        ("MS:1000523", "MS:1000523")
+    };
     let mut body = String::new();
     for index in 0..spectra {
         body.push_str(&format!(
@@ -6553,7 +6564,10 @@ fn mzml_document(spectra: u32, indexed: bool) -> String {
         body.push_str(r#"<cvParam accession="MS:1000511" name="ms level" value="1"/>"#);
         body.push_str(r#"<cvParam accession="MS:1000128" name="profile spectrum"/>"#);
         body.push_str(r#"<binaryDataArrayList count="2">"#);
-        for accession in ["MS:1000514", "MS:1000515"] {
+        for (accession, precision) in [
+            ("MS:1000514", mz_precision),
+            ("MS:1000515", intensity_precision),
+        ] {
             body.push_str(&format!(
                 r#"<binaryDataArray encodedLength="8"><cvParam accession="{accession}"/><cvParam accession="MS:1000574"/><cvParam accession="{precision}"/><binary>AA==</binary></binaryDataArray>"#
             ));
@@ -7111,7 +7125,12 @@ fn a_thermo_dataset_converts_through_its_handle_and_is_judged_on_the_output_alon
         "the acquisition itself is still bound and rechecked; got {:?}",
         validation.verified
     );
-    for comparison in ["spectrum_count", "binary_array_lengths", "precursor_counts"] {
+    for comparison in [
+        "spectrum_count",
+        "spectrum_array_lengths",
+        "chromatogram_array_lengths",
+        "precursor_counts",
+    ] {
         assert!(
             validation
                 .inapplicable
@@ -7121,10 +7140,15 @@ fn a_thermo_dataset_converts_through_its_handle_and_is_judged_on_the_output_alon
             validation.inapplicable
         );
     }
-    assert!(
-        validation.unverified.is_empty(),
-        "nothing here failed a check that could have been made; got {:?}",
-        validation.unverified
+    // Two requested properties are unverified rather than inapplicable, and the
+    // difference matters on the wire. A comparison was never a question here;
+    // these two were asked and could not be answered -- whether the output holds
+    // exactly the requested spectra needs a source to count against, and what
+    // was done to the peaks is a claim with nothing to check it against.
+    assert_eq!(
+        validation.unverified,
+        vec!["requested_spectrum_population", "requested_processing"],
+        "an output-only run may not report a requested property as established"
     );
 
     let output = report
@@ -12719,6 +12743,7 @@ fn releasing_another_attempt_leaves_the_live_stop_handle_alone() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
+        ConversionIntent::SHIPPED,
         vec![test_queue_item()],
     )
     .expect("one item is a queue");
@@ -12755,6 +12780,7 @@ fn releasing_another_attempt_leaves_the_live_stop_handle_alone() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
+        ConversionIntent::SHIPPED,
         vec![test_queue_item()],
     )
     .expect("one item is a queue");
@@ -12791,6 +12817,7 @@ fn a_stop_arriving_before_the_handle_is_bound_still_reaches_that_attempt() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
+        ConversionIntent::SHIPPED,
         vec![test_queue_item()],
     )
     .expect("one item is a queue");
@@ -12863,6 +12890,81 @@ fn a_quarantined_session_rechecks_without_launching_anything() {
     );
 }
 
+/// What a queue converts under is bound once and re-read, never re-derived.
+///
+/// The retry is the case this exists for. A retry that decided an intent again
+/// could run the second attempt under something the first was never judged
+/// against -- the user asked for one thing, saw it fail, and pressed retry --
+/// and nothing about the argv it produced would look wrong on its own.
+///
+/// Asserted with an intent that is deliberately *not* the shipped one, so a
+/// re-derivation is visible rather than accidentally correct. Production binds
+/// `ConversionIntent::SHIPPED` at the single call site that makes a queue; this
+/// is about what happens to whatever was bound there.
+#[test]
+fn a_queue_keeps_the_intent_it_was_bound_to_across_a_retry() {
+    let bound = ConversionIntent::admitted(
+        OutputFormat::MzMl,
+        ProcessingIntent::NoAdditionalCentroiding,
+        SpectrumPopulation::All,
+        NumericPrecision::Mz64Intensity64,
+        CompressionIntent::Zlib,
+    )
+    .expect("an admitted combination");
+    assert_ne!(
+        bound,
+        ConversionIntent::SHIPPED,
+        "the proof needs an intent a re-derivation would not land on"
+    );
+
+    let mut slot = ConversionSlot::default();
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        bound,
+        vec![test_queue_item()],
+    )
+    .expect("one item is a queue");
+    let _ = slot.begin(queue).expect("reservation");
+    let operation = slot
+        .claim(&reservation_handle(&slot), 0)
+        .expect("claim the reservation");
+    assert!(slot.start_running(operation, test_destination()));
+    assert_eq!(
+        slot.running(operation).expect("a running queue").intent(),
+        bound,
+        "the first attempt did not run under what was bound"
+    );
+
+    // One retryable failure, and the queue ends.
+    let attempt = slot.start_item(operation, 0).expect("the item starts");
+    slot.bind_attempt(
+        operation,
+        0,
+        attempt,
+        ConversionCancellation::new().request_handle(),
+    );
+    assert!(slot.settle_item(
+        operation,
+        0,
+        ItemOutcome::Refused {
+            retryable: true,
+            error: PreviewErrorDto::new("file_unreadable", "unreadable", true),
+        },
+    ));
+    slot.release_attempt(operation, 0, attempt);
+    slot.finish(operation, None, TerminalReason::Completed);
+
+    let operation = slot.begin_retry().expect("a completed queue with failures");
+    assert_eq!(
+        slot.running(operation)
+            .expect("the retry is running")
+            .intent(),
+        bound,
+        "the retry converted under an intent nobody asked for"
+    );
+}
+
 /// A retry stopped partway through does not report the failures it had not got
 /// to yet as never run.
 ///
@@ -12877,6 +12979,7 @@ fn a_stopped_retry_keeps_the_failures_it_had_not_reached() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
+        ConversionIntent::SHIPPED,
         vec![test_queue_item(), test_queue_item_named(1, "two.raw")],
     )
     .expect("two items are a queue");
@@ -13045,6 +13148,7 @@ fn a_stop_accepted_while_a_queue_settles_is_not_overwritten_by_completion() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
+        ConversionIntent::SHIPPED,
         vec![test_queue_item()],
     )
     .expect("one item is a queue");
@@ -13831,6 +13935,7 @@ fn a_queue_reports_each_distinct_family_once_in_first_appearance_order() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
+        ConversionIntent::SHIPPED,
         vec![
             item(
                 0,
@@ -15057,6 +15162,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
+        ConversionIntent::SHIPPED,
         vec![test_queue_item(), test_queue_item_named(1, "two.raw")],
     )
     .expect("two items are a queue");
@@ -15166,6 +15272,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
     let replacement = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
+        ConversionIntent::SHIPPED,
         vec![test_queue_item()],
     )
     .expect("one item is a queue");

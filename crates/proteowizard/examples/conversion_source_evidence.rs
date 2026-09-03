@@ -33,10 +33,10 @@ use std::process::ExitCode;
 use std::time::SystemTime;
 
 use mscanvas_proteowizard::{
-    AvailabilityState, CommandSpec, ConflictPolicy, ConversionPlan, ConversionRunOutcome,
-    ConversionSource, ConversionSourceKind, ConversionSourceRejection, DiscoveryRequest,
-    InstalledHelpCapabilities, MzmlScanLimits, OpenFormat, OutputEntryKind, ProcessError,
-    ProcessOutput, ProcessRunner, Sha256Digest, SystemProcessRunner,
+    AvailabilityState, CommandSpec, ConflictPolicy, ConversionIntent, ConversionPlan,
+    ConversionRunOutcome, ConversionSource, ConversionSourceKind, ConversionSourceRejection,
+    DiscoveryRequest, InstalledHelpCapabilities, MzmlScanLimits, OpenFormat, OutputEntryKind,
+    ProcessError, ProcessOutput, ProcessRunner, Sha256Digest, SystemProcessRunner,
     build_msconvert_command_for_source, discover, execute, run_conversion,
     snapshot_output_directory,
 };
@@ -408,7 +408,7 @@ fn report_layout(
         &cli.input,
         &output_directory,
         &output_file_name,
-        OpenFormat::MzMl,
+        &ConversionIntent::SHIPPED,
         kind.input_spelling(),
     )
     .map_err(|error| format!("the conversion could not be planned: {error}"))?;
@@ -689,8 +689,13 @@ fn report_boundary(
     println!("boundary.source_byte_length={}", source.byte_length());
     println!("boundary.source_sha256={}", source.sha256());
 
-    let plan = ConversionPlan::to_mzml(source, &destination_root, ConflictPolicy::Fail)
-        .map_err(|error| format!("the conversion could not be planned: {error}"))?;
+    let plan = ConversionPlan::to_mzml(
+        source,
+        &destination_root,
+        ConflictPolicy::Fail,
+        ConversionIntent::SHIPPED,
+    )
+    .map_err(|error| format!("the conversion could not be planned: {error}"))?;
 
     let runner = CapturingRunner {
         inner: SystemProcessRunner,

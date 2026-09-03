@@ -104,8 +104,8 @@ surface, not about building the boundary.
 | G3 | `applyUpdate` assigns `busyRef` unconditionally from the arriving status, so a read installing a non-owning status can **lower a claim a handler just raised** | authority defect | **M6.1 — closed.** A read may raise the lane, never lower a claim |
 | G4 | `ConversionOperation.canRetry` is computed and **has no consumer**; the `Retry` button answers to `canConvert` instead — two rules that can drift | authority defect | **M6.1 — closed.** `Retry` reads `retryAvailability` |
 | G5 | No `msconvert` **capability measurement** exists beyond single- and multi-output mzML with `--zlib`. No `--filter`, no filter ordering, no `peakPicking`, no MS-level selection and no compression choice has ever been executed through this boundary | evidence gap | **M6.2** |
-| G6 | There is **no typed conversion intent**. `OpenFormat::MzMl` is hard-coded in the planner and `ConversionPolicy::default()` fixes zlib, so `ConversionQueue` binds no intent because there is none to bind | model gap | **M6.3** |
-| G7 | CNV-002 mzXML is unplannable at the product boundary. `OpenFormat::MzXml` and `require_conversion(OpenFormat::MzXml)` exist in the crate, and a test pins that the mzXML grammar **does not** enable public conversion planning | gated by evidence | **M6.2**, then **M6.10** |
+| G6 | There is **no typed conversion intent**. `OpenFormat::MzMl` is hard-coded in the planner and `ConversionPolicy::default()` fixes zlib, so `ConversionQueue` binds no intent because there is none to bind | model gap | **M6.3 — closed.** `ConversionIntent`, admitted by table, bound at `ConversionQueue::new` |
+| G7 | CNV-002 mzXML is unplannable at the product boundary. `OpenFormat::MzXml` and `require_conversion(OpenFormat::MzXml)` exist in the crate, and a test pins that the mzXML grammar **does not** enable public conversion planning. Since **M6.3** that refusal is a type rather than a runtime `PlanError`: no `ConversionIntent` names the format, so the command is unconstructible and the `MzXmlIntegrityGateRequired` arm is unreachable — kept, because deleting a refusal because nothing reaches it today is how a format returns without one | gated by evidence | **M6.2**, then **M6.10** |
 | G8 | CNV-003 exposes no location *choice*. There is one Rust-owned folder picker and no sibling / named-subfolder / custom vocabulary | product surface | **M6.5**, **M6.6** |
 | G9 | No admitted acquisition family is **directory-shaped**, so the vendor-dataset-root rule CNV-003 states has never been exercisable. `ProcessError::OutputDirectoryInsideDirectoryInput` and `BackendExecutionFailure::OutputInsideSource` exist and are unreachable for conversion today | latent safety rule | **M6.5** |
 | G10 | CNV-008's overwrite half is unimplemented, and what is missing is a **destructive-finalization contract on the Rust side** — how an already-validated new object replaces an existing destination object without a failure losing the old one. The backend's own overwrite behaviour is *not* the gap: ADR 0009 sends the provider only into private staging and refuses before launch where the final target exists | product and architecture gap | **M6.6** |
@@ -229,12 +229,13 @@ destination object — not a new queue made of what is left.
 re-searching the roster changes what the user is looking at, not what the queue
 does; removing a row a live queue holds is refused with `conversion_busy()`.
 
-**What M6 must add.** The queue binds no *conversion intent*, because there is
-none to bind: the format is hard-coded and the compression is a fixed policy
-inside the plan. The moment M6.3 makes an intent expressible and M6.4 makes it
-visible, **the intent joins the bound facts** — captured at `ConversionQueue::new`
-alongside the conflict policy, never re-read per item, and never re-read from a
-control the user may since have moved. Two further facts M6 adds have the same
+**What M6 must add.** The queue bound no *conversion intent*, because there was
+none to bind: the format was hard-coded and the compression was a fixed policy
+inside the plan. **M6.3 made the intent expressible and joined it to the bound
+facts** — captured at `ConversionQueue::new` alongside the conflict policy, never
+re-read per item, and never re-read from a control the user may since have moved.
+M6.4 makes it visible, which changes where the bound value comes from and not
+what happens to it afterwards. Two further facts M6 adds have the same
 obligation: the **destination policy** M6.5 introduces is a bound plan fact, and
 so is every identity it resolves to — but those are not the same cardinality. The
 policy is one decision bound to the plan; a source-relative policy resolves to
@@ -653,6 +654,174 @@ against the request, never as proof, with absence recorded as unverified.
 centroiding rule.
 
 *Downstream:* M6.4.
+
+*Delivered.* `crates/proteowizard/src/intent.rs` holds five closed enums and one
+`ConversionIntent` whose five fields are private and whose only constructor is
+`admitted(..)`. That constructor is a lookup in `ConversionIntent::ADMITTED` —
+nine rows, each naming the M6.2 case that measured it — so the compatibility rule
+*is* the table and there is no second implementation of it to drift from.
+`SHIPPED` is row one and lowers to exactly `--mzML --zlib`, which is the argv the
+product already emitted.
+
+**The type expresses the graph M6.2 produced, not the axes it has.** Five axes
+span forty-eight combinations; nine are constructible. Everything M6.2 measured
+and rejected or could not reach is unnameable rather than merely unused: `mzXML`
+has no `OutputFormat` variant, no `ProcessingIntent` variant carries a picker
+name or an `msLevel` scope, and no admitted row composes centroiding with a
+population filter — because that pair was never measured, which is dimension 8 of
+this slice's own evidence order.
+
+The three centroiding obligations locked above are met as follows. Obligation 2
+is met by construction and vacuously: the only admitted algorithm cannot be
+named as a token and the scope cannot be reached, so `UnscopedDefaultCentroiding`
+has no parameters to misplace. Obligation 1 — *ordered sequence, never a set* —
+is met in effect rather than in shape: no admitted combination lowers to more
+than one filter, so no order between two filters is expressible today, and the
+one total order `lower()` fixes (processing before population) is straight-line
+code that nothing outside can influence. **The obligation becomes structural
+again the moment the evidence admits a two-filter composition**, and a widened
+table that leaves the lowering a struct would be the defect this obligation
+names.
+
+`ConversionPolicy` and `CompressionPolicy` are gone rather than wrapped. Both
+were second answers to what a conversion had asked for — a policy the integrity
+check was allowed to assume, constructible alone, beside a hard-coded format in
+the planner and an unconditional `--zlib` in the builder. `ConversionPlan` now
+carries the intent it was planned under, `ConversionQueue` binds one at
+construction and exposes it read-only, and every attempt — first and retry alike
+— re-reads that field rather than deciding again.
+
+**The capability receipt is part of the boundary, not a precondition beside
+it.** An admitted intent is evidence about the executable M6.2 measured; the
+executable a user has installed is a separate fact, and the planner establishes
+it before a `CommandSpec` exists. `ConversionIntent` builds its argv from
+segments that each carry the provider capabilities their tokens depend on, and
+`require_conversion_intent` reads that same list — so a flag cannot reach argv
+without its requirement arriving beside it, and nothing is demanded that is not
+emitted. The shipped intent requires exactly the two options it emits and still
+plans on a build declaring no filters at all. Establishing this exposed a defect
+underneath it: the help parser required an option name to begin with a letter, so
+`--32` and `--64` were never recorded and could not have been required. Option
+names may now begin with a digit; filter names and grammar parameters keep the
+stricter rule.
+
+**A declared name is not a declared invocation.** A build that made
+`peakPicking`'s picker token mandatory, or gave `msLevel` a second required
+argument, declares everything a name check asks for and would still reject the
+argv. The lowering therefore carries a typed *invocation* — the filter name, how
+many positional arguments follow it, and which `name=` parameters it supplies —
+and the capability gate reads the parsed grammar structurally: required and
+optional positional placeholders, and whether every declared parameter the
+invocation omits is optional. Structural rather than textual, so a build that
+widens the grammar with an extra *optional* parameter still plans. This is a
+capability check, not a version pin, and it needs no measurement: the installed
+help already says it.
+
+Integrity became intent-aware in four places, each answering a different
+question. Numeric precision is read **per array role and across both record
+lists**, which is why the mzML scanner gained per-role encoding sets: a
+per-record union reports `{32, 64}` for a correct mixed-precision output and for
+one with the roles swapped, so it cannot answer the question the intent asks —
+and a check that walked spectra alone recorded the property verified over a
+chromatogram-only document by an empty loop. A chromatogram's *time* array stays
+unchecked, because no intent states a time width. Compression is checked in both
+directions and **per array**: every array must state the requested encoding and
+none may state the opposite, so silence, a mixed record and a single array
+claiming both markers all fail — a marker on one array does not answer for a
+sibling. Population is the exact requested subset: the source is projected
+through the intent before any comparison runs, so a requested `msLevel` filter is
+not reported as a spectrum-count defect, and a narrowing request over a source
+holding a spectrum of unstated MS level is refused rather than sorted onto a
+side. And the processing history is compared against the request, at the scope
+mzML says it applies to.
+
+**A requested transformation is not a defect, and skipping a comparison is not
+establishing it.** M6.2 measured the admitted default picker turning source peaks
+`2,1,3,1` into entries `4,1,7,1`, so under `UnscopedDefaultCentroiding` a
+spectrum's point count is *expected* to change — and an unconditional
+source/output length equality refused exactly the operation the intent exists to
+express. The aggregate length property is therefore split: the spectrum half is
+**inapplicable** under centroiding, a question that conversion never asked, while
+the chromatogram half stays compared, because spectrum processing does not excuse
+chromatogram structure. Under `NoAdditionalCentroiding` an unexpected length
+change remains a defect. The same three-way answer covers a document that gives a
+property nothing to inspect at all: a chromatogram-only conversion records the
+spectrum-scoped properties as inapplicable rather than establishing them through
+an empty loop, and — unlike `unverified` — that does not stop a faithful
+conversion being fully verified.
+
+**Verified means the comparison was possible, not that no mismatch was seen.**
+The two came apart on representation: a source that emitted no profile/centroid
+marker and an output that emitted one was recorded as an advisory *and* left the
+property verified, so `NoAdditionalCentroiding` — which rests on that comparison
+— was reported established over a source that never said what it was. The
+property now verifies only where both sides stated a marker. The hard refusal for
+a proved profile-to-centroid change is unchanged.
+
+**Processing is read by reference, per spectrum, and without losing what the
+comparison needs.** mzML says which processing applies to a spectrum:
+`dataProcessing/@id` names a definition, `spectrumList/@defaultDataProcessingRef`
+selects one for the list, and `spectrum/@dataProcessingRef` overrides it. A
+definition nothing references applies to nothing, and counting it would let a
+picker that never ran establish or refuse a request. A reference that cannot be
+resolved — a missing target, an absent or repeated identity — is *unresolved*,
+never a guess and never "no processing"; the property degrades instead. The
+comparison runs per spectrum, so a picker attached to one cannot answer for
+another.
+
+What it compares is a **multiset of distinguishable identities**, not a set of
+classes. The measured build copies an incoming `dataProcessing` list into its
+output, so a source already carrying another picker appears beside the requested
+one; a document-level fold read that as two contradictory algorithms and rejected
+a faithful run, and a class-presence set then hid a *second* rejected picker
+added beside an inherited one. `cwt` and `vendor` are therefore separate
+identities and occurrences are counted, so an added second application is
+visible. What the model cannot distinguish is two *unknown* implementations from
+one another, and that limit is stated where it is paid: where the source already
+carried an unknown method the delta over unknowns is not establishable, and the
+request is neither verified nor refused on that axis.
+
+**The comparison is deliberately asymmetric, and the asymmetry is the OpenMS
+caveat applied.** A genuinely new unrequested algorithm refuses. Asking to add
+nothing does not make the history a refusal channel at all, for the same
+copy-through reason; what guards that direction is the representation comparison,
+and only where it was possible. An absent record, an unresolved reference, and a
+history the output merely repeats are all `unverified` — never "no peaks were
+picked".
+
+**The stronger rule is still not taken.** The source/output delta above makes
+"the output carries a picker the source did not" available for
+`NoAdditionalCentroiding` too, and refusing on it would be a new refusal on the
+path every production conversion runs, resting on a copy-through generalization
+M6.2 did not qualify. The delta is used only to remove a false rejection, never
+to create a new one.
+
+*Proof.* The centroiding regression uses the counts M6.2 measured —
+`2,1,3,1` in, `4,1,7,1` out — rather than a fixture whose lengths happen to
+match, because a matching fixture proves nothing about this. `intent.rs` pins the
+table itself: forty-eight against nine, exactly the admitted combinations
+constructible, no row listed twice, every row naming its evidence, no scoped
+picker nameable, and the shipped intent lowering to today's two flags — and that
+every argument an admitted intent emits is covered by a stated capability
+requirement, with nothing required that is not emitted. `capability.rs` pins that
+a grammar keeping the filter's name while changing its required shape is refused
+before a command exists, that an added optional parameter is not, and that
+removing one declaration at a time refuses the intent
+that needs it, as a `PlanError` rather than a backend failure, while the shipped
+intent still plans on a build declaring only what it uses. `conversion.rs` pins the judgement: one byte-identical output document
+that is valid under the intent it was produced under and a
+`NumericPrecisionMismatch` under a different admitted one; the two array roles
+held to their own widths, proved with a document whose roles are swapped and
+whose per-record union is unchanged; compression failing in both directions;
+a narrowed population read as the requested subset under one intent, as an
+excluded level surviving under another, and as a plain count loss under `All`;
+every arm of the processing classification, including the absent claim that is
+unverified rather than either answer; and profile-to-centroid read as the
+requested result under one intent and as `RepresentationChange` under the other.
+`capability.rs` pins that no admitted intent reaches the mzXML grammar, and
+`preview/tests.rs` pins that a queue keeps the intent it was bound to across a
+retry — asserted with an intent that is deliberately not `SHIPPED`, so a
+re-derivation would be visible rather than accidentally right.
 
 ### M6.4 — Visible settings, and a truthful plan
 

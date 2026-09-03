@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use crate::command::{BackendTool, OpenFormat, PreviewOperation};
 use crate::discovery::{BoundHelpProbe, DiscoveredTool};
+use crate::intent::{ConversionIntent, FilterInvocation, ProviderFeature};
 use crate::sha256::{Sha256Error, digest_bytes, digest_file};
 
 /// A SHA-256 digest supplied by the component that captured the complete raw
@@ -164,6 +165,14 @@ impl OptionDeclaration {
 pub struct NamedGrammarDeclaration {
     normalized_signature: String,
     parameters: BTreeMap<String, ParameterGrammar>,
+    /// Positional placeholders the declaration states outside any `[...]`.
+    ///
+    /// `msLevel <mslevels>` declares one; the measured
+    /// `peakPicking [<PickerType>] [msLevel=<ms levels>]` declares none, which
+    /// is exactly what makes the bare invocation legal on this build.
+    required_positionals: usize,
+    /// Positional placeholders the declaration marks optional.
+    optional_positionals: usize,
 }
 
 impl NamedGrammarDeclaration {
@@ -191,6 +200,46 @@ impl NamedGrammarDeclaration {
     #[must_use]
     pub fn parameter_is_optional(&self, name: &str) -> Option<bool> {
         self.parameters.get(name).map(|grammar| grammar.optional)
+    }
+
+    #[must_use]
+    pub const fn required_positionals(&self) -> usize {
+        self.required_positionals
+    }
+
+    #[must_use]
+    pub const fn optional_positionals(&self) -> usize {
+        self.optional_positionals
+    }
+
+    /// Whether this declaration accepts an invocation of exactly the shape
+    /// given: that many positional arguments after the name, and those `name=`
+    /// parameters and no others.
+    ///
+    /// Structural rather than textual. The question is whether the *currently
+    /// installed* grammar accepts the invocation MSCanvas will emit, not whether
+    /// it is byte-identical to the help M6.2 measured -- so a build that adds an
+    /// unrelated optional parameter or an extra optional positional still
+    /// accepts what this product sends, and a build that makes a placeholder
+    /// mandatory does not.
+    #[must_use]
+    pub fn accepts_invocation(&self, positional_arguments: usize, named: &[&str]) -> bool {
+        if positional_arguments < self.required_positionals
+            || positional_arguments > self.required_positionals + self.optional_positionals
+        {
+            return false;
+        }
+        // Anything the declaration requires and this invocation omits makes the
+        // invocation incomplete.
+        if self
+            .parameters
+            .iter()
+            .any(|(name, grammar)| !grammar.optional && !named.contains(&name.as_str()))
+        {
+            return false;
+        }
+        // And anything supplied has to exist.
+        named.iter().all(|name| self.parameters.contains_key(*name))
     }
 }
 
@@ -562,6 +611,13 @@ impl InstalledHelpCapabilities {
         Ok(())
     }
 
+    /// Whether this build can convert to a format at all.
+    ///
+    /// The readiness question, asked of a *format* rather than of a plan: it
+    /// establishes the grammar every conversion needs whatever it asks for. It
+    /// is not sufficient to plan a command, because a plan emits the arguments
+    /// its intent lowers to and this cannot know what those are. See
+    /// [`Self::require_conversion_intent`], which is what a builder asks.
     pub fn require_conversion(&self, format: OpenFormat) -> Result<(), CapabilityRequirementError> {
         self.require_tool(BackendTool::MsConvert)?;
         self.require_option("outdir", OptionArgument::Required)?;
@@ -571,6 +627,49 @@ impl InstalledHelpCapabilities {
             OpenFormat::MzMl => self.require_option("mzML", OptionArgument::None),
             OpenFormat::MzXml => self.require_option("mzXML", OptionArgument::None),
         }
+    }
+
+    /// Whether this build declares everything one exact intent will emit.
+    ///
+    /// The relationship this closes is the one that makes the whole boundary
+    /// fail-closed: *a typed admitted intent plus the live executable's
+    /// capability receipt yields an executable command.* M6.2's evidence admits
+    /// a semantic on the executable it measured; it says nothing about the
+    /// build a user has installed today, so an intent that lowers to `--64` or
+    /// to a `peakPicking` filter must be refused at planning time on a build
+    /// whose help declares neither -- not launched and failed.
+    ///
+    /// Asked of the intent's own [`ProviderFeature`] list, which is built from
+    /// the same segments its argv is, so this cannot drift from what is emitted
+    /// and cannot demand a feature the intent does not use. The shipped intent
+    /// lowers to two flags and requires exactly those two beyond the grammar
+    /// every conversion needs.
+    ///
+    /// What it establishes for a filter is that the installed help *declares*
+    /// that named filter. It deliberately does not pin an exact normalized
+    /// signature the way the msaccess analysis queries do: that signature would
+    /// have to be copied from one build's help text, and this correction has no
+    /// authority to take a new measurement of the installed build.
+    pub fn require_conversion_intent(
+        &self,
+        intent: &ConversionIntent,
+    ) -> Result<(), CapabilityRequirementError> {
+        self.require_tool(BackendTool::MsConvert)?;
+        self.require_option("outdir", OptionArgument::Required)?;
+        self.require_option("outfile", OptionArgument::Required)?;
+        for feature in intent.required_provider_features() {
+            match feature {
+                ProviderFeature::Flag(name) => self.require_option(name, OptionArgument::None)?,
+                ProviderFeature::ZlibOption => self.require_zlib_option()?,
+                ProviderFeature::FilterOption => {
+                    self.require_option("filter", OptionArgument::Required)?;
+                }
+                ProviderFeature::Filter(invocation) => {
+                    self.require_filter_invocation(&invocation)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn require_tool(&self, expected: BackendTool) -> Result<(), CapabilityRequirementError> {
@@ -595,6 +694,38 @@ impl InstalledHelpCapabilities {
             Ok(())
         } else {
             Err(CapabilityRequirementError::Missing(name))
+        }
+    }
+
+    /// Whether the installed help declares a spectrum-list filter that accepts
+    /// the exact invocation an intent will emit.
+    ///
+    /// Three separate facts, and the name is only the first. `--filter` existing
+    /// does not imply this filter existing, and this filter existing does not
+    /// imply it accepting the shape MSCanvas sends: a build that made
+    /// `peakPicking`'s picker token mandatory, or gave `msLevel` a second
+    /// required argument, would still declare the name while rejecting the
+    /// invocation. Establishing only the name leaves that failure to the
+    /// backend, which is what this gate exists to prevent.
+    ///
+    /// Read structurally from the parsed declaration rather than against a
+    /// remembered signature string, so a build that widens the grammar with an
+    /// extra *optional* parameter still plans.
+    fn require_filter_invocation(
+        &self,
+        invocation: &FilterInvocation,
+    ) -> Result<(), CapabilityRequirementError> {
+        let declaration = self
+            .spectrum_filter(invocation.name)
+            .ok_or(CapabilityRequirementError::Missing(invocation.name))?;
+        if declaration
+            .accepts_invocation(invocation.positional_arguments, invocation.named_arguments)
+        {
+            Ok(())
+        } else {
+            Err(CapabilityRequirementError::GrammarRejectsInvocation(
+                invocation.name,
+            ))
         }
     }
 
@@ -745,6 +876,11 @@ pub enum CapabilityRequirementError {
     },
     #[error("installed help does not confirm required grammar: {0}")]
     Missing(&'static str),
+    /// The named grammar exists and does not accept the invocation this product
+    /// emits. A different failure from an absent declaration, and worth its own
+    /// identity: the build supports the feature and not the way it is used.
+    #[error("installed help declares {0} with a grammar that rejects the planned invocation")]
+    GrammarRejectsInvocation(&'static str),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -927,7 +1063,7 @@ fn parse_option_declaration(line: &str) -> Option<(String, OptionDeclaration)> {
         .enumerate()
         .find(|(_, token)| token.starts_with("--"))?;
     let name = option_token.trim_start_matches("--").trim_end_matches(']');
-    if !is_identifier(name) {
+    if !is_option_name(name) {
         return None;
     }
 
@@ -971,13 +1107,91 @@ fn parse_named_grammar_declaration(
         return None;
     }
 
+    let (required_positionals, optional_positionals) = parse_positionals(signature);
     Some((
         name.to_owned(),
         NamedGrammarDeclaration {
             normalized_signature: signature.to_owned(),
             parameters: parse_parameters(signature),
+            required_positionals,
+            optional_positionals,
         },
     ))
+}
+
+/// How many positional placeholders a signature declares, and how many of those
+/// it marks optional.
+///
+/// A positional placeholder is a `<...>` group that is not the value of a
+/// `name=` parameter, so this walks the same shapes [`parse_parameters`] does
+/// and counts what that scan skips. Depth inside `[...]` is what makes a
+/// placeholder optional, exactly as it does for a named parameter.
+fn parse_positionals(signature: &str) -> (usize, usize) {
+    let bytes = signature.as_bytes();
+    let mut required = 0_usize;
+    let mut optional = 0_usize;
+    let mut index = 0;
+    let mut optional_depth = 0_u32;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'[' => {
+                optional_depth = optional_depth.saturating_add(1);
+                index += 1;
+            }
+            b']' => {
+                optional_depth = optional_depth.saturating_sub(1);
+                index += 1;
+            }
+            b'<' => {
+                if optional_depth > 0 {
+                    optional = optional.saturating_add(1);
+                } else {
+                    required = required.saturating_add(1);
+                }
+                index += 1;
+                while index < bytes.len() && bytes[index] != b'>' {
+                    index += 1;
+                }
+                index = index.saturating_add(1);
+            }
+            byte if is_identifier_start(byte) => {
+                let start = index;
+                index += 1;
+                while index < bytes.len() && is_identifier_continue(bytes[index]) {
+                    index += 1;
+                }
+                if bytes.get(index) != Some(&b'=') {
+                    continue;
+                }
+                // A `name=` parameter. Its value belongs to the parameter, not
+                // to the positional list, so it is consumed here rather than
+                // counted above.
+                let _ = start;
+                index += 1;
+                if let Some(open) = bytes
+                    .get(index)
+                    .copied()
+                    .filter(|byte| matches!(byte, b'[' | b'<'))
+                {
+                    let close = if open == b'[' { b']' } else { b'>' };
+                    index += 1;
+                    while index < bytes.len() && bytes[index] != close {
+                        index += 1;
+                    }
+                    index = index.saturating_add(1);
+                } else {
+                    while index < bytes.len()
+                        && !bytes[index].is_ascii_whitespace()
+                        && !matches!(bytes[index], b']' | b'|')
+                    {
+                        index += 1;
+                    }
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    (required, optional)
 }
 
 fn parse_parameters(signature: &str) -> BTreeMap<String, ParameterGrammar> {
@@ -1147,6 +1361,26 @@ fn normalize_space(value: &str) -> String {
     value.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Whether a token is an option name this parser will record.
+///
+/// Looser than [`is_identifier`] in exactly one place: an option name may begin
+/// with a digit. `msconvert` spells its global precision switches `--32` and
+/// `--64`, and a parser that refused a leading digit did not merely skip them --
+/// it left the capability model unable to express options a real build declares,
+/// so nothing could require them before emitting them.
+///
+/// Deliberately not a change to `is_identifier` itself, which also gates filter
+/// names and the `name=` parameters inside a grammar signature. Neither of those
+/// is spelled with a leading digit, and widening them would recognize shapes no
+/// build declares.
+fn is_option_name(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    bytes
+        .next()
+        .is_some_and(|byte| is_identifier_start(byte) || byte.is_ascii_digit())
+        && bytes.all(is_identifier_continue)
+}
+
 fn is_identifier(value: &str) -> bool {
     let mut bytes = value.bytes();
     bytes.next().is_some_and(is_identifier_start) && bytes.all(is_identifier_continue)
@@ -1172,6 +1406,10 @@ mod tests {
     use crate::command::{
         PlanError, build_msaccess_command_with_capabilities,
         build_msconvert_command_with_capabilities,
+    };
+    use crate::intent::{
+        CompressionIntent, ConversionIntent, NumericPrecision, OutputFormat, ProcessingIntent,
+        SpectrumPopulation,
     };
 
     const EMPTY_SHA256: Sha256Digest = Sha256Digest::from_bytes([
@@ -1251,6 +1489,42 @@ Examples:
 msconvert data.RAW --mzXML
 "#;
 
+    /// Everything the admitted table can lower to, declared.
+    ///
+    /// Kept beside the minimal fixture rather than replacing it. The minimal one
+    /// is a build that supports the shipped posture and nothing else, and that
+    /// distinction is the whole of what `require_conversion_intent` is for.
+    const MSCONVERT_FULL_HELP: &str = r#"Usage: msconvert [options] [filemasks]
+Convert mass spec data file formats.
+
+Options:
+  -o [ --outdir ] arg (=.)           : set output directory
+  --outfile arg                      : Override the name of output file.
+  --mzML                             : write mzML format [default]
+  --mzXML                            : write mzXML format
+  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
+  --filter arg                       : add a spectrum list filter
+  --32                               : set default binary encoding to 32-bit precision
+  --64                               : set default binary encoding to 64-bit precision [default]
+  --mz32                             : encode m/z values in 32-bit precision
+  --mz64                             : encode m/z values in 64-bit precision [default]
+  --inten32                          : encode intensity values in 32-bit precision [default]
+  --inten64                          : encode intensity values in 64-bit precision
+
+Spectrum List Filters
+=====================
+
+msLevel <mslevels>
+This filter selects only spectra with the indicated <mslevels>, expressed as an int_set.
+
+peakPicking [<PickerType>] [msLevel=<ms levels>]
+This filter performs centroiding on spectra with the selected <ms levels>.
+
+Examples:
+
+msconvert data.RAW --mzXML
+"#;
+
     fn capture(text: &str) -> CompleteHelpCapture<'_> {
         CompleteHelpCapture::new(
             CapturedHelpStream::new(text.as_bytes(), text.len() as u64, false, FIXTURE_SHA256),
@@ -1312,7 +1586,7 @@ msconvert data.RAW --mzXML
             &input,
             &conversion_output,
             OsStr::new("sample.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect("bound conversion command");
 
@@ -1821,6 +2095,20 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             .expect("mzXML grammar");
     }
 
+    /// The installed build still declares the mzXML grammar, and the public
+    /// planner still cannot be asked for it.
+    ///
+    /// What M6.3 moved is where that refusal lives. It used to be a runtime
+    /// `PlanError` returned *after* a caller named the format; a caller can no
+    /// longer name it, because the builder takes a `ConversionIntent` and no
+    /// intent carries mzXML -- M6.2 measured that output and recorded it
+    /// rejected. Asked over the whole admitted table rather than of one
+    /// intent, so a row added later cannot quietly reintroduce the format.
+    ///
+    /// The grammar assertion stays. This layer's job is to report what the
+    /// installed build declares, not to decide what this product converts to,
+    /// and conflating the two is how a capability check starts making product
+    /// decisions.
     #[test]
     fn mzxml_grammar_does_not_enable_public_conversion_planning() {
         let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
@@ -1829,16 +2117,320 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             .require_conversion(OpenFormat::MzXml)
             .expect("installed help recognizes the mzXML grammar");
 
-        let error = build_msconvert_command_with_capabilities(
-            &capabilities,
-            &test_path("sample.raw"),
-            &test_path("converted"),
-            OsStr::new("sample.mzXML"),
-            OpenFormat::MzXml,
-        )
-        .expect_err("mzXML must remain unavailable until its integrity gate is implemented");
+        let test_directory = TestDirectory::new();
+        let source = test_directory.path().join("sample.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::write(&source, b"source RAW").expect("write source RAW");
+        fs::create_dir(&output_directory).expect("create fresh output directory");
 
-        assert_eq!(error, PlanError::MzXmlIntegrityGateRequired);
+        let complete = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_FULL_HELP))
+            .expect("valid full msconvert fixture");
+        for admitted in ConversionIntent::ADMITTED {
+            let command = build_msconvert_command_with_capabilities(
+                &complete,
+                &source,
+                &output_directory,
+                OsStr::new("sample.mzML"),
+                &admitted.intent(),
+            )
+            .expect("every admitted intent plans on a build declaring everything");
+            assert!(
+                command.args.iter().any(|argument| argument == "--mzML"),
+                "an admitted intent asked for something other than mzML: {:?}",
+                admitted.intent().stable_id()
+            );
+            assert!(
+                !command.args.iter().any(|argument| argument == "--mzXML"),
+                "an admitted intent reached the mzXML grammar: {:?}",
+                admitted.intent().stable_id()
+            );
+        }
+    }
+
+    /// A plan is refused before it exists when the installed build does not
+    /// declare something the chosen intent will emit.
+    ///
+    /// The relationship this pins is the fail-closed one: an admitted intent is
+    /// evidence about the executable M6.2 measured, and the executable a user
+    /// has installed is a separate fact the planner has to establish. Each
+    /// declaration is removed on its own, so every refusal names the thing that
+    /// was missing rather than a build that happened to be poor overall.
+    ///
+    /// The expected result is a `PlanError`, never a backend failure. Nothing is
+    /// spawned, and no `CommandSpec` exists to spawn.
+    #[test]
+    fn an_intent_is_refused_when_the_build_does_not_declare_what_it_emits() {
+        let test_directory = TestDirectory::new();
+        let source = test_directory.path().join("sample.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::write(&source, b"source RAW").expect("write source RAW");
+        fs::create_dir(&output_directory).expect("create fresh output directory");
+
+        let intent = |precision, population, processing| {
+            ConversionIntent::admitted(
+                OutputFormat::MzMl,
+                processing,
+                population,
+                precision,
+                CompressionIntent::Zlib,
+            )
+            .expect("an admitted combination")
+        };
+        let global_64 = intent(
+            NumericPrecision::Mz64Intensity64,
+            SpectrumPopulation::All,
+            ProcessingIntent::NoAdditionalCentroiding,
+        );
+        let per_array = intent(
+            NumericPrecision::Mz32Intensity64,
+            SpectrumPopulation::All,
+            ProcessingIntent::NoAdditionalCentroiding,
+        );
+        let survey_only = intent(
+            NumericPrecision::Mz64Intensity64,
+            SpectrumPopulation::Ms1Only,
+            ProcessingIntent::NoAdditionalCentroiding,
+        );
+        let centroiding = intent(
+            NumericPrecision::Mz64Intensity64,
+            SpectrumPopulation::All,
+            ProcessingIntent::UnscopedDefaultCentroiding,
+        );
+
+        for (label, removed, intent) in [
+            ("the global 64-bit option", "  --64  ", global_64),
+            ("a per-array precision option", "  --inten64  ", per_array),
+            ("the filter option", "  --filter arg  ", survey_only),
+            (
+                "the msLevel filter grammar",
+                "msLevel <mslevels>",
+                survey_only,
+            ),
+            (
+                "the peakPicking filter grammar",
+                "peakPicking [",
+                centroiding,
+            ),
+        ] {
+            let crippled: String = MSCONVERT_FULL_HELP
+                .lines()
+                .filter(|line| !line.trim_start().starts_with(removed.trim()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let capabilities = parse_capabilities(BackendTool::MsConvert, capture(&crippled))
+                .expect("a build missing one declaration is still parseable");
+
+            let error = build_msconvert_command_with_capabilities(
+                &capabilities,
+                &source,
+                &output_directory,
+                OsStr::new("sample.mzML"),
+                &intent,
+            )
+            .expect_err(label);
+            assert!(
+                matches!(error, PlanError::InstalledHelpCapability(_)),
+                "{label} produced {error:?} rather than a capability refusal"
+            );
+        }
+    }
+
+    /// Declaring the filter's name is not declaring that it accepts what this
+    /// product sends.
+    ///
+    /// The gate's claim is that the current executable can express the exact
+    /// typed invocation, so each case below keeps the name and changes only the
+    /// grammar around it. A build that made `peakPicking`'s picker token
+    /// mandatory, or gave `msLevel` a second required argument, declares
+    /// everything a name check asks for and would still reject the argv.
+    ///
+    /// The last case is the other direction: a grammar that grows an *optional*
+    /// parameter still accepts the same invocation, and refusing it would make
+    /// this gate a version pin rather than a capability check.
+    #[test]
+    fn a_filter_grammar_must_accept_the_exact_invocation_the_intent_emits() {
+        let test_directory = TestDirectory::new();
+        let source = test_directory.path().join("sample.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::write(&source, b"source RAW").expect("write source RAW");
+        fs::create_dir(&output_directory).expect("create fresh output directory");
+
+        let intent = |population, processing| {
+            ConversionIntent::admitted(
+                OutputFormat::MzMl,
+                processing,
+                population,
+                NumericPrecision::Mz64Intensity64,
+                CompressionIntent::Zlib,
+            )
+            .expect("an admitted combination")
+        };
+        let centroiding = intent(
+            SpectrumPopulation::All,
+            ProcessingIntent::UnscopedDefaultCentroiding,
+        );
+        let survey_only = intent(
+            SpectrumPopulation::Ms1Only,
+            ProcessingIntent::NoAdditionalCentroiding,
+        );
+
+        let plan = |help: &str, intent: &ConversionIntent| {
+            let capabilities = parse_capabilities(BackendTool::MsConvert, capture(help))
+                .expect("a changed filter grammar is still parseable");
+            build_msconvert_command_with_capabilities(
+                &capabilities,
+                &source,
+                &output_directory,
+                OsStr::new("sample.mzML"),
+                intent,
+            )
+        };
+
+        // The picker token becomes mandatory. The bare invocation this product
+        // emits is no longer expressible.
+        let mandatory_picker = MSCONVERT_FULL_HELP.replace(
+            "peakPicking [<PickerType>] [msLevel=<ms levels>]",
+            "peakPicking <PickerType> [msLevel=<ms levels>]",
+        );
+        assert!(
+            matches!(
+                plan(&mandatory_picker, &centroiding),
+                Err(PlanError::InstalledHelpCapability(
+                    CapabilityRequirementError::GrammarRejectsInvocation("peakPicking")
+                ))
+            ),
+            "a mandatory picker token still admitted the bare invocation"
+        );
+
+        // The population filter grows a second required argument.
+        let second_required =
+            MSCONVERT_FULL_HELP.replace("msLevel <mslevels>", "msLevel <mslevels> <combination>");
+        assert!(
+            matches!(
+                plan(&second_required, &survey_only),
+                Err(PlanError::InstalledHelpCapability(
+                    CapabilityRequirementError::GrammarRejectsInvocation("msLevel")
+                ))
+            ),
+            "a second required argument still admitted a one-argument invocation"
+        );
+
+        // A required *named* parameter is the same refusal by another shape:
+        // this product supplies none.
+        let required_named = MSCONVERT_FULL_HELP.replace(
+            "peakPicking [<PickerType>] [msLevel=<ms levels>]",
+            "peakPicking [<PickerType>] msLevel=<ms levels>",
+        );
+        assert!(
+            matches!(
+                plan(&required_named, &centroiding),
+                Err(PlanError::InstalledHelpCapability(
+                    CapabilityRequirementError::GrammarRejectsInvocation("peakPicking")
+                ))
+            ),
+            "a required named parameter still admitted an invocation supplying none"
+        );
+
+        // Optional widening is not a refusal. The same invocation is still
+        // accepted, so the plan stands.
+        let widened = MSCONVERT_FULL_HELP.replace(
+            "msLevel <mslevels>",
+            "msLevel <mslevels> [<combination>] [mode=<union|intersection>]",
+        );
+        plan(&widened, &survey_only)
+            .expect("an added optional parameter refused an unchanged invocation");
+
+        // And the grammar as measured admits both.
+        plan(MSCONVERT_FULL_HELP, &centroiding).expect("the measured grammar plans centroiding");
+        plan(MSCONVERT_FULL_HELP, &survey_only).expect("the measured grammar plans a filter");
+    }
+
+    /// The structural facts the invocation check reads.
+    ///
+    /// Pinned directly, because every refusal above depends on the signature
+    /// parser telling a bracketed placeholder from a bare one, and on a `name=`
+    /// value not being counted as a positional argument of its own.
+    #[test]
+    fn a_filter_signature_is_read_as_positional_and_named_structure() {
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_FULL_HELP))
+            .expect("valid full msconvert fixture");
+
+        let picker = capabilities
+            .spectrum_filter("peakPicking")
+            .expect("the fixture declares peakPicking");
+        assert_eq!(picker.required_positionals(), 0);
+        assert_eq!(picker.optional_positionals(), 1);
+        assert_eq!(picker.parameter_is_optional("msLevel"), Some(true));
+        assert!(picker.accepts_invocation(0, &[]));
+        assert!(picker.accepts_invocation(1, &[]));
+        assert!(!picker.accepts_invocation(2, &[]));
+        assert!(!picker.accepts_invocation(0, &["notADeclaredParameter"]));
+
+        let levels = capabilities
+            .spectrum_filter("msLevel")
+            .expect("the fixture declares msLevel");
+        assert_eq!(levels.required_positionals(), 1);
+        assert_eq!(levels.optional_positionals(), 0);
+        assert!(levels.accepts_invocation(1, &[]));
+        assert!(!levels.accepts_invocation(0, &[]));
+    }
+
+    /// The global precision switches are options this model can hold.
+    ///
+    /// They are spelled with a leading digit, and a parser that refused one did
+    /// not skip a cosmetic detail: it made the capability model unable to
+    /// express two options a real build declares, so nothing could require them
+    /// before emitting them. Asserted against the declared argument posture as
+    /// well as presence, because a name recorded with the wrong posture would
+    /// satisfy a requirement it should refuse.
+    #[test]
+    fn a_digit_led_option_name_is_recorded_like_any_other() {
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_FULL_HELP))
+            .expect("valid full msconvert fixture");
+
+        for name in ["32", "64", "mz32", "mz64", "inten32", "inten64"] {
+            assert_eq!(
+                capabilities.option(name).map(OptionDeclaration::argument),
+                Some(OptionArgument::None),
+                "{name} is not recorded as a no-argument option"
+            );
+        }
+        // And the looser rule stops at option names: a filter or a grammar
+        // parameter is still required to start with a letter.
+        assert!(!is_identifier("64"));
+        assert!(is_option_name("64"));
+    }
+
+    /// The shipped intent asks for nothing beyond the grammar it emits.
+    ///
+    /// The other half of the same rule, and the one that keeps the requirement
+    /// honest: a build declaring only what `SHIPPED` lowers to must still plan.
+    /// Requiring the whole M6.2 candidate list would make every conversion
+    /// depend on features it never uses.
+    #[test]
+    fn the_shipped_intent_plans_on_a_build_declaring_only_what_it_emits() {
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+            .expect("valid msconvert fixture");
+        let test_directory = TestDirectory::new();
+        let source = test_directory.path().join("sample.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::write(&source, b"source RAW").expect("write source RAW");
+        fs::create_dir(&output_directory).expect("create fresh output directory");
+
+        let command = build_msconvert_command_with_capabilities(
+            &capabilities,
+            &source,
+            &output_directory,
+            OsStr::new("sample.mzML"),
+            &ConversionIntent::SHIPPED,
+        )
+        .expect("the shipped intent plans on a build declaring no filters at all");
+        assert!(!command.contains_argument("--filter"));
+        assert_eq!(
+            ConversionIntent::SHIPPED.required_provider_features().len(),
+            2,
+            "the shipped intent grew a requirement it does not emit"
+        );
     }
 
     #[test]
@@ -1863,7 +2455,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             &output_directory,
             OsStr::new("样本 01.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect("complete installed grammar permits mzML planning");
 
@@ -1901,7 +2493,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             &output_directory,
             OsStr::new("sample.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect_err("an existing default output must not produce a command specification");
 
@@ -1923,7 +2515,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             output_directory.path(),
             OsStr::new("converted.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect("a distinct exact target does not conflict with the source");
 
@@ -1938,7 +2530,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             output_directory.path(),
             OsStr::new("sample.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect_err("the exact source path must never be a conversion destination");
         assert_eq!(error, PlanError::OutputDestinationExists);
@@ -1963,7 +2555,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             &output_directory,
             OsStr::new("sample.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect("unrelated entries do not conflict with the exact destination");
 
@@ -1991,7 +2583,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &first_input,
             &output_directory,
             OsStr::new("first.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect("plan first item");
         fs::write(
@@ -2007,7 +2599,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &second_input,
             &output_directory,
             OsStr::new("second.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect("plan second item in the same output root");
         assert_eq!(
@@ -2032,7 +2624,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             &output_directory,
             OsStr::new("sample.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect_err("any object at the exact destination must fail closed");
 
@@ -2053,7 +2645,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             &missing_output,
             OsStr::new("sample.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect_err("an uninspectable output directory must fail closed");
 
@@ -2087,7 +2679,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 &input,
                 &output_directory,
                 OsStr::new("dataset.mzML"),
-                OpenFormat::MzMl,
+                &ConversionIntent::SHIPPED,
             )
             .expect_err("output inside a directory input must fail closed");
 
@@ -2114,7 +2706,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &input,
             &output_directory,
             OsStr::new("dataset.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect("a fresh sibling output directory is safe to plan");
 
@@ -2141,7 +2733,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             &missing_input,
             &output_directory,
             OsStr::new("missing.mzML"),
-            OpenFormat::MzMl,
+            &ConversionIntent::SHIPPED,
         )
         .expect_err("an uninspectable input must fail closed");
 
@@ -2181,7 +2773,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 &test_path("sample.raw"),
                 &test_path("converted"),
                 OsStr::new(output_file_name),
-                OpenFormat::MzMl,
+                &ConversionIntent::SHIPPED,
             )
             .expect_err("unsafe output names must fail before filesystem inspection");
             assert_eq!(error, PlanError::InvalidOutputFileName);
@@ -2193,7 +2785,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 &test_path("sample.raw"),
                 &test_path("converted"),
                 OsStr::new(output_file_name),
-                OpenFormat::MzMl,
+                &ConversionIntent::SHIPPED,
             )
             .expect_err("the exact output extension must match the selected format");
             assert_eq!(error, PlanError::OutputFileExtensionMismatch);
@@ -2218,7 +2810,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 &test_path("sample.raw"),
                 &test_path("converted"),
                 OsStr::new("sample.mzML"),
-                OpenFormat::MzMl,
+                &ConversionIntent::SHIPPED,
             )
             .expect_err("missing or optional outfile grammar must fail closed");
 
@@ -2247,7 +2839,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 &test_path("sample.raw"),
                 &test_path("converted"),
                 OsStr::new("sample.mzML"),
-                OpenFormat::MzMl,
+                &ConversionIntent::SHIPPED,
             )
             .expect_err("missing or changed zlib grammar must fail closed");
 

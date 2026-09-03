@@ -10,7 +10,7 @@
 //! fidelity, and it never fails a conversion merely because the output uses a
 //! different but legal mzML serialization.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::File;
@@ -24,46 +24,26 @@ use crate::command::{OpenFormat, SourceIdentity};
 use crate::fs_guard::{
     self, OutputDirectoryEntry, OutputDirectorySnapshot, OutputEntryKind, RegularFileError,
 };
+use crate::intent::{
+    CompressionIntent, ConversionIntent, NumericPrecision, ProcessingIntent, SpectrumPopulation,
+};
 use crate::mzml::{
-    self, ArrayKind, CompressionMarker, MzmlFacts, MzmlLimitKind, MzmlMalformedKind, MzmlScanError,
-    MzmlScanLimits, MzmlSpectrumRecord, RepresentationMarker, UnsafeXmlKind,
+    self, ArrayKind, CompressionMarker, EffectiveProcessing, MzmlFacts, MzmlLimitKind,
+    MzmlMalformedKind, MzmlScanError, MzmlScanLimits, MzmlSpectrumRecord, NumericPrecisionMarker,
+    NumericPrecisionSet, ProcessingAlgorithm, ProcessingHistory, RepresentationMarker,
+    UnsafeXmlKind,
 };
 
-/// The compression the typed conversion plan requested. This is MSCanvas policy,
-/// not a scientific property of the source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CompressionPolicy {
-    /// Every binary array in the output must carry a zlib compression marker.
-    #[default]
-    Zlib,
-}
-
-impl CompressionPolicy {
-    #[must_use]
-    pub const fn stable_id(self) -> &'static str {
-        match self {
-            Self::Zlib => "zlib",
-        }
-    }
-}
-
-/// The typed conversion intent an integrity check is allowed to assume.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct ConversionPolicy {
-    compression: CompressionPolicy,
-}
-
-impl ConversionPolicy {
-    #[must_use]
-    pub const fn new(compression: CompressionPolicy) -> Self {
-        Self { compression }
-    }
-
-    #[must_use]
-    pub const fn compression(self) -> CompressionPolicy {
-        self.compression
-    }
-}
+// There is deliberately no `ConversionPolicy` here any more, and no
+// `CompressionPolicy` beside it.
+//
+// Both used to be *second* answers to what a conversion had asked for: a policy
+// an integrity check was "allowed to assume", constructible on its own, sitting
+// beside a hard-coded format in the planner, an unconditional `--zlib` in the
+// command builder and a provider precision default nothing had named. Integrity
+// now compares the output against [`ConversionIntent`] itself, which is the
+// thing the queue bound and the command was lowered from, so there is one
+// answer to what this conversion meant to do.
 
 /// Typed facts about a conversion output, established without consulting the
 /// backend's exit status.
@@ -581,6 +561,22 @@ impl BinaryArrayMismatchKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum IntegrityProperty {
     SourceUnchanged,
+    /// Each stored array carries the width the bound intent asked for, read for
+    /// the m/z and intensity arrays **independently**.
+    ///
+    /// Separately because the shipped posture differs between them, and a
+    /// document-wide marker could not tell a correct mixed-precision output
+    /// from a broken one.
+    RequestedNumericPrecision,
+    /// The output holds exactly the spectra the bound intent asked for.
+    RequestedSpectrumPopulation,
+    /// What the output says was done to its peaks does not contradict what was
+    /// asked for.
+    ///
+    /// A weak witness by construction, and recorded as one: every picker this
+    /// build ships writes the same CV accession, so only a free-text name
+    /// distinguishes them, and its absence is `unverified` rather than proof.
+    RequestedProcessing,
     /// The output's own declared list counts agree with what it contains. A
     /// structural property about the output alone, so an output-only validation
     /// can establish it.
@@ -624,7 +620,18 @@ pub enum IntegrityProperty {
     MsLevelDistribution,
     BinaryArrayCounts,
     BinaryArrayKinds,
-    BinaryArrayLengths,
+    /// Every compared spectrum declares the same number of points on both sides.
+    ///
+    /// Split from the chromatogram twin because the two stop being comparable
+    /// for different reasons. A requested centroiding changes a spectrum's point
+    /// count -- M6.2 measured the admitted picker turning `2,1,3,1` into
+    /// `4,1,7,1` -- so under that intent this is **inapplicable**, a question the
+    /// conversion was never asked. A chromatogram is untouched by spectrum
+    /// processing and stays comparable, and one aggregate answer for both would
+    /// have to lie about one of them.
+    SpectrumArrayLengths,
+    /// The same for chromatograms, which no admitted intent transforms.
+    ChromatogramArrayLengths,
     BinaryArrayPayloadPresence,
     PrecursorCounts,
     SpectrumNativeIdentity,
@@ -638,6 +645,9 @@ impl IntegrityProperty {
     pub const fn stable_id(self) -> &'static str {
         match self {
             Self::SourceUnchanged => "source_unchanged",
+            Self::RequestedNumericPrecision => "requested_numeric_precision",
+            Self::RequestedSpectrumPopulation => "requested_spectrum_population",
+            Self::RequestedProcessing => "requested_processing",
             Self::OutputDeclaredCounts => "output_declared_counts",
             Self::OutputDeclaredArrayLengths => "output_declared_array_lengths",
             Self::OutputArrayPayloadPresence => "output_array_payload_presence",
@@ -650,7 +660,8 @@ impl IntegrityProperty {
             Self::MsLevelDistribution => "ms_level_distribution",
             Self::BinaryArrayCounts => "binary_array_counts",
             Self::BinaryArrayKinds => "binary_array_kinds",
-            Self::BinaryArrayLengths => "binary_array_lengths",
+            Self::SpectrumArrayLengths => "spectrum_array_lengths",
+            Self::ChromatogramArrayLengths => "chromatogram_array_lengths",
             Self::BinaryArrayPayloadPresence => "binary_array_payload_presence",
             Self::PrecursorCounts => "precursor_counts",
             Self::SpectrumNativeIdentity => "spectrum_native_identity",
@@ -806,6 +817,45 @@ impl ValidConversion {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConversionIntegrityOutcome {
     Valid(Box<ValidConversion>),
+    /// A stored array does not carry the width the intent asked for.
+    NumericPrecisionMismatch {
+        requested: NumericPrecision,
+        /// Which list the record is in. Chromatograms carry intensity arrays
+        /// too, and a spectrum index would name the wrong record.
+        part: DocumentPart,
+        /// Which array disagreed. The roles are reported apart because they are
+        /// asked for apart.
+        array: ArrayKind,
+        index: u64,
+    },
+    /// The output does not hold exactly the spectra the intent asked for.
+    SpectrumPopulationMismatch {
+        requested: SpectrumPopulation,
+        /// An MS level present in the output that the request excluded, where
+        /// one is what went wrong.
+        unexpected_ms_level: Option<u32>,
+        /// How many spectra the source held at the requested level, and how
+        /// many survived. Equal counts with a wrong level present is a
+        /// different failure from a level going missing.
+        expected: Option<u64>,
+        observed: u64,
+    },
+    /// This conversion recorded a peak-picking algorithm that was not asked for.
+    ///
+    /// `observed` is the algorithm attributable to *this* run on that spectrum,
+    /// not everything the document's processing history mentions: a picker the
+    /// source already carried is the source's, and the output repeating it is
+    /// the provider copying a list rather than a second algorithm running.
+    ProcessingAlgorithmMismatch {
+        requested: ProcessingIntent,
+        observed: ProcessingAlgorithm,
+        spectrum_index: u64,
+    },
+    /// Centroiding was asked for and the output does not say it happened.
+    CentroidRepresentationMissing {
+        spectrum_index: u64,
+        observed: RepresentationMarker,
+    },
     MissingOutput,
     EmptyOutput,
     NonRegularOutput,
@@ -880,6 +930,14 @@ pub enum ConversionIntegrityOutcome {
     /// against, because a comparison would already have found the counts
     /// disagreeing.
     OutputContainsNoRecords,
+    /// The output does not hold as many spectra as the source was expected to
+    /// contribute.
+    ///
+    /// `source` is that expectation, not the source's own count. Under an
+    /// intent carrying every spectrum the two are the same number; under one
+    /// that narrows the population it is the size of the requested subset,
+    /// because comparing against the whole source would report the requested
+    /// filtering as a loss.
     SpectrumCountMismatch {
         source: u64,
         output: u64,
@@ -909,9 +967,18 @@ pub enum ConversionIntegrityOutcome {
         source: RepresentationMarker,
         output: RepresentationMarker,
     },
+    /// The output is not compressed the way the intent asked.
+    ///
+    /// Both directions: arrays left uncompressed under [`CompressionIntent::Zlib`]
+    /// and arrays compressed -- or silent about it -- under
+    /// [`CompressionIntent::NoCompression`]. One variant, because it is one
+    /// question, and the request is carried in it so a reader can tell which
+    /// way it failed.
     CompressionPolicyMismatch {
-        requested: CompressionPolicy,
-        uncompressed_array_count: u64,
+        requested: CompressionIntent,
+        /// Arrays that did not individually state the requested encoding, plus
+        /// arrays that stated the opposite one.
+        disagreeing_array_count: u64,
     },
 }
 
@@ -920,6 +987,10 @@ impl ConversionIntegrityOutcome {
     pub const fn stable_id(&self) -> &'static str {
         match self {
             Self::Valid(_) => "valid",
+            Self::NumericPrecisionMismatch { .. } => "numeric_precision_mismatch",
+            Self::SpectrumPopulationMismatch { .. } => "spectrum_population_mismatch",
+            Self::ProcessingAlgorithmMismatch { .. } => "processing_algorithm_mismatch",
+            Self::CentroidRepresentationMissing { .. } => "centroid_representation_missing",
             Self::MissingOutput => "missing_output",
             Self::EmptyOutput => "zero_byte_output",
             Self::NonRegularOutput => "non_regular_output",
@@ -1027,13 +1098,13 @@ pub fn verify_mzml_conversion(
     source: &ConversionSourceFacts,
     output_directory: &Path,
     expected_file_name: &OsStr,
-    policy: ConversionPolicy,
+    intent: ConversionIntent,
     limits: MzmlScanLimits,
 ) -> ConversionIntegrityOutcome {
     let (file, output) = match open_and_inspect_output(
         output_directory,
         expected_file_name,
-        OpenFormat::MzMl,
+        OpenFormat::of_intent(intent.format()),
         limits,
         OutputRetention::Release,
     ) {
@@ -1044,7 +1115,7 @@ pub fn verify_mzml_conversion(
     // for facts, not for the object, and holding their file open for the
     // source revalidation below would be a change they did not ask for.
     drop(file);
-    judge_against_source(source, output, policy)
+    judge_against_source(source, output, intent)
 }
 
 /// Verifies a conversion and, when it passes, retains the exact object judged.
@@ -1059,13 +1130,13 @@ pub(crate) fn verify_mzml_conversion_retaining_output(
     source: &ConversionSourceFacts,
     output_directory: &Path,
     expected_file_name: &OsStr,
-    policy: ConversionPolicy,
+    intent: ConversionIntent,
     limits: MzmlScanLimits,
 ) -> VerifiedConversion {
     let (file, output) = match open_and_inspect_output(
         output_directory,
         expected_file_name,
-        OpenFormat::MzMl,
+        OpenFormat::of_intent(intent.format()),
         limits,
         OutputRetention::Retain,
     ) {
@@ -1073,7 +1144,7 @@ pub(crate) fn verify_mzml_conversion_retaining_output(
         Err(rejection) => return VerifiedConversion::Rejected(rejection.into()),
     };
 
-    match judge_against_source(source, output, policy) {
+    match judge_against_source(source, output, intent) {
         ConversionIntegrityOutcome::Valid(valid) => {
             VerifiedConversion::Valid(Box::new(ValidatedConversionOutput {
                 file,
@@ -1103,13 +1174,13 @@ pub(crate) fn verify_vendor_conversion_retaining_output(
     source: &SourceObjectFacts,
     output_directory: &Path,
     expected_file_name: &OsStr,
-    policy: ConversionPolicy,
+    intent: ConversionIntent,
     limits: MzmlScanLimits,
 ) -> VerifiedConversion {
     let (file, output) = match open_and_inspect_output(
         output_directory,
         expected_file_name,
-        OpenFormat::MzMl,
+        OpenFormat::of_intent(intent.format()),
         limits,
         OutputRetention::Retain,
     ) {
@@ -1117,7 +1188,7 @@ pub(crate) fn verify_vendor_conversion_retaining_output(
         Err(rejection) => return VerifiedConversion::Rejected(rejection.into()),
     };
 
-    match judge_output_alone(source, output, policy) {
+    match judge_output_alone(source, output, intent) {
         ConversionIntegrityOutcome::Valid(valid) => {
             VerifiedConversion::Valid(Box::new(ValidatedConversionOutput {
                 file,
@@ -1145,7 +1216,7 @@ pub(crate) fn verify_staged_member_retaining_output(
     output_directory: &Path,
     member_file_name: &OsStr,
     enumerated_byte_length: u64,
-    policy: ConversionPolicy,
+    intent: ConversionIntent,
     limits: MzmlScanLimits,
 ) -> VerifiedConversion {
     let path = output_directory.join(member_file_name);
@@ -1164,7 +1235,7 @@ pub(crate) fn verify_staged_member_retaining_output(
         Ok(inspected) => inspected,
         Err(rejection) => return VerifiedConversion::Rejected(rejection.into()),
     };
-    match judge_output_alone(source, output, policy) {
+    match judge_output_alone(source, output, intent) {
         ConversionIntegrityOutcome::Valid(valid) => {
             VerifiedConversion::Valid(Box::new(ValidatedConversionOutput {
                 file,
@@ -1182,13 +1253,14 @@ pub(crate) fn verify_staged_member_retaining_output(
 /// explicitly, rather than deriving the set by subtraction, is what makes adding
 /// a new comparison property a compile-time decision about which bucket it
 /// belongs in.
-const COMPARISON_PROPERTIES: [IntegrityProperty; 11] = [
+const COMPARISON_PROPERTIES: [IntegrityProperty; 12] = [
     IntegrityProperty::SpectrumCount,
     IntegrityProperty::ChromatogramCount,
     IntegrityProperty::MsLevelDistribution,
     IntegrityProperty::BinaryArrayCounts,
     IntegrityProperty::BinaryArrayKinds,
-    IntegrityProperty::BinaryArrayLengths,
+    IntegrityProperty::SpectrumArrayLengths,
+    IntegrityProperty::ChromatogramArrayLengths,
     IntegrityProperty::BinaryArrayPayloadPresence,
     IntegrityProperty::PrecursorCounts,
     IntegrityProperty::SpectrumNativeIdentity,
@@ -1206,7 +1278,7 @@ const COMPARISON_PROPERTIES: [IntegrityProperty; 11] = [
 fn judge_output_alone(
     source: &SourceObjectFacts,
     output: ConversionOutputInspection,
-    policy: ConversionPolicy,
+    intent: ConversionIntent,
 ) -> ConversionIntegrityOutcome {
     match revalidate_source(source) {
         Ok(true) => {}
@@ -1307,7 +1379,7 @@ fn judge_output_alone(
         // claiming its arrays are both compressed and uncompressed is worse
         // than wrong: it is two answers to one question, and the compressed
         // count alone cannot see it because that count is satisfied.
-        if let Some(outcome) = check_output_array_encoding(after, policy) {
+        if let Some(outcome) = check_output_array_encoding(after, intent) {
             return outcome;
         }
         report
@@ -1336,11 +1408,31 @@ fn judge_output_alone(
             .insert(IntegrityProperty::OutputSpectrumMetadata);
     }
 
-    // The compression policy is the one requested property that is readable from
-    // the output alone, and it degrades for the same reason it degrades in a
-    // comparison: an indirected controlled vocabulary is not a fact this scanner
-    // will assert.
-    if let Some(outcome) = check_compression_policy(after, policy, vocabulary_readable, &mut report)
+    // What the intent asked for, as far as an output can answer alone.
+    //
+    // Three of the four requested properties are readable here, and each
+    // degrades for the same reason: an indirected controlled vocabulary is not
+    // a fact this scanner will assert. The population is the exception -- the
+    // output can show that nothing outside the requested set survived and can
+    // never show that everything inside it did, so the refusal applies and the
+    // property does not.
+    if let Some(outcome) =
+        check_requested_precision(after, intent, vocabulary_readable, &mut report)
+    {
+        return outcome;
+    }
+    if let Some(outcome) = check_requested_population_in_output(after, intent) {
+        return outcome;
+    }
+    report
+        .unverified
+        .insert(IntegrityProperty::RequestedSpectrumPopulation);
+    // No source, so no inherited processing history to subtract from the
+    // output's. `None` says that, rather than an empty set standing in for it.
+    if let Some(outcome) = check_requested_processing(after, None, intent, &mut report) {
+        return outcome;
+    }
+    if let Some(outcome) = check_compression_policy(after, intent, vocabulary_readable, &mut report)
     {
         return outcome;
     }
@@ -1350,7 +1442,10 @@ fn judge_output_alone(
         mode: ValidationMode::OutputOnly,
         verified: report.verified,
         unverified: report.unverified,
-        inapplicable: COMPARISON_PROPERTIES.into_iter().collect(),
+        inapplicable: COMPARISON_PROPERTIES
+            .into_iter()
+            .chain(report.inapplicable)
+            .collect(),
         advisory: report.advisory,
     }))
 }
@@ -1533,9 +1628,9 @@ fn check_output_spectrum_metadata(after: &MzmlFacts) -> Option<ConversionIntegri
 /// array omitted its own, or declared two.
 fn check_output_array_encoding(
     after: &MzmlFacts,
-    policy: ConversionPolicy,
+    intent: ConversionIntent,
 ) -> Option<ConversionIntegrityOutcome> {
-    let compression_matters = matches!(policy.compression(), CompressionPolicy::Zlib);
+    let compression_matters = matches!(intent.compression(), CompressionIntent::Zlib);
     for (position, record) in after.spectra().iter().enumerate() {
         if let Some(outcome) = judge_record_encoding(
             DocumentPart::Spectrum,
@@ -1626,14 +1721,14 @@ fn check_output_declared_counts(
 fn judge_against_source(
     source: &ConversionSourceFacts,
     output: ConversionOutputInspection,
-    policy: ConversionPolicy,
+    intent: ConversionIntent,
 ) -> ConversionIntegrityOutcome {
     match revalidate_source(source.object()) {
         Ok(true) => {}
         Ok(false) => return ConversionIntegrityOutcome::SourceChangedDuringConversion,
         Err(outcome) => return outcome,
     }
-    compare_documents(source, output, policy)
+    compare_documents(source, output, intent)
 }
 
 /// Whether the source object is still the one that was admitted.
@@ -1664,14 +1759,35 @@ fn revalidate_source(source: &SourceObjectFacts) -> Result<bool, ConversionInteg
 fn compare_documents(
     source: &ConversionSourceFacts,
     output: ConversionOutputInspection,
-    policy: ConversionPolicy,
+    intent: ConversionIntent,
 ) -> ConversionIntegrityOutcome {
     let before = source.facts();
     let after = output.facts();
     let mut report = IntegrityReport::default();
     report.verified.insert(IntegrityProperty::SourceUnchanged);
 
-    if let Some(outcome) = compare_counts(before, after, &mut report) {
+    // What the bound intent asked the source to contribute. Under an intent
+    // that carries every spectrum this is the source itself and every
+    // comparison below is the one that always ran; under one that narrows the
+    // population it is the subset the request named, and comparing the output
+    // against the whole source would report the *requested* filtering as a
+    // defect.
+    let Some(expected) = expected_source_spectra(before, intent.population()) else {
+        return ConversionIntegrityOutcome::SpectrumPopulationMismatch {
+            requested: intent.population(),
+            unexpected_ms_level: None,
+            expected: None,
+            observed: after.observed_spectrum_count(),
+        };
+    };
+
+    // Asked before any comparison, because it is the most specific thing that
+    // can be said: a spectrum the request excluded surviving is that failure,
+    // not a count disagreement and not a shifted MS-level histogram.
+    if let Some(outcome) = check_requested_population_in_output(after, intent) {
+        return outcome;
+    }
+    if let Some(outcome) = compare_counts(before, after, expected.len() as u64, &mut report) {
         return outcome;
     }
     if let Some(outcome) = compare_index_sequences(before, after, &mut report) {
@@ -1686,7 +1802,7 @@ fn compare_documents(
         !before.parameter_group_reference_observed() && !after.parameter_group_reference_observed();
 
     if vocabulary_comparable {
-        if before.ms_level_distribution() != after.ms_level_distribution() {
+        if expected_ms_level_distribution(&expected) != *after.ms_level_distribution() {
             return ConversionIntegrityOutcome::MsLevelDistributionMismatch;
         }
         report
@@ -1702,11 +1818,16 @@ fn compare_documents(
     // property unverifiable, so it is decided once for both lists.
     let lengths_comparable =
         declared_lengths_are_complete(before) && declared_lengths_are_complete(after);
+    // A requested transformation and a missing declaration are different
+    // reasons, and only the second is a failure to establish something.
+    let preserves_spectrum_lengths =
+        processing_preserves_spectrum_point_counts(intent.processing());
     if let Some(outcome) = compare_spectra(
-        before,
+        &expected,
         after,
+        intent.processing(),
         vocabulary_comparable,
-        lengths_comparable,
+        lengths_comparable && preserves_spectrum_lengths,
         &mut report,
     ) {
         return outcome;
@@ -1720,9 +1841,20 @@ fn compare_documents(
     ) {
         return outcome;
     }
+    // Three answers, not two. A spectrum's point count is *inapplicable* where
+    // the intent asked for the transformation that changes it, `unverified`
+    // where a document declined to declare a length, and verified only where it
+    // was compared and held. Collapsing the first into either of the others is
+    // how a skipped comparison becomes a claim.
+    insert_disposition(
+        &mut report,
+        IntegrityProperty::SpectrumArrayLengths,
+        preserves_spectrum_lengths && !expected.is_empty(),
+        lengths_comparable,
+    );
     insert_property(
         &mut report,
-        IntegrityProperty::BinaryArrayLengths,
+        IntegrityProperty::ChromatogramArrayLengths,
         lengths_comparable,
     );
     // Array roles are vocabulary-derived, and both lists are now compared, so
@@ -1733,7 +1865,20 @@ fn compare_documents(
         vocabulary_comparable,
     );
     if let Some(outcome) =
-        check_compression_policy(after, policy, vocabulary_comparable, &mut report)
+        check_requested_precision(after, intent, vocabulary_comparable, &mut report)
+    {
+        return outcome;
+    }
+    if let Some(outcome) =
+        check_requested_population(after, intent, &expected, vocabulary_comparable, &mut report)
+    {
+        return outcome;
+    }
+    if let Some(outcome) = check_requested_processing(after, Some(before), intent, &mut report) {
+        return outcome;
+    }
+    if let Some(outcome) =
+        check_compression_policy(after, intent, vocabulary_comparable, &mut report)
     {
         return outcome;
     }
@@ -1755,8 +1900,9 @@ fn compare_documents(
         mode: ValidationMode::SourceComparison,
         verified: report.verified,
         unverified: report.unverified,
-        // A comparison was available, so nothing was outside the question.
-        inapplicable: BTreeSet::new(),
+        // A comparison was available, so the only properties outside the
+        // question are the ones this *request* put there.
+        inapplicable: report.inapplicable,
         advisory: report.advisory,
     }))
 }
@@ -1765,6 +1911,15 @@ fn compare_documents(
 struct IntegrityReport {
     verified: BTreeSet<IntegrityProperty>,
     unverified: BTreeSet<IntegrityProperty>,
+    /// Properties a comparison was available for and that this *request* put
+    /// outside the question.
+    ///
+    /// Distinct from `unverified`, which means the question was asked and could
+    /// not be answered. A conversion that asked for a transformation is not
+    /// failing to establish that the thing it transformed stayed the same; it
+    /// never claimed that, and recording the difference is the whole reason a
+    /// skipped comparison must not quietly become a verified one.
+    inapplicable: BTreeSet<IntegrityProperty>,
     advisory: BTreeSet<AdvisoryObservation>,
 }
 
@@ -1782,6 +1937,7 @@ fn declared_lengths_are_complete(facts: &MzmlFacts) -> bool {
 fn compare_counts(
     before: &MzmlFacts,
     after: &MzmlFacts,
+    expected_spectrum_count: u64,
     report: &mut IntegrityReport,
 ) -> Option<ConversionIntegrityOutcome> {
     // The output is ours, so it must be internally consistent. A source that
@@ -1802,9 +1958,13 @@ fn compare_counts(
             .insert(AdvisoryObservation::SourceDeclaredCountInconsistent);
     }
 
-    if before.observed_spectrum_count() != after.observed_spectrum_count() {
+    // Against the projection, not against the source: under an intent that
+    // carries everything the two are the same number, and under one that
+    // narrows the population the source's own count is not what the output was
+    // asked to hold.
+    if expected_spectrum_count != after.observed_spectrum_count() {
         return Some(ConversionIntegrityOutcome::SpectrumCountMismatch {
-            source: before.observed_spectrum_count(),
+            source: expected_spectrum_count,
             output: after.observed_spectrum_count(),
         });
     }
@@ -1847,15 +2007,22 @@ fn compare_index_sequences(
 }
 
 fn compare_spectra(
-    before: &MzmlFacts,
+    expected: &[&MzmlSpectrumRecord],
     after: &MzmlFacts,
+    processing: ProcessingIntent,
     vocabulary_comparable: bool,
-    lengths_comparable: bool,
+    spectrum_lengths_comparable: bool,
     report: &mut IntegrityReport,
 ) -> Option<ConversionIntegrityOutcome> {
     let mut identity_comparable = true;
+    // Whether the representation question could be *asked* of every compared
+    // pair, which is a different fact from no mismatch having been found. A
+    // source that never emitted a marker cannot witness what the output did to
+    // it, and recording the property verified on that pair would turn "nothing
+    // to compare" into "compared and unchanged".
+    let mut representation_comparable = true;
 
-    for (position, (source, output)) in before.spectra().iter().zip(after.spectra()).enumerate() {
+    for (position, (source, output)) in expected.iter().copied().zip(after.spectra()).enumerate() {
         let index = position as u64;
         if source.binary_array_count() != output.binary_array_count() {
             return Some(ConversionIntegrityOutcome::BinaryArrayMismatch {
@@ -1864,7 +2031,9 @@ fn compare_spectra(
                 kind: BinaryArrayMismatchKind::Count,
             });
         }
-        if lengths_comparable && source.default_array_length() != output.default_array_length() {
+        if spectrum_lengths_comparable
+            && source.default_array_length() != output.default_array_length()
+        {
             return Some(ConversionIntegrityOutcome::BinaryArrayMismatch {
                 part: DocumentPart::Spectrum,
                 first_divergent_index: index,
@@ -1899,10 +2068,14 @@ fn compare_spectra(
             (Some(_), Some(_)) => {}
             _ => identity_comparable = false,
         }
-        if vocabulary_comparable
-            && let Some(outcome) = compare_representation(index, source, output, report)
-        {
-            return Some(outcome);
+        if vocabulary_comparable {
+            if !representation_is_comparable(source, output) {
+                representation_comparable = false;
+            }
+            if let Some(outcome) = compare_representation(index, source, output, processing, report)
+            {
+                return Some(outcome);
+            }
         }
         if source.precision() != output.precision() {
             report
@@ -1916,10 +2089,11 @@ fn compare_spectra(
     report
         .verified
         .insert(IntegrityProperty::BinaryArrayPayloadPresence);
-    insert_property(
+    insert_disposition(
         report,
         IntegrityProperty::SpectrumRepresentation,
-        vocabulary_comparable,
+        !expected.is_empty(),
+        vocabulary_comparable && representation_comparable,
     );
     insert_property(
         report,
@@ -1929,13 +2103,72 @@ fn compare_spectra(
     None
 }
 
+/// Whether both sides said what their representation is.
+///
+/// The property this gates is "no unexpected representation change", and a pair
+/// where one side emitted no marker cannot establish it in either direction:
+/// there is nothing to have changed *from*, and nothing to have stayed the same
+/// as. `Conflicting` is the same case wearing the opposite disguise -- a record
+/// claiming both profile and centroid has not said which it is.
+///
+/// Recorded as unverified rather than refused. The existing contract already
+/// treats an added or removed marker as a legal serialization difference and
+/// keeps it advisory; what this stops is that advisory being read afterwards as
+/// evidence that nothing happened.
+const fn representation_is_comparable(
+    source: &MzmlSpectrumRecord,
+    output: &MzmlSpectrumRecord,
+) -> bool {
+    matches!(
+        (source.representation(), output.representation()),
+        (
+            RepresentationMarker::Profile | RepresentationMarker::Centroid,
+            RepresentationMarker::Profile | RepresentationMarker::Centroid
+        )
+    )
+}
+
+/// Whether the bound processing intent leaves a spectrum's point count alone.
+///
+/// M6.2 measured the admitted default picker changing it: source peaks
+/// `2,1,3,1` came back as entries `4,1,7,1`, the surplus being zero-intensity
+/// padding around each apex. So under a centroiding request an unequal point
+/// count is the requested result, and refusing it would reject exactly what the
+/// evidence says the operation does.
+///
+/// Stated as a property of the *intent* rather than tested against the observed
+/// difference, so the answer does not depend on whether a particular document
+/// happened to change.
+const fn processing_preserves_spectrum_point_counts(processing: ProcessingIntent) -> bool {
+    match processing {
+        ProcessingIntent::NoAdditionalCentroiding => true,
+        ProcessingIntent::UnscopedDefaultCentroiding => false,
+    }
+}
+
+/// A representation change is a defect or the requested result, and only the
+/// bound intent says which.
+///
+/// Profile becoming centroid is precisely what
+/// [`ProcessingIntent::UnscopedDefaultCentroiding`] asks for and precisely what
+/// [`ProcessingIntent::NoAdditionalCentroiding`] forbids, so the same pair of
+/// documents is judged differently by the two -- which is the point of binding
+/// an intent to a conversion at all. The other direction is asked for by
+/// neither: nothing this boundary can request turns centroid peaks back into a
+/// profile trace, so it refuses under both.
 fn compare_representation(
     index: u64,
     source: &MzmlSpectrumRecord,
     output: &MzmlSpectrumRecord,
+    processing: ProcessingIntent,
     report: &mut IntegrityReport,
 ) -> Option<ConversionIntegrityOutcome> {
     match (source.representation(), output.representation()) {
+        (RepresentationMarker::Profile, RepresentationMarker::Centroid)
+            if matches!(processing, ProcessingIntent::UnscopedDefaultCentroiding) =>
+        {
+            None
+        }
         (RepresentationMarker::Profile, RepresentationMarker::Centroid)
         | (RepresentationMarker::Centroid, RepresentationMarker::Profile) => {
             Some(ConversionIntegrityOutcome::RepresentationChange {
@@ -2016,7 +2249,7 @@ fn compare_chromatograms(
 
 fn check_compression_policy(
     after: &MzmlFacts,
-    policy: ConversionPolicy,
+    intent: ConversionIntent,
     vocabulary_comparable: bool,
     report: &mut IntegrityReport,
 ) -> Option<ConversionIntegrityOutcome> {
@@ -2027,32 +2260,451 @@ fn check_compression_policy(
         return None;
     }
 
-    let uncompressed = after
+    // Both lists, as (arrays held, arrays marked zlib, arrays marked
+    // uncompressed). Three counts and no set: a record's marker *union* cannot
+    // answer this question in either direction, because one array carrying the
+    // requested marker would satisfy a sibling that carried none.
+    let records = after
         .spectra()
         .iter()
         .map(|record| {
-            u64::from(
-                record
-                    .binary_array_count()
-                    .saturating_sub(record.zlib_compressed_array_count()),
+            (
+                record.binary_array_count(),
+                record.zlib_compressed_array_count(),
+                record.no_compression_array_count(),
             )
         })
         .chain(after.chromatograms().iter().map(|record| {
-            u64::from(
-                record
-                    .binary_array_count()
-                    .saturating_sub(record.zlib_compressed_array_count()),
+            (
+                record.binary_array_count(),
+                record.zlib_compressed_array_count(),
+                record.no_compression_array_count(),
             )
-        }))
+        }));
+    let requested = intent.compression();
+    // Every array must individually state the requested encoding, and none may
+    // state the opposite. An array carrying both markers increments both counts,
+    // so it fails whichever encoding was asked for -- a record that contradicts
+    // itself has not stated anything.
+    let disagreeing = records
+        .map(|(binary, zlib, uncompressed)| {
+            let (stated, opposite) = match requested {
+                CompressionIntent::Zlib => (zlib, uncompressed),
+                CompressionIntent::NoCompression => (uncompressed, zlib),
+            };
+            u64::from(binary.saturating_sub(stated)) + u64::from(opposite)
+        })
         .sum::<u64>();
-    if uncompressed > 0 {
+    if disagreeing > 0 {
         return Some(ConversionIntegrityOutcome::CompressionPolicyMismatch {
-            requested: policy.compression(),
-            uncompressed_array_count: uncompressed,
+            requested,
+            disagreeing_array_count: disagreeing,
         });
     }
-    report.verified.insert(IntegrityProperty::CompressionPolicy);
+    insert_disposition(
+        report,
+        IntegrityProperty::CompressionPolicy,
+        holds_any_binary_array(after),
+        true,
+    );
     None
+}
+
+/// The spectra a bound intent asked the source to contribute.
+///
+/// Every source/output comparison in this module asks "is this still here",
+/// and under an intent that narrows the population that question is not about
+/// the whole source. The projection is taken once, before any comparison runs,
+/// so a requested `msLevel` filter cannot be reported as a spectrum-count
+/// defect by comparisons that were written when every intent carried
+/// everything.
+///
+/// `None` means the projection could not be taken at all: a narrowing intent
+/// over a source holding a spectrum that never said which MS level it is. Which
+/// side of the filter that spectrum belonged on is unknowable, so nothing is
+/// assumed about it and the conversion is refused.
+fn expected_source_spectra(
+    before: &MzmlFacts,
+    population: SpectrumPopulation,
+) -> Option<Vec<&MzmlSpectrumRecord>> {
+    let Some(level) = population.retained_ms_level() else {
+        return Some(before.spectra().iter().collect());
+    };
+    let mut retained = Vec::new();
+    for record in before.spectra() {
+        match record.ms_level() {
+            Some(observed) if observed == level => retained.push(record),
+            Some(_) => {}
+            None => return None,
+        }
+    }
+    Some(retained)
+}
+
+/// The MS-level histogram of a projection, in the shape the scanner reports.
+///
+/// Built the same way the scanner builds its own -- one entry per record, keyed
+/// by the level the record stated -- so that under an intent carrying every
+/// spectrum this is exactly the source's own distribution and the comparison is
+/// the one that always ran.
+fn expected_ms_level_distribution(expected: &[&MzmlSpectrumRecord]) -> BTreeMap<Option<u32>, u64> {
+    let mut distribution = BTreeMap::new();
+    for record in expected {
+        *distribution.entry(record.ms_level()).or_insert(0) += 1;
+    }
+    distribution
+}
+
+/// Whether a record's arrays declared exactly the numeric width that was asked
+/// for, and nothing beside it.
+///
+/// Exact set equality, not membership. A set holding the requested width *and*
+/// another one is two answers to one question, and an empty set is none;
+/// neither is the document saying what the intent asked for.
+fn stores_exactly(observed: NumericPrecisionSet, bits: u8) -> bool {
+    let expected = match bits {
+        32 => NumericPrecisionMarker::Float32,
+        64 => NumericPrecisionMarker::Float64,
+        // Not reachable: `NumericPrecision` names 32 and 64 and nothing else.
+        // Answering `false` rather than guessing means a widened enum fails this
+        // check instead of passing it silently.
+        _ => return false,
+    };
+    observed.bits() == 1 << expected as u8
+}
+
+/// Refuses an output whose stored widths are not the ones the intent asked for.
+///
+/// Read per array role, because the widths are *asked for* per role. The
+/// shipped intent stores m/z at 64 bits and intensity at 32; a per-record union
+/// of the encodings a scanner saw reports `{32, 64}` for that correct output and
+/// for one that swapped the two, so the union cannot answer this question and is
+/// not asked. That is why M6.3 gave the scanner two more sets.
+///
+/// **Both lists, not only the spectra.** A chromatogram carries an intensity
+/// array, the intent states an intensity width for the conversion, and a check
+/// that walked spectra alone would record the property verified over a
+/// chromatogram-only document by an empty loop -- asserting a width nothing had
+/// looked at.
+///
+/// A record holding no arrays is passed over -- there is no stored width to
+/// disagree with. A record holding arrays whose roles are unreadable is
+/// refused, not excused: the role check that runs first establishes only that
+/// the roles appear *somewhere* in the record, and an array claiming two roles
+/// leaves both per-role sets empty. Failing here is the fail-closed reading of
+/// a gap that check documents and cannot close.
+///
+/// The readability argument passed in is the *document pair's*, not the
+/// output's alone, in the comparison path. That is deliberately the same
+/// condition [`check_compression_policy`] degrades on: both are questions about
+/// the output, and answering one of them while the other stands down would make
+/// two requested properties disagree about how much an indirected vocabulary
+/// costs. It is conservative in one direction only -- an unreadable source
+/// leaves this unverified rather than asserted.
+fn check_requested_precision(
+    after: &MzmlFacts,
+    intent: ConversionIntent,
+    vocabulary_readable: bool,
+    report: &mut IntegrityReport,
+) -> Option<ConversionIntegrityOutcome> {
+    if !vocabulary_readable {
+        report
+            .unverified
+            .insert(IntegrityProperty::RequestedNumericPrecision);
+        return None;
+    }
+
+    let requested = intent.precision();
+    for (position, record) in after.spectra().iter().enumerate() {
+        if record.binary_array_count() == 0 {
+            continue;
+        }
+        for (array, observed, bits) in [
+            (ArrayKind::Mz, record.mz_precision(), requested.mz_bits()),
+            (
+                ArrayKind::Intensity,
+                record.intensity_precision(),
+                requested.intensity_bits(),
+            ),
+        ] {
+            if !stores_exactly(observed, bits) {
+                return Some(ConversionIntegrityOutcome::NumericPrecisionMismatch {
+                    requested,
+                    part: DocumentPart::Spectrum,
+                    array,
+                    index: position as u64,
+                });
+            }
+        }
+    }
+    // Chromatograms carry an intensity array exactly as spectra do, and the
+    // intent states one intensity width for the conversion. Their *time* array
+    // is not checked: the intent says nothing about a time axis, and applying
+    // the m/z width to it would be inventing a requirement.
+    for (position, record) in after.chromatograms().iter().enumerate() {
+        if record.binary_array_count() == 0 {
+            continue;
+        }
+        if !stores_exactly(record.intensity_precision(), requested.intensity_bits()) {
+            return Some(ConversionIntegrityOutcome::NumericPrecisionMismatch {
+                requested,
+                part: DocumentPart::Chromatogram,
+                array: ArrayKind::Intensity,
+                index: position as u64,
+            });
+        }
+    }
+    insert_disposition(
+        report,
+        IntegrityProperty::RequestedNumericPrecision,
+        holds_any_binary_array(after),
+        true,
+    );
+    None
+}
+
+/// Whether any record in either list carries a binary array.
+///
+/// What separates "every stored array carries the requested width" from a claim
+/// made over nothing. A document holding no arrays has no width to be wrong
+/// about, and saying so is a different answer from having checked.
+fn holds_any_binary_array(facts: &MzmlFacts) -> bool {
+    facts
+        .spectra()
+        .iter()
+        .any(|record| record.binary_array_count() > 0)
+        || facts
+            .chromatograms()
+            .iter()
+            .any(|record| record.binary_array_count() > 0)
+}
+
+/// Refuses an output holding a spectrum the request excluded.
+///
+/// The half of the population question the output answers by itself, and it is
+/// only a half: that nothing outside the requested set survived. Whether
+/// everything inside it survived is a statement about the source, made by the
+/// comparison twin below.
+///
+/// A spectrum that does not state its MS level is refused rather than excused.
+/// It cannot be shown to be inside the requested set, and a filtered conversion
+/// accepted on silence is exactly the inference this module refuses elsewhere.
+fn check_requested_population_in_output(
+    after: &MzmlFacts,
+    intent: ConversionIntent,
+) -> Option<ConversionIntegrityOutcome> {
+    let requested = intent.population();
+    let level = requested.retained_ms_level()?;
+    for record in after.spectra() {
+        if record.ms_level() != Some(level) {
+            return Some(ConversionIntegrityOutcome::SpectrumPopulationMismatch {
+                requested,
+                unexpected_ms_level: record.ms_level(),
+                expected: None,
+                observed: after.observed_spectrum_count(),
+            });
+        }
+    }
+    None
+}
+
+/// The completeness half of the population question, which needs the source.
+///
+/// The exclusion half ran before every comparison above. What is left is that
+/// nothing the request asked for went missing, asked against the projection
+/// those comparisons were run over -- and the two halves together are what make
+/// this "exactly the requested subset" rather than "nothing unexpected".
+fn check_requested_population(
+    after: &MzmlFacts,
+    intent: ConversionIntent,
+    expected: &[&MzmlSpectrumRecord],
+    vocabulary_comparable: bool,
+    report: &mut IntegrityReport,
+) -> Option<ConversionIntegrityOutcome> {
+    let expected_count = expected.len() as u64;
+    let observed = after.observed_spectrum_count();
+    if expected_count != observed {
+        return Some(ConversionIntegrityOutcome::SpectrumPopulationMismatch {
+            requested: intent.population(),
+            unexpected_ms_level: None,
+            expected: Some(expected_count),
+            observed,
+        });
+    }
+    // Which spectra those are is a controlled-vocabulary fact on both sides.
+    // With the vocabulary indirected the counts still agree and what they are
+    // counts of does not, so the property degrades rather than being asserted.
+    insert_property(
+        report,
+        IntegrityProperty::RequestedSpectrumPopulation,
+        vocabulary_comparable,
+    );
+    None
+}
+
+/// Compares what the output says was done to its peaks against what was asked.
+///
+/// Deliberately asymmetric, because the two requests are not symmetric.
+///
+/// [`ProcessingIntent::NoAdditionalCentroiding`] asks *this boundary* to add
+/// nothing. It does not ask the source to have had nothing done to it, and the
+/// measured executable copies an incoming `dataProcessing` list into its
+/// output -- so a peak-picking record in the output can be the source's own
+/// history rather than anything this conversion did. Reading it as a
+/// contradiction would refuse legitimate already-centroided inputs, so for this
+/// request the history is not a refusal channel. What guards it is the
+/// source/output representation comparison, which is about this conversion, and
+/// only where that comparison could be made.
+///
+/// **A stronger rule exists and is deliberately not taken here.** The per-run
+/// delta is computed below, so "the output carries a picker the source did not"
+/// is available for this request too -- and refusing on it would be a new
+/// refusal on the path every production conversion takes, resting on the
+/// copy-through behaviour being exactly what one measured fixture showed. That
+/// is an evidence question with an owner, the same kind M6.2 answers. The delta
+/// is used only to avoid a *false rejection*, never to create a new one.
+///
+/// [`ProcessingIntent::UnscopedDefaultCentroiding`] asks for one algorithm on
+/// every spectrum, and three things have to be true of the answer rather than
+/// one.
+///
+/// It is asked **per spectrum**, through each one's effective `dataProcessing`
+/// reference. A document-wide reading would let a picker attached to one
+/// spectrum establish the request for another, and let a definition the document
+/// merely holds establish it for all of them.
+///
+/// It is asked as a **delta against the source's own history**, because the
+/// provider copies that history through. Folding the output's whole history into
+/// one answer rejects a faithful centroiding of an already-processed document.
+///
+/// And it is asked over **occurrences of distinguishable identities**, because a
+/// second copy of an algorithm is a second application of it, and two different
+/// rejected pickers are two different facts. What that model cannot distinguish
+/// is two *unknown* implementations from one another, so where the source
+/// already carried one the delta over unknowns is not established and the
+/// property degrades rather than being claimed.
+fn check_requested_processing(
+    after: &MzmlFacts,
+    before: Option<&MzmlFacts>,
+    intent: ConversionIntent,
+    report: &mut IntegrityReport,
+) -> Option<ConversionIntegrityOutcome> {
+    let requested = intent.processing();
+    match requested {
+        ProcessingIntent::NoAdditionalCentroiding => {
+            // Established by the representation comparison, and only where that
+            // comparison established something. A source that never said what it
+            // was leaves `SpectrumRepresentation` unverified, and this property
+            // may not claim more than it.
+            let compared = report
+                .verified
+                .contains(&IntegrityProperty::SpectrumRepresentation);
+            insert_disposition(
+                report,
+                IntegrityProperty::RequestedProcessing,
+                !after.spectra().is_empty(),
+                compared,
+            );
+            None
+        }
+        ProcessingIntent::UnscopedDefaultCentroiding => {
+            let mut established = true;
+            for (position, output) in after.spectra().iter().enumerate() {
+                if output.binary_array_count() == 0 {
+                    continue;
+                }
+                // With no source there is nothing inherited, and none may be
+                // invented: a vendor acquisition's output history is whatever
+                // this run wrote. With a source, the spectrum it was projected
+                // from is the one whose history this output inherited.
+                let inherited = match before {
+                    None => ProcessingHistory::default(),
+                    Some(_) => match source_history_for(before, position) {
+                        Some(history) => history,
+                        // The source spectrum could not say what it was under,
+                        // so nothing about this output is attributable.
+                        None => {
+                            established = false;
+                            continue;
+                        }
+                    },
+                };
+                let EffectiveProcessing::Resolved(observed) = output.effective_processing() else {
+                    // An unresolved reference is not an absence of processing.
+                    established = false;
+                    continue;
+                };
+                let added = observed.added_over(inherited);
+
+                // A recognised algorithm this run added and nobody asked for.
+                // Reliable per identity: these are distinguished by name.
+                for unrequested in [
+                    ProcessingAlgorithm::WaveletCantWait,
+                    ProcessingAlgorithm::VendorPeakPicking,
+                ] {
+                    if added.count(unrequested) > 0 {
+                        return Some(ConversionIntegrityOutcome::ProcessingAlgorithmMismatch {
+                            requested,
+                            observed: unrequested,
+                            spectrum_index: position as u64,
+                        });
+                    }
+                }
+                // An unknown one, but only where the subtraction means
+                // something. Where the source already carried an unknown method
+                // this cannot tell a copied one from a new one, so it neither
+                // refuses nor establishes.
+                if ProcessingHistory::unknown_delta_is_establishable(inherited) {
+                    if added.count(ProcessingAlgorithm::Unrecognized) > 0 {
+                        return Some(ConversionIntegrityOutcome::ProcessingAlgorithmMismatch {
+                            requested,
+                            observed: ProcessingAlgorithm::Unrecognized,
+                            spectrum_index: position as u64,
+                        });
+                    }
+                } else {
+                    established = false;
+                }
+                if added.count(ProcessingAlgorithm::DefaultLocalMaximum) == 0 {
+                    established = false;
+                }
+            }
+            insert_disposition(
+                report,
+                IntegrityProperty::RequestedProcessing,
+                after
+                    .spectra()
+                    .iter()
+                    .any(|record| record.binary_array_count() > 0),
+                established,
+            );
+
+            for (position, record) in after.spectra().iter().enumerate() {
+                if record.binary_array_count() == 0 {
+                    continue;
+                }
+                if record.representation() != RepresentationMarker::Centroid {
+                    return Some(ConversionIntegrityOutcome::CentroidRepresentationMissing {
+                        spectrum_index: position as u64,
+                        observed: record.representation(),
+                    });
+                }
+            }
+            None
+        }
+    }
+}
+
+/// The processing history the source spectrum at this position was under.
+///
+/// `None` where there is no such spectrum, or where its own reference could not
+/// be resolved. The positions line up because every comparison above ran over
+/// the projection in the same order.
+fn source_history_for(before: Option<&MzmlFacts>, position: usize) -> Option<ProcessingHistory> {
+    match before?.spectra().get(position)?.effective_processing() {
+        EffectiveProcessing::Resolved(history) => Some(history),
+        EffectiveProcessing::Unresolved => None,
+    }
 }
 
 /// The verified statement is "the set of emitted retention-time unit markers is
@@ -2084,6 +2736,26 @@ fn insert_property(report: &mut IntegrityReport, property: IntegrityProperty, ve
     }
 }
 
+/// Records a property the document gave nothing to establish it over.
+///
+/// Not `verified`, because no record was inspected, and not `unverified`,
+/// because nothing was left unanswered: a document with no spectra has no
+/// spectrum representation to have changed. The distinction matters because
+/// `unverified` is what stops a run being fully verified, and a chromatogram-only
+/// conversion has not failed to establish anything.
+fn insert_disposition(
+    report: &mut IntegrityReport,
+    property: IntegrityProperty,
+    applicable: bool,
+    verified: bool,
+) {
+    if applicable {
+        insert_property(report, property, verified);
+    } else {
+        report.inapplicable.insert(property);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -2092,6 +2764,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+    use crate::intent::OutputFormat;
     use crate::mzml::MzmlRoot;
 
     static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -2330,6 +3003,31 @@ mod tests {
     }
 
     impl SpectrumFixture {
+        /// A survey scan still carrying its profile trace, at a chosen length.
+        const fn profile_ms1(array_length: u64) -> Self {
+            Self {
+                ms_level: 1,
+                array_length,
+                arrays: "mz+intensity",
+                representation: "profile",
+                precursors: 0,
+            }
+        }
+
+        /// A survey scan whose peaks have already been picked.
+        ///
+        /// The output side of a centroiding conversion: same level, same
+        /// arrays, different representation.
+        const fn centroided_ms1(array_length: u64) -> Self {
+            Self {
+                ms_level: 1,
+                array_length,
+                arrays: "mz+intensity",
+                representation: "centroid",
+                precursors: 0,
+            }
+        }
+
         const fn ms1(array_length: u64) -> Self {
             Self {
                 ms_level: 1,
@@ -2400,9 +3098,17 @@ mod tests {
             for accession in arrays {
                 // The two serializations deliberately disagree on numeric
                 // encoding and cvParam order, which must never fail a check.
-                let precision = match serialization {
-                    Serialization::Source => "MS:1000523",
-                    Serialization::Output => "MS:1000521",
+                //
+                // Per array role on the output side, because the shipped intent
+                // asks per array role: M6.2 measured this build writing m/z at
+                // 64 bits and intensity at 32 when asked for nothing in
+                // particular. The intensity arrays still differ between the two
+                // documents, so the advisory this fixture exists for is still
+                // raised.
+                let precision = match (serialization, *accession) {
+                    (Serialization::Source, _) => "MS:1000523",
+                    (Serialization::Output, "MS:1000515") => "MS:1000521",
+                    (Serialization::Output, _) => "MS:1000523",
                 };
                 body.push_str(r#"<binaryDataArray encodedLength="8">"#);
                 match serialization {
@@ -2420,13 +3126,22 @@ mod tests {
 
         let mut chromatogram_body = String::new();
         for index in 0..chromatograms {
+            // A time array and an intensity array, because that is what a
+            // converted chromatogram carries and because the intent states an
+            // intensity width for both lists. The time array keeps 64 bits on
+            // both sides: no intent says anything about a time axis, and the
+            // check must not invent a requirement for it.
+            let chromatogram_intensity = match serialization {
+                Serialization::Source => "MS:1000523",
+                Serialization::Output => "MS:1000521",
+            };
             chromatogram_body.push_str(&format!(
-                r#"<chromatogram index="{index}" id="TIC{index}" defaultArrayLength="4"><binaryDataArrayList count="1"><binaryDataArray encodedLength="8"><cvParam accession="MS:1000595"/><cvParam accession="MS:1000574"/><binary>AA==</binary></binaryDataArray></binaryDataArrayList></chromatogram>"#
+                r#"<chromatogram index="{index}" id="TIC{index}" defaultArrayLength="4"><binaryDataArrayList count="2"><binaryDataArray encodedLength="8"><cvParam accession="MS:1000595"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000523"/><binary>AA==</binary></binaryDataArray><binaryDataArray encodedLength="8"><cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="{chromatogram_intensity}"/><binary>AA==</binary></binaryDataArray></binaryDataArrayList></chromatogram>"#
             ));
         }
 
         let run = format!(
-            r#"<run id="R1"><spectrumList count="{}">{body}</spectrumList><chromatogramList count="{chromatograms}">{chromatogram_body}</chromatogramList></run>"#,
+            r#"<dataProcessingList count="1"><dataProcessing id="{APPLIED_PROCESSING}"><processingMethod order="0" softwareRef="pwiz"><cvParam accession="MS:1000544" name="Conversion to mzML"/></processingMethod></dataProcessing></dataProcessingList><run id="R1"><spectrumList count="{}" defaultDataProcessingRef="{APPLIED_PROCESSING}">{body}</spectrumList><chromatogramList count="{chromatograms}">{chromatogram_body}</chromatogramList></run>"#,
             spectra.len()
         );
         match serialization {
@@ -2441,6 +3156,110 @@ mod tests {
 
     #[cfg(windows)]
     fn verify(source_body: &str, output_body: &str) -> ConversionIntegrityOutcome {
+        verify_under(source_body, output_body, ConversionIntent::SHIPPED)
+    }
+
+    /// One admitted combination, or a panic naming what was asked for.
+    ///
+    /// Written as a lookup rather than a constructor so a test cannot quietly
+    /// assert something about a combination the evidence never admitted.
+    #[cfg(windows)]
+    fn admitted(
+        processing: ProcessingIntent,
+        population: SpectrumPopulation,
+        precision: NumericPrecision,
+        compression: CompressionIntent,
+    ) -> ConversionIntent {
+        ConversionIntent::admitted(
+            OutputFormat::MzMl,
+            processing,
+            population,
+            precision,
+            compression,
+        )
+        .expect("the test asked for a combination the evidence does not admit")
+    }
+
+    /// The output's intensity arrays, widened to the 64 bits some intents ask
+    /// for. The m/z arrays already carry 64 in every output fixture.
+    #[cfg(windows)]
+    fn intensity_at_64(document: &str) -> String {
+        document.replace(
+            r#"<cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/>"#,
+            r#"<cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000523"/>"#,
+        )
+    }
+
+    /// Every array's zlib marker replaced by the `no compression` one.
+    #[cfg(windows)]
+    fn stated_uncompressed(document: &str) -> String {
+        document.replace(
+            r#"<cvParam accession="MS:1000574"/>"#,
+            r#"<cvParam accession="MS:1000576"/>"#,
+        )
+    }
+
+    /// A `dataProcessing` list claiming one peak-picking method per name.
+    ///
+    /// Named through a free-text `userParam`, because that is where the
+    /// measured build puts the implementation: the accession is the same for
+    /// every picker it ships.
+    /// The `dataProcessing` identity every fixture spectrum is under.
+    #[cfg(windows)]
+    const APPLIED_PROCESSING: &str = "pwiz";
+
+    /// An identity no spectrum references, for the inert-definition case.
+    #[cfg(windows)]
+    const UNREFERENCED_PROCESSING: &str = "not_applied";
+
+    #[cfg(windows)]
+    fn picking_methods(names: &[&str]) -> String {
+        let mut methods = String::new();
+        for (order, name) in names.iter().enumerate() {
+            methods.push_str(&format!(
+                r#"<processingMethod order="{}" softwareRef="pwiz"><cvParam accession="MS:1000035" name="peak picking"/><userParam name="{name}"/></processingMethod>"#,
+                order + 1
+            ));
+        }
+        methods
+    }
+
+    /// Adds peak-picking methods to the definition every spectrum references.
+    #[cfg(windows)]
+    fn claiming_pickers(document: &str, names: &[&str]) -> String {
+        document.replacen(
+            "</dataProcessing>",
+            &format!("{}</dataProcessing>", picking_methods(names)),
+            1,
+        )
+    }
+
+    /// Adds a whole definition nothing references, beside the one that is.
+    #[cfg(windows)]
+    fn claiming_pickers_unreferenced(document: &str, names: &[&str]) -> String {
+        claiming_pickers_under(document, UNREFERENCED_PROCESSING, names)
+    }
+
+    /// Adds a whole definition under a chosen identity, which may repeat one the
+    /// document already declares.
+    #[cfg(windows)]
+    fn claiming_pickers_under(document: &str, id: &str, names: &[&str]) -> String {
+        let block = format!(
+            r#"<dataProcessing id="{id}">{}</dataProcessing>"#,
+            picking_methods(names)
+        );
+        document.replace(
+            "</dataProcessingList>",
+            &format!("{block}</dataProcessingList>"),
+        )
+    }
+
+    #[cfg(windows)]
+    fn verify_under(
+        source_body: &str,
+        output_body: &str,
+        intent: ConversionIntent,
+    ) -> ConversionIntegrityOutcome {
         let directory = TestDirectory::new();
         let source_path = directory.path().join("source.mzML");
         let output_directory = directory.path().join("converted");
@@ -2454,7 +3273,7 @@ mod tests {
             &source,
             &output_directory,
             OsStr::new("source.mzML"),
-            ConversionPolicy::default(),
+            intent,
             MzmlScanLimits::default(),
         )
     }
@@ -2497,6 +3316,1082 @@ mod tests {
             valid
                 .verified()
                 .contains(&IntegrityProperty::CompressionPolicy)
+        );
+    }
+
+    /// The headline claim of M6.3, stated as one assertion pair.
+    ///
+    /// One byte-identical output document. Under the intent the conversion was
+    /// bound to it is a valid result; under a *different admitted* intent it is
+    /// a refusal. Nothing about the document changed between the two calls --
+    /// only what was asked for -- which is what makes the intent part of the
+    /// judgement rather than decoration beside it.
+    #[cfg(windows)]
+    #[test]
+    fn the_same_output_satisfies_one_intent_and_fails_another() {
+        let source = source_document(&TWO_SPECTRA, 1);
+        let output = output_document(&TWO_SPECTRA, 1);
+
+        assert!(
+            verify_under(&source, &output, ConversionIntent::SHIPPED)
+                .valid()
+                .is_some(),
+            "the shipped intent is what this output was produced under"
+        );
+
+        // Same document, asked for 64-bit intensities instead.
+        assert_eq!(
+            verify_under(
+                &source,
+                &output,
+                admitted(
+                    ProcessingIntent::NoAdditionalCentroiding,
+                    SpectrumPopulation::All,
+                    NumericPrecision::Mz64Intensity64,
+                    CompressionIntent::Zlib,
+                ),
+            ),
+            ConversionIntegrityOutcome::NumericPrecisionMismatch {
+                requested: NumericPrecision::Mz64Intensity64,
+                part: DocumentPart::Spectrum,
+                array: ArrayKind::Intensity,
+                index: 0,
+            },
+            "a wider intensity request accepted a narrower stored width"
+        );
+    }
+
+    /// The m/z and intensity widths are asked for apart and answered apart.
+    ///
+    /// A per-record union of the encodings a scanner saw cannot make this
+    /// distinction: it reports `{32, 64}` for the correct document below and
+    /// for the one with the two roles swapped.
+    #[cfg(windows)]
+    #[test]
+    fn each_array_role_is_held_to_the_width_its_own_request_named() {
+        let source = source_document(&TWO_SPECTRA, 1);
+
+        // The correct document first, and it is half the proof: a per-record
+        // union of the encodings this output declares is {32, 64}, which is the
+        // same set the swapped document below declares. A check reading the
+        // union refuses this one, so passing here and failing there is what
+        // shows the two roles are read apart.
+        assert!(
+            verify_under(
+                &source,
+                &output_document(&TWO_SPECTRA, 1),
+                ConversionIntent::SHIPPED,
+            )
+            .valid()
+            .is_some(),
+            "the correctly encoded output was refused"
+        );
+
+        let swapped = output_document(&TWO_SPECTRA, 1)
+            .replace(
+                r#"<cvParam accession="MS:1000514"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000523"/>"#,
+                r#"<cvParam accession="MS:1000514"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/>"#,
+            )
+            .replace(
+                r#"<cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/>"#,
+                r#"<cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000523"/>"#,
+            );
+
+        assert_eq!(
+            verify_under(&source, &swapped, ConversionIntent::SHIPPED),
+            ConversionIntegrityOutcome::NumericPrecisionMismatch {
+                requested: NumericPrecision::Mz64Intensity32,
+                part: DocumentPart::Spectrum,
+                array: ArrayKind::Mz,
+                index: 0,
+            },
+            "the roles were swapped and the union of widths did not change"
+        );
+    }
+
+    /// A marker on one array does not answer for a sibling that stated none.
+    ///
+    /// The record's marker *union* is the same set in the first two cases below
+    /// -- exactly `{no compression}` -- so a check reading the union accepts the
+    /// second, where one array's encoding is simply unstated. Compression is
+    /// therefore counted per array, in both directions.
+    #[cfg(windows)]
+    #[test]
+    fn compression_is_established_per_array_and_never_by_a_sibling() {
+        let source = source_document(&TWO_SPECTRA, 1);
+        let no_compression = admitted(
+            ProcessingIntent::NoAdditionalCentroiding,
+            SpectrumPopulation::All,
+            NumericPrecision::Mz64Intensity64,
+            CompressionIntent::NoCompression,
+        );
+        let widened = intensity_at_64(&output_document(&TWO_SPECTRA, 1));
+
+        // Every array states it. The only shape that passes.
+        assert!(
+            verify_under(&source, &stated_uncompressed(&widened), no_compression)
+                .valid()
+                .is_some(),
+            "an output stating no compression on every array was refused"
+        );
+
+        // One array states it and its sibling states nothing. The union is
+        // unchanged; the counts are not.
+        let silent_sibling =
+            stated_uncompressed(&widened).replacen(r#"<cvParam accession="MS:1000576"/>"#, "", 1);
+        assert!(
+            matches!(
+                verify_under(&source, &silent_sibling, no_compression),
+                ConversionIntegrityOutcome::CompressionPolicyMismatch {
+                    requested: CompressionIntent::NoCompression,
+                    ..
+                }
+            ),
+            "an array that stated no encoding was covered by its sibling"
+        );
+
+        // One array states it and its sibling states the opposite.
+        let mixed = stated_uncompressed(&widened).replacen(
+            r#"<cvParam accession="MS:1000576"/>"#,
+            r#"<cvParam accession="MS:1000574"/>"#,
+            1,
+        );
+        assert!(
+            matches!(
+                verify_under(&source, &mixed, no_compression),
+                ConversionIntegrityOutcome::CompressionPolicyMismatch {
+                    requested: CompressionIntent::NoCompression,
+                    ..
+                }
+            ),
+            "a zlib array was accepted under a request for no compression"
+        );
+
+        // One array carrying both markers. It has not stated an encoding; it has
+        // stated two, and a record contradicting itself fails whichever was
+        // asked for.
+        let contradictory = stated_uncompressed(&widened).replacen(
+            r#"<cvParam accession="MS:1000576"/>"#,
+            r#"<cvParam accession="MS:1000576"/><cvParam accession="MS:1000574"/>"#,
+            1,
+        );
+        assert!(
+            matches!(
+                verify_under(&source, &contradictory, no_compression),
+                ConversionIntegrityOutcome::CompressionPolicyMismatch {
+                    requested: CompressionIntent::NoCompression,
+                    ..
+                }
+            ),
+            "an array claiming both encodings was accepted"
+        );
+        // The same contradiction the other way round, on a document whose
+        // widths are the shipped ones so nothing else can answer first.
+        let contradictory_under_zlib = output_document(&TWO_SPECTRA, 1).replacen(
+            r#"<cvParam accession="MS:1000574"/>"#,
+            r#"<cvParam accession="MS:1000574"/><cvParam accession="MS:1000576"/>"#,
+            1,
+        );
+        assert!(
+            matches!(
+                verify_under(
+                    &source,
+                    &contradictory_under_zlib,
+                    ConversionIntent::SHIPPED
+                ),
+                ConversionIntegrityOutcome::CompressionPolicyMismatch {
+                    requested: CompressionIntent::Zlib,
+                    ..
+                }
+            ),
+            "a self-contradicting array was accepted under a zlib request"
+        );
+    }
+
+    /// A chromatogram's intensity array is held to the requested width too.
+    ///
+    /// The intent states one intensity width for the conversion, and a
+    /// chromatogram carries an intensity array. A check that walked spectra
+    /// alone recorded the property verified over a chromatogram-only document by
+    /// an empty loop -- asserting a width nothing had looked at.
+    #[cfg(windows)]
+    #[test]
+    fn a_chromatogram_intensity_array_is_held_to_the_requested_width() {
+        const NO_SPECTRA: [SpectrumFixture; 0] = [];
+
+        // Chromatograms only, at the width the shipped intent asks for.
+        let outcome = verify(
+            &document(&NO_SPECTRA, 2, Serialization::Source),
+            &document(&NO_SPECTRA, 2, Serialization::Output),
+        );
+        let valid = outcome
+            .valid()
+            .unwrap_or_else(|| panic!("a correct chromatogram-only output failed: {outcome:?}"));
+        assert!(
+            valid
+                .verified()
+                .contains(&IntegrityProperty::RequestedNumericPrecision)
+        );
+
+        // The same document with the chromatogram intensity widened. Nothing
+        // else about it changed, and nothing else could have caught it.
+        let widened = document(&NO_SPECTRA, 2, Serialization::Output).replace(
+            r#"<cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/>"#,
+            r#"<cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000523"/>"#,
+        );
+        assert_eq!(
+            verify(&document(&NO_SPECTRA, 2, Serialization::Source), &widened),
+            ConversionIntegrityOutcome::NumericPrecisionMismatch {
+                requested: NumericPrecision::Mz64Intensity32,
+                part: DocumentPart::Chromatogram,
+                array: ArrayKind::Intensity,
+                index: 0,
+            }
+        );
+
+        // Mixed lists, spectra correct and the chromatogram wrong. The spectrum
+        // loop passes and the document is still refused.
+        let mixed = output_document(&TWO_SPECTRA, 1).replacen(
+            r#"<chromatogram index="0" id="TIC0" defaultArrayLength="4"><binaryDataArrayList count="2"><binaryDataArray encodedLength="8"><cvParam accession="MS:1000595"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000523"/><binary>AA==</binary></binaryDataArray><binaryDataArray encodedLength="8"><cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/>"#,
+            r#"<chromatogram index="0" id="TIC0" defaultArrayLength="4"><binaryDataArrayList count="2"><binaryDataArray encodedLength="8"><cvParam accession="MS:1000595"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000523"/><binary>AA==</binary></binaryDataArray><binaryDataArray encodedLength="8"><cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000523"/>"#,
+            1,
+        );
+        assert_eq!(
+            verify(&source_document(&TWO_SPECTRA, 1), &mixed),
+            ConversionIntegrityOutcome::NumericPrecisionMismatch {
+                requested: NumericPrecision::Mz64Intensity32,
+                part: DocumentPart::Chromatogram,
+                array: ArrayKind::Intensity,
+                index: 0,
+            }
+        );
+
+        // Mixed lists, everything correct: the unmodified fixture pair, which
+        // every other comparison test already runs over.
+        assert!(
+            verify(
+                &source_document(&TWO_SPECTRA, 1),
+                &output_document(&TWO_SPECTRA, 1)
+            )
+            .valid()
+            .is_some()
+        );
+
+        // A chromatogram whose intensity role cannot be established: one array
+        // claiming both roles. The record-level role check is satisfied -- both
+        // roles appear -- and the width still cannot be attributed, so it fails
+        // closed rather than being passed over.
+        let ambiguous = document(&NO_SPECTRA, 2, Serialization::Output).replace(
+            r#"<cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/>"#,
+            r#"<cvParam accession="MS:1000515"/><cvParam accession="MS:1000595"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/>"#,
+        );
+        assert_eq!(
+            verify(&document(&NO_SPECTRA, 2, Serialization::Source), &ambiguous),
+            ConversionIntegrityOutcome::NumericPrecisionMismatch {
+                requested: NumericPrecision::Mz64Intensity32,
+                part: DocumentPart::Chromatogram,
+                array: ArrayKind::Intensity,
+                index: 0,
+            }
+        );
+    }
+
+    /// Compression is checked in both directions, and neither is the other's
+    /// absence.
+    #[cfg(windows)]
+    #[test]
+    fn compression_is_judged_against_the_request_in_both_directions() {
+        let source = source_document(&TWO_SPECTRA, 1);
+        let compressed = output_document(&TWO_SPECTRA, 1);
+        let uncompressed = stated_uncompressed(&compressed);
+        let no_compression = admitted(
+            ProcessingIntent::NoAdditionalCentroiding,
+            SpectrumPopulation::All,
+            NumericPrecision::Mz64Intensity64,
+            CompressionIntent::NoCompression,
+        );
+
+        // Asked for zlib, given arrays that state they are not compressed.
+        let outcome = verify_under(&source, &uncompressed, ConversionIntent::SHIPPED);
+        let ConversionIntegrityOutcome::CompressionPolicyMismatch {
+            requested,
+            disagreeing_array_count,
+        } = outcome
+        else {
+            panic!("an uncompressed output satisfied a zlib request: {outcome:?}");
+        };
+        assert_eq!(requested, CompressionIntent::Zlib);
+        assert!(disagreeing_array_count > 0);
+
+        // Asked for no compression, given zlib. The widths are what that intent
+        // asks for, so compression is the only thing left to disagree about.
+        let outcome = verify_under(&source, &intensity_at_64(&compressed), no_compression);
+        let ConversionIntegrityOutcome::CompressionPolicyMismatch {
+            requested,
+            disagreeing_array_count,
+        } = outcome
+        else {
+            panic!("a zlib output satisfied a no-compression request: {outcome:?}");
+        };
+        assert_eq!(requested, CompressionIntent::NoCompression);
+        assert!(disagreeing_array_count > 0);
+
+        // And the output that does state it: valid, under that intent alone.
+        assert!(
+            verify_under(
+                &source,
+                &stated_uncompressed(&intensity_at_64(&compressed)),
+                no_compression,
+            )
+            .valid()
+            .is_some(),
+            "an output stating no compression failed the request for it"
+        );
+    }
+
+    /// A narrowed population is the requested subset, and the comparison is
+    /// made against that subset rather than against the whole source.
+    ///
+    /// Both halves are asserted, because each fails differently: a spectrum the
+    /// request excluded surviving, and one it asked for going missing. The same
+    /// pair of documents under `All` is a plain count loss, which is what the
+    /// comparison said before an intent was bound to it.
+    #[cfg(windows)]
+    #[test]
+    fn a_narrowed_population_is_the_requested_subset_not_a_missing_spectrum() {
+        let source = source_document(&TWO_SPECTRA, 1);
+        let survey_only = intensity_at_64(&output_document(&[SpectrumFixture::ms1(15)], 1));
+        let ms1_only = admitted(
+            ProcessingIntent::NoAdditionalCentroiding,
+            SpectrumPopulation::Ms1Only,
+            NumericPrecision::Mz64Intensity64,
+            CompressionIntent::Zlib,
+        );
+        let ms2_only = admitted(
+            ProcessingIntent::NoAdditionalCentroiding,
+            SpectrumPopulation::Ms2Only,
+            NumericPrecision::Mz64Intensity64,
+            CompressionIntent::Zlib,
+        );
+
+        assert!(
+            verify_under(&source, &survey_only, ms1_only)
+                .valid()
+                .is_some(),
+            "the requested subset was read as a loss"
+        );
+
+        // The same output, asked for the other level: what survived is exactly
+        // what that request excluded.
+        assert_eq!(
+            verify_under(&source, &survey_only, ms2_only),
+            ConversionIntegrityOutcome::SpectrumPopulationMismatch {
+                requested: SpectrumPopulation::Ms2Only,
+                unexpected_ms_level: Some(1),
+                expected: None,
+                observed: 1,
+            }
+        );
+
+        // And under an intent that asked for everything, the same output is the
+        // count loss it has always been.
+        assert_eq!(
+            verify_under(
+                &source,
+                &survey_only,
+                admitted(
+                    ProcessingIntent::NoAdditionalCentroiding,
+                    SpectrumPopulation::All,
+                    NumericPrecision::Mz64Intensity64,
+                    CompressionIntent::Zlib,
+                ),
+            ),
+            ConversionIntegrityOutcome::SpectrumCountMismatch {
+                source: 2,
+                output: 1,
+            }
+        );
+    }
+
+    /// A filtered request over a source that does not say what its spectra are
+    /// is refused rather than guessed at.
+    #[cfg(windows)]
+    #[test]
+    fn a_narrowed_population_over_an_unstated_source_level_fails_closed() {
+        let source = source_document(&TWO_SPECTRA, 1).replace(
+            r#"<cvParam accession="MS:1000511" name="ms level" value="2"/>"#,
+            "",
+        );
+        let survey_only = intensity_at_64(&output_document(&[SpectrumFixture::ms1(15)], 1));
+
+        assert_eq!(
+            verify_under(
+                &source,
+                &survey_only,
+                admitted(
+                    ProcessingIntent::NoAdditionalCentroiding,
+                    SpectrumPopulation::Ms1Only,
+                    NumericPrecision::Mz64Intensity64,
+                    CompressionIntent::Zlib,
+                ),
+            ),
+            ConversionIntegrityOutcome::SpectrumPopulationMismatch {
+                requested: SpectrumPopulation::Ms1Only,
+                unexpected_ms_level: None,
+                expected: None,
+                observed: 1,
+            },
+            "a spectrum of unknown level was silently sorted onto one side of the filter"
+        );
+    }
+
+    /// Centroiding changes a spectrum's point count, and the contract says so.
+    ///
+    /// M6.2 measured the admitted default picker turning source peaks
+    /// `2,1,3,1` into entries `4,1,7,1` -- the surplus being zero-intensity
+    /// padding around each apex. An unconditional source/output length equality
+    /// therefore rejected the exact operation the intent exists to express,
+    /// before the requested-processing judgement could run.
+    ///
+    /// The measured counts are used rather than a convenient pair, because a
+    /// fixture whose lengths happen to match proves nothing about this.
+    #[cfg(windows)]
+    #[test]
+    fn centroiding_may_change_spectrum_point_counts() {
+        const PROFILE: [SpectrumFixture; 4] = [
+            SpectrumFixture::profile_ms1(2),
+            SpectrumFixture::profile_ms1(1),
+            SpectrumFixture::profile_ms1(3),
+            SpectrumFixture::profile_ms1(1),
+        ];
+        const PICKED: [SpectrumFixture; 4] = [
+            SpectrumFixture::centroided_ms1(4),
+            SpectrumFixture::centroided_ms1(1),
+            SpectrumFixture::centroided_ms1(7),
+            SpectrumFixture::centroided_ms1(1),
+        ];
+        let centroiding = admitted(
+            ProcessingIntent::UnscopedDefaultCentroiding,
+            SpectrumPopulation::All,
+            NumericPrecision::Mz64Intensity64,
+            CompressionIntent::Zlib,
+        );
+        let source = document(&PROFILE, 1, Serialization::Source);
+        let picked = claiming_pickers(
+            &intensity_at_64(&document(&PICKED, 1, Serialization::Output)),
+            &["local maximum peak picker"],
+        );
+
+        let outcome = verify_under(&source, &picked, centroiding);
+        let valid = outcome.valid().unwrap_or_else(|| {
+            panic!("the measured centroiding transformation was rejected: {outcome:?}")
+        });
+
+        // Not verified, and not unverified either. The conversion asked for the
+        // transformation, so preserving spectrum point counts was never a
+        // question it failed to answer.
+        assert!(
+            valid
+                .inapplicable()
+                .contains(&IntegrityProperty::SpectrumArrayLengths),
+            "spectrum lengths were not recorded as outside the question: {:?}",
+            valid.inapplicable()
+        );
+        assert!(
+            !valid
+                .verified()
+                .contains(&IntegrityProperty::SpectrumArrayLengths),
+            "a skipped comparison was reported as established"
+        );
+        // The chromatogram list is untouched by spectrum processing, so its own
+        // lengths are still compared and still hold.
+        assert!(
+            valid
+                .verified()
+                .contains(&IntegrityProperty::ChromatogramArrayLengths)
+        );
+        assert!(
+            valid
+                .verified()
+                .contains(&IntegrityProperty::RequestedProcessing)
+        );
+
+        // The same changed lengths under a request that promised to change
+        // nothing. Representation is unchanged on both sides here, so length is
+        // the only thing that can answer -- and it must.
+        const PROFILE_LONGER: [SpectrumFixture; 4] = [
+            SpectrumFixture::profile_ms1(4),
+            SpectrumFixture::profile_ms1(1),
+            SpectrumFixture::profile_ms1(7),
+            SpectrumFixture::profile_ms1(1),
+        ];
+        assert_eq!(
+            verify_under(
+                &source,
+                &document(&PROFILE_LONGER, 1, Serialization::Output),
+                ConversionIntent::SHIPPED,
+            ),
+            ConversionIntegrityOutcome::BinaryArrayMismatch {
+                part: DocumentPart::Spectrum,
+                first_divergent_index: 0,
+                kind: BinaryArrayMismatchKind::Length,
+            },
+            "a conversion that promised to change nothing accepted a changed point count"
+        );
+
+        // And an unchanged pair under that request still establishes the
+        // property rather than leaving it out.
+        let unchanged = verify_under(
+            &source,
+            &document(&PROFILE, 1, Serialization::Output),
+            ConversionIntent::SHIPPED,
+        );
+        let valid = unchanged
+            .valid()
+            .expect("an unchanged pair is a valid conversion");
+        assert!(
+            valid
+                .verified()
+                .contains(&IntegrityProperty::SpectrumArrayLengths)
+        );
+        assert!(
+            valid.inapplicable().is_empty(),
+            "a conversion that asked for no transformation put something outside the question"
+        );
+    }
+
+    /// What the output says was done to its peaks, compared against what the
+    /// source already said, per spectrum and per occurrence.
+    ///
+    /// Every arm is asserted here, including the ones that do not fail: a
+    /// history the output merely repeats establishes nothing rather than either
+    /// answer, and only an algorithm this run added can satisfy or refuse the
+    /// request.
+    #[cfg(windows)]
+    #[test]
+    fn a_processing_claim_is_classified_and_only_the_admitted_algorithm_satisfies_it() {
+        const PICKED: [SpectrumFixture; 2] =
+            [SpectrumFixture::centroided_ms1(15), SpectrumFixture::ms2(8)];
+        const WAVELET: &str = "CantWaiT (continuous wavelet transform) peak picker";
+        const VENDOR: &str = "vendor peak picking";
+        const DEFAULT: &str = "local maximum peak picker";
+        let source = source_document(&TWO_SPECTRA, 1);
+        let picked = intensity_at_64(&output_document(&PICKED, 1));
+        let centroiding = admitted(
+            ProcessingIntent::UnscopedDefaultCentroiding,
+            SpectrumPopulation::All,
+            NumericPrecision::Mz64Intensity64,
+            CompressionIntent::Zlib,
+        );
+
+        // The admitted algorithm, named as this build names it, over a source
+        // carrying no history at all.
+        let outcome = verify_under(&source, &claiming_pickers(&picked, &[DEFAULT]), centroiding);
+        let valid = outcome
+            .valid()
+            .unwrap_or_else(|| panic!("the requested algorithm was refused: {outcome:?}"));
+        assert!(
+            valid
+                .verified()
+                .contains(&IntegrityProperty::RequestedProcessing)
+        );
+
+        // A recognized algorithm that is not the requested one.
+        assert_eq!(
+            verify_under(&source, &claiming_pickers(&picked, &[WAVELET]), centroiding),
+            ConversionIntegrityOutcome::ProcessingAlgorithmMismatch {
+                requested: ProcessingIntent::UnscopedDefaultCentroiding,
+                observed: ProcessingAlgorithm::WaveletCantWait,
+                spectrum_index: 0,
+            }
+        );
+
+        // A peak-picking method naming nothing this evidence qualified.
+        assert_eq!(
+            verify_under(
+                &source,
+                &claiming_pickers(&picked, &["some other picker"]),
+                centroiding,
+            ),
+            ConversionIntegrityOutcome::ProcessingAlgorithmMismatch {
+                requested: ProcessingIntent::UnscopedDefaultCentroiding,
+                observed: ProcessingAlgorithm::Unrecognized,
+                spectrum_index: 0,
+            }
+        );
+
+        // Two algorithms in one output, where the source carried neither.
+        assert_eq!(
+            verify_under(
+                &source,
+                &claiming_pickers(&picked, &[DEFAULT, WAVELET]),
+                centroiding,
+            ),
+            ConversionIntegrityOutcome::ProcessingAlgorithmMismatch {
+                requested: ProcessingIntent::UnscopedDefaultCentroiding,
+                observed: ProcessingAlgorithm::WaveletCantWait,
+                spectrum_index: 0,
+            }
+        );
+
+        // The same two, where the *source* already carried the one that was not
+        // asked for. The provider copies an incoming `dataProcessing` list into
+        // its output, so this is what a faithful centroiding of an
+        // already-processed document looks like.
+        let inherited_wavelet = claiming_pickers(&source, &[WAVELET]);
+        let outcome = verify_under(
+            &inherited_wavelet,
+            &claiming_pickers(&picked, &[WAVELET, DEFAULT]),
+            centroiding,
+        );
+        let valid = outcome.valid().unwrap_or_else(|| {
+            panic!("an inherited picker claim rejected a faithful conversion: {outcome:?}")
+        });
+        assert!(
+            valid
+                .verified()
+                .contains(&IntegrityProperty::RequestedProcessing),
+            "the requested algorithm was recorded by this run and not established"
+        );
+
+        // The inherited claim licenses nothing new. A *different* rejected
+        // picker added beside it is a second algorithm, and a classification
+        // that lumped the two together would subtract it away.
+        assert_eq!(
+            verify_under(
+                &inherited_wavelet,
+                &claiming_pickers(&picked, &[WAVELET, VENDOR, DEFAULT]),
+                centroiding,
+            ),
+            ConversionIntegrityOutcome::ProcessingAlgorithmMismatch {
+                requested: ProcessingIntent::UnscopedDefaultCentroiding,
+                observed: ProcessingAlgorithm::VendorPeakPicking,
+                spectrum_index: 0,
+            },
+            "a second rejected picker was hidden by the first"
+        );
+
+        // An output that only repeats the source's own history added nothing
+        // this run can be credited with.
+        let outcome = verify_under(
+            &inherited_wavelet,
+            &claiming_pickers(&picked, &[WAVELET]),
+            centroiding,
+        );
+        let valid = outcome.valid().unwrap_or_else(|| {
+            panic!("a copied-through history was read as a contradiction: {outcome:?}")
+        });
+        assert!(
+            valid
+                .unverified()
+                .contains(&IntegrityProperty::RequestedProcessing),
+            "an unchanged history was reported as establishing the request"
+        );
+
+        // Multiplicity. The source already ran the default picker once; the
+        // output records it twice, and the second occurrence is this run's.
+        let inherited_default = claiming_pickers(&source, &[DEFAULT]);
+        let outcome = verify_under(
+            &inherited_default,
+            &claiming_pickers(&picked, &[DEFAULT, DEFAULT]),
+            centroiding,
+        );
+        let valid = outcome
+            .valid()
+            .unwrap_or_else(|| panic!("a second occurrence was invisible: {outcome:?}"));
+        assert!(
+            valid
+                .verified()
+                .contains(&IntegrityProperty::RequestedProcessing),
+            "an added occurrence of the requested algorithm was subtracted away"
+        );
+
+        // And one occurrence carried through unchanged still establishes
+        // nothing, which is what makes the case above a real distinction.
+        let outcome = verify_under(
+            &inherited_default,
+            &claiming_pickers(&picked, &[DEFAULT]),
+            centroiding,
+        );
+        assert!(
+            outcome
+                .valid()
+                .expect("a copied history is not a contradiction")
+                .unverified()
+                .contains(&IntegrityProperty::RequestedProcessing)
+        );
+
+        // Unknown implementations are not told apart, and the comparison says so
+        // rather than pretending. A source carrying an unknown method leaves the
+        // delta over unknowns unestablishable, so the request is unverified even
+        // though the requested picker was added.
+        let inherited_unknown = claiming_pickers(&source, &["unknown A"]);
+        let outcome = verify_under(
+            &inherited_unknown,
+            &claiming_pickers(&picked, &["unknown A", DEFAULT]),
+            centroiding,
+        );
+        assert!(
+            outcome
+                .valid()
+                .expect("an unknown inherited method is not a contradiction")
+                .unverified()
+                .contains(&IntegrityProperty::RequestedProcessing),
+            "a delta over indistinguishable unknowns was claimed as established"
+        );
+        let outcome = verify_under(
+            &inherited_unknown,
+            &claiming_pickers(&picked, &["unknown B", DEFAULT]),
+            centroiding,
+        );
+        assert!(
+            outcome
+                .valid()
+                .expect("a substituted unknown method is not a contradiction")
+                .unverified()
+                .contains(&IntegrityProperty::RequestedProcessing),
+            "a substituted unknown method was silently verified"
+        );
+
+        // What still has to hold when nothing was established: peaks were asked
+        // to be picked, and a spectrum still marked profile did not get them.
+        assert_eq!(
+            verify_under(
+                &source,
+                &intensity_at_64(&output_document(&TWO_SPECTRA, 1)),
+                centroiding,
+            ),
+            ConversionIntegrityOutcome::CentroidRepresentationMissing {
+                spectrum_index: 0,
+                observed: RepresentationMarker::Profile,
+            }
+        );
+    }
+
+    /// A `dataProcessing` definition nothing references applies to nothing.
+    ///
+    /// Both directions, because an inert definition can lie either way: it can
+    /// make a request look established when no spectrum ran it, and it can make
+    /// a faithful conversion look contradicted by an algorithm no spectrum is
+    /// under.
+    #[cfg(windows)]
+    #[test]
+    fn only_referenced_processing_participates_in_the_judgement() {
+        const PICKED: [SpectrumFixture; 2] =
+            [SpectrumFixture::centroided_ms1(15), SpectrumFixture::ms2(8)];
+        const WAVELET: &str = "CantWaiT (continuous wavelet transform) peak picker";
+        const DEFAULT: &str = "local maximum peak picker";
+        let source = source_document(&TWO_SPECTRA, 1);
+        let picked = intensity_at_64(&output_document(&PICKED, 1));
+        let centroiding = admitted(
+            ProcessingIntent::UnscopedDefaultCentroiding,
+            SpectrumPopulation::All,
+            NumericPrecision::Mz64Intensity64,
+            CompressionIntent::Zlib,
+        );
+
+        // The requested picker is declared, and no spectrum is under it.
+        let outcome = verify_under(
+            &source,
+            &claiming_pickers_unreferenced(&picked, &[DEFAULT]),
+            centroiding,
+        );
+        assert!(
+            outcome
+                .valid()
+                .expect("an inert definition is not a contradiction")
+                .unverified()
+                .contains(&IntegrityProperty::RequestedProcessing),
+            "a definition no spectrum references established the request"
+        );
+
+        // A conflicting picker is declared, no spectrum is under it, and the
+        // referenced definition carries exactly what was asked for.
+        let mixed =
+            claiming_pickers_unreferenced(&claiming_pickers(&picked, &[DEFAULT]), &[WAVELET]);
+        let outcome = verify_under(&source, &mixed, centroiding);
+        let valid = outcome.valid().unwrap_or_else(|| {
+            panic!("an inert definition refused a faithful conversion: {outcome:?}")
+        });
+        assert!(
+            valid
+                .verified()
+                .contains(&IntegrityProperty::RequestedProcessing)
+        );
+    }
+
+    /// A spectrum's own `dataProcessingRef` overrides the list default, and the
+    /// judgement follows the override.
+    ///
+    /// The discriminating case for reading processing at the right scope: the
+    /// document carries the requested picker, one spectrum is under it, and one
+    /// is not. A document-wide reading would let the first establish the request
+    /// for the second.
+    #[cfg(windows)]
+    #[test]
+    fn a_spectrum_reference_overrides_the_list_default() {
+        const PICKED: [SpectrumFixture; 2] =
+            [SpectrumFixture::centroided_ms1(15), SpectrumFixture::ms2(8)];
+        const DEFAULT: &str = "local maximum peak picker";
+        let source = source_document(&TWO_SPECTRA, 1);
+        let centroiding = admitted(
+            ProcessingIntent::UnscopedDefaultCentroiding,
+            SpectrumPopulation::All,
+            NumericPrecision::Mz64Intensity64,
+            CompressionIntent::Zlib,
+        );
+
+        // Both spectra under the definition that ran the picker: established.
+        let picked = claiming_pickers(
+            &intensity_at_64(&document(&PICKED, 1, Serialization::Output)),
+            &[DEFAULT],
+        );
+        assert!(
+            verify_under(&source, &picked, centroiding)
+                .valid()
+                .expect("a faithful centroiding is valid")
+                .verified()
+                .contains(&IntegrityProperty::RequestedProcessing)
+        );
+
+        // The second spectrum points somewhere else, and that definition ran no
+        // picker. The request is no longer established for the whole list.
+        let unpicked_definition = claiming_pickers_unreferenced(&picked, &[]);
+        let overridden = unpicked_definition.replacen(
+            r#"<spectrum index="1""#,
+            &format!(r#"<spectrum dataProcessingRef="{UNREFERENCED_PROCESSING}" index="1""#),
+            1,
+        );
+        assert!(
+            verify_under(&source, &overridden, centroiding)
+                .valid()
+                .expect("an override is not a contradiction")
+                .unverified()
+                .contains(&IntegrityProperty::RequestedProcessing),
+            "a spectrum under different processing was covered by its sibling"
+        );
+
+        // And an override pointing at a definition that *did* run the picker
+        // establishes it exactly as the default would.
+        let picked_elsewhere = claiming_pickers_under(&picked, "second", &[DEFAULT]);
+        let overridden = picked_elsewhere.replacen(
+            r#"<spectrum index="1""#,
+            r#"<spectrum dataProcessingRef="second" index="1""#,
+            1,
+        );
+        assert!(
+            verify_under(&source, &overridden, centroiding)
+                .valid()
+                .expect("a resolvable override is valid")
+                .verified()
+                .contains(&IntegrityProperty::RequestedProcessing)
+        );
+    }
+
+    /// A document that gives a property nothing to be established over records
+    /// that, rather than claiming it.
+    ///
+    /// The third answer exists for exactly this: a chromatogram-only conversion
+    /// has not *failed* to establish anything about spectra, and it has not
+    /// established anything either. Marking it unverified would stop a faithful
+    /// LabSolutions conversion being fully verified; marking it verified would
+    /// be a claim over an empty loop.
+    #[cfg(windows)]
+    #[test]
+    fn a_property_with_no_records_to_inspect_is_inapplicable_rather_than_claimed() {
+        const NO_SPECTRA: [SpectrumFixture; 0] = [];
+        let outcome = verify(
+            &document(&NO_SPECTRA, 2, Serialization::Source),
+            &document(&NO_SPECTRA, 2, Serialization::Output),
+        );
+        let valid = outcome
+            .valid()
+            .unwrap_or_else(|| panic!("a chromatogram-only conversion failed: {outcome:?}"));
+
+        for property in [
+            IntegrityProperty::SpectrumArrayLengths,
+            IntegrityProperty::SpectrumRepresentation,
+            IntegrityProperty::RequestedProcessing,
+        ] {
+            assert!(
+                valid.inapplicable().contains(&property),
+                "{property:?} was answered over a document with no spectra"
+            );
+            assert!(!valid.verified().contains(&property));
+            assert!(!valid.unverified().contains(&property));
+        }
+        // The chromatograms are still compared, and the run is still complete:
+        // nothing was left unanswered.
+        assert!(
+            valid
+                .verified()
+                .contains(&IntegrityProperty::ChromatogramArrayLengths)
+        );
+        assert!(
+            valid
+                .verified()
+                .contains(&IntegrityProperty::RequestedNumericPrecision)
+        );
+        assert!(
+            valid.is_fully_verified(),
+            "an inapplicable property stopped a complete conversion being complete: {:?}",
+            valid.unverified()
+        );
+    }
+
+    /// A reference the scanner cannot resolve is never read as "no processing".
+    #[cfg(windows)]
+    #[test]
+    fn an_unresolved_processing_reference_never_establishes_the_request() {
+        const PICKED: [SpectrumFixture; 2] =
+            [SpectrumFixture::centroided_ms1(15), SpectrumFixture::ms2(8)];
+        const DEFAULT: &str = "local maximum peak picker";
+        let source = source_document(&TWO_SPECTRA, 1);
+        let centroiding = admitted(
+            ProcessingIntent::UnscopedDefaultCentroiding,
+            SpectrumPopulation::All,
+            NumericPrecision::Mz64Intensity64,
+            CompressionIntent::Zlib,
+        );
+
+        // The list names a target the document does not define.
+        let dangling = claiming_pickers(&intensity_at_64(&output_document(&PICKED, 1)), &[DEFAULT])
+            .replace(
+                r#"<dataProcessing id="pwiz">"#,
+                r#"<dataProcessing id="other">"#,
+            );
+        assert!(
+            verify_under(&source, &dangling, centroiding)
+                .valid()
+                .expect("a dangling reference is not a contradiction")
+                .unverified()
+                .contains(&IntegrityProperty::RequestedProcessing),
+            "an unresolvable reference established the request"
+        );
+
+        // Two definitions sharing one identity: nothing can be resolved by it.
+        let ambiguous = claiming_pickers_under(
+            &claiming_pickers(&intensity_at_64(&output_document(&PICKED, 1)), &[DEFAULT]),
+            APPLIED_PROCESSING,
+            &[DEFAULT],
+        );
+        assert!(
+            verify_under(&source, &ambiguous, centroiding)
+                .valid()
+                .expect("an ambiguous identity is not a contradiction")
+                .unverified()
+                .contains(&IntegrityProperty::RequestedProcessing),
+            "a repeated processing identity still resolved"
+        );
+
+        // The discriminating case: the *source* reference dangles while the
+        // output resolves and carries exactly what was asked for. Reading an
+        // unresolved reference as an empty history would subtract nothing, find
+        // the requested picker added, and establish the request over a source
+        // whose processing nobody could determine.
+        let dangling_source = source.replace(
+            &format!(r#"defaultDataProcessingRef="{APPLIED_PROCESSING}""#),
+            r#"defaultDataProcessingRef="absent""#,
+        );
+        assert!(
+            verify_under(
+                &dangling_source,
+                &claiming_pickers(&intensity_at_64(&output_document(&PICKED, 1)), &[DEFAULT],),
+                centroiding,
+            )
+            .valid()
+            .expect("an unresolved source reference is not a contradiction")
+            .unverified()
+            .contains(&IntegrityProperty::RequestedProcessing),
+            "a source whose processing could not be resolved still attributed the picker"
+        );
+
+        // And a resolved definition that records no peak picking at all says
+        // nothing about picking, rather than saying none happened.
+        assert!(
+            verify_under(
+                &source,
+                &intensity_at_64(&output_document(&PICKED, 1)),
+                centroiding,
+            )
+            .valid()
+            .expect("silence is not a contradiction")
+            .unverified()
+            .contains(&IntegrityProperty::RequestedProcessing),
+            "silence was read as evidence"
+        );
+    }
+
+    /// Profile becoming centroid is a defect or the requested result, and only
+    /// the bound intent says which.
+    ///
+    /// The pair of documents is identical in both calls.
+    #[cfg(windows)]
+    #[test]
+    fn a_representation_change_is_read_by_the_intent_that_asked_for_it() {
+        const PICKED: [SpectrumFixture; 2] =
+            [SpectrumFixture::centroided_ms1(15), SpectrumFixture::ms2(8)];
+        let source = source_document(&TWO_SPECTRA, 1);
+        let picked = intensity_at_64(&output_document(&PICKED, 1));
+
+        assert_eq!(
+            verify_under(
+                &source,
+                &picked,
+                admitted(
+                    ProcessingIntent::NoAdditionalCentroiding,
+                    SpectrumPopulation::All,
+                    NumericPrecision::Mz64Intensity64,
+                    CompressionIntent::Zlib,
+                ),
+            ),
+            ConversionIntegrityOutcome::RepresentationChange {
+                first_divergent_index: 0,
+                source: RepresentationMarker::Profile,
+                output: RepresentationMarker::Centroid,
+            },
+            "a conversion that asked for no centroiding accepted centroiding"
+        );
+
+        assert!(
+            verify_under(
+                &source,
+                &picked,
+                admitted(
+                    ProcessingIntent::UnscopedDefaultCentroiding,
+                    SpectrumPopulation::All,
+                    NumericPrecision::Mz64Intensity64,
+                    CompressionIntent::Zlib,
+                ),
+            )
+            .valid()
+            .is_some(),
+            "a conversion that asked for centroiding refused its own result"
+        );
+    }
+
+    /// A picker claim the source brought with it does not fail a conversion
+    /// that asked to add nothing.
+    ///
+    /// The asymmetry is deliberate and is the reason the claim is not a refusal
+    /// channel for `NoAdditionalCentroiding`: the measured build copies an
+    /// incoming `dataProcessing` list into its output, so a claim there can be
+    /// the source's own history. Refusing it would refuse legitimate
+    /// already-centroided inputs.
+    #[cfg(windows)]
+    #[test]
+    fn a_source_carried_picker_claim_never_fails_a_request_to_add_nothing() {
+        let source = source_document(&TWO_SPECTRA, 1);
+        let output = claiming_pickers(
+            &output_document(&TWO_SPECTRA, 1),
+            &["CantWaiT (continuous wavelet transform) peak picker"],
+        );
+
+        assert!(
+            verify_under(&source, &output, ConversionIntent::SHIPPED)
+                .valid()
+                .is_some(),
+            "an inherited processing record failed a conversion that added nothing"
         );
     }
 
@@ -2576,8 +4471,8 @@ mod tests {
     fn a_chromatogram_array_role_change_fails() {
         // Same array count, same declared length, different role.
         let output = output_document(&TWO_SPECTRA, 1).replace(
-            r#"<chromatogram index="0" id="TIC0" defaultArrayLength="4"><binaryDataArrayList count="1"><binaryDataArray encodedLength="8"><cvParam accession="MS:1000595"/>"#,
-            r#"<chromatogram index="0" id="TIC0" defaultArrayLength="4"><binaryDataArrayList count="1"><binaryDataArray encodedLength="8"><cvParam accession="MS:1000514"/>"#,
+            r#"<binaryDataArray encodedLength="8"><cvParam accession="MS:1000595"/>"#,
+            r#"<binaryDataArray encodedLength="8"><cvParam accession="MS:1000514"/>"#,
         );
 
         assert_eq!(
@@ -2623,8 +4518,10 @@ mod tests {
             }
         );
 
-        let chromatogram_loss = output_document(&TWO_SPECTRA, 1)
-            .replace(r#"<cvParam accession="MS:1000595"/><cvParam accession="MS:1000574"/><binary>AA==</binary>"#, r#"<cvParam accession="MS:1000595"/><cvParam accession="MS:1000574"/><binary/>"#);
+        let chromatogram_loss = output_document(&TWO_SPECTRA, 1).replace(
+            r#"<cvParam accession="MS:1000595"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000523"/><binary>AA==</binary>"#,
+            r#"<cvParam accession="MS:1000595"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000523"/><binary/>"#,
+        );
         assert_eq!(
             verify(&source_document(&TWO_SPECTRA, 1), &chromatogram_loss),
             ConversionIntegrityOutcome::BinaryArrayMismatch {
@@ -2652,7 +4549,8 @@ mod tests {
             IntegrityProperty::MsLevelDistribution,
             IntegrityProperty::BinaryArrayCounts,
             IntegrityProperty::BinaryArrayKinds,
-            IntegrityProperty::BinaryArrayLengths,
+            IntegrityProperty::SpectrumArrayLengths,
+            IntegrityProperty::ChromatogramArrayLengths,
             IntegrityProperty::BinaryArrayPayloadPresence,
             IntegrityProperty::PrecursorCounts,
             IntegrityProperty::SpectrumNativeIdentity,
@@ -2715,6 +4613,95 @@ mod tests {
                 .advisory()
                 .contains(&AdvisoryObservation::RepresentationMarkerAdded)
         );
+        // Advisory, and *not* evidence. A source that never said what it was
+        // cannot witness what the output did to it, so the comparison could not
+        // be made -- and the request to add no centroiding, which rests on that
+        // comparison, may not be reported as established either.
+        assert!(
+            valid
+                .unverified()
+                .contains(&IntegrityProperty::SpectrumRepresentation),
+            "an unaskable comparison was recorded as made"
+        );
+        assert!(
+            valid
+                .unverified()
+                .contains(&IntegrityProperty::RequestedProcessing),
+            "no-additional-centroiding was established without a comparison"
+        );
+        assert!(
+            !valid.is_fully_verified(),
+            "an added marker over an unmarked source claimed a complete verification"
+        );
+    }
+
+    /// Every pairing of representation markers, and what each may establish.
+    ///
+    /// The distinction this pins is between *no mismatch observed* and *the
+    /// comparison was possible*. Only the second may verify the property, and
+    /// only the first was checked before this correction.
+    #[cfg(windows)]
+    #[test]
+    fn representation_verifies_only_where_both_sides_said_what_they_are() {
+        let marked = |representation: &'static str| {
+            let mut spectra = TWO_SPECTRA;
+            spectra[0].representation = representation;
+            spectra[1].representation = representation;
+            spectra
+        };
+        let no_centroiding = ConversionIntent::SHIPPED;
+
+        // Both sides known and unchanged: the comparison was made, and it holds.
+        let outcome = verify_under(
+            &document(&marked("profile"), 1, Serialization::Source),
+            &document(&marked("profile"), 1, Serialization::Output),
+            no_centroiding,
+        );
+        let valid = outcome
+            .valid()
+            .unwrap_or_else(|| panic!("an unchanged representation failed: {outcome:?}"));
+        assert!(
+            valid
+                .verified()
+                .contains(&IntegrityProperty::SpectrumRepresentation)
+        );
+        assert!(
+            valid
+                .verified()
+                .contains(&IntegrityProperty::RequestedProcessing)
+        );
+
+        // Both sides known and changed the forbidden way: still a refusal, and
+        // that is the half this correction must not soften.
+        assert_eq!(
+            verify_under(
+                &document(&marked("profile"), 1, Serialization::Source),
+                &document(&marked("centroid"), 1, Serialization::Output),
+                no_centroiding,
+            ),
+            ConversionIntegrityOutcome::RepresentationChange {
+                first_divergent_index: 0,
+                source: RepresentationMarker::Profile,
+                output: RepresentationMarker::Centroid,
+            }
+        );
+
+        // Neither side said anything. Nothing was observed and nothing was
+        // established; an empty comparison is not agreement.
+        let outcome = verify_under(
+            &document(&marked("none"), 1, Serialization::Source),
+            &document(&marked("none"), 1, Serialization::Output),
+            no_centroiding,
+        );
+        let valid = outcome
+            .valid()
+            .unwrap_or_else(|| panic!("two silent documents failed: {outcome:?}"));
+        assert!(
+            valid
+                .unverified()
+                .contains(&IntegrityProperty::SpectrumRepresentation)
+        );
+        assert!(!valid.is_fully_verified());
     }
 
     #[cfg(windows)]
@@ -2728,8 +4715,11 @@ mod tests {
         assert_eq!(
             verify(&source_document(&TWO_SPECTRA, 1), &output),
             ConversionIntegrityOutcome::CompressionPolicyMismatch {
-                requested: CompressionPolicy::Zlib,
-                uncompressed_array_count: 5,
+                requested: CompressionIntent::Zlib,
+                // Four spectrum arrays plus two chromatogram arrays, each
+                // counted once for stating no zlib and once for stating the
+                // opposite encoding.
+                disagreeing_array_count: 12,
             }
         );
     }
@@ -2843,7 +4833,7 @@ mod tests {
                 &source,
                 &output_directory,
                 OsStr::new("source.mzML"),
-                ConversionPolicy::default(),
+                ConversionIntent::SHIPPED,
                 MzmlScanLimits::default(),
             ),
             ConversionIntegrityOutcome::SourceChangedDuringConversion
@@ -2865,7 +4855,7 @@ mod tests {
                 &source,
                 empty_output.path(),
                 OsStr::new("source.mzML"),
-                ConversionPolicy::default(),
+                ConversionIntent::SHIPPED,
                 MzmlScanLimits::default(),
             ),
             ConversionIntegrityOutcome::MissingOutput
@@ -2882,7 +4872,7 @@ mod tests {
                 &source,
                 wrong_root.path(),
                 OsStr::new("source.mzML"),
-                ConversionPolicy::default(),
+                ConversionIntent::SHIPPED,
                 MzmlScanLimits::default(),
             ),
             ConversionIntegrityOutcome::WrongRootFormat
@@ -2899,7 +4889,7 @@ mod tests {
                 &source,
                 unsafe_output.path(),
                 OsStr::new("source.mzML"),
-                ConversionPolicy::default(),
+                ConversionIntent::SHIPPED,
                 MzmlScanLimits::default(),
             ),
             ConversionIntegrityOutcome::UnsafeXml {
@@ -2971,8 +4961,8 @@ mod tests {
                 output: RepresentationMarker::Centroid,
             },
             ConversionIntegrityOutcome::CompressionPolicyMismatch {
-                requested: CompressionPolicy::Zlib,
-                uncompressed_array_count: 1,
+                requested: CompressionIntent::Zlib,
+                disagreeing_array_count: 1,
             },
         ];
 

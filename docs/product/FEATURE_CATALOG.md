@@ -259,10 +259,20 @@ tests: it plans mzML
 only, derives the output name from the source, refuses or skips an existing
 destination with no overwrite to select, stages the backend's output in a
 directory MSCanvas owns and takes the final name only after the produced
-document passes the integrity contract. CNV-002 stays unplannable. The only
-processing decisions that boundary expresses are CNV-004's no-peak-picking rule
-and zlib compression, which is unconditional rather than the explicit choice
-CNV-007 asks for; CNV-005 and CNV-006 are not expressible at all, and CNV-003's
+document passes the integrity contract. CNV-002 stays unplannable — and since **M6.3** it is
+unplannable by type rather than by refusal: the command builder takes a
+`ConversionIntent`, and no intent names that format.
+
+That intent is how the boundary now expresses every processing decision it makes.
+It is not five independent settings: nine combinations of output format,
+centroiding, MS-level population, numeric precision and compression are
+constructible, each admitted by a named M6.2 measurement, and the other
+thirty-nine of the forty-eight the axes span are unconstructible. CNV-004's
+no-peak-picking rule and zlib compression are what the shipped intent selects,
+and CNV-005's unscoped centroiding and CNV-006's MS-level filter are expressible
+there — **which is not the same as reachable**. No visible control names any of
+them, so what the product converts under is still one fixed intent; CNV-005's
+lossy marking, CNV-006's control and CNV-007's choice are M6.4's. CNV-003's
 vendor-dataset-root rule is unexercisable because no admitted acquisition family
 is directory-shaped — Thermo RAW and Shimadzu LCD are single files, and a SCIEX
 acquisition is a `.wiff` bound to its `.wiff.scan` sibling. See

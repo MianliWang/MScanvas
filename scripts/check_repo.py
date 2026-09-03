@@ -1761,6 +1761,79 @@ M62_ROUTE_OUTCOMES: frozenset[str] = frozenset(
     }
 )
 
+M63_INTENT = "crates/proteowizard/src/intent.rs"
+
+#: How many combinations the five axes span, and how many the evidence admits.
+#: Stated here as well as in the module so a widened table has to be widened
+#: deliberately in two places rather than drifting in one.
+M63_CROSS_PRODUCT = 48
+M63_ADMITTED_ROWS = 9
+
+#: The one shape a picker filter may take in an admitted row's evidence.
+#:
+#: M6.2 measured that `peakPicking msLevel=<set>` with no picker token silently
+#: centroids every level while exiting 0, and that every named picker token is
+#: either rejected or blocked. So the bare filter is the only measured form, and
+#: a row citing any other is citing something that does not mean what it reads.
+M63_ADMITTED_PICKER_FILTER = "peakPicking"
+
+#: The MS-level filter forms that mean "every level".
+#:
+#: The omission and the explicit open range, which M6.2 measured byte-identical
+#: (L3 against L4). Nothing else: a bounded range is a different population.
+M63_ALL_LEVEL_FILTERS: frozenset[tuple[str, ...]] = frozenset({(), ("msLevel 1-",)})
+
+#: What each precision value requires of the flags a case was measured with.
+#:
+#: Alternatives, because a width can be asked for globally or per array and M6.2
+#: measured both spellings. An empty alternative means *no* precision flag: that
+#: is what `Mz64Intensity32` is, and it is the provider's default rather than
+#: anything MSCanvas states -- which is the finding that put precision on M6.2's
+#: candidate list in the first place.
+M63_PRECISION_EVIDENCE: dict[str, tuple[frozenset[str], ...]] = {
+    "Mz64Intensity32": (frozenset(),),
+    "Mz64Intensity64": (frozenset({"--64"}), frozenset({"--mz64", "--inten64"})),
+    "Mz32Intensity32": (frozenset({"--32"}), frozenset({"--mz32", "--inten32"})),
+    "Mz32Intensity64": (frozenset({"--mz32", "--inten64"}),),
+}
+
+#: The flags each precision value contradicts.
+#:
+#: Present as well as the alternatives above because a spelling can be satisfied
+#: while another flag says the opposite: `--64 --inten32` contains `--64` and is
+#: the mixed posture, not the 64-bit one. Absent here for `Mz64Intensity32`,
+#: whose whole requirement is that no precision flag was given at all.
+M63_PRECISION_CONTRADICTIONS: dict[str, frozenset[str]] = {
+    "Mz64Intensity32": frozenset(),
+    "Mz64Intensity64": frozenset({"--32", "--mz32", "--inten32"}),
+    "Mz32Intensity32": frozenset({"--64", "--mz64", "--inten64"}),
+    "Mz32Intensity64": frozenset({"--32", "--64", "--mz64", "--inten32"}),
+}
+
+#: Every precision flag the installed grammar exposes, so "no precision flag"
+#: is decided against a closed list rather than against a prefix.
+M63_PRECISION_FLAGS: frozenset[str] = frozenset(
+    {"--32", "--64", "--mz32", "--mz64", "--inten32", "--inten64"}
+)
+
+#: How compression appears in a measured argv. `--zlib` is the provider default,
+#: so a case that names neither measured compression *on*.
+M63_COMPRESSION_OFF = "--zlib=off"
+
+M63_INTENT_ROW = re.compile(
+    r"AdmittedIntent\s*\{\s*"
+    r"intent:\s*ConversionIntent\s*\{\s*"
+    r"format:\s*OutputFormat::(?P<format>\w+),\s*"
+    r"processing:\s*ProcessingIntent::(?P<processing>\w+),\s*"
+    r"population:\s*SpectrumPopulation::(?P<population>\w+),\s*"
+    r"precision:\s*NumericPrecision::(?P<precision>\w+),\s*"
+    r"compression:\s*CompressionIntent::(?P<compression>\w+),\s*"
+    r"\},\s*"
+    r'evidence:\s*"(?P<evidence>[^"]*)",\s*'
+    r"\}",
+)
+
+
 M62_SPIKE = "docs/spikes/M6_MSCONVERT_CAPABILITY_EVIDENCE.md"
 M62_ROUTE = "docs/architecture/adr/0043-conversion-completion-route.md"
 
@@ -2348,6 +2421,261 @@ def _validate_the_msconvert_case_ledger(spike_text: str, errors: list[str]) -> N
         )
 
 
+def validate_the_admitted_intent_table_cites_measurements_that_support_it(
+    errors: list[str],
+) -> None:
+    """M6.3's admitted table names M6.2 cases, and the cases say what it claims.
+
+    The whole point of `ConversionIntent` is that an intent may only name a
+    semantic the installed build was measured performing. The type enforces the
+    *shape* of that rule -- five values in, `Option<Self>` out -- and cannot
+    enforce its content: nothing in Rust stops a row being added with an
+    evidence string that names a case which measured something else, or nothing
+    at all.
+
+    So the two files are held against each other. Every row of
+    `ConversionIntent::ADMITTED` names at least one case; every named case
+    exists in the committed M6.2 ledger, produced mzML, and exited zero; and
+    every case a row names must have been run with argv consistent with the
+    combination the row claims -- the required tokens present and the
+    contradicting ones absent, in *every* case the row cites rather than in one
+    of them.
+
+    That last rule is what catches the failure this validator exists for. A row
+    claiming `NoCompression` while citing a case that ran `--zlib` is not a
+    typo; it is the composition graph being widened by assertion, which is
+    precisely what M6.2 was run to prevent.
+
+    Nothing here reads whether a measurement was any good. That a row rests on a
+    run that did what the row says is structure; whether the run established the
+    conclusion stays a matter for review.
+    """
+    intent_path = ROOT / M63_INTENT
+    if not intent_path.is_file():
+        fail(
+            f"{M63_INTENT} is missing. It holds the admitted-intent table, which is the "
+            "only thing standing between M6.2's incomplete composition graph and a free "
+            "cross-product of its axes",
+            errors,
+        )
+        return
+    intent_text = intent_path.read_text(encoding="utf-8")
+
+    rows = [match.groupdict() for match in M63_INTENT_ROW.finditer(intent_text)]
+    if len(rows) != M63_ADMITTED_ROWS:
+        fail(
+            f"{M63_INTENT} declares {len(rows)} admitted combinations, not "
+            f"{M63_ADMITTED_ROWS}. The table is the compatibility rule; a row appearing or "
+            "disappearing without this constant moving is the rule changing silently",
+            errors,
+        )
+        return
+    if f"[AdmittedIntent; {M63_ADMITTED_ROWS}]" not in intent_text:
+        fail(
+            f"{M63_INTENT} does not declare `ADMITTED` as `[AdmittedIntent; "
+            f"{M63_ADMITTED_ROWS}]`. The array length is what makes a dropped row a compile "
+            "error rather than a quieter table",
+            errors,
+        )
+
+    ledger = _msconvert_ledger(errors)
+    if ledger is None:
+        return
+    if ledger.ledger_defects():
+        # Already reported in full by the M6.2 validator; a malformed ledger
+        # cannot support any statement about what it measured.
+        return
+    cases = {case.case: case for case in ledger.CASES}
+
+    seen: set[tuple[str, ...]] = set()
+    for row in rows:
+        combination = (
+            row["format"],
+            row["processing"],
+            row["population"],
+            row["precision"],
+            row["compression"],
+        )
+        if combination in seen:
+            fail(
+                f"{M63_INTENT} lists the combination {'+'.join(combination)} twice. A "
+                "combination admitted twice is a lookup whose answer depends on which row "
+                "is reached first",
+                errors,
+            )
+        seen.add(combination)
+
+        named = [name.strip() for name in row["evidence"].split(",") if name.strip()]
+        if not named:
+            fail(
+                f"{M63_INTENT} admits {'+'.join(combination)} without naming any evidence. "
+                "A row with no case behind it is the assertion this table exists to refuse",
+                errors,
+            )
+            continue
+
+        for name in named:
+            case = cases.get(name)
+            if case is None:
+                fail(
+                    f"{M63_INTENT} admits {'+'.join(combination)} on case {name!r}, which is "
+                    "not in the M6.2 ledger. An intent may only name a semantic the build "
+                    "was measured performing, and there is no such measurement",
+                    errors,
+                )
+                continue
+            if case.output_format != "mzML":
+                fail(
+                    f"{M63_INTENT} admits {'+'.join(combination)} on case {name!r}, which "
+                    f"produced {case.output_format}. No admitted intent names that format",
+                    errors,
+                )
+            if case.posture != "exit 0":
+                fail(
+                    f"{M63_INTENT} admits {'+'.join(combination)} on case {name!r}, whose "
+                    f"measured posture is {case.posture!r}. A run that did not complete "
+                    "admits nothing",
+                    errors,
+                )
+            _validate_one_admitted_row_against_its_case(combination, name, case, errors)
+
+
+def _msconvert_case_semantics(
+    arguments: tuple[str, ...],
+) -> tuple[frozenset[str], tuple[str, ...], tuple[str, ...]]:
+    """What one measured argv actually asked for.
+
+    Walked rather than searched, because a filter crosses the boundary as two
+    tokens -- `--filter` and its whole argument -- and substring matching would
+    find `msLevel 1` inside `msLevel 1-`, which is a different measurement, and
+    would miss `peakPicking cwt` when looking for a picker.
+    """
+    flags: set[str] = set()
+    pickers: list[str] = []
+    levels: list[str] = []
+    index = 0
+    while index < len(arguments):
+        token = arguments[index]
+        if token == "--filter":
+            index += 1
+            if index >= len(arguments):
+                break
+            argument = arguments[index]
+            if argument.startswith("peakPicking"):
+                pickers.append(argument)
+            elif argument.startswith("msLevel"):
+                levels.append(argument)
+        else:
+            flags.add(token)
+        index += 1
+    return frozenset(flags), tuple(pickers), tuple(levels)
+
+
+def _validate_one_admitted_row_against_its_case(
+    combination: tuple[str, ...],
+    name: str,
+    case: object,
+    errors: list[str],
+) -> None:
+    """One admitted row, against the argv of one case said to admit it.
+
+    Four questions, one per axis that argv can answer, each decided against what
+    the case actually ran rather than against a token appearing anywhere in it.
+    The format is checked by the caller, which reads the ledger's own declared
+    output format instead.
+    """
+    _, processing, population, precision, compression = combination
+    flags, pickers, levels = _msconvert_case_semantics(tuple(case.arguments))
+
+    def refuse(detail: str) -> None:
+        fail(
+            f"{M63_INTENT} admits {'+'.join(combination)} on case {name!r}, {detail}",
+            errors,
+        )
+
+    if processing == "NoAdditionalCentroiding":
+        if pickers:
+            refuse(
+                f"which ran the picker filter(s) {list(pickers)}. A row that asks this "
+                "boundary to add nothing may not rest on a run that picked peaks"
+            )
+    elif processing == "UnscopedDefaultCentroiding":
+        if list(pickers) != [M63_ADMITTED_PICKER_FILTER]:
+            refuse(
+                f"whose picker filters are {list(pickers)}, not "
+                f"[{M63_ADMITTED_PICKER_FILTER!r}]. The bare filter is the only measured "
+                "form: a picker token is rejected or blocked, and an `msLevel=` scope "
+                "without one is silently discarded while exiting 0"
+            )
+    else:
+        refuse(
+            f"naming the processing value {processing!r}, which this guard has no evidence "
+            "rule for. A new axis value is a new claim about what was measured, and it may "
+            "not reach the admitted table unstated"
+        )
+
+    if population == "All":
+        if levels not in M63_ALL_LEVEL_FILTERS:
+            refuse(
+                f"which ran the MS-level filter(s) {list(levels)}. A row that asks for every "
+                "spectrum may not rest on a run that dropped some"
+            )
+    elif population in {"Ms1Only", "Ms2Only"}:
+        wanted = f"msLevel {population[2]}"
+        if list(levels) != [wanted]:
+            refuse(
+                f"whose MS-level filters are {list(levels)}, not [{wanted!r}]. The row "
+                "claims a population that case did not select"
+            )
+    else:
+        refuse(
+            f"naming the population value {population!r}, which this guard has no evidence "
+            "rule for"
+        )
+
+    alternatives = M63_PRECISION_EVIDENCE.get(precision)
+    if alternatives is None:
+        refuse(
+            f"naming the precision value {precision!r}, which this guard has no evidence "
+            "rule for"
+        )
+    else:
+        stated = flags & M63_PRECISION_FLAGS
+        contradicting = stated & M63_PRECISION_CONTRADICTIONS[precision]
+        if (
+            not any(alternative <= stated for alternative in alternatives)
+            or (alternatives == (frozenset(),) and stated)
+            or contradicting
+        ):
+            spellings = " or ".join(
+                "no precision flag" if not alternative else " ".join(sorted(alternative))
+                for alternative in alternatives
+            )
+            refuse(
+                f"which ran {sorted(stated) if stated else 'no precision flag'} rather than "
+                f"{spellings}. The row claims a width that case did not ask for"
+            )
+
+    off = M63_COMPRESSION_OFF in flags
+    if compression == "Zlib":
+        if off:
+            refuse(
+                f"which ran {M63_COMPRESSION_OFF!r}. That case measured the opposite of what "
+                "the row claims"
+            )
+    elif compression == "NoCompression":
+        if not off:
+            refuse(
+                f"which never ran {M63_COMPRESSION_OFF!r}. `--zlib` is the provider's "
+                "default, so a case that does not turn it off measured compression on"
+            )
+    else:
+        refuse(
+            f"naming the compression value {compression!r}, which this guard has no evidence "
+            "rule for"
+        )
+
+
 def validate_the_msconvert_capability_evidence_is_closed(errors: list[str]) -> None:
     """M6.2's candidate set is finite, closed, and answered across one standard.
 
@@ -2924,6 +3252,7 @@ def main() -> int:
         validate_the_xic_route_outcome_has_one_answer(errors)
         validate_one_candidate_evidence_dimension_vocabulary(errors)
         validate_the_msconvert_capability_evidence_is_closed(errors)
+        validate_the_admitted_intent_table_cites_measurements_that_support_it(errors)
         validate_current_status_documents_describe_the_shipped_product(errors)
 
     if errors:

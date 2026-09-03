@@ -381,8 +381,9 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 ## M6 — Conversion Completion
 
 **Started. The route is locked, the conversion lane has one availability
-authority, and the installed `msconvert` has been measured against M6's finite
-candidate set; M6.3 is the next slice.**
+authority, the installed `msconvert` has been measured against M6's finite
+candidate set, and what a conversion is asked to do is now a type; M6.4 is the
+next slice.**
 
 The route, the live conversion gap audit it was decided from, the nine product
 decisions it surfaces, the twelve exit criteria and the M7/M8 seams are in
@@ -392,8 +393,8 @@ slices:
 - M6.0 — **complete** (route lock, documentation only).
 - M6.1 — conversion-lane authority. **complete.**
 - M6.2 — `msconvert` capability and evidence. **complete.**
-- M6.3 — typed `ConversionIntent`. **Next.**
-- M6.4 — visible settings, and a truthful plan.
+- M6.3 — typed `ConversionIntent`. **complete.**
+- M6.4 — visible settings, and a truthful plan. **Next.**
 - M6.5 — destination authority.
 - M6.6 — destination and conflict UX, including the destructive question.
 - M6.7 — convert selected, convert all.
@@ -431,6 +432,32 @@ scoped to this evidence and re-openable only by a representative profile
 acquisition. The record is
 [M6.2's evidence document](docs/spikes/M6_MSCONVERT_CAPABILITY_EVIDENCE.md); the
 disposition remains M6.10's.
+
+**M6.3 turned that evidence into a type, and the useful part of it was never the
+list of options.** What M6.2 produced is an *incomplete composition graph*: five
+axes span forty-eight combinations, and nine of them were measured. Individual
+capability supported is not the same claim as arbitrary composition supported,
+and until this slice nothing in the code said so. `ConversionIntent` has private
+fields and no public constructor; the only way to get one is to look five values
+up in a nine-row admitted table that names its evidence per row, and the other
+thirty-nine answer `None`. What the evidence rejected or never reached is
+unnameable rather than merely unused — mzXML has no variant, no processing
+variant carries a picker name or a scope, and no admitted row composes
+centroiding with an MS-level filter, because that pair was never run. The two
+policy types that used to answer the same question a second time are gone, the
+queue binds one intent and a retry re-reads it, and integrity now asks the
+output whether it did *what was asked* — per array width across both record
+lists, compression established per array in both directions, the exact requested
+population, and the processing each spectrum's own `dataProcessing` reference
+selects, compared against what the source already carried. Two rounds of
+exact-head review shaped that contract: a requested transformation must not be
+rejected for doing what the evidence says it does, a comparison the request put
+outside the question must not be recorded as one that passed, and silence — an
+absent record, an unresolved reference, a history merely copied through — is
+unverified rather than proof. The planner also proves the *live* executable
+declares the exact invocation each intent emits, rather than trusting that M6.2's
+executable and today's are the same build. Nothing visible changed: the product
+still converts under the shipped intent and still emits the same two flags.
 
 **The audit also found the boundary beneath M6 is stronger than this backlog
 implied**, and the route is shaped accordingly: destinations are already admitted
