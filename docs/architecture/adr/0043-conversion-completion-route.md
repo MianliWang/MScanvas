@@ -691,34 +691,74 @@ carries the intent it was planned under, `ConversionQueue` binds one at
 construction and exposes it read-only, and every attempt — first and retry alike
 — re-reads that field rather than deciding again.
 
+**The capability receipt is part of the boundary, not a precondition beside
+it.** An admitted intent is evidence about the executable M6.2 measured; the
+executable a user has installed is a separate fact, and the planner establishes
+it before a `CommandSpec` exists. `ConversionIntent` builds its argv from
+segments that each carry the provider capabilities their tokens depend on, and
+`require_conversion_intent` reads that same list — so a flag cannot reach argv
+without its requirement arriving beside it, and nothing is demanded that is not
+emitted. The shipped intent requires exactly the two options it emits and still
+plans on a build declaring no filters at all. Establishing this exposed a defect
+underneath it: the help parser required an option name to begin with a letter, so
+`--32` and `--64` were never recorded and could not have been required. Option
+names may now begin with a digit; filter names and grammar parameters keep the
+stricter rule.
+
 Integrity became intent-aware in four places, each answering a different
-question. Numeric precision is read **per array role**, which is why the mzML
-scanner gained a per-role encoding set: a per-record union reports `{32, 64}` for
-a correct mixed-precision output and for one with the roles swapped, so it cannot
-answer the question the intent asks. Compression is checked in both directions,
-and under `NoCompression` a record holding arrays must *state* `no compression`
-rather than merely omit `zlib`. Population is the exact requested subset: the
-source is projected through the intent before any comparison runs, so a requested
-`msLevel` filter is not reported as a spectrum-count defect, and a narrowing
-request over a source holding a spectrum of unstated MS level is refused rather
-than sorted onto a side. And the processing claim is classified into five states
-and compared against the request.
+question. Numeric precision is read **per array role and across both record
+lists**, which is why the mzML scanner gained per-role encoding sets: a
+per-record union reports `{32, 64}` for a correct mixed-precision output and for
+one with the roles swapped, so it cannot answer the question the intent asks —
+and a check that walked spectra alone recorded the property verified over a
+chromatogram-only document by an empty loop. A chromatogram's *time* array stays
+unchecked, because no intent states a time width. Compression is checked in both
+directions and **per array**: every array must state the requested encoding and
+none may state the opposite, so silence, a mixed record and a single array
+claiming both markers all fail — a marker on one array does not answer for a
+sibling. Population is the exact requested subset: the source is projected
+through the intent before any comparison runs, so a requested `msLevel` filter is
+not reported as a spectrum-count defect, and a narrowing request over a source
+holding a spectrum of unstated MS level is refused rather than sorted onto a
+side. And the processing history is compared against the request.
+
+**Verified means the comparison was possible, not that no mismatch was seen.**
+The two came apart on representation: a source that emitted no profile/centroid
+marker and an output that emitted one was recorded as an advisory *and* left the
+property verified, so `NoAdditionalCentroiding` — which rests on that comparison
+— was reported established over a source that never said what it was. The
+property now verifies only where both sides stated a marker. The hard refusal for
+a proved profile-to-centroid change is unchanged.
 
 **The processing comparison is deliberately asymmetric, and the asymmetry is the
 OpenMS caveat applied.** Asking for the default picker makes the claim the
-question: a recognized-but-different algorithm, an unrecognized one, or two
-claimed at once all refuse. Asking to add nothing does *not* make it a refusal
-channel, because the measured build copies an incoming `dataProcessing` list into
-its output — so a picker claim in the output can be the source's own history, and
-refusing it would refuse legitimate already-centroided inputs. What guards that
-direction is the source/output representation comparison, which is about this
-conversion. An absent claim is `unverified` under both, never "no peaks were
-picked".
+question — but the question is about *this* conversion. The measured build copies
+an incoming `dataProcessing` list into its output, so a source already carrying
+another picker appears in the output beside the requested one; a document-level
+fold read that as two contradictory algorithms and rejected a faithful run. The
+scanner therefore keeps a bounded **set** of claimed algorithms rather than a
+fold, and what is compared is the algorithms the output carries that the source
+did not. A genuinely new unrequested algorithm still refuses. Asking to add
+nothing does not make the claim a refusal channel at all, for the same
+copy-through reason; what guards that direction is the representation comparison,
+and only where it was possible. An absent claim, and an unchanged history, are
+`unverified` under both — never "no peaks were picked".
+
+**The stronger rule is still not taken.** The source/output delta above makes
+"the output carries a picker the source did not" available for
+`NoAdditionalCentroiding` too, and refusing on it would be a new refusal on the
+path every production conversion runs, resting on a copy-through generalization
+M6.2 did not qualify. The delta is used only to remove a false rejection, never
+to create a new one.
 
 *Proof.* `intent.rs` pins the table itself: forty-eight against nine, exactly the
 admitted combinations constructible, no row listed twice, every row naming its
 evidence, no scoped picker nameable, and the shipped intent lowering to today's
-two flags. `conversion.rs` pins the judgement: one byte-identical output document
+two flags — and that every argument an admitted intent emits is covered by a
+stated capability requirement, with nothing required that is not emitted.
+`capability.rs` pins that removing one declaration at a time refuses the intent
+that needs it, as a `PlanError` rather than a backend failure, while the shipped
+intent still plans on a build declaring only what it uses. `conversion.rs` pins the judgement: one byte-identical output document
 that is valid under the intent it was produced under and a
 `NumericPrecisionMismatch` under a different admitted one; the two array roles
 held to their own widths, proved with a document whose roles are swapped and

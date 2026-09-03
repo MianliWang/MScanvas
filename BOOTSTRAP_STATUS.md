@@ -6664,18 +6664,26 @@ from there.
 
 ### Integrity became a question about what was asked
 
-Four checks, each answering something the old contract could not ask.
+Four checks, each answering something the old contract could not ask. Each is
+described here as it finally stands; three of them were corrected after the final
+review, and the section below says what was wrong with them.
 
-**Precision, per array role.** The shipped posture is m/z at 64 bits and
-intensity at 32, so a per-record union of the encodings a scanner saw reports
-`{32, 64}` for a correct output *and* for one with the two roles swapped. The
-union cannot answer the question, so the mzML scanner gained two per-role sets
-and the check reads them apart. An array that declares both roles or neither
-contributes to neither set and therefore fails, which closes — fail-closed — the
-gap the record-level role check documents and cannot close itself.
+**Precision, per array role and across both lists.** The shipped posture is m/z
+at 64 bits and intensity at 32, so a per-record union of the encodings a scanner
+saw reports `{32, 64}` for a correct output *and* for one with the two roles
+swapped. The union cannot answer the question, so the mzML scanner gained
+per-role sets and the check reads them apart. A chromatogram carries an intensity
+array too, and the intent states one intensity width for the conversion, so both
+lists are covered; a chromatogram's *time* array is not, because no intent states
+a time width. An array that declares more than one role contributes to none of
+the per-role sets and therefore fails, which closes — fail-closed — the gap the
+record-level role check documents and cannot close itself.
 
-**Compression, in both directions.** Under `NoCompression` a record holding
-arrays must *state* `no compression`; omitting `zlib` is not a claim of absence.
+**Compression, in both directions and per array.** Every array must state the
+requested encoding and none may state the opposite. Under `NoCompression` a
+record holding arrays must *state* `no compression`; omitting `zlib` is not a
+claim of absence, and a marker on one array does not answer for a sibling that
+stated nothing.
 
 **Population, as the exact requested subset.** The source is projected through
 the intent before any comparison runs, so a requested `msLevel` filter is not
@@ -6683,17 +6691,20 @@ reported as a spectrum-count defect. A narrowing request over a source holding a
 spectrum that never said which level it is is refused rather than sorted onto a
 side.
 
-**The processing claim, classified and asymmetric.** Five states: absent, the
-default local-maximum picker, a recognized-but-different algorithm, an
-unrecognized one, and two claimed at once. Asking for the default picker makes
-the claim the question and the last three refuse. Asking to add nothing does not
-make it a refusal channel — the measured build copies an incoming
+**The processing history, compared rather than folded.** The scanner keeps a
+bounded set of the peak-picking implementations a document claims — the default
+local-maximum picker, a recognized-but-different algorithm, an unrecognized one —
+and the check compares the algorithms the output carries that the source did not.
+Asking for the default picker makes that delta the question, and a new
+unrequested algorithm in it refuses. Asking to add nothing does not make the
+claim a refusal channel at all: the measured build copies an incoming
 `dataProcessing` list into its output, so a picker claim there can be the
 source's own history, and refusing it would refuse legitimate already-centroided
 inputs. What guards that direction is the source/output representation
-comparison, which is about this conversion. **An absent claim is `unverified`
-under both and never "no peaks were picked"**, which is the rule M6.2 recorded
-and the OpenMS caveat ADR 0043 locks.
+comparison, which is about this conversion — and only where that comparison could
+be made. **An absent claim, and a history the output merely repeats, are
+`unverified` under both and never "no peaks were picked"**, which is the rule
+M6.2 recorded and the OpenMS caveat ADR 0043 locks.
 
 The consequence a reader should take from this: the same pair of documents is now
 judged differently by two admitted intents. Profile becoming centroid is the
@@ -6738,6 +6749,9 @@ case that produced mzXML, one combination admitted twice, the same duplicate at
 an unchanged row count, an unknown axis value, and a precision claim on a case
 that stated a different width.
 
+The whole set was re-run after the correction changed the intent module, and all
+sixteen were caught again.
+
 Two of them exist because the first attempt was caught by the wrong rule. The
 duplicate-row mutation also changed the array length, so the row-count rule
 caught it and the duplicate rule was never exercised; the compression mutation
@@ -6748,12 +6762,18 @@ it is reporting a coverage it does not have.
 
 ### The mechanisms, proved load-bearing
 
-Seven M6.3 mechanisms were reverted one at a time and the test that pins each was
-confirmed to fail: the admitted table returning every combination, precision read
-as a per-record union again, compression checked in one direction only, the
-source never projected through the intent, an absent processing claim read as
-established, a representation change judged without the intent, and a retry
-re-deriving the intent instead of re-reading it.
+**Eleven** M6.3 mechanisms were reverted one at a time and the test that pins
+each was confirmed to fail: the admitted table returning every combination; the
+capability check ignoring what the intent emits; a digit-led option name being
+dropped again; one array's compression marker answering for the record it is in;
+the chromatogram precision loop removed; representation verifying on no mismatch
+rather than on comparability; the source history not subtracted from the output's
+claims; precision read as a per-record union again; the source never projected
+through the intent; a representation change judged without the intent; and a
+retry re-deriving the intent instead of re-reading it.
+
+The whole set was re-run after the correction, on a tree the runner verified
+clean against `HEAD` before it started and again after it restored.
 
 **The union mutation passed on the first attempt, and the test was wrong rather
 than the mechanism.** The swapped-roles document a union check also refuses — for
@@ -6771,7 +6791,7 @@ reported here was produced on a tree verified against `HEAD` immediately before
 the run. Recorded for the same reason M6.2 recorded its false green: a
 measurement is only worth what the state it was taken on is known to be.
 
-### What the review found
+### What the self-review found
 
 **Four second answers to the format question survived the first pass.**
 `ConversionPlan::to_mzml` derived its output name -- and validated it -- against
@@ -6795,6 +6815,11 @@ hoping is the failure this milestone is built to avoid. The omission is written
 into the code beside the rule it would strengthen, so it reads as a decision
 rather than an oversight.
 
+The correction below computes that source/output delta after all, because F5
+needs it to *remove* a false rejection in the other direction. It still does not
+refuse on it, and the position is unchanged: the delta exists, the stronger rule
+does not.
+
 **Two accessors have no production caller.** `ConversionIntent::stable_id` and
 `ConversionIntent::evidence` are read only by tests, because nothing visible
 names an intent yet. They are kept rather than deferred, and the reason is now
@@ -6803,15 +6828,105 @@ written into each: neither can drift, because both answer from the one table, an
 guard already enforces. Recorded rather than left silent -- an unused accessor a
 reader has to guess about is how the next one gets added without a reason.
 
+
+### The final review, and the five findings it found
+
+The exact-head review of PR #94 returned one P1 and four P2. All five were
+reproduced before anything was changed, and all five were real. Two of them were
+false *verification* claims reachable with the shipped intent, which is the one
+thing this module exists not to make, so the candidate was not merged.
+
+**F1 — P2. The capability receipt did not cover what the intent emits.** The
+planner established `outdir`, `outfile`, `zlib` and the format, then lowered an
+intent that may add `--32`, `--64`, `--mz32`, `--inten64` or a `--filter`. On a
+build declaring none of those it produced a runnable command and failed at the
+backend — the opposite of the relationship this crate holds, where a typed
+admitted intent plus the *live* executable's capability receipt is what yields an
+executable command. M6.2's evidence admits a semantic on the executable it
+measured; it says nothing about the one installed today.
+
+The argv is now built from segments that each carry the provider capabilities
+their tokens depend on, and the requirement reads that same list — so a flag
+cannot reach argv without its requirement arriving beside it, and nothing is
+demanded that is not emitted. `SHIPPED` requires exactly the two options it emits
+and still plans on a build declaring no filters at all.
+
+**Repairing it exposed a defect underneath.** `parse_option_declaration` required
+an option name to begin with a letter, so `--32` and `--64` were never recorded
+at all: the capability model could not express two options a real build declares,
+which is why nothing could require them, and requiring them without this would
+have made every explicit-precision intent permanently unplannable. Option names
+may now begin with a digit. Filter names and grammar parameters keep the stricter
+rule, because no build spells those with one.
+
+**F2 — P2. `NoCompression` was checked per record.** A spectrum whose first array
+declared `MS:1000576` and whose second declared nothing had a marker union of
+exactly `{no compression}` and passed, though the second array's encoding was
+unstated. Compression is now counted per array in both directions and both lists:
+every array must state the requested encoding and none may state the opposite, so
+silence, a mixed record, and a single array claiming both markers all fail
+whichever direction was asked for.
+
+**F3 — P1. Chromatogram intensity precision was never verified.** The check
+walked spectra and then recorded `RequestedNumericPrecision` verified for the
+document. A chromatogram-only output made the false claim plainly: the loop was
+empty and the property was still established. The scanner now keeps chromatogram
+intensity precision by role and the check covers both lists. A chromatogram's
+*time* array is deliberately not checked — no intent states a time width, and
+applying the m/z width to it would invent a requirement. Per-role attribution is
+also exact now in both lists: an array contributes to a role only if it declared
+that role and no other.
+
+**F4 — P2. An unknown source representation became a verified claim.** A source
+that emitted no profile/centroid marker, converted to an output that emitted one,
+was recorded as an advisory *and* left `SpectrumRepresentation` verified — so
+`NoAdditionalCentroiding`, which rests on that comparison, was reported
+established, and `is_fully_verified()` could claim a conversion added no
+centroiding over a source that never said what it was. **"No mismatch observed"
+and "the comparison was possible" are now separate facts**, and only the second
+verifies the property. The hard refusal for a proved profile-to-centroid change
+is unchanged.
+
+**F5 — P2. Inherited processing history was read as this conversion's.** The
+scanner folded every peak-picking method in the output into one document-level
+value, so a source already carrying another picker — copied into the output
+beside the requested one — collapsed to `Conflicting` and a faithful centroiding
+was rejected. This was the slice's own reasoning contradicting itself: the
+asymmetry argument says the claim cannot be a refusal channel for "add nothing"
+*because* the provider copies history through, and then a document-level fold was
+used as a refusal channel for "do centroid", where copy-through does exactly the
+same thing.
+
+Reachability was established rather than assumed, because it decided whether to
+repair or disposition. The desktop queue binds `SHIPPED` and the visible workflow
+excludes mzML sources, so the product route cannot reach it. But
+`ConversionPlan::to_mzml` and `verify_mzml_conversion` are public, accept any
+admitted intent, and the crate already tests mzML-to-mzML comparison — so the
+boundary this slice owns supports the case, and a false rejection in it is a
+defect in the contract whatever the visible surface offers today.
+
+The scanner now keeps a bounded **set** of claimed algorithms rather than a fold,
+and the check compares the algorithms the output carries that the source did not.
+An inherited claim no longer fails a faithful run; a genuinely new unrequested one
+still does; an unchanged history establishes nothing and is recorded unverified.
+
+**The stronger rule is still not taken.** The delta makes "the output carries a
+picker the source did not" available for `NoAdditionalCentroiding` as well, and
+refusing on it would be a new production refusal resting on a copy-through
+generalization M6.2 did not qualify. It is used only to remove a false rejection.
+
+
 ### Validation
 
 `cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
 --all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
 `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
 `pnpm build`, `pnpm e2e:typecheck` and `git diff --check`, each run directly on
-the final head and each exiting zero. Rust **1,373** and frontend **1,398** —
-twenty-three Rust tests added and none removed or weakened, and the frontend
-unchanged, which is what a slice that touches no frontend file should do.
+the corrected head and each exiting zero. Rust **1,381** and frontend **1,398** —
+thirty-one Rust tests added across the slice and its correction, none removed or
+weakened, and the frontend unchanged, which is what a slice that touches no
+frontend file should do. The green CI on the stopped head was not inherited: the
+correction produced a new exact head and the whole set was re-run on it.
 
 **Browser E2E was not run, and is not described as green.** This slice changes no
 frontend file, no CSS, no DTO field and no rendered behaviour. `apps/desktop/AGENTS.md`
