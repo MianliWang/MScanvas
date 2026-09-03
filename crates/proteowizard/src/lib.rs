@@ -97,8 +97,8 @@ pub use intent::{
 pub use mzml::{
     ArrayKind, ArrayKindSet, CompressionMarker, CompressionSet, MzmlChromatogramRecord, MzmlFacts,
     MzmlLimitKind, MzmlMalformedKind, MzmlRoot, MzmlScanError, MzmlScanLimits, MzmlSpectrumRecord,
-    NumericPrecisionMarker, NumericPrecisionSet, ProcessingAlgorithmClaim, RepresentationMarker,
-    RetentionTimeUnitMarker, UnsafeXmlKind, inspect_file, inspect_reader,
+    NumericPrecisionMarker, NumericPrecisionSet, ProcessingAlgorithm, ProcessingAlgorithmSet,
+    RepresentationMarker, RetentionTimeUnitMarker, UnsafeXmlKind, inspect_file, inspect_reader,
 };
 pub use preview::{
     MAX_PREVIEW_TEXT_BYTES, MetadataEntry, MetadataResult, MetadataSection, MetadataSectionKind,

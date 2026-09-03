@@ -194,6 +194,56 @@ impl CompressionIntent {
     }
 }
 
+/// One provider capability an intent's lowering depends on.
+///
+/// The command builder must establish every one of these against the *live*
+/// installed help before a `CommandSpec` exists. M6.2's evidence says a semantic
+/// was measured on one executable; it says nothing about the executable a user
+/// has installed today, and a flag the intent emits that the installed build
+/// does not declare has to be a planning refusal rather than a backend failure.
+///
+/// Only what the intent actually emits appears here. The shipped intent lowers
+/// to two flags and therefore requires two capabilities -- naming the whole M6.2
+/// candidate list would make every conversion depend on features it never uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProviderFeature {
+    /// A `--name` option that takes no argument, named as the help declares it.
+    Flag(&'static str),
+    /// The `--zlib` option, which is required for both compression directions
+    /// because `--zlib=off` is that same option carrying its argument.
+    ZlibOption,
+    /// The generic `--filter` option, which takes a required argument.
+    FilterOption,
+    /// A named spectrum-list filter, by the name the help declares. Separate
+    /// from [`Self::FilterOption`] because the option existing does not imply
+    /// the named grammar existing.
+    Filter(&'static str),
+}
+
+impl ProviderFeature {
+    #[must_use]
+    pub const fn stable_id(self) -> &'static str {
+        match self {
+            Self::Flag(_) => "flag",
+            Self::ZlibOption => "zlib_option",
+            Self::FilterOption => "filter_option",
+            Self::Filter(_) => "named_filter",
+        }
+    }
+}
+
+/// One thing an intent asks the provider to do: the argv it lowers to, and the
+/// capabilities that argv depends on.
+///
+/// The pair is the whole point. `lower()` reads the tokens and the capability
+/// requirement reads the features, both from one list built once, so an argument
+/// cannot be emitted without its requirement being stated beside it.
+#[derive(Debug, Clone, Copy)]
+struct LoweredSegment {
+    features: &'static [ProviderFeature],
+    tokens: &'static [&'static str],
+}
+
 /// One conversion's complete product semantics.
 ///
 /// The fields are private and there is no public constructor that takes them.
@@ -421,62 +471,122 @@ impl ConversionIntent {
     /// stated product semantic and this is the argv the product already ships.
     #[must_use]
     pub fn lower(&self) -> Vec<OsString> {
-        let mut argv = Vec::new();
-        argv.push(OsString::from(match self.format {
-            OutputFormat::MzMl => "--mzML",
-        }));
-        argv.push(OsString::from(match self.compression {
-            CompressionIntent::Zlib => "--zlib",
-            CompressionIntent::NoCompression => "--zlib=off",
-        }));
-        match self.precision {
-            // The measured lowering of the shipped posture is silence.
-            NumericPrecision::Mz64Intensity32 => {}
-            NumericPrecision::Mz64Intensity64 => argv.push(OsString::from("--64")),
-            NumericPrecision::Mz32Intensity32 => argv.push(OsString::from("--32")),
-            NumericPrecision::Mz32Intensity64 => {
-                argv.push(OsString::from("--mz32"));
-                argv.push(OsString::from("--inten64"));
-            }
-        }
-        // Filters last, and processing before population. The provider applies
-        // filters in the order they are listed and says a picker must come
-        // first, so the order is a property of the scientific intent rather
-        // than of anything a control happens to do.
-        //
-        // No admitted intent currently produces both — centroiding beside a
-        // population filter is unmeasured — so this order is stated for the
-        // evidence that would widen it rather than exercised today.
-        if let Some(filter) = self.processing_filter() {
-            argv.push(OsString::from("--filter"));
-            argv.push(OsString::from(filter));
-        }
-        if let Some(filter) = self.population_filter() {
-            argv.push(OsString::from("--filter"));
-            argv.push(OsString::from(filter));
-        }
-        argv
+        self.segments()
+            .into_iter()
+            .flat_map(|segment| segment.tokens.iter().copied().map(OsString::from))
+            .collect()
     }
 
-    /// The peak-picking filter this intent asks for, if any.
+    /// Every provider capability this intent's own lowering depends on.
     ///
-    /// Never emits an `msLevel=` argument. The measured behaviour of
-    /// `peakPicking msLevel=<set>` without a picker token is that the scope is
-    /// silently discarded and *every* level is centroided, so the form is not
-    /// merely unevidenced — it is known to mean something other than it reads.
-    fn processing_filter(&self) -> Option<&'static str> {
-        match self.processing {
-            ProcessingIntent::NoAdditionalCentroiding => None,
-            ProcessingIntent::UnscopedDefaultCentroiding => Some("peakPicking"),
-        }
+    /// Read from the same segments `lower()` reads, so the two cannot come
+    /// apart: an argument has no way to reach argv without arriving inside a
+    /// segment that names what it needs.
+    #[must_use]
+    pub fn required_provider_features(&self) -> Vec<ProviderFeature> {
+        self.segments()
+            .into_iter()
+            .flat_map(|segment| segment.features.iter().copied())
+            .collect()
     }
 
-    fn population_filter(&self) -> Option<&'static str> {
-        match self.population {
-            SpectrumPopulation::All => None,
-            SpectrumPopulation::Ms1Only => Some("msLevel 1"),
-            SpectrumPopulation::Ms2Only => Some("msLevel 2"),
-        }
+    /// What this intent asks the provider to do, in the order it asks.
+    ///
+    /// Filters last, and processing before population. The provider applies
+    /// filters in the order they are listed and says a picker must come first,
+    /// so the order is a property of the scientific intent rather than of
+    /// anything a control happens to do.
+    ///
+    /// No admitted intent currently produces both — centroiding beside a
+    /// population filter is unmeasured — so this order is stated for the
+    /// evidence that would widen it rather than exercised today.
+    ///
+    /// A segment may carry no tokens at all. The shipped precision posture is
+    /// one: it emits nothing, so it depends on nothing, and a build declaring no
+    /// precision options can still run it.
+    fn segments(&self) -> Vec<LoweredSegment> {
+        let format = match self.format {
+            OutputFormat::MzMl => LoweredSegment {
+                features: &[ProviderFeature::Flag("mzML")],
+                tokens: &["--mzML"],
+            },
+        };
+        let compression = match self.compression {
+            CompressionIntent::Zlib => LoweredSegment {
+                features: &[ProviderFeature::ZlibOption],
+                tokens: &["--zlib"],
+            },
+            CompressionIntent::NoCompression => LoweredSegment {
+                features: &[ProviderFeature::ZlibOption],
+                tokens: &["--zlib=off"],
+            },
+        };
+        let precision = match self.precision {
+            // The measured lowering of the shipped posture is silence, and
+            // silence depends on nothing.
+            NumericPrecision::Mz64Intensity32 => LoweredSegment {
+                features: &[],
+                tokens: &[],
+            },
+            NumericPrecision::Mz64Intensity64 => LoweredSegment {
+                features: &[ProviderFeature::Flag("64")],
+                tokens: &["--64"],
+            },
+            NumericPrecision::Mz32Intensity32 => LoweredSegment {
+                features: &[ProviderFeature::Flag("32")],
+                tokens: &["--32"],
+            },
+            NumericPrecision::Mz32Intensity64 => LoweredSegment {
+                features: &[
+                    ProviderFeature::Flag("mz32"),
+                    ProviderFeature::Flag("inten64"),
+                ],
+                tokens: &["--mz32", "--inten64"],
+            },
+        };
+        // The `--filter` option itself is required by every filter segment, and
+        // the named grammar beside it: a build declaring `--filter` but not the
+        // filter this intent names cannot run it.
+        //
+        // Never an `msLevel=` argument inside the picker. The measured
+        // behaviour of `peakPicking msLevel=<set>` without a picker token is
+        // that the scope is silently discarded and *every* level is centroided,
+        // so the form is not merely unevidenced -- it is known to mean
+        // something other than it reads.
+        let processing = match self.processing {
+            ProcessingIntent::NoAdditionalCentroiding => LoweredSegment {
+                features: &[],
+                tokens: &[],
+            },
+            ProcessingIntent::UnscopedDefaultCentroiding => LoweredSegment {
+                features: &[
+                    ProviderFeature::FilterOption,
+                    ProviderFeature::Filter("peakPicking"),
+                ],
+                tokens: &["--filter", "peakPicking"],
+            },
+        };
+        let population = match self.population {
+            SpectrumPopulation::All => LoweredSegment {
+                features: &[],
+                tokens: &[],
+            },
+            SpectrumPopulation::Ms1Only => LoweredSegment {
+                features: &[
+                    ProviderFeature::FilterOption,
+                    ProviderFeature::Filter("msLevel"),
+                ],
+                tokens: &["--filter", "msLevel 1"],
+            },
+            SpectrumPopulation::Ms2Only => LoweredSegment {
+                features: &[
+                    ProviderFeature::FilterOption,
+                    ProviderFeature::Filter("msLevel"),
+                ],
+                tokens: &["--filter", "msLevel 2"],
+            },
+        };
+        vec![format, compression, precision, processing, population]
     }
 
     /// A stable, path-free identity for this intent.
@@ -717,6 +827,74 @@ mod tests {
         assert_eq!(
             shipped.lower(),
             vec![OsString::from("--mzML"), OsString::from("--zlib")]
+        );
+    }
+
+    /// Every argument an admitted intent emits is covered by a stated
+    /// requirement, and nothing is required that is not emitted.
+    ///
+    /// Derived from the argv here only as a *proof*: the mechanism is that both
+    /// come from one segment list, and this reads the result back to show the
+    /// two halves of each segment agree. A flag that reached argv without its
+    /// requirement would be one the planner could not have established before
+    /// emitting it, which is the whole defect this closes.
+    #[test]
+    fn every_emitted_argument_is_covered_by_a_stated_requirement() {
+        for admitted in &ConversionIntent::ADMITTED {
+            let intent = admitted.intent;
+            let features = intent.required_provider_features();
+            let lowered = intent.lower();
+
+            let mut expected: Vec<ProviderFeature> = Vec::new();
+            let mut tokens = lowered.iter();
+            while let Some(token) = tokens.next() {
+                let token = token.to_str().expect("every lowered token is UTF-8");
+                if token == "--filter" {
+                    expected.push(ProviderFeature::FilterOption);
+                    let argument = tokens.next().expect("a filter carries its grammar");
+                    let named = argument
+                        .to_str()
+                        .expect("every lowered token is UTF-8")
+                        .split(' ')
+                        .next()
+                        .expect("a filter names a grammar");
+                    expected.push(ProviderFeature::Filter(match named {
+                        "peakPicking" => "peakPicking",
+                        "msLevel" => "msLevel",
+                        other => panic!("{other} reached argv with no requirement rule"),
+                    }));
+                } else if token.starts_with("--zlib") {
+                    expected.push(ProviderFeature::ZlibOption);
+                } else {
+                    expected.push(ProviderFeature::Flag(match token {
+                        "--mzML" => "mzML",
+                        "--32" => "32",
+                        "--64" => "64",
+                        "--mz32" => "mz32",
+                        "--inten64" => "inten64",
+                        other => panic!("{other} reached argv with no requirement rule"),
+                    }));
+                }
+            }
+
+            assert_eq!(
+                features, expected,
+                "{:?} emits arguments its requirement list does not cover",
+                intent
+            );
+        }
+    }
+
+    /// The shipped intent depends on the two flags it emits and nothing else.
+    ///
+    /// The other half of the same rule. Requiring the whole M6.2 candidate list
+    /// would make every production conversion refuse on a build that declares
+    /// only what it actually uses.
+    #[test]
+    fn the_shipped_intent_requires_only_what_it_emits() {
+        assert_eq!(
+            ConversionIntent::SHIPPED.required_provider_features(),
+            vec![ProviderFeature::Flag("mzML"), ProviderFeature::ZlibOption,]
         );
     }
 

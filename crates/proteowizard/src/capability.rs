@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use crate::command::{BackendTool, OpenFormat, PreviewOperation};
 use crate::discovery::{BoundHelpProbe, DiscoveredTool};
+use crate::intent::{ConversionIntent, ProviderFeature};
 use crate::sha256::{Sha256Error, digest_bytes, digest_file};
 
 /// A SHA-256 digest supplied by the component that captured the complete raw
@@ -562,6 +563,13 @@ impl InstalledHelpCapabilities {
         Ok(())
     }
 
+    /// Whether this build can convert to a format at all.
+    ///
+    /// The readiness question, asked of a *format* rather than of a plan: it
+    /// establishes the grammar every conversion needs whatever it asks for. It
+    /// is not sufficient to plan a command, because a plan emits the arguments
+    /// its intent lowers to and this cannot know what those are. See
+    /// [`Self::require_conversion_intent`], which is what a builder asks.
     pub fn require_conversion(&self, format: OpenFormat) -> Result<(), CapabilityRequirementError> {
         self.require_tool(BackendTool::MsConvert)?;
         self.require_option("outdir", OptionArgument::Required)?;
@@ -571,6 +579,47 @@ impl InstalledHelpCapabilities {
             OpenFormat::MzMl => self.require_option("mzML", OptionArgument::None),
             OpenFormat::MzXml => self.require_option("mzXML", OptionArgument::None),
         }
+    }
+
+    /// Whether this build declares everything one exact intent will emit.
+    ///
+    /// The relationship this closes is the one that makes the whole boundary
+    /// fail-closed: *a typed admitted intent plus the live executable's
+    /// capability receipt yields an executable command.* M6.2's evidence admits
+    /// a semantic on the executable it measured; it says nothing about the
+    /// build a user has installed today, so an intent that lowers to `--64` or
+    /// to a `peakPicking` filter must be refused at planning time on a build
+    /// whose help declares neither -- not launched and failed.
+    ///
+    /// Asked of the intent's own [`ProviderFeature`] list, which is built from
+    /// the same segments its argv is, so this cannot drift from what is emitted
+    /// and cannot demand a feature the intent does not use. The shipped intent
+    /// lowers to two flags and requires exactly those two beyond the grammar
+    /// every conversion needs.
+    ///
+    /// What it establishes for a filter is that the installed help *declares*
+    /// that named filter. It deliberately does not pin an exact normalized
+    /// signature the way the msaccess analysis queries do: that signature would
+    /// have to be copied from one build's help text, and this correction has no
+    /// authority to take a new measurement of the installed build.
+    pub fn require_conversion_intent(
+        &self,
+        intent: &ConversionIntent,
+    ) -> Result<(), CapabilityRequirementError> {
+        self.require_tool(BackendTool::MsConvert)?;
+        self.require_option("outdir", OptionArgument::Required)?;
+        self.require_option("outfile", OptionArgument::Required)?;
+        for feature in intent.required_provider_features() {
+            match feature {
+                ProviderFeature::Flag(name) => self.require_option(name, OptionArgument::None)?,
+                ProviderFeature::ZlibOption => self.require_zlib_option()?,
+                ProviderFeature::FilterOption => {
+                    self.require_option("filter", OptionArgument::Required)?;
+                }
+                ProviderFeature::Filter(name) => self.require_spectrum_filter(name)?,
+            }
+        }
+        Ok(())
     }
 
     fn require_tool(&self, expected: BackendTool) -> Result<(), CapabilityRequirementError> {
@@ -592,6 +641,22 @@ impl InstalledHelpCapabilities {
             .option(name)
             .is_some_and(|option| option.argument == argument)
         {
+            Ok(())
+        } else {
+            Err(CapabilityRequirementError::Missing(name))
+        }
+    }
+
+    /// Whether the installed help declares a named spectrum-list filter.
+    ///
+    /// `--filter` existing is a different fact from the filter an intent names
+    /// existing, and the first does not imply the second: the option is generic
+    /// and the grammar is per name.
+    fn require_spectrum_filter(
+        &self,
+        name: &'static str,
+    ) -> Result<(), CapabilityRequirementError> {
+        if self.spectrum_filter(name).is_some() {
             Ok(())
         } else {
             Err(CapabilityRequirementError::Missing(name))
@@ -927,7 +992,7 @@ fn parse_option_declaration(line: &str) -> Option<(String, OptionDeclaration)> {
         .enumerate()
         .find(|(_, token)| token.starts_with("--"))?;
     let name = option_token.trim_start_matches("--").trim_end_matches(']');
-    if !is_identifier(name) {
+    if !is_option_name(name) {
         return None;
     }
 
@@ -1147,6 +1212,26 @@ fn normalize_space(value: &str) -> String {
     value.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Whether a token is an option name this parser will record.
+///
+/// Looser than [`is_identifier`] in exactly one place: an option name may begin
+/// with a digit. `msconvert` spells its global precision switches `--32` and
+/// `--64`, and a parser that refused a leading digit did not merely skip them --
+/// it left the capability model unable to express options a real build declares,
+/// so nothing could require them before emitting them.
+///
+/// Deliberately not a change to `is_identifier` itself, which also gates filter
+/// names and the `name=` parameters inside a grammar signature. Neither of those
+/// is spelled with a leading digit, and widening them would recognize shapes no
+/// build declares.
+fn is_option_name(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    bytes
+        .next()
+        .is_some_and(|byte| is_identifier_start(byte) || byte.is_ascii_digit())
+        && bytes.all(is_identifier_continue)
+}
+
 fn is_identifier(value: &str) -> bool {
     let mut bytes = value.bytes();
     bytes.next().is_some_and(is_identifier_start) && bytes.all(is_identifier_continue)
@@ -1173,7 +1258,10 @@ mod tests {
         PlanError, build_msaccess_command_with_capabilities,
         build_msconvert_command_with_capabilities,
     };
-    use crate::intent::ConversionIntent;
+    use crate::intent::{
+        CompressionIntent, ConversionIntent, NumericPrecision, OutputFormat, ProcessingIntent,
+        SpectrumPopulation,
+    };
 
     const EMPTY_SHA256: Sha256Digest = Sha256Digest::from_bytes([
         0xE3, 0xB0, 0xC4, 0x42, 0x98, 0xFC, 0x1C, 0x14, 0x9A, 0xFB, 0xF4, 0xC8, 0x99, 0x6F, 0xB9,
@@ -1246,6 +1334,42 @@ Options:
   --mzML                             : write mzML format [default]
   --mzXML                            : write mzXML format
   -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
+
+Examples:
+
+msconvert data.RAW --mzXML
+"#;
+
+    /// Everything the admitted table can lower to, declared.
+    ///
+    /// Kept beside the minimal fixture rather than replacing it. The minimal one
+    /// is a build that supports the shipped posture and nothing else, and that
+    /// distinction is the whole of what `require_conversion_intent` is for.
+    const MSCONVERT_FULL_HELP: &str = r#"Usage: msconvert [options] [filemasks]
+Convert mass spec data file formats.
+
+Options:
+  -o [ --outdir ] arg (=.)           : set output directory
+  --outfile arg                      : Override the name of output file.
+  --mzML                             : write mzML format [default]
+  --mzXML                            : write mzXML format
+  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
+  --filter arg                       : add a spectrum list filter
+  --32                               : set default binary encoding to 32-bit precision
+  --64                               : set default binary encoding to 64-bit precision [default]
+  --mz32                             : encode m/z values in 32-bit precision
+  --mz64                             : encode m/z values in 64-bit precision [default]
+  --inten32                          : encode intensity values in 32-bit precision [default]
+  --inten64                          : encode intensity values in 64-bit precision
+
+Spectrum List Filters
+=====================
+
+msLevel <mslevels>
+This filter selects only spectra with the indicated <mslevels>, expressed as an int_set.
+
+peakPicking [<PickerType>] [msLevel=<ms levels>]
+This filter performs centroiding on spectra with the selected <ms levels>.
 
 Examples:
 
@@ -1850,15 +1974,17 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         fs::write(&source, b"source RAW").expect("write source RAW");
         fs::create_dir(&output_directory).expect("create fresh output directory");
 
+        let complete = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_FULL_HELP))
+            .expect("valid full msconvert fixture");
         for admitted in ConversionIntent::ADMITTED {
             let command = build_msconvert_command_with_capabilities(
-                &capabilities,
+                &complete,
                 &source,
                 &output_directory,
                 OsStr::new("sample.mzML"),
                 &admitted.intent(),
             )
-            .expect("every admitted intent plans");
+            .expect("every admitted intent plans on a build declaring everything");
             assert!(
                 command.args.iter().any(|argument| argument == "--mzML"),
                 "an admitted intent asked for something other than mzML: {:?}",
@@ -1870,6 +1996,152 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 admitted.intent().stable_id()
             );
         }
+    }
+
+    /// A plan is refused before it exists when the installed build does not
+    /// declare something the chosen intent will emit.
+    ///
+    /// The relationship this pins is the fail-closed one: an admitted intent is
+    /// evidence about the executable M6.2 measured, and the executable a user
+    /// has installed is a separate fact the planner has to establish. Each
+    /// declaration is removed on its own, so every refusal names the thing that
+    /// was missing rather than a build that happened to be poor overall.
+    ///
+    /// The expected result is a `PlanError`, never a backend failure. Nothing is
+    /// spawned, and no `CommandSpec` exists to spawn.
+    #[test]
+    fn an_intent_is_refused_when_the_build_does_not_declare_what_it_emits() {
+        let test_directory = TestDirectory::new();
+        let source = test_directory.path().join("sample.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::write(&source, b"source RAW").expect("write source RAW");
+        fs::create_dir(&output_directory).expect("create fresh output directory");
+
+        let intent = |precision, population, processing| {
+            ConversionIntent::admitted(
+                OutputFormat::MzMl,
+                processing,
+                population,
+                precision,
+                CompressionIntent::Zlib,
+            )
+            .expect("an admitted combination")
+        };
+        let global_64 = intent(
+            NumericPrecision::Mz64Intensity64,
+            SpectrumPopulation::All,
+            ProcessingIntent::NoAdditionalCentroiding,
+        );
+        let per_array = intent(
+            NumericPrecision::Mz32Intensity64,
+            SpectrumPopulation::All,
+            ProcessingIntent::NoAdditionalCentroiding,
+        );
+        let survey_only = intent(
+            NumericPrecision::Mz64Intensity64,
+            SpectrumPopulation::Ms1Only,
+            ProcessingIntent::NoAdditionalCentroiding,
+        );
+        let centroiding = intent(
+            NumericPrecision::Mz64Intensity64,
+            SpectrumPopulation::All,
+            ProcessingIntent::UnscopedDefaultCentroiding,
+        );
+
+        for (label, removed, intent) in [
+            ("the global 64-bit option", "  --64  ", global_64),
+            ("a per-array precision option", "  --inten64  ", per_array),
+            ("the filter option", "  --filter arg  ", survey_only),
+            (
+                "the msLevel filter grammar",
+                "msLevel <mslevels>",
+                survey_only,
+            ),
+            (
+                "the peakPicking filter grammar",
+                "peakPicking [",
+                centroiding,
+            ),
+        ] {
+            let crippled: String = MSCONVERT_FULL_HELP
+                .lines()
+                .filter(|line| !line.trim_start().starts_with(removed.trim()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let capabilities = parse_capabilities(BackendTool::MsConvert, capture(&crippled))
+                .expect("a build missing one declaration is still parseable");
+
+            let error = build_msconvert_command_with_capabilities(
+                &capabilities,
+                &source,
+                &output_directory,
+                OsStr::new("sample.mzML"),
+                &intent,
+            )
+            .expect_err(label);
+            assert!(
+                matches!(error, PlanError::InstalledHelpCapability(_)),
+                "{label} produced {error:?} rather than a capability refusal"
+            );
+        }
+    }
+
+    /// The global precision switches are options this model can hold.
+    ///
+    /// They are spelled with a leading digit, and a parser that refused one did
+    /// not skip a cosmetic detail: it made the capability model unable to
+    /// express two options a real build declares, so nothing could require them
+    /// before emitting them. Asserted against the declared argument posture as
+    /// well as presence, because a name recorded with the wrong posture would
+    /// satisfy a requirement it should refuse.
+    #[test]
+    fn a_digit_led_option_name_is_recorded_like_any_other() {
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_FULL_HELP))
+            .expect("valid full msconvert fixture");
+
+        for name in ["32", "64", "mz32", "mz64", "inten32", "inten64"] {
+            assert_eq!(
+                capabilities.option(name).map(OptionDeclaration::argument),
+                Some(OptionArgument::None),
+                "{name} is not recorded as a no-argument option"
+            );
+        }
+        // And the looser rule stops at option names: a filter or a grammar
+        // parameter is still required to start with a letter.
+        assert!(!is_identifier("64"));
+        assert!(is_option_name("64"));
+    }
+
+    /// The shipped intent asks for nothing beyond the grammar it emits.
+    ///
+    /// The other half of the same rule, and the one that keeps the requirement
+    /// honest: a build declaring only what `SHIPPED` lowers to must still plan.
+    /// Requiring the whole M6.2 candidate list would make every conversion
+    /// depend on features it never uses.
+    #[test]
+    fn the_shipped_intent_plans_on_a_build_declaring_only_what_it_emits() {
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+            .expect("valid msconvert fixture");
+        let test_directory = TestDirectory::new();
+        let source = test_directory.path().join("sample.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::write(&source, b"source RAW").expect("write source RAW");
+        fs::create_dir(&output_directory).expect("create fresh output directory");
+
+        let command = build_msconvert_command_with_capabilities(
+            &capabilities,
+            &source,
+            &output_directory,
+            OsStr::new("sample.mzML"),
+            &ConversionIntent::SHIPPED,
+        )
+        .expect("the shipped intent plans on a build declaring no filters at all");
+        assert!(!command.contains_argument("--filter"));
+        assert_eq!(
+            ConversionIntent::SHIPPED.required_provider_features().len(),
+            2,
+            "the shipped intent grew a requirement it does not emit"
+        );
     }
 
     #[test]

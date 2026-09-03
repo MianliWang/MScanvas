@@ -125,61 +125,34 @@ pub enum RetentionTimeUnitMarker {
     NotEmitted,
 }
 
-/// What a document says about the peak-picking algorithm that ran.
+/// One peak-picking implementation a document says ran on it.
 ///
 /// A bounded classification of an unbounded thing, and the boundedness is the
 /// point. M6.2 measured this build recording **every** picker under the same
 /// `MS:1000035 peak picking` accession, and naming the implementation only in a
 /// free-text `userParam` -- so the accession cannot identify an algorithm, and
-/// the free text must not become trusted domain state. What is retained is
-/// which of a small set of build-qualified strings was seen, never the string.
-///
-/// `Absent` is deliberately not `NoProcessing`. A document that records nothing
-/// has told us nothing, and reading silence as "no peaks were picked" is the
-/// inference the M6.2 record refuses to make.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ProcessingAlgorithmClaim {
-    /// No `peak picking` processing method was recorded at all.
-    #[default]
-    Absent,
+/// the free text must not become trusted domain state. What is retained is which
+/// of a small set of build-qualified strings was seen, never the string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum ProcessingAlgorithm {
     /// The build's default local-maximum picker named itself.
-    DefaultLocalMaximum,
+    DefaultLocalMaximum = 0,
     /// A picker this repository recognizes and has not admitted -- measured, and
     /// measured failing.
-    KnownDifferentAlgorithm,
+    KnownDifferentAlgorithm = 1,
     /// A `peak picking` method was recorded whose implementation name is not one
     /// of the strings the evidence qualified.
-    Unrecognized,
-    /// More than one distinct algorithm was claimed for one document.
-    Conflicting,
+    Unrecognized = 2,
 }
 
-impl ProcessingAlgorithmClaim {
+impl ProcessingAlgorithm {
     #[must_use]
     pub const fn stable_id(self) -> &'static str {
         match self {
-            Self::Absent => "absent",
             Self::DefaultLocalMaximum => "default_local_maximum",
             Self::KnownDifferentAlgorithm => "known_different_algorithm",
             Self::Unrecognized => "unrecognized",
-            Self::Conflicting => "conflicting",
-        }
-    }
-
-    /// Folds a second observation into the first.
-    ///
-    /// Two different named algorithms in one document is `Conflicting` and
-    /// cannot become anything else afterwards: a document that claims two
-    /// things has not claimed either.
-    const fn combine(self, observed: Self) -> Self {
-        match (self, observed) {
-            (Self::Conflicting, _) | (_, Self::Conflicting) => Self::Conflicting,
-            (Self::Absent, other) | (other, Self::Absent) => other,
-            // Compared as discriminants because `PartialEq` is not const here.
-            // Two methods claiming the same algorithm are one claim; two
-            // claiming different ones are no claim at all.
-            (first, second) if first as u8 == second as u8 => first,
-            _ => Self::Conflicting,
         }
     }
 }
@@ -216,6 +189,16 @@ impl RepresentationMarker {
     }
 }
 
+/// Whether an array declared exactly one role, and that role is the given one.
+///
+/// Exact rather than "contains", because a per-role precision set exists to say
+/// what the m/z or intensity array *is*. An array claiming two roles is
+/// ambiguous about which width belongs to which, and contributing it to either
+/// set would let one array's encoding answer for another's.
+const fn declares_only(kinds: ArrayKindSet, role: ArrayKind) -> bool {
+    kinds.bits() == 1 << role as u8
+}
+
 macro_rules! marker_set {
     ($name:ident, $marker:ty, $doc:literal) => {
         #[doc = $doc]
@@ -245,6 +228,12 @@ macro_rules! marker_set {
             fn merge(&mut self, other: Self) {
                 self.0 |= other.0;
             }
+
+            /// The markers this set holds that the other does not.
+            #[must_use]
+            pub const fn difference(self, other: Self) -> Self {
+                Self(self.0 & !other.0)
+            }
         }
 
         impl fmt::Debug for $name {
@@ -270,6 +259,13 @@ marker_set!(
     CompressionMarker,
     "The set of compression markers observed. An empty set means none was emitted."
 );
+marker_set!(
+    ProcessingAlgorithmSet,
+    ProcessingAlgorithm,
+    "Every peak-picking implementation one document claims ran on it. An empty \
+     set means the document recorded no peak-picking method at all -- which is \
+     silence, not a claim that none ran."
+);
 
 /// Compact per-spectrum facts. No raw scientific value is retained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,6 +275,7 @@ pub struct MzmlSpectrumRecord {
     default_array_length: Option<u64>,
     binary_array_count: u32,
     zlib_compressed_array_count: u32,
+    no_compression_array_count: u32,
     empty_binary_payload_count: u32,
     precursor_count: u32,
     scan_number: Option<u64>,
@@ -340,6 +337,19 @@ impl MzmlSpectrumRecord {
         self.zlib_compressed_array_count
     }
 
+    /// How many of this record's binary arrays individually carried a
+    /// `no compression` marker.
+    ///
+    /// Counted per array rather than folded into the record's marker set,
+    /// because a marker on one array says nothing about a sibling that stated
+    /// none. An array carrying both markers increments this *and* the zlib
+    /// count, so a record contradicting itself is visible as the two counts
+    /// exceeding the arrays they describe.
+    #[must_use]
+    pub const fn no_compression_array_count(&self) -> u32 {
+        self.no_compression_array_count
+    }
+
     /// How many of this record's binary arrays carried no non-whitespace
     /// payload. Presence is observed without decoding, so an array whose
     /// scientific data went missing is comparable across a conversion.
@@ -394,9 +404,19 @@ pub struct MzmlChromatogramRecord {
     default_array_length: Option<u64>,
     binary_array_count: u32,
     zlib_compressed_array_count: u32,
+    no_compression_array_count: u32,
     empty_binary_payload_count: u32,
     array_kinds: ArrayKindSet,
     precision: NumericPrecisionSet,
+    /// The encodings observed on arrays that declared themselves intensity
+    /// arrays, and nothing else.
+    ///
+    /// A chromatogram carries an intensity array exactly as a spectrum does, and
+    /// a bound intent states an intensity width for the whole conversion. Kept
+    /// apart from `precision` for the same reason the spectrum's is: the union
+    /// of a time array's width and an intensity array's width cannot say what
+    /// either of them is.
+    intensity_precision: NumericPrecisionSet,
     compression: CompressionSet,
 }
 
@@ -421,6 +441,19 @@ impl MzmlChromatogramRecord {
     #[must_use]
     pub const fn zlib_compressed_array_count(&self) -> u32 {
         self.zlib_compressed_array_count
+    }
+
+    /// How many of this chromatogram's binary arrays individually carried a
+    /// `no compression` marker. See the spectrum twin for why it is counted.
+    #[must_use]
+    pub const fn no_compression_array_count(&self) -> u32 {
+        self.no_compression_array_count
+    }
+
+    /// The encodings the intensity arrays of this chromatogram declared.
+    #[must_use]
+    pub const fn intensity_precision(&self) -> NumericPrecisionSet {
+        self.intensity_precision
     }
 
     /// How many of this record's binary arrays carried no non-whitespace
@@ -627,8 +660,8 @@ pub struct MzmlFacts {
     parameter_group_reference_observed: bool,
     first_identities: Vec<SpectrumIdentity>,
     last_identity: Option<SpectrumIdentity>,
-    /// What the document says was done to its peaks, classified.
-    processing_claim: ProcessingAlgorithmClaim,
+    /// Every peak-picking implementation the document claims ran on it.
+    processing_claims: ProcessingAlgorithmSet,
     scanned_bytes: u64,
 }
 
@@ -689,8 +722,8 @@ impl MzmlFacts {
     /// picker this build ships records the same CV accession, and only a
     /// free-text name distinguishes them.
     #[must_use]
-    pub const fn processing_claim(&self) -> ProcessingAlgorithmClaim {
-        self.processing_claim
+    pub const fn processing_claims(&self) -> ProcessingAlgorithmSet {
+        self.processing_claims
     }
 
     #[must_use]
@@ -926,6 +959,7 @@ struct SpectrumBuilder {
     default_array_length: Option<u64>,
     binary_array_count: u32,
     zlib_compressed_array_count: u32,
+    no_compression_array_count: u32,
     empty_binary_payload_count: u32,
     precursor_count: u32,
     scan_number: Option<u64>,
@@ -944,9 +978,11 @@ struct ChromatogramBuilder {
     default_array_length: Option<u64>,
     binary_array_count: u32,
     zlib_compressed_array_count: u32,
+    no_compression_array_count: u32,
     empty_binary_payload_count: u32,
     array_kinds: ArrayKindSet,
     precision: NumericPrecisionSet,
+    intensity_precision: NumericPrecisionSet,
     compression: CompressionSet,
 }
 
@@ -979,7 +1015,7 @@ struct ScanState {
     chromatogram: Option<ChromatogramBuilder>,
     array: Option<ArrayBuilder>,
     processing_method: Option<ProcessingMethodBuilder>,
-    processing_claim: ProcessingAlgorithmClaim,
+    processing_claims: ProcessingAlgorithmSet,
 }
 
 /// One `processingMethod` element, while it is open.
@@ -990,7 +1026,7 @@ struct ScanState {
 #[derive(Debug, Default)]
 struct ProcessingMethodBuilder {
     peak_picking: bool,
-    named: Option<ProcessingAlgorithmClaim>,
+    named: ProcessingAlgorithmSet,
 }
 
 impl ScanState {
@@ -1013,7 +1049,7 @@ impl ScanState {
             chromatogram: None,
             array: None,
             processing_method: None,
-            processing_claim: ProcessingAlgorithmClaim::Absent,
+            processing_claims: ProcessingAlgorithmSet::default(),
         }
     }
 
@@ -1307,16 +1343,13 @@ impl ScanState {
             return;
         };
         let observed = if name == DEFAULT_PICKER_NAME {
-            ProcessingAlgorithmClaim::DefaultLocalMaximum
+            ProcessingAlgorithm::DefaultLocalMaximum
         } else if KNOWN_OTHER_PICKER_NAMES.contains(&name) {
-            ProcessingAlgorithmClaim::KnownDifferentAlgorithm
+            ProcessingAlgorithm::KnownDifferentAlgorithm
         } else {
             return;
         };
-        method.named = Some(match method.named {
-            Some(existing) => existing.combine(observed),
-            None => observed,
-        });
+        method.named.insert(observed);
     }
 
     fn finish_processing_method(&mut self) {
@@ -1328,10 +1361,15 @@ impl ScanState {
             // nothing about picking and is not folded in as if it did.
             return;
         }
-        let observed = method
-            .named
-            .unwrap_or(ProcessingAlgorithmClaim::Unrecognized);
-        self.processing_claim = self.processing_claim.combine(observed);
+        // A peak-picking method that named no picker this evidence qualified is
+        // one unrecognized algorithm, not an absence: something ran and the
+        // document declined to say what.
+        if method.named.is_empty() {
+            self.processing_claims
+                .insert(ProcessingAlgorithm::Unrecognized);
+        } else {
+            self.processing_claims.merge(method.named);
+        }
     }
 
     fn finish_array(&mut self) {
@@ -1347,25 +1385,23 @@ impl ScanState {
         };
 
         let zlib = u32::from(array.compression.contains(CompressionMarker::Zlib));
+        let uncompressed = u32::from(array.compression.contains(CompressionMarker::NoCompression));
         let empty_payload = u32::from(!array.has_payload);
         if let Some(spectrum) = self.spectrum.as_mut() {
             spectrum.binary_array_count = spectrum.binary_array_count.saturating_add(1);
             spectrum.zlib_compressed_array_count =
                 spectrum.zlib_compressed_array_count.saturating_add(zlib);
+            spectrum.no_compression_array_count = spectrum
+                .no_compression_array_count
+                .saturating_add(uncompressed);
             spectrum.empty_binary_payload_count = spectrum
                 .empty_binary_payload_count
                 .saturating_add(empty_payload);
             spectrum.array_kinds.merge(kinds);
             spectrum.precision.merge(array.precision);
-            // Attributed to the role the array declared for itself. An array
-            // that declared both roles, or neither, contributes to neither
-            // per-role set: the point of these two is to say what the m/z and
-            // intensity arrays are, and an ambiguous array cannot.
-            let mz = kinds.contains(ArrayKind::Mz);
-            let intensity = kinds.contains(ArrayKind::Intensity);
-            if mz && !intensity {
+            if declares_only(kinds, ArrayKind::Mz) {
                 spectrum.mz_precision.merge(array.precision);
-            } else if intensity && !mz {
+            } else if declares_only(kinds, ArrayKind::Intensity) {
                 spectrum.intensity_precision.merge(array.precision);
             }
             spectrum.compression.merge(array.compression);
@@ -1374,11 +1410,17 @@ impl ScanState {
             chromatogram.zlib_compressed_array_count = chromatogram
                 .zlib_compressed_array_count
                 .saturating_add(zlib);
+            chromatogram.no_compression_array_count = chromatogram
+                .no_compression_array_count
+                .saturating_add(uncompressed);
             chromatogram.empty_binary_payload_count = chromatogram
                 .empty_binary_payload_count
                 .saturating_add(empty_payload);
             chromatogram.array_kinds.merge(kinds);
             chromatogram.precision.merge(array.precision);
+            if declares_only(kinds, ArrayKind::Intensity) {
+                chromatogram.intensity_precision.merge(array.precision);
+            }
             chromatogram.compression.merge(array.compression);
         }
     }
@@ -1397,6 +1439,7 @@ impl ScanState {
             default_array_length: spectrum.default_array_length,
             binary_array_count: spectrum.binary_array_count,
             zlib_compressed_array_count: spectrum.zlib_compressed_array_count,
+            no_compression_array_count: spectrum.no_compression_array_count,
             empty_binary_payload_count: spectrum.empty_binary_payload_count,
             precursor_count: spectrum.precursor_count,
             scan_number: spectrum.scan_number,
@@ -1419,9 +1462,11 @@ impl ScanState {
             default_array_length: chromatogram.default_array_length,
             binary_array_count: chromatogram.binary_array_count,
             zlib_compressed_array_count: chromatogram.zlib_compressed_array_count,
+            no_compression_array_count: chromatogram.no_compression_array_count,
             empty_binary_payload_count: chromatogram.empty_binary_payload_count,
             array_kinds: chromatogram.array_kinds,
             precision: chromatogram.precision,
+            intensity_precision: chromatogram.intensity_precision,
             compression: chromatogram.compression,
         });
     }
@@ -1444,7 +1489,7 @@ impl ScanState {
             parameter_group_reference_observed: self.parameter_group_reference_observed,
             first_identities: self.first_identities,
             last_identity: self.last_identity,
-            processing_claim: self.processing_claim,
+            processing_claims: self.processing_claims,
             scanned_bytes,
         })
     }

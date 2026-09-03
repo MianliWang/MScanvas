@@ -723,7 +723,7 @@ pub(crate) fn build_msconvert_set_command_for_source(
     intent: &ConversionIntent,
     spelling: InputSpelling,
 ) -> Result<CommandSpec, PlanError> {
-    capabilities.require_conversion(OpenFormat::of_intent(intent.format()))?;
+    capabilities.require_conversion_intent(intent)?;
     let executable = capabilities.executable().to_path_buf();
     validate_paths(&executable, input, output_directory)?;
     // Fresh, not merely safe. Discovery afterwards attributes every member of
@@ -812,7 +812,7 @@ pub fn build_msconvert_command_for_source(
     let format = OpenFormat::of_intent(intent.format());
     match format {
         OpenFormat::MzMl => {
-            capabilities.require_conversion(format)?;
+            capabilities.require_conversion_intent(intent)?;
             let executable = capabilities.executable().to_path_buf();
             validate_paths(&executable, input, output_directory)?;
             validate_output_file_name(output_file_name, format)?;
