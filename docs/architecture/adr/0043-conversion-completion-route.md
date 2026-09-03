@@ -916,6 +916,15 @@ running and terminal surfaces read it, so moving a control afterwards changes
 what the *next* conversion would be and nothing about this one, through every
 retry.
 
+Two consequences of those rules were found by review and repaired. A preserved
+semantic whose every one-axis neighbour is refused is a dead end, so there is one
+**labelled** way out — offered only while the chosen semantic cannot run, and
+only ever selecting the semantic Rust names as shipped, which is a deliberate
+choice rather than the silent fallback this design refuses. And a catalog is an
+answer about one executable, so a session that loses its ProteoWizard loses the
+catalog with it rather than offering that build's availability marks beside a
+banner saying none is installed.
+
 **And the M6.1 initial-unread-slot residual is closed here**, as its record said
 it should be: one lane fact rather than a new mechanism. `slotUnread` is the
 rendered half of `installedSequence`, and a conversion may not start against a

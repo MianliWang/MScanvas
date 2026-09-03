@@ -100,6 +100,16 @@ export interface ConversionChoice<A extends ConversionAxis> {
  */
 export type ConversionSettings =
   | { readonly status: "loading" }
+  /**
+   * This session has no usable ProteoWizard, so there is nothing to ask.
+   *
+   * Distinct from `loading`, which says a read is under way, and from `failed`,
+   * which says one was attempted and did not answer. **The last catalog is not
+   * kept here**: a catalog is an answer about one executable, and offering its
+   * availability marks beside a banner saying no backend is installed would
+   * describe a build that is not there.
+   */
+  | { readonly status: "noBackend" }
   /** The catalog could not be established. No semantic is manufactured. */
   | { readonly status: "failed"; readonly error: PreviewError }
   | {
@@ -108,6 +118,35 @@ export type ConversionSettings =
       /** The identity of the selected row, which is always a row of `catalog`. */
       readonly selectedId: string;
     };
+
+/**
+ * The semantic to offer as a way out, or `null` where none is needed.
+ *
+ * **A dead end is reachable without this, and it is the cost of two rules that
+ * are each right.** A choice survives an installation change, because it is a
+ * scientific request rather than a property of a catalog; and a control moves
+ * one axis, because a control that moved two would change something the user
+ * did not ask about. Put together, a preserved semantic whose every one-axis
+ * neighbour is unqualified or undeclared leaves every control refused, with the
+ * shipped posture sitting available and unreachable.
+ *
+ * So the way out is an explicit, labelled, atomic choice rather than a silent
+ * rewrite: offered only while the current selection cannot run, and only when
+ * the semantic Rust names as shipped can. Where even that cannot run, nothing
+ * is offered — inventing a route to whichever row happens to be available would
+ * be the silent fallback this design exists to refuse.
+ */
+export function recoveryIntent(settings: ConversionSettings): ConversionIntentOption | null {
+  if (settings.status !== "ready") {
+    return null;
+  }
+  const chosen = catalogRow(settings.catalog, settings.selectedId);
+  if (chosen !== null && chosen.availability.kind === "available") {
+    return null;
+  }
+  const shipped = catalogRow(settings.catalog, settings.catalog.shippedIntentId);
+  return shipped !== null && shipped.availability.kind === "available" ? shipped : null;
+}
 
 /**
  * The catalog row an identity names.

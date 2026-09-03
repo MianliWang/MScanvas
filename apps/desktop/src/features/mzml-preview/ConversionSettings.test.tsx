@@ -17,6 +17,7 @@ import {
   queueOf,
   SHIPPED_INTENT,
   shimadzuDataset,
+  unavailableBackend,
 } from "../../test/previewFixtures";
 import type { FakePreviewApi, FakePreviewApiOptions } from "../../test/previewFixtures";
 import type { ConversionQueuePlan, WorkspaceConversionState } from "./contracts";
@@ -695,6 +696,117 @@ describe("choosing what a conversion will do", () => {
     });
     const { settings } = rendered.result.current.conversion;
     expect(settings.status === "ready" && settings.selectedId).toBe(SHIPPED_INTENT.id);
+  });
+
+  it("offers one explicit way out when the chosen semantic has no reachable neighbour", async () => {
+    // The dead end two right rules produce together. A choice survives an
+    // installation change, and a control moves one axis; a preserved semantic
+    // whose every one-axis neighbour is unqualified or undeclared therefore
+    // leaves every control refused, with the shipped posture available and
+    // unreachable.
+    const chosen = intentFor({
+      processing: "unscopedDefaultCentroiding",
+      precision: "mz32Intensity32",
+    });
+    const everythingElse = intentCatalog()
+      .intents.map((option) => option.intent.id)
+      .filter((id) => id !== SHIPPED_INTENT.id);
+    let generation = 0;
+    const { panel } = await openTheSettings({
+      availability: () =>
+        Promise.resolve({ ...availableBackend, installationGeneration: generation }),
+      conversionIntents: () =>
+        Promise.resolve(
+          generation === 0
+            ? intentCatalog()
+            : intentCatalog({ unsupported: everythingElse, installationGeneration: 1 }),
+        ),
+    });
+
+    // Chosen on a build that offers it, in two explicit steps.
+    await waitFor(() => {
+      expect(choice(panel, "Numeric precision", /32-bit · intensity 32-bit/u)).toBeEnabled();
+    });
+    fireEvent.click(choice(panel, "Numeric precision", /32-bit · intensity 32-bit/u));
+    await waitFor(() => {
+      expect(choice(panel, "Peak processing", "Centroid all MS levels")).toBeEnabled();
+    });
+    fireEvent.click(choice(panel, "Peak processing", "Centroid all MS levels"));
+    await waitFor(() => {
+      expect(choice(panel, "Peak processing", "Centroid all MS levels").checked).toBe(true);
+    });
+    expect(chosen.id).not.toBe(SHIPPED_INTENT.id);
+
+    // The installation is replaced by one that can run only what MSCanvas
+    // ships, through the control a reader actually has.
+    generation = 1;
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+
+    const recover = await within(panel).findByRole("button", {
+      name: "Use the settings MSCanvas ships",
+    });
+    // The semantic was preserved rather than silently replaced, and every
+    // control is refused.
+    expect(choice(panel, "Peak processing", "Centroid all MS levels").checked).toBe(true);
+    for (const [group, label] of [
+      ["Peak processing", "No additional centroiding"],
+      ["Spectra included", "MS1 spectra only"],
+      ["Numeric precision", /64-bit · intensity 64-bit/u],
+      ["Array compression", "Uncompressed"],
+    ] as const) {
+      expect(choice(panel, group, label)).toBeDisabled();
+    }
+    expect(describedText(recover)).toContain("no single change to one of them reaches");
+
+    fireEvent.click(recover);
+    await waitFor(() => {
+      expect(choice(panel, "Peak processing", "No additional centroiding").checked).toBe(true);
+    });
+    // And the way out goes with the need for it.
+    expect(
+      within(panel).queryByRole("button", { name: "Use the settings MSCanvas ships" }),
+    ).toBeNull();
+  });
+
+  it("drops the catalog when this session stops having a usable backend", async () => {
+    // A catalog is an answer about one executable. When the session has none,
+    // keeping the last one would leave the controls offering availability marks
+    // for a build that is not installed, beside a banner saying none is.
+    let usable = true;
+    const api = createFakePreviewApi({
+      initialDatasets: [VENDOR_ROW],
+      availability: () => Promise.resolve(usable ? availableBackend : unavailableBackend),
+    });
+    const rendered = renderHook(() => usePreviewWorkspace(), {
+      wrapper: ({ children }) =>
+        createElement(
+          WorkspaceDropTransportProvider,
+          { value: createFakeWorkspaceDropTransport() },
+          createElement(PreviewApiProvider, { value: api }, children),
+        ),
+    });
+    await waitFor(() => {
+      expect(rendered.result.current.conversion.settings.status).toBe("ready");
+    });
+
+    usable = false;
+    act(() => {
+      rendered.result.current.checkBackend();
+    });
+    await waitFor(() => {
+      expect(rendered.result.current.conversion.settings.status).toBe("noBackend");
+    });
+    expect(rendered.result.current.conversion.settingsReadiness).toBe("unavailable");
+
+    // And it comes back on its own when a usable installation does, without
+    // anybody pressing anything.
+    usable = true;
+    act(() => {
+      rendered.result.current.checkBackend();
+    });
+    await waitFor(() => {
+      expect(rendered.result.current.conversion.settings.status).toBe("ready");
+    });
   });
 
   it("says why it will not convert when the catalog cannot be established", async () => {

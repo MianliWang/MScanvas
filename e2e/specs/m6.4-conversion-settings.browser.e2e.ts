@@ -24,7 +24,12 @@ import {
   setInvokeResult,
 } from "../support/harness";
 import { ipcTable, VENDOR_ROW } from "../support/fixtures";
-import { intentFor, SHIPPED_INTENT } from "../../apps/desktop/src/test/previewFixtures";
+import {
+  availableBackend,
+  intentCatalog,
+  intentFor,
+  SHIPPED_INTENT,
+} from "../../apps/desktop/src/test/previewFixtures";
 
 const VIEWPORTS = [
   { name: "1920x1080", width: 1_920, height: 1_080 },
@@ -343,6 +348,72 @@ describe("M6.4 — visible conversion settings, rendered", () => {
       timeoutMsg: "the settings stayed on screen after a conversion began",
     });
     expect(begunIntents(await ipcCalls())).toEqual([wide.id]);
+  });
+
+  it("offers one labelled way out when an installation change strands the choice", async () => {
+    await openTheSettings();
+    const narrow = intentFor({ precision: "mz32Intensity32" });
+    const centroided = intentFor({
+      processing: "unscopedDefaultCentroiding",
+      precision: "mz32Intensity32",
+    });
+    await setInvokeResult("describe_workspace_conversion_queue", planFor(narrow));
+    await browser.$(radio("precision", "mz32Intensity32")).click();
+    await setInvokeResult("describe_workspace_conversion_queue", planFor(centroided));
+    await browser.waitUntil(
+      async () => browser.$(radio("processing", "unscopedDefaultCentroiding")).isEnabled(),
+      { timeout: 30_000, timeoutMsg: "centroiding never became available at 32/32" },
+    );
+    await browser.$(radio("processing", "unscopedDefaultCentroiding")).click();
+    await browser.waitUntil(
+      async () => isChecked(radio("processing", "unscopedDefaultCentroiding")),
+      { timeout: 30_000, timeoutMsg: "the centroided semantic was never selected" },
+    );
+
+    // The installation is replaced by one that can run only what MSCanvas
+    // ships, through the control a reader actually has. Every one-axis move
+    // from where they are is now refused.
+    const everythingElse = intentCatalog()
+      .intents.map((option) => option.intent.id)
+      .filter((id) => id !== SHIPPED_INTENT.id);
+    await setInvokeResult("get_workspace_conversion_intents", {
+      ...intentCatalog({ unsupported: everythingElse, installationGeneration: 1 }),
+    });
+    await setInvokeResult("inspect_backend", {
+      ...availableBackend,
+      installationGeneration: 1,
+    });
+    const rechecks = await browser.$$("button.link-button");
+    for (const button of rechecks) {
+      if ((await button.getText()).trim() === "Check again") {
+        await button.click();
+        break;
+      }
+    }
+
+    const recover = `${SETTINGS} .conversion-settings-recovery button`;
+    await browser.$(recover).waitForExist({ timeout: 30_000 });
+    // The request was preserved rather than silently replaced.
+    expect(await isChecked(radio("processing", "unscopedDefaultCentroiding"))).toBe(true);
+    for (const [axis, value] of [
+      ["processing", "noAdditionalCentroiding"],
+      ["population", "ms1Only"],
+      ["precision", "mz64Intensity64"],
+      ["compression", "none"],
+    ] as const) {
+      expect(await browser.$(radio(axis, value)).isEnabled()).toBe(false);
+    }
+    expect(await describedText(recover)).toContain("no single change to one of them reaches");
+
+    await setInvokeResult("describe_workspace_conversion_queue", planFor(SHIPPED_INTENT));
+    await browser.$(recover).click();
+    await browser.waitUntil(async () => isChecked(radio("processing", "noAdditionalCentroiding")), {
+      timeout: 30_000,
+      timeoutMsg: "the way out never selected the shipped semantic",
+    });
+    // And it goes with the need for it.
+    expect(await browser.$(recover).isExisting()).toBe(false);
+    expect(await unexpectedConsole()).toEqual([]);
   });
 
   it("refuses the conversion, with a reason, when the catalog cannot be read", async () => {

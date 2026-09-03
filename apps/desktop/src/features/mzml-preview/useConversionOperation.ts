@@ -133,6 +133,7 @@ export function settingsReadinessOf(settings: ConversionSettings): ConversionSet
   switch (settings.status) {
     case "loading":
       return "loading";
+    case "noBackend":
     case "failed":
       return "unavailable";
     case "ready": {
@@ -788,6 +789,13 @@ export function useConversionOperation(
   // conversion for that first, and asking would add a refusal nobody needed.
   useEffect(() => {
     if (!environment.backendUsable) {
+      // And the catalog goes with the backend. It described an executable this
+      // session can no longer launch -- after a folder change that resolved to
+      // nothing, or discovery losing what it had found -- so keeping it would
+      // leave the controls offering availability marks for a build that is not
+      // installed, beside a banner saying none is. Nothing is probed to
+      // establish that; there is nothing to probe.
+      setSettings({ status: "noBackend" });
       return;
     }
     readCatalog();

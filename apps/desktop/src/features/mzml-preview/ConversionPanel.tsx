@@ -656,13 +656,13 @@ function PlanState({
    * be a reference a screen reader resolves to nothing, so this follows the
    * three states rather than assuming the loaded one: the plan and its
    * validation note, the pending sentence alone, or -- under a finished result,
-   * where the pending sentence is deliberately silent -- nothing but the
-   * refusal the availability rule adds.
+   * and where there is no usable backend to read a plan from, both of which are
+   * deliberately silent -- nothing but the refusal the availability rule adds.
    */
   const planDescription =
     summary !== null
       ? "conversion-plan-summary conversion-validation-disclosure"
-      : repeating
+      : repeating || conversion.settings.status === "noBackend"
         ? ""
         : "conversion-plan-summary";
   return (
@@ -677,7 +677,7 @@ function PlanState({
           plan. */}
       {plan.status === "loaded" ? (
         <PlanDetail excludedSelectedCount={excludedSelectedCount} summary={plan.plan} />
-      ) : repeating ? null : (
+      ) : repeating || conversion.settings.status === "noBackend" ? null : (
         <PlanPending plan={plan} />
       )}
 

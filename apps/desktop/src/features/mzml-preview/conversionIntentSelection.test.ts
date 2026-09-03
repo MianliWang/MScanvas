@@ -23,6 +23,7 @@ import {
   catalogRow,
   choiceState,
   CONVERSION_AXES,
+  recoveryIntent,
   reselect,
   selectedIntent,
 } from "./conversionIntentSelection";
@@ -210,8 +211,57 @@ describe("what a conversion settings control may offer", () => {
     expect(reselect(afterChange, null)).toBe(afterChange.shippedIntentId);
   });
 
+  it("offers a way out where a preserved semantic has no reachable neighbour", () => {
+    // Two rules that are each right, meeting: a choice survives an installation
+    // change, and a control moves one axis. A build that can run only the
+    // shipped posture leaves centroiding at 32/32 with every single-axis
+    // neighbour refused -- some unqualified, the rest undeclared -- and the
+    // shipped posture sitting available and unreachable.
+    const chosen = intentFor({
+      processing: "unscopedDefaultCentroiding",
+      precision: "mz32Intensity32",
+    });
+    const onlyShipped = intentCatalog({
+      unsupported: CATALOG.intents
+        .map((option) => option.intent.id)
+        .filter((id) => id !== SHIPPED_INTENT.id),
+      installationGeneration: 1,
+    });
+    expect(reselect(onlyShipped, chosen.id)).toBe(chosen.id);
+    for (const axis of CONVERSION_AXES) {
+      for (const { value, state } of axisChoices(onlyShipped, chosen, axis)) {
+        expect(canChoose(state), `${axis} to ${String(value)}`).toBe(false);
+      }
+    }
+
+    // So the way out is explicit rather than silent: one labelled choice, and
+    // only the semantic Rust names as shipped.
+    const recovery = recoveryIntent({
+      status: "ready",
+      catalog: onlyShipped,
+      selectedId: chosen.id,
+    });
+    expect(recovery?.intent.id).toBe(SHIPPED_INTENT.id);
+
+    // Not offered while the selection can run, because there is nothing to
+    // recover from -- and never a route to whichever row happens to be
+    // available, which would be the silent fallback this design refuses.
+    expect(
+      recoveryIntent({ status: "ready", catalog: CATALOG, selectedId: chosen.id }),
+    ).toBeNull();
+    const nothingRuns = intentCatalog({
+      unsupported: CATALOG.intents.map((option) => option.intent.id),
+    });
+    expect(
+      recoveryIntent({ status: "ready", catalog: nothingRuns, selectedId: chosen.id }),
+    ).toBeNull();
+    expect(recoveryIntent({ status: "loading" })).toBeNull();
+    expect(recoveryIntent({ status: "noBackend" })).toBeNull();
+  });
+
   it("has no selected semantic until a catalog says which are selectable", () => {
     expect(selectedIntent({ status: "loading" })).toBeNull();
+    expect(selectedIntent({ status: "noBackend" })).toBeNull();
     expect(
       selectedIntent({
         status: "failed",

@@ -14,7 +14,12 @@ import type {
   ConversionChoiceState,
   ConversionSettings as ConversionSettingsState,
 } from "./conversionIntentSelection";
-import { axisChoices, CONVERSION_AXES, selectedIntent } from "./conversionIntentSelection";
+import {
+  axisChoices,
+  CONVERSION_AXES,
+  recoveryIntent,
+  selectedIntent,
+} from "./conversionIntentSelection";
 
 /**
  * What each axis is called where the user meets it.
@@ -206,6 +211,12 @@ export function ConversionSettings({
   readonly settings: ConversionSettingsState;
   readonly onChoose: (intentId: string) => void;
 }): ReactElement | null {
+  if (settings.status === "noBackend") {
+    // Nothing is said here. The panel already explains that this session has no
+    // usable ProteoWizard, and a second sentence saying the same thing beside
+    // an empty space would be the panel telling a reader twice.
+    return null;
+  }
   if (settings.status === "loading") {
     return (
       <div className="conversion-settings" data-settings-state="loading">
@@ -233,8 +244,27 @@ export function ConversionSettings({
     );
   }
 
+  const recovery = recoveryIntent(settings);
   return (
     <div className="conversion-settings" data-settings-state="ready">
+      {recovery === null ? null : (
+        <div className="conversion-settings-recovery" role="note">
+          <p id="conversion-settings-recovery-reason">
+            The installed ProteoWizard build cannot run the conversion settings you
+            chose, and no single change to one of them reaches a combination it can.
+          </p>
+          <button
+            aria-describedby="conversion-settings-recovery-reason"
+            className="link-button"
+            onClick={() => {
+              onChoose(recovery.intent.id);
+            }}
+            type="button"
+          >
+            Use the settings MSCanvas ships
+          </button>
+        </div>
+      )}
       <dl className="metadata-list">
         <div>
           <dt>Format</dt>

@@ -7232,6 +7232,38 @@ decision disables the control and supplies the sentence. Under a finished result
 the *pending text* is still suppressed, which is what the original rule was
 about.
 
+### Two findings from review, and the repair they got
+
+Both were raised against the published head, both were real, and both were
+consequences of decisions above rather than slips.
+
+**A preserved semantic could be a dead end.** A choice survives an installation
+change, because it is a scientific request rather than a property of a catalog;
+and a control moves one axis, because a control that moved two would change
+something the user did not ask about. Put together, a preserved semantic whose
+every one-axis neighbour is unqualified or undeclared leaves every control
+refused, with the shipped posture sitting available and unreachable — and the
+conversion blocked until a restart. Centroiding at 32/32 on a build that
+declares only what the shipped intent emits is exactly that state.
+
+The repair is a way out that is explicit rather than silent, which is what the
+rules actually forbid: **one labelled control, offered only while the chosen
+semantic cannot run, and only ever selecting the semantic Rust names as
+shipped.** Where even that cannot run, nothing is offered — a route to whichever
+row happened to be available would be the silent fallback this design exists to
+refuse. The sentence beside it says why every control is refused before the
+action says what taking it will select.
+
+**The catalog outlived the backend it described.** A session that loses its
+ProteoWizard — a folder that resolves to nothing, discovery finding nothing —
+kept the last catalog, so the controls went on offering installation-specific
+availability marks for a build that is not installed, beside a banner saying
+none is. `Convert` was refused throughout, by a rule that outranks the settings,
+so nothing unsafe was reachable; what was wrong was the claim. The settings now
+have a fourth state, `noBackend`, distinct from *a read is under way* and from
+*a read did not answer*: no catalog, no controls, and no second sentence beside
+the one the panel already gives.
+
 ### Fail closed on an unestablished catalog
 
 A catalog that cannot be read produces `settings: unavailable`, no plan read at
@@ -7268,10 +7300,11 @@ ADR 0043's M6.4 delivery note.
 `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
 `pnpm build`, `pnpm e2e:typecheck`, `pnpm e2e:browser` and `git diff --check`,
 each run directly on the final candidate head and each exiting zero. Rust
-**1,397** and frontend **1,426** — nine Rust tests and twenty-eight frontend
-tests added, none removed or weakened. Browser E2E: **11 spec files, 218 tests**,
-including the new ten-case M6.4 spec, three of whose cases run at 1920×1080,
-1366×768 and 960×640.
+**1,397** and frontend **1,429** — nine Rust tests and thirty-one frontend tests
+added, none removed or weakened. Browser E2E: **11 spec files, 219 tests**,
+including the new eleven-case M6.4 spec, three of whose cases run at 1920×1080,
+1366×768 and 960×640. Every gate was re-run on the repaired head; nothing is
+inherited from the published one.
 
 **The browser run needed the same machine-specific workaround M6.1 recorded, for
 the same reason.** Chrome finalizes a staged update only once every Chrome
@@ -7281,7 +7314,7 @@ a throwaway configuration that imports `e2e/wdio.browser.conf.ts` and overrides
 one field — the browser binary — deleted before the commit. No repository file,
 dependency or spec was changed for it, and CI does not run this suite.
 
-### Two existing tests were changed, and neither was weakened
+### Three existing tests were changed, and none was weakened
 
 `capability_evidence_from_the_wrong_tool_cannot_convert` now asserts an **earlier**
 refusal. The pre-picker capability gate asks whether the resolved build declares
@@ -7289,6 +7322,13 @@ what the chosen intent emits, and `msaccess` help declares no `--mzML` — so th
 queue is refused before a reservation exists rather than after a destination has
 been chosen. The property is unchanged and slightly stronger: this binding
 converts nothing, and now it opens no picker either.
+
+M6.1's rendered case pinned what the refused `Convert` points at, and that
+string is now shorter: with no usable ProteoWizard there is no catalog, so there
+is no plan, so the control points at the refusal and nothing else. The property
+M6.1 established — one sentence, both controls present and refused, nothing
+crossing the boundary — is unchanged; what changed is that the panel no longer
+claims to be reading a plan it cannot ask for.
 
 The two panel path sweeps banned a bare `/`. The precision labels render `m/z`,
 which is a scientific unit rather than a path separator, so the sweeps now remove
