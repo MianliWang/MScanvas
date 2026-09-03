@@ -1080,7 +1080,7 @@ pub fn verify_mzml_conversion(
     let (file, output) = match open_and_inspect_output(
         output_directory,
         expected_file_name,
-        OpenFormat::MzMl,
+        OpenFormat::of_intent(intent.format()),
         limits,
         OutputRetention::Release,
     ) {
@@ -1112,7 +1112,7 @@ pub(crate) fn verify_mzml_conversion_retaining_output(
     let (file, output) = match open_and_inspect_output(
         output_directory,
         expected_file_name,
-        OpenFormat::MzMl,
+        OpenFormat::of_intent(intent.format()),
         limits,
         OutputRetention::Retain,
     ) {
@@ -1156,7 +1156,7 @@ pub(crate) fn verify_vendor_conversion_retaining_output(
     let (file, output) = match open_and_inspect_output(
         output_directory,
         expected_file_name,
-        OpenFormat::MzMl,
+        OpenFormat::of_intent(intent.format()),
         limits,
         OutputRetention::Retain,
     ) {

@@ -1072,10 +1072,13 @@ impl ConversionPlan {
         if source.kind().produces_output_set() {
             return Err(ConversionPlanError::SourceProducesAnOutputSet);
         }
-        let output_file_name =
-            conversion_output_file_name(source.canonical_path(), OpenFormat::MzMl)
-                .ok_or(ConversionPlanError::SourceHasNoConvertibleName)?;
-        crate::command::validate_output_file_name(&output_file_name, OpenFormat::MzMl)
+        // Derived from the intent rather than restated. The extension a plan
+        // stages for and the format the argv asks for are one decision, and a
+        // planner holding its own copy of it is how they come apart.
+        let format = OpenFormat::of_intent(intent.format());
+        let output_file_name = conversion_output_file_name(source.canonical_path(), format)
+            .ok_or(ConversionPlanError::SourceHasNoConvertibleName)?;
+        crate::command::validate_output_file_name(&output_file_name, format)
             .map_err(|_| ConversionPlanError::UnsafeOutputFileName)?;
         // The staging area is named after the output, so a name the plan would
         // otherwise accept can still be one this boundary cannot stage. Deciding
@@ -1253,7 +1256,7 @@ impl fmt::Debug for ConversionPlan {
         formatter
             .debug_struct("ConversionPlan")
             .field("source", &self.source)
-            .field("format", &OpenFormat::MzMl)
+            .field("format", &self.format())
             .field("conflict", &self.conflict)
             .field("intent", &self.intent)
             .finish_non_exhaustive()

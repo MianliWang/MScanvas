@@ -361,6 +361,11 @@ impl ConversionIntent {
     /// Every constructed intent has one, because construction goes through the
     /// table. Returning it rather than storing it keeps the intent itself a
     /// pure product semantic.
+    ///
+    /// Like [`Self::stable_id`], no production caller reads it yet. It is the
+    /// runtime half of an audit link whose static half `check_repo.py` already
+    /// enforces -- that every row cites a measurement the ledger actually
+    /// holds -- and it answers from the same table, so the two cannot disagree.
     #[must_use]
     pub fn evidence(&self) -> &'static str {
         Self::ADMITTED
@@ -474,7 +479,13 @@ impl ConversionIntent {
         }
     }
 
-    /// A stable, path-free identity for this intent, for records that need one.
+    /// A stable, path-free identity for this intent.
+    ///
+    /// No production caller reads it yet: nothing visible names an intent, so
+    /// nothing has one to render. It is kept rather than deferred because it is
+    /// the one shape a record of *what was asked for* can take without a path
+    /// in it, and because it cannot drift -- every part is the five values'
+    /// own identity, composed here in one order and nowhere else.
     #[must_use]
     pub fn stable_id(&self) -> String {
         format!(

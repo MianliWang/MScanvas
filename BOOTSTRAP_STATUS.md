@@ -6771,6 +6771,27 @@ reported here was produced on a tree verified against `HEAD` immediately before
 the run. Recorded for the same reason M6.2 recorded its false green: a
 measurement is only worth what the state it was taken on is known to be.
 
+### What the review found
+
+**Four second answers to the format question survived the first pass.**
+`ConversionPlan::to_mzml` derived its output name -- and validated it -- against
+a hard-coded `OpenFormat::MzMl` while holding an intent that names one; the three
+integrity entry points inspected their output under the same constant for the
+same reason; and `ConversionPlan`'s `Debug` printed a `format` field beside the
+intent that already carries it. None was wrong, because only one format is
+nameable. All four were **exactly the shape this slice claims to have removed**,
+and a slice that deletes `ConversionPolicy` for being a second answer while
+leaving four more is arguing with itself. Every one now derives from
+`intent.format()`.
+
+**Two accessors have no production caller.** `ConversionIntent::stable_id` and
+`ConversionIntent::evidence` are read only by tests, because nothing visible
+names an intent yet. They are kept rather than deferred, and the reason is now
+written into each: neither can drift, because both answer from the one table, and
+`evidence` is the runtime half of an audit link whose static half the repository
+guard already enforces. Recorded rather than left silent -- an unused accessor a
+reader has to guess about is how the next one gets added without a reason.
+
 ### Validation
 
 `cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
