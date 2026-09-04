@@ -110,11 +110,21 @@ known, but no preview verdict has settled for it yet. Today that state is
 approximated by an inequality between two frontend watermarks.
 
 **A `Partial` discovery is `NoInstallation`.** The union has two members because
-the fact it names is binary: `InstallationIdentity::of` returns an `Option`, and
-it is `Some` only when *both* tools resolve. A folder holding msconvert.exe and no
-msaccess.exe, a mismatched pair, a timed-out probe — each is a discovery that
-establishes no installation identity, so each is `NoInstallation`, and the binding
-is not obliged to invent a third member for the ways that can happen.
+the fact it names is binary — *is this session bound to an installation it may
+launch?* — and the answer is `AvailabilityState::Available`, which is exactly the
+condition `bind_help_of` already refuses on. A folder holding msconvert.exe and no
+msaccess.exe, a mismatched pair, a timed-out probe: each is `Partial` or
+`Unavailable`, so each is `NoInstallation`, and the binding needs no third member
+for the ways that can happen.
+
+**It is not derived from `InstallationIdentity::of` returning `Some`,** and a
+draft of this document said it was, wrongly. `ToolIdentity::resolved` needs only a
+path, and an evaluated candidate always has one, so `of` yields an identity for a
+`Partial` build as readily as for a whole one. That is correct for what an
+identity is for — it answers *are these the same files as before*, a content
+question — and it is why the binding may not be minted from it. An implementer who
+took `of`'s `Some` as the test would bind a `Partial` build as `Installed` and
+send a probe at a build the backend has already refused.
 
 The trap that comes with it is a sentence, not a state: `NoInstallation` must
 never be rendered as "ProteoWizard is not installed", because a `Partial` build
@@ -164,7 +174,11 @@ Required properties:
 - **equatable**, and that is the whole of its interface;
 - **changes** whenever the authoritative binding is replaced, including when a
   build is replaced by no build and when no build is replaced by one;
-- **stays equal** through a same-installation recheck;
+- **stays equal** through a same-installation recheck, and equally through a
+  repeated observation of no installation: the fact it names is the binding, so
+  a session that stays unbound keeps one `NoInstallation` receipt however many
+  discoveries confirm it, and a `Partial` build becoming a different `Partial`
+  build replaces nothing;
 - **sufficient** to decide whether a catalog, a plan or a result describes the
   binding this session is on.
 
@@ -351,6 +365,13 @@ AuthorityObserved<T> {
 }
 ```
 
+**One response carries one projection.** `ConversionConfigurationSnapshot` is this
+shape specialised for the configuration read — its `authority` field *is* the
+`AuthorityObserved` authority — and is never additionally wrapped in one. Applying
+both uniformly would nest a projection inside a projection with no stated
+equality, which is the self-contradicting shape ledger row 36 forbids one level
+down.
+
 `Binding` is Decision 1's, unchanged and not restated: `Installed { receipt }` or
 `NoInstallation { receipt }`. The receipt lives inside it, in exactly one place,
 so there is one shape for the union Rust owns and one place a comparison reads
@@ -360,19 +381,29 @@ from.
 about the session, not an omission.** An operation that noticed a new binding
 without computing a preview verdict leaves the session genuinely between verdicts:
 the old one described a different build and may not be reused, and no new one
-exists yet. `ConversionLane` is unchanged and still needs a boolean, so the
-projection is fixed rather than left to a reader — while the authority is
-`ObservedButUnsettled`, `backendUsable` is false and the lane's reason is
-`backend-changing`, which is the truthful M6.1 word for it and is already in its
-vocabulary. Refusing as `backend-unavailable` would state a verdict this session
-does not hold.
+exists yet. `ConversionLane` is unchanged and still needs a boolean, so one half of the
+projection is fixed: **while the authority is `ObservedButUnsettled`,
+`backendUsable` is false.** Claiming otherwise would reuse a verdict belonging to a
+different build, and refusing as `backend-unavailable` would state a verdict this
+session does not hold.
+
+The *reason* is not fixed with it, and an earlier draft fixing it to
+`backend-changing` was wrong: that word asserts a check is in progress, which is
+not true of an unsettled state reached from a refused `BEGIN`. The reason comes
+from the lane's existing ordering, unchanged, and it lands correctly on its own —
+because whatever is stopping the obliged check from running is a lane fact, and
+the lane already words it. A check actually in flight is `backend-changing`,
+literally. A quarantined session says quarantine. A drain holding the gate says
+the conversion is running. There is no case left needing a new word.
 
 And the state owes an exit. **Entering `ObservedButUnsettled` obliges exactly one
-backend check**, issued by the same automatic initiator that owes the first
-configuration read and admitted by the same rule, whose answer settles the
-verdict. That is what keeps the two scenarios below — a `BEGIN` refused after
-observing a replacement, and an installation change that refuses — from parking
-the panel in a state with no verdict and nothing obliged to produce one.
+backend check**, issued in the same commit that installs the authority, admitted
+by the same rule as the first configuration read, and — refused — owed on exactly
+the same terms: it stays owed, and every authority delivery is an occasion to
+issue it. The two obligations are one mechanism asked twice, which is what keeps
+the scenarios below — a `BEGIN` refused after observing a replacement, an
+installation change that refuses, a replacement noticed mid-drain — from parking
+the panel with no verdict and nothing obliged to produce one.
 
 **The projection carries the authority state, not a flattened stand-in for it.**
 Collapsing `ObservedButUnsettled` and `Settled` into one member — and dropping
@@ -456,6 +487,13 @@ empty rendered binding — which is how the first binding is installed at all.
 **Step two — identity, by receipt only, and only on a projection just accepted**
 (the first line above included; an equal revision changes nothing and skips it).
 
+Read the same-receipt arm as a rule about *invalidation*, because that is all it
+is. It says a binding that did not change does not lose what it has — not that a
+binding that has never been read must stay unread. `Unattempted` and
+`ObservedButUnsettled` are obligations, and an obligation is discharged by
+issuing, not by invalidating; the delivery that carries an unchanged receipt is
+precisely the deadlock-break ledger rows 39 and 42 rely on.
+
 ```text
 the accepted projection's receipt differs from the rendered one
   -> configuration and plan for the rendered binding are non-current, immediately
@@ -465,7 +503,10 @@ the accepted projection's receipt differs from the rendered one
 
 the accepted projection carries the same receipt
   -> nothing about the installation changed
-  -> the configuration is not invalidated, and no probe is spent
+  -> the configuration is not invalidated, and nothing already answered
+     is re-read
+  -> an obligation this binding has never discharged is still owed, and this
+     delivery is an occasion to issue it
   -> its authority state is rendered as it arrived: a move from
      ObservedButUnsettled to Settled on the same receipt is news about the
      preview verdict and about nothing else
@@ -737,10 +778,19 @@ MSCanvas ships" action; and that action is never a silent fallback.
 ```text
 none
 blocked
-loading { request identity }
+loading { request identity, request }
 ready   { plan }
-failed  { request identity, error }
+failed  { request identity, request, error }
 ```
+
+**`request` is a per-question ordinal, and it is why a retry is safe.** The
+identity says *which question*, and a retry asks the same one by design (ledger
+row 35) — so identity alone cannot tell a superseded request's late reply from the
+retry's, and the machine would install the answer it just decided to discard. The
+ordinal rises on every request for the same identity, and a reply is installed only
+when identity *and* ordinal both match what is loading. It is the same separation
+Decision 4b draws one layer up: identity does not do ordering, and ordering does
+not do identity.
 
 Total enough to implement from, including the successful path the first draft
 listed no transition into:
@@ -754,7 +804,7 @@ rows requested, but no plan question can be posed
   -> blocked, never loading
 
 a plan question is posed and its request is issued
-  -> loading { that request's identity }
+  -> loading { that request's identity, the next ordinal }
 
 the in-flight request answers, and the answer is for that identity
   -> ready { plan }
@@ -763,11 +813,11 @@ the in-flight request fails, for that identity
   -> failed { identity, error }
 
 failed, and the reader asks for the same question again
-  -> loading { the same identity, a new request }
+  -> loading { the same identity, the next ordinal }
 
 handles, intent, conflict policy, binding receipt or document authority
 change, and a replacement request is issued
-  -> loading { the replacement's identity }
+  -> loading { the replacement's identity, the next ordinal }
 
 any of those change while no replacement request is yet eligible
   -> blocked
@@ -1147,7 +1197,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–43).
+plus the findings raised against this document's own drafts (rows 18–47).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1193,9 +1243,13 @@ and no finding may disappear because the old PR was superseded.
 | 38 | Receipt comparison silently disabled | Two shapes for the one union Rust owns | `Binding` carries its receipt, in one place, wherever the union appears | Decision 1's union | Every comparison in the replacement reads the receipt from the same field |
 | 39 | The first read is owed and never re-issued | An admission refusal with no named stimulus to try again | The read stays owed, and every authority delivery is an occasion to issue it; the retry is offered from `Unattempted` too | Rust configuration lifecycle + panel | A configuration read refused under a held gate is issued when the holder answers, and a reader is never left with a stuck panel and nothing to press |
 | 40 | A probe launches in a quarantined session | A membership criterion written as "takes the gate" alone | Admission is what Rust refuses a backend process for: the gate **and** the quarantine boundary | `ConversionConfigurationProbeAdmission` | A quarantined session admits no probe, automatic or explicit, and says so with quarantine's own reason |
-| 41 | `Partial` has no representable binding | A union read as installed-or-nothing while discovery has three outcomes | An identity is established or it is not; `Partial` is `NoInstallation`, and the tag carries no reason | Decision 1's union | A folder with msconvert and no msaccess binds as `NoInstallation`, probes nothing, and is never worded "ProteoWizard is not installed" |
-| 42 | A binding is observed and never settles | An unsettled state with no obligation to produce a verdict | Entering `ObservedButUnsettled` obliges one backend check; until it answers the lane is not usable and refuses as `backend-changing` | Authority + `ConversionLane` projection | A refused `BEGIN` that observed a replacement leaves no verdict claimed and one check owed |
+| 41 | `Partial` has no representable binding | A union read as installed-or-nothing while discovery has three outcomes | `Installed` is `AvailabilityState::Available` and nothing else; `Partial` is `NoInstallation`, and the tag carries no reason | Decision 1's union | A folder with msconvert and no msaccess binds as `NoInstallation`, probes nothing, and is never worded "ProteoWizard is not installed" |
+| 42 | A binding is observed and never settles | An unsettled state with no obligation to produce a verdict | Entering `ObservedButUnsettled` obliges one backend check, owed and re-issued on the same terms as the first configuration read; until it answers the lane is not usable | Authority + `ConversionLane` projection | A replacement observed mid-drain claims no verdict, and its check is issued when the drain answers rather than waiting for a reader |
 | 43 | The two judgements never actually diverge | A split justified by a state the code cannot reach | `Failed` is reached by a capability parse that refuses a probe discovery accepted | Decision 3 | A build whose msconvert help is bound but unparseable is preview-usable with a `Failed` configuration |
+| 44 | A superseded plan reply installed by its own retry | A machine keyed on an identity a retry preserves by design | `loading` and `failed` carry a per-question ordinal, and a reply matches identity **and** ordinal | Plan state machine | A retry issued while an earlier request is in flight ignores the earlier reply, and the plan rendered is the one the reader asked for last |
+| 45 | A projection nested inside a projection | Two contracts each carrying authority, with no rule for which applies | One response carries one projection; the snapshot's `authority` **is** the observed authority | Decision 4 + Decision 6 | The configuration read's response has exactly one authority field, and no equality rule is needed because there is nothing to disagree with |
+| 46 | Repeated absence read as repeated replacement | Receipt stability defined only for a same-installation recheck | An unbound session keeps one `NoInstallation` receipt however many discoveries confirm it | `BackendBindingReceipt` | Two consecutive failed discoveries revoke nothing and re-probe nothing |
+| 47 | A binding read as `Installed` on a refused build | The union derived from `InstallationIdentity::of` rather than from availability | `of` yields an identity for `Partial` too; the binding is minted from `Available` | Decision 1's union | A `Partial` build never reaches probe admission, because it never becomes `Installed` |
 
 ## What this interlude does not do
 
