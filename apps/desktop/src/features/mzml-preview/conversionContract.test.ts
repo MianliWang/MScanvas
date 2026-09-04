@@ -17,6 +17,23 @@ import type {
 } from "./contracts";
 
 /**
+ * The semantic a queue binds, spelled as Rust sends it.
+ *
+ * Written out here rather than imported from the shared fixtures for the reason
+ * the rest of this file restates its shapes: a literal taken from the same
+ * helper the production code uses would agree with itself whatever the wire
+ * said. The identity is the crate's own composition of the five values.
+ */
+const SHIPPED_ON_THE_WIRE = {
+  id: "mzml+no_additional_centroiding+all+mz64_intensity32+zlib",
+  format: "mzML",
+  processing: "noAdditionalCentroiding",
+  population: "all",
+  precision: "mz64Intensity32",
+  compression: "zlib",
+} as const;
+
+/**
  * The wire shapes this side expects, written out independently of the types it
  * is checking.
  *
@@ -181,6 +198,7 @@ const QUEUE = {
   itemCount: 2,
   retryRound: 1,
   conflictPolicy: "fail",
+  intent: SHIPPED_ON_THE_WIRE,
   finalizedCount: 1,
   skippedCount: 0,
   failedCount: 1,
@@ -237,6 +255,7 @@ const STOPPED_QUEUE = {
   itemCount: 3,
   retryRound: 0,
   conflictPolicy: "fail",
+  intent: SHIPPED_ON_THE_WIRE,
   finalizedCount: 1,
   skippedCount: 0,
   failedCount: 0,
@@ -292,24 +311,28 @@ describe("the conversion wire contract", () => {
         state: { status: "idle" },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
       {
         sequence: 1,
         state: { status: "awaitingDestination", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
       {
         sequence: 2,
         state: { status: "running", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
       {
         sequence: 3,
         state: { status: "stopping", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
       {
         sequence: 4,
@@ -321,6 +344,7 @@ describe("the conversion wire contract", () => {
         },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
       {
         sequence: 5,
@@ -332,12 +356,14 @@ describe("the conversion wire contract", () => {
         },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: true,
+    installationGeneration: 0,
       },
       {
         sequence: 6,
         state: { status: "terminal", operationId: "1", reason: "completed", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
     ] as const satisfies readonly WorkspaceConversionUpdate[];
 
@@ -347,6 +373,7 @@ describe("the conversion wire contract", () => {
       "state",
       "diagnostics",
       "backendQuarantined",
+      "installationGeneration",
     ]);
     expect(updates.map((update) => update.state.status)).toEqual([
       "idle",
@@ -374,18 +401,21 @@ describe("the conversion wire contract", () => {
         state: { status: "awaitingDestination", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
       {
         sequence: 2,
         state: { status: "running", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
       {
         sequence: 3,
         state: { status: "stopping", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+    installationGeneration: 0,
       },
     ] as const satisfies readonly WorkspaceConversionUpdate[]) {
       expect(Object.keys(update.state).sort()).toEqual(["operationId", "queue", "status"]);
@@ -419,6 +449,7 @@ describe("the conversion wire contract", () => {
         "failedCount",
         "finalizedCount",
         "installationGeneration",
+        "intent",
         "itemCount",
         "items",
         "nonRetryableFailedCount",

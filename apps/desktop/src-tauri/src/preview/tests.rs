@@ -41,10 +41,12 @@ use super::dto::{
     WorkspaceDropUpdateDto, WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto,
 };
 use super::dto::{
-    ConversionConflictPolicyDto, ConversionDiagnosticsExportDto, ConversionDiagnosticsStateDto,
-    ConversionOutputFormatDto, ConversionQueueDto, ConversionQueueItemStateDto,
-    ConversionQueueTerminalReasonDto, DatasetSourceKindDto, ValidationModeDto,
-    WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
+    ConversionCompressionDto, ConversionConflictPolicyDto, ConversionDiagnosticsExportDto,
+    ConversionDiagnosticsStateDto, ConversionIntentAvailabilityDto, ConversionNumericPrecisionDto,
+    ConversionOutputFormatDto, ConversionProcessingDto, ConversionQueueDto,
+    ConversionQueueItemStateDto, ConversionQueueTerminalReasonDto, ConversionSpectrumPopulationDto,
+    DatasetSourceKindDto, ValidationModeDto, WorkspaceConversionStateDto,
+    WorkspaceConversionUpdateDto,
 };
 use super::dto::{MAX_SPECTRUM_POINTS, SpectrumDomainRefusalDto, SpectrumViewportDomainDto};
 use super::installation::InstallationIdentity;
@@ -3574,6 +3576,7 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "clear_workspace",
             "open_mzml_preview",
             "load_selected_spectrum",
+            "get_workspace_conversion_intents",
             "describe_workspace_conversion_queue",
             "get_workspace_conversion_state",
             "begin_workspace_conversion_queue",
@@ -6501,6 +6504,47 @@ Options:
   -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
 ";
 
+/// Installed help declaring everything the nine admitted intents lower to.
+///
+/// The fixture above is deliberately minimal -- it declares the two options the
+/// shipped intent emits and nothing else -- which makes it exactly the build
+/// that can run `SHIPPED` and no other admitted combination. This one adds the
+/// precision options, the generic filter and the two filter grammars, so a test
+/// can drive a build on which every admitted row is live.
+///
+/// The filter signatures are the shapes the capability model reads structurally:
+/// `msLevel` takes one required positional, `peakPicking` takes none and
+/// declares its picker token and its scope as optional. Nothing here admits a
+/// semantic. What a build declares and what MSCanvas has measured are two
+/// different facts, and only the second is what `ConversionIntent::ADMITTED`
+/// holds.
+const MSCONVERT_FULL_GRAMMAR_HELP: &str = r"Usage: msconvert [options] [filemasks]
+Convert mass spec data file formats.
+
+Options:
+  -o [ --outdir ] arg (=.)           : set output directory
+  --outfile arg                      : Override the name of output file.
+  --mzML                             : write mzML format [default]
+  --mzXML                            : write mzXML format
+  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
+  --filter arg                       : add a spectrum list filter
+  --32                               : set default binary encoding to 32-bit precision
+  --64                               : set default binary encoding to 64-bit precision [default]
+  --mz32                             : encode m/z values in 32-bit precision
+  --mz64                             : encode m/z values in 64-bit precision [default]
+  --inten32                          : encode intensity values in 32-bit precision [default]
+  --inten64                          : encode intensity values in 64-bit precision
+
+Spectrum List Filters
+=====================
+
+msLevel <mslevels>
+This filter selects only spectra with the indicated <mslevels>.
+
+peakPicking [<PickerType>] [msLevel=<ms levels>]
+This filter performs centroiding on spectra with the selected <ms levels>.
+";
+
 /// The build the repository has recorded vendor conversion evidence for, and
 /// the digest of the exact executable that evidence was produced on.
 ///
@@ -6694,6 +6738,21 @@ fn conversion_capabilities_for(
     revision: Option<&str>,
     executable_sha256: &str,
 ) -> InstalledHelpCapabilities {
+    conversion_capabilities_with_grammar(tool, release, revision, executable_sha256, false)
+}
+
+/// The same, choosing which option grammar the installed help declares.
+///
+/// `full_grammar` is a fact about the *build*, never about what is admitted. A
+/// build that declares every option can still only run the nine combinations
+/// the evidence admits, which is what the catalog tests turn on.
+fn conversion_capabilities_with_grammar(
+    tool: BackendTool,
+    release: &str,
+    revision: Option<&str>,
+    executable_sha256: &str,
+    full_grammar: bool,
+) -> InstalledHelpCapabilities {
     let executable = fs::canonicalize(std::env::current_exe().expect("test executable"))
         .expect("canonical test executable");
     let reported = revision.map_or_else(
@@ -6701,7 +6760,11 @@ fn conversion_capabilities_for(
         |revision| format!("{release} ({revision})"),
     );
     let body = if tool == BackendTool::MsConvert {
-        MSCONVERT_HELP
+        if full_grammar {
+            MSCONVERT_FULL_GRAMMAR_HELP
+        } else {
+            MSCONVERT_HELP
+        }
     } else {
         MSACCESS_HELP
     };
@@ -6731,6 +6794,17 @@ fn evidenced_capabilities() -> InstalledHelpCapabilities {
         EVIDENCED_RELEASE,
         Some(EVIDENCED_REVISION),
         EVIDENCED_EXECUTABLE_SHA256,
+    )
+}
+
+/// The same build, whose help declares every option the admitted intents emit.
+fn evidenced_capabilities_declaring_every_option() -> InstalledHelpCapabilities {
+    conversion_capabilities_with_grammar(
+        BackendTool::MsConvert,
+        EVIDENCED_RELEASE,
+        Some(EVIDENCED_REVISION),
+        EVIDENCED_EXECUTABLE_SHA256,
+        true,
     )
 }
 
@@ -6765,6 +6839,13 @@ struct FakeConversionRunner {
     /// Shared with the test, so a refusal can be shown to have launched
     /// nothing at all rather than merely to have produced no file.
     calls: Arc<AtomicUsize>,
+    /// Every launched process's arguments, in launch order.
+    ///
+    /// What an intent lowers to is the only observation that can prove a chosen
+    /// semantic reached the backend. A queue's own projection says what it
+    /// bound; this says what it sent, and a test that read only the first would
+    /// pass over a lowering that dropped the flag.
+    launched_arguments: Arc<Mutex<Vec<Vec<String>>>>,
     /// Signalled the moment a process starts, and parked until released, for the
     /// tests that need to observe a conversion while it is still holding the
     /// backend gate.
@@ -6777,6 +6858,7 @@ impl FakeConversionRunner {
         Self {
             act,
             calls: Arc::new(AtomicUsize::new(0)),
+            launched_arguments: Arc::new(Mutex::new(Vec::new())),
             started: Mutex::new(None),
             release: Mutex::new(None),
         }
@@ -6796,11 +6878,26 @@ impl FakeConversionRunner {
     fn launches(&self) -> Arc<AtomicUsize> {
         Arc::clone(&self.calls)
     }
+
+    /// The arguments of every process this runner launches, readable after the
+    /// runner itself has been moved into the provider.
+    fn launched_arguments(&self) -> Arc<Mutex<Vec<Vec<String>>>> {
+        Arc::clone(&self.launched_arguments)
+    }
 }
 
 impl ProcessRunner for FakeConversionRunner {
     fn run(&self, spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.launched_arguments
+            .lock()
+            .expect("the recorded argv is never poisoned")
+            .push(
+                spec.args()
+                    .iter()
+                    .map(|argument| argument.to_string_lossy().into_owned())
+                    .collect(),
+            );
         if let Some(started) = self.started.lock().expect("started channel").take() {
             started.send(()).expect("announce the started conversion");
             let parked = self
@@ -6884,6 +6981,22 @@ struct ConvertingProvider<R = FakeConversionRunner> {
     /// here, because the window is real time in production and injected code
     /// in a deterministic test.
     on_conversion_backend: BackendResolutionHook,
+    /// Whether the installed build can still be resolved at all.
+    ///
+    /// Production loses one by deletion, by replacement with something that no
+    /// longer declares what MSCanvas needs, or by a chosen folder moving out
+    /// from under it -- and the two questions that notice are the same two:
+    /// `availability` stops naming an identity, and `conversion_backend` stops
+    /// binding one. Held in one flag so a test cannot make one true and not the
+    /// other, which is a state no filesystem can produce.
+    installed: Arc<AtomicBool>,
+    /// A resolution failure that establishes nothing about the installation.
+    ///
+    /// Production has these too: help output that could not be read this time,
+    /// a spawn that lost a race with something holding the file. The build is
+    /// still there and still answers the availability question, so nothing
+    /// about the installation may move because of it.
+    transient_resolution_failure: Arc<AtomicBool>,
 }
 
 impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
@@ -6897,6 +7010,8 @@ impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
             installation_label: Arc::new(Mutex::new(String::from("msconvert"))),
             bindings: Arc::new(AtomicUsize::new(0)),
             on_conversion_backend: Arc::new(Mutex::new(None)),
+            installed: Arc::new(AtomicBool::new(true)),
+            transient_resolution_failure: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -6909,6 +7024,31 @@ impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
     /// How many backend resolutions this provider has been asked for.
     fn bindings(&self) -> Arc<AtomicUsize> {
         Arc::clone(&self.bindings)
+    }
+
+    /// Whether the build is still installed, as the test can change it.
+    fn installed(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.installed)
+    }
+
+    /// The one installation this provider resolves to.
+    ///
+    /// Read by both questions that can name one -- the availability verdict and
+    /// the conversion binding -- so the two can never disagree about which
+    /// build this session is on.
+    fn resolved_installation(&self) -> InstallationIdentity {
+        backend(
+            &self
+                .installation_label
+                .lock()
+                .expect("the installation label is never poisoned"),
+            EVIDENCED_RELEASE,
+        )
+    }
+
+    /// Whether the next resolutions fail without the build having gone.
+    fn transient_resolution_failure(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.transient_resolution_failure)
     }
 
     /// The name this provider will answer with, changeable from the test.
@@ -6960,7 +7100,36 @@ impl ConvertingProvider<FakeConversionRunner> {
 
 impl<R: ProcessRunner + Send + Sync> PreviewProvider for ConvertingProvider<R> {
     fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
-        self.inner.availability()
+        if !self.installed.load(Ordering::SeqCst) {
+            // No identity, exactly as production reports a build that did not
+            // resolve: an installation that cannot be used is not one anything
+            // could have come from, so it compares equal to nothing.
+            return (
+                BackendAvailabilityDto {
+                    state: "unavailable".to_owned(),
+                    origin: "automatic".to_owned(),
+                    installation_generation: 0,
+                    release: None,
+                    build_date: None,
+                    same_installation: false,
+                    failure: Some(BackendFailureDto {
+                        kind: "backend_not_found".to_owned(),
+                        summary: "ProteoWizard was not found.".to_owned(),
+                        corrective_action: "Install ProteoWizard separately.".to_owned(),
+                    }),
+                },
+                None,
+            );
+        }
+        // The identity this provider's *conversion* binding reports, not the
+        // inner fake's own. Production resolves both from one discovery -- the
+        // trait says so, and says why: asking twice would let the verdict
+        // describe one installation and the identity another. A fake that
+        // answered with two identities would make every reading look like a
+        // change, which is not a state any filesystem can produce.
+        let (verdict, _) = self.inner.availability();
+        let identity = (verdict.state == "available").then(|| self.resolved_installation());
+        (verdict, identity)
     }
 
     fn run(
@@ -6993,7 +7162,24 @@ impl<R: ProcessRunner + Send + Sync> PreviewProvider for ConvertingProvider<R> {
     }
 
     fn conversion_backend(&self) -> Result<ConversionBackend<'_>, PreviewErrorDto> {
+        // Counted before the refusals below, because production does the work
+        // either way: resolving is what discovers that there is nothing to
+        // resolve.
         self.bindings.fetch_add(1, Ordering::SeqCst);
+        if !self.installed.load(Ordering::SeqCst) {
+            return Err(PreviewErrorDto::new(
+                "backend_not_found",
+                "ProteoWizard was not found.",
+                false,
+            ));
+        }
+        if self.transient_resolution_failure.load(Ordering::SeqCst) {
+            return Err(PreviewErrorDto::new(
+                "capability_evidence_unavailable",
+                "The installed ProteoWizard did not describe the commands MSCanvas needs.",
+                false,
+            ));
+        }
         if let Some(hook) = self
             .on_conversion_backend
             .lock()
@@ -7004,13 +7190,7 @@ impl<R: ProcessRunner + Send + Sync> PreviewProvider for ConvertingProvider<R> {
         }
         Ok(ConversionBackend {
             capabilities: self.capabilities.clone(),
-            installation: Some(backend(
-                &self
-                    .installation_label
-                    .lock()
-                    .expect("the installation label is never poisoned"),
-                EVIDENCED_RELEASE,
-            )),
+            installation: Some(self.resolved_installation()),
             runner: &self.runner,
         })
     }
@@ -8806,11 +8986,11 @@ fn the_visible_workflow_converts_real_shimadzu_and_mixed_queues_end_to_end() {
     // evidenced build.
     let document = current_document(&service);
     let plan = service
-        .conversion_queue_plan(&handles)
+        .conversion_queue_plan_shipped(&handles)
         .expect("the mixed queue has a plan");
     assert_eq!(plan.items.len(), 3);
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("the mixed queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -9343,8 +9523,8 @@ fn the_plan_summary_describes_the_fixed_plan_and_refuses_an_mzml_row() {
     assert_eq!(summary.items[0].dataset_handle, handle);
     assert_eq!(plan_output_name(&summary.items[0]), "acquisition.mzML");
     assert_eq!(summary.capacity, 16);
-    assert_eq!(summary.output_format, ConversionOutputFormatDto::MzMl);
-    assert_eq!(summary.compression, "zlib");
+    assert_eq!(summary.intent.format, ConversionOutputFormatDto::MzMl);
+    assert_eq!(summary.intent.compression, ConversionCompressionDto::Zlib);
     assert_eq!(summary.validation_mode, ValidationModeDto::OutputOnly);
 
     let refused = service
@@ -10033,12 +10213,22 @@ fn a_reload_does_not_release_a_conversion_that_is_already_running() {
 ///
 /// The deterministic half of ADR 0011's open binding gate: a provider that
 /// bound `msaccess` help instead of `msconvert` gets capability evidence for a
-/// tool whose option grammar cannot express a conversion, and the run refuses.
+/// tool whose option grammar cannot express a conversion, and the conversion
+/// refuses.
+///
+/// **Since M6.4 it refuses one step earlier.** The pre-picker gate now asks the
+/// resolved build whether it declares everything the chosen intent emits, and
+/// `msaccess` help declares no `--mzML`, so the queue is refused before a
+/// reservation exists rather than after a destination has been chosen. What the
+/// test proves is unchanged and slightly stronger: this binding converts
+/// nothing, and now it does not open a picker either.
 #[test]
 fn capability_evidence_from_the_wrong_tool_cannot_convert() {
     let fixture = TestFile::new("wrong-tool-help");
     let acquisition = fixture.thermo_raw("acquisition.raw");
     let destination = destination_root(&fixture, "out");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
     let provider = ConvertingProvider::new(
         conversion_capabilities_for(
             BackendTool::MsAccess,
@@ -10046,24 +10236,25 @@ fn capability_evidence_from_the_wrong_tool_cannot_convert() {
             Some(EVIDENCED_REVISION),
             EVIDENCED_EXECUTABLE_SHA256,
         ),
-        FakeConversionRunner::new(BackendAct::Convert),
+        runner,
     );
     let service = PreviewService::new(Box::new(provider));
     let handle = add_one_acquisition(&service, &acquisition);
     let document = current_document(&service);
-    let reservation = service
+
+    let error = service
         .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
-        .expect("one reservation");
-    let operation = service
-        .claim_conversion(&reservation.reservation_id, document)
-        .expect("claim it");
+        .expect_err("a tool whose grammar cannot express a conversion reserves nothing");
 
-    let update = service.run_claimed_conversion(operation, &destination);
-
-    let Some(report) = sole_report(&update.state) else {
-        panic!("the run reaches an outcome; got {:?}", update.state);
-    };
-    assert_ne!(report.outcome, "finalized");
+    assert_eq!(error.kind, "conversion_intent_unsupported");
+    assert!(
+        matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Idle
+        ),
+        "no reservation is issued, so no picker can be opened"
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 0);
     assert_eq!(entry_names(&destination), Vec::<String>::new());
 }
 
@@ -10194,7 +10385,7 @@ fn queue_and_run(
 ) -> WorkspaceConversionUpdateDto {
     let document = current_document(service);
     let reservation = service
-        .begin_conversion_queue(handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(handles, ConversionConflictPolicyDto::Fail, document)
         .expect("the queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -10312,7 +10503,7 @@ fn a_queue_whose_items_would_share_an_output_name_is_refused_before_anything_run
     let two = add_one_acquisition(&service, &other);
 
     let error = service
-        .conversion_queue_plan(&[one.clone(), two.clone()])
+        .conversion_queue_plan_shipped(&[one.clone(), two.clone()])
         .expect_err("two items cannot write one name");
     assert_eq!(error.kind, "queue_output_name_collision");
     assert_eq!(error.detail.as_deref(), Some("run.mzML"));
@@ -10321,7 +10512,11 @@ fn a_queue_whose_items_would_share_an_output_name_is_refused_before_anything_run
     let document = current_document(&service);
     assert_eq!(
         service
-            .begin_conversion_queue(&[one, two], ConversionConflictPolicyDto::Fail, document)
+            .begin_conversion_queue_shipped(
+                &[one, two],
+                ConversionConflictPolicyDto::Fail,
+                document
+            )
             .expect_err("the queue is refused, not created")
             .kind,
         "queue_output_name_collision"
@@ -10342,20 +10537,23 @@ fn a_queue_is_bounded_deduplicated_and_convertible_or_it_is_refused() {
     let mzml = service.add_dataset(&fixture.path).expect("an mzML row");
 
     assert_eq!(
-        service.conversion_queue_plan(&[]).expect_err("empty").kind,
+        service
+            .conversion_queue_plan_shipped(&[])
+            .expect_err("empty")
+            .kind,
         "queue_is_empty"
     );
     let too_many: Vec<String> = (0..17).map(|_| handle.clone()).collect();
     assert_eq!(
         service
-            .conversion_queue_plan(&too_many)
+            .conversion_queue_plan_shipped(&too_many)
             .expect_err("seventeen is more than a session runs")
             .kind,
         "queue_too_large"
     );
     assert_eq!(
         service
-            .conversion_queue_plan(&[handle.clone(), handle.clone()])
+            .conversion_queue_plan_shipped(&[handle.clone(), handle.clone()])
             .expect_err("one row twice is one row")
             .kind,
         "queue_output_name_collision",
@@ -10363,14 +10561,14 @@ fn a_queue_is_bounded_deduplicated_and_convertible_or_it_is_refused() {
     );
     assert_eq!(
         service
-            .conversion_queue_plan(&[handle.clone(), mzml.handle])
+            .conversion_queue_plan_shipped(&[handle.clone(), mzml.handle])
             .expect_err("an mzML row is not queued silently")
             .kind,
         "dataset_not_convertible"
     );
     assert_eq!(
         service
-            .conversion_queue_plan(&[handle, String::from("file-404")])
+            .conversion_queue_plan_shipped(&[handle, String::from("file-404")])
             .expect_err("a handle naming nothing")
             .kind,
         "unknown_file_handle"
@@ -10389,7 +10587,7 @@ fn every_queued_row_is_protected_while_the_queue_is_live() {
         .expect("an unrelated row");
     let document = current_document(&service);
     service
-        .begin_conversion_queue(
+        .begin_conversion_queue_shipped(
             &[first.clone(), second.clone()],
             ConversionConflictPolicyDto::Fail,
             document,
@@ -10417,7 +10615,7 @@ fn every_queued_row_is_protected_while_the_queue_is_live() {
             .load_spectrum(&unrelated.handle, 0)
             .expect_err("and so is a spectrum"),
         service
-            .begin_conversion_queue(&[first], ConversionConflictPolicyDto::Fail, document)
+            .begin_conversion_queue_shipped(&[first], ConversionConflictPolicyDto::Fail, document)
             .expect_err("and a second queue"),
     ] {
         assert_eq!(refusal.kind, "conversion_busy");
@@ -10557,7 +10755,7 @@ fn a_reload_recovers_the_queue_and_a_new_queue_replaces_it() {
     // A new queue replaces it rather than accumulating beside it.
     let document = current_document(&service);
     service
-        .begin_conversion_queue(&[first], ConversionConflictPolicyDto::Skip, document)
+        .begin_conversion_queue_shipped(&[first], ConversionConflictPolicyDto::Skip, document)
         .expect("the slot is free again");
     let WorkspaceConversionStateDto::AwaitingDestination { queue, .. } =
         service.conversion_state().state
@@ -10592,7 +10790,7 @@ fn a_queue_parked_at_its_first_item_has_started_no_other() {
 
     let document = current_document(&service);
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("the queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -10633,7 +10831,7 @@ fn a_queue_parked_at_its_first_item_has_started_no_other() {
             .open_preview(&preview_source.handle)
             .expect_err("a preview is refused"),
         service
-            .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+            .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
             .expect_err("a second queue is refused"),
         service
             .remove_datasets(std::slice::from_ref(&handles[2]))
@@ -10793,6 +10991,7 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "failedCount",
             "finalizedCount",
             "installationGeneration",
+            "intent",
             "itemCount",
             "items",
             "nonRetryableFailedCount",
@@ -11030,7 +11229,7 @@ fn a_real_queue_converts_several_thermo_acquisitions_one_at_a_time() {
     let expected_order = vec!["charlie.mzML", "alpha.mzML", "bravo.mzML"];
 
     let plan = service
-        .conversion_queue_plan(&queued)
+        .conversion_queue_plan_shipped(&queued)
         .expect("three convertible rows are a plan");
     println!("plan: {plan:?}");
     assert_eq!(plan.capacity, super::dto::MAX_CONVERSION_QUEUE_ITEMS);
@@ -11066,7 +11265,7 @@ fn a_real_queue_converts_several_thermo_acquisitions_one_at_a_time() {
 
     let document = service.workspace_drop_document_epoch();
     let reservation = service
-        .begin_conversion_queue(&queued, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&queued, ConversionConflictPolicyDto::Fail, document)
         .expect("one reservation for the whole queue");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -11250,7 +11449,7 @@ fn a_real_queue_isolates_one_failure_and_converts_the_rest() {
 
     let document = service.workspace_drop_document_epoch();
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("one reservation for the whole queue");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -11371,7 +11570,7 @@ fn output_names_that_differ_only_in_case_are_a_collision() {
 
     // Distinct strings, and the same file on the volume this queue writes to.
     let error = service
-        .conversion_queue_plan(&[one, two])
+        .conversion_queue_plan_shipped(&[one, two])
         .expect_err("an ordinary Windows folder resolves both of these to one file");
     assert_eq!(error.kind, "queue_output_name_collision");
     assert!(matches!(
@@ -11389,7 +11588,7 @@ fn output_names_that_differ_only_in_case_are_a_collision() {
     let sigma_twin = add_one_acquisition(&service, &final_sigma);
     assert_eq!(
         service
-            .conversion_queue_plan(&[sigma, sigma_twin])
+            .conversion_queue_plan_shipped(&[sigma, sigma_twin])
             .expect_err("a Windows volume upcases both of these to one name")
             .kind,
         "queue_output_name_collision"
@@ -11740,7 +11939,7 @@ fn stop_mid_item(
 
     let document = current_document(&service);
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("the queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -11852,7 +12051,7 @@ fn a_stop_between_items_keeps_every_finished_output_and_starts_no_more() {
 
     let document = current_document(&service);
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("the queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -11982,7 +12181,7 @@ fn an_unconfirmed_stop_quarantines_the_backend_and_refuses_every_operation() {
         let document = current_document(&service);
         assert_eq!(
             service
-                .begin_conversion_queue(
+                .begin_conversion_queue_shipped(
                     std::slice::from_ref(&handle),
                     ConversionConflictPolicyDto::Fail,
                     document
@@ -12019,7 +12218,7 @@ fn a_stop_before_the_first_item_launches_no_process() {
 
     let document = current_document(&service);
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("the queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -12083,7 +12282,7 @@ fn only_the_current_document_may_stop_its_own_running_queue() {
     );
 
     let reservation = service
-        .begin_conversion_queue(
+        .begin_conversion_queue_shipped(
             std::slice::from_ref(&handle),
             ConversionConflictPolicyDto::Fail,
             document,
@@ -12159,7 +12358,7 @@ fn a_new_queue_is_not_born_stopped() {
     let document = current_document(&service);
 
     let reservation = service
-        .begin_conversion_queue(
+        .begin_conversion_queue_shipped(
             std::slice::from_ref(&handle),
             ConversionConflictPolicyDto::Fail,
             document,
@@ -12224,7 +12423,7 @@ fn a_real_queue_stops_the_running_item_and_starts_no_other() {
     let handles = admit_all(&service, &copies);
     let document = service.workspace_drop_document_epoch();
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("one reservation for the whole queue");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -12323,7 +12522,7 @@ fn a_real_stop_after_one_item_keeps_that_output_and_runs_no_other() {
     let handles = admit_all(&service, &copies);
     let document = service.workspace_drop_document_epoch();
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("one reservation for the whole queue");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -12531,7 +12730,7 @@ fn a_stop_between_starting_an_item_and_spawning_it_launches_nothing() {
         .collect();
     let document = current_document(&service);
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("the queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -12653,7 +12852,7 @@ fn a_stopped_queue_is_not_retried_even_when_it_holds_a_retryable_failure() {
 
     let document = current_document(&service);
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("the queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -13020,7 +13219,7 @@ fn a_stopped_retry_keeps_the_failures_it_had_not_reached() {
     ));
     slot.finish(operation, None, TerminalReason::Stopped);
 
-    let update = slot.read(false, ConversionDiagnosticsStateDto::default());
+    let update = slot.read(false, ConversionDiagnosticsStateDto::default(), 0);
     let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
         panic!("the queue reaches a terminal state");
     };
@@ -13052,35 +13251,68 @@ fn a_stopped_retry_keeps_the_failures_it_had_not_reached() {
 fn a_queue_stopped_behind_the_gate_resolves_no_backend() {
     let fixture = TestFile::new("queue-stop-gate-first");
     let destination = destination_root(&fixture, "out");
-    let (provider, observe_start, release_preview) =
-        ConvertingProvider::faithful().parking_the_first_preview();
+    let provider = ConvertingProvider::faithful();
     let bindings = provider.bindings();
+    let hook = provider.on_conversion_backend();
     let service = Arc::new(PreviewService::new(Box::new(provider)));
-    let preview_source = service
-        .add_dataset(&fixture.path)
-        .expect("add the preview dataset");
     let handles: Vec<String> = ["one.raw", "two.raw"]
         .iter()
         .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
         .collect();
 
-    // A preview holds the one backend lane, which is what a queue waits behind.
-    let opening = std::thread::spawn({
-        let service = Arc::clone(&service);
-        let handle = preview_source.handle.clone();
-        move || service.open_preview(&handle)
-    });
-    observe_start
-        .recv_timeout(Duration::from_secs(10))
-        .expect("the preview reached the provider and holds the gate");
-
+    // Admitted with the lane free, so its mandatory pre-picker preflight runs
+    // here rather than becoming part of what this case measures. That preflight
+    // resolves the build once; the whole point below is that the *queue* then
+    // resolves none of its own.
     let document = current_document(&service);
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("the queue is admitted");
+    let bound_by_preflight = bindings.load(Ordering::SeqCst);
+    assert_eq!(
+        bound_by_preflight, 1,
+        "admitting a queue proves the build once, before any picker"
+    );
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("claim it");
+
+    // Something bounded now holds the one backend lane, and that is what the
+    // queue's own worker waits behind.
+    //
+    // A parked *preview* used to be what held it, admitted before the queue
+    // existed. It cannot be any more, and for two independent reasons: a queue
+    // is now admitted only from a free lane, and Rust refuses a preview while a
+    // conversion holds the slot. A catalog read is the honest stand-in -- it
+    // takes the same gate, reads the same installed tools, and is exactly the
+    // kind of bounded work the queue's worker is expected to wait behind.
+    let (holding, observe_hold) = mpsc::channel();
+    let (release_hold, held) = mpsc::channel();
+    {
+        let holding = Mutex::new(Some(holding));
+        let held = Mutex::new(Some(held));
+        *hook.lock().expect("arm the hook") = Some(Box::new(move || {
+            let Some(started) = holding.lock().expect("the hold channel").take() else {
+                return;
+            };
+            started.send(()).expect("announce the held lane");
+            held.lock()
+                .expect("the release channel")
+                .take()
+                .expect("a held lane is released exactly once")
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the held lane is released");
+        }));
+    }
+    let holder = std::thread::spawn({
+        let service = Arc::clone(&service);
+        move || service.conversion_intent_catalog()
+    });
+    observe_hold
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the catalog read reached the provider and holds the gate");
+    let bound_by_holder = bindings.load(Ordering::SeqCst);
+
     let worker = {
         let service = Arc::clone(&service);
         let destination = destination.clone();
@@ -13100,11 +13332,9 @@ fn a_queue_stopped_behind_the_gate_resolves_no_backend() {
         .stop_conversion_queue(&operation.to_string(), document)
         .expect("the running queue of this document is stoppable");
 
-    release_preview
-        .send(())
-        .expect("release the parked preview");
+    release_hold.send(()).expect("release the held lane");
     let update = worker.join().expect("the queue worker finishes");
-    opening.join().expect("the preview finishes").ok();
+    holder.join().expect("the catalog read finishes").ok();
     assert_eq!(
         terminal_reason(&update),
         ConversionQueueTerminalReasonDto::Stopped
@@ -13122,8 +13352,8 @@ fn a_queue_stopped_behind_the_gate_resolves_no_backend() {
     );
     assert_eq!(
         bindings.load(Ordering::SeqCst),
-        0,
-        "no build was resolved for a queue that will convert nothing"
+        bound_by_holder,
+        "the stopped queue resolved no build of its own"
     );
     assert_eq!(
         entry_names(&destination),
@@ -13167,7 +13397,7 @@ fn a_stop_accepted_while_a_queue_settles_is_not_overwritten_by_completion() {
     ));
     slot.finish(operation, None, TerminalReason::Completed);
 
-    let update = slot.read(false, ConversionDiagnosticsStateDto::default());
+    let update = slot.read(false, ConversionDiagnosticsStateDto::default(), 0);
     assert_eq!(
         terminal_reason(&update),
         ConversionQueueTerminalReasonDto::Stopped,
@@ -13207,7 +13437,7 @@ fn no_read_reports_an_unconfirmed_stop_beside_a_trusted_backend() {
 
     let document = current_document(&service);
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("the queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -13305,7 +13535,7 @@ fn a_recheck_waiting_on_the_gate_launches_nothing_after_a_lost_converter() {
 
     let document = current_document(&service);
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("the queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -13386,7 +13616,7 @@ fn test_destination() -> AdmittedDestination {
 
 /// The reservation the slot currently holds, as the webview would return it.
 fn reservation_handle(slot: &ConversionSlot) -> String {
-    let update = slot.read(false, ConversionDiagnosticsStateDto::default());
+    let update = slot.read(false, ConversionDiagnosticsStateDto::default(), 0);
     match update.state {
         WorkspaceConversionStateDto::AwaitingDestination { operation_id, .. } => {
             format!("conversion-reservation-{operation_id}")
@@ -13421,7 +13651,7 @@ fn converted_queue(fixture: &TestFile, names: &[&str]) -> (Arc<PreviewService>, 
         .collect();
     let document = current_document(&service);
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("the queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -13572,7 +13802,7 @@ fn a_stop_reaching_a_running_shimadzu_item_cancels_it_and_runs_no_other() {
 
     let document = current_document(&service);
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("the mixed queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -13699,7 +13929,7 @@ fn a_mixed_family_queue_converts_serially_in_visible_order() {
 
     // The plan carries each row's family, in the caller's order.
     let plan = service
-        .conversion_queue_plan(&handles)
+        .conversion_queue_plan_shipped(&handles)
         .expect("a mixed queue has a plan");
     let plan_kinds: Vec<DatasetSourceKindDto> =
         plan.items.iter().map(|item| item.source_kind).collect();
@@ -13714,7 +13944,7 @@ fn a_mixed_family_queue_converts_serially_in_visible_order() {
 
     let document = current_document(&service);
     let reservation = service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("the mixed queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -13761,7 +13991,7 @@ fn a_cross_family_output_name_collision_refuses_the_queue_before_the_picker() {
     // The read-only plan already refuses it.
     assert_eq!(
         service
-            .conversion_queue_plan(&handles)
+            .conversion_queue_plan_shipped(&handles)
             .expect_err("two planned items may not write one name")
             .kind,
         "queue_output_name_collision"
@@ -13775,7 +14005,7 @@ fn a_cross_family_output_name_collision_refuses_the_queue_before_the_picker() {
     ] {
         assert_eq!(
             service
-                .begin_conversion_queue(&handles, policy, document)
+                .begin_conversion_queue_shipped(&handles, policy, document)
                 .expect_err("the queue itself is invalid")
                 .kind,
             "queue_output_name_collision"
@@ -13845,7 +14075,11 @@ fn an_unevidenced_build_refuses_a_queue_before_the_destination_picker() {
     ] {
         assert_eq!(
             service
-                .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+                .begin_conversion_queue_shipped(
+                    &handles,
+                    ConversionConflictPolicyDto::Fail,
+                    document
+                )
                 .expect_err("an unevidenced build is refused before the picker")
                 .kind,
             "provider_build_not_evidenced"
@@ -13858,6 +14092,241 @@ fn an_unevidenced_build_refuses_a_queue_before_the_destination_picker() {
             "no reservation was taken"
         );
     }
+}
+
+/// A build that has gone is observed by the `BEGIN` that discovers it, so the
+/// session stops describing it rather than repeating one refusal for ever.
+///
+/// The pre-picker preflight resolves the installed executable. When that
+/// resolution *succeeds* the identity is recorded, which is what lets a build
+/// replaced in place be noticed here. When it failed, nothing was recorded at
+/// all -- so a catalogued executable that had been deleted left the banner
+/// saying available, the catalog offering that build's availability marks, the
+/// plan current, and every press producing the same refusal.
+///
+/// Nothing is inferred from the error. The provider's own availability
+/// authority is asked, and it names an identity only where something usable
+/// actually resolved.
+#[test]
+fn a_begin_that_cannot_resolve_the_build_observes_that_it_is_gone() {
+    let fixture = TestFile::new("begin-resolution-lost");
+    let provider = ConvertingProvider::faithful();
+    let installed = provider.installed();
+    let service = PreviewService::new(Box::new(provider));
+    let handle = add_one_acquisition(&service, &fixture.shimadzu_lcd("one.lcd"));
+    let document = current_document(&service);
+
+    // A catalog is read while the build is there, which is what a session has
+    // on screen before any of this.
+    let before = service
+        .conversion_intent_catalog()
+        .expect("the installed build offers a catalog")
+        .installation_generation;
+
+    // And then the executable is gone.
+    installed.store(false, Ordering::SeqCst);
+
+    let refusal = service
+        .begin_conversion_queue_shipped(
+            std::slice::from_ref(&handle),
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect_err("a build that cannot be resolved converts nothing");
+    assert_eq!(refusal.kind, "backend_not_found");
+
+    // Nothing was created on the way to that refusal.
+    assert!(
+        matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Idle
+        ),
+        "a refused BEGIN leaves the slot exactly where it was"
+    );
+
+    // **And the session knows.** The sequence has moved, so the ordinary slot
+    // read the frontend already makes carries the news: the old verdict is
+    // reconciled and the catalog that described the lost build stops being an
+    // answer.
+    assert!(
+        service.conversion_state().installation_generation > before,
+        "the resolution that failed established that the build is gone"
+    );
+    assert_eq!(
+        service.inspect_backend().state,
+        "unavailable",
+        "and the verdict this session answers with says so"
+    );
+}
+
+/// A resolution that failed without establishing anything must not manufacture
+/// an installation change.
+///
+/// The observation above is a statement about the installed build, and it is
+/// only allowed where the provider's own authority says nothing usable
+/// resolved. Help output that could not be read this time is not that: the
+/// build is still there, still answers the availability question, and a
+/// generation advanced on its account would revoke a catalog and a plan that
+/// are both still true.
+#[test]
+fn a_transient_resolution_failure_does_not_manufacture_an_installation_change() {
+    let fixture = TestFile::new("begin-resolution-transient");
+    let provider = ConvertingProvider::faithful();
+    let transient = provider.transient_resolution_failure();
+    let service = PreviewService::new(Box::new(provider));
+    let handle = add_one_acquisition(&service, &fixture.shimadzu_lcd("one.lcd"));
+    let document = current_document(&service);
+    let before = service
+        .conversion_intent_catalog()
+        .expect("the installed build offers a catalog")
+        .installation_generation;
+
+    transient.store(true, Ordering::SeqCst);
+    let refusal = service
+        .begin_conversion_queue_shipped(
+            std::slice::from_ref(&handle),
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect_err("a resolution that did not answer starts nothing");
+    assert_eq!(refusal.kind, "capability_evidence_unavailable");
+
+    assert_eq!(
+        service.conversion_state().installation_generation,
+        before,
+        "a failure that establishes nothing about the build moves nothing"
+    );
+}
+
+/// The exact-intent preflight is a duty, not a courtesy: a queue is never
+/// admitted without it, however busy the one backend lane is.
+///
+/// It used to run only when the lane happened to be free. A preview, a drop
+/// scan or another document's check holding it meant the check was skipped
+/// entirely -- and a build that could not express the chosen semantic produced
+/// a bound queue, a reservation, an opened picker and a chosen folder before
+/// anything refused. What M6.4 promises is a refusal before all of that, and a
+/// promise that holds only when a lock happens to be free is not one.
+#[test]
+fn a_busy_backend_lane_delays_the_intent_preflight_rather_than_skipping_it() {
+    let fixture = TestFile::new("preflight-busy-lane");
+    let destination = destination_root(&fixture, "out");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    // A build whose help is the wrong tool's: its grammar cannot express any
+    // mzML conversion, so the exact-intent gate is what refuses this queue.
+    let provider = ConvertingProvider::new(
+        conversion_capabilities_for(
+            BackendTool::MsAccess,
+            EVIDENCED_RELEASE,
+            Some(EVIDENCED_REVISION),
+            EVIDENCED_EXECUTABLE_SHA256,
+        ),
+        runner,
+    );
+    let hook = provider.on_conversion_backend();
+    let service = Arc::new(PreviewService::new(Box::new(provider)));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    let document = current_document(&service);
+
+    // Something bounded takes the one backend lane and holds it.
+    let (holding, observe_hold) = mpsc::channel();
+    let (release_hold, held) = mpsc::channel();
+    {
+        let holding = Mutex::new(Some(holding));
+        let held = Mutex::new(Some(held));
+        *hook.lock().expect("arm the hook") = Some(Box::new(move || {
+            let Some(started) = holding.lock().expect("the hold channel").take() else {
+                return;
+            };
+            started.send(()).expect("announce the held lane");
+            held.lock()
+                .expect("the release channel")
+                .take()
+                .expect("a held lane is released exactly once")
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the held lane is released");
+        }));
+    }
+    let holder = std::thread::spawn({
+        let service = Arc::clone(&service);
+        move || service.conversion_intent_catalog()
+    });
+    observe_hold
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the catalog read holds the gate");
+
+    // Convert is pressed while that lane is held. It waits rather than
+    // skipping the check it cannot currently make.
+    let begun = std::thread::spawn({
+        let service = Arc::clone(&service);
+        let handle = handle.clone();
+        move || {
+            service.begin_conversion_queue_shipped(
+                std::slice::from_ref(&handle),
+                ConversionConflictPolicyDto::Fail,
+                document,
+            )
+        }
+    });
+    // It has not answered, because it cannot: the answer needs the lane. And
+    // nothing is reserved meanwhile, which is the half that used to be false.
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Idle
+        ),
+        "nothing is reserved while the preflight waits"
+    );
+
+    release_hold.send(()).expect("release the held lane");
+    holder.join().expect("the catalog read finishes").ok();
+    let refusal = begun
+        .join()
+        .expect("BEGIN finishes")
+        .expect_err("this build cannot express the chosen semantic");
+    assert_eq!(refusal.kind, "conversion_intent_unsupported");
+
+    // No queue, no reservation, no picker, no process, nothing staged.
+    assert!(
+        matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Idle
+        ),
+        "a refused BEGIN creates nothing at all"
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 0);
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+}
+
+/// The same preflight, from an idle lane, runs exactly once.
+///
+/// Making the check mandatory must not make it repeated: resolving the backend
+/// runs the installed tool's help, and a second resolution per press would be a
+/// process spent proving what the first one just proved.
+#[test]
+fn an_idle_begin_resolves_the_build_once_for_its_preflight() {
+    let fixture = TestFile::new("preflight-idle-once");
+    let provider = ConvertingProvider::faithful();
+    let bindings = provider.bindings();
+    let service = PreviewService::new(Box::new(provider));
+    let handle = add_one_acquisition(&service, &fixture.shimadzu_lcd("one.lcd"));
+    let document = current_document(&service);
+
+    let before = bindings.load(Ordering::SeqCst);
+    service
+        .begin_conversion_queue_shipped(
+            std::slice::from_ref(&handle),
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect("an evidenced build admits the shipped semantic");
+    assert_eq!(
+        bindings.load(Ordering::SeqCst) - before,
+        1,
+        "one resolution answers the family evidence and the exact intent alike"
+    );
 }
 
 /// A row removed while the pre-picker preflight is resolving the backend is
@@ -13886,7 +14355,7 @@ fn a_row_removed_during_the_preflight_refuses_the_queue_before_a_reservation() {
 
     assert_eq!(
         service
-            .begin_conversion_queue(
+            .begin_conversion_queue_shipped(
                 std::slice::from_ref(&handle),
                 ConversionConflictPolicyDto::Fail,
                 document,
@@ -14293,7 +14762,7 @@ fn a_replaced_queue_releases_its_tickets_without_touching_the_files() {
     // A second queue replaces the terminal one, tickets and all.
     let next = add_one_acquisition(&service, &fixture.thermo_raw("three.raw"));
     let _ = service
-        .begin_conversion_queue(
+        .begin_conversion_queue_shipped(
             std::slice::from_ref(&next),
             ConversionConflictPolicyDto::Fail,
             document,
@@ -15224,7 +15693,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
     );
     assert!(!rendered.contains("one.raw"), "{rendered}");
     assert_eq!(
-        slot.read(false, ConversionDiagnosticsStateDto::default())
+        slot.read(false, ConversionDiagnosticsStateDto::default(), 0)
             .diagnostics
             .eligible_item_count,
         1
@@ -15279,7 +15748,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
     let _ = slot.begin(replacement).expect("reservation");
     assert!(slot.terminal_diagnostics(operation).is_none());
     assert_eq!(
-        slot.read(false, ConversionDiagnosticsStateDto::default())
+        slot.read(false, ConversionDiagnosticsStateDto::default(), 0)
             .diagnostics
             .eligible_item_count,
         0
@@ -15407,7 +15876,7 @@ fn an_export_in_flight_closes_the_actions_that_would_replace_its_queue() {
     );
     assert_eq!(
         service
-            .begin_conversion_queue(
+            .begin_conversion_queue_shipped(
                 std::slice::from_ref(&spare),
                 ConversionConflictPolicyDto::Fail,
                 document
@@ -16915,7 +17384,7 @@ fn add_files_admits_a_sciex_bundle_as_one_row() {
     // The visible queue takes it, and plans it as a backend-named set.
     assert!(is_convertible(DatasetSourceKind::SciexWiff));
     let plan = service
-        .conversion_queue_plan(std::slice::from_ref(&handle))
+        .conversion_queue_plan_shipped(std::slice::from_ref(&handle))
         .expect("the visible queue takes a bundle");
     assert_eq!(
         plan.items[0].output,
@@ -17125,7 +17594,7 @@ fn reopening_a_rewritten_bundle_through_the_picker_rebinds_its_row() {
         "the stale-digest loop must not create a second row"
     );
     // Bound to what is on disk now, which is what makes the instruction usable.
-    let planned = service.conversion_queue_plan(std::slice::from_ref(&handle));
+    let planned = service.conversion_queue_plan_shipped(std::slice::from_ref(&handle));
     assert!(planned.is_ok(), "the rebound row plans: {planned:?}");
 }
 
@@ -17144,7 +17613,7 @@ fn a_mixed_family_queue_plans_every_visible_family() {
     ];
 
     let plan = service
-        .conversion_queue_plan(&handles)
+        .conversion_queue_plan_shipped(&handles)
         .expect("every visible convertible family is planned together");
     assert_eq!(plan.items.len(), 3, "item count is source count");
     assert_eq!(
@@ -18333,7 +18802,7 @@ fn run_visible_queue(
 ) -> WorkspaceConversionUpdateDto {
     let document = service.workspace_drop_document_epoch();
     let reservation = service
-        .begin_conversion_queue(handles, conflict, document)
+        .begin_conversion_queue_shipped(handles, conflict, document)
         .expect("the queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
@@ -18408,7 +18877,7 @@ fn a_visible_sciex_item_carries_set_topology_and_no_output_name() {
 
     // The visible planner takes the row, and says what it will produce.
     let plan = service
-        .conversion_queue_plan(std::slice::from_ref(&handle))
+        .conversion_queue_plan_shipped(std::slice::from_ref(&handle))
         .expect("the visible planner takes a SCIEX row");
     assert_eq!(plan.items.len(), 1);
     assert_eq!(plan.items[0].source_kind, DatasetSourceKindDto::SciexWiff);
@@ -18425,7 +18894,7 @@ fn a_visible_sciex_item_carries_set_topology_and_no_output_name() {
     );
 
     let reservation = service
-        .begin_conversion_queue(
+        .begin_conversion_queue_shipped(
             std::slice::from_ref(&handle),
             ConversionConflictPolicyDto::Fail,
             document,
@@ -18758,7 +19227,7 @@ fn the_queue_output_name_authority_is_bounded() {
     }
     let document = service.workspace_drop_document_epoch();
     service
-        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("a full private queue is admitted");
 
     let (claimed, bound) = service
@@ -19218,7 +19687,7 @@ fn stop_mid_sciex_item(
 
     let document = service.workspace_drop_document_epoch();
     let reservation = service
-        .begin_conversion_queue(
+        .begin_conversion_queue_shipped(
             &[sciex.handle.clone(), thermo.handle.clone()],
             ConversionConflictPolicyDto::Fail,
             document,
@@ -19326,7 +19795,7 @@ fn an_unconfirmed_stop_of_a_set_quarantines_the_backend() {
     // Nothing further may run, at all.
     let document = service.workspace_drop_document_epoch();
     let refused = service
-        .begin_conversion_queue(&[], ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue_shipped(&[], ConversionConflictPolicyDto::Fail, document)
         .expect_err("a quarantined session admits no queue");
     assert_eq!(refused.kind, "backend_quarantined");
     assert_eq!(launches.load(Ordering::SeqCst), 1, "no probe, no process");
@@ -19350,7 +19819,7 @@ fn a_stop_after_a_finalized_set_keeps_its_ticket() {
 
     let document = service.workspace_drop_document_epoch();
     let reservation = service
-        .begin_conversion_queue(
+        .begin_conversion_queue_shipped(
             &[sciex.handle.clone(), thermo.handle.clone()],
             ConversionConflictPolicyDto::Fail,
             document,
@@ -20452,7 +20921,7 @@ fn replacing_a_private_queue_keeps_every_document_it_wrote() {
         .expect("a second SCIEX row");
     let document = service.workspace_drop_document_epoch();
     service
-        .begin_conversion_queue(
+        .begin_conversion_queue_shipped(
             std::slice::from_ref(&another.handle),
             ConversionConflictPolicyDto::Fail,
             document,
@@ -20546,7 +21015,7 @@ fn a_real_sciex_acquisition_runs_through_the_visible_workflow() {
 
     // 2. The visible plan. It states the cardinality and names nothing.
     let plan = service
-        .conversion_queue_plan(std::slice::from_ref(&handle))
+        .conversion_queue_plan_shipped(std::slice::from_ref(&handle))
         .expect("the visible planner takes the acquisition");
     println!("plan topology: {:?}", plan.items[0].output);
     assert_eq!(
@@ -24580,5 +25049,581 @@ fn a_claimed_range_export_writes_its_begin_time_range_after_the_selection_moves(
     assert!(
         document.ends_with("110,20\n120,9000000\n130,8\n"),
         "{document}"
+    );
+}
+
+// --- M6.4: the selectable-intent catalog and the intent one queue binds -----
+
+/// Every identity in the catalog, in catalog order.
+fn catalog_ids(catalog: &super::dto::ConversionIntentCatalogDto) -> Vec<String> {
+    catalog
+        .intents
+        .iter()
+        .map(|option| option.intent.id.clone())
+        .collect()
+}
+
+/// The catalog row an identity names, or nothing.
+fn catalog_row<'a>(
+    catalog: &'a super::dto::ConversionIntentCatalogDto,
+    id: &str,
+) -> Option<&'a super::dto::ConversionIntentOptionDto> {
+    catalog.intents.iter().find(|option| option.intent.id == id)
+}
+
+/// Identities naming combinations the M6.2 evidence does **not** admit.
+///
+/// Written out rather than generated, and each is one axis away from a row that
+/// *is* admitted, which is the shape a control can actually produce. The
+/// shipped posture with compression off, the shipped posture centroided, and
+/// the shipped posture filtered to MS1: all three are what a user would reach
+/// by moving one control away from the default, and none of them was measured.
+const UNADMITTED_INTENT_IDS: [&str; 3] = [
+    "mzml+no_additional_centroiding+all+mz64_intensity32+none",
+    "mzml+unscoped_default_centroiding+all+mz64_intensity32+zlib",
+    "mzml+no_additional_centroiding+ms1_only+mz64_intensity32+zlib",
+];
+
+/// A service whose installed build declares every option the admitted intents
+/// emit, so the catalog answers about the evidence rather than about a
+/// deliberately narrow help fixture.
+fn service_with_full_grammar(act: BackendAct) -> (PreviewService, Arc<AtomicUsize>) {
+    let runner = FakeConversionRunner::new(act);
+    let launches = runner.launches();
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities_declaring_every_option(),
+        runner,
+    )));
+    (service, launches)
+}
+
+/// The catalog is the admitted table, and nothing else is reachable through it.
+///
+/// The count is asserted because the whole point of the boundary is that it is
+/// small: a free cross-product of the five dimensions would allow forty-eight
+/// combinations, and a change that made the catalog larger than the evidence
+/// has to fail here rather than appear as extra controls.
+#[test]
+fn the_intent_catalog_holds_every_admitted_row_and_no_other_combination() {
+    let (service, _) = service_with_full_grammar(BackendAct::Convert);
+
+    let catalog = service
+        .conversion_intent_catalog()
+        .expect("an installed build answers with its catalog");
+
+    let expected: Vec<String> = ConversionIntent::ADMITTED
+        .iter()
+        .map(|admitted| admitted.intent().stable_id())
+        .collect();
+    assert_eq!(
+        catalog_ids(&catalog),
+        expected,
+        "the catalog is ConversionIntent::ADMITTED, in its own order"
+    );
+    assert_eq!(catalog.intents.len(), 9);
+    assert_eq!(
+        catalog.shipped_intent_id,
+        ConversionIntent::SHIPPED.stable_id()
+    );
+    assert_eq!(
+        catalog_row(&catalog, &catalog.shipped_intent_id).map(|option| option.availability),
+        Some(ConversionIntentAvailabilityDto::Available),
+        "the posture the product ships must be selectable on a build that declares it"
+    );
+
+    for id in UNADMITTED_INTENT_IDS {
+        assert!(
+            catalog_row(&catalog, id).is_none(),
+            "{id} is not admitted and must not appear in the catalog"
+        );
+    }
+}
+
+/// Each row carries the dimensions of the intent it projects.
+///
+/// Two rows, chosen because they differ on every axis that has more than one
+/// admitted value: the shipped posture, and the one centroided row that also
+/// narrows precision. A projection that transposed two fields would still pass
+/// a test that only counted rows.
+#[test]
+fn each_catalog_row_projects_the_dimensions_of_its_own_intent() {
+    let (service, _) = service_with_full_grammar(BackendAct::Convert);
+
+    let catalog = service
+        .conversion_intent_catalog()
+        .expect("an installed build answers with its catalog");
+
+    let shipped = catalog_row(&catalog, &ConversionIntent::SHIPPED.stable_id())
+        .expect("the shipped posture is admitted");
+    assert_eq!(shipped.intent.format, ConversionOutputFormatDto::MzMl);
+    assert_eq!(
+        shipped.intent.processing,
+        ConversionProcessingDto::NoAdditionalCentroiding
+    );
+    assert_eq!(
+        shipped.intent.population,
+        ConversionSpectrumPopulationDto::All
+    );
+    assert_eq!(
+        shipped.intent.precision,
+        ConversionNumericPrecisionDto::Mz64Intensity32
+    );
+    assert_eq!(shipped.intent.compression, ConversionCompressionDto::Zlib);
+
+    let centroided = catalog_row(
+        &catalog,
+        "mzml+unscoped_default_centroiding+all+mz32_intensity32+zlib",
+    )
+    .expect("centroiding at 32/32 over every spectrum is admitted");
+    assert_eq!(
+        centroided.intent.processing,
+        ConversionProcessingDto::UnscopedDefaultCentroiding
+    );
+    assert_eq!(
+        centroided.intent.population,
+        ConversionSpectrumPopulationDto::All
+    );
+    assert_eq!(
+        centroided.intent.precision,
+        ConversionNumericPrecisionDto::Mz32Intensity32
+    );
+    assert_eq!(
+        centroided.intent.compression,
+        ConversionCompressionDto::Zlib
+    );
+}
+
+/// An admitted row the installed build cannot express is present and refused,
+/// and it is refused by exactly the gate that decides.
+///
+/// The narrow help fixture declares the mzML flag and the zlib option and
+/// nothing else, which is precisely the build that can run the shipped posture
+/// and no other admitted combination. The assertion is not a list of which rows
+/// those are: it is that every row agrees with `require_conversion_intent` on
+/// the same intent, so the catalog cannot come to hold a second opinion.
+#[test]
+fn the_catalog_marks_a_row_this_build_cannot_express_and_agrees_with_the_planning_gate() {
+    let capabilities = evidenced_capabilities();
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        capabilities.clone(),
+        FakeConversionRunner::new(BackendAct::Convert),
+    )));
+
+    let catalog = service
+        .conversion_intent_catalog()
+        .expect("a narrow build still answers with a catalog");
+
+    assert_eq!(catalog.intents.len(), 9, "the evidence does not shrink");
+    for option in &catalog.intents {
+        let intent = super::intent_catalog::intent_from_id(&option.intent.id)
+            .expect("every catalog row names an admitted intent");
+        let expected = if capabilities.require_conversion_intent(&intent).is_ok() {
+            ConversionIntentAvailabilityDto::Available
+        } else {
+            ConversionIntentAvailabilityDto::UnsupportedByInstallation
+        };
+        assert_eq!(
+            option.availability, expected,
+            "{} disagrees with the gate that plans it",
+            option.intent.id
+        );
+    }
+    assert_eq!(
+        catalog_row(&catalog, &ConversionIntent::SHIPPED.stable_id())
+            .map(|option| option.availability),
+        Some(ConversionIntentAvailabilityDto::Available),
+        "the shipped posture emits only what the minimal grammar declares"
+    );
+    assert_eq!(
+        catalog_row(
+            &catalog,
+            "mzml+no_additional_centroiding+all+mz64_intensity64+zlib"
+        )
+        .map(|option| option.availability),
+        Some(ConversionIntentAvailabilityDto::UnsupportedByInstallation),
+        "a build declaring no 64-bit option cannot run the 64/64 posture"
+    );
+}
+
+/// A catalog belongs to the installation it was read against.
+#[test]
+fn the_catalog_is_stamped_with_the_installation_it_was_read_against() {
+    let fixture = TestFile::new("catalog-generation");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let provider = ConvertingProvider::new(evidenced_capabilities(), runner);
+    let installation = provider.installation_label();
+    let service = PreviewService::new(Box::new(provider));
+    // A dataset so the service has something to hold, and a first read so the
+    // sequence has an installation to count from.
+    let _ = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+
+    let first = service
+        .conversion_intent_catalog()
+        .expect("the first read succeeds");
+    *installation.lock().expect("the label") = String::from("another-msconvert");
+    let second = service
+        .conversion_intent_catalog()
+        .expect("the second read succeeds");
+
+    assert!(
+        second.installation_generation > first.installation_generation,
+        "a catalog read after an installation change describes the new one: {} then {}",
+        first.installation_generation,
+        second.installation_generation
+    );
+}
+
+/// A combination the evidence does not admit cannot be planned, whatever the
+/// interface sends.
+#[test]
+fn a_combination_the_evidence_does_not_admit_cannot_be_planned() {
+    let fixture = TestFile::new("unadmitted-plan");
+    let (service, _) = service_with_full_grammar(BackendAct::Convert);
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+
+    for id in UNADMITTED_INTENT_IDS {
+        let error = service
+            .conversion_plan_summary_for(&handle, id)
+            .expect_err("an unadmitted combination has no plan");
+        assert_eq!(error.kind, "conversion_intent_not_admitted", "{id}");
+    }
+    // And a value that is not an identity at all is the same refusal rather
+    // than a different failure mode.
+    assert_eq!(
+        service
+            .conversion_plan_summary_for(&handle, "")
+            .expect_err("the empty identity names nothing")
+            .kind,
+        "conversion_intent_not_admitted"
+    );
+}
+
+/// The same combination cannot begin a queue either, and is refused without
+/// launching anything or touching the one slot.
+#[test]
+fn a_combination_the_evidence_does_not_admit_cannot_begin_a_queue() {
+    let fixture = TestFile::new("unadmitted-begin");
+    let (service, launches) = service_with_full_grammar(BackendAct::Convert);
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+    let document = current_document(&service);
+
+    for id in UNADMITTED_INTENT_IDS {
+        let error = service
+            .begin_conversion_with_intent(&handle, ConversionConflictPolicyDto::Fail, id, document)
+            .expect_err("an unadmitted combination reserves nothing");
+        assert_eq!(error.kind, "conversion_intent_not_admitted", "{id}");
+    }
+    assert_eq!(
+        launches.load(Ordering::SeqCst),
+        0,
+        "a refused semantic never reaches a process"
+    );
+    assert!(
+        matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Idle
+        ),
+        "a refused semantic leaves the one slot alone"
+    );
+}
+
+/// An admitted semantic this build cannot express is refused before a picker
+/// opens, and by its own name.
+///
+/// The two refusals are different facts and carry different identifiers: one
+/// says the combination has never been qualified, the other says this
+/// ProteoWizard does not declare what it needs. A user can act on the second
+/// and cannot act on the first.
+#[test]
+fn beginning_refuses_an_admitted_semantic_the_installed_build_cannot_express() {
+    let fixture = TestFile::new("unsupported-begin");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    // The narrow grammar again: no 64-bit option is declared, so that posture
+    // is admitted by the evidence and unrunnable on this build.
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+    let document = current_document(&service);
+
+    let error = service
+        .begin_conversion_with_intent(
+            &handle,
+            ConversionConflictPolicyDto::Fail,
+            "mzml+no_additional_centroiding+all+mz64_intensity64+zlib",
+            document,
+        )
+        .expect_err("this build declares no 64-bit option");
+
+    assert_eq!(error.kind, "conversion_intent_unsupported");
+    assert_eq!(
+        launches.load(Ordering::SeqCst),
+        0,
+        "a refusal at the capability gate launches nothing"
+    );
+    assert!(
+        matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Idle
+        ),
+        "no reservation is issued for a semantic this build cannot run"
+    );
+}
+
+/// A plan echoes the intent it was resolved for, not the one the product ships.
+#[test]
+fn a_plan_echoes_the_reconstructed_intent_it_was_asked_for() {
+    let fixture = TestFile::new("plan-intent");
+    let (service, _) = service_with_full_grammar(BackendAct::Convert);
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+
+    let chosen = "mzml+no_additional_centroiding+ms2_only+mz64_intensity64+zlib";
+    let plan = service
+        .conversion_plan_summary_for(&handle, chosen)
+        .expect("an admitted semantic has a plan");
+
+    assert_eq!(plan.intent.id, chosen);
+    assert_eq!(
+        plan.intent.population,
+        ConversionSpectrumPopulationDto::Ms2Only
+    );
+    assert_eq!(
+        plan.intent.precision,
+        ConversionNumericPrecisionDto::Mz64Intensity64
+    );
+    assert_eq!(
+        plan.conflict_policy,
+        ConversionConflictPolicyDto::Fail,
+        "the policy the plan was read under is part of the plan"
+    );
+    // Still mzML, so the output name is unchanged, which is the point of
+    // deriving it from the intent rather than restating it somewhere.
+    assert_eq!(plan_output_name(&plan.items[0]), "acquisition.mzML");
+}
+
+/// What the user chose is what the queue binds, what the backend receives, and
+/// what a retry runs again.
+///
+/// Deliberately a non-shipped semantic, because a re-derivation would produce
+/// the shipped one and be invisible under it. Four separate observations: the
+/// queue's own projection, the argv of the launched process, the same two after
+/// the settings that started it have moved on, and the argv of the process a
+/// rerun launches.
+///
+/// The second row is held open for writing, which is the one transient refusal
+/// this repository has measured -- so the queue finishes with something a retry
+/// can actually change, and the rerun launches a real process whose arguments
+/// can be compared with the first one's.
+#[test]
+fn a_queue_binds_the_chosen_semantic_and_keeps_it_through_a_retry() {
+    let fixture = TestFile::new("bound-intent");
+    let destination = destination_root(&fixture, "out");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let arguments = runner.launched_arguments();
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities_declaring_every_option(),
+        runner,
+    )));
+    let first_row = add_one_acquisition(&service, &fixture.thermo_raw("first.raw"));
+    let held = fixture.thermo_raw("held.raw");
+    let second_row = add_one_acquisition(&service, &held);
+    let document = current_document(&service);
+    let writer = hold_for_writing(&held);
+
+    let chosen = "mzml+no_additional_centroiding+all+mz64_intensity64+none";
+    let reservation = service
+        .begin_conversion_queue(
+            &[first_row.clone(), second_row],
+            ConversionConflictPolicyDto::Fail,
+            chosen,
+            document,
+        )
+        .expect("an admitted, declared semantic is accepted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let update = service.run_claimed_conversion(operation, &destination);
+
+    let queue = terminal_queue(&update);
+    assert_eq!(queue.intent.id, chosen, "the queue binds what was begun");
+    assert_eq!(
+        queue.intent.compression,
+        ConversionCompressionDto::None,
+        "the projection is of the queue's own bound value"
+    );
+    assert_eq!(queue.retryable_failed_count, 1);
+    let first = arguments
+        .lock()
+        .expect("recorded argv")
+        .first()
+        .cloned()
+        .expect("the readable row launched a process");
+    assert!(
+        first.iter().any(|argument| argument == "--zlib=off"),
+        "the chosen compression reached the backend: {first:?}"
+    );
+    assert!(
+        first.iter().any(|argument| argument == "--64"),
+        "the chosen precision reached the backend: {first:?}"
+    );
+
+    // The settings a later conversion would use move on. The queue does not.
+    let moved_on = service
+        .conversion_plan_summary_for(&first_row, &ConversionIntent::SHIPPED.stable_id())
+        .expect("a plan for the shipped posture");
+    assert_eq!(moved_on.intent.id, ConversionIntent::SHIPPED.stable_id());
+    assert_eq!(
+        terminal_queue(&service.conversion_state()).intent.id,
+        chosen,
+        "reading a plan for another semantic changes nothing about a queue that exists"
+    );
+
+    drop(writer);
+    let retried = service
+        .retry_conversion_queue(current_document(&service))
+        .expect("the transient failure is retryable");
+    assert_eq!(
+        terminal_queue(&retried).intent.id,
+        chosen,
+        "a retry runs the semantic the queue was created with"
+    );
+    let rerun = arguments
+        .lock()
+        .expect("recorded argv")
+        .get(1)
+        .cloned()
+        .expect("the retry launched a second process");
+    assert!(
+        rerun.iter().any(|argument| argument == "--zlib=off")
+            && rerun.iter().any(|argument| argument == "--64"),
+        "a retry sends the semantic the queue holds, not the one the settings now show: {rerun:?}"
+    );
+}
+
+/// A refused `BEGIN` still tells the session which build it resolved.
+///
+/// The pre-picker capability gate resolves the installed executable, and on a
+/// machine where one was replaced in place it is very often the first thing to
+/// see the replacement. Whether *this* queue is admitted is a different
+/// question from which build this session is looking at, and recording the
+/// second only on the way to a reservation is how a refusal here leaves the
+/// sequence naming a build that is gone -- with the catalog the interface
+/// answers from never re-read, and the refusal repeating for ever.
+///
+/// Observed through `conversion_state`, which reads the counter and resolves
+/// nothing. Asking `conversion_intent_catalog` or `inspect_backend` instead
+/// would advance the sequence by asking, and could not tell the fix from its
+/// absence.
+#[test]
+fn a_begin_refused_for_the_installed_build_still_records_the_build_it_saw() {
+    let fixture = TestFile::new("begin-observes-replacement");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    // The narrow grammar: `--64` is not declared, so the 64-bit posture is
+    // admitted by the evidence and unrunnable on this build.
+    let provider = ConvertingProvider::new(evidenced_capabilities(), runner);
+    let installation = provider.installation_label();
+    let service = PreviewService::new(Box::new(provider));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+    let document = current_document(&service);
+    // One reading establishes which installation this session is on, so what
+    // follows is a *change* rather than a first look.
+    let _ = service.conversion_intent_catalog();
+    let before = service.conversion_state().installation_generation;
+
+    // The executable is replaced where it stands: same location, different
+    // build. Nothing has looked at it yet.
+    *installation.lock().expect("the label") = String::from("replaced-msconvert");
+
+    let error = service
+        .begin_conversion_with_intent(
+            &handle,
+            ConversionConflictPolicyDto::Fail,
+            "mzml+no_additional_centroiding+all+mz64_intensity64+zlib",
+            document,
+        )
+        .expect_err("this build declares no 64-bit option");
+
+    assert_eq!(error.kind, "conversion_intent_unsupported");
+    // Refused before a picker, a reservation and a process, exactly as before.
+    assert_eq!(launches.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        service.conversion_state().state,
+        WorkspaceConversionStateDto::Idle
+    ));
+    // And the observation survived the refusal.
+    assert_eq!(
+        service.conversion_state().installation_generation,
+        before + 1,
+        "a refusal must not unlearn which build it resolved"
+    );
+}
+
+/// The same rule from the other side: failing is not evidence of a change.
+///
+/// A sequence that advanced because an operation went wrong would make every
+/// refusal look like a new installation, and every reader that discards what
+/// the previous one produced would do so for nothing.
+#[test]
+fn a_begin_refused_on_the_same_build_advances_no_installation_sequence() {
+    let fixture = TestFile::new("begin-same-build");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    // A build with no recorded vendor evidence, so the preflight resolves it
+    // successfully and then refuses for a reason that is not about identity.
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        conversion_capabilities("3.0.99999", Some("deadbee"), EVIDENCED_EXECUTABLE_SHA256),
+        runner,
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+    let document = current_document(&service);
+    let _ = service.conversion_intent_catalog();
+    let before = service.conversion_state().installation_generation;
+
+    let error = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect_err("no evidence for this family on this build");
+
+    assert_eq!(error.kind, "provider_build_not_evidenced");
+    assert_eq!(launches.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        service.conversion_state().installation_generation,
+        before,
+        "the identity did not change, so nothing about it may have moved"
+    );
+}
+
+/// Every reading carries where the sequence stands, including an idle one.
+///
+/// The field exists for the answer that has no queue in it: a request refused
+/// before a queue exists produces none, and the queue-level number cannot be
+/// read from a slot that holds nothing.
+#[test]
+fn an_idle_slot_still_says_which_installation_this_session_is_on() {
+    let fixture = TestFile::new("idle-carries-generation");
+    let provider = ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::Convert),
+    );
+    let installation = provider.installation_label();
+    let service = PreviewService::new(Box::new(provider));
+    let _ = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+
+    let idle = service.conversion_state();
+    assert!(matches!(idle.state, WorkspaceConversionStateDto::Idle));
+    let before = idle.installation_generation;
+
+    let _ = service.conversion_intent_catalog();
+    *installation.lock().expect("the label") = String::from("another-msconvert");
+    let _ = service.conversion_intent_catalog();
+
+    let after = service.conversion_state();
+    assert!(matches!(after.state, WorkspaceConversionStateDto::Idle));
+    assert_eq!(
+        after.installation_generation,
+        before + 1,
+        "a slot that holds nothing still answers for the session it belongs to"
     );
 }

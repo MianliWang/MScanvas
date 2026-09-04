@@ -16,7 +16,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { ConversionLane, ConversionUnavailableReason } from "./conversionAvailability";
+import type {
+  ConversionLane,
+  ConversionSettingsReadiness,
+  ConversionUnavailableReason,
+} from "./conversionAvailability";
 import {
   canRetryConversion,
   canStartConversion,
@@ -29,6 +33,7 @@ const CLEAR: ConversionLane = {
   backendUsable: true,
   backendChanging: false,
   backendQuarantined: false,
+  slotUnread: false,
   previewReading: false,
   laneClaimed: false,
   adopting: false,
@@ -40,9 +45,26 @@ function lane(overrides: Partial<ConversionLane> = {}): ConversionLane {
   return { ...CLEAR, ...overrides };
 }
 
+/**
+ * A start whose settings are settled and whose plan answers this request.
+ *
+ * Named once so a case about the lane says nothing about the settings, and a
+ * case about the settings changes exactly the field it is about.
+ */
+const READY_START = { settings: "ready" as ConversionSettingsReadiness, planIsCurrent: true };
+
 /** The reason a start is refused for, or `null` where it is not refused. */
-function startReason(overrides: Partial<ConversionLane>, targetCount = 1) {
-  const decision = conversionAvailability(lane(overrides), { kind: "start", targetCount });
+function startReason(
+  overrides: Partial<ConversionLane>,
+  targetCount = 1,
+  start: Partial<typeof READY_START> = {},
+) {
+  const decision = conversionAvailability(lane(overrides), {
+    kind: "start",
+    targetCount,
+    ...READY_START,
+    ...start,
+  });
   return decision.status === "available" ? null : decision.reason;
 }
 
@@ -62,15 +84,19 @@ function retryReason(
 
 describe("the conversion lane's availability decision", () => {
   it("starts an ordinary conversion on a clear lane", () => {
-    expect(conversionAvailability(CLEAR, { kind: "start", targetCount: 1 })).toEqual({
+    expect(
+      conversionAvailability(CLEAR, { kind: "start", targetCount: 1, ...READY_START }),
+    ).toEqual({
       status: "available",
     });
     // No message on the way through. A control that can be used has nothing to
     // explain, and an explanation shown beside a working control is a reason to
     // doubt it.
-    expect(Object.keys(conversionAvailability(CLEAR, { kind: "start", targetCount: 3 }))).toEqual([
-      "status",
-    ]);
+    expect(
+      Object.keys(
+        conversionAvailability(CLEAR, { kind: "start", targetCount: 3, ...READY_START }),
+      ),
+    ).toEqual(["status"]);
   });
 
   it("refuses a start for each lane fact, one reason each", () => {
@@ -79,11 +105,39 @@ describe("the conversion lane's availability decision", () => {
     expect(startReason({ backendQuarantined: true })).toBe("backend-quarantined");
     expect(startReason({ backendChanging: true })).toBe("backend-changing");
     expect(startReason({ backendUsable: false })).toBe("backend-unavailable");
+    // Not yet observed is not idle. Until an authoritative read has committed,
+    // whether a conversion is running is unknown, and this is what refuses a
+    // dispatch made against the local starting value.
+    expect(startReason({ slotUnread: true })).toBe("conversion-state-unknown");
     expect(startReason({ laneClaimed: true })).toBe("conversion-running");
     expect(startReason({ previewReading: true })).toBe("preview-running");
     expect(startReason({ adopting: true })).toBe("adoption-running");
     expect(startReason({ exportingDiagnostics: true })).toBe("diagnostics-exporting");
     expect(startReason({ workspaceSettling: true })).toBe("workspace-settling");
+  });
+
+  it("refuses a start whose semantic or plan is not settled, after the target", () => {
+    // Three different situations, three sentences. A catalog still arriving, a
+    // catalog that could not be established, and a choice this build cannot
+    // express each call for a different response from the reader.
+    expect(startReason({}, 1, { settings: "loading" })).toBe("settings-loading");
+    expect(startReason({}, 1, { settings: "unavailable" })).toBe("settings-unavailable");
+    expect(startReason({}, 1, { settings: "unsupported" })).toBe("intent-unsupported");
+    // And a plan that is no longer an answer to this request cannot start it,
+    // however loaded it is.
+    expect(startReason({}, 1, { planIsCurrent: false })).toBe("plan-superseded");
+    // The semantic ranks above the plan: a plan is an answer about a semantic,
+    // so naming the plan while the settings themselves are unavailable would
+    // name the symptom.
+    expect(startReason({}, 1, { settings: "unavailable", planIsCurrent: false })).toBe(
+      "settings-unavailable",
+    );
+    // And the lane still ranks above both.
+    expect(startReason({ laneClaimed: true }, 1, { settings: "loading" })).toBe(
+      "conversion-running",
+    );
+    // As does having nothing to convert at all.
+    expect(startReason({}, 0, { settings: "loading" })).toBe("no-convertible-target");
   });
 
   it("refuses a start with nothing to convert, and only once the lane is clear", () => {
@@ -108,6 +162,11 @@ describe("the conversion lane's availability decision", () => {
     expect(startReason({ backendChanging: true, backendUsable: false })).toBe("backend-changing");
     // And the things that end by themselves rank under the things that do not.
     expect(startReason({ backendUsable: false, laneClaimed: true })).toBe("backend-unavailable");
+    // An unread slot ranks above every fact that would describe what the slot
+    // holds, because none of them is known yet.
+    expect(startReason({ slotUnread: true, laneClaimed: true, previewReading: true })).toBe(
+      "conversion-state-unknown",
+    );
     expect(startReason({ laneClaimed: true, previewReading: true, adopting: true })).toBe(
       "conversion-running",
     );
@@ -125,6 +184,7 @@ describe("the conversion lane's availability decision", () => {
       { backendQuarantined: true },
       { backendChanging: true },
       { backendUsable: false },
+      { slotUnread: true },
       { laneClaimed: true },
       { previewReading: true },
       { adopting: true },
@@ -150,13 +210,19 @@ describe("the conversion lane's availability decision", () => {
 
     // Nothing selected to convert; a finished queue with a failure worth
     // rerunning. The start is refused and the rerun is not.
-    expect(canStartConversion(clear, 0)).toBe(false);
+    expect(canStartConversion(clear, { targetCount: 0, ...READY_START })).toBe(false);
     expect(canRetryConversion(clear, 1, true)).toBe(true);
 
     // And the reverse: rows to convert, beside a queue that has nothing left
     // another attempt could change.
-    expect(canStartConversion(clear, 2)).toBe(true);
+    expect(canStartConversion(clear, { targetCount: 2, ...READY_START })).toBe(true);
     expect(canRetryConversion(clear, 0, true)).toBe(false);
+    // And a start refused for its own semantic while a rerun of a queue that
+    // already bound one is still offered: the queue is not waiting on settings.
+    expect(
+      canStartConversion(clear, { targetCount: 2, settings: "unsupported", planIsCurrent: true }),
+    ).toBe(false);
+    expect(canRetryConversion(clear, 1, true)).toBe(true);
   });
 
   it("says something a reader can act on for every refusal", () => {
@@ -164,12 +230,17 @@ describe("the conversion lane's availability decision", () => {
       "backend-quarantined",
       "backend-changing",
       "backend-unavailable",
+      "conversion-state-unknown",
       "conversion-running",
       "preview-running",
       "adoption-running",
       "diagnostics-exporting",
       "workspace-settling",
       "no-convertible-target",
+      "settings-loading",
+      "settings-unavailable",
+      "intent-unsupported",
+      "plan-superseded",
       "queue-not-retryable",
       "nothing-to-retry",
     ];
@@ -183,7 +254,12 @@ describe("the conversion lane's availability decision", () => {
               retryableFailureCount: reason === "nothing-to-retry" ? 0 : 1,
               queueCompleted: reason === "nothing-to-retry",
             }
-          : { kind: "start", targetCount: reason === "no-convertible-target" ? 0 : 1 },
+          : {
+              kind: "start",
+              targetCount: reason === "no-convertible-target" ? 0 : 1,
+              settings: startSettingsFor(reason),
+              planIsCurrent: reason !== "plan-superseded",
+            },
       );
       expect(decision.status).toBe("unavailable");
       if (decision.status === "unavailable") {
@@ -226,6 +302,8 @@ function laneFor(reason: ConversionUnavailableReason): Partial<ConversionLane> {
       return { backendChanging: true };
     case "backend-unavailable":
       return { backendUsable: false };
+    case "conversion-state-unknown":
+      return { slotUnread: true };
     case "conversion-running":
       return { laneClaimed: true };
     case "preview-running":
@@ -236,10 +314,29 @@ function laneFor(reason: ConversionUnavailableReason): Partial<ConversionLane> {
       return { exportingDiagnostics: true };
     case "workspace-settling":
       return { workspaceSettling: true };
-    // The three target reasons are reached on a clear lane, by the action.
+    // The target and settings reasons are reached on a clear lane, by the
+    // action itself.
     case "no-convertible-target":
+    case "settings-loading":
+    case "settings-unavailable":
+    case "intent-unsupported":
+    case "plan-superseded":
     case "queue-not-retryable":
     case "nothing-to-retry":
       return {};
+  }
+}
+
+/** The settings posture that produces each start reason, for the sweep above. */
+function startSettingsFor(reason: ConversionUnavailableReason): ConversionSettingsReadiness {
+  switch (reason) {
+    case "settings-loading":
+      return "loading";
+    case "settings-unavailable":
+      return "unavailable";
+    case "intent-unsupported":
+      return "unsupported";
+    default:
+      return "ready";
   }
 }

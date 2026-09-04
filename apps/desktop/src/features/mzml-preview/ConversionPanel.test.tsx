@@ -11,6 +11,7 @@ import {
   createFakeWorkspaceDropTransport,
   queueItem,
   queueOf,
+  SHIPPED_INTENT,
   selectedFile,
   shimadzuDataset,
 } from "../../test/previewFixtures";
@@ -109,7 +110,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
 
     fireEvent.click(within(panel).getByRole("button", { name: "Convert focused…" }));
     await waitFor(() => {
-      expect(api.conversionRequests).toEqual([{ handles: ["file-7"], conflictPolicy: "fail" }]);
+      expect(api.conversionRequests).toEqual([{ handles: ["file-7"], conflictPolicy: "fail", intentId: SHIPPED_INTENT.id }]);
     });
   });
 
@@ -232,7 +233,7 @@ describe("queueing selected Thermo RAW conversions", () => {
 
     fireEvent.click(within(panel).getByRole("button", { name: "Convert focused…" }));
     await waitFor(() => {
-      expect(api.conversionRequests).toEqual([{ handles: ["file-1"], conflictPolicy: "fail" }]);
+      expect(api.conversionRequests).toEqual([{ handles: ["file-1"], conflictPolicy: "fail", intentId: SHIPPED_INTENT.id }]);
     });
   });
 
@@ -254,14 +255,18 @@ describe("queueing selected Thermo RAW conversions", () => {
     fireEvent.keyDown(screen.getByRole("listbox", { name: "Workspace" }), { key: "ArrowUp" });
 
     const panel = await screen.findByRole("region", { name: "Convert" });
+    // Enabled, not merely visible. Since M6.4 the control is on screen while the
+    // plan behind it is still being read -- a refused action has to say why, so
+    // it cannot vanish -- and a conversion may only start the plan the user was
+    // shown. Waiting for visibility alone leaves the click racing that read.
     await waitFor(() => {
-      expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeVisible();
+      expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeEnabled();
     });
     expect(within(panel).queryByRole("button", { name: "Convert focused…" })).toBeNull();
 
     fireEvent.click(within(panel).getByRole("button", { name: "Convert 1 selected…" }));
     await waitFor(() => {
-      expect(api.conversionRequests).toEqual([{ handles: ["file-2"], conflictPolicy: "fail" }]);
+      expect(api.conversionRequests).toEqual([{ handles: ["file-2"], conflictPolicy: "fail", intentId: SHIPPED_INTENT.id }]);
     });
   });
 
@@ -290,7 +295,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     fireEvent.click(within(panel).getByRole("button", { name: "Convert 2 selected…" }));
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([
-        { handles: ["file-1", "file-2"], conflictPolicy: "fail" },
+        { handles: ["file-1", "file-2"], conflictPolicy: "fail", intentId: SHIPPED_INTENT.id },
       ]);
     });
   });
@@ -315,7 +320,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     fireEvent.click(within(panel).getByRole("button", { name: "Convert 2 selected…" }));
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([
-        { handles: ["file-2", "file-1"], conflictPolicy: "fail" },
+        { handles: ["file-2", "file-1"], conflictPolicy: "fail", intentId: SHIPPED_INTENT.id },
       ]);
     });
   });
@@ -841,9 +846,19 @@ describe("queueing selected Thermo RAW conversions", () => {
     const rendered = panel.textContent ?? "";
     expect(rendered).toContain("run-1.raw");
     expect(rendered).toContain("run-1.mzML");
-    for (const separator of ["\\", "/", ":"]) {
-      expect(rendered).not.toContain(separator);
+    // `m/z` is removed first, and only `m/z`. It is a scientific unit this
+    // panel names since M6.4 -- the queue says which precision it bound -- and
+    // it is the one slash that is not a separator. Every other slash, every
+    // backslash and every colon still fails, so a real path could not survive
+    // this replacement.
+    const withoutUnits = rendered.replaceAll("m/z", "mass-to-charge");
+    for (const separator of ["\\", "/"]) {
+      expect(withoutUnits).not.toContain(separator);
     }
+    // A colon in prose is not a path. What the colon was here to catch is a
+    // drive letter, so that is what is asserted -- and with both separators
+    // already banned above, a Windows path could not reach this line anyway.
+    expect(withoutUnits).not.toMatch(/[A-Za-z]:[\/]/u);
     // A skipped item is never described as validated.
     expect(within(panel).getAllByText(/a file of that name was already there/i).length).toBeGreaterThan(
       0,

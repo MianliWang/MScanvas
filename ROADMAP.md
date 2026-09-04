@@ -382,8 +382,9 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 
 **Started. The route is locked, the conversion lane has one availability
 authority, the installed `msconvert` has been measured against M6's finite
-candidate set, and what a conversion is asked to do is now a type; M6.4 is the
-next slice.**
+candidate set, what a conversion is asked to do is now a type, and the nine
+admitted semantics are selectable with a truthful plan behind them on an
+unmerged branch; M6.4 is the next slice to publish.**
 
 The route, the live conversion gap audit it was decided from, the nine product
 decisions it surfaces, the twelve exit criteria and the M7/M8 seams are in
@@ -394,8 +395,8 @@ slices:
 - M6.1 — conversion-lane authority. **complete.**
 - M6.2 — `msconvert` capability and evidence. **complete.**
 - M6.3 — typed `ConversionIntent`. **complete.**
-- M6.4 — visible settings, and a truthful plan. **Next.**
-- M6.5 — destination authority.
+- M6.4 — visible settings, and a truthful plan. **implemented, unmerged.**
+- M6.5 — destination authority. **not started.**
 - M6.6 — destination and conflict UX, including the destructive question.
 - M6.7 — convert selected, convert all.
 - M6.8 — cancellation, capacity, and truthful progress.
@@ -459,6 +460,72 @@ declares the exact invocation each intent emits, rather than trusting that M6.2'
 executable and today's are the same build. Nothing visible changed: the product
 still converts under the shipped intent and still emits the same two flags.
 
+**M6.4 has stopped four times, and every stop has been caused by the round
+before it.** Three findings stopped it first, which a bounded
+correction closed; the fresh review of that corrected head found two more — a
+backend *check* being read as "no backend", and a running queue polling a stream
+of backend probes that could not answer while it held the lane. A second bounded
+correction closed those by answering one question rather than patching two
+paths: a conversion catalog belongs to a **settled backend binding**, which a
+check in progress does not move, and an installation generation arriving is an
+**observation** rather than a request, so one newly observed build costs one
+reconciliation however many readings carry it. Then the review of *that* head
+found a defect the correction itself introduced -- removing the `backendUsable`
+conflation also removed the only thing that ever re-read a catalog whose read
+had failed -- and three more beside it. The last round answered them as one
+question, **which failure does which control own**: a backend verdict is the
+banner's `Check again`, a catalog read is the settings' own `Try again`, and a
+failed automatic reconciliation is nobody's, because one attempt is the ration.
+It also made the pre-picker intent check mandatory rather than a courtesy the
+busy lane could decline, made a `BEGIN` that cannot resolve the build say so
+through the provider's own authority, and gave a preserved-but-unrunnable
+selection a state that says both things at once. The review of that head found
+two more the closure introduced -- a per-row refusal rendered as a per-value one,
+so three of four groups tell the reader something untrue, and a retry control
+duplicating a DOM id the panel already owns. All four rounds are recorded in
+`BOOTSTRAP_STATUS.md`; nothing is on `main`, which is unchanged.
+
+**After four rounds the question is the boundary, not the next edge.** Every
+round closed what it was asked to and was stopped by something it introduced,
+which is what a slice carrying four interacting authorities -- backend binding,
+installation observation, catalog lifecycle, plan identity -- looks like from the
+outside. `BOOTSTRAP_STATUS.md` records the two candidates for extraction:
+installation/backend reconciliation, which Rust already owns and the frontend
+reconstructs from a bare counter; and per-value availability, which is currently
+a fact about a row rendered four times.
+
+**M6.4 made the nine admitted semantics selectable without letting the
+interface re-invent the graph.** The controls a user meets are four scientific
+dimensions, and every one of them is a projection of a single backend catalog:
+Rust sends `ConversionIntent::ADMITTED` with each row marked for what the
+*installed* executable declares, and the frontend looks combinations up rather
+than composing them. Nothing on that side enumerates a dimension's values either
+— they are read out of the catalog in first-appearance order — so the
+thirty-nine combinations the evidence does not admit are unreachable by any
+sequence of activations. Changing one control never silently moves another: a
+choice either names the admitted row that differs in exactly that dimension, or
+it is refused, and the two refusals stay apart because a reader can act on one of
+them and not the other — *not qualified* against *this build does not declare
+it*. The plan is now Rust's answer to one exact request — rows, semantic,
+conflict policy, installation — and carries the intent it resolved, so the
+summary states format, processing, population, precision and compression from
+what the backend said rather than from the controls; centroiding is marked lossy
+at the choice, a population filter says which spectra are omitted, a 32-bit
+posture says what it rounds, and the destination is still described as chosen
+next, because at summary time there is none. `BEGIN` sends that identity and
+Rust resolves it through the admitted table again and re-asks the live
+executable, so a semantic that was runnable when the summary was read is refused
+if the installation changed. The queue keeps what it bound through every retry,
+and the running surface reads the queue's intent rather than the controls. M6.4
+also closed the M6.1 initial-unread-slot residual with one lane fact: **a slot
+this document has never read is not an idle slot**, and a conversion may not
+start against one. It took two review rounds and one stop to get there, and what
+the later rounds found were edges rather than the graph: a catalog request
+outliving the state it produced, an installation observation lost because the
+operation that made it was refused, a way-out affordance claiming there was no
+ordinary way out while an enabled control offered one, and — twice over — a
+signal read from a proxy that resembled it.
+
 **The audit also found the boundary beneath M6 is stronger than this backlog
 implied**, and the route is shaped accordingly: destinations are already admitted
 by Windows object identity and revalidated on retry, finalization is already
@@ -497,9 +564,13 @@ claimed closed. M6.1 closed that window, and widened the lane's first half by on
 fact: a dispatched *conversion* owns it too, which is what the viewer's selection
 guard had been unable to see.
 
-- Widen the typed conversion settings the interface can actually express:
-  CNV-002's mzXML gate, CNV-004 to CNV-007's processing and compression choices,
-  and CNV-003's output-location choices.
+- Widen the typed conversion settings the interface can actually express.
+  CNV-004 to CNV-007's processing, population, precision and compression choices
+  are visible on M6.4's branch, in the nine combinations M6.2 measured and no
+  others, and are **not on `main`** — that slice is implemented and unmerged.
+  What remains here beyond publishing it is CNV-002's mzXML gate, whose
+  disposition is M6.10's, and CNV-003's output-location choices, which are
+  M6.5's and M6.6's.
 - Queue work beyond the current bounds, **measurement-gated, and neither an exit
   criterion nor a route requiring a disposition**: a re-evaluated queue bound and
   per-item cancellation. Both are admitted only on M6.8's measurement of what an

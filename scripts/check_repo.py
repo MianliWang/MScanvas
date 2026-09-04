@@ -1763,6 +1763,44 @@ M62_ROUTE_OUTCOMES: frozenset[str] = frozenset(
 
 M63_INTENT = "crates/proteowizard/src/intent.rs"
 
+#: Where the frontend suites keep their copy of the admitted combinations.
+#:
+#: A fixture rather than a second authority -- production TypeScript looks
+#: combinations up in the catalog Rust sends and enumerates nothing -- but a
+#: fixture that drifted from the table would make every rendered and unit test
+#: driving it evidence for a shape the boundary does not produce.
+M64_FIXTURES = "apps/desktop/src/test/previewFixtures.ts"
+
+#: How a dimension value is spelled on each side.
+#:
+#: The wire name is the crate's own `stable_id`, and the fixture's TypeScript
+#: name is the camelCase union member. Written out because the two spellings are
+#: independent decisions: deriving one from the other here would make this
+#: validator agree with whichever side it derived from.
+M64_DIMENSION_SPELLINGS: dict[str, tuple[str, str]] = {
+    "MzMl": ("mzml", "mzML"),
+    "NoAdditionalCentroiding": ("no_additional_centroiding", "noAdditionalCentroiding"),
+    "UnscopedDefaultCentroiding": ("unscoped_default_centroiding", "unscopedDefaultCentroiding"),
+    "All": ("all", "all"),
+    "Ms1Only": ("ms1_only", "ms1Only"),
+    "Ms2Only": ("ms2_only", "ms2Only"),
+    "Mz64Intensity32": ("mz64_intensity32", "mz64Intensity32"),
+    "Mz64Intensity64": ("mz64_intensity64", "mz64Intensity64"),
+    "Mz32Intensity32": ("mz32_intensity32", "mz32Intensity32"),
+    "Mz32Intensity64": ("mz32_intensity64", "mz32Intensity64"),
+    "Zlib": ("zlib", "zlib"),
+    "NoCompression": ("none", "none"),
+}
+
+M64_FIXTURE_ROW = re.compile(
+    r"\{\s*"
+    r"processing:\s*\"(?P<processing>\w+)\",\s*"
+    r"population:\s*\"(?P<population>\w+)\",\s*"
+    r"precision:\s*\"(?P<precision>\w+)\",\s*"
+    r"compression:\s*\"(?P<compression>\w+)\",\s*"
+    r"\}",
+)
+
 #: How many combinations the five axes span, and how many the evidence admits.
 #: Stated here as well as in the module so a widened table has to be widened
 #: deliberately in two places rather than drifting in one.
@@ -2417,6 +2455,77 @@ def _validate_the_msconvert_case_ledger(spike_text: str, errors: list[str]) -> N
             )
             + ". The mzXML count is derived from these formats, so a row that disagrees "
             "makes the count wrong wherever it is stated",
+            errors,
+        )
+
+
+def validate_the_frontend_fixture_mirrors_the_admitted_table(errors: list[str]) -> None:
+    """The suites drive the nine combinations the crate admits, and no others.
+
+    Production TypeScript holds no compatibility matrix: it looks combinations
+    up in the catalog Rust sends, and reads each dimension's values out of that
+    same list. The *fixtures* are different. They state the admitted rows
+    directly, deliberately, so that a rendered run drives an independent
+    statement of the shape rather than a re-derivation of the code under test --
+    and that is exactly what makes them able to drift.
+
+    A drift would be quiet and expensive. Widen `ConversionIntent::ADMITTED` and
+    forget the fixture, and every frontend and browser test goes on passing
+    against nine rows while the boundary sends ten; the new row is untested and
+    nothing says so. So the two lists are held against each other here, in both
+    directions and in order.
+
+    Only membership and order are checked. What each row *means* is the crate's,
+    and whether the evidence supports it is the validator below.
+    """
+    intent_path = ROOT / M63_INTENT
+    fixture_path = ROOT / M64_FIXTURES
+    if not intent_path.is_file() or not fixture_path.is_file():
+        # The missing-file failure belongs to the validator that owns each path.
+        return
+
+    admitted = [
+        (row["processing"], row["population"], row["precision"], row["compression"])
+        for row in (
+            match.groupdict()
+            for match in M63_INTENT_ROW.finditer(intent_path.read_text(encoding="utf-8"))
+        )
+    ]
+    fixture = [
+        (row["processing"], row["population"], row["precision"], row["compression"])
+        for row in (
+            match.groupdict()
+            for match in M64_FIXTURE_ROW.finditer(fixture_path.read_text(encoding="utf-8"))
+        )
+    ]
+    if not admitted:
+        return
+
+    unknown = [
+        value
+        for row in admitted
+        for value in row
+        if value not in M64_DIMENSION_SPELLINGS
+    ]
+    if unknown:
+        fail(
+            f"{M63_INTENT} names dimension values this check cannot spell: "
+            f"{', '.join(sorted(set(unknown)))}. A value added to the crate has to be given "
+            f"its wire and fixture spellings in `M64_DIMENSION_SPELLINGS` before "
+            f"{M64_FIXTURES} can be held against the table",
+            errors,
+        )
+        return
+
+    expected = [
+        tuple(M64_DIMENSION_SPELLINGS[value][1] for value in row) for row in admitted
+    ]
+    if fixture != expected:
+        fail(
+            f"{M64_FIXTURES} lists {len(fixture)} admitted combinations and {M63_INTENT} "
+            f"lists {len(expected)}, or they differ in content or order. The fixture is what "
+            "every frontend and browser test drives; a fixture that does not mirror the "
+            "table makes those runs evidence for a shape the boundary does not send",
             errors,
         )
 
@@ -3253,6 +3362,7 @@ def main() -> int:
         validate_one_candidate_evidence_dimension_vocabulary(errors)
         validate_the_msconvert_capability_evidence_is_closed(errors)
         validate_the_admitted_intent_table_cites_measurements_that_support_it(errors)
+        validate_the_frontend_fixture_mirrors_the_admitted_table(errors)
         validate_current_status_documents_describe_the_shipped_product(errors)
 
     if errors:

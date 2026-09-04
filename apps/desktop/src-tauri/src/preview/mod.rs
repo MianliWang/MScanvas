@@ -47,6 +47,14 @@ mod export;
 /// pixels for PNG and the clipboard.
 mod figure;
 mod installation;
+/// Which conversion semantics may be chosen, projected from
+/// `ConversionIntent::ADMITTED` and gated on what the installed executable
+/// declares.
+///
+/// Private to this module. The webview receives bounded product semantics --
+/// never provider argv, never help text and never the evidence identifiers the
+/// crate records. See ADR 0043 M6.4.
+mod intent_catalog;
 mod operation;
 /// What a spectrum viewport may know about a retained spectrum: whether it has
 /// an m/z domain at all, and what one committed window of it looks like drawn.

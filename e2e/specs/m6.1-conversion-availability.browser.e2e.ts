@@ -29,6 +29,7 @@ import {
   availableBackend,
   queueItem,
   queueOf,
+  SHIPPED_INTENT,
   unavailableBackend,
 } from "../../apps/desktop/src/test/previewFixtures";
 
@@ -59,10 +60,11 @@ const PLAN = {
       output: { kind: "knownSingle", fileName: "sample-9.mzML" },
     },
   ],
-  outputFormat: "mzML",
-  compression: "zlib",
+  intent: SHIPPED_INTENT,
+  conflictPolicy: "fail",
   validationMode: "output_only",
   capacity: 16,
+  installationGeneration: 0,
 };
 
 /** A finished queue holding one failure another attempt could change. */
@@ -80,8 +82,9 @@ const RETRYABLE_QUEUE = {
       }),
     ]),
   },
-  diagnostics: { available: false, itemCount: 0, exporting: false, lastExport: null },
+  diagnostics: { available: false, eligibleItemCount: 0, exporting: false, lastExport: null },
   backendQuarantined: false,
+  installationGeneration: 0,
 };
 
 /**
@@ -198,8 +201,14 @@ describe("M6.1 — conversion-lane availability, rendered", () => {
     );
     expect(occurrences).toBe(1);
 
+    // The refusal, and nothing else, because there is nothing else on screen.
+    //
+    // Since M6.4 a plan is an answer about a conversion semantic, and which
+    // semantics exist is an answer about an installed executable — so a session
+    // with no usable ProteoWizard has neither, and the panel does not pretend
+    // to be reading one. What the control points at is what is actually there.
     expect(await describedBy(`${PANEL} button.primary-button`)).toBe(
-      "conversion-plan-summary conversion-validation-disclosure conversion-availability-backend-unavailable",
+      "conversion-availability-backend-unavailable",
     );
     expect(await describedBy(`${PANEL} button.secondary-button`)).toBe(
       "conversion-retry-scope conversion-availability-backend-unavailable",

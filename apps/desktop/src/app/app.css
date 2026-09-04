@@ -533,6 +533,110 @@ button:disabled {
   margin: 0;
 }
 
+/* The settings for the next conversion.
+
+   One column of native fieldsets, because each is a scientific dimension with a
+   caption and a closed set of values -- which is what a fieldset, a legend and
+   a radio group are. `min-width: 0` all the way down so a long disclosure wraps
+   inside the panel rather than widening the column it lives in. */
+.conversion-settings {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* The way out of a semantic this build cannot run.
+
+   Present only while it is needed, and stated before it is offered: the
+   sentence says why every control is refused, and the action says exactly what
+   taking it will select. */
+.conversion-settings-recovery {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.conversion-settings-recovery > p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.conversion-setting {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  gap: 6px;
+}
+
+.conversion-setting > legend {
+  padding: 0 4px;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.conversion-setting-choice {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.conversion-setting-choice > label {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/* What a choice does to the data, and why it cannot be taken.
+
+   Indented under its own control so the association is visible as well as
+   programmatic, and rendered as ordinary text rather than as a colour: a reader
+   who cannot see the difference between an enabled and a disabled radio still
+   reads the sentence that says so. */
+.conversion-setting-note {
+  margin: 0;
+  padding-left: 22px;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+/* A refused choice, marked by more than the browser's dimming. */
+.conversion-setting-choice[data-choice-state="unavailable"] > label,
+.conversion-setting-choice[data-choice-state="selectedUnavailable"] > label {
+  color: var(--color-text-muted);
+}
+
+/*
+ * The chosen semantic this build cannot run.
+ *
+ * It stays checked, because it is still what the user asked for, and it reads
+ * as refused like every other refused value. Colour is never the only carrier:
+ * the state is announced through `aria-disabled` and the reason is the sentence
+ * the control points at.
+ */
+.conversion-setting-choice[data-choice-state="selectedUnavailable"] > label {
+  cursor: not-allowed;
+}
+
+/* What the chosen semantic costs, beside the plan that carries it. */
+.conversion-plan-disclosures {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
 /* Native radios in a native fieldset. The policy is a two-way choice with a
    caption, which is what a fieldset and a legend are; a pair of styled buttons
    would be the same choice with the grouping left implicit. */

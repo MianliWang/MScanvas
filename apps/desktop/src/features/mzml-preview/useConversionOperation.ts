@@ -1,12 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { usePreviewApi } from "./api";
-import type { ConversionAvailability, ConversionLane } from "./conversionAvailability";
+import type { SettledBackendBinding } from "./backendBinding";
+import { backendBindingIdentity } from "./backendBinding";
+import type {
+  ConversionAvailability,
+  ConversionLane,
+  ConversionSettingsReadiness,
+} from "./conversionAvailability";
 import {
   canRetryConversion,
   canStartConversion,
+  catalogReadAvailability,
   conversionAvailability,
 } from "./conversionAvailability";
+import type { ConversionSettings } from "./conversionIntentSelection";
+import { catalogRow, reselect } from "./conversionIntentSelection";
 import type {
   ConversionConflictPolicy,
   ConversionDiagnosticsExport,
@@ -73,6 +82,76 @@ export type ConversionPlanState =
   | { readonly status: "loaded"; readonly plan: ConversionQueuePlan }
   | { readonly status: "failed"; readonly handles: readonly string[]; readonly error: PreviewError };
 
+/**
+ * What a plan would have to be an answer to, to be startable now.
+ *
+ * Every mutable fact that changes what a queue would mean. A plan is not a
+ * cache of a summary; it is one exact answer from Rust, and asking a
+ * different question makes the previous answer a description of something the
+ * user is no longer looking at.
+ */
+export interface ConversionPlanRequest {
+  readonly handles: readonly string[];
+  /** The selected semantic, or `null` while there is not one. */
+  readonly intentId: string | null;
+  readonly conflictPolicy: ConversionConflictPolicy;
+  /** The installation the catalog was evaluated against, or `null` while unknown. */
+  readonly installationGeneration: number | null;
+}
+
+/**
+ * Whether a loaded plan is an answer to exactly this request.
+ *
+ * **Read off the plan itself, never off a memo of what was asked.** Rust puts
+ * the ordered membership, the intent, the policy and the installation on the
+ * plan, so this compares the answer with the question rather than comparing two
+ * copies of the question. A slow reply for one semantic landing after the user
+ * has moved to another fails here even if a request token somehow admitted it.
+ */
+export function planAnswers(
+  plan: ConversionPlanState,
+  request: ConversionPlanRequest,
+): boolean {
+  if (plan.status !== "loaded") {
+    return false;
+  }
+  const answered = plan.plan;
+  return (
+    answered.intent.id === request.intentId &&
+    answered.conflictPolicy === request.conflictPolicy &&
+    answered.installationGeneration === request.installationGeneration &&
+    answered.items.length === request.handles.length &&
+    answered.items.every((item, index) => item.datasetHandle === request.handles[index])
+  );
+}
+
+/**
+ * What a start of the current request still needs from the settings.
+ *
+ * One projection of the settings state, read by the rendered decision and by
+ * the dispatch guard, so a control that offers a conversion and a handler that
+ * accepts one cannot come to disagree about whether a semantic is runnable.
+ */
+export function settingsReadinessOf(settings: ConversionSettings): ConversionSettingsReadiness {
+  switch (settings.status) {
+    case "loading":
+      return "loading";
+    case "noBackend":
+    case "failed":
+      return "unavailable";
+    case "ready": {
+      const chosen = catalogRow(settings.catalog, settings.selectedId);
+      if (chosen === null) {
+        // The catalog no longer holds the selection. Nothing manufactures one:
+        // an unreadable selection is unavailable, not silently the shipped
+        // posture.
+        return "unavailable";
+      }
+      return chosen.availability.kind === "available" ? "ready" : "unsupported";
+    }
+  }
+}
+
 export interface ConversionOperation {
   /** The authoritative slot, as Rust last reported it. */
   readonly state: WorkspaceConversionState;
@@ -111,6 +190,38 @@ export interface ConversionOperation {
    */
   readonly lane: ConversionLane;
   readonly plan: ConversionPlanState;
+  /**
+   * Which conversion semantics may be chosen, and which one is.
+   *
+   * One selection, not five independent settings. The controls are editors of
+   * it, and every edit goes through {@link chooseIntent} with an identity the
+   * backend catalog issued.
+   */
+  readonly settings: ConversionSettings;
+  /**
+   * Selects one admitted semantic by the identity the catalog gave it.
+   *
+   * Refuses anything the catalog does not hold and anything the installed
+   * build cannot express, so a hand-made call cannot select what a control
+   * would not offer.
+   */
+  readonly chooseIntent: (intentId: string) => void;
+  /**
+   * Asks for the catalog again after a read that did not answer.
+   *
+   * The failure's own recovery, and the only one it has. A catalog read is a
+   * query about an installation that is already settled, so its failing changes
+   * nothing about the installation and nothing keyed on one fires again -- and
+   * `Check again`, which asks a different question, must not secretly double as
+   * this. Refuses unless a read actually failed and the lane can answer.
+   */
+  readonly retryCatalog: () => void;
+  /** Whether that retry may be offered, from the one lane rule. */
+  readonly catalogRetryAvailability: ConversionAvailability;
+  /** What a start still needs from the settings, as the guard reads it. */
+  readonly settingsReadiness: ConversionSettingsReadiness;
+  /** Whether the loaded plan answers the request as it now stands. */
+  readonly planIsCurrent: boolean;
   /** A request that never reached Rust's slot, kept apart from a conversion's own outcome. */
   readonly error: PreviewError | null;
   readonly conflictPolicy: ConversionConflictPolicy;
@@ -343,7 +454,19 @@ function reportsAQueueOtherThan(
 }
 
 export function useConversionOperation(
-  onInstallationGeneration: (generation: number) => void,
+  /**
+   * Says where the installation sequence stands, as a fact rather than a
+   * request.
+   *
+   * **Reporting a generation is not asking for anything.** This operation reads
+   * the one slot every two seconds while a queue runs, and every one of those
+   * replies carries the counter; a sink that treated each of them as a reason
+   * to go and look would launch a backend process per poll behind a lane the
+   * queue already holds. So this raises a monotonic observation and nothing
+   * else — what to do about a generation nobody has reconciled yet is the
+   * workspace's, because the workspace is where the authoritative verdict is.
+   */
+  onInstallationObserved: (generation: number) => void,
   onOutputsAdopted: AdoptedOutputsSink,
   /** The lane facts this operation does not own, as a render sees them. */
   environment: ConversionEnvironment,
@@ -356,12 +479,40 @@ export function useConversionOperation(
    * refs here; this operation reads its own.
    */
   readEnvironment: () => ConversionEnvironment,
+  /**
+   * Which installation a **settled** verdict has bound this session to.
+   *
+   * The signal to read the catalog again, and the only honest one. Which
+   * semantics are offered is an answer about one executable, so the question is
+   * re-asked exactly when the bound executable changes — and a binding changes
+   * only when a verdict settles.
+   *
+   * Deliberately not `backendUsable`. That flag is false for the duration of
+   * *any* probe, because a check reports `checking` before it awaits, so keying
+   * the catalog on it read every healthy recheck as a disappearance: the four
+   * fieldsets were revoked, a good read still in flight was cancelled, and the
+   * returning verdict — naming the same installation at the same generation —
+   * spent a second `msconvert --help` probe putting back what was already
+   * correct. `checking` is activity; this is binding.
+   */
+  backendBinding: SettledBackendBinding,
 ): ConversionOperation {
   const api = usePreviewApi();
   const [state, setState] = useState<WorkspaceConversionState>({ status: "idle" });
   const [plan, setPlan] = useState<ConversionPlanState>({ status: "none" });
   const [error, setError] = useState<PreviewError | null>(null);
   const [conflictPolicy, setConflictPolicy] = useState<ConversionConflictPolicy>("fail");
+  /**
+   * Which semantics may be chosen, and which one is.
+   *
+   * Starts as loading rather than as the shipped posture. What MSCanvas ships
+   * is the backend's to name, and a local default here would be a second statement of
+   * it -- one that would go on being shown after a catalog said this build
+   * cannot run it.
+   */
+  const [settings, setSettings] = useState<ConversionSettings>({ status: "loading" });
+  /** The rows the workspace has asked for a plan of. */
+  const [requestedHandles, setRequestedHandles] = useState<readonly string[]>([]);
   /**
    * Bumped when an authoritative read failed, to ask again.
    *
@@ -376,7 +527,63 @@ export function useConversionOperation(
   // lower one is describing a slot that has already moved.
   const installedSequence = useRef(-1);
   const planToken = useRef(0);
+  const catalogToken = useRef(0);
   const stateToken = useRef(0);
+  /**
+   * The highest installation generation a catalog reply has installed.
+   *
+   * A catalog is an answer about one executable, and the two commands that can
+   * change one do not answer in call order -- so a slower reply describing a
+   * build that has since been replaced is discarded here rather than allowed to
+   * overwrite its successor. The same precedence the workspace applies to a
+   * backend verdict, applied to the one other reading bound to an installation.
+   */
+  const catalogGeneration = useRef(-1);
+  /**
+   * Which installation the catalog **now on screen** describes, or `null` when
+   * there is not one.
+   *
+   * Deliberately not `catalogGeneration`, and the difference is the point. That
+   * one is a high-water mark that never rewinds, because its job is to refuse a
+   * reply about a build that has already been replaced. This one falls to
+   * `null` the moment a catalog is revoked, because its job is to answer a
+   * different question: *does this session already hold the catalog for the
+   * installation it is now bound to?*
+   *
+   * That question is what lets a catalog read be the first operation to notice
+   * an installation change without paying for the discovery twice. The reply
+   * describes generation H, the workspace reconciles to H, the binding becomes
+   * H -- and the answer for H is already on screen, so nothing is re-read.
+   */
+  const installedCatalogGeneration = useRef<number | null>(null);
+  /**
+   * The binding whose **one automatic attempt** has already been spent.
+   *
+   * Not "the binding this lane has served". It was called that, and the name
+   * was a claim the state could not make: an attempt that failed spends this
+   * just as an attempt that succeeded does, so a `failed` catalog sat behind a
+   * marker asserting it had been served. What is actually known here is
+   * narrower and is all the effect needs -- *this binding has already been
+   * asked about automatically, so becoming active again is not a reason to ask
+   * again*. Whether the asking produced a catalog is `installedCatalogGeneration`,
+   * and whether a failed one may be asked again is the reader's, through the
+   * explicit retry below.
+   *
+   * Not a second "the catalog needs refreshing" boolean either. A boolean would
+   * be a fact of its own, free to disagree with the binding, and the
+   * disagreement is the whole family of defects here.
+   */
+  const automaticallyAttemptedBinding = useRef<string | null>(null);
+  /**
+   * The semantic the user last chose, across catalogs.
+   *
+   * Held apart from the settings state because the state stops being `ready`
+   * while a new installation is being read, and the *choice* has to outlive
+   * that: it is a scientific request, not a property of one catalog. What it
+   * does not do is survive into a catalog that no longer holds it -- `reselect`
+   * decides that, and falls back only to the semantic Rust names as shipped.
+   */
+  const chosenIntentId = useRef<string | null>(null);
   // Whether a slot read is outstanding. Paired with the token above rather than
   // replacing it: the token decides which reply may install, and this decides
   // that there is only ever one to choose between.
@@ -390,6 +597,22 @@ export function useConversionOperation(
   // would leave a dispatch guard one commit behind the queue it is asking
   // about.
   const stateRef = useRef<WorkspaceConversionState>({ status: "idle" });
+  /**
+   * Whether this document has installed an authoritative slot reading at all.
+   *
+   * The rendered half of `installedSequence`, which is the synchronous one.
+   * Both say the same thing -- a read has committed -- and both exist because a
+   * dispatch guard runs before any commit while a control is drawn from one.
+   *
+   * It closes the M6.1 residual: a conversion dispatched before the first read
+   * lands is dispatched against a slot this document has never seen, and the
+   * local `idle` it starts from is an initial value rather than a fact.
+   */
+  const [slotObserved, setSlotObserved] = useState(false);
+  /** The selected semantic, the plan, and the policy, where a guard reads them. */
+  const settingsRef = useRef<ConversionSettings>({ status: "loading" });
+  const planRef = useRef<ConversionPlanState>({ status: "none" });
+  const conflictPolicyRef = useRef<ConversionConflictPolicy>("fail");
   /**
    * What this document has dispatched onto the lane and not been answered on.
    *
@@ -470,7 +693,34 @@ export function useConversionOperation(
   }, []);
 
   const applyUpdate = useCallback((update: WorkspaceConversionUpdate) => {
-    if (!mounted.current || update.sequence <= installedSequence.current) {
+    if (!mounted.current) {
+      return;
+    }
+    // Where the installation sequence stands, reported **before** the sequence
+    // guard, because the sequence does not order this.
+    //
+    // That guard orders slot *states* against each other, and this is not one:
+    // it rides on the same read the way the quarantine flag does. The reading
+    // that matters most here carries no new slot state at all — a conversion
+    // refused before a queue exists leaves the slot exactly where it was, so
+    // its sequence is unchanged and the guard below drops the reply. Reporting
+    // after it would discard the one observation that refusal produced, which
+    // is the whole of what this field is for.
+    //
+    // It replaces a maximum taken over the queue's own reading and its items'
+    // reports, which could only be computed where a queue existed. This number
+    // is at least every number that maximum could produce, so it is strictly
+    // more current as well as strictly simpler.
+    //
+    // **Reporting it costs nothing, which is what makes reporting it on every
+    // read correct.** This is a fact arriving, not a request being made: the
+    // sink raises a monotonic observation, and a generation already observed is
+    // a no-op there. A poll of a long-running queue carries the same number
+    // every two seconds, and the hundredth of them asks for exactly as much
+    // work as the first — none. Nothing here inspects what failed, or whether
+    // anything failed.
+    onInstallationObserved(update.installationGeneration);
+    if (update.sequence <= installedSequence.current) {
       return;
     }
     // A result belongs to one settling of one queue. Anything that produces a
@@ -480,6 +730,10 @@ export function useConversionOperation(
     // "not terminal any more" is not a test that catches it.
     setAdoption((previous) => (previous === null || describes(previous, update) ? previous : null));
     installedSequence.current = update.sequence;
+    // A reading has committed, so "not observed" stops being true. Written
+    // beside the sequence rather than derived from the status, because every
+    // status -- including idle -- is an observation once it has arrived.
+    setSlotObserved(true);
     // **Raises the claim, and never lowers one this document is holding.**
     //
     // The sequence guard above orders reads against each other; it cannot order
@@ -532,33 +786,178 @@ export function useConversionOperation(
     if (update.state.status === "terminal" || update.state.status === "idle") {
       setStopRequested(false);
     }
-    // A conversion is a backend operation like any other, and it can be the
-    // first to notice that the installed ProteoWizard changed. Without this the
-    // banner and a preview read from the replaced installation would stay on
-    // screen beside a conversion done by its successor, until some later
-    // backend operation happened to reconcile them.
-    if (update.state.status === "terminal") {
-      // Once for the queue, not once per item. Every item of one queue ran on
-      // one installation, so their generations agree -- and reporting each of
-      // them separately would start a backend probe per item before any of them
-      // had answered, which for a full queue is sixteen serial help probes with
-      // preview and conversion disabled throughout.
-      const generations = [
-        // The queue's own reading first. A pass refused for running on a
-        // different installation produced no item, so the reports alone would
-        // leave the banner naming the installation the earlier results came
-        // from until the user rechecked by hand.
-        update.state.queue.installationGeneration,
-        // Whichever cardinality the item's latest attempt had. Both reports
-        // carry the sequence they ran under, and an item is never described by
-        // both at once.
-        ...update.state.queue.items
-          .map((item) => item.result?.report.installationGeneration)
-          .filter((generation): generation is number => generation !== undefined),
-      ];
-      onInstallationGeneration(Math.max(...generations));
+  }, [claimLane, onInstallationObserved]);
+
+  /**
+   * Reads which semantics this installation offers, and installs the answer if
+   * it is not about a build that has already been replaced.
+   *
+   * The user's selection survives the read wherever the new catalog still holds
+   * it, including where it holds it as unsupported: what they asked for is a
+   * scientific request, and replacing it with the shipped posture because an
+   * installation changed would convert something else without saying so.
+   */
+  /**
+   * Revokes every outstanding catalog answer, and says what stands in its place.
+   *
+   * **Two things move together, because either one alone is a defect.** Setting
+   * the state without advancing the token leaves an earlier request
+   * authoritative: its reply resolves afterwards, passes a token check that
+   * still matches, and puts back the catalog of an executable the session has
+   * just lost. Advancing the token without setting the state leaves that
+   * executable's catalog on screen with nothing coming to replace it. The pair
+   * cannot come apart here because there is no way to do one of them.
+   *
+   * Every transition that makes an in-flight answer obsolete goes through this,
+   * and the token it returns is the only authority a request may hold.
+   *
+   * It deliberately leaves `catalogGeneration` alone. That guard orders replies
+   * against each other by the installation they describe, and rewinding it
+   * would let a genuinely superseded reply install after this.
+   */
+  const revokeCatalog = useCallback((standing: ConversionSettings) => {
+    catalogToken.current += 1;
+    // There is no catalog on screen after this, so there is no installation one
+    // describes. Cleared here rather than at each caller for the same reason the
+    // token is advanced here: the three facts move together or they are wrong,
+    // and this is the only place any of them may move.
+    installedCatalogGeneration.current = null;
+    setSettings(standing);
+    return catalogToken.current;
+  }, []);
+
+  const readCatalog = useCallback(() => {
+    // The catalog on screen described the installation that has just been
+    // replaced, so it stops being an answer the moment this read begins -- and
+    // so does any reply still on its way about that installation.
+    //
+    // **Keeping it would leave a plan startable against a build that is gone.**
+    // The plan carries the installation it was read at and is checked against
+    // the catalog's, so an old catalog beside a new installation makes the two
+    // agree about a number neither still describes. Going back to `loading`
+    // refuses the conversion for the true reason -- MSCanvas is reading what
+    // this ProteoWizard offers -- for exactly as long as that is true.
+    const token = revokeCatalog({ status: "loading" });
+    api
+      .conversionIntents()
+      .then((catalog) => {
+        if (!mounted.current || token !== catalogToken.current) {
+          return;
+        }
+        // A reply about an installation already superseded describes a build
+        // that is gone. Discarded rather than rendered beside its successor.
+        if (catalog.installationGeneration < catalogGeneration.current) {
+          return;
+        }
+        catalogGeneration.current = catalog.installationGeneration;
+        installedCatalogGeneration.current = catalog.installationGeneration;
+        const selectedId = reselect(catalog, chosenIntentId.current);
+        chosenIntentId.current = selectedId;
+        setSettings({ status: "ready", catalog, selectedId });
+        // Reading the catalog resolves the installed backend, so it can be the
+        // first thing to notice the installation changed -- exactly as a
+        // conversion report can. Without this the banner and everything read
+        // from the replaced installation would stay on screen beside settings
+        // that describe its successor.
+        //
+        // Raised as an observation, which is what makes it safe to raise here.
+        // The workspace reconciles it once, the verdict that follows binds this
+        // session to the installation this reply already describes, and the
+        // effect below recognises that the standing catalog *is* the answer for
+        // that binding -- so the news costs one backend verdict and no second
+        // help probe. Reporting it as "go and read the catalog again" is what
+        // would loop.
+        onInstallationObserved(catalog.installationGeneration);
+      })
+      .catch((cause: unknown) => {
+        if (!mounted.current || token !== catalogToken.current) {
+          return;
+        }
+        // Fail closed. Nothing manufactures the shipped posture from a failed
+        // read, and nothing keeps an older catalog: a settings surface that
+        // could not be established is a conversion that cannot start.
+        setSettings({ status: "failed", error: toPreviewError(cause) });
+      });
+  }, [api, onInstallationObserved, revokeCatalog]);
+
+  /**
+   * The catalog lifecycle, and the one thing it is keyed on.
+   *
+   * **A catalog belongs to a binding.** Reading it probes the installed
+   * `msconvert --help`, which is a process on the one serialized backend lane,
+   * so the question is asked exactly once per installation this session becomes
+   * bound to and never for any other reason -- not once per plan, not once per
+   * focused row, and not once per check.
+   *
+   * Every transition is written out here rather than left to be inferred from
+   * two booleans, because inferring it is what went wrong:
+   *
+   * ```text
+   * unresolved                     -> no catalog yet, and nothing probed
+   * available G, none for G        -> read it, once
+   * available G, already have G    -> nothing; the answer is on screen
+   * available H after G            -> revoke G with its request, read H once
+   * settled unavailable            -> revoke the catalog with its request
+   * ```
+   *
+   * And, by construction, the transition that is *not* in that list: a check
+   * beginning, a check resolving to the same installation, and a check failing
+   * without producing a verdict all leave the binding where it was, so none of
+   * them reaches this effect at all. The catalog, the plan read against it and
+   * the user's chosen semantic stand throughout; `backendChanging` is what
+   * refuses the conversion for as long as the check runs, which is a sentence
+   * about a check rather than about an executable.
+   *
+   * Guarded on the binding it last *attempted* rather than on the effect having
+   * run. An effect running is a fact about React; a binding changing is a fact
+   * about the installed build, and only the second one is a reason to launch a
+   * process. Recording the identity is what makes the two impossible to
+   * confuse, whatever causes this to be evaluated again.
+   *
+   * **One automatic attempt per binding, and no automatic retry of a failed
+   * one.** A read that did not answer says nothing about which build is
+   * installed, so the binding does not change and nothing here fires again --
+   * which is correct, and was also, for one head, the whole of the recovery
+   * story. It is not any more: retrying a failed read is the reader's, through
+   * `retryCatalog`, because the thing that failed was this query and not the
+   * installation it was about.
+   */
+  useEffect(() => {
+    const binding = backendBindingIdentity(backendBinding);
+    if (automaticallyAttemptedBinding.current === binding) {
+      return;
     }
-  }, [claimLane, onInstallationGeneration]);
+    automaticallyAttemptedBinding.current = binding;
+    if (backendBinding.status === "unresolved") {
+      // No verdict has settled, so there is no installation to ask about. The
+      // session opens here and leaves it once, and asking anything now would be
+      // asking about a build nobody has established exists.
+      return;
+    }
+    if (backendBinding.status === "unavailable") {
+      // The catalog goes with the backend -- the one on screen *and* any still
+      // on its way. It described an executable this session can no longer
+      // launch, after a folder change that resolved to nothing or discovery
+      // losing what it had found, so keeping either would leave the controls
+      // offering availability marks for a build that is not installed, beside a
+      // banner saying none is. Revoked rather than merely replaced: a request
+      // issued a moment ago would otherwise resolve into this state and undo it.
+      // Nothing is probed to establish any of that; there is nothing to probe.
+      revokeCatalog({ status: "noBackend" });
+      return;
+    }
+    if (installedCatalogGeneration.current === backendBinding.installationGeneration) {
+      // The standing catalog already *is* the answer for this binding. This is
+      // the case where a catalog read was the first operation to resolve the
+      // replacement build: it installed the answer for H and reported H, the
+      // workspace reconciled, and the verdict has now bound the session to the
+      // installation this catalog already describes. Throwing it away to ask
+      // the same executable the same question would be a probe spent proving
+      // what is on screen.
+      return;
+    }
+    readCatalog();
+  }, [backendBinding, readCatalog, revokeCatalog]);
 
   const readState = useCallback(() => {
     // One at a time. The token below lets only the newest read install, so two
@@ -659,6 +1058,7 @@ export function useConversionOperation(
     () => ({
       ...environment,
       backendQuarantined,
+      slotUnread: !slotObserved,
       laneClaimed,
       adopting,
       exportingDiagnostics: exportRequested || diagnostics.exporting,
@@ -670,6 +1070,7 @@ export function useConversionOperation(
       environment,
       exportRequested,
       laneClaimed,
+      slotObserved,
     ],
   );
 
@@ -686,6 +1087,10 @@ export function useConversionOperation(
     (): ConversionLane => ({
       ...readEnvironment(),
       backendQuarantined: backendQuarantinedRef.current,
+      // The synchronous half of `slotObserved`. A dispatch arriving in the same
+      // commit as the first slot read must see that the read has landed, and a
+      // dispatch arriving before it must see that it has not.
+      slotUnread: installedSequence.current < 0,
       laneClaimed: laneClaimedRef.current,
       adopting: adoptingRef.current,
       exportingDiagnostics: exportRequestedRef.current || backendExportingRef.current,
@@ -727,30 +1132,158 @@ export function useConversionOperation(
     };
   }, [awaitingRetryTransition, busy, readState]);
 
-  const describe = useCallback(
-    (handles: readonly string[]) => {
-      planToken.current += 1;
-      const token = planToken.current;
-      if (handles.length === 0) {
-        setPlan({ status: "none" });
-        return;
-      }
+  /**
+   * Says which rows a plan is wanted for.
+   *
+   * It records the request rather than performing it, because the rows are only
+   * one of four things a plan answers. The read below is issued for the rows,
+   * the selected semantic, the conflict policy and the installation together --
+   * so a settings change re-asks exactly as a selection change does, instead of
+   * leaving a summary on screen that describes the previous question.
+   */
+  const describe = useCallback((handles: readonly string[]) => {
+    setRequestedHandles((previous) =>
+      previous.length === handles.length && previous.every((handle, index) => handle === handles[index])
+        ? previous
+        : handles,
+    );
+  }, []);
+
+  /** The selected semantic, or `null` while there is not one. */
+  const selectedIntentId = settings.status === "ready" ? settings.selectedId : null;
+  /** The installation the catalog describes, or `null` while there is not one. */
+  const catalogInstallation =
+    settings.status === "ready" ? settings.catalog.installationGeneration : null;
+  const requestKey = requestedHandles.join("\u001f");
+
+  // One read per distinct question. The dependency list *is* the plan
+  // identity: change the rows, the semantic, the policy or the installation and
+  // this asks again, which is the same set of facts `planAnswers` checks the
+  // reply against.
+  useEffect(() => {
+    planToken.current += 1;
+    const token = planToken.current;
+    const handles = requestedHandles;
+    if (handles.length === 0) {
+      setPlan({ status: "none" });
+      return;
+    }
+    // No semantic, no plan. A plan read without one would have to invent an
+    // intent to ask for, and inventing one here is exactly what this slice
+    // removes.
+    if (selectedIntentId === null) {
       setPlan({ status: "loading", handles });
-      api
-        .describeConversion(handles)
-        .then((summary) => {
-          if (mounted.current && token === planToken.current) {
-            setPlan({ status: "loaded", plan: summary });
-          }
-        })
-        .catch((cause: unknown) => {
-          if (mounted.current && token === planToken.current) {
-            setPlan({ status: "failed", handles, error: toPreviewError(cause) });
-          }
-        });
-    },
-    [api],
-  );
+      return;
+    }
+    setPlan({ status: "loading", handles });
+    api
+      .describeConversion(handles, selectedIntentId, conflictPolicy)
+      .then((summary) => {
+        if (mounted.current && token === planToken.current) {
+          setPlan({ status: "loaded", plan: summary });
+        }
+      })
+      .catch((cause: unknown) => {
+        if (mounted.current && token === planToken.current) {
+          setPlan({ status: "failed", handles, error: toPreviewError(cause) });
+        }
+      });
+    // `requestedHandles` is deliberately absent: `requestKey` is its content,
+    // and the content is what decides whether to ask again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, requestKey, selectedIntentId, conflictPolicy, catalogInstallation]);
+
+  /*
+   * The three facts a dispatch guard reads, kept level with what is rendered.
+   *
+   * After the commit rather than during the render, and the difference from
+   * `laneClaimedRef` is the point. That one is raised inside `convert` itself,
+   * because a *second activation in the same commit* must see the first one --
+   * a window that exists only because one handler can raise it and another can
+   * read it before React has committed anything. These three are moved by
+   * `setState` from an event or a reply, so the earliest a handler can read
+   * them is the next discrete event, and React has flushed this effect by then.
+   * Writing them during the render would be the anti-pattern that buys nothing:
+   * a render React discards would leave a guard reading a state that never
+   * committed.
+   */
+  useEffect(() => {
+    settingsRef.current = settings;
+    planRef.current = plan;
+    conflictPolicyRef.current = conflictPolicy;
+  }, [settings, plan, conflictPolicy]);
+
+  /**
+   * Reads the catalog again after a read that did not answer.
+   *
+   * **The failure this recovers has no other owner.** A catalog is a query
+   * about an installation that is already settled and already available; when
+   * the query fails the binding has not changed, so nothing about the
+   * installation is news and nothing keyed on it fires again. That is right --
+   * a `Check again` asks whether the backend is usable, and a verdict that
+   * resolves to the same build has answered it truthfully. What it must not do
+   * is silently double as this: two questions with one button is how a reader
+   * comes to believe they have retried something they have not.
+   *
+   * So the retry is explicit, and it is one attempt. Failing again leaves the
+   * same failed state and waits to be asked again; nothing loops, and no effect
+   * can reach this.
+   *
+   * Guarded by the same lane the panel projects the control's own disabled
+   * state from -- read from refs here, because a press arriving during an
+   * installation change must be decided by what is true now. A hand-made call
+   * meets the same guard, so nothing can start a help probe while the
+   * authoritative state says backend work cannot begin.
+   */
+  const retryCatalog = useCallback(() => {
+    // Only a read that failed is retried. A catalog on screen is an answer, and
+    // re-asking for one would be the per-recheck probe this design refuses.
+    if (settingsRef.current.status !== "failed") {
+      return;
+    }
+    if (catalogReadAvailability(readLane()).status !== "available") {
+      return;
+    }
+    readCatalog();
+  }, [readCatalog, readLane]);
+  /**
+   * Whether that retry may be offered, as a render sees it.
+   *
+   * The rendered half of the guard above, from the lane the control is beside.
+   */
+  const catalogRetryAvailability = useMemo(() => catalogReadAvailability(lane), [lane]);
+
+  /** What a start still needs from the settings, as a render sees it. */
+  const settingsReadiness = settingsReadinessOf(settings);
+  /** Whether the plan on screen answers the request as it now stands. */
+  const planIsCurrent = planAnswers(plan, {
+    handles: requestedHandles,
+    intentId: selectedIntentId,
+    conflictPolicy,
+    installationGeneration: catalogInstallation,
+  });
+
+  /**
+   * Selects one admitted semantic.
+   *
+   * Guarded against the catalog rather than trusted. A control offers only what
+   * the catalog admits and this build declares, and this refuses anything else
+   * -- so an activation reaching it by another route cannot select what no
+   * control would have offered.
+   */
+  const chooseIntent = useCallback((intentId: string) => {
+    setSettings((previous) => {
+      if (previous.status !== "ready") {
+        return previous;
+      }
+      const chosen = catalogRow(previous.catalog, intentId);
+      if (chosen === null || chosen.availability.kind !== "available") {
+        return previous;
+      }
+      chosenIntentId.current = intentId;
+      return { ...previous, selectedId: intentId };
+    });
+  }, []);
 
   const convert = useCallback(
     (handles: readonly string[]) => {
@@ -764,7 +1297,32 @@ export function useConversionOperation(
       // answer. VS Code ships the opposite choice and says so in its own schema;
       // for something that claims a backend lane and spawns a process, an
       // explicit refusal is the only safe end of that window.
-      if (!canStartConversion(readLane(), handles.length)) {
+      // Read from the refs, including the settings and the plan: a click that
+      // arrives during a settings change or between two plan reads must be
+      // decided by what is true now, not by what the closure was made with.
+      const currentSettings = settingsRef.current;
+      const intentId = currentSettings.status === "ready" ? currentSettings.selectedId : null;
+      const request = {
+        targetCount: handles.length,
+        settings: settingsReadinessOf(currentSettings),
+        planIsCurrent: planAnswers(planRef.current, {
+          handles,
+          intentId,
+          conflictPolicy: conflictPolicyRef.current,
+          installationGeneration:
+            currentSettings.status === "ready"
+              ? currentSettings.catalog.installationGeneration
+              : null,
+        }),
+      };
+      if (!canStartConversion(readLane(), request)) {
+        return;
+      }
+      // Unreachable while the rule above holds -- a settings state with no
+      // selection is never `ready` -- and refused rather than asserted, because
+      // the alternative to a refusal here would be dispatching a conversion
+      // with no semantic at all.
+      if (intentId === null) {
         return;
       }
       // Claimed before the request leaves, so a second activation inside the
@@ -779,7 +1337,7 @@ export function useConversionOperation(
       });
       setError(null);
       api
-        .convertDatasets(handles, conflictPolicy, () => {
+        .convertDatasets(handles, conflictPolicyRef.current, intentId, () => {
           // The reservation exists and the claim has been dispatched. From here
           // the operation is Rust's, and a read will find it even if this
           // document goes away.
@@ -807,7 +1365,7 @@ export function useConversionOperation(
           readState();
         });
     },
-    [api, applyUpdate, claimLane, conflictPolicy, readLane, readState],
+    [api, applyUpdate, claimLane, readLane, readState],
   );
 
   // Every row a live queue holds, not only the one running: a queued row
@@ -1118,6 +1676,12 @@ export function useConversionOperation(
     retrying,
     converting,
     plan,
+    settings,
+    chooseIntent,
+    retryCatalog,
+    catalogRetryAvailability,
+    settingsReadiness,
+    planIsCurrent,
     error,
     conflictPolicy,
     setConflictPolicy,

@@ -25,6 +25,7 @@ import {
   buildPreview,
   createFakePreviewApi,
   createFakeWorkspaceDropTransport,
+  intentCatalog,
   deferred,
   previewError,
   secondFile,
@@ -228,6 +229,7 @@ function harness(
       Promise.resolve<SelectedSpectrumOutcome>({ outcome: "unavailable", requestedIndex: 0 }),
     // This file is about installation ordering, so the conversion slot answers
     // idle and nothing here starts one.
+    conversionIntents: () => Promise.resolve(intentCatalog()),
     describeConversion: () => Promise.reject(new Error("not used in this file")),
     getConversionState: () =>
       Promise.resolve({
@@ -240,6 +242,7 @@ function harness(
           lastExport: null,
         },
         backendQuarantined: false,
+        installationGeneration: 0,
       }),
     convertDatasets: () => Promise.reject(new Error("not used in this file")),
     retryConversions: () => Promise.reject(new Error("not used in this file")),

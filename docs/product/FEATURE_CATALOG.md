@@ -225,11 +225,44 @@ process and a single row of the plan. Items convert one at a time in
 the order shown. One file's failure marks that file and the queue continues,
 and `Retry N failed` reruns only the failures Rust marks retryable.
 
-Reachable that far and no further. CNV-001 and CNV-008's fail/skip half are
-reachable; CNV-009's batch summary is reachable as an item count, an ordered list
-and the planned output names, but not as processing options it does not have.
-CNV-003 exposes no location choice beyond the folder itself. CNV-007's zlib is
-shown but not selectable. CNV-002 and CNV-004 to CNV-006 remain unreachable.
+**M6.4's conversion settings are implemented and not published.** They are on
+`feat/m6.4-visible-conversion-settings` and not on `main`: that slice has stopped
+four times in review and its latest head carries two release-blocking findings,
+recorded in `BOOTSTRAP_STATUS.md`. What the rest of this section describes is
+therefore what that branch delivers, and `main` still converts under one fixed
+intent with no visible control naming it.
+
+**On that branch, the conversion semantics are chosen rather than fixed.** Four
+native radio groups — peak processing, spectra included, numeric precision and
+array compression — edit one selection, which opens on the posture the product
+has always shipped: mzML, no additional centroiding, every spectrum, m/z at 64
+bits with intensity narrowed to 32, zlib compressed. What may be chosen is a
+projection of the nine combinations M6.2 measured, sent by Rust with each row
+marked for what the *installed* executable declares; the interface holds no
+compatibility matrix of its own and enumerates neither the combinations nor the
+values of a dimension. Changing one control never moves another: a choice either
+names the admitted combination that differs in exactly that dimension, or it is
+refused with a reason — *MSCanvas has not qualified that combination* and *the
+installed ProteoWizard build does not offer this option* are different sentences
+because they call for different responses. Centroiding is marked **lossy where it
+is chosen**, and named for what it is: the build's default local-maximum picker
+across every MS level, which cannot be scoped and is not vendor centroiding. An
+MS-level choice says which spectra are left out of the file rather than implying
+they are processed differently. A 32-bit posture says what it rounds and is never
+called lossless. Compression says the numbers written are the same either way.
+
+Reachable that far and no further. On `main`, CNV-001 and CNV-008's fail/skip
+half are reachable and CNV-004 to CNV-007 are not; on M6.4's branch CNV-004,
+CNV-005, CNV-006 and CNV-007 join them, each in the combinations the evidence
+admits and no others — there is no free cross-product, and in particular no
+uncompressed output except at 64-bit m/z and intensity, no MS-level filter except
+there, and no centroiding except at 64/64 or 32/32. CNV-009's summary now states
+file count, order, format, processing, population, precision, compression,
+conflict policy and validation posture from the plan Rust answered with, and says
+the destination is chosen next because at summary time there is none — its
+output-root half is M6.5's and M6.6's. CNV-003 still exposes no location choice
+beyond the folder itself. CNV-002 remains unreachable, and its disposition is
+M6.10's.
 
 A terminal queue that has something to diagnose also offers **Export failure
 diagnostics…**: one local JSON file, saved where the user chooses, holding
@@ -267,12 +300,22 @@ That intent is how the boundary now expresses every processing decision it makes
 It is not five independent settings: nine combinations of output format,
 centroiding, MS-level population, numeric precision and compression are
 constructible, each admitted by a named M6.2 measurement, and the other
-thirty-nine of the forty-eight the axes span are unconstructible. CNV-004's
-no-peak-picking rule and zlib compression are what the shipped intent selects,
-and CNV-005's unscoped centroiding and CNV-006's MS-level filter are expressible
-there — **which is not the same as reachable**. No visible control names any of
-them, so what the product converts under is still one fixed intent; CNV-005's
-lossy marking, CNV-006's control and CNV-007's choice are M6.4's. CNV-003's
+thirty-nine of the forty-eight the axes span are unconstructible. On **M6.4's
+unmerged branch** those nine are also *selectable*, through one backend-owned catalog rather than
+through a second list on the interface side: the webview names a semantic by the
+identity Rust issued, Rust resolves it through the same admitted table before a
+plan exists and again before a queue does, and re-asks the live executable in
+between — so a semantic that was runnable when a summary was read is refused if
+the installation changed — proved before a destination picker opens, whatever
+else is using the one backend lane. The catalog is read once per installation
+this session is bound to: a check that resolves to the same build changes
+nothing, and only a settled verdict naming a different one — or naming none —
+replaces or revokes it. A read that fails has its own **Try again**, because a
+query that did not answer is not a build that offers nothing. A choice this
+installation cannot run stays chosen and says it cannot run, in every group. A queue binds one intent when it is created, keeps it
+through every retry, and is described on screen from that bound value, so moving
+a control while it runs changes what the *next* conversion would be and nothing
+about this one. CNV-003's
 vendor-dataset-root rule is unexercisable because no admitted acquisition family
 is directory-shaped — Thermo RAW and Shimadzu LCD are single files, and a SCIEX
 acquisition is a `.wiff` bound to its `.wiff.scan` sibling. See

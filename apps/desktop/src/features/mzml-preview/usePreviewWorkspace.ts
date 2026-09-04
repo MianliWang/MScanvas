@@ -9,6 +9,12 @@ import {
 } from "react";
 
 import { usePreviewApi } from "./api";
+import type { SettledBackendBinding } from "./backendBinding";
+import {
+  sameBackendBinding,
+  settledBackendBinding,
+  UNRESOLVED_BACKEND_BINDING,
+} from "./backendBinding";
 import type { ConversionOperation } from "./useConversionOperation";
 import { useConversionOperation } from "./useConversionOperation";
 import type {
@@ -984,6 +990,39 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       next.status === "resolved" && next.availability.state === "available";
     setBackend(next);
   }, []);
+  /**
+   * Which installation a settled verdict has bound this session to.
+   *
+   * **`BackendState` above is activity; this is binding.** They are two facts
+   * about the backend and they answer different questions, which is why the
+   * banner may say `checking` for two seconds without a single thing that was
+   * read from the installed build being invalidated. Everything that must not
+   * outlive an installation change -- the conversion catalog, the outstanding
+   * request that would install one, the plan read against it -- is keyed here.
+   *
+   * Written in exactly one place, `applyVerdict`, which is the one place a
+   * verdict is accepted as current. Nothing else may move it: a check
+   * beginning, a check failing to come back, and a session that stopped
+   * trusting a converter process it launched are all true things that are not
+   * evidence about which executable is installed.
+   */
+  const [backendBinding, setBackendBinding] = useState<SettledBackendBinding>(
+    UNRESOLVED_BACKEND_BINDING,
+  );
+  /**
+   * Records a settled verdict's binding, and keeps the previous object where it
+   * is the same binding.
+   *
+   * A settled available verdict at the same generation **is the same binding**,
+   * so it must not read as news to anything downstream. Keeping the object
+   * makes that true of identity as well as of value, which is what stops a
+   * memo, an effect dependency or a future reader from rediscovering the defect
+   * this replaces by comparing the wrong thing.
+   */
+  const bindBackend = useCallback((availability: BackendAvailability) => {
+    const next = settledBackendBinding(availability);
+    setBackendBinding((previous) => (sameBackendBinding(previous, next) ? previous : next));
+  }, []);
 
   const backendToken = useRef(0);
   /**
@@ -995,6 +1034,102 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * the installation that change replaced.
    */
   const appliedGeneration = useRef(-1);
+  /**
+   * The same number where a render can see it.
+   *
+   * Written beside the ref at every site that advances it, like every other
+   * paired fact here.
+   *
+   * **It is an ordering watermark over authoritative readings, not a record
+   * that a verdict has been applied.** A preview open raises it too, and
+   * deliberately: adopting the generation its reply carries is what stops the
+   * verdict that follows reading as a change *after* that preview and
+   * discarding the very reading which discovered it. So this can stand ahead of
+   * the installation the session is actually bound to, and two things follow --
+   * the conversion catalog is keyed on `backendBinding` rather than on this,
+   * and so is the reconciliation obligation below. Comparing an observation
+   * with this number instead would call an installation reconciled because some
+   * reading had been *ordered* against it.
+   */
+  const [appliedGenerationState, setAppliedGenerationState] = useState(-1);
+  /**
+   * The highest installation generation anything in this session has ever
+   * *seen*, whether or not a verdict has been applied for it.
+   *
+   * **An observation is a monotonic fact, not an action.** Three things resolve
+   * the installed executable and can therefore be the first to see it replaced:
+   * a backend verdict, a catalog read, and the conversion slot -- which reports
+   * where the sequence stands on every two-second poll of a running queue. The
+   * hundredth poll of one queue carries the same number as the first, and only
+   * the first of them is news.
+   *
+   * Raising this is the whole of what an observer does. What to do about a
+   * generation nobody has reconciled is decided once, below, by the effect that
+   * owns that obligation -- because the workspace is where the authoritative
+   * verdict is, and because an obligation nobody counts is an obligation that
+   * can be created a hundred times.
+   */
+  const highestObservedGeneration = useRef(-1);
+  /**
+   * The same number where an effect can depend on it.
+   *
+   * Written beside the ref at the one site that advances it, like every other
+   * paired fact here. A ref cannot be an effect dependency, and the
+   * reconciliation obligation is an effect because it has to wait for the
+   * backend lane.
+   */
+  const [observedGenerationState, setObservedGenerationState] = useState(-1);
+  /**
+   * The highest generation an automatic reconciliation has already been
+   * **attempted** for.
+   *
+   * Not "reconciled". It was called that, and the name outran the fact: this is
+   * advanced when the attempt is dispatched, not when a verdict settles, so a
+   * check that rejected or was superseded leaves it raised over a generation
+   * this session never reconciled to. That is the intended behaviour -- but the
+   * state has to say what it is, because a reader who trusted the old name
+   * would conclude the session had caught up when it had only tried.
+   *
+   * **One observation gets at most one automatic attempt.** Not one per poll,
+   * and not one per failure: an attempt that failed has already told this
+   * session what it can about that observation, and asking again on the next
+   * tick would be the same unbounded stream from a different direction. A
+   * genuinely newer generation is a new observation and may have its own.
+   *
+   * A `Check again` the user presses is untouched by this. It is an explicit
+   * request rather than an automatic reconciliation, and it goes through
+   * `checkBackend` directly. So does the conversion catalog's own retry, which
+   * is why a failed automatic attempt is a stop rather than a dead end.
+   */
+  const automaticallyAttemptedGeneration = useRef(-1);
+  /**
+   * The one way an authoritative reply moves the applied generation.
+   *
+   * **Every reply that can order itself against an installation has also seen
+   * one**, so the two watermarks move together here rather than at each site.
+   * A verdict and a preview open both resolve the installed build; one settles
+   * a binding and the other does not, but both are sightings, and a sighting
+   * that raised only the ordering number would be a build this session had
+   * looked at and not recorded looking at.
+   *
+   * It is the observation half that matters downstream. The obligation below
+   * asks whether anything seen is ahead of the installation the session is
+   * *bound* to -- so a preview that finds a replacement, whose own inline
+   * recheck then fails, still leaves an obligation for the reconciler to spend
+   * its one attempt on. Raising the ordering number alone left that build
+   * unreconciled with no automatic route back.
+   *
+   * Two sites reach this, and they reach it through one function so the pairing
+   * is a property of the code rather than of remembering.
+   */
+  const applyInstallationGeneration = useCallback((generation: number) => {
+    appliedGeneration.current = generation;
+    setAppliedGenerationState(generation);
+    if (generation > highestObservedGeneration.current) {
+      highestObservedGeneration.current = generation;
+      setObservedGenerationState(generation);
+    }
+  }, []);
   /**
    * How many installation changes are outstanding.
    *
@@ -1242,8 +1377,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         return false;
       }
       const changed = generation > appliedGeneration.current && appliedGeneration.current >= 0;
-      appliedGeneration.current = generation;
+      applyInstallationGeneration(generation);
       showBackend({ status: "resolved", availability });
+      // The settled fact, recorded beside the visible one and only here. This
+      // is what a catalog belongs to.
+      bindBackend(availability);
       // Not while an open is in flight. That open has already emptied the
       // screen and is about to fill it, and its reply is judged on its own
       // generation when it lands -- so discarding here would only reject a
@@ -1253,7 +1391,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       }
       return true;
     },
-    [discardBackendDerivedState],
+    [applyInstallationGeneration, bindBackend, discardBackendDerivedState],
   );
 
   const checkBackend = useCallback(() => {
@@ -1535,7 +1673,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           }
           const noticedAChange = loaded.installationGeneration > appliedGeneration.current;
           if (noticedAChange) {
-            appliedGeneration.current = loaded.installationGeneration;
+            // Through the one helper, like the verdict path. A preview open
+            // *is* a look at the installed build, so what it learns is an
+            // observation as well as an application -- and raising only the
+            // second would leave the reconciler's invariant false in the
+            // direction that silences it: observed behind applied, so every
+            // later reading of this generation is refused as already handled
+            // while nothing has reconciled to it.
+            applyInstallationGeneration(loaded.installationGeneration);
           }
           setPreview({ status: "loaded", preview: loaded });
           dispatchRoster({ type: "rowStateChanged", handle, state: "loaded" });
@@ -3368,18 +3513,31 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     visibleTraces,
   ]);
 
-  // A conversion's report carries the installation sequence it ran at. If it is
-  // newer than what this document has applied, the banner and everything read
-  // from the previous installation are stale -- so the backend is re-read
-  // through the one path that knows how to discard them.
-  const reconcileConversionGeneration = useCallback(
-    (generation: number) => {
-      if (generation > appliedGeneration.current) {
-        checkBackend();
-      }
-    },
-    [checkBackend],
-  );
+  /**
+   * Records that something resolved the installed build and found this
+   * generation.
+   *
+   * **The whole of it is a monotonic raise.** It launches nothing, decides
+   * nothing and refuses nothing; calling it a hundred times with the same
+   * number does what calling it once did. That is the correction: the previous
+   * shape called `checkBackend()` from here, so a two-second poll of a queue
+   * whose start had observed a replacement fired one `inspect_backend` per
+   * tick -- each of them blocking on the backend gate `drain_queue` holds for
+   * the length of the run, and each of them a process launch waiting to happen
+   * once it let go.
+   *
+   * What to do about a generation nobody has reconciled to is decided in one
+   * place, by the effect below, which can count the obligation and can wait for
+   * a lane that is able to answer. Neither is possible from inside a callback
+   * a poll invokes.
+   */
+  const observeInstallationGeneration = useCallback((generation: number) => {
+    if (generation <= highestObservedGeneration.current) {
+      return;
+    }
+    highestObservedGeneration.current = generation;
+    setObservedGenerationState(generation);
+  }, []);
   // Adopted rows are ordinary workspace rows, so the roster answers for them
   // like any other mutation: adopted whole, with the query, the sort and the
   // preview on screen left exactly as the user had them.
@@ -3468,11 +3626,83 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     [],
   );
   const conversion = useConversionOperation(
-    reconcileConversionGeneration,
+    observeInstallationGeneration,
     adoptOutputs,
     conversionEnvironment,
     readConversionEnvironment,
+    backendBinding,
   );
+  /**
+   * The one reconciliation obligation an unreconciled observation creates.
+   *
+   * **At most one automatic check per newly observed generation, and it waits
+   * for a lane that can answer it.** Four guards, and each of them names a
+   * different way the previous shape could produce a probe that helps nobody:
+   *
+   * - *nothing settled yet.* Before a first verdict there is no binding to
+   *   reconcile **to**, and the check that will establish one is already in
+   *   flight. Firing beside it would cost a probe on every mount whose slot
+   *   read answered first -- a slot read being memory and a probe being a
+   *   process, which is nearly all of them.
+   * - *already bound.* The settled binding already describes this installation,
+   *   which is the question worth asking. Asking it of `appliedGeneration`
+   *   instead is subtly wrong: that number is raised by a preview open too, so
+   *   an installation could be treated as reconciled because a *reading* had
+   *   been ordered against it while no verdict had ever named it.
+   * - *already attempted* — this observation has had its one automatic
+   *   attempt, whether that attempt settled, failed, or was superseded. A
+   *   failure is not a reason to ask again on the next render; the banner says
+   *   the check failed, and asking again is the reader's;
+   * - *the lane cannot answer.* `inspect_backend` contends for the same backend
+   *   gate `drain_queue` holds for the whole of a queue, so a request issued
+   *   now would not be a reconciliation -- it would be a process waiting to
+   *   launch when the queue finally let go, and the poll behind it would issue
+   *   another. **The obligation is coalesced instead of queued:** it is held in
+   *   `observedGenerationState`, repeated polls of the same generation add
+   *   nothing to it, and the moment the lane is free this effect performs
+   *   exactly one check.
+   *
+   * A higher generation arriving while one is outstanding is not lost: it
+   * raises the observation, and when the current check settles this effect asks
+   * again -- reconciling only if that newer number is still ahead of what the
+   * verdict applied.
+   *
+   * A `Check again` the user presses is not this. It is an explicit action, it
+   * goes straight to `checkBackend`, and nothing here stands in its way.
+   */
+  useEffect(() => {
+    if (backendBinding.status === "unresolved") {
+      return;
+    }
+    if (observedGenerationState <= backendBinding.installationGeneration) {
+      return;
+    }
+    if (observedGenerationState <= automaticallyAttemptedGeneration.current) {
+      return;
+    }
+    // A check already owns the lane -- this one, or the mount's, or the user's.
+    // Waiting is free and correct: when it settles, either it applied the
+    // generation this obligation is about, or this effect runs again.
+    if (backendBusy) {
+      return;
+    }
+    // And a conversion owns it for as long as its queue runs.
+    if (conversion.lane.laneClaimed) {
+      return;
+    }
+    // Spent on dispatch rather than on the verdict, and deliberately: what is
+    // being rationed is the *attempt*, because the attempt is the process. A
+    // failure that re-armed this would re-enter the moment it cleared the busy
+    // flag, which is the unbounded stream from the other direction.
+    automaticallyAttemptedGeneration.current = observedGenerationState;
+    checkBackend();
+  }, [
+    backendBinding,
+    backendBusy,
+    checkBackend,
+    conversion.lane.laneClaimed,
+    observedGenerationState,
+  ]);
   // A stop that could not be confirmed makes this session's backend unusable
   // without changing the installation, so nothing about it advances the
   // installation sequence and the reconciler above would never fire. Left

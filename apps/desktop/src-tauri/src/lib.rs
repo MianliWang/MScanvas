@@ -12,9 +12,9 @@ use tauri::{Manager, State};
 
 use preview::dto::{
     BackendAvailabilityDto, ConversionConflictPolicyDto, ConversionDiagnosticsReservationDto,
-    ConversionQueuePlanDto, FolderImportReservationDto, FolderIngestionResultDto, PreviewDto,
-    PreviewErrorDto, SelectedSpectrumOutcomeDto, WorkspaceAddResultDto,
-    WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto,
+    ConversionIntentCatalogDto, ConversionQueuePlanDto, FolderImportReservationDto,
+    FolderIngestionResultDto, PreviewDto, PreviewErrorDto, SelectedSpectrumOutcomeDto,
+    WorkspaceAddResultDto, WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto,
     WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
     WorkspaceOutputAdoptionResultDto, WorkspaceRemoveResultDto, WorkspaceRosterDto,
     diagnostics_picker_unavailable, invalid_conversion_reservation,
@@ -267,19 +267,49 @@ async fn subscribe_workspace_drop_updates(
     }
 }
 
+/// Every conversion semantic that may be chosen, and which of them the
+/// installed executable can express.
+///
+/// A backend operation: it probes the installed `msconvert`'s own help and so
+/// takes the one lane, which is why it is read once per installation rather
+/// than once per plan. The webview receives bounded product semantics -- never
+/// argv, never help text, never an evidence identifier.
+///
+/// It is not permission to run anything. A catalog that cannot be established
+/// leaves the settings unavailable and `Convert` refused; nothing manufactures
+/// a fallback semantic from a failed read.
+#[tauri::command]
+async fn get_workspace_conversion_intents(
+    service: State<'_, SharedService>,
+) -> Result<ConversionIntentCatalogDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.conversion_intent_catalog()).await?
+}
+
 /// Describes the conversion one focused row would get, without starting one.
 ///
 /// Read-only and free: no picker, no reservation, no process. It exists so the
 /// summary the user reads before deciding is derived from what the run will
 /// actually do, rather than composed in the webview from constants that are
 /// free to drift from it.
+///
+/// The intent is named by identity and resolved against the admitted table, so
+/// a plan can only ever describe a combination the evidence admits. The policy
+/// is taken because it is a fact the plan states and `BEGIN` binds -- a summary
+/// that could not say which conflict rule it was read under would be a summary
+/// the user could not check.
 #[tauri::command]
 async fn describe_workspace_conversion_queue(
     handles: Vec<String>,
+    intent_id: String,
+    conflict_policy: ConversionConflictPolicyDto,
     service: State<'_, SharedService>,
 ) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
     let service = Arc::clone(&service);
-    off_the_async_runtime(move || service.conversion_queue_plan(&handles)).await?
+    off_the_async_runtime(move || {
+        service.conversion_queue_plan(&handles, &intent_id, conflict_policy)
+    })
+    .await?
 }
 
 /// Runs every retryable failure of the terminal queue again.
@@ -840,7 +870,8 @@ async fn get_workspace_conversion_state(
     off_the_async_runtime(move || service.conversion_state()).await
 }
 
-/// Binds one conversion request and reserves the right to choose a folder.
+/// Binds one conversion request -- its rows, its conflict policy and its exact
+/// conversion semantic -- and reserves the right to choose a folder.
 ///
 /// Deliberately synchronous and deliberately separate from choosing, for the
 /// reason `begin_mzml_folder_import` already gives: a webview can reload between
@@ -854,6 +885,7 @@ async fn get_workspace_conversion_state(
 async fn begin_workspace_conversion_queue(
     handles: Vec<String>,
     conflict_policy: ConversionConflictPolicyDto,
+    intent_id: String,
     ipc_request: tauri::ipc::Request<'_>,
     webview: tauri::Webview<tauri::Wry>,
     service: State<'_, SharedService>,
@@ -861,7 +893,7 @@ async fn begin_workspace_conversion_queue(
     let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
     let service = Arc::clone(&service);
     off_the_async_runtime(move || {
-        service.begin_conversion_queue(&handles, conflict_policy, document_epoch)
+        service.begin_conversion_queue(&handles, conflict_policy, &intent_id, document_epoch)
     })
     .await?
 }
@@ -1184,6 +1216,7 @@ pub fn run() {
             clear_workspace,
             open_mzml_preview,
             load_selected_spectrum,
+            get_workspace_conversion_intents,
             describe_workspace_conversion_queue,
             get_workspace_conversion_state,
             begin_workspace_conversion_queue,

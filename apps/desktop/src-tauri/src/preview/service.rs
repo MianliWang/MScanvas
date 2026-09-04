@@ -45,9 +45,8 @@ use super::conversion::WorkspaceMultiOutputConversionReport;
 #[cfg(test)]
 use super::conversion::run_planned_conversion;
 use super::conversion::{
-    ConvertedItem, WorkspaceConversionReport, conflict_policy, fixed_compression,
-    fixed_output_format, plan_conversion, refusal_is_retryable, refuse_unevidenced_build,
-    run_planned_conversion_cancellable,
+    ConvertedItem, WorkspaceConversionReport, conflict_policy, plan_conversion,
+    refusal_is_retryable, refuse_unevidenced_build, run_planned_conversion_cancellable,
 };
 use super::destination::admit_destination_root;
 use super::diagnostics::OutputSetDiagnosticFacts;
@@ -69,16 +68,17 @@ use super::drop_ingestion::{
 use super::dto::queue_output_name_claimed;
 use super::dto::{
     AdoptionCandidateIdentityDto, BackendAvailabilityDto, BackendFailureDto,
-    ConversionConflictPolicyDto, ConversionQueuePlanDto, ConversionQueuePlanItemDto,
-    DropIngestionResultDto, MAX_CONVERSION_QUEUE_ITEMS, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES,
-    MAX_METADATA_LINE_CHARS, MAX_MS_LEVELS, MAX_PRECURSORS, MAX_SPECTRUM_POINTS,
-    MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto, MsLevelCountDto, PrecursorDto,
-    PreviewDto, PreviewErrorDto, RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto,
-    SelectedSpectrumDto, SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto,
-    ValidationModeDto, WorkspaceAddOutcomeDto, WorkspaceAddResultDto,
-    WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto, WorkspaceDropStateDto,
-    WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
-    WorkspaceRosterDto, bounded_text, conversion_busy, dataset_not_previewable,
+    ConversionConflictPolicyDto, ConversionIntentCatalogDto, ConversionQueuePlanDto,
+    ConversionQueuePlanItemDto, DropIngestionResultDto, MAX_CONVERSION_QUEUE_ITEMS,
+    MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES, MAX_METADATA_LINE_CHARS, MAX_MS_LEVELS,
+    MAX_PRECURSORS, MAX_SPECTRUM_POINTS, MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto,
+    MsLevelCountDto, PrecursorDto, PreviewDto, PreviewErrorDto, RetentionTimeDto,
+    RetentionTimeRangeDto, RunSummaryDto, SelectedSpectrumDto, SelectedSpectrumOutcomeDto,
+    SpectrumRowDto, SpectrumTableDto, ValidationModeDto, WorkspaceAddOutcomeDto,
+    WorkspaceAddResultDto, WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto,
+    WorkspaceDropStateDto, WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
+    WorkspaceRemoveResultDto, WorkspaceRosterDto, bounded_text, conversion_busy,
+    conversion_intent_not_admitted, conversion_intent_unsupported, dataset_not_previewable,
     invalid_conversion_reservation, queue_destination_changed, queue_is_empty,
     queue_output_name_collision, queue_too_large, redact_absolute_paths, require_finite,
     require_finite_option, workspace_full,
@@ -128,6 +128,7 @@ use super::figure::{
     FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
 };
 use super::installation::InstallationIdentity;
+use super::intent_catalog::{catalog_options, intent_dto, intent_from_id};
 use super::operation::{
     AdmittedDestination, CancellationFacts, ConversionQueue, ConversionSlot, ItemOutcome,
     ItemState, QueueItem, QueueItemAttempt, StopAccepted, TerminalReason, folded_output_name,
@@ -1208,7 +1209,11 @@ impl PreviewService {
         let slot = self.conversion_slot();
         let quarantined = self.backend_is_quarantined();
         let diagnostics = self.diagnostics_read();
-        slot.read(quarantined, diagnostics)
+        slot.read(
+            quarantined,
+            diagnostics,
+            self.installation_generation.load(Ordering::Relaxed),
+        )
     }
 
     /// Whether this session has stopped trusting the backend.
@@ -1260,7 +1265,11 @@ impl PreviewService {
         }
         let accepted = slot.request_stop(operation)?;
         self.publish_conversion_busy(&slot);
-        let update = slot.read(self.backend_is_quarantined(), self.diagnostics_read());
+        let update = slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.installation_generation.load(Ordering::Relaxed),
+        );
         drop(slot);
 
         if let StopAccepted::Requested(Some(request)) = accepted {
@@ -1277,7 +1286,58 @@ impl PreviewService {
         self.conversion_busy.load(Ordering::Acquire)
     }
 
-    /// Describes the queue a set of selected rows would get.
+    /// Every conversion semantic that may be chosen, and which of them the
+    /// installed executable can express.
+    ///
+    /// A backend operation like any other: reading it probes the installed
+    /// `msconvert`'s own help, so it takes the one lane and a quarantined
+    /// session refuses it without launching anything. It is read once per
+    /// installation rather than once per plan, which is why the plan itself
+    /// stays free.
+    ///
+    /// The rows are `ConversionIntent::ADMITTED`, projected in
+    /// `intent_catalog`. Nothing here decides what is admitted, and nothing
+    /// downstream of here is entitled to a combination that is absent.
+    pub fn conversion_intent_catalog(&self) -> Result<ConversionIntentCatalogDto, PreviewErrorDto> {
+        // Before the gate, exactly as `inspect_backend` does. A session that
+        // has lost a converter process must not start two more probing what it
+        // could convert.
+        self.require_usable_backend()?;
+        let _running = self.enter_backend();
+        // And again on this side of it: a caller admitted before a stop began
+        // waits here for as long as the conversion takes, and that queue may
+        // have ended by failing to confirm its converter died.
+        self.require_usable_backend()?;
+        let backend = self.provider.conversion_backend()?;
+        let intents = catalog_options(&backend.capabilities);
+        // Noted, not merely read. Resolving a backend for a catalog is a look
+        // at the installed build like any other, and it can be the first thing
+        // to see the installation change -- so it advances the sequence rather
+        // than stamping this answer with a number an earlier operation left
+        // behind. Under the gate, so the number describes the installation
+        // whose help these answers came from.
+        let installation_generation = self.note_resolved(backend.installation.clone());
+        Ok(ConversionIntentCatalogDto {
+            intents,
+            // Named by Rust so the interface never states what MSCanvas ships.
+            shipped_intent_id: ConversionIntent::SHIPPED.stable_id(),
+            installation_generation,
+        })
+    }
+
+    /// The admitted intent this request names, or a refusal.
+    ///
+    /// **The one crossing point for a caller-supplied semantic.** The webview
+    /// sends an identity and never five loose values, and the identity is
+    /// resolved against the admitted table rather than parsed -- so a
+    /// combination the evidence does not admit cannot become a
+    /// `ConversionIntent` at all, whatever the interface believes.
+    fn admitted_intent(intent_id: &str) -> Result<ConversionIntent, PreviewErrorDto> {
+        intent_from_id(intent_id).ok_or_else(conversion_intent_not_admitted)
+    }
+
+    /// Describes the queue a set of selected rows would get, under one exact
+    /// admitted semantic.
     ///
     /// Read-only and free: no picker, no reservation, no process. Everything in
     /// it is derived from what the runs will actually do -- above all each
@@ -1287,11 +1347,21 @@ impl PreviewService {
     /// The order is the caller's, and the caller's order is the order the user
     /// is looking at. Rust does not re-sort it: a queue that ran in registry
     /// insertion order would run in an order nothing on screen shows.
+    ///
+    /// **Deliberately does not probe the installed build.** Whether this exact
+    /// executable can express the chosen semantic is the catalog's answer and
+    /// is re-established at `BEGIN`; asking it here would put a help probe
+    /// behind every change of focus. What this plan carries instead is the
+    /// installation generation it was read at, so a summary read against a
+    /// build that has since been replaced is visibly not current.
     pub fn conversion_queue_plan(
         &self,
         handles: &[String],
+        intent_id: &str,
+        conflict: ConversionConflictPolicyDto,
     ) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
-        let items = self.plan_queue_items(handles)?;
+        let intent = Self::admitted_intent(intent_id)?;
+        let items = self.plan_queue_items(handles, intent)?;
         Ok(ConversionQueuePlanDto {
             items: items
                 .iter()
@@ -1302,17 +1372,19 @@ impl PreviewService {
                     output: item.output().to_dto(),
                 })
                 .collect(),
-            // Both read off the intent this queue will be bound to, so what
-            // the panel is told before the picker opens is the same fact the
-            // conversion is judged against afterwards.
-            output_format: fixed_output_format(ConversionIntent::SHIPPED),
-            compression: fixed_compression(ConversionIntent::SHIPPED).to_owned(),
+            // The reconstructed intent, not the request. What the summary
+            // states about format, processing, population, precision and
+            // compression is read off the value the queue would be bound to,
+            // so there is no second projection to disagree with it.
+            intent: intent_dto(intent),
+            conflict_policy: conflict,
             // Stated before the run rather than after it. A vendor acquisition
             // has no mzML reading, so nothing about any output can be compared
             // to a source model -- and a user deciding whether to convert a
             // batch is entitled to know that before they choose a folder.
             validation_mode: ValidationModeDto::OutputOnly,
             capacity: MAX_CONVERSION_QUEUE_ITEMS,
+            installation_generation: self.installation_generation.load(Ordering::Relaxed),
         })
     }
 
@@ -1323,8 +1395,12 @@ impl PreviewService {
     /// created. The bound, the duplicate rule and the empty rule live in the
     /// queue's own constructor; what this adds is that every handle names a
     /// live, convertible row, and that no two of them would write one name.
-    fn plan_queue_items(&self, handles: &[String]) -> Result<Vec<QueueItem>, PreviewErrorDto> {
-        self.plan_items(handles)
+    fn plan_queue_items(
+        &self,
+        handles: &[String],
+        intent: ConversionIntent,
+    ) -> Result<Vec<QueueItem>, PreviewErrorDto> {
+        self.plan_items(handles, intent)
     }
 
     /// Turns handles into queue items.
@@ -1332,7 +1408,11 @@ impl PreviewService {
     /// One implementation and one answer. There is no longer a private planner
     /// beside this one: which cardinality a row gets is decided by the family it
     /// was admitted as, so the planner has nothing left to be told.
-    fn plan_items(&self, handles: &[String]) -> Result<Vec<QueueItem>, PreviewErrorDto> {
+    fn plan_items(
+        &self,
+        handles: &[String],
+        intent: ConversionIntent,
+    ) -> Result<Vec<QueueItem>, PreviewErrorDto> {
         // Refused before the workspace is even read. A list longer than a
         // session may run is not a queue whose rows are worth resolving.
         if handles.is_empty() {
@@ -1358,7 +1438,7 @@ impl PreviewService {
             // dropped: the interface states how many selected rows are
             // excluded, and a boundary that quietly shortened the list would
             // make that count a fiction.
-            let output = item_output_topology(kind, &dto.file_name)?;
+            let output = item_output_topology(kind, &dto.file_name, intent)?;
             items.push(QueueItem::new(id, epoch, kind, dto, output));
         }
         drop(workspace);
@@ -1408,25 +1488,31 @@ impl PreviewService {
     /// that never receives the identifier can never open a picker.
     ///
     /// What is bound here cannot change afterwards -- the document, the ordered
-    /// rows, their request epochs, their family and the conflict policy -- so
-    /// the picker that follows is a picker *for this queue*, and re-sorting or
-    /// re-selecting while it is open changes what is on screen and not what
-    /// will run.
+    /// rows, their request epochs, their family, the conflict policy and the
+    /// conversion intent -- so the picker that follows is a picker *for this
+    /// queue*, and re-sorting, re-selecting or moving a settings control while
+    /// it is open changes what is on screen and not what will run.
     pub fn begin_conversion_queue(
         &self,
         handles: &[String],
         conflict: ConversionConflictPolicyDto,
+        intent_id: &str,
         document_epoch: u64,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
-        self.begin_queue(handles, conflict, document_epoch)
+        self.begin_queue(handles, conflict, intent_id, document_epoch)
     }
 
     fn begin_queue(
         &self,
         handles: &[String],
         conflict: ConversionConflictPolicyDto,
+        intent_id: &str,
         document_epoch: u64,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
+        // Before anything else, and from the admitted table rather than from
+        // what arrived. A webview that names a combination the evidence does
+        // not admit is refused here, whatever its controls believe.
+        let intent = Self::admitted_intent(intent_id)?;
         // Before the plan, so a quarantined session refuses a queue without
         // first describing one it will never run.
         self.require_usable_backend()?;
@@ -1443,7 +1529,7 @@ impl PreviewService {
         // is the plan the queue is actually bound from. This first pass also
         // keeps a batch of dead handles from costing a help probe.
         let preflight_families: Vec<ConversionSourceKind> = {
-            let items = self.plan_items(handles)?;
+            let items = self.plan_items(handles, intent)?;
             let mut families = Vec::new();
             for item in &items {
                 let kind = conversion_source_kind(item.kind());
@@ -1453,26 +1539,111 @@ impl PreviewService {
             }
             families
         };
-        // Provider evidence for every distinct family in the plan, before the
-        // destination picker opens. Execution re-asks fail-closed per item and
-        // per family regardless; what this adds is that a user is normally
-        // refused before choosing a folder rather than after -- and refused
-        // for *any* unevidenced family in the batch, because a mixed queue is
-        // not authorized by its first item.
+        // **A queue that is already running makes this request invalid, and it
+        // is refused here rather than after the wait below.**
         //
-        // Only when the backend lane is free right now. Resolving the backend
-        // runs the installed tools' help, which is a process, and processes
-        // take the one lane -- but a queue has always been admittable while a
-        // preview holds that lane, with the queue's own worker doing the
-        // waiting rather than this click. Blocking here would change that, so
-        // when the lane is held the pre-picker courtesy is skipped and the
-        // authoritative per-family gate at execution refuses before anything
-        // is staged.
-        if let Some(running) = self.try_enter_backend() {
-            let backend = self.provider.conversion_backend()?;
+        // The slot refuses a second queue anyway, at the very end of this
+        // function. What that cannot do is refuse it *cheaply*: `drain_queue`
+        // holds the backend gate for the whole of a run, so a press landing
+        // during one would otherwise wait for the entire queue on the gate
+        // below only to be told the slot had been busy all along. This is the
+        // same authority asked where no waiting has started yet -- it takes
+        // only the slot lock and launches nothing.
+        if self.conversion_slot().is_busy() {
+            return Err(conversion_busy());
+        }
+        // Provider evidence for every distinct family in the plan, and that
+        // this exact build declares everything this exact intent emits,
+        // **before the destination picker opens**.
+        //
+        // Waited for rather than skipped. This block used to run only when the
+        // backend lane happened to be free, on the reasoning that a queue has
+        // always been admittable while a preview holds that lane and the
+        // authoritative per-item gate at execution refuses fail-closed anyway.
+        // That reasoning is sound for the family evidence it was written for
+        // and wrong for what M6.4 added beside it: an intent the user chose,
+        // read from a catalog, summarised in a plan, and promised -- here, in
+        // ADR 0043 and in the product record -- to be refused before a folder
+        // is chosen. **A guarantee that holds only when a lock happens to be
+        // free is not a guarantee**, and the price of skipping it is a queue
+        // bound to a semantic this build cannot express, a picker opened, a
+        // destination staged, and every item failing afterwards.
+        //
+        // The wait is bounded because every holder of this gate is: a preview
+        // read, a check, a chooser, a catalog probe. The one unbounded holder
+        // is a running queue, and the slot refused this request above before
+        // any waiting began.
+        {
+            let running = self.enter_backend();
+            // Again on this side of the gate, exactly as the catalog read does:
+            // a caller admitted before a stop began waits here for as long as
+            // that conversion takes, and it may have ended by losing track of
+            // its converter.
+            self.require_usable_backend()?;
+            let backend = match self.provider.conversion_backend() {
+                Ok(backend) => backend,
+                Err(error) => {
+                    // **Resolution failing is an observation too, and it is the
+                    // one that used to be lost.**
+                    //
+                    // The catalogued executable can be deleted, replaced by
+                    // something that no longer declares what MSCanvas needs, or
+                    // moved out from under a chosen folder, and `BEGIN` is very
+                    // often what finds out. Returning here without recording it
+                    // left the session naming a build that is gone: the banner
+                    // said available, the catalog went on offering that build's
+                    // availability marks, the plan stayed current, and pressing
+                    // Convert again produced the same refusal for ever.
+                    //
+                    // **Nothing is inferred from the error.** What this asks is
+                    // the provider's own availability authority -- the same
+                    // resolution `inspect_backend` is answered from, which
+                    // returns the verdict and the identity together and yields
+                    // an identity only where something usable actually
+                    // resolved. It goes through the one counter, so a build
+                    // that really is gone advances the sequence and a failure
+                    // that establishes nothing about the installation advances
+                    // nothing. The reading is cached as this session's last
+                    // verdict as well, so the banner a reload recovers is the
+                    // one this refusal was decided against.
+                    self.stamped_availability();
+                    drop(running);
+                    return Err(error);
+                }
+            };
+            // **Resolving an executable is an observation, and it is complete
+            // the moment it succeeds.**
+            //
+            // Recorded here rather than after the checks below, because whether
+            // this queue is admitted is a different question from which build
+            // this session is looking at. An executable replaced in place --
+            // same location, different build -- is very often first seen right
+            // here, and if the refusals below returned first, the session would
+            // go on describing the build that is gone: the banner, the catalog
+            // the settings answer from, and the availability marks beside every
+            // control. The user would then be told this build does not offer
+            // the option while the controls still said it did.
+            //
+            // Nothing is manufactured. The generation moves only when the
+            // resolved identity actually differs, and an operation failing
+            // never moves it by itself.
+            self.note_resolved(backend.installation.clone());
             for kind in preflight_families {
                 refuse_unevidenced_build(&backend.capabilities, kind)?;
             }
+            // And that this exact build declares everything this exact intent
+            // emits, asked again here rather than trusted from the catalog the
+            // summary was read against. The installation can change between the
+            // two, and an intent valid when the user read the plan is not a
+            // licence to run it now. The same gate the command builder applies
+            // per item, asked before a picker opens rather than after -- which
+            // is what keeps a refusal free of a destination, a staging area and
+            // a launched process, and which is now true of every admitted
+            // queue rather than of the ones that found the lane free.
+            backend
+                .capabilities
+                .require_conversion_intent(&intent)
+                .map_err(|_| conversion_intent_unsupported())?;
             drop(running);
         }
         // The same gate every workspace mutation takes, so a queue and a batch
@@ -1497,7 +1668,7 @@ impl PreviewService {
         // picker would open for a run guaranteed to end superseded. Planning
         // is lock-cheap and launches nothing, so it is simply done again where
         // it counts.
-        let items = self.plan_items(handles)?;
+        let items = self.plan_items(handles, intent)?;
         let mut slot = self.conversion_slot();
         // Under the slot lock, and immediately before the slot is taken. The
         // authority proof is awaited, so a reload can start any time after it
@@ -1507,11 +1678,12 @@ impl PreviewService {
         if document_epoch != self.workspace_drop_document_epoch() {
             return Err(invalid_conversion_reservation());
         }
-        // The one place a production conversion's intent is chosen. Everything
-        // downstream -- each item, each retry, the argv, the integrity
-        // comparison -- reads it back off the queue rather than deciding again.
-        let queue =
-            ConversionQueue::new(document_epoch, conflict, ConversionIntent::SHIPPED, items)?;
+        // The one place a production conversion's intent is bound. It is the
+        // value resolved from the admitted table at the top of this function,
+        // and everything downstream -- each item, each retry, the argv, the
+        // integrity comparison -- reads it back off the queue rather than
+        // deciding again. Nothing the interface does afterwards can reach it.
+        let queue = ConversionQueue::new(document_epoch, conflict, intent, items)?;
         let reservation = slot.begin(queue);
         self.publish_conversion_busy(&slot);
         // The previous queue's diagnostics go with the previous queue. Under
@@ -1550,7 +1722,11 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.cancel(operation);
         self.publish_conversion_busy(&slot);
-        slot.read(self.backend_is_quarantined(), self.diagnostics_read())
+        slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.installation_generation.load(Ordering::Relaxed),
+        )
     }
 
     /// Runs one claimed queue into one chosen folder.
@@ -3699,7 +3875,11 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.finish(operation, None, reason);
         self.publish_conversion_busy(&slot);
-        let update = slot.read(self.backend_is_quarantined(), self.diagnostics_read());
+        let update = slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.installation_generation.load(Ordering::Relaxed),
+        );
         drop(slot);
         update
     }
@@ -4069,7 +4249,11 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.refuse(operation, error);
         self.publish_conversion_busy(&slot);
-        slot.read(self.backend_is_quarantined(), self.diagnostics_read())
+        slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.installation_generation.load(Ordering::Relaxed),
+        )
     }
 
     /// Reserves the right to claim the workspace's next state without opening
@@ -4204,12 +4388,65 @@ impl PreviewService {
     ///
     /// A queue of one is the single-conversion workflow, so these read the way
     /// they always did while going through the queue the product uses.
+    /// A queue plan under the shipped semantic, for the tests that are not
+    /// about which one.
+    ///
+    /// Named rather than defaulted. Most of this suite predates a chosen
+    /// intent and is about membership, order, names and refusals; making those
+    /// tests say `_shipped` keeps the production entry point one that always
+    /// has to be told, so a caller cannot acquire an intent by omission.
+    #[cfg(test)]
+    pub(super) fn conversion_queue_plan_shipped(
+        &self,
+        handles: &[String],
+    ) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
+        self.conversion_queue_plan(
+            handles,
+            &ConversionIntent::SHIPPED.stable_id(),
+            ConversionConflictPolicyDto::Fail,
+        )
+    }
+
+    /// The same, for beginning one.
+    #[cfg(test)]
+    pub(super) fn begin_conversion_queue_shipped(
+        &self,
+        handles: &[String],
+        conflict: ConversionConflictPolicyDto,
+        document_epoch: u64,
+    ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
+        self.begin_conversion_queue(
+            handles,
+            conflict,
+            &ConversionIntent::SHIPPED.stable_id(),
+            document_epoch,
+        )
+    }
+
     #[cfg(test)]
     pub(super) fn conversion_plan_summary(
         &self,
         handle: &str,
     ) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
-        self.conversion_queue_plan(std::slice::from_ref(&handle.to_owned()))
+        self.conversion_plan_summary_for(handle, &ConversionIntent::SHIPPED.stable_id())
+    }
+
+    /// The same, under one named semantic.
+    ///
+    /// Separate from the helper above so the tests that are about the shipped
+    /// posture keep reading the way they did, and the tests that are about a
+    /// *chosen* one have to name it.
+    #[cfg(test)]
+    pub(super) fn conversion_plan_summary_for(
+        &self,
+        handle: &str,
+        intent_id: &str,
+    ) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
+        self.conversion_queue_plan(
+            std::slice::from_ref(&handle.to_owned()),
+            intent_id,
+            ConversionConflictPolicyDto::Fail,
+        )
     }
 
     #[cfg(test)]
@@ -4219,9 +4456,27 @@ impl PreviewService {
         conflict: ConversionConflictPolicyDto,
         document_epoch: u64,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
+        self.begin_conversion_with_intent(
+            handle,
+            conflict,
+            &ConversionIntent::SHIPPED.stable_id(),
+            document_epoch,
+        )
+    }
+
+    /// The same, under one named semantic.
+    #[cfg(test)]
+    pub(super) fn begin_conversion_with_intent(
+        &self,
+        handle: &str,
+        conflict: ConversionConflictPolicyDto,
+        intent_id: &str,
+        document_epoch: u64,
+    ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
         self.begin_conversion_queue(
             std::slice::from_ref(&handle.to_owned()),
             conflict,
+            intent_id,
             document_epoch,
         )
     }
@@ -6268,29 +6523,17 @@ fn differs(left: f64, right: f64) -> bool {
 }
 
 impl PreviewService {
-    /// Takes the right to run a backend operation only if it is free now.
-    ///
-    /// For work that is a courtesy rather than a duty: the queue's pre-picker
-    /// evidence check improves where a refusal lands, and the authoritative
-    /// check at execution does not depend on it having run. Nothing that
-    /// *must* happen may use this.
-    fn try_enter_backend(&self) -> Option<BackendRun<'_>> {
-        match self.backend_gate.try_lock() {
-            Ok(guard) => Some(BackendRun {
-                installation: self.installation_generation.load(Ordering::Relaxed),
-                _guard: guard,
-            }),
-            Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(BackendRun {
-                installation: self.installation_generation.load(Ordering::Relaxed),
-                _guard: poisoned.into_inner(),
-            }),
-            Err(std::sync::TryLockError::WouldBlock) => None,
-        }
-    }
-
     /// Waits for the right to run a backend operation.
     ///
     /// The guard is the permission; dropping it releases the next caller.
+    ///
+    /// There is deliberately no non-blocking variant any more. One existed for
+    /// "work that is a courtesy rather than a duty", and its only caller was
+    /// the queue's pre-picker check -- which M6.4 made a duty, because the
+    /// intent it validates is one the user chose and was promised a refusal
+    /// about before a folder is chosen. A gate that can be declined is a
+    /// guarantee that can be skipped, so the shape that allowed it is gone
+    /// rather than left available to the next caller who assumes otherwise.
     fn enter_backend(&self) -> BackendRun<'_> {
         let guard = self
             .backend_gate

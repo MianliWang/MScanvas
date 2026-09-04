@@ -48,6 +48,7 @@ use super::dto::{
     queue_duplicate_dataset, queue_installation_changed, queue_is_empty, queue_too_large,
 };
 use super::installation::InstallationIdentity;
+use super::intent_catalog::intent_dto;
 use super::selection::{DatasetId, DatasetSourceKind};
 
 const CONVERSION_RESERVATION_PREFIX: &str = "conversion-reservation-";
@@ -347,6 +348,7 @@ pub(super) const fn item_state_of(class: super::conversion::OutcomeClass) -> Ite
 pub(super) fn item_output_topology(
     kind: DatasetSourceKind,
     file_name: &str,
+    intent: ConversionIntent,
 ) -> Result<ItemOutputTopology, PreviewErrorDto> {
     // Convertibility first, and for both arms. Producing an output set is a
     // statement about cardinality rather than a licence to convert: a family the
@@ -366,7 +368,7 @@ pub(super) fn item_output_topology(
         });
     }
     Ok(ItemOutputTopology::KnownSingle {
-        basename: super::conversion::planned_output_name(file_name, ConversionIntent::SHIPPED)
+        basename: super::conversion::planned_output_name(file_name, intent)
             .ok_or_else(super::dto::dataset_not_convertible)?,
     })
 }
@@ -957,6 +959,11 @@ impl ConversionQueue {
             item_count: self.items.len(),
             retry_round: self.retry_round,
             conflict_policy: self.conflict,
+            // The queue's own bound value, projected here and read by every
+            // surface that describes this queue. There is no path by which a
+            // control the user moved afterwards reaches it: the field is
+            // private, is set once in `new`, and has no setter.
+            intent: intent_dto(self.intent),
             finalized_count: self.count(ItemState::Finalized),
             skipped_count: self.count(ItemState::Skipped),
             failed_count: failed,
@@ -2072,10 +2079,16 @@ impl ConversionSlot {
     }
 
     /// The current state, as the webview reads it.
+    ///
+    /// `installation_generation` is the session's, not the slot's: the slot may
+    /// hold nothing at all and the answer still has to say which build this
+    /// session is looking at, because a refusal that created no queue is
+    /// precisely when that matters.
     pub(super) fn read(
         &self,
         backend_quarantined: bool,
         diagnostics: ConversionDiagnosticsStateDto,
+        installation_generation: u64,
     ) -> WorkspaceConversionUpdateDto {
         let operation_id = self.operation.to_string();
         let state = match &self.state {
@@ -2110,6 +2123,7 @@ impl ConversionSlot {
                 ..diagnostics
             },
             backend_quarantined,
+            installation_generation,
         }
     }
 

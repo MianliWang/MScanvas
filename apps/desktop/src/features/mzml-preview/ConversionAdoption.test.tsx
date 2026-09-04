@@ -304,8 +304,14 @@ describe("adding converted outputs to the workspace", () => {
       within(panel).getByText("run-2.mzML was not added: changed since it was converted."),
     ).toBeVisible();
     // No path anywhere in what a refusal says.
+    //
+    // `m/z` is removed first, and only `m/z`. It is a scientific unit this
+    // panel names since M6.4 -- the queue says which precision it bound -- and
+    // it is the one slash that is not a separator. Every other slash, in every
+    // position, still fails: a real path could not survive this replacement.
+    const withoutUnits = (panel.textContent ?? "").replaceAll("m/z", "mass-to-charge");
     for (const separator of ["\\", "/"]) {
-      expect(panel.textContent ?? "").not.toContain(separator);
+      expect(withoutUnits).not.toContain(separator);
     }
   });
 

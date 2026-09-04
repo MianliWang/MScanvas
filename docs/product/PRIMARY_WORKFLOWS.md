@@ -193,9 +193,10 @@ See also
 
 **Success:** valid outputs are easy to locate and failures do not require rebuilding the batch.
 
-**Partly built.** Steps 4 and 5 are reachable for one vendor family, as WF-004a
-below. Step 1's "all" is not: a queue holds at most 16 items. Steps 2's semantic
-settings, its output-root choice and "Open file/folder" remain unreachable. See
+**Partly built.** Steps 2 to 5 are reachable, as WF-004a below. Step 1's "all"
+is not: a queue holds at most 16 items. Step 2's semantic settings *are* now
+reachable -- four scientific dimensions over the nine measured combinations --
+while its output-root choice and "Open file/folder" remain unreachable. See
 [ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md) and
 [ADR 0013](../architecture/adr/0013-serial-conversion-queue.md).
 
@@ -212,27 +213,52 @@ settings, its output-root choice and "Open file/folder" remain unreachable. See
    and choosing the `.wiff.scan` on its own says to choose the `.wiff` instead.
 2. Select the vendor rows to convert, or focus one. The three families may be
    mixed in one selection. Vendor rows cannot be previewed, and say so.
-3. Review the plan: the ordered list of what will run, which family each row
-   is, what each item will write, how many selected rows are excluded for
-   being mzML already, and the
-   output-only validation disclosure. Two rows that would write one name are
-   refused here, before anything is chosen or created.
+3. Choose what the conversion will do, in four groups over one selection: peak
+   processing, spectra included, numeric precision and array compression. The
+   format is stated rather than offered, because mzML is the one admitted
+   output. Only combinations MSCanvas has measured can be selected, and each
+   control moves one dimension: a value the current combination cannot take is
+   refused where it is offered, with a sentence saying whether MSCanvas has not
+   qualified that combination or the installed ProteoWizard does not offer the
+   option. A lossy choice says so where it is made.
+
+   A choice survives a change of installation. Where the new build cannot run
+   it, it stays chosen and is shown as unavailable rather than being replaced;
+   where no single change reaches a runnable combination, one labelled control
+   offers the settings MSCanvas ships.
+
+   If MSCanvas cannot read what this ProteoWizard offers, the settings say so
+   and offer **Try again**. That is a retry of the *catalog*; the backend
+   banner's `Check again` asks a different question.
+4. Review the plan Rust answers with for that exact request: the ordered list of
+   what will run, which family each row is, what each item will write, the
+   semantic it will be run under, how many selected rows are excluded for being
+   mzML already, and the output-only validation disclosure. Two rows that would
+   write one name are refused here, before anything is chosen or created.
+   Changing any control re-reads the plan, and a conversion may only start the
+   plan on screen.
 
    A row whose outputs the backend names itself says so — *1–24 mzML outputs,
    filenames determined during conversion* — rather than naming a file MSCanvas
    would be inventing.
-4. Choose Fail or Skip if a file of that name already exists. There is no
+5. Choose Fail or Skip if a file of that name already exists. There is no
    overwrite. The choice applies to the whole queue.
-5. `Convert N selected…` opens a Rust-owned picker for one local folder, which
-   every item of the queue writes into.
-6. Items convert one at a time, in the order shown, and the panel says which item
+6. `Convert N selected…` opens a Rust-owned picker for one local folder, which
+   every item of the queue writes into. Before that picker opens, MSCanvas
+   proves against the installed build that this exact semantic can still be
+   run -- so an installation replaced while the plan was being read refuses the
+   conversion with nothing chosen and nothing created.
+7. Items convert one at a time, in the order shown, and the panel says which item
    of how many is running. `Stop queue` ends the whole queue: it asks the current
    conversion to stop and begins none of the items after it, and the panel says
    so before it is pressed. Adding, clearing and previewing are unavailable until
    it ends; searching, sorting and reading the list are not, and every queued row
    stays visible through a search.
-7. Each item reports its own outcome: the output's name, size and record counts;
+8. Each item reports its own outcome: the output's name, size and record counts;
    or that a name was already taken and left alone; or why nothing was written.
+   The queue keeps the semantic it was started with, through every retry, and
+   the running surface states it -- so moving a control while it runs changes
+   what the *next* conversion would be and nothing about this one.
    The queue reports how many converted, were skipped, and failed — always as
    counts of acquisitions, never of output files.
 

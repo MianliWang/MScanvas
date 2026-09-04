@@ -191,8 +191,15 @@ describe("rendered QA for the one-to-many output topology", () => {
     fireEvent.click(rows[1], { ctrlKey: true });
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    const outputs = [...panel.querySelectorAll(".conversion-queue-output")];
-    expect(outputs).toHaveLength(2);
+    // Waited for rather than read once. The panel is on screen before the plan
+    // is: since M6.4 a plan is an answer about a chosen semantic, so the block
+    // exists -- with its settings and its refused control -- while the read is
+    // still in flight.
+    const outputs = await waitFor(() => {
+      const found = [...panel.querySelectorAll(".conversion-queue-output")];
+      expect(found).toHaveLength(2);
+      return found;
+    });
 
     // The distinction is structural: a different attribute and different text,
     // neither of which needs a colour to be read.

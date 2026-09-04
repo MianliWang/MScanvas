@@ -13,6 +13,7 @@ import type {
   ChromatogramRange,
   ChromatogramTraceSet,
   ConversionConflictPolicy,
+  ConversionIntentCatalog,
   ConversionQueuePlan,
   FolderIngestionResult,
   Preview,
@@ -125,10 +126,27 @@ export interface PreviewApi {
   openPreview(handle: string): Promise<Preview>;
   loadSpectrum(handle: string, index: number): Promise<SelectedSpectrumOutcome>;
   /**
-   * Describes the conversion one row would get. Starts nothing: no picker, no
-   * reservation, no process.
+   * Every conversion semantic that may be chosen, and which of them the
+   * installed executable can express.
+   *
+   * A backend read: it probes the installed `msconvert`'s help and takes the
+   * one lane, so it is asked once per installation rather than once per plan.
+   * The reply is stamped with the installation it describes, which is what lets
+   * a slower answer about a replaced build be discarded.
    */
-  describeConversion(handles: readonly string[]): Promise<ConversionQueuePlan>;
+  conversionIntents(): Promise<ConversionIntentCatalog>;
+  /**
+   * Describes the conversion one row would get, under one exact semantic.
+   *
+   * Starts nothing: no picker, no reservation, no process. The semantic is
+   * named by the identity Rust issued, never by five loose values, so a
+   * combination the evidence does not admit cannot be asked for.
+   */
+  describeConversion(
+    handles: readonly string[],
+    intentId: string,
+    conflictPolicy: ConversionConflictPolicy,
+  ): Promise<ConversionQueuePlan>;
   /**
    * Reads the session's one conversion slot.
    *
@@ -153,6 +171,7 @@ export interface PreviewApi {
   convertDatasets(
     handles: readonly string[],
     conflictPolicy: ConversionConflictPolicy,
+    intentId: string,
     onReserved: () => void,
   ): Promise<WorkspaceConversionUpdate>;
   /**
@@ -369,17 +388,23 @@ export const tauriPreviewApi: PreviewApi = {
   openPreview: (handle) => invoke<Preview>("open_mzml_preview", { handle }),
   loadSpectrum: (handle, index) =>
     invoke<SelectedSpectrumOutcome>("load_selected_spectrum", { handle, index }),
-  describeConversion: (handles) =>
-    invoke<ConversionQueuePlan>("describe_workspace_conversion_queue", { handles }),
+  conversionIntents: () =>
+    invoke<ConversionIntentCatalog>("get_workspace_conversion_intents"),
+  describeConversion: (handles, intentId, conflictPolicy) =>
+    invoke<ConversionQueuePlan>("describe_workspace_conversion_queue", {
+      handles,
+      intentId,
+      conflictPolicy,
+    }),
   getConversionState: () =>
     invoke<WorkspaceConversionUpdate>("get_workspace_conversion_state"),
-  convertDatasets: (handles, conflictPolicy, onReserved) => {
+  convertDatasets: (handles, conflictPolicy, intentId, onReserved) => {
     const invokeOptions = {
       headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() },
     };
     return invoke<ConversionReservation>(
       "begin_workspace_conversion_queue",
-      { handles, conflictPolicy },
+      { handles, conflictPolicy, intentId },
       invokeOptions,
     ).then((reservation) => {
       const converted = invoke<WorkspaceConversionUpdate>(

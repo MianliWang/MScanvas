@@ -855,6 +855,162 @@ cancellation change.
 
 *Downstream:* M6.5.
 
+*Implemented, and not published.* One backend-owned catalog, one selected
+identity, and a plan that is Rust's answer rather than the interface's summary of
+its own controls — delivered on `feat/m6.4-visible-conversion-settings`, which
+review has now stopped four times. Three findings stopped it first and a bounded
+correction closed them; the fresh review of that corrected head found two more,
+in the seam the correction itself had just widened; a second bounded correction
+closed those and was in turn stopped by a defect it introduced — a catalog read
+that failed once could no longer be retried, because the recovery had been living
+on the very conflation the correction removed. Every round is recorded in
+`BOOTSTRAP_STATUS.md`, and none of it is on `main`. The fourth round is the one
+that changes what this route should do next: after four corrections each stopped
+by what the one before it introduced, the recommendation on record is to settle
+the slice boundary -- installation/backend reconciliation as an authority Rust
+carries rather than the frontend reconstructs, and per-value availability as a
+fact about a value rather than a row rendered four times -- before a fifth
+attempt at the same head.
+
+The stops are part of the record. A second review of the head that had passed every
+gate found three further truthfulness defects once the route's single repair pass
+was spent, so the slice halted rather than self-authorizing another; an explicit
+new authorization then closed them. All three were the same shape of mistake in
+different places — a fact and the thing that carries it coming apart — and none
+was in the composition graph this slice was mostly about: a catalog request that
+outlived the state it produced, an installation observation lost because the
+operation that made it was refused, and a way-out affordance that claimed there
+was no ordinary way out while an enabled control offered one.
+
+The two that followed were the same lesson a third time, and the correction that
+closed them answered one design question rather than patching two paths: **what
+is the signal, and what is merely activity?** Two answers, both now written into
+types rather than inferred from booleans:
+
+```text
+backend check in progress      is not   settled backend unavailable
+a reply carries generation G   is not   a new observation of generation G
+```
+
+A conversion catalog belongs to a **settled backend binding** —
+`Unresolved | Available { generation } | Unavailable { generation }` — which
+changes only when an authoritative verdict settles. A check beginning, a check
+resolving to the same installation, and a check that never came back all leave it
+where it was, so none of them revokes a catalog, a plan or an outstanding read;
+`backendChanging` refuses the conversion meanwhile, which is a sentence about a
+check rather than about an executable. And the installation sequence a slot read
+carries raises a **monotonic observation** rather than requesting anything: one
+newly observed generation creates at most one automatic reconciliation, coalesced
+until the backend lane can actually answer it, so a ten-minute queue polled three
+hundred times launches one backend process and not three hundred.
+
+The earlier note here said the applied installation generation was the fact both
+wanted. That was half right, and the half it missed is why this needed a third
+round: a generation alone cannot say whether the executable it names is one this
+session can launch, and a number arriving cannot say whether anyone has yet acted
+on it. Both facts had to be carried with their verdicts.
+
+The fourth round answered a narrower question, and not by retreating from that
+model: **a read that failed is not a state the binding can clear.** Retrying it
+belongs to the reader asking explicitly, never to an installation identity that
+has not changed — so each failure has exactly one owner:
+
+```text
+backend verdict failed          ->  the banner's Check again
+catalog read failed             ->  the settings' own Try again
+automatic reconciliation failed ->  nobody; one attempt is the ration
+```
+
+Three consequences followed from asking that question properly. The pre-picker
+intent check became a duty rather than a courtesy the busy lane could decline —
+a guarantee that holds only when a lock is free is not one, and the shape that
+allowed it was deleted with its last caller. A `BEGIN` whose resolution *fails*
+now records what the provider's own availability authority establishes, so a
+build that is gone stops being described rather than producing the same refusal
+for ever; nothing is inferred from the error. And the reconciliation obligation
+was moved off `appliedGeneration` — an ordering watermark a preview open raises
+too — onto the settled binding, which is the thing an observation can actually
+be ahead of.
+
+**The graph stays where the evidence is.**
+`apps/desktop/src-tauri/src/preview/intent_catalog.rs` projects
+`ConversionIntent::ADMITTED` — all nine rows, in that table's own order — and
+marks each with what the *installed* executable declares, asked through
+`require_conversion_intent`, which is the same gate the command builder applies
+before it emits argv. So the interface receives bounded product semantics and no
+compatibility rule: a combination the evidence does not admit is **absent from
+the catalog**, and its absence is the answer. `conversionIntentSelection.ts`
+looks combinations up and never composes one; it does not even list the values of
+a dimension, reading each axis's vocabulary out of the catalog in
+first-appearance order. There is therefore no TypeScript from which a second
+nine-row graph could be built, and the thirty-nine rejected combinations are
+unreachable by any sequence of activations rather than refused after one.
+
+**Two refusals, kept apart because they call for different responses.** *Not
+qualified* means no admitted row names the combination, and no ProteoWizard
+changes that. *Unsupported by this installation* means the row exists and this
+build declares neither the option nor the filter grammar it emits, which a
+different build would. Each is a sentence beside the control, associated with it
+programmatically, and a refused value is refused to the pointer, to the keyboard
+and to a hand-made call alike.
+
+**One axis moves, and only that axis.** A choice is the current semantic with
+exactly one dimension replaced; if the catalog holds it the choice selects it,
+and otherwise the choice is refused. Nothing searches for another admitted row
+that happens to contain the requested value — which is what would silently change
+a precision the user had chosen while they were deciding about compression, and
+would hide the shape of the evidence inside the interaction. All nine rows stay
+reachable through explicit single-axis steps from the shipped posture, which is a
+proved property rather than an observation.
+
+**The plan is an answer to one exact request.** `ConversionQueuePlanDto` carries
+the reconstructed intent, the conflict policy it was read under and the
+installation generation it was read at, beside its ordered membership — so
+whether a loaded plan still answers what the user is asking is decided by
+comparing the answer with the question, rather than by a request token alone.
+Change the rows, the semantic, the policy or the installation and the plan is
+re-read; a slow reply for one semantic landing after the user has moved to
+another is neither rendered nor startable. An installation change also takes the
+catalog with it rather than leaving the old one beside the new build — otherwise
+the plan and the catalog would agree about an installation neither still
+describes — while the user's chosen semantic outlives the gap and is restored
+into the new catalog wherever it still holds it. Every visible fact about format,
+processing, population, precision and compression is read from that intent, and
+the destination is still described as chosen next, because at summary time there
+is none.
+
+**`BEGIN` binds the plan that was shown.** The webview sends the identity Rust
+issued and never five loose values; `begin_conversion_queue` resolves it through
+the admitted table before anything else happens, and the pre-picker gate asks the
+freshly resolved build for `require_conversion_intent` on that exact intent — so
+a semantic that was runnable when the summary was read is refused, before a
+picker opens and before a process launches, if the installation changed in
+between. `ConversionQueueDto` now carries the queue's bound intent, and the
+running and terminal surfaces read it, so moving a control afterwards changes
+what the *next* conversion would be and nothing about this one, through every
+retry.
+
+Three consequences of those rules were found by review and repaired. A preserved
+semantic whose every one-axis neighbour is refused is a dead end, so there is one
+**labelled** way out — offered only where no ordinary one-axis choice is
+selectable, decided through the very `axisChoices` call the fieldsets make rather
+than a second scan, and only ever selecting the semantic Rust names as shipped.
+A catalog is an answer about one executable, so a session that loses its
+ProteoWizard loses the catalog with it — the rendered state **and** any request
+still in flight, which are revoked together because either alone lets the other
+undo it. And resolving an executable is an observation that is complete when it
+succeeds: the pre-picker gate records the identity it saw before any refusal can
+return, and the ordinary slot read carries where the sequence stands, so a
+refusal reconciles through the path a conversion report already used instead of
+through a second protocol keyed on what failed.
+
+**And the M6.1 initial-unread-slot residual is closed here**, as its record said
+it should be: one lane fact rather than a new mechanism. `slotUnread` is the
+rendered half of `installedSequence`, and a conversion may not start against a
+slot this document has never read — because `idle` is where the operation starts,
+not something it has observed, and the slot may already hold a queue a replaced
+document began.
+
 ### M6.5 — Destination authority
 
 *Purpose:* a destination *policy* — source sibling, named subfolder, custom

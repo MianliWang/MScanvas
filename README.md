@@ -133,6 +133,18 @@ MSCanvas shows the ordered list it would run, which family each row is, and what
 each item would write; you choose Fail or Skip for names already taken, with no
 overwrite, and one folder on this computer through a Rust-owned picker.
 
+**What the conversion does is yours to choose, within what has been measured.**
+Four groups edit one semantic — peak processing, spectra included, numeric
+precision and array compression — over the nine combinations MSCanvas has
+qualified out of the forty-eight the axes span. mzML is stated rather than
+offered, because it is the one admitted output. Each control moves one
+dimension: a value the current combination cannot take is refused where you meet
+it, and says whether MSCanvas has not qualified that combination or the
+installed ProteoWizard does not offer the option — two different situations,
+because they call for different responses. Centroiding is marked lossy where it
+is chosen. The plan beneath the controls is ProteoWizard's answer for that exact
+request, and pressing Convert starts the plan you were shown or nothing.
+
 **One acquisition is one queue item, whatever it produces.** Thermo and Shimadzu
 rows each write one mzML whose name is known before anything runs. A SCIEX
 acquisition can hold many samples, and ProteoWizard writes one document per
