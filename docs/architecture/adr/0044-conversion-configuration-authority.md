@@ -1418,7 +1418,16 @@ proof takes it away deliberately, and cannot also be defended by it.)
 refuses first and names the fact: `ConversionLane` already refuses every conversion
 action while `previewReading` or `laneClaimed` holds, so the common cases never
 reach Rust and the reader is told which fact it
-was. **The proof takes the gate with `try_enter_backend` and refuses if it is held.**
+was. **The proof and the pre-picker courtesy share one gate acquisition.** They are two
+questions about one build asked at one moment, and taking the gate twice would run
+two full discoveries — up to a minute of probes — for a single `BEGIN`. One
+acquisition answers both: the proof, which refuses the request when it fails, and
+the family check, which is where a refusal lands better and is skipped when the
+acquisition does not succeed. Row 87's acceptance case is about that skip and is
+unaffected: what the courtesy loses under a held gate it loses because the proof
+refused first, and the reader is told so.
+
+**The proof takes that gate with `try_enter_backend` and refuses if it is held.**
 One rule, no cases, and nothing to decide about who the holder is. Two earlier drafts
 tried to be cleverer than that and both were wrong on the tree: one claimed
 `begin_queue` "already takes the gate by waiting" as a precedent, which it does not — it
@@ -1672,8 +1681,8 @@ React owns:
 the selected admitted intent id
 request-in-flight state needed to render an outstanding command
 per-obligation bookkeeping: whether a read or check is in flight, and whether
-  any delivery has landed since it was issued -- never whether one is *owed*,
-  which Rust's own configuration state answers
+  any delivery has landed since it was issued -- never a *judgement* about
+  whether one is owed, which Rust's configuration state makes
 the per-panel plan request ordinal, which is never reset
 the Rust-authored configuration snapshot it is rendering, catalog included
 the Rust-authored plan answer
@@ -1685,6 +1694,15 @@ ordinary presentation state
 React does **not** own reconstructed authorities for installation observation
 watermarks, an applied generation, an automatic reconciliation quota, a settled
 binding, a catalog-served binding, or catalog-generation ordering.
+
+**"Owed" is read, not derived — and the one case where React has nothing to read
+from is not an exception.** A binding whose snapshot React holds says for itself
+whether its catalog has been read: `Unattempted` says it has not, `Ready` and
+`Failed` say it has. A binding just observed by a drain or a refused `BEGIN` is
+different only in that React holds *no snapshot for it at all*, which is not a
+judgement about the configuration but an observation about React's own state — it
+has nothing for the binding on screen, so it asks. That is the same act as a mount,
+one binding later, and it decides nothing Rust has not been asked yet.
 
 **Holding Rust's answers is not owning them.** The configuration snapshot is on
 that list because Decisions 4b, 6, 7 and 8 all require React to render it and to
@@ -1927,7 +1945,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–114).
+plus the findings raised against this document's own drafts (rows 18–116).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2047,6 +2065,8 @@ and no finding may disappear because the old PR was superseded.
 | 112 | A plan judged by a projection its reply does not carry | A payload rule sourcing the receipt from a projection uniformly | A snapshot's receipt comes from its response's projection; a plan's from its own identity | Decision 4b + Decision 9 | `conversion_queue_plan`, which takes no gate and delivers no authority, still yields a plan that can be judged |
 | 113 | A masking window this boundary opens | `!backendUsable` outranking the lane facts, in a state this decision creates | No such state is created: the verdict arrives with the binding, so `backendUsable` is never false for want of one | Decision 1 | No window exists in which a lane fact is the real reason and a verdict is the one reported |
 | 114 | React forbidden to hold the answer it must render | An exhaustive retain-list omitting the configuration snapshot | The Rust-authored snapshot and its catalog are retained as the plan answer is: kept as they arrived, never recomputed | Decision 13 | Rendering a catalog and looking a row up in it needs no exception to the retain list |
+| 115 | Two discoveries for one `BEGIN` | The proof and the pre-picker courtesy each taking the gate | One acquisition answers both | Decision 10 | A single Convert click costs at most one discovery, not two |
+| 116 | The slice planned as a panel-only change | A delivery rule over every gate-taker, recorded only in the panel's decision | ADR 0043's M6.4 scope names the viewer contracts the rule reaches | ADR 0043 amendment | The preview and spectrum responses, `BackendStatus`, and the five contracts losing `installationGeneration` are all inside the slice as planned |
 
 ## What this interlude does not do
 

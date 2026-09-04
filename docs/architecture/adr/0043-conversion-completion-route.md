@@ -24,15 +24,14 @@ Related: [0002](0002-external-proteowizard.md),
 
 **Amended 2026-09-04 by M6.4A.** The route gains one authority interlude where
 M6.1 and M6.3 converge, immediately before M6.4, and with it three edges, M6.4's
-prerequisites and acceptance, and the chain wording. M6.1's edge now lands on the interlude rather
-than on M6.4, because the boundary is normative over the lane's field set and
-refusal precedence; M6.4 inherits it through M6.4A.
-Where M6.4 owns the conversion configuration's *ownership boundary*, that is now
-[ADR 0044](0044-conversion-configuration-authority.md)'s, and this document
-defers to it there. Everything else here is the route as it was locked on
-2026-09-01 and is **not** rewritten as though ADR 0044 had existed then: the
-first M6.4 attempt, its four stops and the reasoning that produced them are
-history this document keeps.
+prerequisites and acceptance, and the chain wording. M6.1's edge now lands on the
+interlude rather than on M6.4, because the boundary is normative over the lane's field
+set and refusal precedence, which it reads rather than rewrites; M6.4 inherits the edge
+through M6.4A. Where M6.4 owns the conversion configuration's *ownership boundary*, that
+is now [ADR 0044](0044-conversion-configuration-authority.md)'s, and this document
+defers to it there. Everything else here is the route as it was locked on 2026-09-01 and
+is **not** rewritten as though ADR 0044 had existed then: the first M6.4 attempt, its
+four stops and the reasoning that produced them are history this document keeps.
 
 ## What this ADR is, and what it is not
 
@@ -443,7 +442,7 @@ Read as edges, with the reason each exists:
 | --- | --- |
 | M6.0 -> M6.1 | M6.1 needs the audit that says which rules disagree and where |
 | M6.0 -> M6.2 | M6.2 needs the frozen evidence contract and the fixture/identity baseline |
-| M6.1 -> M6.4A | The boundary is normative over the lane's field set and its refusal precedence; it can only be written against a lane that exists |
+| M6.1 -> M6.4A | The boundary is written *against* the lane's field set and refusal precedence — it reads them, defers to them and forbids changing them — so it can only be written against a lane that exists |
 | M6.2 -> M6.3 | An intent may only name semantics the build was measured performing |
 | M6.3 -> M6.4A | Making the intent visible needs an owner for the installation it is valid against |
 | M6.4A -> M6.4 | A visible setting projects a typed intent through one Rust-owned authority; it creates neither |
@@ -849,8 +848,8 @@ the identity that binds them, before the visible settings are built a second
 time.
 
 *Prerequisites:* M6.1 (there is a conversion lane whose field set and refusal
-precedence the boundary is normative over) and M6.3 (there is a typed intent to be
-valid *about*).
+precedence the boundary reads, defers to, and forbids the replacement changing) and
+M6.3 (there is a typed intent to be valid *about*).
 
 *Establishes:* [ADR 0044](0044-conversion-configuration-authority.md) — a
 Rust-owned installation authority that is a typed state rather than a counter; a
@@ -894,6 +893,15 @@ through M6.4A, M6.1's one availability rule).
 *Establishes:* the visible controls for whatever M6.2 admitted; CNV-009's
 natural-language summary widened from item count and ordered list to **format
 and processing**; and the binding of the chosen intent into the queue at `BEGIN`.
+
+**The slice reaches past the conversion panel, and is sized for it.** ADR 0044's
+delivery rule is over every operation that takes the backend gate, which includes
+the preview and spectrum reads — so their responses carry the authority projection
+too, and `BackendStatus` reads it beside the availability DTO it already renders.
+`installationGeneration` leaves the five contracts that carry it in the same
+change. None of that is new *behaviour* for the viewer; it is the same facts on a
+typed carrier, and it is named here so the slice is not planned as a panel-only
+one.
 
 **CNV-009's output-root half is not M6.4's, and cannot be.** In the live flow the
 destination is chosen *after* the queue is created — the slot passes through
