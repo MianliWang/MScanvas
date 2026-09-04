@@ -547,11 +547,14 @@ already recorded below for the msaccess/msconvert conflation — not to M6.4.
 because `backendUsableRef` gates it and this decision sets `backendUsable` false
 there. Suppressing it is correct — a preview must not be auto-loaded against a
 verdict the session does not hold — but the guard fires once, so suppression alone
-would lose the load rather than defer it. **The authority settling is an occasion**,
-exactly as it is for the obligations above: when the check answers and the
-authority becomes `Settled` on an `Installed` binding, an automatic load that was
-suppressed while unsettled is issued. Same stimulus, same rule, one more thing
-waiting on it.
+would lose the load rather than defer it. **`backendUsable` becoming true is the occasion**, and it is worth stating as that
+rather than as "the authority settles": settling on a `Settled { Installed,
+unusable }` build — the msaccess-missing-a-preview-operation case Decision 1 and
+row 24 are about — would auto-load a preview against a build just judged
+preview-unusable, and a session quarantined while the check was in flight would do
+the same against row 66. The condition is the whole conjunction above, unchanged
+and unabbreviated. Same stimulus as the obligations, one more thing waiting on
+it.
 
 And the state owes an exit. **Entering `ObservedButUnsettled` obliges exactly one
 backend check**, issued in the same commit that installs the authority, and — when
@@ -586,12 +589,18 @@ admission refuses permanently  (quarantine)         -> discharged; there is
 the operation ran and answered                      -> discharged
 ```
 
-A check can also answer without discovering, and that discharges it too: an
-authority still `ObservedButUnsettled` afterwards is a true description of a
-session that will not get a verdict, not a state to keep retrying into. The reader
-is not misled by it: quarantine
-outranks every other reason in the lane's ordering, so what they are told is
-quarantine, not that a binding is settling. The two obligations are one mechanism asked twice, which is what keeps
+A check can also answer without discovering, and that is not a fourth arm: it
+follows the same rule as the three above, by whether what stopped it can stop. A
+quarantined session refuses ahead of discovery permanently, so the obligation
+discharges and an authority still `ObservedButUnsettled` afterwards is a true
+description of a session that will not get a verdict — and the reader is not misled
+by it, because quarantine outranks every other reason in the lane's ordering, so
+what they are told is quarantine rather than that a binding is settling. A request
+that simply failed before reaching a discovery has stopped nothing permanently, so
+its obligation stays owed and is re-issued on the next occasion. Discharging that
+one would strand the session `ObservedButUnsettled` for its whole life, with
+`backendUsable` false and `backend-unavailable` on screen — the exact sentence this
+paragraph promises the reader will not see. The two obligations are one mechanism asked twice, which is what keeps
 the scenarios below — a `BEGIN` refused after observing a replacement, an
 installation change that refuses, a replacement noticed mid-drain — from parking
 the panel with no verdict and nothing obliged to produce one.
@@ -804,11 +813,18 @@ excluded every obligation-produced delivery and starved it.
 the accepted projection's receipt differs from the rendered one
   -> configuration and plan for the rendered binding are non-current, immediately
   -> no conversion action stays enabled from them
-  -> read the Rust-owned ConversionConfigurationSnapshot for the new binding,
-     unless this very response already carries one for it
+  -> the new binding owes a configuration read; step three issues it, subject
+     to admission and to the duty-first ordering, and step two dispatches
+     nothing itself
+  -> unless this very response already carries a snapshot for the new binding,
+     in which case nothing is owed and nothing is issued
   -> render only the snapshot that carries it
 
-     (that exception is not an optimisation: without it, mount and every
+     (the separation matters: step two decides what is *invalid*, and an
+      imperative read here would spend the binding's automatic attempt into a
+      held gate and put the courtesy ahead of the duty in the very case --
+      a BEGIN refused mid-drain -- where both obligations arise at once.
+      And the exception is not an optimisation: without it, mount and every
       rebinding read cost two snapshots, and the second would contradict
       rows 20 and 56 by asking again for what the first already answered.
       A configuration read that observes a replacement *is* the read for
@@ -1481,6 +1497,14 @@ shared notice states the fact — *a conversion is running* — and each action'
 control says what it cannot do. Where a fact refuses only one action, the two
 readings coincide and nothing changes.
 
+**That is a second text, not a rewrite of the first.** `CONVERSION_MESSAGES` are
+action-phrased, and this document forbids the replacement rewriting the lane's
+refusal vocabulary — so `ConversionAvailability.message` is untouched and stays
+where it belongs, on the control it describes. The fact-phrased sentence is the
+panel's, minted by the registry for the notice element the actions point
+`aria-describedby` at, and it is new work rather than a relabelling. One fact, one
+element, one sentence in it; and each control keeps its own.
+
 The key matters because two vocabularies now reach this registry: `ConversionLane`
 refuses a conversion, `ConversionConfigurationProbeAdmission` refuses a probe, and
 they are disjoint word-sets over an overlapping set of facts. A conversion holding
@@ -1778,7 +1802,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–89).
+plus the findings raised against this document's own drafts (rows 18–93).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1873,6 +1897,10 @@ and no finding may disappear because the old PR was superseded.
 | 87 | A courtesy abolished with the duty it was mistaken for | One decision covering the exact-intent proof and the pre-picker family check | The proof owns a guarantee and may not be skipped; the pre-picker courtesy owns none and may | Decision 10 | The pre-picker family check is still skipped under a held lane rather than blocking on it, and no picker opens before the exact intent is proved |
 | 88 | One moment keyed two ways by an order written wrong | An admitting list whose middle two facts were transposed | The list is `ConversionLane`'s precedence exactly: `laneClaimed` before `previewReading` | Decision 11 | A conversion running during a preview read is keyed `conversion-running` by both authorities |
 | 89 | A quarantined unbound session with no configuration state | The binding-only exemption stated for Rust and not for the frontend | A rendered `NoInstallation` binding issues its configuration read regardless of admission | Frontend reconciliation + Decision 5 | The exemption holds on both sides of the boundary, not just Rust's |
+| 90 | A preview auto-loaded against a build just judged unusable | A re-issue condition abbreviated to "the authority settles" | The occasion is `backendUsable` becoming true, the whole conjunction | `ConversionLane` projection + preview load | Settling on an unusable build, or settling while quarantined, loads nothing |
+| 91 | A session stranded unsettled by a transient failure | "Answers without discovering" discharging unconditionally | It follows the permanent-or-transient rule like every other refusal | Authority obligations | A check whose request failed stays owed; a quarantined one discharges |
+| 92 | The automatic attempt spent into a held gate by the invalidation step | Step two dispatching a read imperatively | Step two decides what is invalid; step three issues, under admission and duty-first ordering | Frontend reconciliation | A `BEGIN` refused mid-drain issues the check first and the read on its answer, never a probe into the drain |
+| 93 | One fact with two sentences and no rule for which is rendered | A fact-phrased notice required over an action-phrased vocabulary | The notice sentence is the panel's, new; `ConversionAvailability.message` is untouched and stays on its control | Panel notice registry | The lane's vocabulary is not rewritten, and the shared element carries exactly one sentence |
 
 ## What this interlude does not do
 
