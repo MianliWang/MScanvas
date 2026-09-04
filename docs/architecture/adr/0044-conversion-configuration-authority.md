@@ -1170,29 +1170,30 @@ refuses it.** The rule governs a `msconvert --help` probe; a binding that names 
 build launches none, and its configuration follows from the binding alone. Two
 consequences, and the second is the one an earlier draft missed:
 
-```text
-probe admission does not apply    -- there is no probe to admit
-the quarantine pre-check does not apply
-                                 -- require_usable_backend guards operations
-                                    that launch a process; this launches none
-```
+**Probe admission does not apply, because there is no probe to admit.** A read for
+such a binding is not deferred by a held gate: it answers from the binding
+immediately, which is what keeps the panel from having no configuration state for
+the length of someone else's drain — a state Decision 13 forbids it to derive from
+the binding tag itself. The frontend applies the same exemption on its side, since
+it renders the binding and can tell: **when the rendered binding is
+`NoInstallation`, the configuration read is issued regardless of admission.**
 
-Without the second, a quarantined session bound to `NoInstallation` could never
-render `UnavailableForBinding` at all: the read would be refused ahead of
-discovery, its obligation discharged by quarantine's permanent-refusal rule, and
-the panel left with no configuration state for an answer that needed no process —
-which Decision 13 forbids it to derive from the binding tag. So the replacement's
-configuration read answers from the binding before it asks anything about
-processes, and only the arms that need a probe consult a gate at all.
+**A quarantine exemption is not needed, and a draft of this document added one.**
+The case it protected — a quarantined session bound to `NoInstallation` — cannot
+arise. Quarantine is set only when a running conversion's stop cannot be confirmed,
+which is a session that had resolved a build; and from that moment every discovery
+path short-circuits, so no later observation can move the binding to
+`NoInstallation`. An exemption for a state the tree cannot produce is the defect row
+107 rejects one level up, and it goes.
 
-**The frontend's side needs the same exemption, or the fix stops at the
-boundary.** Quarantine is admission's first fact, so a frontend applying admission
-uniformly would never issue the read at all — and Decision 4's permanent-refusal
-rule would then discharge the obligation, leaving a quarantined unbound session
-with no configuration state exactly as before. It can tell the difference, because
-it renders the binding: **when the rendered binding is `NoInstallation`, the
-configuration read is issued regardless of admission**, since the answer it will
-get is a fact about that binding and no probe is involved.
+**And this read runs no discovery of its own.** The binding is already
+`NoInstallation`; the configuration follows from it; there is nothing to find out.
+That is what makes the paragraph above safe rather than a licence to send a
+gate-taking discovery into a running drain, and it is also why
+`UnavailableForBinding` needs no exit inside the panel: the state is left when some
+*other* operation observes a build, which is the banner's owed check, an installation
+change, or a recheck the reader presses. A settings retry is not offered for it,
+because there is nothing to retry.
 
 **`UnavailableForBinding` is not entered because `backendUsable` went false**, and
 that rule belongs here rather than to the read above it — splitting the paragraph in an
@@ -1690,8 +1691,11 @@ notice that two actions point at cannot be phrased about one of them: keyed on
 element, and if that element kept Convert's wording the settings retry would be
 described as "converting is unavailable while a conversion is running". So a
 shared notice states the fact — *a conversion is running* — and each action's own
-control says what it cannot do. Where a fact refuses only one action, the two
-readings coincide and nothing changes.
+control says what it cannot do. **A notice element is fact-phrased whether one
+action points at it or three**, because a sentence that changed when a second action
+appeared would be exactly the wobble this decision removes: the same unchanged
+`laneClaimed` refusal would read one way with Convert alone on screen and another
+with the settings retry beside it.
 
 **That is a second text, not a rewrite of the first.** `CONVERSION_MESSAGES` are
 action-phrased, and this document forbids the replacement rewriting the lane's
@@ -2015,11 +2019,17 @@ first, identity second, is what makes the two questions separable.
 
 **Backend lost after BEGIN, before execution.** Binding A reserved → the
 provider's resolution observes the loss → the authority records it → execution
-refuses → **that refusal carries the new receipt**, and the next state read
-carries it too → A's catalog and plan cannot remain current. The delivery rule is
-not `BEGIN`-specific, and this is the path that shows why: the queue exists here,
-so a poll would eventually carry the news, but the operation that *found* it
-answers first and is not permitted to answer silently.
+refuses → **that refusal carries the new receipt** → A's catalog and plan cannot
+remain current. The delivery rule is not `BEGIN`-specific, and this is the path that
+shows why: the operation that *found* the loss answers first, and is not permitted to
+answer silently.
+
+The state poll behind the queue does **not** carry it. `conversion_state` takes no
+gate and runs no discovery, so it is outside Decision 4's delivery membership for
+exactly the reason `conversion_queue_plan` is — and it must stay outside, because a
+poll that counted as a delivery would make every tick an occasion under step three,
+re-issuing owed obligations at poll frequency. The bound would hold, and it would hold
+against a loop the bound was never meant to have to stop.
 
 **Plan blocked.** No configuration or no selected intent → no plan request → no
 "Reading the conversion plan…".
@@ -2030,7 +2040,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–122).
+plus the findings raised against this document's own drafts (rows 18–124).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2117,14 +2127,14 @@ and no finding may disappear because the old PR was superseded.
 | 79 | The one self-minted key outside the shared order | A precedence covering only the lane's own fields | Probe-in-flight sorts after every lane field that can refuse a probe | Panel notice registry | A probe in flight beside such a fact yields to it; beside a fact that refuses no probe — adoption, diagnostics export, workspace settling — there is no tie to resolve |
 | 80 | The binding oscillating between two observers | The preview verdict folded into the identity by one of them | Every observer mints the binding from `AvailabilityState::Available`; the verdict travels beside it | Decision 1 + Decision 3 | An `Available` build whose msaccess lacks a required preview operation is one binding to every observer, and its catalog survives a backend check |
 | 81 | An obligation waiting on a delivery nothing will produce | A stimulus that assumed every deferring fact belongs to a gate holder | A lane fact going false is an occasion, observed by the frontend without being told | Frontend reconciliation | A destination picker cancelled after a `BEGIN` observed a replacement issues the owed check, and the read follows on its answer |
-| 82 | No configuration state for an answer needing no process | A binding-only answer routed through the guards that protect a process | A read for a binding that names no build answers from the binding before consulting probe admission or the quarantine pre-check | Decision 5 + Decision 11 | A quarantined session bound to no installation still renders `UnavailableForBinding` |
+| 82 | No configuration state for an answer needing no process | A binding-only answer deferred by a gate it does not take | A read for a binding that names no build runs no discovery and consults no admission; it answers from the binding | Decision 5 + Decision 11 | A session bound to no installation renders `UnavailableForBinding` while a drain holds the gate |
 | 83 | A retained question mistaken for a retained belief | A retain-list bounding receipts by the render alone | A plan identity's receipt is a component of a question, bounded by the plan, not by the render | Decision 9 + Decision 13 | A failed plan can be retried for the same question without React holding a third authority |
 | 84 | Two obligations issued into each other's gate | "Issues both" read as simultaneously | Where both are owed the duty goes first and the courtesy is deferred onto its answer | Frontend reconciliation | An occasion finding a mount-time check and a read both owed strands neither, and issues one process at a time |
 | 85 | An admission rule the frontend cannot evaluate | A rule stated over `ConversionLane` for a fact with no lane field | Admission reads the lane's ownership fields plus the frontend's own probe-in-flight bookkeeping | Decision 4 + Decision 13 | No backend work is issued while a configuration probe is in flight |
 | 86 | Work suppressed by a missing verdict, and never re-issued | One-shot guards behind a verdict that arrives later than the binding | A binding never arrives without its verdict, so nothing `backendUsable` gates is suppressed for want of one | Decision 1 + `backendUsable`'s readers | A document opened as a replacement is observed previews on that observation, and a scan clicked then is not silently lost |
 | 87 | A courtesy abolished with the duty it was mistaken for | One decision covering the exact-intent proof and the pre-picker family check | The proof owns a guarantee and may not be skipped; the pre-picker courtesy owns none and may | Decision 10 | The pre-picker family check is still skipped under a held lane rather than blocking on it, and no picker opens before the exact intent is proved |
 | 88 | One moment keyed two ways by an order written wrong | An admitting list whose middle two facts were transposed | The list is `ConversionLane`'s precedence exactly: `laneClaimed` before `previewReading` | Decision 11 | A conversion running during a preview read is keyed `conversion-running` by both authorities |
-| 89 | A quarantined unbound session with no configuration state | The binding-only exemption stated for admission and not for discharge | A `NoInstallation` binding's read is exempt from both: quarantine discharges only obligations that need the backend | Frontend reconciliation + Decision 5 | A session quarantined before it loses its build still renders `UnavailableForBinding` |
+| 89 | An exemption written for a state the tree cannot produce | A quarantined `NoInstallation` session, protected by a rule of its own | Quarantine follows a resolved build and short-circuits every later discovery, so the pairing cannot arise and needs no exemption | Frontend reconciliation + Decision 5 | The binding-only read has one exemption, from admission, and no second one that protects nothing |
 | 90 | A preview auto-loaded against a build just judged unusable | A re-issue condition abbreviated to "the authority moved" | `backendUsable` is the whole conjunction, quarantine included, wherever it is consulted | `ConversionLane` projection + preview load | An observation settling on an unusable build, or arriving in a quarantined session, loads nothing |
 | 91 | A session stranded `Unresolved` by a transient failure | "Answers without discovering" discharging unconditionally | It follows the permanent-or-transient rule like every other refusal | Authority obligations | An operation whose request failed leaves the mount-time obligation owed; a quarantined one discharges it |
 | 92 | The courtesy put ahead of the duty by the invalidation step | Step two dispatching a read imperatively | Step two decides what is invalid; step three issues, under admission and duty-first ordering | Frontend reconciliation | A `BEGIN` refused mid-drain issues the check first and the read on its answer, never a probe into the drain |
@@ -2158,6 +2168,8 @@ and no finding may disappear because the old PR was superseded.
 | 120 | A binding-only read deferred behind a discovery it does not need | Duty-first ordering applied to a read that takes no gate | The ordering is about the gate, so a `NoInstallation` read is issued immediately | Frontend reconciliation | A session bound to no installation renders `UnavailableForBinding` without waiting for a check |
 | 121 | A contention refusal shown to a reader who asked for nothing | An outcome rule written as though every request were a press | An outcome is shown to whoever made the request; an automatic read's refusal moves the obligation | Frontend, ordering then identity | A settings read refused by a held gate puts no error on screen; an explicit retry's refusal does |
 | 122 | A plan stamped for a binding it was not computed under | A receipt expected from a call that observes nothing | The binding is part of the question the frontend asks, echoed back, never taken from ambient authority | Decision 9 | `conversion_queue_plan` runs no discovery and stamps no receipt of its own; a binding that changed under the request makes the reply stale |
+| 123 | Owed obligations re-issued at poll frequency | A state poll counted as a delivery | `conversion_state` takes no gate and delivers no authority, exactly as `conversion_queue_plan` does not | Decision 4 + Decision 4b | A running queue's polling produces no occasions, and re-issues nothing |
+| 124 | A notice sentence that changes when a second action appears | Fact-phrasing required only where a fact is shared | A notice element is fact-phrased whether one action points at it or three | Panel notice registry | The same `laneClaimed` refusal reads identically with Convert alone and with the settings retry beside it |
 
 ## What this interlude does not do
 
