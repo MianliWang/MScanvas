@@ -169,9 +169,21 @@ The current design has one global "is the backend usable" fact, and it answers
 two different questions:
 
 ```text
-preview availability      -> msaccess, required preview operations
-conversion configuration  -> msconvert, ConversionIntent capability grammar
+preview availability      -> both tools resolve to one installation, and
+                             msaccess declares every required preview operation
+conversion configuration  -> msconvert's ConversionIntent capability grammar
 ```
+
+Stated precisely, because the looser version — "preview is msaccess, conversion
+is msconvert" — is not what the code does. `AvailabilityState::Available`
+requires `msconvert.exists && msaccess.exists && same_installation`, and the
+provider then narrows it further by asking *msaccess's* grammar for the required
+preview operations. So the two judgements share a discovery, share an
+installation, and share the requirement that both executables be present; what
+they do not share is **which grammar is interrogated**. That is the whole of the
+split, and it is enough: a build whose msconvert is present but cannot express a
+chosen intent, or whose help cannot be read at all, is truthfully preview-usable
+with a configuration that is `Failed` or a selected row that is unavailable.
 
 They share an installation. They are not the same judgement, and collapsing them
 is what let a *check* invalidate a *catalog*, and what makes "the backend is
@@ -288,15 +300,8 @@ BackendAuthorityProjection {
     revision: BackendAuthorityRevision
     state:
         Unresolved
-      | ObservedButUnsettled {
-            binding: Installed | NoInstallation
-            receipt: BackendBindingReceipt
-        }
-      | Settled {
-            binding: Installed | NoInstallation
-            receipt: BackendBindingReceipt
-            previewAvailability
-        }
+      | ObservedButUnsettled { binding: Binding }
+      | Settled             { binding: Binding, previewAvailability }
 }
 
 AuthorityObserved<T> {
@@ -304,6 +309,11 @@ AuthorityObserved<T> {
     outcome: T
 }
 ```
+
+`Binding` is Decision 1's, unchanged and not restated: `Installed { receipt }` or
+`NoInstallation { receipt }`. The receipt lives inside it, in exactly one place,
+so there is one shape for the union Rust owns and one place a comparison reads
+from.
 
 **The projection carries the authority state, not a flattened stand-in for it.**
 Collapsing `ObservedButUnsettled` and `Settled` into one member — and dropping
@@ -372,12 +382,20 @@ So Rust authors the order, and the frontend applies it in two steps.
 **Step one — ordering, by revision only.**
 
 ```text
+nothing is rendered yet                 -> accept; this is the first publication
 incoming.revision <  rendered.revision  -> stale; discard the projection entirely
-incoming.revision == rendered.revision  -> the same authoritative publication
+incoming.revision == rendered.revision  -> the same publication already accepted;
+                                           keep what is rendered, re-read nothing
 incoming.revision >  rendered.revision  -> accept this Rust-authored projection
 ```
 
-**Step two — identity, by receipt only, and only on a projection just accepted.**
+The first line is the bootstrap, and it is not a special case so much as the
+absence of one: with nothing rendered there is no revision to be older than, so
+the first projection a session receives is accepted and step two runs against an
+empty rendered binding — which is how the first binding is installed at all.
+
+**Step two — identity, by receipt only, and only on a projection just accepted**
+(the first line above included; an equal revision changes nothing and skips it).
 
 ```text
 the accepted projection's receipt differs from the rendered one
@@ -553,7 +571,6 @@ ConversionConfigurationSnapshot {
     configuration:
         NoBinding
       | ForBinding {
-            receipt
             state: UnavailableForBinding
                  | Unattempted
                  | Ready  { catalog: admitted rows, shipped intent identity }
@@ -561,6 +578,12 @@ ConversionConfigurationSnapshot {
         }
 }
 ```
+
+**The receipt appears once, in the authority.** `ForBinding` describes the
+binding the authority in the same snapshot names, and carries no second copy of
+its identity: two copies with no stated equality would make a self-contradictory
+snapshot representable — one binding's authority beside another's catalog — and
+the frontend, comparing the projection's receipt, would install the wrong one.
 
 `NoBinding` is the member the authority makes necessary. `Unresolved` is a state
 this session really reaches — the first discovery that establishes nothing leaves
@@ -890,6 +913,25 @@ rather than left to a reader:
 | Is there a real plan request, answer or failure? | The plan state machine |
 | May a conversion action start? | `ConversionLane`, unchanged from M6.1 |
 
+`ConversionLane` is unchanged, and that is a decision with a residual worth
+stating rather than a claim that the split is finished. `backendUsable` is a real
+precondition for starting a conversion — no resolved pair, no process to launch —
+so it stays the lane's third refusal. What Decision 3 removes is its use as the
+authority for the *catalog* and the *plan*: those are keyed on the binding, and a
+`Ready` catalog with a truthful plan may be rendered beside a Convert control the
+lane refuses.
+
+The residual is the narrow case where those two disagree for a reason the reader
+cannot see: both executables resolve to one installation, msconvert's grammar
+admits the selected row, and the preview verdict is nonetheless unusable because
+*msaccess* lacks a required preview operation. The lane then refuses as
+`backend-unavailable` — a sentence about preview, offered as the reason a
+conversion cannot run. **This ADR does not fix that, and does not license the
+replacement to fix it**: the lane's refusal vocabulary is M6.1's, and rewriting it
+is scope M6.4 does not own. It is recorded here so that the next milestone to
+open that lane finds the case already diagnosed, and so that no reader mistakes
+"unchanged from M6.1" for "already correct".
+
 Read the other way, no field appears twice. The receipt does identity and never
 ordering; the revision does ordering and never meaning; the lifecycle says what
 the configuration *is* and never whether a probe may run; the probe rule says
@@ -1025,7 +1067,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–30).
+plus the findings raised against this document's own drafts (rows 18–38).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1060,12 +1102,15 @@ and no finding may disappear because the old PR was superseded.
 | 27 | A delayed reply rolls the authority backwards | Equality asked to do ordering's work | Ordering is `BackendAuthorityRevision` and identity is the receipt; neither answers the other's question | Rust-authored revision | A late projection at a lower revision is discarded whole; the rendered binding survives and no snapshot is read for the stale one |
 | 28 | A revision read as meaning | One token carrying an ordering and a semantics | The revision's only frontend meaning is staleness; observed, settled, attempted and ready arrive as typed state | Frontend contract | Nothing in React derives an authority state from a revision comparison |
 | 29 | The plan reaches no successful state | A machine with no transition into `ready` | Every state has an entry, and a matching answer reaches `ready { plan }` | Plan state machine | A plan request that answers for its own identity renders the plan; one that fails renders the failure |
+| 30 | The route record contradicts itself | An amended ADR left reading as though it were not | ADR 0043 records the M6.4A amendment, links ADR 0044, and keeps its original decisions and date | ADR 0043 metadata | Its status, amendment note and `Related` name ADR 0044, and its chain wording matches ROADMAP |
 | 31 | `Unresolved` has no representable snapshot | A snapshot demanding a binding for a state that has none | The snapshot says `NoBinding` where there is no binding | `ConversionConfigurationSnapshot` | A session whose first discovery establishes nothing renders no configuration, invents no receipt, and is not called `UnavailableForBinding` |
 | 32 | Contention spends the one automatic attempt | "A read that does not answer" catching a read that never ran | `Failed` requires a probe that ran; a probe that could not start leaves `Unattempted` | Rust configuration lifecycle | A configuration read refused by probe admission leaves the state unchanged and the first read still owed |
 | 33 | The two operations that replace a binding owe nothing | A delivery rule scoped to conversion-bound work | Every operation that can observe **or replace** authority returns it | Authority delivery | Choosing a different ProteoWizard folder invalidates the previous configuration and plan with nothing else required |
 | 34 | A stale reply's payload installed under a newer binding | Ordering applied to the projection but not to what it carries | A binding-bound payload obeys the same ordering as the projection that carries it | Frontend, ordering then identity | A late snapshot or plan for A cannot be installed while B is rendered |
 | 35 | A transient plan failure is permanent | A `failed` state with no exit but a new question | An explicit request may re-ask the same plan question | Plan state machine | A failed plan can be retried without changing handles, intent, policy or binding |
-| 30 | The route record contradicts itself | An amended ADR left reading as though it were not | ADR 0043 records the M6.4A amendment, links ADR 0044, and keeps its original decisions and date | ADR 0043 metadata | Its status, amendment note and `Related` name ADR 0044, and its chain wording matches ROADMAP |
+| 36 | A snapshot that contradicts itself | The receipt carried twice with no stated equality | The receipt appears once, in the authority; the configuration describes the binding beside it | `ConversionConfigurationSnapshot` | No snapshot can pair one binding's authority with another's catalog |
+| 37 | The first binding is never installed | An ordering rule defined only for a strictly newer revision | Nothing rendered accepts the first projection; an equal revision changes nothing and re-reads nothing | Frontend, ordering then identity | A session's first projection installs its binding, and a repeated projection spends no probe |
+| 38 | Receipt comparison silently disabled | Two shapes for the one union Rust owns | `Binding` carries its receipt, in one place, wherever the union appears | Decision 1's union | Every comparison in the replacement reads the receipt from the same field |
 
 ## What this interlude does not do
 
