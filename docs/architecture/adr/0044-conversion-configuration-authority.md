@@ -579,13 +579,32 @@ in the same commit that installs the authority and is therefore genuinely in
 flight: `backendChanging` is *literally* true, and it outranks `!backendUsable`
 already.
 
-**The residual, recorded rather than hidden:** when the check cannot be dispatched
-because a drain or a preview read holds the gate, `unavailableReason` ranks
-`!backendUsable` above `laneClaimed` and `previewReading`, so the reader is told
-`backend-unavailable` rather than the lane fact underneath. That is a claim about
-the build in a session that holds no verdict about it. It is a wording defect,
-deadlocks nothing, and correcting the ordering belongs to the same M6.1 scope
-already recorded below for the msaccess/msconvert conflation — not to M6.4.
+**The residual, recorded rather than hidden, and owned here rather than deferred:**
+when the check cannot be dispatched because a drain or a preview read holds the
+gate, `unavailableReason` ranks `!backendUsable` above `laneClaimed` and
+`previewReading`, so the reader is told `backend-unavailable` rather than the lane
+fact underneath. That is a claim about the build in a session that holds no verdict
+about it.
+
+This one is **not** the pre-existing M6.1 defect recorded below, and an earlier
+draft filed it there, wrongly. The msaccess/msconvert conflation is on the tree
+today; this masking is created by this decision, which is what sets `backendUsable`
+false in a state where a lane fact is the real reason. Two halves, two owners:
+
+```text
+that the window exists at all           -> M6.4's, and bounded by M6.4
+  the obliged check is dispatched in the commit that enters the state, so
+  the window lasts one check -- and where the gate is held, it is the gate
+  holder's own answer that ends it, by the step-three occasion
+
+that the lane words it wrongly          -> M6.1's, unchanged
+  the ordering that ranks a verdict above the facts that own a process is
+  M6.1's refusal vocabulary, and rewriting it is scope M6.4 does not have
+```
+
+Ledger row 113 holds M6.4 to the half it owns: the window is entered only with a
+check already dispatched or owed, and never persists past the occasion that would
+end it.
 
 **What the unsettled window costs is everything `backendUsable` gates**, and that
 is more than the conversion panel. `backendUsableRef` has six readers in
@@ -854,14 +873,15 @@ frontend's own probe-in-flight
 bookkeeping, which Decision 13 grants it and which has no lane field of its own; a
 rule stated only over `ConversionLane` would not have been evaluable.
 
-An in-flight probe is such a thing: it holds the gate, so it defers the check like
-any other holder. That is not the collapse row 59 is about, and it costs nothing —
-a probe is one `msconvert --help`, it terminates, and its answer is a delivery that
-re-issues what it deferred. `inspect_backend` would have queued behind it in any
-case, since it takes the gate by waiting. What the two rules must not share is the
-courtesy's *refusal semantics*: a probe refuses and stays owed, a check waits and
-runs, and putting the duty under the courtesy's rule would make the operation that
-ends an unsettled state something the frontend declines to issue.
+An in-flight probe is such a thing: it holds the gate, so it defers the check like any
+other holder. That is not the collapse row 59 is about, and what it costs is bounded
+rather than nothing — a probe is a discovery over both tools, so up to two 15-second
+`PROBE_TIMEOUT`s, after which it terminates and its answer is a delivery that re-issues
+what it deferred. `inspect_backend` would have queued behind it in any case, since it
+takes the gate by waiting. What the two rules must not share is the courtesy's *refusal
+semantics*: a probe refuses and stays owed, a check waits and runs, and putting the duty
+under the courtesy's rule would make the operation that ends an unsettled state
+something the frontend declines to issue.
 
 **"Owns the backend process" is Decision 11's criterion, and it is not "the lane
 refuses".** The distinction is the one that decision already draws between facts
@@ -1366,8 +1386,11 @@ a reply arrives for the loading identity **and** its ordinal, and it failed
 a reply arrives for any other identity or any earlier ordinal
   -> discarded; the state does not move
 
-a reply arrives while the state is none, blocked or ready
+a reply arrives while the state is none, blocked, ready or failed
   -> discarded; nothing is loading, so nothing is awaiting an answer
+  -> `failed` is named explicitly because it is the one non-loading state
+     that still holds a matchable identity and ordinal, so a rule keyed on
+     matching would install into it
   -> stated because `blocked` has no loading identity to fail to match,
      and a rule written only as "any other identity" leaves a plan built
      under the previous binding installable
@@ -1476,10 +1499,10 @@ that click for the length of a preview scan with nothing on screen to explain wh
 (The admittability the paragraph above discusses is not an argument here: this
 proof takes it away deliberately, and cannot also be defended by it.)
 
-**Refuses on a lane fact; waits behind a configuration probe.** Those are the two
-kinds of gate holder, and only one of them can be named to a reader. `ConversionLane`
-already refuses every conversion action while `previewReading` or `laneClaimed` holds,
-so refusing there costs nothing that was available and the reader is told which fact it
+**Refused twice, by two authorities, for two different reasons.** The frontend
+refuses first and names the fact: `ConversionLane` already refuses every conversion
+action while `previewReading` or `laneClaimed` holds, so the common cases never
+reach Rust and the reader is told which fact it
 was. **The proof takes the gate with `try_enter_backend` and refuses if it is held.**
 One rule, no cases, and nothing to decide about who the holder is. Two earlier drafts
 tried to be cleverer than that and both were wrong on the tree: one claimed
@@ -1498,20 +1521,21 @@ refusal is Rust's own, carries Rust's own reason, and is retriable at once, agai
 a probe that lasts at most two 15-second `PROBE_TIMEOUT`s.
 
 **The probe is deliberately not made a lane fact, and that is a trade rather than
-an oversight.** React does hold it (Decision 13) and admission does read it
-(Decision 11), so Convert *could* be disabled for its duration — and it is not,
-because the probe is the one gate holder with nothing to tell a reader. Disabling
-Convert for up to thirty seconds under a sentence about a settings read the reader
-did not ask for buys a refusal in advance of a refusal, and Decision 12's
-"shared by nothing" stops being true the moment a conversion action shares it. The
-cost is the mirror image: a Convert pressed in that window renders enabled and is
-refused by Rust. It is rare, it is immediately retriable, and it says something
-true. A refusal a reader can
-act on beats a click that hangs for thirty seconds and beats a rule the gate cannot
-evaluate. What the rule forbids is proceeding without the proof, and that has not
-changed. The proof's answer only arises at all in the narrow window where the frontend's
-projection was stale — and there the truthful thing is to say which fact refused, in the
-lane's own words, rather than to hang. What may not happen is the third option:
+an oversight.** React does hold it (Decision 13) and admission does read it (Decision
+11), so Convert *could* be disabled for its duration — and it is not, because the probe
+is the one gate holder with nothing to tell a reader. Disabling Convert for up to thirty
+seconds under a sentence about a settings read the reader did not ask for buys a refusal
+in advance of a refusal, and Decision 12's "shared by nothing" stops being true the
+moment a conversion action shares it. The cost is the mirror image: a Convert pressed in
+that window renders enabled and is refused by Rust. It is rare, it is immediately
+retriable, and it says something true. A refusal a reader can act on beats a click that
+hangs for thirty seconds and beats a rule the gate cannot evaluate. What the rule
+forbids is proceeding without the proof, and that has not changed. The proof's answer
+only arises at all in the narrow window where the frontend's projection was stale, or
+where a probe holds the gate — and there the refusal is Rust's own and says what Rust
+knows, which is that the backend is busy. It cannot say more: `backend_gate` is a
+`Mutex<()>`, no holder is consulted (row 106), and naming a lane fact is the frontend's
+job, done before the request was ever sent. What may not happen is the third option:
 proceeding without the proof. Execution-time revalidation remains, because the
 executable can change again after admission; it is a **second temporal proof**, not a
 substitute for the first.
@@ -1738,6 +1762,7 @@ per-obligation bookkeeping: whether a read or check is in flight, and whether
 which automatic preview load, if any, was suppressed by an unsettled authority
   and is waiting on `backendUsable`
 the per-panel plan request ordinal, which is never reset
+the Rust-authored configuration snapshot it is rendering, catalog included
 the Rust-authored plan answer
 the authority revision of the projection it is currently rendering
 the binding receipt carried by that projection, where one exists
@@ -1747,6 +1772,13 @@ ordinary presentation state
 React does **not** own reconstructed authorities for installation observation
 watermarks, an applied generation, an automatic reconciliation quota, a settled
 binding, a catalog-served binding, or catalog-generation ordering.
+
+**Holding Rust's answers is not owning them.** The configuration snapshot is on
+that list because Decisions 4b, 6, 7 and 8 all require React to render it and to
+look rows up in it, and a list that omitted it would forbid the thing the rest of
+the document assumes. It is retained exactly as the plan answer is: a Rust-authored
+value, kept as it arrived, replaced when a newer one arrives, and never recomputed
+— React reads the catalog, and does not decide what is in it.
 
 **The obligation bookkeeping is not a reconstructed authority either**, and the
 ban above is narrower than it may read. What Decision 13 refuses is React deciding
@@ -1982,7 +2014,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–112).
+plus the findings raised against this document's own drafts (rows 18–114).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2091,7 +2123,7 @@ and no finding may disappear because the old PR was superseded.
 | 101 | A click hung behind whatever holds the gate | A proof that waits on a lock nothing bounds | The proof takes the gate with `try_enter_backend` and refuses if it is held, with Rust's own reason | Decision 10 | No `BEGIN` blocks; a reader refused during a probe can press again at once |
 | 102 | The banner naming a build the session has left | One surface left reading the verdict without the authority beside it | `BackendStatus` reads both: the DTO for the reason, origin and quarantine sentence, the projection for whether the verdict is current | Decision 4 | No window exists in which the banner reports a verdict about the previous build, and none in which it loses the reason text it has today |
 | 103 | A plan installed because it belongs to the binding | A receipt test read as sufficient for a payload with an owner | Receipt admits a payload to the binding; the plan machine's identity-and-ordinal test then decides it | Decision 4b + Decision 9 | A superseded plan reply for the current binding is still discarded |
-| 104 | A plan installed into a state awaiting nothing | A discard rule written only as "any other identity", over states that have none | A reply arriving while `none`, `blocked` or `ready` is discarded | Plan state machine | A reply outstanding across `loading -> blocked` installs nothing |
+| 104 | A plan installed into a state awaiting nothing | A discard rule written only as "any other identity", over states that have none or that still match | A reply arriving while `none`, `blocked`, `ready` or `failed` is discarded | Plan state machine | A reply outstanding across `loading -> blocked` installs nothing, and neither does one arriving after the same request already failed |
 | 105 | A build that cannot convert reported `Ready` by the lifecycle | A discriminator asking only whether a probe answered | A probe that answered and found `require_conversion` refusing is `Failed` | Rust configuration lifecycle | Decision 3's cannot-convert case and the lifecycle that implements it agree |
 | 106 | A rule about the gate's holder that Rust cannot evaluate, and could not trust | `backend_gate` as a bare `Mutex<()>` under a rule keyed on who holds it, read before blocking on it | No holder is consulted: the gate is taken or the proof refuses | Decision 10 + Rust gate | The proof needs no tag, and no window exists between reading a holder and waiting on one |
 | 107 | An unsettled `NoInstallation` made constructible | A union member typed wider than the state it names | `ObservedButUnsettled` carries `Installed`, not `Binding` | Decision 4's union | The shape row 95 forbids cannot be built |
@@ -2100,6 +2132,8 @@ and no finding may disappear because the old PR was superseded.
 | 110 | A banner naming the left build while marking its verdict superseded | Currency applied to the verdict and not to the identity beside it | The projection governs the whole reading: release, build date and origin included | Decision 4 | Through an unsettled window the banner names no build as current, and keeps every reason it has today |
 | 111 | The counter kept beside the receipt that replaced it | A boundary that adds an identity without retiring the one it supersedes | `installationGeneration` leaves all five contracts, and no installation comparison survives that is not receipt equality | Decision 1 + wire contracts | No `Math.max` over installation numbers remains anywhere in the frontend |
 | 112 | A plan judged by a projection its reply does not carry | A payload rule sourcing the receipt from a projection uniformly | A snapshot's receipt comes from its response's projection; a plan's from its own identity | Decision 4b + Decision 9 | `conversion_queue_plan`, which takes no gate and delivers no authority, still yields a plan that can be judged |
+| 113 | A masking window this boundary opens, deferred to a milestone that did not open it | `!backendUsable` outranking the lane facts, in a state this decision creates | The window is entered only with the obliged check dispatched or owed, and never outlives the occasion that would end it | Authority obligations | No unsettled window persists past the delivery or lane transition that could settle it |
+| 114 | React forbidden to hold the answer it must render | An exhaustive retain-list omitting the configuration snapshot | The Rust-authored snapshot and its catalog are retained as the plan answer is: kept as they arrived, never recomputed | Decision 13 | Rendering a catalog and looking a row up in it needs no exception to the retain list |
 
 ## What this interlude does not do
 
