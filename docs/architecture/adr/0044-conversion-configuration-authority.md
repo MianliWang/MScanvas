@@ -30,7 +30,7 @@ answers the questions those measurements turned out to be about.
 No production code changes with this ADR. The boundary is proved by audit and
 contract; the replacement implementation proves it by construction.
 
-## The nine questions, answered
+## The eleven questions, answered
 
 The replacement implementation must not have to invent any of these while
 coding.
@@ -41,8 +41,10 @@ coding.
 | Who is obliged to deliver it? | Every conversion-bound operation that can observe it, on its answer, whether that answer succeeds or refuses. |
 | Who owns conversion-capability/catalog truth? | Rust, as a lifecycle keyed by the installation binding. |
 | What identity binds those facts together? | One opaque, session-scoped, path-free `BackendBindingReceipt`. |
+| Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
+| May an `msconvert --help` probe launch now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate. |
 | Who owns catalog request lifecycle and retry? | Rust owns the lifecycle state; the frontend initiates a read or a retry and owns neither. |
-| What does React retain? | The selected intent id, request-in-flight for rendering, Rust's plan answer, and presentation. Nothing else. |
+| What does React retain? | The selected intent id, request-in-flight for rendering, Rust's plan answer, the revision and receipt of what it is rendering, and presentation. Nothing else. |
 | At what granularity does availability exist? | The admitted **row** — one composition. There is no per-value availability authority. |
 | What makes a pre-run plan current? | Ordered handles, intent id, conflict policy, binding receipt, document epoch — compared against Rust's own answer. |
 | What must be established before BEGIN reserves anything? | The current binding has proved the exact selected intent executable. Mandatory, never a courtesy. |
@@ -53,7 +55,7 @@ Sixteen live findings stand on PR #95 — five of them at outdated diff position
 all read — plus four committed STOP records. Read as
 a list they look like sixteen defects in six files. Collapsed by *what made each
 one possible*, they are seventeen semantic families and almost all of them are
-one of three shapes:
+one of four shapes:
 
 **A fact and the thing that carries it come apart.** A request outlives the state
 it produced; an observation is lost because the operation carrying it failed; a
@@ -110,10 +112,17 @@ approximated by an inequality between two frontend watermarks.
 **`NoInstallation` is a binding, not the absence of one**, and that is what lets
 Decision 4's three-way distinction be written at all: *this build*, *no build*,
 and *nothing was established* are three different observations, and only the
-third leaves the authority alone. It is also what the current design already
-does — `note_resolved(None)` advances the counter, because nothing resolving is
-a different answer from something resolving — expressed as a member rather than
-as a `None` two layers down.
+third leaves the authority alone.
+
+The current implementation already treats absence as an answer rather than as a
+gap, though its mechanics are narrower than that: after a prior observation,
+changing from an installed identity to `None` is a different resolution and
+advances the counter; the *first* observation records that a look happened
+without necessarily incrementing anything. That is evidence about what exists
+today — it is **not** the normative semantics of `BackendAuthorityRevision`
+below, which advances whenever the projected state changes, including from
+`Unresolved`. The replacement does not inherit today's first-observation quirk;
+it inherits the idea that absence is something one can observe.
 
 **The frontend may project this state. It may not synthesize it.** A conversion
 operation that resolves the installed executable is an observation, and it
@@ -257,19 +266,53 @@ contract level: the number existed and the refusal path did not carry it.
 So the rule is stated in full:
 
 > **Every conversion-bound operation that can observe installation authority
-> returns the authoritative `BackendBindingReceipt` it observed or left current
-> — whether its domain outcome succeeds or refuses.**
+> returns the authority as it stands when the operation answers — whether its
+> domain outcome succeeds or refuses.**
+
+What it returns is a *projection of the authority*, not a receipt, and the
+difference matters at exactly one point: `Unresolved` has no binding and
+therefore no receipt, and a contract demanding one would force the very first
+discovery failure either to invent an observation or to omit a required field.
 
 ```text
+BackendAuthorityProjection {
+    revision: BackendAuthorityRevision
+    state:
+        Unresolved
+      | Binding {
+            binding: Installed | NoInstallation
+            receipt: BackendBindingReceipt
+        }
+}
+
 AuthorityObserved<T> {
-    bindingReceipt,
+    authority: BackendAuthorityProjection
     outcome: T
 }
 ```
 
-The production type and its name are the replacement implementation's; the
-obligation is not. **A refusal may not erase a newly observed binding**, and an
-error is not an excuse to answer a question the operation has already answered.
+Production names remain the replacement implementation's; the obligation does
+not. The rules the projection must obey:
+
+```text
+initial discovery establishes nothing
+  -> authority.state = Unresolved
+  -> no receipt is invented
+
+an existing binding A, and a later operation establishes nothing new
+  -> the authority is still A
+  -> the response projects the current A
+
+an operation observes B
+  -> Rust records B first
+  -> the response projects the current B
+```
+
+**A domain failure never forces an observation into existence, and never erases
+one.** Those are the two halves of the same rule, and each was a finding: the
+second on PR #95's `?` discarding an identity discovery had already found, the
+first on this document's own first draft demanding a receipt where the model
+says there is none.
 
 This is not `BEGIN`-specific. It applies to every conversion-bound operation that
 may observe a replacement or a loss — the configuration read, the preflight,
@@ -283,32 +326,84 @@ caller and silently misses the next error kind. It was proposed twice during
 PR #95 and declined both times; recording it here means it does not have to be
 declined a third.
 
-## Decision 4b — a delivered receipt that differs invalidates on arrival
+## Decision 4b — order the projection first, then compare the receipt
 
-The frontend compares receipts. It never interprets them, and there is nothing in
-one to interpret: it is opaque, and equality is its whole interface.
-
-When a response carries receipt **B** and what is rendered belongs to receipt
-**A**:
+**Two questions, and one field cannot answer both.** *Is this answer newer than
+what I am showing?* is ordering. *Does this catalog belong to the installation I
+am bound to?* is identity. A receipt is opaque and equality is its whole
+interface, so a receipt can answer the second and never the first: replies cross
+the boundary out of order, and
 
 ```text
-B != A
-  -> configuration A is non-current, immediately
-  -> plan A is non-current, immediately
-  -> no conversion action stays enabled from A
-  -> read the Rust-owned ConversionConfigurationSnapshot for B
-  -> render only the snapshot that carries B
-
-B == A
-  -> the refusal is about this request, not about the installation
-  -> nothing is reread
+rendered   = B
+late reply = A
+A != B
 ```
 
-Both halves are load-bearing. The first closes the stale window above. The second
-is what keeps a refusal from becoming a refresh: an ordinary refusal on an
-unchanged binding — two rows that would write one name, a queue over capacity —
-must not spend a help probe, which is the error-triggered reread loop PR #95
-declined twice.
+proves a mismatch, not that A supersedes B. Invalidating on inequality alone
+would let a delayed answer about the build the session has already left revoke
+the build it is on, and send it to read a snapshot for a binding that is gone.
+
+So Rust authors the order, and the frontend applies it in two steps.
+
+**Step one — ordering, by revision only.**
+
+```text
+incoming.revision <  rendered.revision  -> stale; discard the projection entirely
+incoming.revision == rendered.revision  -> the same authoritative publication
+incoming.revision >  rendered.revision  -> accept this Rust-authored projection
+```
+
+**Step two — identity, by receipt only, and only on a projection just accepted.**
+
+```text
+the accepted projection's receipt differs from the rendered one
+  -> configuration and plan for the rendered binding are non-current, immediately
+  -> no conversion action stays enabled from them
+  -> read the Rust-owned ConversionConfigurationSnapshot for the new binding
+  -> render only the snapshot that carries it
+
+the accepted projection carries the same receipt
+  -> nothing about the installation changed
+  -> the configuration is not invalidated, and no probe is spent
+
+the accepted projection is Unresolved
+  -> there is no receipt to compare; there is no binding to hold a
+     configuration, so no configuration is current
+```
+
+Both halves of step two are load-bearing. The first closes the stale-on-screen
+window above. The second is what keeps a refusal from becoming a refresh: an
+ordinary refusal on an unchanged binding — two rows that would write one name, a
+queue over capacity — must not spend a help probe, which is the error-triggered
+reread loop PR #95 declined twice. A projection whose *presentation* changed
+while its binding did not is accepted by step one and changes nothing in step
+two.
+
+### `BackendAuthorityRevision`, and why it is not the model that was rejected
+
+The revision is a typed monotonic token with **exactly one** meaning to the
+frontend:
+
+> a projection with a lower revision is stale and cannot replace one with a
+> higher revision.
+
+Rust owns it. It advances when the projected authority state actually changes —
+`Unresolved` becoming `Installed` or `NoInstallation`, one binding replaced by
+another, or an authority-state transition that changes what is projected even
+where the receipt stays equal. A same-installation recheck that produces the same
+authoritative state does not advance it.
+
+It is emphatically **not** the design this ADR exists to remove. That one exposed
+a bare counter and let React derive *observed*, *attempted*, *applied* and
+*settled* from arithmetic over it — four meanings the number never carried, each
+added because the previous round's reading could not answer the next round's
+question. This token carries one meaning, it is the only one React may take from
+it, and React may not infer any of those four from it: whether something was
+observed, whether a verdict settled, whether a configuration was attempted and
+whether one is ready all remain Rust-authored typed state, delivered as such.
+Comparing two revisions to discard a late reply is not reconstructing meaning; it
+is doing what a sequence number is for.
 
 **A must not survive while B is being established.** The gap between invalidating
 A and receiving B's snapshot is a truthful `loading` or `blocked` state, never the
@@ -342,14 +437,50 @@ Failed { binding, error }
 
 Lifecycle:
 
+Every entry and exit is written out, because a state named without them is a
+state an implementer has to guess at — and the natural guess here is the one that
+reintroduces `backendUsable` as the thing that drives a catalog:
+
 ```text
-the receipt is replaced    -> the previous configuration state no longer applies
-same receipt               -> Ready stays Ready, Failed stays Failed
-                              a recheck alone never causes a second probe
-Unattempted                -> one read when the lane permits
-Failed                     -> only an explicit settings retry spends another attempt
-receipt replaced mid-request -> the stale reply cannot become current
+BackendAuthorityState = Unresolved
+  -> no binding exists, so there is no configuration lifecycle entry at all
+     (not UnavailableForBinding: that is a statement about a binding)
+
+Binding = NoInstallation { receipt }
+  -> UnavailableForBinding { binding }
+  -> no msconvert help probe is attempted; there is nothing to probe
+
+Binding = Installed { receipt }
+  -> the lifecycle begins at Unattempted { binding }
+
+Unattempted, Installed
+  -> a configuration read that answers    -> Ready  { binding, catalog }
+  -> a configuration read that does not   -> Failed { binding, error }
+
+Failed
+  -> only an explicit settings retry spends another attempt
+
+Ready / Failed / UnavailableForBinding, same receipt
+  -> the state is retained; a recheck alone never causes a second probe
+
+the receipt is replaced
+  -> the previous configuration is non-current immediately, whatever it was
+  -> the new binding's state is initialized from what it is:
+         Installed      -> Unattempted
+         NoInstallation -> UnavailableForBinding
+
+receipt replaced mid-request
+  -> the stale reply cannot become current
 ```
+
+**`UnavailableForBinding` is entered from the binding and from nothing else.** It
+says *this session is bound to no installation, so there are no conversion
+semantics to describe* — a fact about the binding, not a preview verdict. It is
+not entered because `backendUsable` went false, and it is not a place a build
+that previews badly ends up: a build may be truthfully unusable for preview while
+its conversion configuration is `Ready`, which is Decision 3's whole point. Using
+the preview verdict to enter it would rebuild the conflation ledger row 6 exists
+to remove.
 
 **Invalidation is triggered by the receipt being replaced, not by a preview
 verdict settling**, and the difference is a real window rather than a wording
@@ -446,16 +577,49 @@ MSCanvas ships" action; and that action is never a silent fallback.
 ## Decision 9 — the plan has an explicit state machine
 
 ```text
-none | blocked | loading { request identity } | ready | failed
+none
+blocked
+loading { request identity }
+ready   { plan }
+failed  { request identity, error }
 ```
 
+Total enough to implement from, including the successful path the first draft
+listed no transition into:
+
 ```text
-no rows requested                     -> none
-rows requested, no usable intent      -> blocked, never loading
-a request is in flight                -> loading, carrying that request's identity
-the request failed                    -> failed; never "rereading"
-inputs changed, replacement in flight  -> loading for the replacement
-old answer no longer current, no replacement -> blocked, not loading
+no rows requested
+  -> none
+
+rows requested, but no plan question can be posed
+(no configuration, no usable selected intent)
+  -> blocked, never loading
+
+a plan question is posed and its request is issued
+  -> loading { that request's identity }
+
+the in-flight request answers, and the answer is for that identity
+  -> ready { plan }
+
+the in-flight request fails, for that identity
+  -> failed { identity, error }
+
+handles, intent, conflict policy, binding receipt or document authority
+change, and a replacement request is issued
+  -> loading { the replacement's identity }
+
+any of those change while no replacement request is yet eligible
+  -> blocked
+
+a ready or failed answer stops describing the current question
+  -> it may not continue to stand for it; the rules above decide what replaces it
+```
+
+Two invariants govern the whole table, and each is a finding:
+
+```text
+no loading without a request actually in flight
+no failed described as "rereading" unless a replacement request exists
 ```
 
 `none` and `blocked` are kept apart because they say different things to the
@@ -502,7 +666,7 @@ Execution-time revalidation remains, because the executable can change again
 after admission; it is a **second temporal proof**, not a substitute for the
 first.
 
-## Decision 11 — one lane authority for any `msconvert --help` probe
+## Decision 11 — one admission rule for any `msconvert --help` probe
 
 PR #95's last round produced a second-answer shape of its own: the explicit
 catalog retry consulted a lane rule and the automatic read did not. One question
@@ -515,12 +679,70 @@ differ in *initiation*, never in *admission*. If a queue owns the backend, the
 request is deferred or truthfully refused; an unbounded hidden probe is never
 enqueued behind it.
 
-This is expressed over M6.1's existing lane, not beside it. `ConversionLane` and
-its one availability rule remain the authority for what the backend lane is doing;
-what this decision adds is that a catalog probe is an *action over that lane*
-like any other, and so is admitted by the same facts rather than by a predicate
-written for it. Which subset of those facts applies to a probe is part of the
-rule and stated once, not decided again per call site.
+### It is not `ConversionLane`, and that was the error in the first draft
+
+`ConversionLane` answers *may a conversion action start?* — a question that
+begins with `backendUsable`, a preview verdict. A configuration probe asks
+something else: *may another backend process begin right now?* Making the lane
+the probe authority puts a preview verdict in the permission path for an
+`msconvert` probe, which contradicts Decision 3, and puts a frontend struct in
+the authority position, which contradicts Decisions 5 and 13.
+
+```text
+conversion action availability   is not   configuration-probe admission
+
+both consume shared backend-process ownership facts
+neither is authority for the other
+```
+
+So the probe gets its own named rule:
+
+```text
+ConversionConfigurationProbeAdmission
+```
+
+**The definitive authority is Rust's backend process gate and its quarantine
+boundary.** A configuration probe is backend process work, and Rust refuses it if
+the frontend's projection is wrong or stale — the projection is a courtesy that
+keeps the interface from offering an action that is known to be refused, never a
+permission.
+
+### The exact subset, stated once
+
+The projection consults only facts that name an operation genuinely owning a
+backend process, and thus genuinely conflicting with launching another:
+
+```text
+a backend installation check or change is in progress
+the session is backend-quarantined
+a preview run or scan is being read
+a conversion owns the backend lane
+another configuration probe is already in flight
+```
+
+and deliberately not:
+
+```text
+the preview "usable" verdict            -- a judgement, not process ownership
+adoption                                 -- owns no backend process
+diagnostics export                       -- owns no backend process
+other workspace settling                 -- owns no backend process
+```
+
+That split is drawn from what actually takes the one gate on the current tree:
+`inspect_backend`, `use_installation`, `open_preview`, `interpret_spectrum` and
+`drain_queue` do; `adopt_conversion_outputs` and
+`begin_conversion_diagnostics_export` do not. If the replacement finds that
+ownership has moved, it records the ownership it measures rather than preserving
+this list — the rule is *facts that own a backend process*, and the list is that
+rule applied to today's code.
+
+**Automatic and explicit consume the same rule.** The first configuration read
+for a binding and an explicit settings retry differ in what *initiates* them —
+one is the lifecycle reaching `Unattempted`, the other is a reader pressing a
+control — and in nothing else. There is not an automatic probe rule and a retry
+probe rule; there is one, and both ask it. That asymmetry is ledger row 17, and
+stating the subset once is what closes it.
 
 ## Decision 12 — one DOM owner per availability reason
 
@@ -543,7 +765,8 @@ React owns:
 the selected admitted intent id
 request-in-flight state needed to render an outstanding command
 the Rust-authored plan answer
-the receipt of the snapshot it is currently rendering
+the authority revision of the projection it is currently rendering
+the binding receipt carried by that projection, where one exists
 ordinary presentation state
 ```
 
@@ -551,14 +774,20 @@ React does **not** own reconstructed authorities for installation observation
 watermarks, an applied generation, an automatic reconciliation quota, a settled
 binding, a catalog-served binding, or catalog-generation ordering.
 
-**Retaining a receipt is not owning a binding**, and Decision 4b needs the
-difference to be stated rather than assumed. React holds the receipt that arrived
-*on the snapshot it is showing*, for one purpose: to notice that a receipt on a
-later response is not the same one. It does not decide when a binding changes, does
-not order two receipts, does not derive anything from what is inside one — there
-is nothing inside one — and does not hold a receipt for anything it is not
-currently rendering. That is a rendered fact travelling with the thing it
-describes, which is the opposite of the watermarks this decision removes.
+**Retaining two tokens is not owning an authority**, and Decision 4b needs the
+difference stated rather than assumed. React holds the revision and the receipt
+that arrived *on the projection it is showing*, each for exactly one purpose: the
+revision to discard a reply that is older than what is on screen, the receipt to
+notice that a newer reply describes a different installation. It does not order
+receipts, does not derive meaning from a revision, does not hold either for
+anything it is not currently rendering, and does not reconstruct *observed*,
+*settled*, *attempted* or *ready* from them — all four remain Rust-authored typed
+state that arrives as such.
+
+Two rendered facts travelling with the thing they describe is the opposite of the
+watermark set this decision removes: those were four independent numbers the
+frontend maintained *about* an authority it could not see, and their disagreement
+was the defect.
 
 **One distinction here is load-bearing, because the replacement will meet it on
 its first day.** React *looks combinations up* in the catalog Rust sent; it does
@@ -572,10 +801,54 @@ out of a row.
 If a proposed implementation needs several of those again, it violates this
 interlude and the ADR must be revised first rather than the rule bent.
 
+## One answer per question, and one question per field
+
+The defect this ADR exists to remove is a question with two answers. So the
+vocabulary is small enough to check exhaustively, and the check is written down
+rather than left to a reader:
+
+| Question | The one thing that answers it |
+|---|---|
+| What is the current installation authority? | `BackendAuthorityProjection`, Rust-authored |
+| Is this response older than what is rendered? | `BackendAuthorityRevision`, compared, nothing else |
+| Does this catalog or plan belong to the installation I am bound to? | `BackendBindingReceipt` equality, nothing else |
+| Is conversion configuration unavailable, unattempted, ready or failed? | The Rust configuration lifecycle, delivered as typed state |
+| May an `msconvert --help` probe launch now? | `ConversionConfigurationProbeAdmission` |
+| Is there a real plan request, answer or failure? | The plan state machine |
+| May a conversion action start? | `ConversionLane`, unchanged from M6.1 |
+
+Read the other way, no field appears twice. The receipt does identity and never
+ordering; the revision does ordering and never meaning; the lifecycle says what
+the configuration *is* and never whether a probe may run; the probe rule says
+whether a process may start and never whether a conversion may; `ConversionLane`
+keeps the question it has always had. Where two of these consume the same
+underlying fact — a conversion owning the backend gate is both a reason no probe
+may launch and a reason no conversion may start — they consume it, and neither
+becomes the other's authority.
+
 ## The state graph the replacement implements
 
-**Healthy mount.** Settled binding A → configuration `Unattempted(A)` → the lane
-permits a read → `Ready(A, catalog)` → SHIPPED selected → plan for A.
+**Nothing resolves at all.** Authority `Unresolved(r0)` → a configuration request
+attempts discovery → discovery establishes neither an installed build nor an
+absence → the authority is still `Unresolved(r0)` → the response projects
+`Unresolved(r0)` and whatever its domain outcome was → **no receipt is invented**,
+and there is no binding to hold a configuration.
+
+**The first installed observation.** `Unresolved(r0)` → `Installed A` is observed
+→ revision `r1 > r0`, receipt A → configuration `Unattempted(A)`.
+
+**Healthy mount.** Settled binding A → configuration `Unattempted(A)` → probe
+admission permits a read → `Ready(A, catalog)` → SHIPPED selected → plan for A.
+
+**The build goes away.** Binding A → `NoInstallation B` is observed → new receipt
+B on a newer revision → A's configuration and plan are non-current immediately →
+configuration for B is `UnavailableForBinding`, and nothing is probed, because
+there is nothing to probe.
+
+**A configuration retry.** `Installed A`, configuration `Failed(A)` → the reader
+takes the explicit settings retry → the binding is unchanged, so no authority
+change is required or expected → the configuration lifecycle alone decides
+`Ready(A)` or `Failed(A)` again.
 
 **Same-installation `Check again`.** `Ready(A)` → a check is in progress →
 configuration for A is preserved → conversion is unavailable *because backend
@@ -614,10 +887,11 @@ BEGIN
   -> no picker
   -> no staging
   -> no conversion process
-  -> the response still carries receipt B
+  -> the response still projects the current authority: B, at a newer revision
 
 frontend
-  -> A != B
+  -> the revision is newer, so the projection is accepted
+  -> its receipt differs from A
   -> Ready(A) is invalidated
   -> Plan(A) is invalidated
   -> ConversionConfigurationSnapshot(B) is read, once, through the ordinary
@@ -635,9 +909,25 @@ that follows is the one saying this session has no usable build.
 
 **A refusal that changes nothing changes nothing.** The mirror case belongs
 beside it: `BEGIN` refused on unchanged binding A — a name collision, a queue over
-capacity — returns receipt A, so the configuration and the plan stay exactly as
-they are and no probe is spent. A refusal is not a reason to re-read the
-installation; a *different receipt* is.
+capacity — projects the current A at its current revision, so the configuration
+and the plan stay exactly as they are and no probe is spent. A refusal is not a
+reason to re-read the installation; a newer projection carrying a *different
+receipt* is.
+
+**A delayed reply about the build the session has left.** The frontend already
+renders B at revision `rB`; a slow reply arrives projecting A at `rA < rB`.
+
+```text
+rA < rB
+  -> the projection is discarded as stale, entirely
+  -> B is NOT invalidated
+  -> no snapshot is read for A
+  -> the reply's domain outcome is still the answer to the request that made it
+```
+
+Receipt inequality alone would have done the opposite here — revoked the build
+the session is on and gone to read a snapshot for one it has left. Ordering
+first, identity second, is what makes the two questions separable.
 
 **Backend lost after BEGIN, before execution.** Binding A reserved → the
 provider's resolution observes the loss → the authority records it → execution
@@ -656,7 +946,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the finding raised against this document's own first draft (rows 18–23).
+plus the findings raised against this document's own drafts (rows 18–30).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -666,7 +956,7 @@ and no finding may disappear because the old PR was superseded.
 | 2 | Preserved unsupported selection unrecoverable | One-axis editing plus a preserved choice, with no escape | A genuine dead end offers one explicit atomic recovery | Selection module | Dead end offers the shipped row; a reachable one-axis route offers no recovery block |
 | 3 | Catalog outlives the backend it described | Catalog lifetime keyed on nothing that expires | A replaced receipt revokes the configuration bound to the old one | Rust configuration lifecycle | A binding observed as `NoInstallation` → the previous configuration is gone, without waiting for a verdict |
 | 4 | In-flight obsolete catalog resurrects state | Revoking rendered state without revoking the request | Revocation is one act over state and request | Rust configuration lifecycle | A reply about a superseded binding cannot install |
-| 5 | BEGIN observes a changed build, nothing reconciles | An observation made by an operation that then refused | Resolution is an observation, complete when it succeeds | Provider attempt + authority | A refused BEGIN that resolved a new build advances the authority |
+| 5 | BEGIN observes a changed build, nothing reconciles | An observation made by an operation that then refused | An observation is complete once discovery establishes an installed binding **or** an absence; later capability or domain failure does not erase it | Provider attempt + authority | A refused BEGIN that resolved a new build advances the authority |
 | 6 | Catalog read tied to transient checking | `backendUsable` false for the duration of any probe | A check is activity; a binding is a verdict | Authority state | Same-generation recheck: no probe, no revocation, plan preserved |
 | 7 | Repeated polls, repeated reconciliation | A reply carrying a number treated as a request | An arriving fact is not a request | Authority state | N polls of one observation → at most one backend probe |
 | 8 | Catalog failure with no retry owner | Recovery living on a conflation that was removed | A failed read is not a state a binding can clear | Rust lifecycle + explicit retry | Transient failure → recheck does not retry it; explicit retry does |
@@ -680,11 +970,18 @@ and no finding may disappear because the old PR was superseded.
 | 16 | Backend loss during drain not recorded | The same `?` as #9, in the execution path | Every conversion-bound resolution observes | `ConversionBackendAttempt` | Loss while the picker is open advances the authority |
 | 17 | Automatic read ungoverned, explicit retry governed | Two answers to "may a probe launch now?" | One admission rule for every probe | Lane authority | Both paths refuse identically under a held lane |
 | 18 | A refused operation records a new binding and reports none | Recording an observation without delivering it | Every conversion-bound answer carries the receipt it observed or left current | `AuthorityObserved<T>` | A `BEGIN` refused on the exact-intent proof, having been the first to resolve B, returns B |
-| 19 | Old configuration usable after a newer binding arrives | Invalidation waiting for something later than the arrival | A differing receipt invalidates on arrival, before any further action | Frontend receipt comparison | `Ready(A)` and `Plan(A)` are non-current, and no action is enabled from them, before the next interaction is possible |
+| 19 | Old configuration usable after a newer binding arrives | Invalidation waiting for something later than the arrival | A newer projection carrying a differing receipt invalidates on arrival, before any further action | Frontend, ordering then identity | `Ready(A)` and `Plan(A)` are non-current, and no action is enabled from them, before the next interaction is possible |
 | 20 | The replacement's configuration read twice, or not at all | Ad-hoc refresh paths beside the lifecycle | Exactly one snapshot per newly observed binding, through the ordinary lifecycle | Rust configuration lifecycle | One `ConversionConfigurationSnapshot(B)` is established; the gap before it is a truthful loading state, never A's catalog and never a silent SHIPPED |
-| 21 | A refusal becomes a refresh | Treating any error as installation news | An unchanged receipt is not a reason to re-read | Frontend receipt comparison | A refusal returning receipt A spends no probe and changes no configuration |
+| 21 | A refusal becomes a refresh | Treating any error as installation news | An unchanged receipt is not a reason to re-read | Frontend, ordering then identity | A refusal projecting the current A spends no probe and changes no configuration |
 | 22 | A lost build leaves its catalog on screen | Absence not modelled as a binding | `NoInstallation` is a receipt and differs from A | Authority + frontend comparison | An observed `NoInstallation` revokes A on arrival, exactly as a replacement does |
-| 23 | React classifies errors to decide whether to reconcile | The observation not travelling with the answer | No error-kind allowlist and no `retryable` heuristic anywhere in React | Frontend contract | Reconciliation is decided by receipt inequality alone; nothing inspects what failed |
+| 23 | React classifies errors to decide whether to reconcile | The observation not travelling with the answer | No error-kind allowlist and no `retryable` heuristic anywhere in React | Frontend contract | Reconciliation is decided by the projection alone — revision, then receipt; nothing inspects what failed |
+| 24 | `UnavailableForBinding` entered by guesswork | A state named with no entry or exit | It is entered from a `NoInstallation` binding and from nothing else, and left only when the receipt is replaced | Rust configuration lifecycle | A build that previews badly but converts fine is `Ready`, not `UnavailableForBinding`; a session bound to no installation probes nothing |
+| 25 | Two probe-admission rules | An authority for conversion actions reused for process admission | One named `ConversionConfigurationProbeAdmission`, over backend-process ownership facts only, with Rust's gate as the decider | Rust gate + one frontend projection | The automatic first read and the explicit retry are refused identically under each admitting fact, and `backendUsable` is not one of them |
+| 26 | `Unresolved` forced to fabricate an identity | A wire contract demanding a receipt every state can supply | The response projects the authority, which may be `Unresolved` and then carries no receipt | `BackendAuthorityProjection` | A first discovery that establishes nothing answers with `Unresolved` and invents nothing |
+| 27 | A delayed reply rolls the authority backwards | Equality asked to do ordering's work | Ordering is `BackendAuthorityRevision` and identity is the receipt; neither answers the other's question | Rust-authored revision | A late projection at a lower revision is discarded whole; the rendered binding survives and no snapshot is read for the stale one |
+| 28 | A revision read as meaning | One token carrying an ordering and a semantics | The revision's only frontend meaning is staleness; observed, settled, attempted and ready arrive as typed state | Frontend contract | Nothing in React derives an authority state from a revision comparison |
+| 29 | The plan reaches no successful state | A machine with no transition into `ready` | Every state has an entry, and a matching answer reaches `ready { plan }` | Plan state machine | A plan request that answers for its own identity renders the plan; one that fails renders the failure |
+| 30 | The route record contradicts itself | An amended ADR left reading as though it were not | ADR 0043 records the M6.4A amendment, links ADR 0044, and keeps its original decisions and date | ADR 0043 metadata | Its status, amendment note and `Related` name ADR 0044, and its chain wording matches ROADMAP |
 
 ## What this interlude does not do
 

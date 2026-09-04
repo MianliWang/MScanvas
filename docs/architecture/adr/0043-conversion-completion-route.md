@@ -1,6 +1,6 @@
 # ADR 0043 — Conversion Completion is the next milestone, and this is its route
 
-Status: accepted
+Status: accepted, amended 2026-09-04
 Date: 2026-09-01
 Related: [0002](0002-external-proteowizard.md),
 [0009](0009-mzml-conversion-execution-boundary.md),
@@ -19,7 +19,17 @@ Related: [0002](0002-external-proteowizard.md),
 [0027](0027-first-visible-sciex-wiff-workflow.md),
 [0037](0037-viewer-completion-route.md),
 [0041](0041-viewer-selection-availability.md),
-[0042](0042-viewer-completion-closure-and-handoff.md)
+[0042](0042-viewer-completion-closure-and-handoff.md),
+[0044](0044-conversion-configuration-authority.md)
+
+**Amended 2026-09-04 by M6.4A.** The route gains one authority interlude between
+M6.3 and M6.4, and with it two edges, M6.4's prerequisites and the chain wording.
+Where M6.4 owns the conversion configuration's *ownership boundary*, that is now
+[ADR 0044](0044-conversion-configuration-authority.md)'s, and this document
+defers to it there. Everything else here is the route as it was locked on
+2026-09-01 and is **not** rewritten as though ADR 0044 had existed then: the
+first M6.4 attempt, its four stops and the reasoning that produced them are
+history this document keeps.
 
 ## What this ADR is, and what it is not
 
@@ -417,7 +427,7 @@ appears in the diagram. **M6.2 has two children** — M6.3 and M6.10. It no long
 feeds M6.6: the destructive question is answered by MSCanvas's own finalization
 boundary, so the edge that existed only to wait on a provider measurement is
 gone. M6.10 descends from M6.2 alone — a measurement branch, not a stage of the
-M6.4-to-M6.9 chain — and converges only at closure.
+M6.4A-to-M6.9 chain — and converges only at closure.
 
 **M6.11 is downstream of every slice that owns a core criterion**, transitively:
 M6.1 through M6.9 along the spine, and M6.10 along the branch. There is no core
@@ -852,10 +862,10 @@ probe; and one DOM owner per availability reason.
 PR #95 and stopped four times, each round closing what it was given and being
 stopped by what that closing introduced. The measurements are real and are kept:
 sixteen live findings and four STOP records collapse into seventeen semantic
-families — and a review of the record itself added a further six obligations, in
-the same shape one layer out — almost all of them one shape — an authority that exists in Rust
-projected to the frontend as a number or a boolean, leaving the frontend to
-reconstruct its meaning. ADR 0044 removes the reconstruction rather than
+families, and reviews of the record itself added further obligations in the same
+shape one layer out. Almost all of them are one shape: an authority that exists
+in Rust, projected to the frontend as a number or a boolean, leaving the frontend
+to reconstruct its meaning. ADR 0044 removes the reconstruction rather than
 correcting its arithmetic, and carries the finding ledger the replacement
 implementation must prove.
 

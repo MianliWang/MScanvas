@@ -7088,8 +7088,8 @@ next edge repaired.
 
 Sixteen live review threads stand on PR #95 (five of them at outdated diff
 positions, all read) plus the four STOP records. Collapsed by *what made each one
-possible* they are seventeen semantic families, and almost all are one of three
-shapes: a fact and the thing that carries it coming apart; a signal read from a
+possible* they are seventeen semantic families, and almost all are one of four
+shapes — the fourth found in this record's own drafts, and named in ADR 0044: a fact and the thing that carries it coming apart; a signal read from a
 proxy that resembles it; a fact about one thing asserted about another.
 
 What they share is the boundary. The authority that could have settled each
@@ -7107,7 +7107,7 @@ discarding an identity discovery had already found.
 
 ### What ADR 0044 locks
 
-Fourteen decisions, answering nine questions the replacement must not have to
+Fourteen decisions, answering eleven questions the replacement must not have to
 invent while coding: a Rust-owned installation authority that is a typed state
 (`Unresolved | ObservedButUnsettled | Settled`) rather than a counter; one opaque,
 path-free, session-scoped `BackendBindingReceipt` every fact about one installed
@@ -7124,21 +7124,34 @@ receipt; a mandatory pre-BEGIN intent proof that no busy lane may skip; one lane
 admission rule for every `msconvert --help` probe; and one panel-level owner per
 availability reason.
 
-It ends with a twenty-three-obligation acceptance ledger: seventeen families from
-PR #95, and six more from a finding raised against this document's own first
-draft. Every live release-blocking finding maps to at least one obligation, so
-nothing PR #95 measured has to be rediscovered by the replacement.
+It ends with a thirty-obligation acceptance ledger: seventeen families from
+PR #95, and thirteen more from findings raised against this record's own drafts.
+Every live release-blocking finding maps to at least one obligation, so nothing
+PR #95 measured has to be rediscovered by the replacement.
 
-**That last finding is worth recording, because it is the same shape one layer
+**Those thirteen are worth recording, because they are the same shapes one layer
 out.** The first draft said Rust must observe a replacement binding before
 propagating a refusal — and stopped there. Recording an observation without
-*delivering* it leaves the session correct in Rust and stale on screen: a
-refused `BEGIN` creates no queue, so there is no slot to poll and nothing else
-arrives to correct it, and the reader may go on pressing an action Rust is now
-certain to refuse. A boundary that says who *owns* a fact has not yet said who is
-obliged to *carry* it. Every conversion-bound operation now returns the receipt
-it observed or left current, whether its outcome succeeds or refuses, and a
-receipt that differs invalidates what is on screen the moment it arrives.
+*delivering* it leaves the session correct in Rust and stale on screen: a refused
+`BEGIN` creates no queue, so there is no slot to poll and nothing else arrives to
+correct it, and the reader may go on pressing an action Rust is now certain to
+refuse. A boundary that says who *owns* a fact had not yet said who is obliged to
+*carry* it.
+
+The delivery rule then had to be made expressible twice more. `Unresolved` has no
+binding, so a contract demanding a receipt on every answer would have forced the
+first discovery failure to invent one — the response projects the *authority*,
+which may be `Unresolved`, rather than a receipt. And an opaque receipt can say
+that two things differ but not which is newer, so a delayed reply about the build
+the session has left would have revoked the build it is on: ordering is a
+Rust-authored `BackendAuthorityRevision`, applied first, and receipt equality
+decides identity only on a projection that has already been accepted as newer.
+
+Two more gaps were structural rather than new: `UnavailableForBinding` was named
+with no entry or exit, whose natural guess reinstates the `backendUsable`
+conflation; and the probe-admission rule was promised "stated once" and never
+stated, while being hung on `ConversionLane` — an authority for a different
+question, headed by a preview verdict.
 
 ### PR #95's disposition
 
