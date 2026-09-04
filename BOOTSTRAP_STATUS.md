@@ -7109,32 +7109,30 @@ carrying it failed.
 
 ### What ADR 0044 locks
 
-Fourteen decisions, answering twelve questions the replacement must not have to
-invent while coding: a Rust-owned installation authority that is a typed state
-(`Unresolved | ObservedButUnsettled | Settled`) rather than a counter; one opaque,
-path-free, session-scoped `BackendBindingReceipt` every fact about one installed
-build carries; preview availability and conversion configuration as two
-judgements under one binding; a conversion resolution attempt that records **and
-returns** its observation whether or not the capability binding succeeded, so a
-refusal can never erase a newly observed binding; a Rust-owned
-configuration lifecycle keyed by receipt, so React needs no `servedBinding`,
-`catalogGeneration` or `automaticallyAttemptedBinding`; a delivered projection
-that is ordered before its receipt is compared, so a late reply cannot roll the
-session back; one settings snapshot on the wire; availability as a property of an admitted **row**; a preserved
-unrunnable selection stated once at settings level; an explicit plan state
-machine that never says `loading` without a request; plan identity carrying the
-receipt; a mandatory pre-BEGIN intent proof that no busy lane may skip; one
+Fourteen decisions, answering twelve questions the replacement must not have to invent
+while coding: a Rust-owned installation authority that is a typed state (`Unresolved |
+ObservedButUnsettled | Settled`) rather than a counter; one opaque, path-free,
+session-scoped `BackendBindingReceipt` every fact about one installed build carries;
+preview availability and conversion configuration as two judgements under one binding; a
+conversion resolution attempt that records **and returns** its observation whether or
+not the capability binding succeeded, so a refusal can never erase a newly observed
+binding; a Rust-owned configuration lifecycle keyed by receipt, so React needs no
+`servedBinding`, `catalogGeneration` or `automaticallyAttemptedBinding`; a delivered
+projection that is ordered before its receipt is compared, so a late reply cannot roll
+the session back; one settings snapshot on the wire; availability as a property of an
+admitted **row**; a preserved unrunnable selection stated once at settings level; an
+explicit plan state machine that never says `loading` without a request; plan identity
+carrying the receipt; a mandatory pre-BEGIN intent proof that no busy lane may skip; one
 `ConversionConfigurationProbeAdmission` rule — Rust's backend gate and quarantine
-boundary, not `ConversionLane` — for the conversion configuration read; and one panel-level owner
-per availability reason.
+boundary, not `ConversionLane` — for the conversion configuration read; and one
+panel-level owner per availability reason.
 
-It ends with a hundred-obligation acceptance ledger: seventeen families
-from PR #95, and eighty-three more from findings raised against this record's own
-drafts.
-Every live release-blocking finding maps to at least one obligation, so nothing
-PR #95 measured has to be rediscovered by the replacement.
+It ends with a hundred-and-four-obligation acceptance ledger: seventeen families from PR
+#95, and eighty-seven more from findings raised against this record's own drafts. Every
+live release-blocking finding maps to at least one obligation, so nothing PR #95
+measured has to be rediscovered by the replacement.
 
-**Those eighty-three are worth recording, because they are the same shapes one layer
+**Those eighty-seven are worth recording, because they are the same shapes one layer
 out.** The first draft said Rust must observe a replacement binding before
 propagating a refusal — and stopped there. Recording an observation without
 *delivering* it leaves the session correct in Rust and stale on screen: a refused

@@ -389,6 +389,20 @@ the gate delivers authority when it answers" without qualification. A preview re
 that finishes is as much an occasion to issue an owed catalog read as a drain
 is.
 
+### The banner is a reader of this authority, not a second one
+
+`BackendStatus` renders `BackendAvailabilityDto` today, which is the same fact this
+decision moves — so leaving it on the old feed would open the stale window this
+whole decision closes, in the one surface that exists to tell the reader which
+build the session is on. Through an `ObservedButUnsettled` window the banner would
+name the build the session has left and call it available, while
+`backend-unavailable`'s own message sends the reader to look at it.
+
+**So the banner consumes the projection, exactly as the panel does**, and shows an
+unsettled authority as unsettled rather than as the previous verdict. It gains no
+authority of its own by doing so — it renders what arrives, which is what it does
+now.
+
 ### Recording it is only half. The response must carry it.
 
 Updating the authority and then returning a bare refusal leaves the session
@@ -724,7 +738,7 @@ the projection  -> judged by REVISION alone
 the payload     -> judged by RECEIPT alone: the binding it describes against
    (a snapshot     the binding now rendered
     or a plan)     a different binding -> discarded
-                   the rendered binding -> installed, whatever the revision did
+                   the rendered binding -> admitted, whatever the revision did
                    (the receipt is read from the response's own projection --
                     see below: discarding it is not throwing it away)
 
@@ -739,6 +753,15 @@ move, so a snapshot for B issued a moment earlier is stale *by revision* while
 describing exactly the binding on screen. Discarding it leaves a `Ready(B)` binding
 with no catalog rendered and nothing owed to fetch one. Judging it by the receipt
 installs it, correctly, because nothing about B changed.
+
+**Admitted is not installed, for a payload that has an owner.** The receipt test
+is necessary and not sufficient: it says a payload belongs to the binding on
+screen, which is all a rule about bindings can say. A snapshot has nothing further
+to satisfy and is installed. A plan then faces its own owner's test — Decision 9's
+identity *and* ordinal — because "belongs to this binding" does not answer "is this
+the answer to the question still being asked", and a retry preserves the binding by
+design. Row 44 is not weakened by row 94; they test different things, in that
+order.
 
 **"Discard the projection" means do not install it as the rendered authority**,
 not delete the bytes it arrived in. The distinction matters because Decision 6 puts
@@ -1297,6 +1320,12 @@ a reply arrives for the loading identity **and** its ordinal, and it failed
 a reply arrives for any other identity or any earlier ordinal
   -> discarded; the state does not move
 
+a reply arrives while the state is none, blocked or ready
+  -> discarded; nothing is loading, so nothing is awaiting an answer
+  -> stated because `blocked` has no loading identity to fail to match,
+     and a rule written only as "any other identity" leaves a plan built
+     under the previous binding installable
+
 failed, and the reader asks for the same question again
   -> loading { the same identity, the next ordinal }
 
@@ -1401,8 +1430,17 @@ that click for the length of a preview scan with nothing on screen to explain wh
 (The admittability the paragraph above discusses is not an argument here: this
 proof takes it away deliberately, and cannot also be defended by it.)
 
-Refusing costs nothing that was available, because `ConversionLane` already refuses
-every conversion action while `previewReading` or `laneClaimed` holds. The proof's
+**Refuses on a lane fact; waits behind a configuration probe.** Those are the two
+kinds of gate holder, and only one of them can be named to a reader.
+`ConversionLane` already refuses every conversion action while `previewReading` or
+`laneClaimed` holds, so refusing there costs nothing that was available and the
+reader is told which fact it was. A configuration probe has no lane field — by
+Decision 11 it is shared by nothing and refuses no conversion action — so a
+`BEGIN` pressed during one has no fact to be refused with, and it waits instead.
+That is safe where an open-ended wait would not be: a probe is a single
+`msconvert --help`, bounded by the discovery probe timeout, and `begin_queue`
+already takes the gate by waiting. What the rule forbids is hanging a click behind
+a preview scan or a conversion, which have no bound and do have names. The proof's
 answer only arises at all in the narrow window where the frontend's projection was
 stale — and there the truthful thing is to say which fact refused, in the lane's own
 words, rather than to hang. What may not happen is the third option: proceeding
@@ -1876,7 +1914,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–100).
+plus the findings raised against this document's own drafts (rows 18–104).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1982,6 +2020,10 @@ and no finding may disappear because the old PR was superseded.
 | 98 | An occasion bounded only when it was a delivery | The once-per-occasion bound and duty-first ordering written over deliveries alone | Both govern every occasion, a lane fact going false included | Frontend reconciliation | A picker closing issues the check first, exactly as a drain answering does |
 | 99 | Quarantine's own protections read as removed with the route to `backendUsable` | "The short-circuit is gone with it", said of a function rather than of a dependency | `quarantined_availability()` is untouched; only `backendUsable` stops depending on it | Decision 4 | The quarantine banner and the refusal ahead of the gate both survive the authority change |
 | 100 | The route's own acceptance criterion asking for the defect | M6.4's per-value framing left unamended beside a row-level boundary | ADR 0043's M6.4 acceptance states availability as a property of an admitted row | ADR 0043 amendment | The criterion the replacement is measured against and the boundary it is built on ask for the same thing |
+| 101 | A click hung behind a nameable fact, or refused with none to name | One rule for two kinds of gate holder | `BEGIN` refuses on a lane fact and waits only behind a configuration probe, which is bounded and has no name | Decision 10 + Decision 11 | Convert during a preview scan refuses saying so; Convert during an automatic `--help` completes |
+| 102 | The banner naming a build the session has left | One surface left on the availability DTO the authority replaces | `BackendStatus` consumes the projection and renders an unsettled authority as unsettled | Decision 4 | No window exists in which the banner reports a verdict about the previous build |
+| 103 | A plan installed because it belongs to the binding | A receipt test read as sufficient for a payload with an owner | Receipt admits a payload to the binding; the plan machine's identity-and-ordinal test then decides it | Decision 4b + Decision 9 | A superseded plan reply for the current binding is still discarded |
+| 104 | A plan installed into a state awaiting nothing | A discard rule written only as "any other identity", over states that have none | A reply arriving while `none`, `blocked` or `ready` is discarded | Plan state machine | A reply outstanding across `loading -> blocked` installs nothing |
 
 ## What this interlude does not do
 
