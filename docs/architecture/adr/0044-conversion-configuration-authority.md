@@ -45,7 +45,7 @@ coding.
 | May the conversion configuration read run now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate **and its quarantine boundary** — for the automatic first read and the explicit retry, not every `--help` a gated operation runs, and not a read for a binding that launches no probe at all. |
 | Who owns catalog request lifecycle and retry? | Rust owns the lifecycle state; the frontend initiates a read or a retry and owns neither. |
 | What does React retain? | The selected intent id, request-in-flight for rendering, its own per-obligation bookkeeping (in flight, owed, and whether a delivery has landed since), Rust's plan answer, the revision and receipt of what it is rendering, and presentation. Nothing else. |
-| May the obliged backend check be issued now? | Whether anything owns the backend process — never a verdict about a build, and never the probe's admission rule. |
+| May the obliged backend check be issued now? | The same predicate the configuration read asks — process ownership, never a verdict about a build. The two differ in what a refusal means, not in what they ask. |
 | At what granularity does availability exist? | The admitted **row** — one composition. There is no per-value availability authority. |
 | What makes a pre-run plan current? | Ordered handles, intent id, conflict policy, binding receipt, document epoch — compared against Rust's own answer. |
 | What must be established before BEGIN reserves anything? | The current binding has proved the exact selected intent executable. Mandatory, never a courtesy. |
@@ -398,10 +398,17 @@ build the session is on. Through an `ObservedButUnsettled` window the banner wou
 name the build the session has left and call it available, while
 `backend-unavailable`'s own message sends the reader to look at it.
 
-**So the banner consumes the projection, exactly as the panel does**, and shows an
-unsettled authority as unsettled rather than as the previous verdict. It gains no
-authority of its own by doing so — it renders what arrives, which is what it does
-now.
+**So the banner reads both, and each for what it holds.** `BackendAvailabilityDto`
+keeps everything the projection deliberately does not carry — the quarantine
+sentence, the discovery failure, the origin of the installation, all of which
+`quarantined_availability()` exists to keep truthful — and the banner goes on
+rendering it. What the projection adds is one thing: **whether the verdict beside
+it is current**. Through an unsettled window the banner shows the verdict as
+superseded rather than as fact, and says a check is under way; it does not report
+the left build as available, and it does not lose the reason text it has today.
+
+The banner gains no authority of its own by this. It renders what arrives, which is
+what it does now — from one more source, for one more question.
 
 ### Recording it is only half. The response must carry it.
 
@@ -447,7 +454,7 @@ BackendAuthorityProjection {
     revision: BackendAuthorityRevision
     state:
         Unresolved
-      | ObservedButUnsettled { binding: Binding }
+      | ObservedButUnsettled { binding: Installed }
       | Settled             { binding: Binding, previewAvailability }
 }
 
@@ -578,10 +585,12 @@ preview-unusable, and a session quarantined while the check was in flight would 
 same against row 66. The condition is the whole conjunction above, unchanged and
 unabbreviated. Same stimulus as the obligations, one more thing waiting on it.
 
-**Only an `Installed` observation can be unsettled.** A verdict is a judgement
-about a build, so an observation establishing `NoInstallation` has nothing left to
-judge and arrives `Settled` — entailed, exactly as Decision 4's `backendUsable`
-conjunction treats it. `ObservedButUnsettled` names one situation and only one: a
+**Only an `Installed` observation can be unsettled, and the union says so.** A
+verdict is a judgement about a build, so an observation establishing `NoInstallation`
+has nothing left to judge and arrives `Settled` — entailed, exactly as Decision 4's
+`backendUsable` conjunction treats it. The member is typed `Installed` rather than
+`Binding` for the reason this document gives everywhere else: a shape that cannot occur
+should not be constructible. `ObservedButUnsettled` names one situation and only one: a
 build was found and no verdict about it has been reached yet.
 
 And the state owes an exit. **Entering `ObservedButUnsettled` obliges exactly one
@@ -600,8 +609,9 @@ moment it mounts.
 said the opposite — "the owing is shared; the admission is not" — and the document's own
 definitions do not support it: both ask the same predicate over the same five
 process-ownership facts, and neither asks `backendUsable`. What differs is what happens
-when the backend is busy. A configuration probe is a courtesy — `msconvert --help`,
-taken with `try_enter_backend`, **refused** rather than queued, which is why it needs
+when the backend is busy. A configuration probe is a courtesy — an `msconvert --help`
+behind a discovery that probes both tools, taken with `try_enter_backend`,
+**refused** rather than queued, which is why it needs
 the owed-and-re-issued machinery at all. The backend check is `inspect_backend`, which
 is M6.1's, takes the gate by **waiting**, and is a duty: it is the operation that ends
 the unsettled state, and there is nothing else to end it with. The frontend declines to
@@ -1005,7 +1015,10 @@ Binding = Installed { receipt }
   -> the lifecycle begins at Unattempted { binding }
 
 Unattempted, Installed
-  -> a probe ran and answered             -> Ready  { binding, catalog }
+  -> a probe ran, answered, and the build can convert
+                                          -> Ready  { binding, catalog }
+  -> a probe ran, answered, and require_conversion refuses
+                                          -> Failed { binding, error }
   -> a probe ran and did not answer       -> Failed { binding, error }
   -> a probe could not start              -> Unattempted, unchanged
 
@@ -1437,17 +1450,28 @@ kinds of gate holder, and only one of them can be named to a reader.
 reader is told which fact it was. A configuration probe has no lane field — by
 Decision 11 it is shared by nothing and refuses no conversion action — so a
 `BEGIN` pressed during one has no fact to be refused with, and it waits instead.
-That is safe where an open-ended wait would not be: a probe is a single
-`msconvert --help`, bounded by the discovery probe timeout, and `begin_queue`
-already takes the gate by waiting. What the rule forbids is hanging a click behind
-a preview scan or a conversion, which have no bound and do have names. The proof's
-answer only arises at all in the narrow window where the frontend's projection was
-stale — and there the truthful thing is to say which fact refused, in the lane's own
-words, rather than to hang. What may not happen is the third option: proceeding
-without the proof.
-Execution-time revalidation remains, because the executable can change again
-after admission; it is a **second temporal proof**, not a substitute for the
-first.
+
+**Rust decides which case it is in, so the gate records its holder.** `backend_gate`
+is a bare `Mutex<()>` today and Rust owns neither `previewReading` nor
+`laneClaimed`, so a rule phrased as "which operation holds the gate" is not
+answerable as the tree stands — leaving the question this decision claims to settle
+back with the implementer. It is answerable cheaply: what holds the gate is always
+one of Rust's own operations, so the gate carries a tag naming it, and `BEGIN`
+refuses when that tag is a preview read or a conversion and waits when it is a
+configuration probe.
+
+The wait is safe where an open-ended one would not be, but the bound is longer than a
+first reading suggests: the read's discovery probes **both** tools, each with the
+15-second `PROBE_TIMEOUT`, so the worst case is around thirty seconds rather than
+fifteen. That is still bounded, still rare, and still better than refusing with no fact
+to name — and `begin_queue` already takes the gate by waiting. What the rule forbids is
+hanging a click behind a preview scan or a conversion, which have no bound and do have
+names. The proof's answer only arises at all in the narrow window where the frontend's
+projection was stale — and there the truthful thing is to say which fact refused, in the
+lane's own words, rather than to hang. What may not happen is the third option:
+proceeding without the proof. Execution-time revalidation remains, because the
+executable can change again after admission; it is a **second temporal proof**, not a
+substitute for the first.
 
 ## Decision 11 — one admission rule for the configuration read
 
@@ -1665,8 +1689,9 @@ React owns:
 ```text
 the selected admitted intent id
 request-in-flight state needed to render an outstanding command
-per-obligation bookkeeping: whether a read or check is in flight, whether one
-  is owed, and whether any delivery has landed since it was issued
+per-obligation bookkeeping: whether a read or check is in flight, and whether
+  any delivery has landed since it was issued -- never whether one is *owed*,
+  which Rust's own configuration state answers
 which automatic preview load, if any, was suppressed by an unsettled authority
   and is waiting on `backendUsable`
 the per-panel plan request ordinal, which is never reset
@@ -1743,7 +1768,7 @@ rather than left to a reader:
 | Does this catalog or plan belong to the installation I am bound to? | `BackendBindingReceipt` equality, nothing else |
 | Is conversion configuration unavailable, unattempted, ready or failed? | The Rust configuration lifecycle, delivered as typed state |
 | May the conversion configuration read run now? | `ConversionConfigurationProbeAdmission` — the automatic first read and the explicit retry, and no other `--help`; a `NoInstallation` binding's read launches no probe and asks nothing |
-| May the obliged backend check be issued now? | Backend-process ownership, and nothing else — a separate question, deliberately not this one |
+| May the obliged backend check be issued now? | The same predicate, over backend-process ownership; the difference is that its refusal waits where the read's refuses |
 | Is there a real plan request, answer or failure? | The plan state machine |
 | May a conversion action start? | `ConversionLane`, unchanged from M6.1 |
 
@@ -1914,7 +1939,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–104).
+plus the findings raised against this document's own drafts (rows 18–108).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2016,14 +2041,18 @@ and no finding may disappear because the old PR was superseded.
 | 94 | A catalog discarded for a revision bump about its own binding | Staleness reaching a payload that describes the rendered binding | Receipt judges the payload; revision judges only the projection | Frontend, ordering then identity | A same-receipt `ObservedButUnsettled → Settled` move does not strand `Ready(B)` with no catalog on screen |
 | 95 | A `NoInstallation` observation left owing a verdict | An unsettled state entered for a binding with nothing to judge | Only an `Installed` observation can be unsettled; `NoInstallation` arrives `Settled` | Authority state | Observing that no installation resolves obliges no check and settles at once |
 | 96 | `Unresolved` with nothing obliged to move it | A liveness rule written about bindings, over a state that has none | A session that has resolved nothing owes one backend check from mount | Authority obligations | No session can sit unresolved with nothing owed and no control to press |
-| 97 | The suppressed preview load forgotten | An exhaustive retain-list with no member for it | Which load was suppressed and is waiting on `backendUsable` is frontend in-flight bookkeeping, and named as such | Decision 13 | The load deferred by an unsettled authority is the one issued when the verdict arrives |
+| 97 | The suppressed preview load forgotten | An exhaustive retain-list with no member for it | Which load was suppressed and is waiting on `backendUsable` is frontend in-flight bookkeeping, and named as such — unlike whether an obligation is owed, which Rust answers | Decision 13 | The load deferred by an unsettled authority is the one issued when the verdict arrives, and no frontend flag duplicates `Unattempted` |
 | 98 | An occasion bounded only when it was a delivery | The once-per-occasion bound and duty-first ordering written over deliveries alone | Both govern every occasion, a lane fact going false included | Frontend reconciliation | A picker closing issues the check first, exactly as a drain answering does |
 | 99 | Quarantine's own protections read as removed with the route to `backendUsable` | "The short-circuit is gone with it", said of a function rather than of a dependency | `quarantined_availability()` is untouched; only `backendUsable` stops depending on it | Decision 4 | The quarantine banner and the refusal ahead of the gate both survive the authority change |
 | 100 | The route's own acceptance criterion asking for the defect | M6.4's per-value framing left unamended beside a row-level boundary | ADR 0043's M6.4 acceptance states availability as a property of an admitted row | ADR 0043 amendment | The criterion the replacement is measured against and the boundary it is built on ask for the same thing |
 | 101 | A click hung behind a nameable fact, or refused with none to name | One rule for two kinds of gate holder | `BEGIN` refuses on a lane fact and waits only behind a configuration probe, which is bounded and has no name | Decision 10 + Decision 11 | Convert during a preview scan refuses saying so; Convert during an automatic `--help` completes |
-| 102 | The banner naming a build the session has left | One surface left on the availability DTO the authority replaces | `BackendStatus` consumes the projection and renders an unsettled authority as unsettled | Decision 4 | No window exists in which the banner reports a verdict about the previous build |
+| 102 | The banner naming a build the session has left | One surface left reading the verdict without the authority beside it | `BackendStatus` reads both: the DTO for the reason, origin and quarantine sentence, the projection for whether the verdict is current | Decision 4 | No window exists in which the banner reports a verdict about the previous build, and none in which it loses the reason text it has today |
 | 103 | A plan installed because it belongs to the binding | A receipt test read as sufficient for a payload with an owner | Receipt admits a payload to the binding; the plan machine's identity-and-ordinal test then decides it | Decision 4b + Decision 9 | A superseded plan reply for the current binding is still discarded |
 | 104 | A plan installed into a state awaiting nothing | A discard rule written only as "any other identity", over states that have none | A reply arriving while `none`, `blocked` or `ready` is discarded | Plan state machine | A reply outstanding across `loading -> blocked` installs nothing |
+| 105 | A build that cannot convert reported `Ready` by the lifecycle | A discriminator asking only whether a probe answered | A probe that answered and found `require_conversion` refusing is `Failed` | Rust configuration lifecycle | Decision 3's cannot-convert case and the lifecycle that implements it agree |
+| 106 | A rule about the gate's holder that Rust cannot evaluate | `backend_gate` as a bare `Mutex<()>` under a rule keyed on who holds it | The gate carries a tag naming its holder | Decision 10 + Rust gate | `BEGIN` can tell a preview read from a configuration probe without consulting the frontend |
+| 107 | An unsettled `NoInstallation` made constructible | A union member typed wider than the state it names | `ObservedButUnsettled` carries `Installed`, not `Binding` | Decision 4's union | The shape row 95 forbids cannot be built |
+| 108 | The wait behind a probe understated by half | "A single `msconvert --help`", where discovery probes both tools | The bound is two `PROBE_TIMEOUT`s, and is stated as such | Decision 10 | The worst-case wait a reader can meet is written down, not implied |
 
 ## What this interlude does not do
 

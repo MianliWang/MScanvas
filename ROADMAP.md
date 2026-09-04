@@ -421,7 +421,7 @@ So M6.4A was inserted rather than a fifth repair attempted. It decides, in
 [ADR 0044](docs/architecture/adr/0044-conversion-configuration-authority.md),
 who owns installation truth, who owns conversion-capability truth, the receipt
 that binds them, what React retains, and at what granularity availability
-exists — and carries a hundred-and-four-obligation finding ledger the replacement
+exists — and carries a hundred-and-eight-obligation finding ledger the replacement
 must prove, so that nothing PR #95 measured has to be rediscovered. PR #95 stays open
 as implementation evidence until the replacement has extracted its tests, copy
 and behaviour; nothing from it is on `main`.
@@ -439,9 +439,9 @@ later slice adds a control that must say truthfully whether pressing it will do
 something, and each of them now has one rule to ask.
 
 **M6.2 measured the installed build rather than reading its help.** Twelve
-candidates, twelve terminal states: nine admitted on a decoded output, two
-refused on a decoded output, one evidence-blocked with what is missing and who
-owns it. Four findings change what later slices may assume. The provider's precision default is
+candidates, twelve terminal states: nine admitted on a decoded output, two refused on a
+decoded output, one evidence-blocked with what is missing and who owns it. Four findings
+change what later slices may assume. The provider's precision default is
 **mixed** — m/z at 64 bits, intensity narrowed to 32 — so every conversion this
 product has performed has silently narrowed its intensities, and M6.3 types that
 decision rather than inheriting it. `--zlib` is **already the default**, so the
