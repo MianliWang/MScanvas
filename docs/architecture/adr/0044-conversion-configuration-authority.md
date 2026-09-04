@@ -1023,7 +1023,16 @@ discovery, its obligation discharged by quarantine's permanent-refusal rule, and
 the panel left with no configuration state for an answer that needed no process —
 which Decision 13 forbids it to derive from the binding tag. So the replacement's
 configuration read answers from the binding before it asks anything about
-processes, and only the arms that need a probe consult a gate at all. It is
+processes, and only the arms that need a probe consult a gate at all.
+
+**The frontend's side needs the same exemption, or the fix stops at the
+boundary.** Quarantine is admission's first fact, so a frontend applying admission
+uniformly would never issue the read at all — and Decision 4's permanent-refusal
+rule would then discharge the obligation, leaving a quarantined unbound session
+with no configuration state exactly as before. It can tell the difference, because
+it renders the binding: **when the rendered binding is `NoInstallation`, the
+configuration read is issued regardless of admission**, since the answer it will
+get is a fact about that binding and no probe is involved. It is
 not entered because `backendUsable` went false, and it is not a place a build
 that previews badly ends up: a build may be truthfully unusable for preview while
 its conversion configuration is `Ready`, which is Decision 3's whole point. Using
@@ -1299,13 +1308,23 @@ blocking there would take away a queue's long-standing admittability while a
 preview holds the lane. A courtesy that owns no guarantee may be skipped. The
 proof above owns one, and may not.
 
-**If the lane cannot answer now, BEGIN waits.** Deferring this to "the
-repository's concurrency contract" left the one question in the table above for an
-implementer to invent, so it is answered here, by the rule this document uses
-everywhere else: duties wait and courtesies refuse. `begin_queue` already takes the
-gate by waiting; a proof that must happen is a duty; and refusing a reader's
-deliberate click because a preview is mid-scan would be a worse answer than a short
-wait. It is never skipped.
+**If the lane cannot answer now, BEGIN refuses — it does not wait, and it is never
+skipped.** Deferring this to "the repository's concurrency contract" left the one
+question in the table above for an implementer to invent, so it is answered here.
+
+The rule this document uses for its internal obligations — duties wait, courtesies
+refuse — does not decide it, because both of those are about work with no reader
+waiting on it. A `BEGIN` is a click. Blocking it on the backend gate would hang the
+click for the length of a preview scan, and would take away the very property the
+paragraph above preserves: that a queue is admittable while a preview holds the
+lane.
+
+Refusing costs nothing that was available, because `ConversionLane` already refuses
+every conversion action while `previewReading` or `laneClaimed` holds. The proof's
+answer only arises at all in the narrow window where the frontend's projection was
+stale — and there the truthful thing is to say which fact refused, in the lane's own
+words, rather than to hang. What may not happen is the third option: proceeding
+without the proof.
 Execution-time revalidation remains, because the executable can change again
 after admission; it is a **second temporal proof**, not a substitute for the
 first.
@@ -1381,15 +1400,30 @@ backend process, and thus genuinely conflicting with launching another:
 ```text
 the session is backend-quarantined
 a backend installation check or change is in progress
-a preview run or scan is being read
 a conversion owns the backend lane
+a preview run or scan is being read
 another configuration probe is already in flight
 ```
 
-Listed in `ConversionLane`'s own precedence, because Decision 12 makes that the
-order both authorities report in: a list written in any other order reads as a
-second ordering, and two facts holding at once would key one moment two ways —
-the two-notice defect row 73 forbids. Probe-in-flight is last, as row 79 requires.
+Listed in `ConversionLane`'s own precedence — quarantined, changing, *`laneClaimed`
+before `previewReading`*, with probe-in-flight last as row 79 requires. A draft had
+the middle two the other way round, which is enough to break row 73 on its own:
+`previewReading` is an independent counter and both are routinely true together, so
+one moment would have been keyed `conversion-running` by the lane and
+`preview-running` by admission. The order is not decorative; it is the whole
+mechanism.
+
+`backendUsable` is absent, because it is a judgement and this list is ownership.
+That is deliberate and it is *not* a hole in row 73 — see below.
+
+**`laneClaimed` is broader than the gate, and admission takes it whole.** It is
+true while a conversion runs, which owns the gate, and also while the destination
+picker is open, which owns nothing. Read against Decision 11's criterion the second
+case does not belong; read against the field, it comes along. Admission takes the
+field — the frontend's projection is a courtesy, and a courtesy is allowed to be
+conservative, deferring a probe a moment longer than Rust would. What makes that
+safe rather than a stall is row 81: a lane fact going false is an occasion, so the
+picker closing issues the deferred read without waiting for anything to answer.
 
 and deliberately not:
 
@@ -1468,8 +1502,18 @@ refuses, in its own fixed order, and that order is the registry's precedence too
 **`ConversionConfigurationProbeAdmission` reports in that same order**, which is
 the half an earlier draft left unstated: with two facts holding at once, an
 admission free to name either could key a moment differently from the lane and
-emit two sentences for it. One order, read by both, is what makes "one fact, one
-notice" true of a contested moment rather than only of a quiet one. `ConversionConfigurationProbeAdmission` maps its refusals onto the same
+emit two sentences for one fact.
+
+**The invariant is one element per fact, not one element per panel**, and the
+difference matters here because the two authorities read different subsets of the
+order. The lane considers `backendUsable`; admission does not, since it is a
+judgement rather than an owner. So an unsettled session with a drain running keys
+`backendUsable` for the conversion and `laneClaimed` for the probe — two elements,
+because two genuinely different facts are refusing two genuinely different actions,
+and collapsing them would be the lie, not the fix. Each authority reports the
+first fact it is entitled to consider, in the one shared order, and where they
+consider the same fact they name it identically. That is what row 13 asks for and
+all it asks for. `ConversionConfigurationProbeAdmission` maps its refusals onto the same
 names, which it can, because Decision 11's admitting subset was drawn from these
 fields in the first place. Only a refusal with no lane fact behind it mints a key of its own: a
 configuration probe already in flight, **which sorts after every lane field**, so
@@ -1730,7 +1774,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–87).
+plus the findings raised against this document's own drafts (rows 18–89).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1745,7 +1789,7 @@ and no finding may disappear because the old PR was superseded.
 | 7 | Repeated polls, repeated reconciliation | A reply carrying a number treated as a request | An arriving fact is not a request | Authority state | N polls of one observation → at most one backend probe |
 | 8 | Catalog failure with no retry owner | Recovery living on a conflation that was removed | A failed read is not a state a binding can clear | Rust lifecycle + explicit retry | Transient failure → recheck does not retry it; explicit retry does |
 | 9 | Provider-resolution failure loses the observation | `?` propagating an error past a found identity | Resolution returns the observation either way | `ConversionBackendAttempt` | Resolution failure that established absence advances the authority; one that established nothing does not |
-| 10 | Mandatory preflight under an optional courtesy | A gate that may be declined owning a guarantee | Admission proof is never skippable | Rust BEGIN | Busy lane → BEGIN waits or refuses; never a queue without the proof |
+| 10 | Mandatory preflight under an optional courtesy | A gate that may be declined owning a guarantee | Admission proof is never skippable, and a lane that cannot answer refuses rather than blocks the click | Rust BEGIN | Busy lane → BEGIN refuses, naming the lane fact; never a queue without the proof, and never a hung click |
 | 11 | Selected-but-unavailable rendered as usable | A state that could hold only one of the two facts | Selected and available are two facts | Selection module | The preserved unrunnable selection reads as unavailable |
 | 12 | Row incompatibility asserted per value | A row-level fact rendered against each axis value | Availability is a property of a composition | Selection module | A build lacking only peak-picking makes no false claim about 64/64, all spectra or zlib |
 | 13 | Two owners of one availability reason | Each surface minting a global id | One reason, one notice element, deduplicated by the refusing fact rather than by either authority's word for it | Panel notice registry | No duplicate availability id under any refusal shared by two actions, including one fact refusing a conversion and a probe in two vocabularies |
@@ -1808,21 +1852,23 @@ and no finding may disappear because the old PR was superseded.
 | 70 | Two snapshots for one rebinding read | An invalidation rule with no exception for a response that already answers | A response carrying a snapshot for the new binding is the read for it | Frontend reconciliation | Mount and every rebinding read cost one snapshot, not two |
 | 71 | A shared notice phrased about one of its actions | Deduplication defined without saying whose sentence survives | A shared notice states the fact; each control says what it cannot do | Panel notice registry | A settings retry sharing `laneClaimed` with Convert is never described as converting being unavailable |
 | 72 | A reader's error swallowed by an unrelated revision | Staleness applied to the whole response | Staleness reaches the projection and its binding-bound payload, never the domain outcome | Frontend, ordering then identity | A refusal overtaken by a revision bump is still shown to the reader who caused it |
-| 73 | Two authorities keying one contended moment differently | An admission with no stated selection order | Probe admission reports in `ConversionLane`'s order | Decision 11 + panel notice registry | Two facts holding at once produce one notice, not two |
+| 73 | Two authorities keying one contended moment differently | An admission with no stated selection order | Probe admission reports in `ConversionLane`'s order, over the ownership facts it is entitled to consider | Decision 11 + panel notice registry | One fact refusing two actions produces one notice; two different facts refusing two actions produce two, and neither is misnamed |
 | 74 | A working replacement landed unprobed | "The build changed" collapsed into "the build is gone" | A read that finds a different working installation lands on its own answer; `UnavailableForBinding` is only for a binding naming no build | Decision 3 + Rust lifecycle | Switching between two good installations mid-read yields `Ready(B)`, never `UnavailableForBinding` |
 | 75 | A request's payload judged against a receipt React was told not to hold | A retain-list closed before the request-scoped receipt was needed | React holds the receipt a request was issued under, for as long as that request is outstanding | Decision 13 | A stale reply's payload is discarded without consulting the projection that carried it |
 | 76 | An admission rule capturing the operations it lists as refusing it | A scope written as the tool invocation rather than the read | The rule governs the automatic first configuration read and the explicit retry, and no other `--help` | Decision 11 | A preview read and the BEGIN preflight run their own discovery without consulting probe admission |
 | 77 | A rebinding read discarded by the receipt it was issued under | One receipt rule for accepted and stale projections alike | An accepted projection's own receipt judges its payload; the request-issued one judges only a stale reply's | Frontend, ordering then identity | A read issued under A that answers `Ready(B)` is installed whole |
 | 78 | Nine dead controls under a truthful `Ready` | A catalog with no available row left to per-row presentation | A `Ready` catalog with nothing available is one settings-level sentence, and offers no recovery, because the shipped row is unavailable too | Decision 3 + Decision 8 | A build admitting none of the nine rows says so once, and no control implies a way through |
-| 79 | The one self-minted key outside the shared order | A precedence covering only the lane's own fields | Probe-in-flight sorts after every lane field | Panel notice registry | A probe in flight beside a lane fact yields to it, and one notice is rendered |
+| 79 | The one self-minted key outside the shared order | A precedence covering only the lane's own fields | Probe-in-flight sorts after every lane field | Panel notice registry | A probe in flight beside a lane fact yields to it, and the probe's refusal is keyed by that fact |
 | 80 | The binding oscillating between two observers | The preview verdict folded into the identity by one of them | Every observer mints the binding from `AvailabilityState::Available`; the verdict travels beside it | Decision 1 + Decision 3 | An `Available` build whose msaccess lacks a required preview operation is one binding to every observer, and its catalog survives a backend check |
-| 81 | An obligation waiting on a delivery nothing will produce | A stimulus that assumed every deferring fact belongs to a gate holder | A lane fact going false is an occasion, observed by the frontend without being told | Frontend reconciliation | A destination picker cancelled after a `BEGIN` observed a replacement issues both owed operations |
+| 81 | An obligation waiting on a delivery nothing will produce | A stimulus that assumed every deferring fact belongs to a gate holder | A lane fact going false is an occasion, observed by the frontend without being told | Frontend reconciliation | A destination picker cancelled after a `BEGIN` observed a replacement issues the owed check, and the read follows on its answer |
 | 82 | No configuration state for an answer needing no process | A binding-only answer routed through the guards that protect a process | A read for a binding that names no build answers from the binding before consulting probe admission or the quarantine pre-check | Decision 5 + Decision 11 | A quarantined session bound to no installation still renders `UnavailableForBinding` |
 | 83 | A retained question mistaken for a retained belief | A retain-list bounding receipts by the render alone | A plan identity's receipt is a component of a question, bounded by the plan, not by the render | Decision 9 + Decision 13 | A failed plan can be retried for the same question without React holding a third authority |
 | 84 | Two obligations issued into each other's gate | "Issues both" read as simultaneously | Where both are owed the duty goes first and the courtesy is deferred onto its answer | Frontend reconciliation | A delivery finding a check and a read both owed strands neither, and issues one probe, not two |
 | 85 | An admission rule the frontend cannot evaluate | A rule stated over `ConversionLane` for a fact with no lane field | The check reads the lane's ownership fields plus its own probe-in-flight bookkeeping | Decision 4 + Decision 13 | The obliged check is not issued while a configuration probe is in flight |
 | 86 | The suppressed automatic preview load never re-issued | A one-shot guard behind a verdict this decision makes temporarily false | The authority settling is an occasion; a load suppressed while unsettled is issued when it settles | `ConversionLane` projection + preview load | A document opened during an unsettled window previews once the check answers, without a second click |
 | 87 | A courtesy abolished with the duty it was mistaken for | One decision covering the exact-intent proof and the pre-picker family check | The proof owns a guarantee and may not be skipped; the pre-picker courtesy owns none and may; BEGIN waits rather than refuses | Decision 10 | A queue stays admittable while a preview holds the lane, and no picker opens before the exact intent is proved |
+| 88 | One moment keyed two ways by an order written wrong | An admitting list whose middle two facts were transposed | The list is `ConversionLane`'s precedence exactly: `laneClaimed` before `previewReading` | Decision 11 | A conversion running during a preview read is keyed `conversion-running` by both authorities |
+| 89 | A quarantined unbound session with no configuration state | The binding-only exemption stated for Rust and not for the frontend | A rendered `NoInstallation` binding issues its configuration read regardless of admission | Frontend reconciliation + Decision 5 | The exemption holds on both sides of the boundary, not just Rust's |
 
 ## What this interlude does not do
 
