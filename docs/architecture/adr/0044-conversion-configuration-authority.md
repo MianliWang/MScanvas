@@ -467,10 +467,18 @@ one were somehow constructed.
 a route this decision removes.** There is no quarantine conjunct on the current
 tree: `quarantined_availability()` short-circuits the whole availability DTO to
 `unavailable`, and `backendUsable` is read off that DTO. Source the verdict from
-the authority instead and the short-circuit is gone with it — a session quarantined
-after a good verdict keeps a `Settled { Installed, usable }` authority that is
-perfectly true about the build and says nothing about a converter process MSCanvas
-has lost track of.
+the authority instead and `backendUsable` stops passing through that DTO, so the
+short-circuit stops reaching it — a session quarantined after a good verdict keeps a
+`Settled { Installed, usable }` authority that is perfectly true about the build and
+says nothing about a converter process MSCanvas has lost track of.
+
+**`quarantined_availability()` itself stays exactly as it is.** It is not the
+route being removed; it is a function whose own doc comment explains what it
+protects — the banner that keeps naming the installation the session was using,
+and the refusal that keeps `inspect_backend` from launching help probes after
+MSCanvas has lost a converter process. Nothing here touches it. What changes is
+only that `backendUsable` no longer *depends* on it for the quarantine half of its
+meaning, and says so itself.
 
 So the projection is stated in full, and quarantine is a conjunct of its own:
 
@@ -747,23 +755,24 @@ payload bound to A is never installed while B is rendered.
 (the first line above included; an equal revision changes nothing and skips it).
 
 **Step three, and it is not conditional on either of the first two — every
-delivery is an occasion to discharge an owed obligation.** This is deliberately
-outside the ordering rules, because the case rows 39 and 42 exist for is precisely
-the one the ordering rules dismiss: a gate holder finishes, nothing about the
-binding changed, so the revision is equal and the receipt is equal and both steps
-above correctly do nothing — and that is exactly the moment the owed first
-configuration read and the obliged backend check become admissible. So after
-ordering and identity have had their say, the frontend asks one more question: is
-an obligation owed for the binding now rendered, is nothing in flight for it, and
-may it be issued? Invalidation is what steps one and two decide. Issuing is not
-invalidation, and a binding that has never been read must not be kept unread by a
-rule about a binding that did not change.
+occasion is an occasion to discharge an owed obligation.** This is deliberately outside
+the ordering rules, because the case rows 39 and 42 exist for is precisely the one the
+ordering rules dismiss: a gate holder finishes, nothing about the binding changed, so
+the revision is equal and the receipt is equal and both steps above correctly do nothing
+— and that is exactly the moment the owed first configuration read and the obliged
+backend check become admissible. So after ordering and identity have had their say, the
+frontend asks one more question: is an obligation owed — for the binding now rendered,
+or by a session that has not resolved one at all — is nothing in flight for it, and may
+it be issued? Invalidation is what steps one and two decide. Issuing is not
+invalidation, and a binding that has never been read must not be kept unread by a rule
+about a binding that did not change.
 
-**"May it be issued" is two questions, because the two obligations answer to
-different things** (Decision 4's split, stated there): the configuration read asks
-`ConversionConfigurationProbeAdmission`, and the backend check asks **whether
-anything owns the backend process** — and nothing else. Concretely that is the
-lane's process-ownership fields plus the frontend's own probe-in-flight
+**"May it be issued" is one question for both**, over the process-ownership facts
+and no verdict — Decision 4 states it, and states why the earlier reading that gave
+them two predicates was wrong. What differs between them is what a refusal means,
+which step three expresses as the duty-first ordering below rather than as a second
+rule. Concretely the predicate is the lane's process-ownership fields plus the
+frontend's own probe-in-flight
 bookkeeping, which Decision 13 grants it and which has no lane field of its own; a
 rule stated only over `ConversionLane` would not have been evaluable.
 
@@ -1595,6 +1604,7 @@ per-obligation bookkeeping: whether a read or check is in flight, whether one
   is owed, and whether any delivery has landed since it was issued
 which automatic preview load, if any, was suppressed by an unsettled authority
   and is waiting on `backendUsable`
+the per-panel plan request ordinal, which is never reset
 the Rust-authored plan answer
 the authority revision of the projection it is currently rendering
 the binding receipt carried by that projection, where one exists
@@ -1618,23 +1628,23 @@ else can know and nothing else is being asked to.
 difference stated rather than assumed. React holds the revision and the receipt that
 arrived *on the projection it is showing*, each for exactly one purpose: the revision to
 discard a reply that is older than what is on screen, the receipt to notice that a newer
-reply describes a different installation. It holds receipts in two further places, and
-both are bounded by something other than the render. **A plan identity carries one**,
-because Decision 9 makes the binding part of *which question was asked*, and a `loading`
-or `failed` state outlives the request that produced it precisely so a retry can ask the
+reply describes a different installation. It holds a receipt in one further place,
+bounded by something other than the render. **A plan identity carries one**, because
+Decision 9 makes the binding part of *which question was asked*, and a `loading` or
+`failed` state outlives the request that produced it precisely so a retry can ask the
 same question again (rows 35, 44, 61). That receipt is a component of a question, not a
 claim about the current installation, and the plan is invalidated when the rendered
 binding stops matching it — the retain-list's "not past the render" bounds what React
 may *believe*, not what a recorded question may contain.
 
-The other is for the life of a request: **the receipt a request was issued
-under**, which Decision 4b needs to decide whether a
-reply's payload still belongs anywhere. It is not a second authority — it is a
-copy of what was rendered at the moment of asking, kept exactly as long as the
-answer is outstanding, and it is what lets a stale reply's payload be discarded
-without consulting the projection that came with it. React does not order
-receipts, does not derive meaning from a revision, does not hold either past the
-render or the request it belongs to, and does not reconstruct *observed*,
+**A request-issued receipt is not among them, and an earlier draft added one here.**
+It was needed only by a payload rule Decision 4b has since retracted: under the rule
+that stands, a payload is judged by the binding *it* describes against the binding now
+rendered, and what the request went out under does not enter into it. Keeping the extra
+copy would not merely be spare — it would answer the question differently, discarding
+exactly the rebinding read that carries a snapshot for the binding on screen. React does
+not order receipts, does not derive meaning from a revision, does not hold either past
+the render or the request it belongs to, and does not reconstruct *observed*,
 *settled*, *attempted* or *ready* from them — all four remain Rust-authored typed
 state that arrives as such.
 
@@ -1807,10 +1817,16 @@ rA < rB
   -> B is NOT invalidated
   -> no snapshot is read for A
   -> the reply's domain outcome is still the answer to the request that made
-     it -- an error to show, a refusal to explain -- but any *binding-bound
-     payload* it carries is subject to the same rule as the projection: a
-     snapshot or plan for A cannot be installed under B
+     it: an error to show, a refusal to explain
+  -> any payload it carries is judged on its own, by receipt: a snapshot or
+     plan for A is discarded because A is not what is rendered -- not
+     because the projection carrying it was stale
 ```
+
+The last line is the distinction Decision 4b's three rules turn on. Here the two
+tests agree, so it reads as pedantry; the case where they part is a reply that is
+stale by revision while its payload describes the binding on screen, and there the
+payload installs.
 
 Receipt inequality alone would have done the opposite here — revoked the build
 the session is on and gone to read a snapshot for one it has left. Ordering
@@ -1833,7 +1849,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–98).
+plus the findings raised against this document's own drafts (rows 18–99).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1913,9 +1929,9 @@ and no finding may disappear because the old PR was superseded.
 | 72 | A reader's error swallowed by an unrelated revision | Staleness applied to the whole response | Staleness reaches the projection alone; the outcome answers the request that made it | Frontend, ordering then identity | A refusal overtaken by a revision bump is still shown to the reader who caused it |
 | 73 | Two authorities keying one contended moment differently | An admission with no stated selection order | Probe admission reports in `ConversionLane`'s order, over the ownership facts it is entitled to consider | Decision 11 + panel notice registry | One fact refusing two actions produces one notice; two different facts refusing two actions produce two, and neither is misnamed |
 | 74 | A working replacement landed unprobed | "The build changed" collapsed into "the build is gone" | A read that finds a different working installation lands on its own answer; `UnavailableForBinding` is only for a binding naming no build | Decision 3 + Rust lifecycle | Switching between two good installations mid-read yields `Ready(B)`, never `UnavailableForBinding` |
-| 75 | A request's payload judged against a receipt React was told not to hold | A retain-list closed before the request-scoped receipt was needed | React holds the receipt a request was issued under, for as long as that request is outstanding | Decision 13 | A stale reply's payload is discarded without consulting the projection that carried it |
+| 75 | A request's payload judged against a receipt React was told not to hold | A retain-list closed before a plan identity's receipt was accounted for | React holds a plan identity's receipt for the life of the plan, and holds no request-issued copy at all | Decision 13 | A payload is judged by the binding it describes against the binding rendered, needing neither the projection that carried it nor what its request went out under |
 | 76 | An admission rule capturing the operations it lists as refusing it | A scope written as the tool invocation rather than the read | The rule governs the automatic first configuration read and the explicit retry, and no other `--help` | Decision 11 | A preview read and the BEGIN preflight run their own discovery without consulting probe admission |
-| 77 | A rebinding read discarded by the receipt it was issued under | One receipt rule for accepted and stale projections alike | An accepted projection's own receipt judges its payload; the request-issued one judges only a stale reply's | Frontend, ordering then identity | A read issued under A that answers `Ready(B)` is installed whole |
+| 77 | A rebinding read discarded by the receipt it was issued under | A payload judged by its request rather than by itself | A payload is judged by the binding it describes against the binding now rendered | Frontend, ordering then identity | A read issued under A that answers `Ready(B)` is installed whole |
 | 78 | Nine dead controls under a truthful `Ready` | A catalog with no available row left to per-row presentation | A `Ready` catalog with nothing available is one settings-level sentence, and offers no recovery, because the shipped row is unavailable too | Decision 3 + Decision 8 | A build admitting none of the nine rows says so once, and no control implies a way through |
 | 79 | The one self-minted key outside the shared order | A precedence covering only the lane's own fields | Probe-in-flight sorts after every lane field | Panel notice registry | A probe in flight beside a lane fact yields to it, and the probe's refusal is keyed by that fact |
 | 80 | The binding oscillating between two observers | The preview verdict folded into the identity by one of them | Every observer mints the binding from `AvailabilityState::Available`; the verdict travels beside it | Decision 1 + Decision 3 | An `Available` build whose msaccess lacks a required preview operation is one binding to every observer, and its catalog survives a backend check |
@@ -1937,6 +1953,7 @@ and no finding may disappear because the old PR was superseded.
 | 96 | `Unresolved` with nothing obliged to move it | A liveness rule written about bindings, over a state that has none | A session that has resolved nothing owes one backend check from mount | Authority obligations | No session can sit unresolved with nothing owed and no control to press |
 | 97 | The suppressed preview load forgotten | An exhaustive retain-list with no member for it | Which load was suppressed and is waiting on `backendUsable` is frontend in-flight bookkeeping, and named as such | Decision 13 | The load deferred by an unsettled authority is the one issued when the verdict arrives |
 | 98 | An occasion bounded only when it was a delivery | The once-per-occasion bound and duty-first ordering written over deliveries alone | Both govern every occasion, a lane fact going false included | Frontend reconciliation | A picker closing issues the check first, exactly as a drain answering does |
+| 99 | Quarantine's own protections read as removed with the route to `backendUsable` | "The short-circuit is gone with it", said of a function rather than of a dependency | `quarantined_availability()` is untouched; only `backendUsable` stops depending on it | Decision 4 | The quarantine banner and the refusal ahead of the gate both survive the authority change |
 
 ## What this interlude does not do
 
