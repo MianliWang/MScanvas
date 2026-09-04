@@ -610,6 +610,11 @@ absence of one: with nothing rendered there is no revision to be older than, so
 the first projection a session receives is accepted and step two runs against an
 empty rendered binding — which is how the first binding is installed at all.
 
+The exception is not an optimisation; without it, mount and every rebinding read
+cost two snapshots, and the second would contradict rows 20 and 56 by asking again
+for what the first already answered. A configuration read that observes a
+replacement *is* the read for the new binding.
+
 **Discarding is of the response, not the projection alone.** A response older than
 what is rendered can carry nothing current — and since Decision 6 puts the receipt
 only in the authority, a response whose projection were thrown away separately
@@ -642,17 +647,30 @@ rule about a binding that did not change.
 
 **"May it be issued" is two questions, because the two obligations answer to
 different things** (Decision 4's split, stated there): the configuration read asks
-`ConversionConfigurationProbeAdmission`, and the backend check asks whether the
-lane is free. Reading them as one would put the duty under the courtesy's rule, and
-let a probe already in flight block the only operation that can end an unsettled
-state. Neither rule is restated or weakened here — quarantine is one of the five facts
-admission answers on (row 40), and `backendQuarantined` is the lane's first
-refusal. It simply never arises at this step, and it is worth saying why, because
-the alternative reading strands rows 53 and 54. **Step three re-issues; it does not
-make first attempts.** Each obligation is issued once when it is incurred, and a
-quarantined session's refusal is permanent, which *discharges* it. A discharged
-obligation is not owed, and step three's first question is whether one is owed —
-so a quarantined session has nothing here to filter, and nothing to strand.
+`ConversionConfigurationProbeAdmission`, and the backend check asks **whether
+anything owns the backend process** — and nothing else. Reading them as one would
+put the duty under the courtesy's rule, and let a probe already in flight block the
+only operation that can end an unsettled state.
+
+**"Owns the backend process" is Decision 11's criterion, and it is not "the lane
+refuses".** The distinction is the one that decision already draws between facts
+that own a process and judgements that do not, and it has to be applied here
+explicitly, because the lane's third refusal is `!backendUsable` — which this
+document sets false for the whole `ObservedButUnsettled` window. Gate the check on
+"the lane is free" and the state that owes the check is once again the fact that
+refuses it. A verdict about a build owns no process; it can refuse an action, and
+it may never refuse the operation whose job is to replace it.
+
+**Quarantine, at this step, discharges rather than defers.** It is one of
+admission's five facts (row 40) and the lane's first refusal, and neither rule is
+weakened — what changes is what an *obligation* does when it meets a refusal that
+cannot clear. An obligation is discharged the moment the session is quarantined,
+whether it had been issued, deferred by contention, or not yet attempted: there is
+nothing to wait for, and a session whose stop could not be confirmed will not get
+another verdict this run. So a quarantined session makes at most one attempt and
+then stops asking, rather than carrying an obligation it can never discharge —
+which is what rows 53 and 54 require, and what an earlier draft's "issued once,
+answered once" could not deliver for an obligation quarantine arrived *after*.
 
 **And step three is bounded, because an unbounded one spins.** A refused attempt
 answers, an answer is a delivery, and a delivery is an occasion — which closes a
@@ -687,7 +705,8 @@ excluded every obligation-produced delivery and starved it.
 the accepted projection's receipt differs from the rendered one
   -> configuration and plan for the rendered binding are non-current, immediately
   -> no conversion action stays enabled from them
-  -> read the Rust-owned ConversionConfigurationSnapshot for the new binding
+  -> read the Rust-owned ConversionConfigurationSnapshot for the new binding,
+     unless this very response already carries one for it
   -> render only the snapshot that carries it
 
 the accepted projection carries the same receipt
@@ -1245,6 +1264,15 @@ decisions for every action currently offered and deduplicates **by the refusing
 fact, not by the word each authority uses for it.** Child components never mint a
 global availability id.
 
+**The surviving element carries the fact's sentence, not either action's.** A
+notice that two actions point at cannot be phrased about one of them: keyed on
+`laneClaimed`, a Convert refusal and a settings-read refusal collapse to one
+element, and if that element kept Convert's wording the settings retry would be
+described as "converting is unavailable while a conversion is running". So a
+shared notice states the fact — *a conversion is running* — and each action's own
+control says what it cannot do. Where a fact refuses only one action, the two
+readings coincide and nothing changes.
+
 The key matters because two vocabularies now reach this registry: `ConversionLane`
 refuses a conversion, `ConversionConfigurationProbeAdmission` refuses a probe, and
 they are disjoint word-sets over an overlapping set of facts. A conversion holding
@@ -1286,6 +1314,8 @@ React owns:
 ```text
 the selected admitted intent id
 request-in-flight state needed to render an outstanding command
+per-obligation bookkeeping: whether a read or check is in flight, whether one
+  is owed, and whether any delivery has landed since it was issued
 the Rust-authored plan answer
 the authority revision of the projection it is currently rendering
 the binding receipt carried by that projection, where one exists
@@ -1295,6 +1325,15 @@ ordinary presentation state
 React does **not** own reconstructed authorities for installation observation
 watermarks, an applied generation, an automatic reconciliation quota, a settled
 binding, a catalog-served binding, or catalog-generation ordering.
+
+**The obligation bookkeeping is not a reconstructed authority either**, and the
+ban above is narrower than it may read. What Decision 13 refuses is React deciding
+*what is true* — a watermark it compares, an applied generation, a quota that
+rations how often reconciliation is allowed to happen. The obligation state decides
+nothing: Rust's `Unattempted` says the catalog is unread, and these bits say only
+whether this frontend has a request outstanding for it and whether the world has
+moved since. They are facts about the frontend's own in-flight work, which nothing
+else can know and nothing else is being asked to.
 
 **Retaining two tokens is not owning an authority**, and Decision 4b needs the
 difference stated rather than assumed. React holds the revision and the receipt
@@ -1493,7 +1532,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–68).
+plus the findings raised against this document's own drafts (rows 18–71).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1551,7 +1590,7 @@ and no finding may disappear because the old PR was superseded.
 | 50 | An unsettled session claimed as verdict-bearing | A stale verdict surviving the binding it described | `backendUsable` is false while the authority is not `Settled` on an `Installed` binding, and nothing new is fed into `backendChanging` | `ConversionLane` projection | An unsettled authority never reports the previous build's verdict, and never disables the controls that would settle it |
 | 51 | A refused discovery spending a configuration attempt | A read that cannot reach a probe reported as a probe that failed | A read whose own discovery refuses replaces the binding; `Failed` needs a probe that ran | Decision 3 + Rust lifecycle | A build that disappears between the verdict and the read is `NoInstallation` → `UnavailableForBinding`, not `Failed` |
 | 52 | The state that owes the check is the fact that refuses it | An unsettled authority raising the flag that gates the check and the recovery controls | `backendChanging` keeps meaning a check in flight and nothing else | Decision 11 + `ConversionLane` projection | An `ObservedButUnsettled` session with nothing else holding the gate admits its obliged check, and a quarantined one keeps Choose-installation and Recheck live |
-| 53 | An obliged check re-issued against a refusal that never clears | An obligation discharged only by settling | An answered check discharges it, settled or not | Authority obligations | A quarantined session issues its check once, stays truthfully unsettled, and is told quarantine rather than that a binding is settling |
+| 53 | An obliged check re-issued against a refusal that never clears | An obligation discharged only by settling | An answered check discharges it, settled or not; so does the session becoming quarantined, attempted or not | Authority obligations | A session quarantined at any point makes at most one check attempt and stops, stays truthfully unsettled, and is told quarantine |
 | 54 | An obligation owed against a refusal that cannot clear | One rule for deferral and permanent refusal | Deferred obligations stay owed; permanently refused ones are discharged | Authority obligations | A quarantined session asks once and stops; a session behind a held gate asks again when it clears |
 | 55 | A probe waiting out the conversion it lost a race to | The one gate taken by waiting | The probe takes it with `try_enter_backend` and never queues | `ConversionConfigurationProbeAdmission` | A probe dispatched just before a drain refuses immediately and stays owed, rather than surfacing after the conversion |
 | 56 | A fresh catalog discarded, or `Ready` arriving over `Unattempted` | Observation and answer ordered as two events | A read that observes a new available binding answers for it in one transaction | Rust configuration lifecycle | A configuration read that discovers build B returns `Ready(B)`, and `Unattempted(B)` is never rendered |
@@ -1567,6 +1606,9 @@ and no finding may disappear because the old PR was superseded.
 | 66 | A quarantined session reachable through a remembered verdict | The authority's verdict substituted for the projection rather than added to it | Decision 4 changes where the verdict comes from; every conjunct `backendUsable` already requires survives | `ConversionLane` + preview load | A session quarantined after a good verdict starts no conversion and no automatic preview load |
 | 67 | A stale payload with no binding to check against | The projection discarded separately from what it carried | A response older than what is rendered is discarded whole | Frontend, ordering then identity | No outcome from a superseded response is installed, and none is checked against a receipt that was thrown away |
 | 68 | An owed read stranded by an out-of-order reply | A re-issue bound that cannot tell a reorder from a spin | An attempt's own refusal re-issues it when another delivery has been processed since it went out | Frontend reconciliation | A gate holder that answers while a refused probe's reply is still in flight still gets the read issued |
+| 69 | The verdict refusing the operation that replaces it | The obliged check gated on the lane rather than on process ownership | The check asks only whether something owns the backend process; `backendUsable` owns none | Authority obligations + Decision 11 | An `ObservedButUnsettled` session with a free gate issues its check, whatever `backendUsable` says |
+| 70 | Two snapshots for one rebinding read | An invalidation rule with no exception for a response that already answers | A response carrying a snapshot for the new binding is the read for it | Frontend reconciliation | Mount and every rebinding read cost one snapshot, not two |
+| 71 | A shared notice phrased about one of its actions | Deduplication defined without saying whose sentence survives | A shared notice states the fact; each control says what it cannot do | Panel notice registry | A settings retry sharing `laneClaimed` with Convert is never described as converting being unavailable |
 
 ## What this interlude does not do
 
