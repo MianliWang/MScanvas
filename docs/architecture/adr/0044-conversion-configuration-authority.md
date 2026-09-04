@@ -270,14 +270,14 @@ read whose discovery finds a different working installation establishes
 or `Failed(B)`, by the one-transaction rule in Decision 5. `UnavailableForBinding`
 is for a binding that names no build, and only for that.
 
-The fourth is a binding replacement wearing a configuration read's clothes, and
-naming it `Failed` would have been a third way to spend an attempt on something no
-probe ever asked — the mistake ledger row 32 already forbids one level down.
+**The build-is-gone case is a binding replacement wearing a configuration read's
+clothes**, and naming it `Failed` would have been a third way to spend an attempt
+on something no probe ever asked — the mistake ledger row 32 already forbids one level down.
 `Failed` means a probe ran against a binding and did not answer. A read whose own
 discovery refuses never reaches a probe; it reports a different binding.
 
-**The fifth is representable, and its presentation is fixed rather than its
-state.** A build whose baseline grammar is intact but which admits none of the nine
+**The no-row-survives case is representable, and its presentation is fixed rather
+than its state.** A build whose baseline grammar is intact but which admits none of the nine
 rows is genuinely `Ready`: a catalog was read and every row was judged, and the
 judgements are true. What must not follow is nine individual refusals. It is a
 settings-level statement — one sentence, exactly Decision 8's shape — and Decision
@@ -285,7 +285,8 @@ settings-level statement — one sentence, exactly Decision 8's shape — and De
 shipped row being available and here it is not. The reader is told the build cannot
 run any configuration MSCanvas offers, once, and no control implies otherwise.
 
-**The third is `Failed`, not `Ready` with every row unavailable**, and the
+**The cannot-convert-at-all case is `Failed`, not `Ready` with every row
+unavailable**, and the
 difference is the reader's recovery rather than bookkeeping. `Ready` means a
 catalog was read and each row was judged; a build missing `outdir`, `outfile`,
 `--zlib` or the format option offers no row at all, and rendering that as nine
@@ -296,8 +297,8 @@ shape. It is also the rule Decision 7 already implies one level down: availabili
 is a property of a row, and a build that cannot convert has not got as far as
 rows.
 
-The first is the load-bearing one, and it is reachable because acceptance and
-parsing are different steps: discovery stores a bound help probe once the exit and
+**The unparseable-help case is the load-bearing one**, and it is reachable because
+acceptance and parsing are different steps: discovery stores a bound help probe once the exit and
 metadata are acceptable, and only `parse_bound_help` — later, on a stream that may
 have been truncated — decides whether a capability grammar can be extracted from
 it at all.
@@ -1032,9 +1033,12 @@ rule would then discharge the obligation, leaving a quarantined unbound session
 with no configuration state exactly as before. It can tell the difference, because
 it renders the binding: **when the rendered binding is `NoInstallation`, the
 configuration read is issued regardless of admission**, since the answer it will
-get is a fact about that binding and no probe is involved. It is
-not entered because `backendUsable` went false, and it is not a place a build
-that previews badly ends up: a build may be truthfully unusable for preview while
+get is a fact about that binding and no probe is involved.
+
+**`UnavailableForBinding` is not entered because `backendUsable` went false**, and
+that rule belongs here rather than to the read above it — splitting the paragraph
+in an earlier commit left it attached to whatever sentence preceded it. It is not a
+place a build that previews badly ends up: a build may be truthfully unusable for preview while
 its conversion configuration is `Ready`, which is Decision 3's whole point. Using
 the preview verdict to enter it would rebuild the conflation ledger row 6 exists
 to remove.
@@ -1866,7 +1870,7 @@ and no finding may disappear because the old PR was superseded.
 | 84 | Two obligations issued into each other's gate | "Issues both" read as simultaneously | Where both are owed the duty goes first and the courtesy is deferred onto its answer | Frontend reconciliation | A delivery finding a check and a read both owed strands neither, and issues one probe, not two |
 | 85 | An admission rule the frontend cannot evaluate | A rule stated over `ConversionLane` for a fact with no lane field | The check reads the lane's ownership fields plus its own probe-in-flight bookkeeping | Decision 4 + Decision 13 | The obliged check is not issued while a configuration probe is in flight |
 | 86 | The suppressed automatic preview load never re-issued | A one-shot guard behind a verdict this decision makes temporarily false | The authority settling is an occasion; a load suppressed while unsettled is issued when it settles | `ConversionLane` projection + preview load | A document opened during an unsettled window previews once the check answers, without a second click |
-| 87 | A courtesy abolished with the duty it was mistaken for | One decision covering the exact-intent proof and the pre-picker family check | The proof owns a guarantee and may not be skipped; the pre-picker courtesy owns none and may; BEGIN waits rather than refuses | Decision 10 | A queue stays admittable while a preview holds the lane, and no picker opens before the exact intent is proved |
+| 87 | A courtesy abolished with the duty it was mistaken for | One decision covering the exact-intent proof and the pre-picker family check | The proof owns a guarantee and may not be skipped; the pre-picker courtesy owns none and may | Decision 10 | The pre-picker family check is still skipped under a held lane rather than blocking on it, and no picker opens before the exact intent is proved |
 | 88 | One moment keyed two ways by an order written wrong | An admitting list whose middle two facts were transposed | The list is `ConversionLane`'s precedence exactly: `laneClaimed` before `previewReading` | Decision 11 | A conversion running during a preview read is keyed `conversion-running` by both authorities |
 | 89 | A quarantined unbound session with no configuration state | The binding-only exemption stated for Rust and not for the frontend | A rendered `NoInstallation` binding issues its configuration read regardless of admission | Frontend reconciliation + Decision 5 | The exemption holds on both sides of the boundary, not just Rust's |
 
