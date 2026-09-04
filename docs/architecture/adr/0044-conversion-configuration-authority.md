@@ -30,7 +30,7 @@ answers the questions those measurements turned out to be about.
 No production code changes with this ADR. The boundary is proved by audit and
 contract; the replacement implementation proves it by construction.
 
-## The eleven questions, answered
+## The twelve questions, answered
 
 The replacement implementation must not have to invent any of these while
 coding.
@@ -471,12 +471,17 @@ backendChanging is backendBusy, one flag (usePreviewWorkspace.ts)
   -> unsettled never exits; rows 42, 52, 53, 54 and 59 deadlock together
 
 backendBusy also gates BackendStatus's Choose-installation and Recheck
-  -> a permanently unsettled session (quarantine) disables both
-  -> the reader loses the recovery this very decision depends on
+  -> every unsettled window disables both, for as long as it lasts
+  -> the reader loses the two controls that would settle it, in exactly the
+     state where reaching for them is the sensible thing to do
 ```
 
-The second is the decisive one: a rule meant to describe a session accurately
-would have taken away the two controls that end it.
+The first is the decisive one, since it is a deadlock rather than a degradation.
+The second compounds it for every ordinary unsettled window — an observation made
+under a held gate, a check waiting its turn — and is worth stating separately
+because it is the failure a reader would actually notice. It is *not* about the
+quarantined case: quarantine is set once and never cleared, so those two controls
+recover nothing there anyway.
 
 **So `backendUsable` is the only thing the unsettled state fixes**, and the reason
 comes from the lane's existing ordering, unchanged. Most of the unsettled window
@@ -1364,9 +1369,14 @@ else can know and nothing else is being asked to.
 difference stated rather than assumed. React holds the revision and the receipt
 that arrived *on the projection it is showing*, each for exactly one purpose: the
 revision to discard a reply that is older than what is on screen, the receipt to
-notice that a newer reply describes a different installation. It does not order
-receipts, does not derive meaning from a revision, does not hold either for
-anything it is not currently rendering, and does not reconstruct *observed*,
+notice that a newer reply describes a different installation. It holds one receipt beyond that, and only for the life of a request: **the
+receipt a request was issued under**, which Decision 4b needs to decide whether a
+reply's payload still belongs anywhere. It is not a second authority — it is a
+copy of what was rendered at the moment of asking, kept exactly as long as the
+answer is outstanding, and it is what lets a stale reply's payload be discarded
+without consulting the projection that came with it. React does not order
+receipts, does not derive meaning from a revision, does not hold either past the
+render or the request it belongs to, and does not reconstruct *observed*,
 *settled*, *attempted* or *ready* from them — all four remain Rust-authored typed
 state that arrives as such.
 
@@ -1435,10 +1445,16 @@ becomes the other's authority.
 ## The state graph the replacement implements
 
 **Nothing resolves at all.** Authority `Unresolved(r0)` → a configuration request
-attempts discovery → discovery establishes neither an installed build nor an
-absence → the authority is still `Unresolved(r0)` → the response projects
-`Unresolved(r0)` and whatever its domain outcome was → **no receipt is invented**,
-and there is no binding to hold a configuration.
+is made → it answers *without discovering*, because the session is quarantined and
+the operation refuses ahead of discovery → the authority is still `Unresolved(r0)`
+→ the response projects `Unresolved(r0)` and whatever its domain outcome was →
+**no receipt is invented**, and there is no binding to hold a configuration.
+
+That is the whole of how `Unresolved` is reached, and it is worth being exact,
+because a discovery that *runs* always answers: `Available`, `Partial` or
+`Unavailable`, each of which maps onto a binding. There is no fourth outcome to
+leave the authority unresolved, so the state belongs to a session before its first
+discovery and to one whose operations refuse before reaching one.
 
 **The first installed observation.** `Unresolved(r0)` → `Installed A` is observed
 → revision `r1 > r0`, receipt A → configuration `Unattempted(A)`.
@@ -1558,7 +1574,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–74).
+plus the findings raised against this document's own drafts (rows 18–75).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1626,7 +1642,7 @@ and no finding may disappear because the old PR was superseded.
 | 60 | A rebinding read whose probe failed left owing another | One transaction with only a successful arm | The new binding lands on what its own answer supports, `Failed` included | Rust configuration lifecycle | A read that discovers B and fails its probe is `Failed(B)`, and no second automatic probe follows |
 | 61 | The ordinal reset by leaving an identity | A counter scoped per question | One per-panel ordinal, never reset | Plan state machine | A reply in flight from before an identity was left and re-entered is discarded, not installed |
 | 62 | The most-shared refusal left without a key | A key set listing seven of eight lane fields | `backendUsable` is a key; action-derived reasons key by action and target | Panel notice registry | Convert and the conversion retry, refused as unusable, render one sentence |
-| 63 | An obligation re-issued by its own refusal | A stimulus rule with no bound, over a projection allowed to be stale | At most one issue per delivery, and a delivery produced by an obligation attempt is not an occasion | Frontend reconciliation | A refused attempt does not immediately produce another; the next real operation to finish does |
+| 63 | An obligation re-issued by its own refusal | A stimulus rule with no bound, over a projection allowed to be stale | Each owed obligation issues at most once per delivery, and an attempt's own refusal re-issues it only if another delivery landed meanwhile | Frontend reconciliation | A refused attempt with nothing else having happened does not immediately produce another; one overtaken by a gate holder's answer does |
 | 64 | The stimulus narrower than the facts it must cover | A delivery scope read as the conversion path only | Delivery membership and gate membership are the same set | Decision 4 + Decision 11 | A preview read finishing issues an owed catalog read, exactly as a drain finishing does |
 | 65 | A build that cannot convert rendered as nine unavailable rows | `Failed` and `Ready`-with-nothing-available left undecided | A build failing `require_conversion` is `Failed`; availability is a property of rows, and it has not got as far as rows | Decision 3 + Decision 7 | A build missing `outdir`, `outfile`, `--zlib` or the format option renders one sentence and a retry, not nine dead controls |
 | 66 | A quarantined session reachable through a remembered verdict | The authority's verdict substituted for the projection rather than added to it | Decision 4 changes where the verdict comes from; every conjunct `backendUsable` already requires survives | `ConversionLane` + preview load | A session quarantined after a good verdict starts no conversion and no automatic preview load |
@@ -1638,6 +1654,7 @@ and no finding may disappear because the old PR was superseded.
 | 72 | A reader's error swallowed by an unrelated revision | Staleness applied to the whole response | Staleness reaches the projection and its binding-bound payload, never the domain outcome | Frontend, ordering then identity | A refusal overtaken by a revision bump is still shown to the reader who caused it |
 | 73 | Two authorities keying one contended moment differently | An admission with no stated selection order | Probe admission reports in `ConversionLane`'s order | Decision 11 + panel notice registry | Two facts holding at once produce one notice, not two |
 | 74 | A working replacement landed unprobed | "The build changed" collapsed into "the build is gone" | A read that finds a different working installation lands on its own answer; `UnavailableForBinding` is only for a binding naming no build | Decision 3 + Rust lifecycle | Switching between two good installations mid-read yields `Ready(B)`, never `UnavailableForBinding` |
+| 75 | A request's payload judged against a receipt React was told not to hold | A retain-list closed before the request-scoped receipt was needed | React holds the receipt a request was issued under, for as long as that request is outstanding | Decision 13 | A stale reply's payload is discarded without consulting the projection that carried it |
 
 ## What this interlude does not do
 

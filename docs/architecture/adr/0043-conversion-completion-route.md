@@ -22,8 +22,11 @@ Related: [0002](0002-external-proteowizard.md),
 [0042](0042-viewer-completion-closure-and-handoff.md),
 [0044](0044-conversion-configuration-authority.md)
 
-**Amended 2026-09-04 by M6.4A.** The route gains one authority interlude between
-M6.3 and M6.4, and with it two edges, M6.4's prerequisites and the chain wording.
+**Amended 2026-09-04 by M6.4A.** The route gains one authority interlude where
+M6.1 and M6.3 converge, immediately before M6.4, and with it three edges, M6.4's
+prerequisites and the chain wording. M6.1's edge now lands on the interlude rather
+than on M6.4, because the boundary is normative over the lane's field set and
+refusal precedence; M6.4 inherits it through M6.4A.
 Where M6.4 owns the conversion configuration's *ownership boundary*, that is now
 [ADR 0044](0044-conversion-configuration-authority.md)'s, and this document
 defers to it there. Everything else here is the route as it was locked on
@@ -384,8 +387,9 @@ as it bound `msaccess` in M5.
 
 ## The M6 route
 
-Twelve slices, and one authority interlude — M6.4A — inserted between M6.3 and
-M6.4 after the first M6.4 attempt stopped four times. The order is not a
+Twelve slices, and one authority interlude — M6.4A — inserted where M6.1 and M6.3
+converge, immediately before M6.4, after the first M6.4 attempt stopped four
+times. The order is not a
 preference: the dependency graph below has no
 cycle, and every edge is a real one — a slice consumes an authority an earlier
 slice established, or measures something a later slice may not assume.
@@ -401,9 +405,9 @@ slice established, or measures something a later slice may not assume.
                     |                 |                         |
                     |        M6.3 ConversionIntent              |
                     |                 |                         |
-                    |        M6.4A authority boundary           |
-                    |                 |                         |
                     +--------+--------+                         |
+                             |                                  |
+                     M6.4A authority boundary                   |
                              |                                  |
                      M6.4 visible settings                      |
                              |                                  |
@@ -439,7 +443,7 @@ Read as edges, with the reason each exists:
 | --- | --- |
 | M6.0 -> M6.1 | M6.1 needs the audit that says which rules disagree and where |
 | M6.0 -> M6.2 | M6.2 needs the frozen evidence contract and the fixture/identity baseline |
-| M6.1 -> M6.4 | A visible setting is a control; a control needs one availability rule |
+| M6.1 -> M6.4A | The boundary is normative over the lane's field set and its refusal precedence; it can only be written against a lane that exists |
 | M6.2 -> M6.3 | An intent may only name semantics the build was measured performing |
 | M6.3 -> M6.4A | Making the intent visible needs an owner for the installation it is valid against |
 | M6.4A -> M6.4 | A visible setting projects a typed intent through one Rust-owned authority; it creates neither |
@@ -498,7 +502,7 @@ Everything backend-free stays available while the lane says no.
 *Non-goals:* no new setting, no new command, no queue-model change, no viewer
 change. This slice makes an existing set of controls truthful.
 
-*Downstream:* M6.4, and every slice that adds a control.
+*Downstream:* M6.4A, and through it M6.4 and every slice that adds a control.
 
 *Delivered.* `conversionAvailability.ts` holds one `ConversionLane` of eight
 facts, one `ConversionAction` discriminated by `start` and `retry`, and one
@@ -844,7 +848,9 @@ re-derivation would be visible rather than accidentally right.
 the identity that binds them, before the visible settings are built a second
 time.
 
-*Prerequisites:* M6.3 (there is a typed intent to be valid *about*).
+*Prerequisites:* M6.1 (there is a conversion lane whose field set and refusal
+precedence the boundary is normative over) and M6.3 (there is a typed intent to be
+valid *about*).
 
 *Establishes:* [ADR 0044](0044-conversion-configuration-authority.md) — a
 Rust-owned installation authority that is a typed state rather than a counter; a
@@ -881,9 +887,9 @@ implementation evidence and is not merged.
 *Purpose:* make admitted intents selectable, and make the pre-run summary
 describe the plan that will actually be bound.
 
-*Prerequisites:* M6.1 (a control needs one availability rule), M6.4A (a control
-needs one owner for the installation its semantics are valid against, and
-carries M6.3's typed intent through it).
+*Prerequisites:* M6.4A (a control needs one owner for the installation its
+semantics are valid against, and carries M6.3's typed intent through it — and
+through M6.4A, M6.1's one availability rule).
 
 *Establishes:* the visible controls for whatever M6.2 admitted; CNV-009's
 natural-language summary widened from item count and ordered list to **format

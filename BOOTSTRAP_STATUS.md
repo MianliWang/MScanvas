@@ -7109,7 +7109,7 @@ carrying it failed.
 
 ### What ADR 0044 locks
 
-Fourteen decisions, answering eleven questions the replacement must not have to
+Fourteen decisions, answering twelve questions the replacement must not have to
 invent while coding: a Rust-owned installation authority that is a typed state
 (`Unresolved | ObservedButUnsettled | Settled`) rather than a counter; one opaque,
 path-free, session-scoped `BackendBindingReceipt` every fact about one installed
@@ -7128,13 +7128,13 @@ receipt; a mandatory pre-BEGIN intent proof that no busy lane may skip; one
 boundary, not `ConversionLane` — for every `msconvert --help` probe; and one panel-level owner
 per availability reason.
 
-It ends with a seventy-four-obligation acceptance ledger: seventeen families
-from PR #95, and fifty-seven more from findings raised against this record's own
+It ends with a seventy-five-obligation acceptance ledger: seventeen families
+from PR #95, and fifty-eight more from findings raised against this record's own
 drafts.
 Every live release-blocking finding maps to at least one obligation, so nothing
 PR #95 measured has to be rediscovered by the replacement.
 
-**Those fifty-seven are worth recording, because they are the same shapes one layer
+**Those fifty-eight are worth recording, because they are the same shapes one layer
 out.** The first draft said Rust must observe a replacement binding before
 propagating a refusal — and stopped there. Recording an observation without
 *delivering* it leaves the session correct in Rust and stale on screen: a refused
