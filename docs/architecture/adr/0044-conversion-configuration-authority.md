@@ -898,13 +898,27 @@ whose job is to produce one.
 
 **Quarantine, at this step, discharges rather than defers — but only what it can
 actually stop.** The rule is about an obligation meeting a refusal that cannot
-clear, and quarantine refuses *backend process work*: it cannot stop a
-configuration read for a `NoInstallation` binding, which launches nothing and is
-answered from the binding (Decision 5). That read is therefore never discharged by
-quarantine, and a session that is quarantined and then loses its build still issues
-it and still renders `UnavailableForBinding`. Discharge follows the same principle
-as admission does — what owns a process — rather than applying to every obligation
-in sight.
+clear, and quarantine only *refuses* the work that would start a process. It has two
+consequences here, and the second was missed by two drafts.
+
+```text
+the configuration probe  -> refused permanently; the obligation discharges
+                            (an msconvert --help is a process, and a quarantined
+                             session will not start one this run)
+
+the backend check        -> not refused at all. inspect_backend answers a
+                            quarantined session from quarantined_availability(),
+                            without starting anything: the obligation discharges
+                            by being ANSWERED, and the banner gets the quarantine
+                            reading, which is the correct thing to show
+```
+
+That second line is load-bearing. `drain_queue` calls `note_resolved` and can
+quarantine in the same operation, so a session's authority receipt and its quarantine
+can arrive together — leaving the banner's reading stale at the exact moment the check
+that would replace it is owed. Discharging that check on a refusal would reopen the
+stale-banner window rows 96, 102 and 110 exist to close. It is not refused; it answers,
+and what it answers with is the sentence the reader needs.
 
 It is one of admission's five facts (row 40) and the lane's first refusal, and
 neither rule is weakened by any of this — what changes is what an *obligation* does
@@ -1764,18 +1778,22 @@ is entitled to consider, in the one shared order, and where they consider the sa
 they name it identically. That is what row 13 asks for and all it asks for.
 `ConversionConfigurationProbeAdmission` maps its refusals onto the same names, which it
 can, because Decision 11's admitting subset was drawn from these fields in the first
-place. Only a refusal with no lane fact behind it mints a key of its own: a
-configuration probe already in flight, **which sorts after every lane field**, so it has
-a place in the one order both authorities report in and cannot tie with a lane fact for
-the same moment — it is the narrowest refusal there is, shared by nothing, so it yields
-to any lane fact that can refuse a probe at all. The three that cannot — `adopting`,
-`exportingDiagnostics` and `workspaceSettling`, which Decision 11 excludes because they
-own no backend process — never key a probe refusal, so there is no tie for them to lose:
-a probe running beside a diagnostics export is refused by neither, and the export's own
-refusal of a conversion is keyed on its own. And the action-derived reasons, which name
-a target rather than a lane fact. Those last are keyed by action *and* target, and need
-no cross-action deduplication because no two actions can be refused by one of them — a
-missing target is a fact about the action asking. (The alternative — namespaced
+place. **A probe already in flight mints no key at all, and two drafts gave it one.** It
+is admission's fifth fact, so it can refuse a *probe* — but nothing it refuses is ever
+rendered: the settings retry is withdrawn while a probe is in flight (Decision 5),
+Convert is deliberately left enabled for its duration (Decision 10), and an automatic
+read's refusal is bookkeeping rather than an error on screen (row 121). A key with no
+notice behind it is dead specification carrying a test obligation, so it goes, and the
+registry's keys are the lane's eight fields and the action-derived reasons.
+
+The lane fields that refuse no probe — `adopting`, `exportingDiagnostics` and
+`workspaceSettling`, which Decision 11 excludes because they
+own no backend process — key a conversion refusal and nothing else, which is all they
+ever needed to do: a diagnostics export refuses a conversion, is keyed on its own name,
+and has nothing to tie with. The action-derived reasons name a target rather than a
+lane fact, and are keyed by action *and* target; they need no cross-action
+deduplication, because no two actions can be refused by one of them — a missing target
+is a fact about the action asking. (The alternative — namespaced
 per-child notices — is rejected: it multiplies the same sentence and reintroduces the
 "each surface decides again what is wrong" defect ADR 0041 removed.)
 
@@ -2063,7 +2081,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–127).
+plus the findings raised against this document's own drafts (rows 18–128).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2147,7 +2165,7 @@ and no finding may disappear because the old PR was superseded.
 | 76 | An admission rule capturing the operations it lists as refusing it | A scope written as the tool invocation rather than the read | The rule governs the automatic first configuration read and the explicit retry, and no other `--help` | Decision 11 | A preview read and the BEGIN preflight run their own discovery without consulting probe admission |
 | 77 | A rebinding read discarded by the receipt it was issued under | A payload judged by its request rather than by itself | A payload is judged by the binding it describes against the binding now rendered | Frontend, ordering then identity | A read issued under A that answers `Ready(B)` is installed whole |
 | 78 | Nine dead controls under a truthful `Ready` | A catalog with no available row left to per-row presentation | A `Ready` catalog with nothing available is one settings-level sentence, and offers no recovery, because the shipped row is unavailable too | Decision 3 + Decision 8 | A build admitting none of the nine rows says so once, and no control implies a way through |
-| 79 | The one self-minted key outside the shared order | A precedence covering only the lane's own fields | Probe-in-flight sorts after every lane field that can refuse a probe | Panel notice registry | A probe in flight beside such a fact yields to it; beside a fact that refuses no probe — adoption, diagnostics export, workspace settling — there is no tie to resolve |
+| 79 | A registry key for a refusal nothing renders | Probe-in-flight given a key and a place in the order | It mints no key: the retry is withdrawn while a probe is in flight, Convert stays enabled, and an automatic read's refusal is bookkeeping | Panel notice registry | The registry's keys are the lane's eight fields and the action-derived reasons, and every one of them can be rendered |
 | 80 | The binding oscillating between two observers | The preview verdict folded into the identity by one of them | Every observer mints the binding from `AvailabilityState::Available`; the verdict travels beside it | Decision 1 + Decision 3 | An `Available` build whose msaccess lacks a required preview operation is one binding to every observer, and its catalog survives a backend check |
 | 81 | An obligation waiting on a delivery nothing will produce | A stimulus that assumed every deferring fact belongs to a gate holder | A lane fact going false is an occasion, observed by the frontend without being told | Frontend reconciliation | A destination picker cancelled after a `BEGIN` observed a replacement issues the owed check, and the read follows on its answer |
 | 82 | No configuration state for an answer needing no process | A binding-only answer deferred by a gate it does not take | A read for a binding that names no build runs no discovery and consults no admission; it answers from the binding | Decision 5 + Decision 11 | A session bound to no installation renders `UnavailableForBinding` while a drain holds the gate |
@@ -2196,6 +2214,7 @@ and no finding may disappear because the old PR was superseded.
 | 125 | A durable export field replaced by a session-scoped token | "Leaves the wire" read over a persisted schema as well as the live one | The diagnostics export keeps `installationGeneration`; it outlives the session a receipt is scoped to, and its schema is ADR 0017's | Decision 2 + ADR 0017 | The export is byte-identical in shape after the counter leaves the live contracts |
 | 126 | A rule justified by a case its own identity model forbids | An in-place repair offered as an equal receipt with a new verdict | New bytes are a new digest and so a new binding; the reachable case is a transient probe failure | Decision 2 + Decision 4b | Row 94's case is demonstrable: a `--help` that times out once moves the verdict and not the receipt |
 | 127 | React holding a reading it is not permitted to hold | An exhaustive retain-list omitting the banner's own DTO | The rendered `BackendAvailabilityDto` is retained, and its receipt compared against the authority's | Decision 13 + Decision 4 | The banner's currency test needs no exception to the retain list |
+| 128 | The stale-banner window reopened by a discharge | Quarantine discharging every obligation it meets, including one it does not refuse | `inspect_backend` answers a quarantined session rather than refusing it, so the check discharges by answering | Authority obligations + Decision 4 | A drain that observes a replacement and quarantines in the same operation still replaces the banner's reading |
 
 ## What this interlude does not do
 
