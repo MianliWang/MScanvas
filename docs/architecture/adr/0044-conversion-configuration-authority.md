@@ -512,7 +512,7 @@ It cannot be done, for two independent reasons, either of which is fatal.
 
 ```text
 backendChanging is backendBusy, one flag (usePreviewWorkspace.ts)
-  -> Decision 11's first admitting fact is worded the same way
+  -> Decision 11's second admitting fact is worded the same way
   -> the state that OWES the check becomes the fact that REFUSES it
   -> unsettled never exits; rows 42, 52, 53, 54 and 59 deadlock together
 
@@ -821,9 +821,11 @@ the accepted projection's receipt differs from the rendered one
   -> render only the snapshot that carries it
 
      (the separation matters: step two decides what is *invalid*, and an
-      imperative read here would spend the binding's automatic attempt into a
-      held gate and put the courtesy ahead of the duty in the very case --
-      a BEGIN refused mid-drain -- where both obligations arise at once.
+      imperative read here would put the courtesy ahead of the duty in the
+      very case -- a BEGIN refused mid-drain -- where both obligations arise
+      at once. It would not spend the attempt: a probe that cannot start
+      spends nothing, by Decision 5 and row 32. The cost is the ordering,
+      which is all row 92 needs it to be.
       And the exception is not an optimisation: without it, mount and every
       rebinding read cost two snapshots, and the second would contradict
       rows 20 and 56 by asking again for what the first already answered.
@@ -1338,10 +1340,10 @@ question in the table above for an implementer to invent, so it is answered here
 
 The rule this document uses for its internal obligations — duties wait, courtesies
 refuse — does not decide it, because both of those are about work with no reader
-waiting on it. A `BEGIN` is a click. Blocking it on the backend gate would hang the
-click for the length of a preview scan, and would take away the very property the
-paragraph above preserves: that a queue is admittable while a preview holds the
-lane.
+waiting on it. A `BEGIN` is a click, and blocking it on the backend gate would hang
+that click for the length of a preview scan with nothing on screen to explain why.
+(The admittability the paragraph above discusses is not an argument here: this
+proof takes it away deliberately, and cannot also be defended by it.)
 
 Refusing costs nothing that was available, because `ConversionLane` already refuses
 every conversion action while `previewReading` or `laneClaimed` holds. The proof's
@@ -1902,7 +1904,7 @@ and no finding may disappear because the old PR was superseded.
 | 89 | A quarantined unbound session with no configuration state | The binding-only exemption stated for Rust and not for the frontend | A rendered `NoInstallation` binding issues its configuration read regardless of admission | Frontend reconciliation + Decision 5 | The exemption holds on both sides of the boundary, not just Rust's |
 | 90 | A preview auto-loaded against a build just judged unusable | A re-issue condition abbreviated to "the authority settles" | The occasion is `backendUsable` becoming true, the whole conjunction | `ConversionLane` projection + preview load | Settling on an unusable build, or settling while quarantined, loads nothing |
 | 91 | A session stranded unsettled by a transient failure | "Answers without discovering" discharging unconditionally | It follows the permanent-or-transient rule like every other refusal | Authority obligations | A check whose request failed stays owed; a quarantined one discharges |
-| 92 | The automatic attempt spent into a held gate by the invalidation step | Step two dispatching a read imperatively | Step two decides what is invalid; step three issues, under admission and duty-first ordering | Frontend reconciliation | A `BEGIN` refused mid-drain issues the check first and the read on its answer, never a probe into the drain |
+| 92 | The courtesy put ahead of the duty by the invalidation step | Step two dispatching a read imperatively | Step two decides what is invalid; step three issues, under admission and duty-first ordering | Frontend reconciliation | A `BEGIN` refused mid-drain issues the check first and the read on its answer, never a probe into the drain |
 | 93 | One fact with two sentences and no rule for which is rendered | A fact-phrased notice required over an action-phrased vocabulary | The notice sentence is the panel's, new; `ConversionAvailability.message` is untouched and stays on its control | Panel notice registry | The lane's vocabulary is not rewritten, and the shared element carries exactly one sentence |
 
 ## What this interlude does not do
