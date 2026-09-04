@@ -42,7 +42,7 @@ coding.
 | Who owns conversion-capability/catalog truth? | Rust, as a lifecycle keyed by the installation binding. |
 | What identity binds those facts together? | One opaque, session-scoped, path-free `BackendBindingReceipt`. |
 | Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
-| May the conversion configuration read run now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate **and its quarantine boundary**. It governs the automatic first read and the explicit retry, not every `--help` a gated operation runs. |
+| May the conversion configuration read run now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate **and its quarantine boundary** — for the automatic first read and the explicit retry, not every `--help` a gated operation runs, and not a read for a binding that launches no probe at all. |
 | Who owns catalog request lifecycle and retry? | Rust owns the lifecycle state; the frontend initiates a read or a retry and owns neither. |
 | What does React retain? | The selected intent id, request-in-flight for rendering, its own per-obligation bookkeeping (in flight, owed, and whether a delivery has landed since), Rust's plan answer, the revision and receipt of what it is rendering, and presentation. Nothing else. |
 | May the obliged backend check be issued now? | Whether anything owns the backend process — never a verdict about a build, and never the probe's admission rule. |
@@ -692,14 +692,14 @@ proves a mismatch, not that A supersedes B. Invalidating on inequality alone
 would let a delayed answer about the build the session has already left revoke
 the build it is on, and send it to read a snapshot for a binding that is gone.
 
-So Rust authors the order, and the frontend applies it in two steps.
+So Rust authors the order, and the frontend applies it in three steps.
 
 **Step one — ordering, by revision only.**
 
 ```text
 nothing is rendered yet                 -> accept; this is the first publication
-incoming.revision <  rendered.revision  -> stale; discard the projection and
-                                           any binding-bound payload with it
+incoming.revision <  rendered.revision  -> stale; discard the projection
+                                           (the payload has its own rule)
 incoming.revision == rendered.revision  -> the same publication already accepted;
                                            the rendered authority stands
 incoming.revision >  rendered.revision  -> accept this Rust-authored projection
@@ -794,10 +794,20 @@ document sets false for the whole `ObservedButUnsettled` window. Gate the check 
 refuses it. A verdict about a build owns no process; it can refuse an action, and
 it may never refuse the operation whose job is to replace it.
 
-**Quarantine, at this step, discharges rather than defers.** It is one of
-admission's five facts (row 40) and the lane's first refusal, and neither rule is
-weakened — what changes is what an *obligation* does when it meets a refusal that
-cannot clear. An obligation is discharged the moment the session is quarantined,
+**Quarantine, at this step, discharges rather than defers — but only what it can
+actually stop.** The rule is about an obligation meeting a refusal that cannot
+clear, and quarantine refuses *backend process work*: it cannot stop a
+configuration read for a `NoInstallation` binding, which launches nothing and is
+answered from the binding (Decision 5). That read is therefore never discharged by
+quarantine, and a session that is quarantined and then loses its build still issues
+it and still renders `UnavailableForBinding`. Discharge follows the same principle
+as admission does — what owns a process — rather than applying to every obligation
+in sight.
+
+It is one of admission's five facts (row 40) and the lane's first refusal, and
+neither rule is weakened by any of this — what changes is what an *obligation* does
+when it meets a refusal that cannot clear. An obligation whose fulfilment needs the
+backend is discharged the moment the session is quarantined,
 whether it had been issued, deferred by contention, or not yet attempted: there is
 nothing to wait for, and a session whose stop could not be confirmed will not get
 another verdict this run. So a quarantined session makes at most one attempt and
@@ -989,8 +999,9 @@ receipt replaced mid-request
 
 probe admission refuses while Unattempted
   -> stay Unattempted; nothing is queued behind the lane
-  -> the first read is still owed, and is re-issued on the next authority
-     delivery that finds admission available
+  -> the first read is still owed, and is re-issued on the next occasion
+     that finds admission available -- a delivery, or a lane fact going
+     false (Decision 4b, step three)
 
 probe admission refuses an explicit retry while Failed
   -> stay Failed; no probe launches
@@ -1677,7 +1688,7 @@ rather than left to a reader:
 | Is this response older than what is rendered? | `BackendAuthorityRevision`, compared, nothing else |
 | Does this catalog or plan belong to the installation I am bound to? | `BackendBindingReceipt` equality, nothing else |
 | Is conversion configuration unavailable, unattempted, ready or failed? | The Rust configuration lifecycle, delivered as typed state |
-| May the conversion configuration read run now? | `ConversionConfigurationProbeAdmission` — the automatic first read and the explicit retry, and no other `--help` |
+| May the conversion configuration read run now? | `ConversionConfigurationProbeAdmission` — the automatic first read and the explicit retry, and no other `--help`; a `NoInstallation` binding's read launches no probe and asks nothing |
 | May the obliged backend check be issued now? | Backend-process ownership, and nothing else — a separate question, deliberately not this one |
 | Is there a real plan request, answer or failure? | The plan state machine |
 | May a conversion action start? | `ConversionLane`, unchanged from M6.1 |
@@ -1943,7 +1954,7 @@ and no finding may disappear because the old PR was superseded.
 | 86 | The suppressed automatic preview load never re-issued | A one-shot guard behind a verdict this decision makes temporarily false | `backendUsable` becoming true is an occasion; a load suppressed while unsettled is issued then, and not merely on settling | `ConversionLane` projection + preview load | A document opened during an unsettled window previews once the check answers usable, without a second click |
 | 87 | A courtesy abolished with the duty it was mistaken for | One decision covering the exact-intent proof and the pre-picker family check | The proof owns a guarantee and may not be skipped; the pre-picker courtesy owns none and may | Decision 10 | The pre-picker family check is still skipped under a held lane rather than blocking on it, and no picker opens before the exact intent is proved |
 | 88 | One moment keyed two ways by an order written wrong | An admitting list whose middle two facts were transposed | The list is `ConversionLane`'s precedence exactly: `laneClaimed` before `previewReading` | Decision 11 | A conversion running during a preview read is keyed `conversion-running` by both authorities |
-| 89 | A quarantined unbound session with no configuration state | The binding-only exemption stated for Rust and not for the frontend | A rendered `NoInstallation` binding issues its configuration read regardless of admission | Frontend reconciliation + Decision 5 | The exemption holds on both sides of the boundary, not just Rust's |
+| 89 | A quarantined unbound session with no configuration state | The binding-only exemption stated for admission and not for discharge | A `NoInstallation` binding's read is exempt from both: quarantine discharges only obligations that need the backend | Frontend reconciliation + Decision 5 | A session quarantined before it loses its build still renders `UnavailableForBinding` |
 | 90 | A preview auto-loaded against a build just judged unusable | A re-issue condition abbreviated to "the authority settles" | The occasion is `backendUsable` becoming true, the whole conjunction | `ConversionLane` projection + preview load | Settling on an unusable build, or settling while quarantined, loads nothing |
 | 91 | A session stranded unsettled by a transient failure | "Answers without discovering" discharging unconditionally | It follows the permanent-or-transient rule like every other refusal | Authority obligations | A check whose request failed stays owed; a quarantined one discharges |
 | 92 | The courtesy put ahead of the duty by the invalidation step | Step two dispatching a read imperatively | Step two decides what is invalid; step three issues, under admission and duty-first ordering | Frontend reconciliation | A `BEGIN` refused mid-drain issues the check first and the read on its answer, never a probe into the drain |
