@@ -266,9 +266,17 @@ contract level: the number existed and the refusal path did not carry it.
 
 So the rule is stated in full:
 
-> **Every conversion-bound operation that can observe installation authority
-> returns the authority as it stands when the operation answers — whether its
-> domain outcome succeeds or refuses.**
+> **Every operation that can observe or replace installation authority returns
+> the authority as it stands when the operation answers — whether its domain
+> outcome succeeds or refuses.**
+
+"Conversion-bound" would have been too narrow by exactly the two operations that
+*replace* a binding rather than merely notice one: the backend check and the
+installation change. Both already answer with a verdict, and both must answer
+with the authority that verdict established, or choosing a different ProteoWizard
+folder would leave `Ready(A)` and `Plan(A)` on screen with nothing obliged to
+correct them — the same stale window, reached through the one path a reader takes
+deliberately.
 
 What it returns is a *projection of the authority*, not a receipt, and the
 difference matters at exactly one point: `Unresolved` has no binding and
@@ -472,8 +480,9 @@ Binding = Installed { receipt }
   -> the lifecycle begins at Unattempted { binding }
 
 Unattempted, Installed
-  -> a configuration read that answers    -> Ready  { binding, catalog }
-  -> a configuration read that does not   -> Failed { binding, error }
+  -> a probe ran and answered             -> Ready  { binding, catalog }
+  -> a probe ran and did not answer       -> Failed { binding, error }
+  -> a probe could not start              -> Unattempted, unchanged
 
 Failed
   -> only an explicit settings retry spends another attempt
@@ -540,13 +549,26 @@ nothing equivalent to `servedBinding`, `catalogGeneration` or
 
 ```text
 ConversionConfigurationSnapshot {
-    binding
-    configuration: UnavailableForBinding
+    authority: BackendAuthorityProjection
+    configuration:
+        NoBinding
+      | ForBinding {
+            receipt
+            state: UnavailableForBinding
                  | Unattempted
                  | Ready  { catalog: admitted rows, shipped intent identity }
                  | Failed { error }
+        }
 }
 ```
+
+`NoBinding` is the member the authority makes necessary. `Unresolved` is a state
+this session really reaches — the first discovery that establishes nothing leaves
+it there — and a snapshot that demanded a binding would have no representable
+answer for it, leaving only the two exits ledger rows 24 and 26 forbid: invent a
+receipt, or route it to `UnavailableForBinding`, which is a statement about a
+binding that does not exist. `NoBinding` says the true thing: nothing is
+installed *or not installed* yet, so there is no configuration to describe.
 
 The catalog lives **inside** `Ready`, exactly as it does in the lifecycle this
 projects. Carried as a sibling field it would be representable beside a `Failed`
@@ -643,6 +665,9 @@ the in-flight request answers, and the answer is for that identity
 the in-flight request fails, for that identity
   -> failed { identity, error }
 
+failed, and the reader asks for the same question again
+  -> loading { the same identity, a new request }
+
 handles, intent, conflict policy, binding receipt or document authority
 change, and a replacement request is issued
   -> loading { the replacement's identity }
@@ -654,7 +679,15 @@ a ready or failed answer stops describing the current question
   -> it may not continue to stand for it; the rules above decide what replaces it
 ```
 
-Two invariants govern the whole table, and each is a finding:
+**A failed plan has a way out that does not require changing the question.** A
+plan can fail for a reason the reader cannot act on — an IPC that did not come
+back, a read that lost a race — and a machine whose only exit from `failed` is a
+new plan identity would pin `Convert` as refused for the session over a transient
+error, while the refusal beside it says the reader can act. That is the same
+shape as the catalog's own retry, and it gets the same answer: an explicit
+request re-asks the *same* question, and nothing automatic does.
+
+Two further invariants govern the whole table, and each is a finding:
 
 ```text
 no loading without a request actually in flight
@@ -965,7 +998,10 @@ rA < rB
   -> the projection is discarded as stale, entirely
   -> B is NOT invalidated
   -> no snapshot is read for A
-  -> the reply's domain outcome is still the answer to the request that made it
+  -> the reply's domain outcome is still the answer to the request that made
+     it -- an error to show, a refusal to explain -- but any *binding-bound
+     payload* it carries is subject to the same rule as the projection: a
+     snapshot or plan for A cannot be installed under B
 ```
 
 Receipt inequality alone would have done the opposite here — revoked the build
@@ -1024,6 +1060,11 @@ and no finding may disappear because the old PR was superseded.
 | 27 | A delayed reply rolls the authority backwards | Equality asked to do ordering's work | Ordering is `BackendAuthorityRevision` and identity is the receipt; neither answers the other's question | Rust-authored revision | A late projection at a lower revision is discarded whole; the rendered binding survives and no snapshot is read for the stale one |
 | 28 | A revision read as meaning | One token carrying an ordering and a semantics | The revision's only frontend meaning is staleness; observed, settled, attempted and ready arrive as typed state | Frontend contract | Nothing in React derives an authority state from a revision comparison |
 | 29 | The plan reaches no successful state | A machine with no transition into `ready` | Every state has an entry, and a matching answer reaches `ready { plan }` | Plan state machine | A plan request that answers for its own identity renders the plan; one that fails renders the failure |
+| 31 | `Unresolved` has no representable snapshot | A snapshot demanding a binding for a state that has none | The snapshot says `NoBinding` where there is no binding | `ConversionConfigurationSnapshot` | A session whose first discovery establishes nothing renders no configuration, invents no receipt, and is not called `UnavailableForBinding` |
+| 32 | Contention spends the one automatic attempt | "A read that does not answer" catching a read that never ran | `Failed` requires a probe that ran; a probe that could not start leaves `Unattempted` | Rust configuration lifecycle | A configuration read refused by probe admission leaves the state unchanged and the first read still owed |
+| 33 | The two operations that replace a binding owe nothing | A delivery rule scoped to conversion-bound work | Every operation that can observe **or replace** authority returns it | Authority delivery | Choosing a different ProteoWizard folder invalidates the previous configuration and plan with nothing else required |
+| 34 | A stale reply's payload installed under a newer binding | Ordering applied to the projection but not to what it carries | A binding-bound payload obeys the same ordering as the projection that carries it | Frontend, ordering then identity | A late snapshot or plan for A cannot be installed while B is rendered |
+| 35 | A transient plan failure is permanent | A `failed` state with no exit but a new question | An explicit request may re-ask the same plan question | Plan state machine | A failed plan can be retried without changing handles, intent, policy or binding |
 | 30 | The route record contradicts itself | An amended ADR left reading as though it were not | ADR 0043 records the M6.4A amendment, links ADR 0044, and keeps its original decisions and date | ADR 0043 metadata | Its status, amendment note and `Related` name ADR 0044, and its chain wording matches ROADMAP |
 
 ## What this interlude does not do

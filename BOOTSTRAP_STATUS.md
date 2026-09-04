@@ -7128,8 +7128,9 @@ receipt; a mandatory pre-BEGIN intent proof that no busy lane may skip; one
 `ConversionLane` — for every `msconvert --help` probe; and one panel-level owner
 per availability reason.
 
-It ends with a thirty-obligation acceptance ledger: seventeen families from
-PR #95, and thirteen more from findings raised against this record's own drafts.
+It ends with a thirty-five-obligation acceptance ledger: seventeen families
+from PR #95, and eighteen more from findings raised against this record's own
+drafts.
 Every live release-blocking finding maps to at least one obligation, so nothing
 PR #95 measured has to be rediscovered by the replacement.
 
