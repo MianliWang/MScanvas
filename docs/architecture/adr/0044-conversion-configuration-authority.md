@@ -44,7 +44,7 @@ coding.
 | Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
 | May the conversion configuration read run now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate **and its quarantine boundary** — for the automatic first read and the explicit retry, not every `--help` a gated operation runs, and not a read for a binding that launches no probe at all. |
 | Who owns catalog request lifecycle and retry? | Rust owns the lifecycle state; the frontend initiates a read or a retry and owns neither. |
-| What does React retain? | The selected intent id, request-in-flight for rendering, its own per-obligation bookkeeping (in flight, owed, and whether a delivery has landed since), Rust's plan answer, the revision and receipt of what it is rendering, and presentation. Nothing else. |
+| What does React retain? | The selected intent id; request-in-flight for rendering; per-obligation bookkeeping (in flight, and whether a delivery has landed since — never *owed*, which Rust answers); which suppressed work waits on `backendUsable`; the never-reset plan request ordinal; Rust's plan answer, with its identity's receipt for the life of the plan; the revision and receipt of what it is rendering; and presentation. Nothing else. |
 | May the obliged backend check be issued now? | The same predicate the configuration read asks — process ownership, never a verdict about a build. The two differ in what a refusal means, not in what they ask. |
 | At what granularity does availability exist? | The admitted **row** — one composition. There is no per-value availability authority. |
 | What makes a pre-run plan current? | Ordered handles, intent id, conflict policy, binding receipt, document epoch — compared against Rust's own answer. |
@@ -97,7 +97,7 @@ The authority becomes a typed state Rust owns and the frontend renders:
 ```text
 BackendAuthorityState
   | Unresolved
-  | ObservedButUnsettled { binding }
+  | ObservedButUnsettled { binding: Installed }
   | Settled { binding, previewAvailability }
 
 Binding
@@ -204,6 +204,17 @@ An internal monotonic counter may remain the implementation. What must not
 happen again is exposing that counter and letting call sites supply its meaning:
 a receipt is a typed identity, not a number with arithmetic performed on it by
 four different readers.
+
+**So `installationGeneration` leaves the wire, and this is stated as an
+obligation rather than implied by the presence of a receipt.** It sits on five
+contracts in `contracts.ts` today, and `useConversionOperation` reconciles the
+queue's copy with each item's report by `Math.max` over the set — a frontend
+deciding which of several numbers is the current installation, which is precisely
+the defect this decision names. A replacement that adds the receipt and leaves the
+counter beside it satisfies every other rule here and keeps the whole family
+alive: two identities on one payload, one of them arithmetic. The field is removed
+from every contract that carries it, and no comparison of installation identity
+survives that is not receipt equality.
 
 This closes the family in which a plan stamped from one reading and a catalog
 stamped from another are compared for equality, and disagree for reasons neither
@@ -761,8 +772,12 @@ the payload     -> judged by RECEIPT alone: the binding it describes against
    (a snapshot     the binding now rendered
     or a plan)     a different binding -> discarded
                    the rendered binding -> admitted, whatever the revision did
-                   (the receipt is read from the response's own projection --
-                    see below: discarding it is not throwing it away)
+                   (a snapshot's receipt is read from the response's own
+                    projection -- see below: discarding it is not throwing
+                    it away. A plan's comes from its own identity, which
+                    Decision 9 makes the binding part of: `conversion_queue_plan`
+                    takes no gate, so it is outside Decision 4's delivery
+                    membership and carries no projection to read one from)
 
                    a response whose projection is Unresolved names no
                    binding, so its payload is NoBinding, and NoBinding
@@ -1480,7 +1495,18 @@ The frontend already refuses every conversion action while a lane fact holds, so
 the common cases are named to the reader before a request is ever sent. What is
 left is the narrow window where that projection was stale, and a probe — where the
 refusal is Rust's own, carries Rust's own reason, and is retriable at once, against
-a probe that lasts at most two 15-second `PROBE_TIMEOUT`s. A refusal a reader can
+a probe that lasts at most two 15-second `PROBE_TIMEOUT`s.
+
+**The probe is deliberately not made a lane fact, and that is a trade rather than
+an oversight.** React does hold it (Decision 13) and admission does read it
+(Decision 11), so Convert *could* be disabled for its duration — and it is not,
+because the probe is the one gate holder with nothing to tell a reader. Disabling
+Convert for up to thirty seconds under a sentence about a settings read the reader
+did not ask for buys a refusal in advance of a refusal, and Decision 12's
+"shared by nothing" stops being true the moment a conversion action shares it. The
+cost is the mirror image: a Convert pressed in that window renders enabled and is
+refused by Rust. It is rare, it is immediately retriable, and it says something
+true. A refusal a reader can
 act on beats a click that hangs for thirty seconds and beats a rule the gate cannot
 evaluate. What the rule forbids is proceeding without the proof, and that has not
 changed. The proof's answer only arises at all in the narrow window where the frontend's
@@ -1956,7 +1982,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–110).
+plus the findings raised against this document's own drafts (rows 18–112).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2072,6 +2098,8 @@ and no finding may disappear because the old PR was superseded.
 | 108 | The wait behind a probe understated by half | "A single `msconvert --help`", where discovery probes both tools | A configuration probe is a discovery over both tools, bounded by two `PROBE_TIMEOUT`s, and is described as such wherever its cost is weighed | Decision 10 + Decision 11 | No argument in this document rests on a probe being half as long as it is |
 | 109 | A `NoBinding` payload landing on a rendered binding | A receipt rule with nothing to compare when the projection is `Unresolved` | `NoBinding` installs only where the rendered authority is also `Unresolved` | Frontend, ordering then identity | A late mount-time snapshot never replaces a `Ready(A)` |
 | 110 | A banner naming the left build while marking its verdict superseded | Currency applied to the verdict and not to the identity beside it | The projection governs the whole reading: release, build date and origin included | Decision 4 | Through an unsettled window the banner names no build as current, and keeps every reason it has today |
+| 111 | The counter kept beside the receipt that replaced it | A boundary that adds an identity without retiring the one it supersedes | `installationGeneration` leaves all five contracts, and no installation comparison survives that is not receipt equality | Decision 1 + wire contracts | No `Math.max` over installation numbers remains anywhere in the frontend |
+| 112 | A plan judged by a projection its reply does not carry | A payload rule sourcing the receipt from a projection uniformly | A snapshot's receipt comes from its response's projection; a plan's from its own identity | Decision 4b + Decision 9 | `conversion_queue_plan`, which takes no gate and delivers no authority, still yields a plan that can be judged |
 
 ## What this interlude does not do
 
