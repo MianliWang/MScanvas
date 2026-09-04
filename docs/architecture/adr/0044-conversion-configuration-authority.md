@@ -44,7 +44,7 @@ coding.
 | Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
 | May the conversion configuration read run now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate **and its quarantine boundary** — for the automatic first read and the explicit retry, not every `--help` a gated operation runs, and not a read for a binding that launches no probe at all. |
 | Who owns catalog request lifecycle and retry? | Rust owns the lifecycle state; the frontend initiates a read or a retry and owns neither. |
-| What does React retain? | The selected intent id; request-in-flight for rendering; per-obligation bookkeeping (in flight, and whether a delivery has landed since — never *owed*, which Rust answers); which suppressed work waits on `backendUsable`; the never-reset plan request ordinal; Rust's plan answer, with its identity's receipt for the life of the plan; the revision and receipt of what it is rendering; and presentation. Nothing else. |
+| What does React retain? | The selected intent id; request-in-flight for rendering; per-obligation bookkeeping (in flight, and whether a delivery has landed since — never a judgement that one is *owed*, which Rust's state makes); the never-reset plan request ordinal; the Rust-authored configuration snapshot it is rendering, catalog included; Rust's plan answer, with its identity's receipt for the life of the plan; the revision and receipt of what it is rendering; and presentation. Nothing else. |
 | May the obliged backend check be issued now? | The same predicate the configuration read asks — process ownership, never a verdict about a build. The two differ in what a refusal means, not in what they ask. |
 | At what granularity does availability exist? | The admitted **row** — one composition. There is no per-value availability authority. |
 | What makes a pre-run plan current? | Ordered handles, intent id, conflict policy, binding receipt, document epoch — compared against Rust's own answer. |
@@ -429,14 +429,29 @@ the old feed would name the build the session has left and call it available, wh
 keeps everything the projection deliberately does not carry — the quarantine sentence,
 the discovery failure, the origin of the installation, all of which
 `quarantined_availability()` exists to keep truthful — and the banner goes on rendering
-it. What the projection adds is one thing: **whether what it is showing is current**.
+it. `BackendAvailabilityDto` **carries the receipt** in place of the
+`installationGeneration` Decision 2 removes from it — the same substitution made on
+every other contract, and the thing that makes the question below answerable at all.
+
+What the projection adds is one thing: **whether what it is showing is current**,
+which is receipt equality against the authority and nothing more.
 That covers the whole block and not only the verdict — the release, the build date and
 the origin describe a build as much as "available" does, and a banner that marked the
 verdict superseded while still naming the left installation would close half the defect.
-Between an observation and the render that consumes it the banner presents the entire
-reading as superseded rather than as fact. It does not report the left build as
+Between an observation and the reading that describes it, the banner presents the
+entire reading as superseded rather than as fact. It does not report the left build as
 available, it does not name it as the current one, and it loses none of the reason text
 it has today.
+
+**And that state owes its own exit, on the mount-time rule generalised.** A drain or
+a refused `BEGIN` observes a new binding without producing a
+`BackendAvailabilityDto` for it, so nothing would replace the superseded reading and
+it would stand until a reader pressed Recheck by hand. So: **a rendered reading whose
+receipt is not the authority's owes a backend check**, which is exactly the
+obligation `Unresolved` incurs at mount — same admission, same occasions, same
+discharge — asked of one more condition. A session that has never resolved anything
+and a session whose banner describes a build it has left are the same problem, and
+they get the same answer.
 
 The banner gains no authority of its own by this. It renders what arrives, which is
 what it does now — from one more source, for one more question.
@@ -709,11 +724,15 @@ the payload     -> judged by RECEIPT alone: the binding it describes against
     or a plan)     a different binding -> discarded
                    the rendered binding -> admitted, whatever the revision did
                    (a snapshot's receipt is read from the response's own
-                    projection -- see below: discarding it is not throwing
-                    it away. A plan's comes from its own identity, which
-                    Decision 9 makes the binding part of: `conversion_queue_plan`
-                    takes no gate, so it is outside Decision 4's delivery
-                    membership and carries no projection to read one from)
+                    projection, which describes the same instant: Rust
+                    builds both from one observation, under one hold of
+                    the gate, so a catalog probed under A cannot travel
+                    under a projection of B. See below: discarding the
+                    projection is not throwing it away. A plan's receipt
+                    comes from its own identity, which Decision 9 makes
+                    the binding part of: `conversion_queue_plan` takes no
+                    gate, so it is outside Decision 4's delivery membership
+                    and carries no projection to read one from)
 
                    a response whose projection is Unresolved names no
                    binding, so its payload is NoBinding, and NoBinding
@@ -727,11 +746,12 @@ the outcome     -> judged by NEITHER
 ```
 
 The middle line is the one both drafts got wrong, and the case that shows it is
-ordinary: a recheck settles on the same build, so the revision advances while the
-receipt does not, and a snapshot for B issued a moment earlier is stale *by revision*
-while describing exactly the binding on screen. Discarding it leaves a `Ready(B)`
-binding with no catalog rendered and nothing owed to fetch one. Judging it by the
-receipt installs it, correctly, because nothing about B changed.
+ordinary: a build that previewed badly is repaired in place, so a recheck settles on the
+same receipt with a *different* verdict — which advances the revision, by the rule
+below, because what is projected changed. A snapshot for B issued a moment earlier is
+then stale by revision while describing exactly the binding on screen. Discarding it
+leaves a `Ready(B)` binding with no catalog rendered and nothing owed to fetch one.
+Judging it by the receipt installs it, correctly, because nothing about B changed.
 
 **Admitted is not installed, for a payload that has an owner.** The receipt test
 is necessary and not sufficient: it says a payload belongs to the binding on
@@ -741,6 +761,16 @@ identity *and* ordinal — because "belongs to this binding" does not answer "is
 the answer to the question still being asked", and a retry preserves the binding by
 design. Row 44 is not weakened by row 94; they test different things, in that
 order.
+
+**One response, one instant, and that is Rust's obligation rather than a hope.**
+The delivery rule says a response carries "the authority as it stands when the
+operation answers", which on its own would let a catalog probed under A ride out
+under a projection of B — the payload rule would then admit it as B's. It cannot
+happen because the two are built together: a configuration read holds the gate,
+discovers, probes and projects from that one observation, and the projection it
+returns is the one its own discovery established. The gate is what makes "as it
+stands" mean "as this operation found it" rather than "as it happens to be at
+serialisation time".
 
 **"Discard the projection" means do not install it as the rendered authority**,
 not delete the bytes it arrived in. The distinction matters because Decision 6 puts
@@ -1945,7 +1975,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–116).
+plus the findings raised against this document's own drafts (rows 18–118).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2046,7 +2076,7 @@ and no finding may disappear because the old PR was superseded.
 | 93 | One fact with two sentences and no rule for which is rendered | A fact-phrased notice required over an action-phrased vocabulary | The notice sentence is the panel's, new; `ConversionAvailability.message` is untouched and stays on its control | Panel notice registry | The lane's vocabulary is not rewritten, and the shared element carries exactly one sentence |
 | 94 | A catalog discarded for a revision bump about its own binding | Staleness reaching a payload that describes the rendered binding | Receipt judges the payload; revision judges only the projection | Frontend, ordering then identity | A recheck that advances the revision on the same receipt does not strand `Ready(B)` with no catalog on screen |
 | 95 | A verdict owed for a binding that has none to give | A verdict treated as separable from the binding it judges | `NoInstallation` carries no verdict to wait for, and `Installed` never arrives without one | Authority state | Observing that no installation resolves obliges nothing and completes at once |
-| 96 | `Unresolved` with nothing obliged to move it | A liveness rule written about bindings, over a state that has none | A session that has resolved nothing owes one backend check from mount | Authority obligations | No session can sit unresolved with nothing owed and no control to press |
+| 96 | A reading nothing is obliged to replace | A liveness rule written about bindings only | A session that has resolved nothing, and a rendered reading whose receipt is not the authority's, each owe one backend check | Authority obligations | No session sits unresolved, and no banner describes a build the session has left, with nothing owed and no control to press |
 | 97 | React holding what Rust already answers | A retain-list that grew a flag per rule rather than per fact | React holds what only it can know — its own in-flight work — and never whether an obligation is *owed*, which Rust's configuration state answers | Decision 13 | No frontend flag duplicates `Unattempted` |
 | 98 | An occasion bounded only when it was a delivery | The once-per-occasion bound and duty-first ordering written over deliveries alone | Both govern every occasion, a lane fact going false included | Frontend reconciliation | A picker closing issues the check first, exactly as a drain answering does |
 | 99 | Quarantine's own protections read as removed with the route to `backendUsable` | "The short-circuit is gone with it", said of a function rather than of a dependency | `quarantined_availability()` is untouched; only `backendUsable` stops depending on it | Decision 4 | The quarantine banner and the refusal ahead of the gate both survive the authority change |
@@ -2067,6 +2097,8 @@ and no finding may disappear because the old PR was superseded.
 | 114 | React forbidden to hold the answer it must render | An exhaustive retain-list omitting the configuration snapshot | The Rust-authored snapshot and its catalog are retained as the plan answer is: kept as they arrived, never recomputed | Decision 13 | Rendering a catalog and looking a row up in it needs no exception to the retain list |
 | 115 | Two discoveries for one `BEGIN` | The proof and the pre-picker courtesy each taking the gate | One acquisition answers both | Decision 10 | A single Convert click costs at most one discovery, not two |
 | 116 | The slice planned as a panel-only change | A delivery rule over every gate-taker, recorded only in the panel's decision | ADR 0043's M6.4 scope names the viewer contracts the rule reaches | ADR 0043 amendment | The preview and spectrum responses, `BackendStatus`, and the five contracts losing `installationGeneration` are all inside the slice as planned |
+| 117 | A catalog probed under one binding installed under another | A projection defined as "the authority as it stands" with nothing tying it to its payload | Rust builds a response's projection and payload from one observation, under one hold of the gate | Decision 4 + Decision 6 | No snapshot can be admitted as a binding it was not probed against |
+| 118 | A banner asked a question it holds nothing to answer | The counter stripped from `BackendAvailabilityDto` with no receipt put in its place | The DTO carries the receipt, and currency is equality against the authority's | Decision 2 + Decision 4 | "Is this reading current?" is answerable from what the banner already holds |
 
 ## What this interlude does not do
 
