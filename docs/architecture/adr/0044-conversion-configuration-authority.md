@@ -581,12 +581,21 @@ session held in it loses the two controls a reader would reach for. A state that
 disables its own exits is not a state to add, which is the second reason Decision 1
 does not add one.
 
-**`Unresolved` owes one backend check, incurred at mount**, and that is the whole of
-what the authority obliges. It is the one state with no binding, so the liveness rule
+**The authority obliges a backend check in two conditions, and they are one rule.**
+`Unresolved` owes one at mount: it is the state with no binding, so the liveness rule
 below — written about bindings — does not reach it, and without this it would be the
 one state a session could sit in with nothing obliged to move it and no control to
-press. A session that has resolved nothing issues exactly one check, admitted like
-any other backend work, owed on the terms below if it cannot be.
+press. And a rendered `BackendAvailabilityDto` whose receipt is not the authority's
+owes one too (Decision 4), because a binding observed by a drain or a refused `BEGIN`
+produces no reading of its own and the banner would otherwise describe a build the
+session has left until someone pressed Recheck. Both are the same obligation, admitted
+like any other backend work and owed on the terms below if it cannot be issued.
+
+**At mount that check and the first configuration read share one discovery**, for the
+reason row 115 gives for `BEGIN`: both questions are about one build at one moment, and
+one `DiscoveryResult` carries the verdict *and* msconvert's grammar — Decision 1's own
+premise. Two serial acquisitions would cost two full discoveries, up to a minute of
+probes, to open a panel. One acquisition, one discovery, both answers.
 
 **They share the admission and differ in what a refusal means.** An earlier draft
 said the opposite — "the owing is shared; the admission is not" — and the document's own
@@ -728,10 +737,13 @@ the payload     -> judged by RECEIPT alone: the binding it describes against
                     builds both from one observation, under one hold of
                     the gate, so a catalog probed under A cannot travel
                     under a projection of B. See below: discarding the
-                    projection is not throwing it away. A plan's receipt
-                    comes from its own identity, which Decision 9 makes
-                    the binding part of: `conversion_queue_plan` takes no
-                    gate, so it is outside Decision 4's delivery membership
+                    projection is not throwing it away. A plan's receipt is
+                    stamped by Rust, from the binding its own resolution
+                    used, in the call that computes it -- the same
+                    one-observation rule, at a smaller scale. It is not
+                    read from a projection: `conversion_queue_plan` takes
+                    no gate, so it is outside Decision 4's delivery
+                    membership
                     and carries no projection to read one from)
 
                    a response whose projection is Unresolved names no
@@ -741,8 +753,10 @@ the payload     -> judged by RECEIPT alone: the binding it describes against
                    on top of a Ready(A)
 
 the outcome     -> judged by NEITHER
-   (an error,      it answers the request the reader made, and is shown
-    a refusal)
+   (an error,      it answers the request that was made, and is shown to
+    a refusal)     whoever made it. A reader's action surfaces its error;
+                   an automatic read's refusal is bookkeeping, and moves
+                   the obligation rather than the panel
 ```
 
 The middle line is the one both drafts got wrong, and the case that shows it is
@@ -752,6 +766,12 @@ below, because what is projected changed. A snapshot for B issued a moment earli
 then stale by revision while describing exactly the binding on screen. Discarding it
 leaves a `Ready(B)` binding with no catalog rendered and nothing owed to fetch one.
 Judging it by the receipt installs it, correctly, because nothing about B changed.
+
+That last distinction matters as much as the first two. A contention refusal is not
+news for a reader who asked for nothing: Decision 5 already says such a refusal spends
+no attempt and leaves the read owed, and surfacing it would put an error on screen for
+a settings read the reader never requested. It moves the obligation. An explicit
+retry's refusal, by contrast, answers a press, and is shown.
 
 **Admitted is not installed, for a payload that has an owner.** The receipt test
 is necessary and not sufficient: it says a payload belongs to the binding on
@@ -869,15 +889,24 @@ owed the check goes first
   -- "occasion", not "delivery": Decision 5 adds a second kind, a lane fact
      going false, and the bound and the ordering govern both alike. A picker
      closing issues the check first, exactly as a drain answering does
-  -- not "one obligation per delivery": a delivery finding both owed must
+  -- not "one obligation per occasion": an occasion finding both owed must
      leave neither stranded. But they cannot go together, because whichever
      starts holds the gate against the other -- so the duty is issued and
      the courtesy is deferred, which is the arrangement that resolves
      itself: the check answers, its answer is a delivery, and the read it
      deferred is issued by it
+  -- and the ordering is only about the gate, so it does not reach a read
+     that does not want one. A configuration read for a NoInstallation
+     binding launches no probe, is answered from the binding, and is
+     issued immediately -- deferring it behind a full discovery would
+     leave the panel with no configuration state for that whole window,
+     which is what rows 82 and 89 forbid
 
 an obligation is not re-issued by its own refused attempt's answer, unless
-another delivery has been processed since that attempt was issued
+another occasion has passed since that attempt was issued
+  -- an occasion, again, and not a delivery: a picker cancelled while the
+     refused probe's reply is still in flight is exactly the case, and it
+     produces no delivery at all
   -- the first half is the loop: with nothing else having happened, the answer
      that refused it cannot be the occasion to ask again
   -- the second half is a reply arriving out of order. The gate holder finishes
@@ -1975,7 +2004,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–118).
+plus the findings raised against this document's own drafts (rows 18–122).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2099,6 +2128,10 @@ and no finding may disappear because the old PR was superseded.
 | 116 | The slice planned as a panel-only change | A delivery rule over every gate-taker, recorded only in the panel's decision | ADR 0043's M6.4 scope names the viewer contracts the rule reaches | ADR 0043 amendment | The preview and spectrum responses, `BackendStatus`, and the five contracts losing `installationGeneration` are all inside the slice as planned |
 | 117 | A catalog probed under one binding installed under another | A projection defined as "the authority as it stands" with nothing tying it to its payload | Rust builds a response's projection and payload from one observation, under one hold of the gate | Decision 4 + Decision 6 | No snapshot can be admitted as a binding it was not probed against |
 | 118 | A banner asked a question it holds nothing to answer | The counter stripped from `BackendAvailabilityDto` with no receipt put in its place | The DTO carries the receipt, and currency is equality against the authority's | Decision 2 + Decision 4 | "Is this reading current?" is answerable from what the banner already holds |
+| 119 | Two full discoveries to open a panel | The mount-time check and the first configuration read each taking the gate | They share one acquisition and one discovery, as `BEGIN`'s two questions do | Decision 1 + Decision 10 | Opening the panel costs at most one discovery, not two |
+| 120 | A binding-only read deferred behind a discovery it does not need | Duty-first ordering applied to a read that takes no gate | The ordering is about the gate, so a `NoInstallation` read is issued immediately | Frontend reconciliation | A session bound to no installation renders `UnavailableForBinding` without waiting for a check |
+| 121 | A contention refusal shown to a reader who asked for nothing | An outcome rule written as though every request were a press | An outcome is shown to whoever made the request; an automatic read's refusal moves the obligation | Frontend, ordering then identity | A settings read refused by a held gate puts no error on screen; an explicit retry's refusal does |
+| 122 | A plan stamped for a binding it was not computed under | A receipt with no stated author or instant | Rust stamps the plan from the binding its own resolution used, in the call that computes it | Decision 9 | No plan can carry a receipt its own computation did not observe |
 
 ## What this interlude does not do
 
