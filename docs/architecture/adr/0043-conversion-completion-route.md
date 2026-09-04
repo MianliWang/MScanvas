@@ -862,8 +862,8 @@ erase a newly observed binding; a Rust-owned configuration
 lifecycle keyed by that receipt; availability as a property of an admitted
 **row** rather than of an axis value; an explicit plan state machine; a mandatory
 pre-BEGIN intent proof; one probe-admission rule, decided by Rust's backend gate
-and quarantine boundary rather than by the conversion lane, for every
-`msconvert --help` probe; and one DOM owner per availability reason.
+and quarantine boundary rather than by the conversion lane, for the conversion
+configuration read; and one DOM owner per availability reason.
 
 *Why it exists.* M6.4 was attempted on `feat/m6.4-visible-conversion-settings` /
 PR #95 and stopped four times, each round closing what it was given and being

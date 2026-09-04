@@ -42,7 +42,7 @@ coding.
 | Who owns conversion-capability/catalog truth? | Rust, as a lifecycle keyed by the installation binding. |
 | What identity binds those facts together? | One opaque, session-scoped, path-free `BackendBindingReceipt`. |
 | Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
-| May an `msconvert --help` probe launch now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate **and its quarantine boundary**. |
+| May the conversion configuration read run now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate **and its quarantine boundary**. It governs the automatic first read and the explicit retry, not every `--help` a gated operation runs. |
 | Who owns catalog request lifecycle and retry? | Rust owns the lifecycle state; the frontend initiates a read or a retry and owns neither. |
 | What does React retain? | The selected intent id, request-in-flight for rendering, its own per-obligation bookkeeping (in flight, owed, and whether a delivery has landed since), Rust's plan answer, the revision and receipt of what it is rendering, and presentation. Nothing else. |
 | May the obliged backend check be issued now? | Whether anything owns the backend process — never a verdict about a build, and never the probe's admission rule. |
@@ -235,6 +235,11 @@ msconvert's grammar cannot express conversion at all
   -> preview is unaffected
   -> the configuration is Failed (conversion_capability_unavailable)
 
+msconvert can convert, but no admitted row survives require_conversion_intent
+  -> preview is unaffected
+  -> the configuration is Ready, with a catalog in which every row is
+     unavailable
+
 the build is gone between the preview verdict and the catalog read
   -> the read's own discovery is no longer Available, so it establishes
      NoInstallation: the authority is replaced, not the configuration
@@ -253,6 +258,15 @@ naming it `Failed` would have been a third way to spend an attempt on something 
 probe ever asked — the mistake ledger row 32 already forbids one level down.
 `Failed` means a probe ran against a binding and did not answer. A read whose own
 discovery refuses never reaches a probe; it reports a different binding.
+
+**The fifth is representable, and its presentation is fixed rather than its
+state.** A build whose baseline grammar is intact but which admits none of the nine
+rows is genuinely `Ready`: a catalog was read and every row was judged, and the
+judgements are true. What must not follow is nine individual refusals. It is a
+settings-level statement — one sentence, exactly Decision 8's shape — and Decision
+8's atomic recovery is not offered, because row 2 already conditions it on the
+shipped row being available and here it is not. The reader is told the build cannot
+run any configuration MSCanvas offers, once, and no control implies otherwise.
 
 **The third is `Failed`, not `Ready` with every row unavailable**, and the
 difference is the reader's recovery rather than bookkeeping. `Ready` means a
@@ -623,11 +637,6 @@ absence of one: with nothing rendered there is no revision to be older than, so
 the first projection a session receives is accepted and step two runs against an
 empty rendered binding — which is how the first binding is installed at all.
 
-The exception is not an optimisation; without it, mount and every rebinding read
-cost two snapshots, and the second would contradict rows 20 and 56 by asking again
-for what the first already answered. A configuration read that observes a
-replacement *is* the read for the new binding.
-
 **Discarding reaches the payload, and stops at the domain outcome.** A stale
 response can carry nothing current *about the binding*: its projection goes, and so
 does any snapshot or plan it carries, because a payload for A may not be installed
@@ -636,10 +645,25 @@ something the reader did — an error to show, a refusal to explain — and swal
 it because an unrelated revision moved in the meantime leaves a click with no
 answer at all.
 
-The payload is checked against **the receipt the request was issued under**, which
-the frontend holds without needing the discarded projection: it is the receipt of
-what was rendered when it asked. An earlier draft made this a whole-response
-discard for exactly that reason, and paid for it by losing the reader's error.
+**Which receipt judges the payload follows from whether the projection survived.**
+
+```text
+the projection is accepted (equal or newer)
+  -> its own receipt judges the payload, and nothing else does
+  -> a read issued under A that answers Installed(B) with Ready(B) is
+     accepted whole: one transaction, one binding, one snapshot
+
+the projection is discarded as stale
+  -> there is no accepted receipt to judge by, so the receipt the request
+     was issued under does -- which the frontend holds anyway, and which
+     for a stale reply is the binding it was asked about
+```
+
+The first line matters as much as the second: judging every payload by the
+request-issued receipt would discard exactly the rebinding read the one-transaction
+rule exists for, and hand row 70 back its double snapshot. An earlier draft made
+staleness a whole-response discard to avoid needing either receipt, and paid for it
+by losing the reader's error.
 
 **Otherwise these steps govern the authority projection, and nothing else.** A
 response carries an outcome as well, and the outcome is the answer to the request
@@ -735,6 +759,12 @@ the accepted projection's receipt differs from the rendered one
   -> read the Rust-owned ConversionConfigurationSnapshot for the new binding,
      unless this very response already carries one for it
   -> render only the snapshot that carries it
+
+     (that exception is not an optimisation: without it, mount and every
+      rebinding read cost two snapshots, and the second would contradict
+      rows 20 and 56 by asking again for what the first already answered.
+      A configuration read that observes a replacement *is* the read for
+      the new binding.)
 
 the accepted projection carries the same receipt
   -> nothing about the installation changed
@@ -954,8 +984,8 @@ snapshot representable — one binding's authority beside another's catalog — 
 the frontend, comparing the projection's receipt, would install the wrong one.
 
 `NoBinding` is the member the authority makes necessary. `Unresolved` is a state
-this session really reaches — a quarantined session refuses ahead of discovery and
-leaves it there — and a snapshot that demanded a binding would have no representable
+this session really reaches — every session opens in it, and the panel renders
+before any operation has resolved anything — and a snapshot that demanded a binding would have no representable
 answer for it, leaving only the two exits ledger rows 24 and 26 forbid: invent a
 receipt, or route it to `UnavailableForBinding`, which is a statement about a
 binding that does not exist. `NoBinding` says the true thing: nothing is
@@ -1182,7 +1212,17 @@ Execution-time revalidation remains, because the executable can change again
 after admission; it is a **second temporal proof**, not a substitute for the
 first.
 
-## Decision 11 — one admission rule for any `msconvert --help` probe
+## Decision 11 — one admission rule for the configuration read
+
+**Scope first, because "any `msconvert --help` probe" would be far too wide.**
+Discovery runs `msconvert --help` inside every gated operation — a preview read
+and the mandatory BEGIN preflight included — and a rule capturing those would
+contradict this decision's own admitting list (a preview read would refuse itself)
+and Decision 10's "never skippable" preflight. What this rule governs is **the
+conversion configuration read: the automatic first read for a binding, and the
+explicit settings retry**, which are the two paths PR #95 answered differently.
+Every other `--help` invocation belongs to the operation that contains it and
+answers to that operation's own rules.
 
 PR #95's last round produced a second-answer shape of its own: the explicit
 catalog retry consulted a lane rule and the automatic read did not. One question
@@ -1329,8 +1369,11 @@ emit two sentences for it. One order, read by both, is what makes "one fact, one
 notice" true of a contested moment rather than only of a quiet one. `ConversionConfigurationProbeAdmission` maps its refusals onto the same
 names, which it can, because Decision 11's admitting subset was drawn from these
 fields in the first place. Only a refusal with no lane fact behind it mints a key of its own: a
-configuration probe already in flight, which no conversion action can share, and
-the action-derived reasons, which name a target rather than a lane fact. Those
+configuration probe already in flight, **which sorts after every lane field**, so
+it has a place in the one order both authorities report in and cannot tie with a
+lane fact for the same moment — it is the narrowest refusal there is, shared by
+nothing, so it yields to any lane fact holding alongside it. And the
+action-derived reasons, which name a target rather than a lane fact. Those
 last are keyed by action *and* target, and need no cross-action deduplication
 because no two actions can be refused by one of them — a missing target is a fact
 about the action asking. (The alternative — namespaced
@@ -1409,7 +1452,7 @@ rather than left to a reader:
 | Is this response older than what is rendered? | `BackendAuthorityRevision`, compared, nothing else |
 | Does this catalog or plan belong to the installation I am bound to? | `BackendBindingReceipt` equality, nothing else |
 | Is conversion configuration unavailable, unattempted, ready or failed? | The Rust configuration lifecycle, delivered as typed state |
-| May an `msconvert --help` probe launch now? | `ConversionConfigurationProbeAdmission` |
+| May the conversion configuration read run now? | `ConversionConfigurationProbeAdmission` — the automatic first read and the explicit retry, and no other `--help` |
 | May the obliged backend check be issued now? | Backend-process ownership, and nothing else — a separate question, deliberately not this one |
 | Is there a real plan request, answer or failure? | The plan state machine |
 | May a conversion action start? | `ConversionLane`, unchanged from M6.1 |
@@ -1444,17 +1487,18 @@ becomes the other's authority.
 
 ## The state graph the replacement implements
 
-**Nothing resolves at all.** Authority `Unresolved(r0)` → a configuration request
-is made → it answers *without discovering*, because the session is quarantined and
-the operation refuses ahead of discovery → the authority is still `Unresolved(r0)`
-→ the response projects `Unresolved(r0)` and whatever its domain outcome was →
+**Nothing resolves at all.** Authority `Unresolved(r0)` → the panel mounts and
+renders → no operation has resolved an installation yet → the response to whatever
+it asks first projects `Unresolved(r0)` and whatever its domain outcome was →
 **no receipt is invented**, and there is no binding to hold a configuration.
 
-That is the whole of how `Unresolved` is reached, and it is worth being exact,
-because a discovery that *runs* always answers: `Available`, `Partial` or
-`Unavailable`, each of which maps onto a binding. There is no fourth outcome to
-leave the authority unresolved, so the state belongs to a session before its first
-discovery and to one whose operations refuse before reaching one.
+It is worth being exact about how this state is reached, because a discovery that
+*runs* always answers — `Available`, `Partial` or `Unavailable`, each mapping onto
+a binding — so there is no fourth outcome to leave the authority unresolved.
+`Unresolved` is the window before the first discovery answers, plus any operation
+that answers without having reached one. The first is ordinary and every session
+passes through it; the second is a general rule rather than a scenario, and it is
+why the arm exists at all.
 
 **The first installed observation.** `Unresolved(r0)` → `Installed A` is observed
 → revision `r1 > r0`, receipt A → configuration `Unattempted(A)`.
@@ -1574,7 +1618,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–75).
+plus the findings raised against this document's own drafts (rows 18–79).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1655,6 +1699,10 @@ and no finding may disappear because the old PR was superseded.
 | 73 | Two authorities keying one contended moment differently | An admission with no stated selection order | Probe admission reports in `ConversionLane`'s order | Decision 11 + panel notice registry | Two facts holding at once produce one notice, not two |
 | 74 | A working replacement landed unprobed | "The build changed" collapsed into "the build is gone" | A read that finds a different working installation lands on its own answer; `UnavailableForBinding` is only for a binding naming no build | Decision 3 + Rust lifecycle | Switching between two good installations mid-read yields `Ready(B)`, never `UnavailableForBinding` |
 | 75 | A request's payload judged against a receipt React was told not to hold | A retain-list closed before the request-scoped receipt was needed | React holds the receipt a request was issued under, for as long as that request is outstanding | Decision 13 | A stale reply's payload is discarded without consulting the projection that carried it |
+| 76 | An admission rule capturing the operations it lists as refusing it | A scope written as the tool invocation rather than the read | The rule governs the automatic first configuration read and the explicit retry, and no other `--help` | Decision 11 | A preview read and the BEGIN preflight run their own discovery without consulting probe admission |
+| 77 | A rebinding read discarded by the receipt it was issued under | One receipt rule for accepted and stale projections alike | An accepted projection's own receipt judges its payload; the request-issued one judges only a stale reply's | Frontend, ordering then identity | A read issued under A that answers `Ready(B)` is installed whole |
+| 78 | Nine dead controls under a truthful `Ready` | A catalog with no available row left to per-row presentation | A `Ready` catalog with nothing available is one settings-level sentence, and offers no recovery, because the shipped row is unavailable too | Decision 3 + Decision 8 | A build admitting none of the nine rows says so once, and no control implies a way through |
+| 79 | The one self-minted key outside the shared order | A precedence covering only the lane's own fields | Probe-in-flight sorts after every lane field | Panel notice registry | A probe in flight beside a lane fact yields to it, and one notice is rendered |
 
 ## What this interlude does not do
 
