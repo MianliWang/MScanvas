@@ -323,9 +323,16 @@ site may have to remember to record an observation after its own success or
 failure branch — which is precisely the discipline that failed at
 `conversion_intent_catalog`, at `begin_queue`'s error arm, and at `drain_queue`.
 
-The rule must hold for every conversion-bound resolution: the configuration read,
-the BEGIN preflight, queue execution and drain, retry preparation, and anything
-added later.
+The rule must hold for every operation that resolves an installation, which is
+every operation that takes the backend gate — the configuration read, the BEGIN
+preflight, queue execution and drain, retry preparation, the backend check and the
+installation change, and the preview and spectrum reads — and anything added later
+that joins them. The list is not a scope to be narrowed to the conversion path:
+Decision 11's gate membership and this rule's membership are the same set, which
+is what lets `Unattempted`'s stimulus below be stated as "every operation that owns
+the gate delivers authority when it answers" without qualification. A preview read
+that finishes is as much an occasion to issue an owed catalog read as a drain
+is.
 
 ### Recording it is only half. The response must carry it.
 
@@ -414,47 +421,45 @@ projection is fixed: **while the authority is `ObservedButUnsettled`,
 different build, and refusing as `backend-unavailable` would state a verdict this
 session does not hold.
 
-The reason needs deciding with it, and leaving it to the lane's existing ordering
-does not work: `unavailableReason` ranks `!backendUsable` *above* `laneClaimed`
-and `previewReading`, so a drain or a preview read holding the gate would produce
-`backend-unavailable` — the verdict this session does not hold — rather than the
-lane fact underneath it. Two drafts of this paragraph got that wrong in opposite
-directions, so the choice is stated with its cost rather than asserted.
+**Locked choice: nothing new is fed into `backendChanging`.** It keeps meaning
+exactly what it means today — a check or change is in flight — and the unsettled
+state contributes nothing to it. Three drafts of this paragraph tried the
+alternative, and it is worth recording why it fails, because it looks right:
+`backendChanging` reads as transient, describes the binding rather than the build,
+and outranks `!backendUsable` in the lane's ordering, so it is the sentence that
+would reach the reader.
 
-**Locked choice: while the authority is `ObservedButUnsettled`, the lane is
-`backendChanging` as well as not usable.** `backendChanging` ranks above
-`!backendUsable`, so it is the one that reaches the reader; it is the only word in
-M6.1's shipped vocabulary that describes the session's *binding* rather than
-passing a verdict on the build; and its refusal reads as transient and
-self-clearing, which is exactly what an unsettled state is.
-
-**Its cost, recorded rather than hidden:** `backendChanging` is documented as "an
-installation check or change owns the backend lane", and while the obliged check
-is owed but refused, no check owns the lane — something else does. The word
-overstates by that much. It is still the least wrong sentence available, and
-correcting the vocabulary belongs to the same M6.1 scope already recorded below
-for the msaccess/msconvert conflation — not to M6.4.
-
-**And it must not be wired to probe admission, which is the deadlock this choice
-would otherwise create.** Today `backendChanging: backendBusy`, one flag, and
-Decision 11's first admitting fact is worded the same way. Feed the unsettled
-state into both and the state that *owes* the check becomes the fact that
-*refuses* it: unsettled sets changing, changing refuses admission, admission
-never lets the check run, and rows 39, 42 and 49 deadlock on the one path they
-exist to keep open. So the two readers take two facts, and this is the ADR's own
-thesis applied to itself:
+It cannot be done, for two independent reasons, either of which is fatal.
 
 ```text
-ConversionLane.backendChanging  -- a check is in flight, OR the authority is
-                                   ObservedButUnsettled   (what the reader is told)
-admission's "a check is in progress"
-                                -- a check is in flight, and nothing else
-                                                          (what refuses a probe)
+backendChanging is backendBusy, one flag (usePreviewWorkspace.ts)
+  -> Decision 11's first admitting fact is worded the same way
+  -> the state that OWES the check becomes the fact that REFUSES it
+  -> unsettled never exits; rows 42, 52, 53, 54 and 59 deadlock together
+
+backendBusy also gates BackendStatus's Choose-installation and Recheck
+  -> a permanently unsettled session (quarantine) disables both
+  -> the reader loses the recovery this very decision depends on
 ```
 
-One word survives on screen because the reader needs one sentence; underneath it
-there are two facts, and the narrower one is the one with authority over a
-process.
+The second is the decisive one: a rule meant to describe a session accurately
+would have taken away the two controls that end it.
+
+**So `backendUsable` is the only thing the unsettled state fixes**, and the reason
+comes from the lane's existing ordering, unchanged. Most of the unsettled window
+is covered correctly without any new rule, because the obliged check is dispatched
+in the same commit that installs the authority and is therefore genuinely in
+flight: `backendChanging` is *literally* true, and it outranks `!backendUsable`
+already.
+
+**The residual, recorded rather than hidden:** when the check cannot be dispatched
+because a drain or a preview read holds the gate, `unavailableReason` ranks
+`!backendUsable` above `laneClaimed` and `previewReading`, so the reader is told
+`backend-unavailable` rather than the lane fact underneath. That is a claim about
+the build in a session that holds no verdict about it. It is a wording defect in a
+transient state, it disables nothing and deadlocks nothing, and correcting the
+ordering belongs to the same M6.1 scope already recorded below for the
+msaccess/msconvert conflation — not to M6.4.
 
 And the state owes an exit. **Entering `ObservedButUnsettled` obliges exactly one
 backend check**, issued in the same commit that installs the authority, and — when
@@ -596,11 +601,26 @@ the one the ordering rules dismiss: a gate holder finishes, nothing about the
 binding changed, so the revision is equal and the receipt is equal and both steps
 above correctly do nothing — and that is exactly the moment the owed first
 configuration read and the obliged backend check become admissible. So after
-ordering and identity have had their say, the frontend asks one more question,
-unconditionally: is an obligation owed for the binding now rendered, is nothing in
-flight for it, and does admission allow it? Invalidation is what steps one and two
-decide. Issuing is not invalidation, and a binding that has never been read must
-not be kept unread by a rule about binding that did not change.
+ordering and identity have had their say, the frontend asks one more question: is
+an obligation owed for the binding now rendered, is nothing in flight for it, and
+may it be issued? Invalidation is what steps one and two decide. Issuing is not
+invalidation, and a binding that has never been read must not be kept unread by a
+rule about a binding that did not change.
+
+**"May it be issued" is two questions, because the two obligations answer to
+different things** (Decision 4's split, stated there): the configuration read asks
+`ConversionConfigurationProbeAdmission`, and the backend check asks whether the
+lane is free and the session is not quarantined. Reading them as one would put the
+duty under the courtesy's rule, and let a probe already in flight block the only
+operation that can end an unsettled state.
+
+**And step three is bounded, because an unbounded one spins.** A refused attempt
+answers, an answer is a delivery, and a delivery is an occasion — which closes a
+loop at IPC speed against a frontend projection that is explicitly allowed to be
+stale and permissive. So: **an obligation is issued at most once per delivery, and
+a delivery produced by an obligation attempt is not itself an occasion.** The
+stimulus is other work finishing, which is what the rule was always about; an
+obligation that refuses waits for the next real one.
 
 ```text
 the accepted projection's receipt differs from the rendered one
@@ -902,7 +922,7 @@ compression -> off        -> not qualified: no admitted row, on any build
 processing -> not centroided -> row exists, available: the way out
 ```
 
-Only two of the eight admitted rows compose processing with anything, which is why
+Only two of the nine admitted rows compose processing with anything, which is why
 five of those six are statements about the product's evidence rather than about
 this installation — and why the reader is not told the same sentence six times.
 
@@ -1411,7 +1431,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–62).
+plus the findings raised against this document's own drafts (rows 18–64).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1466,9 +1486,9 @@ and no finding may disappear because the old PR was superseded.
 | 47 | A binding read as `Installed` on a refused build | The union derived from `InstallationIdentity::of` rather than from availability | `of` yields an identity for `Partial` too; the binding is minted from `Available` | Decision 1's union | A `Partial` build never reaches probe admission, because it never becomes `Installed` |
 | 48 | The answer to a request discarded for not moving the authority | An ordering rule worded over the whole response | Ordering governs the projection; the outcome answers the request that asked for it | Frontend, ordering then identity | A successful configuration read on an unchanged binding is installed, not dropped for arriving at an equal revision |
 | 49 | An owed obligation issued only when something changed | The deadlock break placed inside the rules its own case dismisses | Discharging an owed obligation is a third, unconditional step after ordering and identity | Frontend reconciliation | The delivery that breaks the deadlock carries an equal revision and an equal receipt, and still issues the read |
-| 50 | An unsettled session claimed as verdict-bearing | `!backendUsable` outranking every lane fact beneath it | `ObservedButUnsettled` sets `backendChanging` as well, so the reader is told the binding is settling and not that the build is unusable | `ConversionLane` projection | An unsettled authority under a held gate never renders `backend-unavailable` |
+| 50 | An unsettled session claimed as verdict-bearing | A stale verdict surviving the binding it described | `backendUsable` is false while the authority is not `Settled` on an `Installed` binding, and nothing new is fed into `backendChanging` | `ConversionLane` projection | An unsettled authority never reports the previous build's verdict, and never disables the controls that would settle it |
 | 51 | A refused discovery spending a configuration attempt | A read that cannot reach a probe reported as a probe that failed | A read whose own discovery refuses replaces the binding; `Failed` needs a probe that ran | Decision 3 + Rust lifecycle | A build that disappears between the verdict and the read is `NoInstallation` → `UnavailableForBinding`, not `Failed` |
-| 52 | The state that owes the check is the fact that refuses it | One `backendChanging` flag read by both the lane and probe admission | Admission reads only a check actually in flight; the lane's word may also mean an unsettled authority | Decision 11 + `ConversionLane` projection | An `ObservedButUnsettled` session with nothing else holding the gate admits its obliged check |
+| 52 | The state that owes the check is the fact that refuses it | An unsettled authority raising the flag that gates the check and the recovery controls | `backendChanging` keeps meaning a check in flight and nothing else | Decision 11 + `ConversionLane` projection | An `ObservedButUnsettled` session with nothing else holding the gate admits its obliged check, and a quarantined one keeps Choose-installation and Recheck live |
 | 53 | An obliged check re-issued against a refusal that never clears | An obligation discharged only by settling | An answered check discharges it, settled or not | Authority obligations | A quarantined session issues its check once, stays truthfully unsettled, and is told quarantine rather than that a binding is settling |
 | 54 | An obligation owed against a refusal that cannot clear | One rule for deferral and permanent refusal | Deferred obligations stay owed; permanently refused ones are discharged | Authority obligations | A quarantined session asks once and stops; a session behind a held gate asks again when it clears |
 | 55 | A probe waiting out the conversion it lost a race to | The one gate taken by waiting | The probe takes it with `try_enter_backend` and never queues | `ConversionConfigurationProbeAdmission` | A probe dispatched just before a drain refuses immediately and stays owed, rather than surfacing after the conversion |
@@ -1479,6 +1499,8 @@ and no finding may disappear because the old PR was superseded.
 | 60 | A rebinding read whose probe failed left owing another | One transaction with only a successful arm | The new binding lands on what its own answer supports, `Failed` included | Rust configuration lifecycle | A read that discovers B and fails its probe is `Failed(B)`, and no second automatic probe follows |
 | 61 | The ordinal reset by leaving an identity | A counter scoped per question | One per-panel ordinal, never reset | Plan state machine | A reply in flight from before an identity was left and re-entered is discarded, not installed |
 | 62 | The most-shared refusal left without a key | A key set listing seven of eight lane fields | `backendUsable` is a key; action-derived reasons key by action and target | Panel notice registry | Convert and both retries refused as unusable render one sentence |
+| 63 | An obligation re-issued by its own refusal | A stimulus rule with no bound, over a projection allowed to be stale | At most one issue per delivery, and a delivery produced by an obligation attempt is not an occasion | Frontend reconciliation | A refused attempt does not immediately produce another; the next real operation to finish does |
+| 64 | The stimulus narrower than the facts it must cover | A delivery scope read as the conversion path only | Delivery membership and gate membership are the same set | Decision 4 + Decision 11 | A preview read finishing issues an owed catalog read, exactly as a drain finishing does |
 
 ## What this interlude does not do
 
