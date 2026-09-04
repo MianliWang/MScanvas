@@ -374,7 +374,9 @@ as it bound `msaccess` in M5.
 
 ## The M6 route
 
-Twelve slices. The order is not a preference: the dependency graph below has no
+Twelve slices, and one authority interlude — M6.4A — inserted between M6.3 and
+M6.4 after the first M6.4 attempt stopped four times. The order is not a
+preference: the dependency graph below has no
 cycle, and every edge is a real one — a slice consumes an authority an earlier
 slice established, or measures something a later slice may not assume.
 
@@ -389,9 +391,9 @@ slice established, or measures something a later slice may not assume.
                     |                 |                         |
                     |        M6.3 ConversionIntent              |
                     |                 |                         |
+                    |        M6.4A authority boundary           |
+                    |                 |                         |
                     +--------+--------+                         |
-                             |                                  |
-                     M6.4A authority boundary                   |
                              |                                  |
                      M6.4 visible settings                      |
                              |                                  |
@@ -430,8 +432,7 @@ Read as edges, with the reason each exists:
 | M6.1 -> M6.4 | A visible setting is a control; a control needs one availability rule |
 | M6.2 -> M6.3 | An intent may only name semantics the build was measured performing |
 | M6.3 -> M6.4A | Making the intent visible needs an owner for the installation it is valid against |
-| M6.4A -> M6.4 | A visible setting projects one Rust-owned authority; it does not reconstruct several |
-| M6.3 -> M6.4 | A visible setting projects a typed intent; it does not create one |
+| M6.4A -> M6.4 | A visible setting projects a typed intent through one Rust-owned authority; it creates neither |
 | M6.4 -> M6.5 | The plan the destination is admitted for must already be truthful |
 | M6.5 -> M6.6 | Conflict and destructive UX act on a resolved destination |
 | M6.6 -> M6.7 | A scope control must display, per row, the destination policy and conflict vocabulary M6.6 establishes — a plan of many rows cannot show what each will do before that exists |
@@ -441,7 +442,7 @@ Read as edges, with the reason each exists:
 | M6.9, M6.10 -> M6.11 | Closure answers criteria the two of them settle |
 
 M6.1 and M6.2 are independent of each other and may run in either order or
-together. **M6.4 through M6.9 are a chain**; M6.10 needs only M6.2 and may run
+together. **M6.4A through M6.9 are a chain**; M6.10 needs only M6.2 and may run
 any time after it.
 
 ### M6.0 — Conversion Completion orientation and route lock
@@ -657,7 +658,7 @@ against the request, never as proof, with absence recorded as unverified.
 *Non-goals:* no UI, no new visible capability, no relaxation of the no-implicit-
 centroiding rule.
 
-*Downstream:* M6.4.
+*Downstream:* M6.4A, and through it M6.4.
 
 *Delivered.* `crates/proteowizard/src/intent.rs` holds five closed enums and one
 `ConversionIntent` whose five fields are private and whose only constructor is
@@ -867,9 +868,9 @@ implementation evidence and is not merged.
 *Purpose:* make admitted intents selectable, and make the pre-run summary
 describe the plan that will actually be bound.
 
-*Prerequisites:* M6.1 (a control needs one availability rule), M6.3 (a control
-projects a typed intent), M6.4A (a control needs one owner for the installation
-its semantics are valid against).
+*Prerequisites:* M6.1 (a control needs one availability rule), M6.4A (a control
+needs one owner for the installation its semantics are valid against, and
+carries M6.3's typed intent through it).
 
 *Establishes:* the visible controls for whatever M6.2 admitted; CNV-009's
 natural-language summary widened from item count and ordered list to **format

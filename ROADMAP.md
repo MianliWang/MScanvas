@@ -402,6 +402,12 @@ Twelve slices, plus one authority interlude:
 - M6.4 — visible settings, and a truthful plan. **replacement implementation
   next.** A first attempt is unmerged evidence on PR #95; see below.
 - M6.5 — destination authority. **not started.**
+- M6.6 — destination and conflict UX, including the destructive question.
+- M6.7 — convert selected, convert all.
+- M6.8 — cancellation, capacity, and truthful progress.
+- M6.9 — output completion and adoption.
+- M6.10 — evidence-gated side routes.
+- M6.11 — closure.
 
 **M6.4 was attempted once and is not published.** The attempt is on
 `feat/m6.4-visible-conversion-settings` / PR #95, which stopped four times: each
@@ -419,12 +425,6 @@ exists — and carries a seventeen-family finding ledger the replacement must
 prove, so that nothing PR #95 measured has to be rediscovered. PR #95 stays open
 as implementation evidence until the replacement has extracted its tests, copy
 and behaviour; nothing from it is on `main`.
-- M6.6 — destination and conflict UX, including the destructive question.
-- M6.7 — convert selected, convert all.
-- M6.8 — cancellation, capacity, and truthful progress.
-- M6.9 — output completion and adoption.
-- M6.10 — evidence-gated side routes.
-- M6.11 — closure.
 
 **M6.1 was first because the audit found the conversion lane had no single
 availability authority**, and it is now closed. `convert` claimed a ref as it

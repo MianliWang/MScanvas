@@ -7086,7 +7086,7 @@ next edge repaired.
 
 ### What the findings turned out to be about
 
-Sixteen live review threads stand on PR #95 (four of them at outdated diff
+Sixteen live review threads stand on PR #95 (five of them at outdated diff
 positions, all read) plus the four STOP records. Collapsed by *what made each one
 possible* they are seventeen semantic families, and almost all are one of three
 shapes: a fact and the thing that carries it coming apart; a signal read from a

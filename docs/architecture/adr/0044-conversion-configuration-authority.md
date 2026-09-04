@@ -48,7 +48,8 @@ coding.
 
 ## The failure shape, before the decisions
 
-Sixteen live findings stand on PR #95, plus four committed STOP records. Read as
+Sixteen live findings stand on PR #95 — five of them at outdated diff positions,
+all read — plus four committed STOP records. Read as
 a list they look like sixteen defects in six files. Collapsed by *what made each
 one possible*, they are seventeen semantic families and almost all of them are
 one of three shapes:
@@ -87,12 +88,24 @@ BackendAuthorityState
   | Unresolved
   | ObservedButUnsettled { binding }
   | Settled { binding, previewAvailability }
+
+Binding
+  | Installed      { receipt }
+  | NoInstallation { receipt }
 ```
 
 `ObservedButUnsettled` is the member the counter could not express, and every
 round needed it: an operation resolved the installed build, so the *binding* is
 known, but no preview verdict has settled for it yet. Today that state is
 approximated by an inequality between two frontend watermarks.
+
+**`NoInstallation` is a binding, not the absence of one**, and that is what lets
+Decision 4's three-way distinction be written at all: *this build*, *no build*,
+and *nothing was established* are three different observations, and only the
+third leaves the authority alone. It is also what the current design already
+does — `note_resolved(None)` advances the counter, because nothing resolving is
+a different answer from something resolving — expressed as a member rather than
+as a `None` two layers down.
 
 **The frontend may project this state. It may not synthesize it.** A conversion
 operation that resolves the installed executable is an observation, and it
@@ -118,7 +131,8 @@ Required properties:
   of absolute paths and must not reach the webview;
 - **session-scoped** and meaningless to anything that did not receive it;
 - **equatable**, and that is the whole of its interface;
-- **changes** whenever the authoritative binding is replaced;
+- **changes** whenever the authoritative binding is replaced, including when a
+  build is replaced by no build and when no build is replaced by one;
 - **stays equal** through a same-installation recheck;
 - **sufficient** to decide whether a catalog, a plan or a result describes the
   binding this session is on.
@@ -258,12 +272,18 @@ nothing equivalent to `servedBinding`, `catalogGeneration` or
 ```text
 ConversionConfigurationSnapshot {
     binding
-    configuration state
-    catalog state
-    admitted intent rows, when established
-    shipped intent identity
+    configuration: UnavailableForBinding
+                 | Unattempted
+                 | Ready  { catalog: admitted rows, shipped intent identity }
+                 | Failed { error }
 }
 ```
+
+The catalog lives **inside** `Ready`, exactly as it does in the lifecycle this
+projects. Carried as a sibling field it would be representable beside a `Failed`
+or `Unattempted` configuration — a payload asserting both that the settings could
+not be established and what they are, which is the shape of half the findings
+this ADR exists to close.
 
 Path-free; no argv; no installation identity. It answers one question:
 
@@ -331,12 +351,18 @@ none | blocked | loading { request identity } | ready | failed
 ```
 
 ```text
-no selected/configured intent      -> blocked, never loading
-a request is in flight             -> loading, carrying that request's identity
-the request failed                 -> failed; never "rereading"
-inputs changed, replacement in flight -> loading for the replacement
+no rows requested                     -> none
+rows requested, no usable intent      -> blocked, never loading
+a request is in flight                -> loading, carrying that request's identity
+the request failed                    -> failed; never "rereading"
+inputs changed, replacement in flight  -> loading for the replacement
 old answer no longer current, no replacement -> blocked, not loading
 ```
+
+`none` and `blocked` are kept apart because they say different things to the
+reader: nothing has been selected to convert, against rows are selected and
+something else is missing. Collapsing them is how a panel comes to explain an
+empty selection with a sentence about the backend.
 
 Two findings are exactly this distinction: a plan pinned at `loading` with no
 request ever issued, and a plan Rust *refused* explained to the reader as one
