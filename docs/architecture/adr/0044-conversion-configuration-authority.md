@@ -112,7 +112,7 @@ approximated by an inequality between two frontend watermarks.
 **A `Partial` discovery is `NoInstallation`.** The union has two members because
 the fact it names is binary — *is this session bound to an installation it may
 launch?* — and the answer is `AvailabilityState::Available`, which is exactly the
-condition `bind_help_of` already refuses on. A folder holding msconvert.exe and no
+condition `bind_help_of` already *requires* before it will bind anything. A folder holding msconvert.exe and no
 msaccess.exe, a mismatched pair, a timed-out probe: each is `Partial` or
 `Unavailable`, so each is `NoInstallation`, and the binding needs no third member
 for the ways that can happen.
@@ -230,9 +230,17 @@ msconvert's grammar is intact but admits no row for the chosen intent
   -> the configuration is Ready, and the selected row is unavailable
 
 the build changed between the preview verdict and the catalog read
-  -> the read's own discovery is no longer Available
-  -> the configuration is Failed, and the authority it carries says why
+  -> the read's own discovery is no longer Available, so it establishes
+     NoInstallation: the authority is replaced, not the configuration
+  -> the old binding's configuration is revoked with the binding
+  -> the new binding's configuration is UnavailableForBinding, unprobed
 ```
+
+The third is a binding replacement wearing a configuration read's clothes, and
+naming it `Failed` would have been a third way to spend an attempt on something no
+probe ever asked — the mistake ledger row 32 already forbids one level down.
+`Failed` means a probe ran against a binding and did not answer. A read whose own
+discovery refuses never reaches a probe; it reports a different binding.
 
 The first is the load-bearing one, and it is reachable because acceptance and
 parsing are different steps: discovery stores a bound help probe once the exit and
@@ -387,14 +395,26 @@ projection is fixed: **while the authority is `ObservedButUnsettled`,
 different build, and refusing as `backend-unavailable` would state a verdict this
 session does not hold.
 
-The *reason* is not fixed with it, and an earlier draft fixing it to
-`backend-changing` was wrong: that word asserts a check is in progress, which is
-not true of an unsettled state reached from a refused `BEGIN`. The reason comes
-from the lane's existing ordering, unchanged, and it lands correctly on its own —
-because whatever is stopping the obliged check from running is a lane fact, and
-the lane already words it. A check actually in flight is `backend-changing`,
-literally. A quarantined session says quarantine. A drain holding the gate says
-the conversion is running. There is no case left needing a new word.
+The reason needs deciding with it, and leaving it to the lane's existing ordering
+does not work: `unavailableReason` ranks `!backendUsable` *above* `laneClaimed`
+and `previewReading`, so a drain or a preview read holding the gate would produce
+`backend-unavailable` — the verdict this session does not hold — rather than the
+lane fact underneath it. Two drafts of this paragraph got that wrong in opposite
+directions, so the choice is stated with its cost rather than asserted.
+
+**Locked choice: while the authority is `ObservedButUnsettled`, the lane is
+`backendChanging` as well as not usable.** `backendChanging` ranks above
+`!backendUsable`, so it is the one that reaches the reader; it is the only word in
+M6.1's shipped vocabulary that describes the session's *binding* rather than
+passing a verdict on the build; and its refusal reads as transient and
+self-clearing, which is exactly what an unsettled state is.
+
+**Its cost, recorded rather than hidden:** `backendChanging` is documented as "an
+installation check or change owns the backend lane", and while the obliged check
+is owed but refused, no check owns the lane — something else does. The word
+overstates by that much. It is still the least wrong sentence available, and
+correcting the vocabulary belongs to the same M6.1 scope already recorded below
+for the msaccess/msconvert conflation — not to M6.4.
 
 And the state owes an exit. **Entering `ObservedButUnsettled` obliges exactly one
 backend check**, issued in the same commit that installs the authority, admitted
@@ -475,7 +495,7 @@ So Rust authors the order, and the frontend applies it in two steps.
 nothing is rendered yet                 -> accept; this is the first publication
 incoming.revision <  rendered.revision  -> stale; discard the projection entirely
 incoming.revision == rendered.revision  -> the same publication already accepted;
-                                           keep what is rendered, re-read nothing
+                                           the rendered authority stands
 incoming.revision >  rendered.revision  -> accept this Rust-authored projection
 ```
 
@@ -484,15 +504,29 @@ absence of one: with nothing rendered there is no revision to be older than, so
 the first projection a session receives is accepted and step two runs against an
 empty rendered binding — which is how the first binding is installed at all.
 
+**These two steps govern the authority projection, and nothing else.** A response
+carries an outcome as well, and the outcome is the answer to the request that
+asked for it: a configuration read that succeeds on an unchanged binding answers
+at an unchanged revision, and discarding it because the authority did not move
+would throw away the very snapshot the frontend asked for. The outcome is
+installed on its own terms, subject only to the binding-payload rule below — a
+payload bound to A is never installed while B is rendered.
+
 **Step two — identity, by receipt only, and only on a projection just accepted**
 (the first line above included; an equal revision changes nothing and skips it).
 
-Read the same-receipt arm as a rule about *invalidation*, because that is all it
-is. It says a binding that did not change does not lose what it has — not that a
-binding that has never been read must stay unread. `Unattempted` and
-`ObservedButUnsettled` are obligations, and an obligation is discharged by
-issuing, not by invalidating; the delivery that carries an unchanged receipt is
-precisely the deadlock-break ledger rows 39 and 42 rely on.
+**Step three, and it is not conditional on either of the first two — every
+delivery is an occasion to discharge an owed obligation.** This is deliberately
+outside the ordering rules, because the case rows 39 and 42 exist for is precisely
+the one the ordering rules dismiss: a gate holder finishes, nothing about the
+binding changed, so the revision is equal and the receipt is equal and both steps
+above correctly do nothing — and that is exactly the moment the owed first
+configuration read and the obliged backend check become admissible. So after
+ordering and identity have had their say, the frontend asks one more question,
+unconditionally: is an obligation owed for the binding now rendered, is nothing in
+flight for it, and does admission allow it? Invalidation is what steps one and two
+decide. Issuing is not invalidation, and a binding that has never been read must
+not be kept unread by a rule about binding that did not change.
 
 ```text
 the accepted projection's receipt differs from the rendered one
@@ -505,8 +539,6 @@ the accepted projection carries the same receipt
   -> nothing about the installation changed
   -> the configuration is not invalidated, and nothing already answered
      is re-read
-  -> an obligation this binding has never discharged is still owed, and this
-     delivery is an occasion to issue it
   -> its authority state is rendered as it arrived: a move from
      ObservedButUnsettled to Settled on the same receipt is news about the
      preview verdict and about nothing else
@@ -822,9 +854,21 @@ change, and a replacement request is issued
 any of those change while no replacement request is yet eligible
   -> blocked
 
+blocked, and the fact that blocked it stops holding
+  -> loading { the now-eligible identity, the next ordinal }
+
 a ready or failed answer stops describing the current question
   -> it may not continue to stand for it; the rules above decide what replaces it
 ```
+
+**`blocked` is not a terminal state either, and its exit is not an identity
+change.** A plan is blocked because something it needs is missing — no catalog
+yet, a selected row this build cannot run — and the usual way that stops being
+true is that the configuration reaches `Ready` on the *same* binding, with every
+identity component unchanged. A machine that left `blocked` only on an identity
+change would pin the plan for exactly the session that just succeeded in reading
+its settings. The cause is re-evaluated whenever a fact it named changes, and a
+request is issued the moment one becomes eligible.
 
 **A failed plan has a way out that does not require changing the question.** A
 plan can fail for a reason the reader cannot act on — an IPC that did not come
@@ -978,8 +1022,17 @@ conversion, retry the settings read — and the last round had two components
 emitting the same id for one reason, leaving `aria-describedby` ambiguous.
 
 **Locked choice:** one panel-level availability notice registry receives the
-decisions for every action currently offered and deduplicates by reason. Child
-components never mint a global availability id. (The alternative — namespaced
+decisions for every action currently offered and deduplicates **by the refusing
+fact, not by the word each authority uses for it.** Child components never mint a
+global availability id.
+
+The key matters because two vocabularies now reach this registry: `ConversionLane`
+refuses a conversion, `ConversionConfigurationProbeAdmission` refuses a probe, and
+they are disjoint word-sets over an overlapping set of facts. A conversion holding
+the backend gate is one fact, refusing two actions, and a registry keyed on the
+reason word would emit two notices for it — which is the defect ledger row 13
+names, reintroduced through the seam this ADR itself opened. Keyed on the fact,
+one sentence is rendered and both actions point `aria-describedby` at it. (The alternative — namespaced
 per-child notices — is rejected: it multiplies the same sentence and reintroduces
 the "each surface decides again what is wrong" defect ADR 0041 removed.)
 
@@ -1197,7 +1250,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–47).
+plus the findings raised against this document's own drafts (rows 18–51).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1215,7 +1268,7 @@ and no finding may disappear because the old PR was superseded.
 | 10 | Mandatory preflight under an optional courtesy | A gate that may be declined owning a guarantee | Admission proof is never skippable | Rust BEGIN | Busy lane → BEGIN waits or refuses; never a queue without the proof |
 | 11 | Selected-but-unavailable rendered as usable | A state that could hold only one of the two facts | Selected and available are two facts | Selection module | The preserved unrunnable selection reads as unavailable |
 | 12 | Row incompatibility asserted per value | A row-level fact rendered against each axis value | Availability is a property of a composition | Selection module | A build lacking only peak-picking makes no false claim about 64/64, all spectra or zlib |
-| 13 | Two owners of one availability reason | Each surface minting a global id | One reason, one notice element | Panel notice registry | No duplicate availability id under any refusal shared by two actions |
+| 13 | Two owners of one availability reason | Each surface minting a global id | One reason, one notice element, deduplicated by the refusing fact rather than by either authority's word for it | Panel notice registry | No duplicate availability id under any refusal shared by two actions, including one fact refusing a conversion and a probe in two vocabularies |
 | 14 | Plan `loading` with no request | One member standing for "in flight" and "never asked" | `loading` names an actual request | Plan state machine | No selected intent → blocked, and nothing claims a read |
 | 15 | Failed plan described as reloading | A single non-current reason for four situations | A refusal names what the reader can change | Availability rule | A refused plan reads as failed, not as being reread |
 | 16 | Backend loss during drain not recorded | The same `?` as #9, in the execution path | Every conversion-bound resolution observes | `ConversionBackendAttempt` | Loss while the picker is open advances the authority |
@@ -1250,6 +1303,10 @@ and no finding may disappear because the old PR was superseded.
 | 45 | A projection nested inside a projection | Two contracts each carrying authority, with no rule for which applies | One response carries one projection; the snapshot's `authority` **is** the observed authority | Decision 4 + Decision 6 | The configuration read's response has exactly one authority field, and no equality rule is needed because there is nothing to disagree with |
 | 46 | Repeated absence read as repeated replacement | Receipt stability defined only for a same-installation recheck | An unbound session keeps one `NoInstallation` receipt however many discoveries confirm it | `BackendBindingReceipt` | Two consecutive failed discoveries revoke nothing and re-probe nothing |
 | 47 | A binding read as `Installed` on a refused build | The union derived from `InstallationIdentity::of` rather than from availability | `of` yields an identity for `Partial` too; the binding is minted from `Available` | Decision 1's union | A `Partial` build never reaches probe admission, because it never becomes `Installed` |
+| 48 | The answer to a request discarded for not moving the authority | An ordering rule worded over the whole response | Ordering governs the projection; the outcome answers the request that asked for it | Frontend, ordering then identity | A successful configuration read on an unchanged binding is installed, not dropped for arriving at an equal revision |
+| 49 | An owed obligation issued only when something changed | The deadlock break placed inside the rules its own case dismisses | Discharging an owed obligation is a third, unconditional step after ordering and identity | Frontend reconciliation | The delivery that breaks the deadlock carries an equal revision and an equal receipt, and still issues the read |
+| 50 | An unsettled session claimed as verdict-bearing | `!backendUsable` outranking every lane fact beneath it | `ObservedButUnsettled` sets `backendChanging` as well, so the reader is told the binding is settling and not that the build is unusable | `ConversionLane` projection | An unsettled authority under a held gate never renders `backend-unavailable` |
+| 51 | A refused discovery spending a configuration attempt | A read that cannot reach a probe reported as a probe that failed | A read whose own discovery refuses replaces the binding; `Failed` needs a probe that ran | Decision 3 + Rust lifecycle | A build that disappears between the verdict and the read is `NoInstallation` → `UnavailableForBinding`, not `Failed` |
 
 ## What this interlude does not do
 
