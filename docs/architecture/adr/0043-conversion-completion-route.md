@@ -24,7 +24,7 @@ Related: [0002](0002-external-proteowizard.md),
 
 **Amended 2026-09-04 by M6.4A.** The route gains one authority interlude where
 M6.1 and M6.3 converge, immediately before M6.4, and with it three edges, M6.4's
-prerequisites and the chain wording. M6.1's edge now lands on the interlude rather
+prerequisites and acceptance, and the chain wording. M6.1's edge now lands on the interlude rather
 than on M6.4, because the boundary is normative over the lane's field set and
 refusal precedence; M6.4 inherits it through M6.4A.
 Where M6.4 owns the conversion configuration's *ownership boundary*, that is now
@@ -903,12 +903,16 @@ destination is chosen *after* the queue is created — the slot passes through
 **M6.5** and its visible form in **M6.6**. Until then the summary says the
 destination is chosen next, which is what the panel says today and is true.
 
-*Acceptance:* every visible setting traces to an evidence row. A setting the
-installed build does not support is absent or refused with a reason, never shown
-inert. **Of the plan facts that exist before dispatch** — membership, order,
-conflict policy and intent — the summary names the ones that will be bound, and
-moving a control after `BEGIN` changes nothing about the running queue. A lossy
-processing choice is marked lossy where the user chooses it.
+*Acceptance:* every visible setting traces to an evidence row. **Availability is a
+property of an admitted row, never of an axis value** — an unsupported *combination* is
+refused once, naming the combination, and no individual control is marked unsupported on
+its account ([ADR 0044](0044-conversion-configuration-authority.md), Decisions 7 and 8;
+the per-value framing this criterion carried until the M6.4A amendment is what produced
+the last round's blocking defect). A control whose own one-axis target is unavailable
+says so for that target, and none is shown inert. **Of the plan facts that exist before
+dispatch** — membership, order, conflict policy and intent — the summary names the ones
+that will be bound, and moving a control after `BEGIN` changes nothing about the running
+queue. A lossy processing choice is marked lossy where the user chooses it.
 
 *Non-goals:* no destination choice, no destination display, no scope control, no
 cancellation change.
