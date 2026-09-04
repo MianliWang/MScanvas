@@ -1,4 +1,4 @@
-# ADR 0044 — Conversion configuration is a Rust-owned authority bound to one installation receipt
+# ADR 0044 — Conversion configuration is a Rust-owned authority, bound to a receipt
 
 Status: accepted
 Date: 2026-09-04
@@ -111,12 +111,12 @@ known, but no preview verdict has settled for it yet. Today that state is
 approximated by an inequality between two frontend watermarks.
 
 **A `Partial` discovery is `NoInstallation`.** The union has two members because
-the fact it names is binary — *is this session bound to an installation it may
-launch?* — and the answer is `AvailabilityState::Available`, which is exactly the
-condition `bind_help_of` already *requires* before it will bind anything. A folder holding msconvert.exe and no
-msaccess.exe, a mismatched pair, a timed-out probe: each is `Partial` or
-`Unavailable`, so each is `NoInstallation`, and the binding needs no third member
-for the ways that can happen.
+the fact it names is binary — *is this session bound to an installation it may launch?*
+— and the answer is `AvailabilityState::Available`, which is exactly the condition
+`bind_help_of` already *requires* before it will bind anything. A folder holding
+msconvert.exe and no msaccess.exe, a mismatched pair, a timed-out probe: each is
+`Partial` or `Unavailable`, so each is `NoInstallation`, and the binding needs no third
+member for the ways that can happen.
 
 **Every observer mints it the same way, and today two of them do not.**
 `bind_help_of` refuses anything but `Available` and then takes the identity, which
@@ -271,19 +271,19 @@ or `Failed(B)`, by the one-transaction rule in Decision 5. `UnavailableForBindin
 is for a binding that names no build, and only for that.
 
 **The build-is-gone case is a binding replacement wearing a configuration read's
-clothes**, and naming it `Failed` would have been a third way to spend an attempt
-on something no probe ever asked — the mistake ledger row 32 already forbids one level down.
-`Failed` means a probe ran against a binding and did not answer. A read whose own
+clothes**, and naming it `Failed` would have been a third way to spend an attempt on
+something no probe ever asked — the mistake ledger row 32 already forbids one level
+down. `Failed` means a probe ran against a binding and did not answer. A read whose own
 discovery refuses never reaches a probe; it reports a different binding.
 
 **The no-row-survives case is representable, and its presentation is fixed rather
-than its state.** A build whose baseline grammar is intact but which admits none of the nine
-rows is genuinely `Ready`: a catalog was read and every row was judged, and the
+than its state.** A build whose baseline grammar is intact but which admits none of the
+nine rows is genuinely `Ready`: a catalog was read and every row was judged, and the
 judgements are true. What must not follow is nine individual refusals. It is a
-settings-level statement — one sentence, exactly Decision 8's shape — and Decision
-8's atomic recovery is not offered, because row 2 already conditions it on the
-shipped row being available and here it is not. The reader is told the build cannot
-run any configuration MSCanvas offers, once, and no control implies otherwise.
+settings-level statement — one sentence, exactly Decision 8's shape — and Decision 8's
+atomic recovery is not offered, because row 2 already conditions it on the shipped row
+being available and here it is not. The reader is told the build cannot run any
+configuration MSCanvas offers, once, and no control implies otherwise.
 
 **The cannot-convert-at-all case is `Failed`, not `Ready` with every row
 unavailable**, and the
@@ -298,10 +298,10 @@ is a property of a row, and a build that cannot convert has not got as far as
 rows.
 
 **The unparseable-help case is the load-bearing one**, and it is reachable because
-acceptance and parsing are different steps: discovery stores a bound help probe once the exit and
-metadata are acceptable, and only `parse_bound_help` — later, on a stream that may
-have been truncated — decides whether a capability grammar can be extracted from
-it at all.
+acceptance and parsing are different steps: discovery stores a bound help probe once the
+exit and metadata are acceptable, and only `parse_bound_help` — later, on a stream that
+may have been truncated — decides whether a capability grammar can be extracted from it
+at all.
 
 They share an installation. They are not the same judgement, and collapsing them
 is what let a *check* invalidate a *catalog*, and what makes "the backend is
@@ -483,11 +483,12 @@ backendUsable = not quarantined
 
 which also puts each fact where it belongs — the verdict stays a statement about a
 build, quarantine stays a statement about the session, and neither is expressed by
-corrupting the other. `backendUsableRef` gates the automatic preview load as well
-as the lane, and this is what keeps both unreachable in a quarantined session. (Forking the union so the field exists only on the `Installed`
-arm would make it unrepresentable outright, and is deliberately not done: it costs
-the single-shape property ledger row 38 bought, for a value nothing can author but
-Rust and no reader can reach past the conjunction.)
+corrupting the other. `backendUsableRef` gates the automatic preview load as well as the
+lane, and this is what keeps both unreachable in a quarantined session. (Forking the
+union so the field exists only on the `Installed` arm would make it unrepresentable
+outright, and is deliberately not done: it costs the single-shape property ledger row 38
+bought, for a value nothing can author but Rust and no reader can reach past the
+conjunction.)
 
 **`ObservedButUnsettled` carries no `previewAvailability`, and that is a claim
 about the session, not an omission.** An operation that noticed a new binding
@@ -544,17 +545,16 @@ deadlocks nothing, and correcting the ordering belongs to the same M6.1 scope
 already recorded below for the msaccess/msconvert conflation — not to M6.4.
 
 **What the unsettled window does cost is one suppressed automatic preview load**,
-because `backendUsableRef` gates it and this decision sets `backendUsable` false
-there. Suppressing it is correct — a preview must not be auto-loaded against a
-verdict the session does not hold — but the guard fires once, so suppression alone
-would lose the load rather than defer it. **`backendUsable` becoming true is the occasion**, and it is worth stating as that
-rather than as "the authority settles": settling on a `Settled { Installed,
-unusable }` build — the msaccess-missing-a-preview-operation case Decision 1 and
-row 24 are about — would auto-load a preview against a build just judged
-preview-unusable, and a session quarantined while the check was in flight would do
-the same against row 66. The condition is the whole conjunction above, unchanged
-and unabbreviated. Same stimulus as the obligations, one more thing waiting on
-it.
+because `backendUsableRef` gates it and this decision sets `backendUsable` false there.
+Suppressing it is correct — a preview must not be auto-loaded against a verdict the
+session does not hold — but the guard fires once, so suppression alone would lose the
+load rather than defer it. **`backendUsable` becoming true is the occasion**, and it is
+worth stating as that rather than as "the authority settles": settling on a `Settled {
+Installed, unusable }` build — the msaccess-missing-a-preview-operation case Decision 1
+and row 24 are about — would auto-load a preview against a build just judged
+preview-unusable, and a session quarantined while the check was in flight would do the
+same against row 66. The condition is the whole conjunction above, unchanged and
+unabbreviated. Same stimulus as the obligations, one more thing waiting on it.
 
 And the state owes an exit. **Entering `ObservedButUnsettled` obliges exactly one
 backend check**, issued in the same commit that installs the authority, and — when
@@ -589,21 +589,21 @@ admission refuses permanently  (quarantine)         -> discharged; there is
 the operation ran and answered                      -> discharged
 ```
 
-A check can also answer without discovering, and that is not a fourth arm: it
-follows the same rule as the three above, by whether what stopped it can stop. A
-quarantined session refuses ahead of discovery permanently, so the obligation
-discharges and an authority still `ObservedButUnsettled` afterwards is a true
-description of a session that will not get a verdict — and the reader is not misled
-by it, because quarantine outranks every other reason in the lane's ordering, so
-what they are told is quarantine rather than that a binding is settling. A request
-that simply failed before reaching a discovery has stopped nothing permanently, so
-its obligation stays owed and is re-issued on the next occasion. Discharging that
-one would strand the session `ObservedButUnsettled` for its whole life, with
-`backendUsable` false and `backend-unavailable` on screen — the exact sentence this
-paragraph promises the reader will not see. The two obligations are one mechanism asked twice, which is what keeps
-the scenarios below — a `BEGIN` refused after observing a replacement, an
-installation change that refuses, a replacement noticed mid-drain — from parking
-the panel with no verdict and nothing obliged to produce one.
+A check can also answer without discovering, and that is not a fourth arm: it follows
+the same rule as the three above, by whether what stopped it can stop. A quarantined
+session refuses ahead of discovery permanently, so the obligation discharges and an
+authority still `ObservedButUnsettled` afterwards is a true description of a session
+that will not get a verdict — and the reader is not misled by it, because quarantine
+outranks every other reason in the lane's ordering, so what they are told is quarantine
+rather than that a binding is settling. A request that simply failed before reaching a
+discovery has stopped nothing permanently, so its obligation stays owed and is re-issued
+on the next occasion. Discharging that one would strand the session
+`ObservedButUnsettled` for its whole life, with `backendUsable` false and
+`backend-unavailable` on screen — the exact sentence this paragraph promises the reader
+will not see. The two obligations are one mechanism asked twice, which is what keeps the
+scenarios below — a `BEGIN` refused after observing a replacement, an installation
+change that refuses, a replacement noticed mid-drain — from parking the panel with no
+verdict and nothing obliged to produce one.
 
 **The projection carries the authority state, not a flattened stand-in for it.**
 Collapsing `ObservedButUnsettled` and `Settled` into one member — and dropping
@@ -1052,12 +1052,11 @@ configuration read is issued regardless of admission**, since the answer it will
 get is a fact about that binding and no probe is involved.
 
 **`UnavailableForBinding` is not entered because `backendUsable` went false**, and
-that rule belongs here rather than to the read above it — splitting the paragraph
-in an earlier commit left it attached to whatever sentence preceded it. It is not a
-place a build that previews badly ends up: a build may be truthfully unusable for preview while
-its conversion configuration is `Ready`, which is Decision 3's whole point. Using
-the preview verdict to enter it would rebuild the conflation ledger row 6 exists
-to remove.
+that rule belongs here rather than to the read above it — splitting the paragraph in an
+earlier commit left it attached to whatever sentence preceded it. It is not a place a
+build that previews badly ends up: a build may be truthfully unusable for preview while
+its conversion configuration is `Ready`, which is Decision 3's whole point. Using the
+preview verdict to enter it would rebuild the conflation ledger row 6 exists to remove.
 
 **Invalidation is triggered by the receipt being replaced, not by a preview
 verdict settling**, and the difference is a real window rather than a wording
@@ -1096,13 +1095,13 @@ its identity: two copies with no stated equality would make a self-contradictory
 snapshot representable — one binding's authority beside another's catalog — and
 the frontend, comparing the projection's receipt, would install the wrong one.
 
-`NoBinding` is the member the authority makes necessary. `Unresolved` is a state
-this session really reaches — every session opens in it, and the panel renders
-before any operation has resolved anything — and a snapshot that demanded a binding would have no representable
-answer for it, leaving only the two exits ledger rows 24 and 26 forbid: invent a
-receipt, or route it to `UnavailableForBinding`, which is a statement about a
-binding that does not exist. `NoBinding` says the true thing: nothing is
-installed *or not installed* yet, so there is no configuration to describe.
+`NoBinding` is the member the authority makes necessary. `Unresolved` is a state this
+session really reaches — every session opens in it, and the panel renders before any
+operation has resolved anything — and a snapshot that demanded a binding would have no
+representable answer for it, leaving only the two exits ledger rows 24 and 26 forbid:
+invent a receipt, or route it to `UnavailableForBinding`, which is a statement about a
+binding that does not exist. `NoBinding` says the true thing: nothing is installed *or
+not installed* yet, so there is no configuration to describe.
 
 The catalog lives **inside** `Ready`, exactly as it does in the lifecycle this
 projects. Carried as a sibling field it would be representable beside a `Failed`
@@ -1323,10 +1322,15 @@ refused.
 `begin_conversion_queue` also runs a per-family evidence check behind
 `try_enter_backend` and skips it under a held lane — deliberately, and it stays.
 That check improves *where* a refusal lands and guarantees nothing: the
-authoritative per-family gate at execution refuses before anything is staged, and
-blocking there would take away a queue's long-standing admittability while a
-preview holds the lane. A courtesy that owns no guarantee may be skipped. The
-proof above owns one, and may not.
+authoritative per-family gate at execution refuses before anything is staged, so
+blocking on it would buy nothing and cost a wait. A courtesy that owns no guarantee
+may be skipped. The proof above owns one, and may not.
+
+The reason to keep it skippable is *not* the admittability it was written for — a
+queue being admissible while a preview holds the lane. The exact-intent proof takes
+that away, deliberately: nothing may reach a picker unproved, and under a held lane
+the proof refuses. Preserving the courtesy's skip is about not adding a second
+wait behind a refusal that is already coming.
 
 **If the lane cannot answer now, BEGIN refuses — it does not wait, and it is never
 skipped.** Deferring this to "the repository's concurrency contract" left the one
@@ -1533,27 +1537,26 @@ admission free to name either could key a moment differently from the lane and
 emit two sentences for one fact.
 
 **The invariant is one element per fact, not one element per panel**, and the
-difference matters here because the two authorities read different subsets of the
-order. The lane considers `backendUsable`; admission does not, since it is a
-judgement rather than an owner. So an unsettled session with a drain running keys
-`backendUsable` for the conversion and `laneClaimed` for the probe — two elements,
-because two genuinely different facts are refusing two genuinely different actions,
-and collapsing them would be the lie, not the fix. Each authority reports the
-first fact it is entitled to consider, in the one shared order, and where they
-consider the same fact they name it identically. That is what row 13 asks for and
-all it asks for. `ConversionConfigurationProbeAdmission` maps its refusals onto the same
-names, which it can, because Decision 11's admitting subset was drawn from these
-fields in the first place. Only a refusal with no lane fact behind it mints a key of its own: a
-configuration probe already in flight, **which sorts after every lane field**, so
-it has a place in the one order both authorities report in and cannot tie with a
-lane fact for the same moment — it is the narrowest refusal there is, shared by
-nothing, so it yields to any lane fact holding alongside it. And the
-action-derived reasons, which name a target rather than a lane fact. Those
-last are keyed by action *and* target, and need no cross-action deduplication
-because no two actions can be refused by one of them — a missing target is a fact
-about the action asking. (The alternative — namespaced
-per-child notices — is rejected: it multiplies the same sentence and reintroduces
-the "each surface decides again what is wrong" defect ADR 0041 removed.)
+difference matters here because the two authorities read different subsets of the order.
+The lane considers `backendUsable`; admission does not, since it is a judgement rather
+than an owner. So an unsettled session with a drain running keys `backendUsable` for the
+conversion and `laneClaimed` for the probe — two elements, because two genuinely
+different facts are refusing two genuinely different actions, and collapsing them would
+be the lie, not the fix. Each authority reports the first fact it is entitled to
+consider, in the one shared order, and where they consider the same fact they name it
+identically. That is what row 13 asks for and all it asks for.
+`ConversionConfigurationProbeAdmission` maps its refusals onto the same names, which it
+can, because Decision 11's admitting subset was drawn from these fields in the first
+place. Only a refusal with no lane fact behind it mints a key of its own: a
+configuration probe already in flight, **which sorts after every lane field**, so it has
+a place in the one order both authorities report in and cannot tie with a lane fact for
+the same moment — it is the narrowest refusal there is, shared by nothing, so it yields
+to any lane fact holding alongside it. And the action-derived reasons, which name a
+target rather than a lane fact. Those last are keyed by action *and* target, and need no
+cross-action deduplication because no two actions can be refused by one of them — a
+missing target is a fact about the action asking. (The alternative — namespaced
+per-child notices — is rejected: it multiplies the same sentence and reintroduces the
+"each surface decides again what is wrong" defect ADR 0041 removed.)
 
 ## Decision 13 — what React retains
 
@@ -1584,17 +1587,17 @@ moved since. They are facts about the frontend's own in-flight work, which nothi
 else can know and nothing else is being asked to.
 
 **Retaining two tokens is not owning an authority**, and Decision 4b needs the
-difference stated rather than assumed. React holds the revision and the receipt
-that arrived *on the projection it is showing*, each for exactly one purpose: the
-revision to discard a reply that is older than what is on screen, the receipt to
-notice that a newer reply describes a different installation. It holds receipts in two further places, and both are bounded by something other
-than the render. **A plan identity carries one**, because Decision 9 makes the
-binding part of *which question was asked*, and a `loading` or `failed` state
-outlives the request that produced it precisely so a retry can ask the same
-question again (rows 35, 44, 61). That receipt is a component of a question, not a
+difference stated rather than assumed. React holds the revision and the receipt that
+arrived *on the projection it is showing*, each for exactly one purpose: the revision to
+discard a reply that is older than what is on screen, the receipt to notice that a newer
+reply describes a different installation. It holds receipts in two further places, and
+both are bounded by something other than the render. **A plan identity carries one**,
+because Decision 9 makes the binding part of *which question was asked*, and a `loading`
+or `failed` state outlives the request that produced it precisely so a retry can ask the
+same question again (rows 35, 44, 61). That receipt is a component of a question, not a
 claim about the current installation, and the plan is invalidated when the rendered
-binding stops matching it — the retain-list's "not past the render" bounds what
-React may *believe*, not what a recorded question may contain.
+binding stops matching it — the retain-list's "not past the render" bounds what React
+may *believe*, not what a recorded question may contain.
 
 The other is for the life of a request: **the receipt a request was issued
 under**, which Decision 4b needs to decide whether a
@@ -1813,7 +1816,7 @@ and no finding may disappear because the old PR was superseded.
 | 3 | Catalog outlives the backend it described | Catalog lifetime keyed on nothing that expires | A replaced receipt revokes the configuration bound to the old one | Rust configuration lifecycle | A binding observed as `NoInstallation` → the previous configuration is gone, without waiting for a verdict |
 | 4 | In-flight obsolete catalog resurrects state | Revoking rendered state without revoking the request | Revocation is one act over state and request | Rust configuration lifecycle | A reply about a superseded binding cannot install |
 | 5 | BEGIN observes a changed build, nothing reconciles | An observation made by an operation that then refused | An observation is complete once discovery establishes an installed binding **or** an absence; later capability or domain failure does not erase it | Provider attempt + authority | A refused BEGIN that resolved a new build advances the authority |
-| 6 | Catalog read tied to transient checking | `backendUsable` false for the duration of any probe | A check is activity; a binding is a verdict | Authority state | A recheck settling on the same receipt: no probe, no revocation, plan preserved |
+| 6 | Catalog read tied to transient checking | `backendUsable` false for the duration of a backend check | A check is activity; a binding is a verdict | Authority state | A recheck settling on the same receipt: no probe, no revocation, plan preserved |
 | 7 | Repeated polls, repeated reconciliation | A reply carrying a number treated as a request | An arriving fact is not a request | Authority state | N polls of one observation → at most one backend probe |
 | 8 | Catalog failure with no retry owner | Recovery living on a conflation that was removed | A failed read is not a state a binding can clear | Rust lifecycle + explicit retry | Transient failure → recheck does not retry it; explicit retry does |
 | 9 | Provider-resolution failure loses the observation | `?` propagating an error past a found identity | Resolution returns the observation either way | `ConversionBackendAttempt` | Resolution failure that established absence advances the authority; one that established nothing does not |
@@ -1824,7 +1827,7 @@ and no finding may disappear because the old PR was superseded.
 | 14 | Plan `loading` with no request | One member standing for "in flight" and "never asked" | `loading` names an actual request | Plan state machine | No selected intent → blocked, and nothing claims a read |
 | 15 | Failed plan described as reloading | A single non-current reason for four situations | A refusal names what the reader can change | Availability rule | A refused plan reads as failed, not as being reread |
 | 16 | Backend loss during drain not recorded | The same `?` as #9, in the execution path | Every conversion-bound resolution observes | `ConversionBackendAttempt` | Loss while the picker is open advances the authority |
-| 17 | Automatic read ungoverned, explicit retry governed | Two answers to "may a probe launch now?" | One admission rule for every probe | `ConversionConfigurationProbeAdmission`, decided by Rust's gate | Both paths refuse identically under a held lane, and neither mutates the configuration state |
+| 17 | Automatic read ungoverned, explicit retry governed | Two answers to "may the configuration read run now?" | One admission rule for both paths of that read, and for no other `--help` | `ConversionConfigurationProbeAdmission`, decided by Rust's gate and quarantine boundary | Both paths refuse identically under a held lane, and neither mutates the configuration state |
 | 18 | A refused operation records a new binding and reports none | Recording an observation without delivering it | Every answer carries the authority projection as it stands — which may be `Unresolved`, and is never a receipt the answer had to invent | `AuthorityObserved<T>` | A `BEGIN` refused on the exact-intent proof, having been the first to resolve B, returns B; an operation that answers without discovering returns `Unresolved` |
 | 19 | Old configuration usable after a newer binding arrives | Invalidation waiting for something later than the arrival | A newer projection carrying a differing receipt invalidates on arrival, before any further action | Frontend, ordering then identity | `Ready(A)` and `Plan(A)` are non-current, and no action is enabled from them, before the next interaction is possible |
 | 20 | The replacement's configuration read twice, or not at all | Ad-hoc refresh paths beside the lifecycle | Exactly one snapshot per newly observed binding, through the ordinary lifecycle | Rust configuration lifecycle | One `ConversionConfigurationSnapshot(B)` is established; the gap before it is a truthful loading state, never A's catalog and never a silent SHIPPED |
@@ -1832,7 +1835,7 @@ and no finding may disappear because the old PR was superseded.
 | 22 | A lost build leaves its catalog on screen | Absence not modelled as a binding | `NoInstallation` is a receipt and differs from A | Authority + frontend comparison | An observed `NoInstallation` revokes A on arrival, exactly as a replacement does |
 | 23 | React classifies errors to decide whether to reconcile | The observation not travelling with the answer | No error-kind allowlist and no `retryable` heuristic anywhere in React | Frontend contract | Reconciliation is decided by the projection alone — revision, then receipt; nothing inspects what failed |
 | 24 | `UnavailableForBinding` entered by guesswork | A state named with no entry or exit | It is entered from a `NoInstallation` binding and from nothing else, and left only when the receipt is replaced | Rust configuration lifecycle | A build that previews badly but converts fine is `Ready`, not `UnavailableForBinding`; a session bound to no installation probes nothing |
-| 25 | Two probe-admission rules | An authority for conversion actions reused for process admission | One named `ConversionConfigurationProbeAdmission`, over backend-process ownership facts only, with Rust's gate as the decider | Rust gate + one frontend projection | The automatic first read and the explicit retry are refused identically under each admitting fact, and `backendUsable` is not one of them |
+| 25 | Two probe-admission rules | An authority for conversion actions reused for process admission | One named `ConversionConfigurationProbeAdmission`, over backend-process ownership facts only, decided by Rust's gate **and its quarantine boundary** | Rust gate + one frontend projection | The automatic first read and the explicit retry are refused identically under each admitting fact, and `backendUsable` is not one of them |
 | 26 | `Unresolved` forced to fabricate an identity | A wire contract demanding a receipt every state can supply | The response projects the authority, which may be `Unresolved` and then carries no receipt | `BackendAuthorityProjection` | A first operation that answers without discovering returns `Unresolved` and invents nothing |
 | 27 | A delayed reply rolls the authority backwards | Equality asked to do ordering's work | Ordering is `BackendAuthorityRevision` and identity is the receipt; neither answers the other's question | Rust-authored revision | A late projection at a lower revision is discarded whole; the rendered binding survives and no snapshot is read for the stale one |
 | 28 | A revision read as meaning | One token carrying an ordering and a semantics | The revision's only frontend meaning is staleness; observed, settled, attempted and ready arrive as typed state | Frontend contract | Nothing in React derives an authority state from a revision comparison |
@@ -1849,7 +1852,7 @@ and no finding may disappear because the old PR was superseded.
 | 39 | The first read is owed and never re-issued | An admission refusal with no named stimulus to try again | The read stays owed, and every authority delivery is an occasion to issue it; the retry is offered from `Unattempted` too | Rust configuration lifecycle + panel | A configuration read refused under a held gate is issued when the holder answers, and a reader is never left with a stuck panel and nothing to press |
 | 40 | A probe launches in a quarantined session | A membership criterion written as "takes the gate" alone | Admission is what Rust refuses a backend process for: the gate **and** the quarantine boundary | `ConversionConfigurationProbeAdmission` | A quarantined session admits no probe, automatic or explicit, and says so with quarantine's own reason |
 | 41 | `Partial` has no representable binding | A union read as installed-or-nothing while discovery has three outcomes | `Installed` is `AvailabilityState::Available` and nothing else; `Partial` is `NoInstallation`, and the tag carries no reason | Decision 1's union | A folder with msconvert and no msaccess binds as `NoInstallation`, probes nothing, and is never worded "ProteoWizard is not installed" |
-| 42 | A binding is observed and never settles | An unsettled state with no obligation to produce a verdict | Entering `ObservedButUnsettled` obliges one backend check, owed and re-issued on the same terms as the first configuration read; until it answers the lane is not usable | Authority + `ConversionLane` projection | A replacement observed mid-drain claims no verdict, and its check is issued when the drain answers rather than waiting for a reader |
+| 42 | A binding is observed and never settles | An unsettled state with no obligation to produce a verdict | Entering `ObservedButUnsettled` obliges one backend check, **owed** on the same terms as the first configuration read and **admitted** on its own — process ownership, never a verdict; until it answers the lane is not usable | Authority + `ConversionLane` projection | A replacement observed mid-drain claims no verdict, and its check is issued when the drain answers rather than waiting for a reader |
 | 43 | The two judgements never actually diverge | A split justified by a state the code cannot reach | `Failed` is reached by a capability parse that refuses a probe discovery accepted | Decision 3 | A build whose msconvert help is bound but unparseable is preview-usable with a `Failed` configuration |
 | 44 | A superseded plan reply installed by its own retry | A machine keyed on an identity a retry preserves by design | `loading` and `failed` carry an ordinal, and a reply matches identity **and** ordinal | Plan state machine | A retry issued while an earlier request is in flight ignores the earlier reply, and the plan rendered is the one the reader asked for last |
 | 45 | A projection nested inside a projection | Two contracts each carrying authority, with no rule for which applies | One response carries one projection; the snapshot's `authority` **is** the observed authority | Decision 4 + Decision 6 | The configuration read's response has exactly one authority field, and no equality rule is needed because there is nothing to disagree with |
@@ -1860,7 +1863,7 @@ and no finding may disappear because the old PR was superseded.
 | 50 | An unsettled session claimed as verdict-bearing | A stale verdict surviving the binding it described | `backendUsable` is false while the authority is not `Settled` on an `Installed` binding, and nothing new is fed into `backendChanging` | `ConversionLane` projection | An unsettled authority never reports the previous build's verdict, and never disables the controls that would settle it |
 | 51 | A refused discovery spending a configuration attempt | A read that cannot reach a probe reported as a probe that failed | A read whose own discovery refuses replaces the binding; `Failed` needs a probe that ran | Decision 3 + Rust lifecycle | A build that disappears between the verdict and the read is `NoInstallation` → `UnavailableForBinding`, not `Failed` |
 | 52 | The state that owes the check is the fact that refuses it | An unsettled authority raising the flag that gates the check and the recovery controls | `backendChanging` keeps meaning a check in flight and nothing else | Decision 11 + `ConversionLane` projection | An `ObservedButUnsettled` session with nothing else holding the gate admits its obliged check, and a quarantined one keeps Choose-installation and Recheck live |
-| 53 | An obliged check re-issued against a refusal that never clears | An obligation discharged only by settling | An answered check discharges it, settled or not; so does the session becoming quarantined, attempted or not | Authority obligations | A session quarantined at any point makes at most one check attempt and stops, stays truthfully unsettled, and is told quarantine |
+| 53 | An obliged check re-issued against a refusal that never clears | An obligation discharged only by settling | A check that ran and answered discharges it, settled or not; so does the session becoming quarantined, attempted or not; a check that never reached a discovery follows the permanent-or-transient rule | Authority obligations | A session quarantined at any point makes at most one check attempt and stops, stays truthfully unsettled, and is told quarantine |
 | 54 | An obligation owed against a refusal that cannot clear | One rule for deferral and permanent refusal | Deferred obligations stay owed; permanently refused ones are discharged | Authority obligations | A quarantined session asks once and stops; a session behind a held gate asks again when it clears |
 | 55 | A probe waiting out the conversion it lost a race to | The one gate taken by waiting | The probe takes it with `try_enter_backend` and never queues | `ConversionConfigurationProbeAdmission` | A probe dispatched just before a drain refuses immediately and stays owed, rather than surfacing after the conversion |
 | 56 | A fresh catalog discarded, or `Ready` arriving over `Unattempted` | Observation and answer ordered as two events | A read that observes a new available binding answers for it in one transaction | Rust configuration lifecycle | A configuration read that discovers build B returns `Ready(B)`, and `Unattempted(B)` is never rendered |
@@ -1893,7 +1896,7 @@ and no finding may disappear because the old PR was superseded.
 | 83 | A retained question mistaken for a retained belief | A retain-list bounding receipts by the render alone | A plan identity's receipt is a component of a question, bounded by the plan, not by the render | Decision 9 + Decision 13 | A failed plan can be retried for the same question without React holding a third authority |
 | 84 | Two obligations issued into each other's gate | "Issues both" read as simultaneously | Where both are owed the duty goes first and the courtesy is deferred onto its answer | Frontend reconciliation | A delivery finding a check and a read both owed strands neither, and issues one probe, not two |
 | 85 | An admission rule the frontend cannot evaluate | A rule stated over `ConversionLane` for a fact with no lane field | The check reads the lane's ownership fields plus its own probe-in-flight bookkeeping | Decision 4 + Decision 13 | The obliged check is not issued while a configuration probe is in flight |
-| 86 | The suppressed automatic preview load never re-issued | A one-shot guard behind a verdict this decision makes temporarily false | The authority settling is an occasion; a load suppressed while unsettled is issued when it settles | `ConversionLane` projection + preview load | A document opened during an unsettled window previews once the check answers, without a second click |
+| 86 | The suppressed automatic preview load never re-issued | A one-shot guard behind a verdict this decision makes temporarily false | `backendUsable` becoming true is an occasion; a load suppressed while unsettled is issued then, and not merely on settling | `ConversionLane` projection + preview load | A document opened during an unsettled window previews once the check answers usable, without a second click |
 | 87 | A courtesy abolished with the duty it was mistaken for | One decision covering the exact-intent proof and the pre-picker family check | The proof owns a guarantee and may not be skipped; the pre-picker courtesy owns none and may | Decision 10 | The pre-picker family check is still skipped under a held lane rather than blocking on it, and no picker opens before the exact intent is proved |
 | 88 | One moment keyed two ways by an order written wrong | An admitting list whose middle two facts were transposed | The list is `ConversionLane`'s precedence exactly: `laneClaimed` before `previewReading` | Decision 11 | A conversion running during a preview read is keyed `conversion-running` by both authorities |
 | 89 | A quarantined unbound session with no configuration state | The binding-only exemption stated for Rust and not for the frontend | A rendered `NoInstallation` binding issues its configuration read regardless of admission | Frontend reconciliation + Decision 5 | The exemption holds on both sides of the boundary, not just Rust's |
