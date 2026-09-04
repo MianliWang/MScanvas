@@ -391,6 +391,8 @@ slice established, or measures something a later slice may not assume.
                     |                 |                         |
                     +--------+--------+                         |
                              |                                  |
+                     M6.4A authority boundary                   |
+                             |                                  |
                      M6.4 visible settings                      |
                              |                                  |
                      M6.5 destination authority                 |
@@ -427,6 +429,8 @@ Read as edges, with the reason each exists:
 | M6.0 -> M6.2 | M6.2 needs the frozen evidence contract and the fixture/identity baseline |
 | M6.1 -> M6.4 | A visible setting is a control; a control needs one availability rule |
 | M6.2 -> M6.3 | An intent may only name semantics the build was measured performing |
+| M6.3 -> M6.4A | Making the intent visible needs an owner for the installation it is valid against |
+| M6.4A -> M6.4 | A visible setting projects one Rust-owned authority; it does not reconstruct several |
 | M6.3 -> M6.4 | A visible setting projects a typed intent; it does not create one |
 | M6.4 -> M6.5 | The plan the destination is admitted for must already be truthful |
 | M6.5 -> M6.6 | Conflict and destructive UX act on a resolved destination |
@@ -823,13 +827,49 @@ requested result under one intent and as `RepresentationChange` under the other.
 retry — asserted with an intent that is deliberately not `SHIPPED`, so a
 re-derivation would be visible rather than accidentally right.
 
+### M6.4A — Conversion configuration authority boundary
+
+*Purpose:* decide who owns installation truth, conversion-capability truth and
+the identity that binds them, before the visible settings are built a second
+time.
+
+*Prerequisites:* M6.3 (there is a typed intent to be valid *about*).
+
+*Establishes:* [ADR 0044](0044-conversion-configuration-authority.md) — a
+Rust-owned installation authority that is a typed state rather than a counter; a
+single opaque binding receipt every fact about one installed ProteoWizard
+carries; preview availability and conversion configuration as two judgements
+under one binding; a conversion resolution attempt that reports its observation
+whether or not the capability binding succeeded; a Rust-owned configuration
+lifecycle keyed by that receipt; availability as a property of an admitted
+**row** rather than of an axis value; an explicit plan state machine; a mandatory
+pre-BEGIN intent proof; one lane admission rule for every `msconvert --help`
+probe; and one DOM owner per availability reason.
+
+*Why it exists.* M6.4 was attempted on `feat/m6.4-visible-conversion-settings` /
+PR #95 and stopped four times, each round closing what it was given and being
+stopped by what that closing introduced. The measurements are real and are kept:
+sixteen live findings and four STOP records collapse into seventeen semantic
+families, and almost all of them are one shape — an authority that exists in Rust
+projected to the frontend as a number or a boolean, leaving the frontend to
+reconstruct its meaning. ADR 0044 removes the reconstruction rather than
+correcting its arithmetic, and carries the finding ledger the replacement
+implementation must prove.
+
+*Non-goals:* no implementation, no new provider measurement, no change to
+`ConversionIntent::ADMITTED`, no destination decision. PR #95 remains open as
+implementation evidence and is not merged.
+
+*Downstream:* M6.4.
+
 ### M6.4 — Visible settings, and a truthful plan
 
 *Purpose:* make admitted intents selectable, and make the pre-run summary
 describe the plan that will actually be bound.
 
 *Prerequisites:* M6.1 (a control needs one availability rule), M6.3 (a control
-projects a typed intent).
+projects a typed intent), M6.4A (a control needs one owner for the installation
+its semantics are valid against).
 
 *Establishes:* the visible controls for whatever M6.2 admitted; CNV-009's
 natural-language summary widened from item count and ordered list to **format
