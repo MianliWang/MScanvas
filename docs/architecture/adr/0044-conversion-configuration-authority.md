@@ -109,6 +109,20 @@ round needed it: an operation resolved the installed build, so the *binding* is
 known, but no preview verdict has settled for it yet. Today that state is
 approximated by an inequality between two frontend watermarks.
 
+**A `Partial` discovery is `NoInstallation`.** The union has two members because
+the fact it names is binary: `InstallationIdentity::of` returns an `Option`, and
+it is `Some` only when *both* tools resolve. A folder holding msconvert.exe and no
+msaccess.exe, a mismatched pair, a timed-out probe — each is a discovery that
+establishes no installation identity, so each is `NoInstallation`, and the binding
+is not obliged to invent a third member for the ways that can happen.
+
+The trap that comes with it is a sentence, not a state: `NoInstallation` must
+never be rendered as "ProteoWizard is not installed", because a `Partial` build
+plainly is. It means *this session is bound to no usable installation*, and the
+reason a reader is shown comes from the discovery failure the preview surface
+already owns and already words correctly — never from the binding tag, which
+carries no reason at all.
+
 **`NoInstallation` is a binding, not the absence of one**, and that is what lets
 Decision 4's three-way distinction be written at all: *this build*, *no build*,
 and *nothing was established* are three different observations, and only the
@@ -176,14 +190,41 @@ conversion configuration  -> msconvert's ConversionIntent capability grammar
 
 Stated precisely, because the looser version — "preview is msaccess, conversion
 is msconvert" — is not what the code does. `AvailabilityState::Available`
-requires `msconvert.exists && msaccess.exists && same_installation`, and the
-provider then narrows it further by asking *msaccess's* grammar for the required
-preview operations. So the two judgements share a discovery, share an
-installation, and share the requirement that both executables be present; what
-they do not share is **which grammar is interrogated**. That is the whole of the
-split, and it is enough: a build whose msconvert is present but cannot express a
-chosen intent, or whose help cannot be read at all, is truthfully preview-usable
-with a configuration that is `Failed` or a selected row that is unavailable.
+requires `msconvert.exists && msaccess.exists && same_installation &&
+overall_failure.is_none()`, and the provider then narrows it further by asking
+*msaccess's* grammar for the required preview operations. So the two judgements
+share a discovery, share an installation, share the requirement that both
+executables be present, and share the requirement that **both** help probes
+succeeded — `overall_failure` carries msconvert's failure too. What they do not
+share is **which grammar is interrogated**.
+
+That is a narrower split than it first appears, and the narrowing matters,
+because it rules out the example a draft of this document reached for. "Msconvert
+help cannot be read" is *not* a preview-usable session: discovery runs `msconvert
+--help` itself, and a probe that fails to launch, times out, exits unacceptably or
+returns no release metadata lands in `overall_failure`, so the build is not
+`Available` and `bind_help_of` refuses before any capability parse. The split is
+still real, and these are the states that reach it:
+
+```text
+msconvert's help probe was accepted, but its bound capability parse refuses
+  -> preview is unaffected: it parses msaccess's grammar, not msconvert's
+  -> the configuration is Failed (capability_evidence_unavailable)
+
+msconvert's grammar is intact but admits no row for the chosen intent
+  -> preview is unaffected
+  -> the configuration is Ready, and the selected row is unavailable
+
+the build changed between the preview verdict and the catalog read
+  -> the read's own discovery is no longer Available
+  -> the configuration is Failed, and the authority it carries says why
+```
+
+The first is the load-bearing one, and it is reachable because acceptance and
+parsing are different steps: discovery stores a bound help probe once the exit and
+metadata are acceptable, and only `parse_bound_help` — later, on a stream that may
+have been truncated — decides whether a capability grammar can be extracted from
+it at all.
 
 They share an installation. They are not the same judgement, and collapsing them
 is what let a *check* invalidate a *catalog*, and what makes "the backend is
@@ -314,6 +355,24 @@ AuthorityObserved<T> {
 `NoInstallation { receipt }`. The receipt lives inside it, in exactly one place,
 so there is one shape for the union Rust owns and one place a comparison reads
 from.
+
+**`ObservedButUnsettled` carries no `previewAvailability`, and that is a claim
+about the session, not an omission.** An operation that noticed a new binding
+without computing a preview verdict leaves the session genuinely between verdicts:
+the old one described a different build and may not be reused, and no new one
+exists yet. `ConversionLane` is unchanged and still needs a boolean, so the
+projection is fixed rather than left to a reader — while the authority is
+`ObservedButUnsettled`, `backendUsable` is false and the lane's reason is
+`backend-changing`, which is the truthful M6.1 word for it and is already in its
+vocabulary. Refusing as `backend-unavailable` would state a verdict this session
+does not hold.
+
+And the state owes an exit. **Entering `ObservedButUnsettled` obliges exactly one
+backend check**, issued by the same automatic initiator that owes the first
+configuration read and admitted by the same rule, whose answer settles the
+verdict. That is what keeps the two scenarios below — a `BEGIN` refused after
+observing a replacement, and an installation change that refuses — from parking
+the panel in a state with no verdict and nothing obliged to produce one.
 
 **The projection carries the authority state, not a flattened stand-in for it.**
 Collapsing `ObservedButUnsettled` and `Settled` into one member — and dropping
@@ -519,13 +578,28 @@ receipt replaced mid-request
 
 probe admission refuses while Unattempted
   -> stay Unattempted; nothing is queued behind the lane
-  -> when admission becomes available again, the automatic initiator issues
-     the one first read
+  -> the first read is still owed, and is re-issued on the next authority
+     delivery that finds admission available
 
 probe admission refuses an explicit retry while Failed
   -> stay Failed; no probe launches
   -> the retry remains available to take again later
 ```
+
+**`Unattempted` is an obligation, not a resting state.** Refusing the automatic
+read must not strand it, and nothing about a held gate is self-clearing from the
+frontend's side — so the stimulus is named rather than left to a timer. Every
+operation that owns the gate delivers authority when it answers (Decision 4), and
+every such delivery is an occasion to ask whether the one first read is still owed
+and admission now allows it. The operation that was holding the gate is therefore
+the operation that releases the read, and a binding cannot reach a state where its
+catalog is owed, nothing is in flight, and nothing will ever ask again.
+
+The explicit retry is the reader's floor under that. It is offered whenever a
+binding has no answer and no probe is in flight — from `Failed`, and equally from
+an `Unattempted` whose automatic read was refused — because a control that says
+"read the settings" is truthful in both, and the alternative is a panel a reader
+can see is stuck with nothing to press.
 
 **Transient process contention is not a failed read.** A configuration attempt is
 spent when a probe *ran* and did not answer, never when one could not start: a
@@ -824,14 +898,20 @@ diagnostics export                       -- owns no backend process
 other workspace settling                 -- owns no backend process
 ```
 
-The split is structural, not a list to keep in sync: **an operation belongs on the
-first side exactly when it takes the one backend gate.** On the current tree the
-gate is taken by the backend check and the installation change, by the preview
-and spectrum reads, by the queue's drain and by the conversion entry points that
-resolve a build — and it is not taken by `adopt_conversion_outputs` or
-`begin_conversion_diagnostics_export`, which is why adoption and diagnostics
-appear on the second side. The replacement derives the membership from the gate
-rather than from this paragraph; what is normative here is the criterion.
+The split is structural, not a list to keep in sync: **a fact belongs on the first
+side exactly when Rust would itself refuse a backend process for it** — which on
+the current tree is two things, not one. The gate is taken by the backend check
+and the installation change, by the preview and spectrum reads, by the queue's
+drain and by the conversion entry points that resolve a build, and it is not taken
+by `adopt_conversion_outputs` or `begin_conversion_diagnostics_export`, which is
+why adoption and diagnostics appear on the second side. Quarantine is the other
+half: `require_usable_backend` refuses before the gate is ever reached, so a
+criterion written as "takes the gate" alone would have dropped the one entry on
+the list that no waiting can clear, and admitted a probe in a session that has
+lost track of a converter process of its own.
+
+The replacement derives membership from what Rust refuses, not from this
+paragraph; what is normative here is that criterion, in both its halves.
 
 **Automatic and explicit consume the same rule.** The first configuration read
 for a binding and an explicit settings retry differ in what *initiates* them —
@@ -1067,14 +1147,14 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–38).
+plus the findings raised against this document's own drafts (rows 18–43).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
 | # | Family | What permitted it | Required invariant | Owner | Replacement acceptance case |
 |---|---|---|---|---|---|
 | 1 | Admitted graph duplicated or widened | A frontend able to compose axis values | The admitted table is the only compatibility rule | Rust (`ConversionIntent::ADMITTED`) | No TS from which a nine-row graph could be rebuilt; 39 combinations unreachable by any activation sequence |
-| 2 | Preserved unsupported selection unrecoverable | One-axis editing plus a preserved choice, with no escape | A genuine dead end offers one explicit atomic recovery | Selection module | Dead end offers the shipped row; a reachable one-axis route offers no recovery block |
+| 2 | Preserved unsupported selection unrecoverable | One-axis editing plus a preserved choice, with no escape | A genuine dead end offers one explicit atomic recovery, when the shipped row is itself available | Selection module | Dead end with an available shipped row offers it; a reachable one-axis route offers no recovery block; a dead end whose shipped row is unavailable offers nothing |
 | 3 | Catalog outlives the backend it described | Catalog lifetime keyed on nothing that expires | A replaced receipt revokes the configuration bound to the old one | Rust configuration lifecycle | A binding observed as `NoInstallation` → the previous configuration is gone, without waiting for a verdict |
 | 4 | In-flight obsolete catalog resurrects state | Revoking rendered state without revoking the request | Revocation is one act over state and request | Rust configuration lifecycle | A reply about a superseded binding cannot install |
 | 5 | BEGIN observes a changed build, nothing reconciles | An observation made by an operation that then refused | An observation is complete once discovery establishes an installed binding **or** an absence; later capability or domain failure does not erase it | Provider attempt + authority | A refused BEGIN that resolved a new build advances the authority |
@@ -1111,6 +1191,11 @@ and no finding may disappear because the old PR was superseded.
 | 36 | A snapshot that contradicts itself | The receipt carried twice with no stated equality | The receipt appears once, in the authority; the configuration describes the binding beside it | `ConversionConfigurationSnapshot` | No snapshot can pair one binding's authority with another's catalog |
 | 37 | The first binding is never installed | An ordering rule defined only for a strictly newer revision | Nothing rendered accepts the first projection; an equal revision changes nothing and re-reads nothing | Frontend, ordering then identity | A session's first projection installs its binding, and a repeated projection spends no probe |
 | 38 | Receipt comparison silently disabled | Two shapes for the one union Rust owns | `Binding` carries its receipt, in one place, wherever the union appears | Decision 1's union | Every comparison in the replacement reads the receipt from the same field |
+| 39 | The first read is owed and never re-issued | An admission refusal with no named stimulus to try again | The read stays owed, and every authority delivery is an occasion to issue it; the retry is offered from `Unattempted` too | Rust configuration lifecycle + panel | A configuration read refused under a held gate is issued when the holder answers, and a reader is never left with a stuck panel and nothing to press |
+| 40 | A probe launches in a quarantined session | A membership criterion written as "takes the gate" alone | Admission is what Rust refuses a backend process for: the gate **and** the quarantine boundary | `ConversionConfigurationProbeAdmission` | A quarantined session admits no probe, automatic or explicit, and says so with quarantine's own reason |
+| 41 | `Partial` has no representable binding | A union read as installed-or-nothing while discovery has three outcomes | An identity is established or it is not; `Partial` is `NoInstallation`, and the tag carries no reason | Decision 1's union | A folder with msconvert and no msaccess binds as `NoInstallation`, probes nothing, and is never worded "ProteoWizard is not installed" |
+| 42 | A binding is observed and never settles | An unsettled state with no obligation to produce a verdict | Entering `ObservedButUnsettled` obliges one backend check; until it answers the lane is not usable and refuses as `backend-changing` | Authority + `ConversionLane` projection | A refused `BEGIN` that observed a replacement leaves no verdict claimed and one check owed |
+| 43 | The two judgements never actually diverge | A split justified by a state the code cannot reach | `Failed` is reached by a capability parse that refuses a probe discovery accepted | Decision 3 | A build whose msconvert help is bound but unparseable is preview-usable with a `Failed` configuration |
 
 ## What this interlude does not do
 
