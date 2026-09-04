@@ -45,7 +45,7 @@ coding.
 | May the conversion configuration read run now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate **and its quarantine boundary** — for the automatic first read and the explicit retry, not every `--help` a gated operation runs, and not a read for a binding that launches no probe at all. |
 | Who owns catalog request lifecycle and retry? | Rust owns the lifecycle state; the frontend initiates a read or a retry and owns neither. |
 | What does React retain? | The selected intent id; request-in-flight for rendering; per-obligation bookkeeping (in flight, and whether an occasion has passed since — never a judgement that one is *owed*, which Rust's state makes); the never-reset plan request ordinal; the Rust-authored configuration snapshot it is rendering, catalog included; Rust's plan answer, with its identity's receipt for the life of the plan; the revision and receipt of what it is rendering; and presentation. Nothing else. |
-| May the obliged backend check be issued now? | The same predicate the configuration read asks — process ownership, never a verdict about a build. The two differ in what a refusal means, not in what they ask. |
+| May the obliged backend check be issued now? | Process ownership, never a verdict about a build — the read's predicate minus quarantine, which refuses a probe and answers a check. |
 | At what granularity does availability exist? | The admitted **row** — one composition. There is no per-value availability authority. |
 | What makes a pre-run plan current? | Ordered handles, intent id, conflict policy, binding receipt, document epoch — compared against Rust's own answer. |
 | What must be established before BEGIN reserves anything? | The current binding has proved the exact selected intent executable. Mandatory, never a courtesy. |
@@ -621,11 +621,9 @@ timeout, not a duration: a healthy `--help` returns in milliseconds, so an ordin
 mount pays two fast discoveries, and only a broken installation pays twice for being
 broken — which is a session that has worse problems and is about to be told so.
 
-**They share the admission and differ in what a refusal means.** An earlier draft
-said the opposite — "the owing is shared; the admission is not" — and the document's own
-definitions do not support it: both ask the same predicate over the same five
-process-ownership facts, and neither asks `backendUsable`. What differs is what happens
-when the backend is busy, and in one fact they do not share. A configuration probe is a
+**They share four facts of five, and differ in what a refusal means.** Neither asks
+`backendUsable` — a verdict owns no process — and both ask the ownership facts. They
+part on quarantine, and on what a busy backend does to them. A configuration probe is a
 courtesy — an `msconvert --help` behind a discovery that probes both tools, taken with
 `try_enter_backend`, **refused** rather than queued, which is why it needs the
 owed-and-re-issued machinery at all, and it asks all five of admission's facts,
@@ -794,22 +792,25 @@ the outcome     -> judged by NEITHER
                    the obligation rather than the panel
 ```
 
-**The two tests never actually disagree, and the rule is still receipt.** Three drafts
-looked for a case where a payload is stale by revision while describing the binding on
-screen, and offered a build repaired in place, then a probe that times out once. Neither
-survives this document's own Decisions 1 and 2: new bytes are a new digest, and a
-timed-out probe sets `overall_failure`, which makes the discovery not `Available`, which
-by Decision 1 is `NoInstallation` and by Decision 2 a replaced receipt. For an
-`Installed` binding the verdict is a pure function of the same files the receipt
-identifies, so **an equal receipt implies an equal projection**, and the revision cannot
-move while the receipt stands still.
+**Two drafts illustrated this with cases their own decisions forbid**, so the
+illustration is worth getting right. A build repaired in place is *not* an equal
+receipt: new bytes are a new digest. Neither is a `--help` that times out: that sets
+`overall_failure`, which makes the discovery not `Available`, which is `NoInstallation`
+and so a replaced receipt.
 
-That is a reason to state the rule carefully, not to drop it. The payload test is about
-bindings, so it asks the binding question; relying on the revision to answer it would
-couple the two rules this document works to keep apart — ordering never means, identity
-never orders — and would make the payload's correctness depend on a coincidence rather
-than on a rule. The tests agreeing everywhere is a property to notice, and the wrong
-thing to build on.
+What *does* move a verdict without moving the files is the case Decision 3 already turns
+on — the msaccess help capture. A probe that exits cleanly is bound without being
+parsed; `from_discovered_tool` parses it later and refuses a truncated stream.
+Truncation is a property of the capture rather than of the build, so the same
+installation can be `Available` with `usable` true on one reading and false on the next,
+at one identity. That is the revision rule's third clause, and it is why that clause
+exists.
+
+**A third draft went the other way and claimed the two tests can never disagree.** They
+can, exactly there, and the document should not lean on an impossibility either way. The
+payload test is about bindings, so it asks the binding question — receipt — and the
+projection test is about ordering, so it asks the revision. Keeping them separate is
+what makes each answerable without the other, which is this decision's whole method.
 
 **A plan's binding is asked, not observed**, and that is what keeps
 `conversion_queue_plan` honest without giving it a discovery it has no business
@@ -879,11 +880,13 @@ flight for it, and may it be issued? Invalidation is what steps one and two deci
 Issuing is not invalidation, and a binding that has never been read must not be kept
 unread by a rule about a binding that did not change.
 
-**"May it be issued" is one question for both**, over the process-ownership facts
-and no verdict — Decision 4 states it, and states why the earlier reading that gave
-them two predicates was wrong. What differs between them is what a refusal means,
-which step three expresses as the duty-first ordering below rather than as a second
-rule. Concretely the predicate is the lane's process-ownership fields plus the
+**"May it be issued" is nearly one question for both**, over the process-ownership
+facts and no verdict — Decision 4 states it, and states the one place they part: the
+probe asks quarantine as well, because a quarantined session will not start one, while
+the check asks only ownership, because a quarantined session answers it rather than
+refusing it. What else differs is what a refusal means, which step three expresses as
+the duty-first ordering below. Concretely the predicate is the lane's
+process-ownership fields plus the
 frontend's own probe-in-flight
 bookkeeping, which Decision 13 grants it and which has no lane field of its own; a
 rule stated only over `ConversionLane` would not have been evaluable.
@@ -929,16 +932,18 @@ that would replace it is owed. Discharging that check on a refusal would reopen 
 stale-banner window rows 96, 102 and 110 exist to close. It is not refused; it answers,
 and what it answers with is the sentence the reader needs.
 
-It is one of admission's five facts (row 40) and the lane's first refusal, and
-neither rule is weakened by any of this — what changes is what an *obligation* does
-when it meets a refusal that cannot clear. An obligation whose fulfilment needs the
-backend is discharged the moment the session is quarantined,
-whether it had been issued, deferred by contention, or not yet attempted: there is
-nothing to wait for, and a session whose stop could not be confirmed will not get
-another verdict this run. So a quarantined session makes at most one attempt and
-then stops asking, rather than carrying an obligation it can never discharge —
-which is what rows 53 and 54 require, and what an earlier draft's "issued once,
-answered once" could not deliver for an obligation quarantine arrived *after*.
+It is one of admission's five facts (row 40) and the lane's first refusal, and neither
+rule is weakened by any of this — what changes is what an *obligation* does when it
+meets a refusal that cannot clear. **An obligation quarantine actually refuses** — the
+configuration probe — is discharged the moment the session is quarantined, whether it
+had been issued, deferred by contention, or not yet attempted: there is nothing to wait
+for, and a session whose stop could not be confirmed will not get another catalog this
+run. The check is not among them, by the paragraph above: it is not refused, so it is
+still owed and still issued, and it discharges by answering. So a quarantined session
+makes at most one attempt and then stops asking, rather than carrying an obligation it
+can never discharge — which is what rows 53 and 54 require, and what an earlier draft's
+"issued once, answered once" could not deliver for an obligation quarantine arrived
+*after*.
 
 **And step three is bounded, because an unbounded one spins.** A refused attempt
 answers, an answer is a delivery, and a delivery is an occasion — which closes a
@@ -1919,7 +1924,7 @@ rather than left to a reader:
 | Does this catalog or plan belong to the installation I am bound to? | `BackendBindingReceipt` equality, nothing else |
 | Is conversion configuration unavailable, unattempted, ready or failed? | The Rust configuration lifecycle, delivered as typed state |
 | May the conversion configuration read run now? | `ConversionConfigurationProbeAdmission` — the automatic first read and the explicit retry, and no other `--help`; a `NoInstallation` binding's read launches no probe and asks nothing |
-| May the obliged backend check be issued now? | The same predicate, over backend-process ownership; the difference is that its refusal waits where the read's refuses |
+| May the obliged backend check be issued now? | Backend-process ownership, and not quarantine — a quarantined session answers this rather than refusing it. Otherwise the read's predicate, differing in that its refusal waits where the read's refuses |
 | Is there a real plan request, answer or failure? | The plan state machine |
 | May a conversion action start? | `ConversionLane`, unchanged from M6.1 |
 
@@ -2198,7 +2203,7 @@ and no finding may disappear because the old PR was superseded.
 | 91 | A session stranded `Unresolved` by a transient failure | "Answers without discovering" discharging unconditionally | It follows the permanent-or-transient rule like every other refusal | Authority obligations | An operation whose request failed leaves the mount-time obligation owed, and a session that has never resolved anything is never quarantined |
 | 92 | The courtesy put ahead of the duty by the invalidation step | Step two dispatching a read imperatively | Step two decides what is invalid; step three issues, under admission and duty-first ordering | Frontend reconciliation | A `BEGIN` refused mid-drain issues the check first and the read on its answer, never a probe into the drain |
 | 93 | One fact with two sentences and no rule for which is rendered | A fact-phrased notice required over an action-phrased vocabulary | The notice sentence is the panel's, new; `ConversionAvailability.message` is untouched and stays on its control | Panel notice registry | The lane's vocabulary is not rewritten, and the shared element carries exactly one sentence |
-| 94 | A payload judged by the rule about ordering | Staleness reaching a payload, which is a question about bindings | Receipt judges the payload; revision judges only the projection — even though for an `Installed` binding the two can never disagree | Frontend, ordering then identity | The payload test reads a receipt, and does not become correct by way of the revision agreeing with it |
+| 94 | A payload judged by the rule about ordering | Staleness reaching a payload, which is a question about bindings | Receipt judges the payload; revision judges only the projection | Frontend, ordering then identity | A snapshot for the rendered binding is installed even when its projection is stale, and the payload test never consults a revision |
 | 95 | A verdict owed for a binding that has none to give | A verdict treated as separable from the binding it judges | `NoInstallation` carries no verdict to wait for, and `Installed` never arrives without one | Authority state | Observing that no installation resolves obliges nothing and completes at once |
 | 96 | A reading nothing is obliged to replace | A liveness rule written about bindings only | A session that has resolved nothing, and a rendered reading whose receipt is not the authority's, each owe one backend check | Authority obligations | No session sits unresolved, and no banner describes a build the session has left, with nothing owed and no control to press |
 | 97 | React holding what Rust already answers | A retain-list that grew a flag per rule rather than per fact | React holds what only it can know — its own in-flight work — and never whether an obligation is *owed*, which Rust's configuration state answers | Decision 13 | No frontend flag duplicates `Unattempted` |
@@ -2230,10 +2235,10 @@ and no finding may disappear because the old PR was superseded.
 | 123 | Owed obligations re-issued at poll frequency | A state poll counted as a delivery | `conversion_state` takes no gate and delivers no authority, exactly as `conversion_queue_plan` does not | Decision 4 + Decision 4b | A running queue's polling produces no occasions, and re-issues nothing |
 | 124 | A notice sentence that changes when a second action appears | Fact-phrasing required only where a fact is shared | A notice element is fact-phrased whether one action points at it or three | Panel notice registry | The same `laneClaimed` refusal reads identically with Convert alone and with the settings retry beside it |
 | 125 | A durable export field replaced by a session-scoped token | "Leaves the wire" read over a persisted schema as well as the live one | The diagnostics export keeps `installationGeneration`; it outlives the session a receipt is scoped to, and its schema is ADR 0017's | Decision 2 + ADR 0017 | The export is byte-identical in shape after the counter leaves the live contracts |
-| 126 | A rule justified by cases its own identity model forbids | Three drafts hunting a reachable equal-receipt, moved-verdict case | There is none: for an `Installed` binding the verdict is a pure function of the files the receipt identifies, so an equal receipt implies an equal projection | Decision 1 + Decision 2 | The document claims no such case, and the payload rule stands on what it is a rule about |
+| 126 | A rule justified by cases its own identity model forbids, then by an impossibility | Two drafts offering an in-place repair and a timed-out probe; a third claiming no case exists | The case is the msaccess help capture: a truncated stream moves `usable` at one identity, which is the revision rule's third clause | Decision 3 + Decision 4b | A verdict that flips on an unchanged build advances the revision, and the payload is still judged by receipt |
 | 127 | React holding a reading it is not permitted to hold | An exhaustive retain-list omitting the banner's own DTO | The rendered `BackendAvailabilityDto` is retained, and its receipt compared against the authority's | Decision 13 + Decision 4 | The banner's currency test needs no exception to the retain list |
 | 128 | The stale-banner window reopened by a discharge | Quarantine discharging every obligation it meets, including one it does not refuse | `inspect_backend` answers a quarantined session rather than refusing it, so the check discharges by answering | Authority obligations + Decision 4 | A drain that observes a replacement and quarantines in the same operation still replaces the banner's reading |
-| 129 | The check unissued in the session that most needs it | One predicate coded for the probe and the check alike | The probe asks all five admitting facts; the check asks the four ownership facts and not quarantine, which does not refuse it | Decision 4 + Decision 11 | A quarantined session issues its owed check and replaces its banner reading |
+| 129 | The check unissued in the session that most needs it | One predicate coded for the probe and the check alike, in four places | The probe asks all five admitting facts; the check asks the four ownership facts and not quarantine, which does not refuse it; and quarantine discharges only what it refuses | Decision 4 + Decision 11 | A quarantined session issues its owed check and replaces its banner reading |
 | 130 | An owed check with no clause to issue it under | Step three enumerating two of the three conditions an obligation arises from | The enumeration names the configuration read, the unresolved session, and the stale rendered reading | Frontend reconciliation | A check owed after a drain observes a replacement is issued by the only procedural statement of issuance |
 
 ## What this interlude does not do
