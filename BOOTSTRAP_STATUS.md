@@ -7107,13 +7107,14 @@ discarding an identity discovery had already found.
 
 ### What ADR 0044 locks
 
-Thirteen decisions, answering eight questions the replacement must not have to
+Fourteen decisions, answering nine questions the replacement must not have to
 invent while coding: a Rust-owned installation authority that is a typed state
 (`Unresolved | ObservedButUnsettled | Settled`) rather than a counter; one opaque,
 path-free, session-scoped `BackendBindingReceipt` every fact about one installed
 build carries; preview availability and conversion configuration as two
-judgements under one binding; a conversion resolution attempt that reports its
-observation whether or not the capability binding succeeded; a Rust-owned
+judgements under one binding; a conversion resolution attempt that records **and
+returns** its observation whether or not the capability binding succeeded, so a
+refusal can never erase a newly observed binding; a Rust-owned
 configuration lifecycle keyed by receipt, so React needs no `servedBinding`,
 `catalogGeneration` or `automaticallyAttemptedBinding`; one settings snapshot on
 the wire; availability as a property of an admitted **row**; a preserved
@@ -7123,9 +7124,21 @@ receipt; a mandatory pre-BEGIN intent proof that no busy lane may skip; one lane
 admission rule for every `msconvert --help` probe; and one panel-level owner per
 availability reason.
 
-It ends with the seventeen-family acceptance ledger. Every live release-blocking
-finding maps to at least one obligation, so nothing PR #95 measured has to be
-rediscovered by the replacement.
+It ends with a twenty-three-obligation acceptance ledger: seventeen families from
+PR #95, and six more from a finding raised against this document's own first
+draft. Every live release-blocking finding maps to at least one obligation, so
+nothing PR #95 measured has to be rediscovered by the replacement.
+
+**That last finding is worth recording, because it is the same shape one layer
+out.** The first draft said Rust must observe a replacement binding before
+propagating a refusal — and stopped there. Recording an observation without
+*delivering* it leaves the session correct in Rust and stale on screen: a
+refused `BEGIN` creates no queue, so there is no slot to poll and nothing else
+arrives to correct it, and the reader may go on pressing an action Rust is now
+certain to refuse. A boundary that says who *owns* a fact has not yet said who is
+obliged to *carry* it. Every conversion-bound operation now returns the receipt
+it observed or left current, whether its outcome succeeds or refuses, and a
+receipt that differs invalidates what is on screen the moment it arrives.
 
 ### PR #95's disposition
 

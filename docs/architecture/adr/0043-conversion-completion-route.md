@@ -840,8 +840,9 @@ time.
 Rust-owned installation authority that is a typed state rather than a counter; a
 single opaque binding receipt every fact about one installed ProteoWizard
 carries; preview availability and conversion configuration as two judgements
-under one binding; a conversion resolution attempt that reports its observation
-whether or not the capability binding succeeded; a Rust-owned configuration
+under one binding; a conversion resolution attempt that records and returns its
+observation whether or not the capability binding succeeded, so a refusal cannot
+erase a newly observed binding; a Rust-owned configuration
 lifecycle keyed by that receipt; availability as a property of an admitted
 **row** rather than of an axis value; an explicit plan state machine; a mandatory
 pre-BEGIN intent proof; one lane admission rule for every `msconvert --help`
@@ -851,7 +852,8 @@ probe; and one DOM owner per availability reason.
 PR #95 and stopped four times, each round closing what it was given and being
 stopped by what that closing introduced. The measurements are real and are kept:
 sixteen live findings and four STOP records collapse into seventeen semantic
-families, and almost all of them are one shape — an authority that exists in Rust
+families — and a review of the record itself added a further six obligations, in
+the same shape one layer out — almost all of them one shape — an authority that exists in Rust
 projected to the frontend as a number or a boolean, leaving the frontend to
 reconstruct its meaning. ADR 0044 removes the reconstruction rather than
 correcting its arithmetic, and carries the finding ledger the replacement
