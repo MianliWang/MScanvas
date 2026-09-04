@@ -207,9 +207,10 @@ pub struct OperationAttempt {
 
 `PreviewProvider::conversion_backend` returns
 `Result<ConversionBackend, PreviewErrorDto>` — a bare `Result`, which is exactly
-what that comment warns against. The preview path learned the lesson; the
-conversion path did not inherit it, and three separate findings are that `?`
-discarding an identity discovery had already found.
+what that comment warns against. The preview path learned the lesson and the
+conversion path did not inherit it, and three separate findings are that `?` at
+work: an identity discovery had already found, discarded because the operation
+carrying it failed.
 
 So conversion resolution returns the same shape:
 
@@ -279,9 +280,14 @@ BackendAuthorityProjection {
     revision: BackendAuthorityRevision
     state:
         Unresolved
-      | Binding {
+      | ObservedButUnsettled {
             binding: Installed | NoInstallation
             receipt: BackendBindingReceipt
+        }
+      | Settled {
+            binding: Installed | NoInstallation
+            receipt: BackendBindingReceipt
+            previewAvailability
         }
 }
 
@@ -290,6 +296,15 @@ AuthorityObserved<T> {
     outcome: T
 }
 ```
+
+**The projection carries the authority state, not a flattened stand-in for it.**
+Collapsing `ObservedButUnsettled` and `Settled` into one member — and dropping
+`previewAvailability` with them — would leave a receipt that stayed equal while
+the state moved, and nothing but the revision to tell the difference. The
+frontend would then have to infer *whether a verdict has settled* from an
+ordering token, or join it out of a second payload, which is precisely the
+reconstruction Decisions 1, 4b and 13 exist to remove. The union that Rust owns
+is the union that crosses.
 
 Production names remain the replacement implementation's; the obligation does
 not. The rules the projection must obey:
@@ -366,6 +381,9 @@ the accepted projection's receipt differs from the rendered one
 the accepted projection carries the same receipt
   -> nothing about the installation changed
   -> the configuration is not invalidated, and no probe is spent
+  -> its authority state is rendered as it arrived: a move from
+     ObservedButUnsettled to Settled on the same receipt is news about the
+     preview verdict and about nothing else
 
 the accepted projection is Unresolved
   -> there is no receipt to compare; there is no binding to hold a
@@ -471,7 +489,28 @@ the receipt is replaced
 
 receipt replaced mid-request
   -> the stale reply cannot become current
+
+probe admission refuses while Unattempted
+  -> stay Unattempted; nothing is queued behind the lane
+  -> when admission becomes available again, the automatic initiator issues
+     the one first read
+
+probe admission refuses an explicit retry while Failed
+  -> stay Failed; no probe launches
+  -> the retry remains available to take again later
 ```
+
+**Transient process contention is not a failed read.** A configuration attempt is
+spent when a probe *ran* and did not answer, never when one could not start: a
+conversion holding the backend lane says nothing about what the installed build
+offers. Turning contention into `Failed` would spend the binding's one automatic
+attempt on a queue, and leave the reader with a retry control as the only way
+back from something that was never asked.
+
+Neither arm introduces a second frontend fact. Whether the first read has already
+been spent is answered by the Rust-owned configuration state itself —
+`Unattempted` says it has not — which is why no `attempted` ref is needed
+alongside it.
 
 **`UnavailableForBinding` is entered from the binding and from nothing else.** It
 says *this session is bound to no installation, so there are no conversion
@@ -729,13 +768,14 @@ diagnostics export                       -- owns no backend process
 other workspace settling                 -- owns no backend process
 ```
 
-That split is drawn from what actually takes the one gate on the current tree:
-`inspect_backend`, `use_installation`, `open_preview`, `interpret_spectrum` and
-`drain_queue` do; `adopt_conversion_outputs` and
-`begin_conversion_diagnostics_export` do not. If the replacement finds that
-ownership has moved, it records the ownership it measures rather than preserving
-this list — the rule is *facts that own a backend process*, and the list is that
-rule applied to today's code.
+The split is structural, not a list to keep in sync: **an operation belongs on the
+first side exactly when it takes the one backend gate.** On the current tree the
+gate is taken by the backend check and the installation change, by the preview
+and spectrum reads, by the queue's drain and by the conversion entry points that
+resolve a build — and it is not taken by `adopt_conversion_outputs` or
+`begin_conversion_diagnostics_export`, which is why adoption and diagnostics
+appear on the second side. The replacement derives the membership from the gate
+rather than from this paragraph; what is normative here is the criterion.
 
 **Automatic and explicit consume the same rule.** The first configuration read
 for a binding and an explicit settings retry differ in what *initiates* them —
@@ -868,8 +908,11 @@ selection is preserved → **one** row-level statement → axis values are not
 labelled unsupported → one-axis alternatives remain reachable.
 
 **True dead end.** The selected row is unavailable and no one-axis transition is
-available → the shipped row is available → the explicit atomic recovery is
-offered.
+available. *If* the shipped row is itself available, the explicit atomic recovery
+is offered; if it is not, nothing is offered, because a control that selects a
+row this build cannot run would be an action Rust is certain to refuse. The
+availability of the shipped row is a condition on offering the recovery, not a
+step that follows from reaching the dead end.
 
 **BEGIN is the first thing to see the replacement, and refuses.** This is the
 case the authority-delivery rule exists for, and it is written out in full
@@ -957,7 +1000,7 @@ and no finding may disappear because the old PR was superseded.
 | 3 | Catalog outlives the backend it described | Catalog lifetime keyed on nothing that expires | A replaced receipt revokes the configuration bound to the old one | Rust configuration lifecycle | A binding observed as `NoInstallation` → the previous configuration is gone, without waiting for a verdict |
 | 4 | In-flight obsolete catalog resurrects state | Revoking rendered state without revoking the request | Revocation is one act over state and request | Rust configuration lifecycle | A reply about a superseded binding cannot install |
 | 5 | BEGIN observes a changed build, nothing reconciles | An observation made by an operation that then refused | An observation is complete once discovery establishes an installed binding **or** an absence; later capability or domain failure does not erase it | Provider attempt + authority | A refused BEGIN that resolved a new build advances the authority |
-| 6 | Catalog read tied to transient checking | `backendUsable` false for the duration of any probe | A check is activity; a binding is a verdict | Authority state | Same-generation recheck: no probe, no revocation, plan preserved |
+| 6 | Catalog read tied to transient checking | `backendUsable` false for the duration of any probe | A check is activity; a binding is a verdict | Authority state | A recheck settling on the same receipt: no probe, no revocation, plan preserved |
 | 7 | Repeated polls, repeated reconciliation | A reply carrying a number treated as a request | An arriving fact is not a request | Authority state | N polls of one observation → at most one backend probe |
 | 8 | Catalog failure with no retry owner | Recovery living on a conflation that was removed | A failed read is not a state a binding can clear | Rust lifecycle + explicit retry | Transient failure → recheck does not retry it; explicit retry does |
 | 9 | Provider-resolution failure loses the observation | `?` propagating an error past a found identity | Resolution returns the observation either way | `ConversionBackendAttempt` | Resolution failure that established absence advances the authority; one that established nothing does not |
@@ -968,7 +1011,7 @@ and no finding may disappear because the old PR was superseded.
 | 14 | Plan `loading` with no request | One member standing for "in flight" and "never asked" | `loading` names an actual request | Plan state machine | No selected intent → blocked, and nothing claims a read |
 | 15 | Failed plan described as reloading | A single non-current reason for four situations | A refusal names what the reader can change | Availability rule | A refused plan reads as failed, not as being reread |
 | 16 | Backend loss during drain not recorded | The same `?` as #9, in the execution path | Every conversion-bound resolution observes | `ConversionBackendAttempt` | Loss while the picker is open advances the authority |
-| 17 | Automatic read ungoverned, explicit retry governed | Two answers to "may a probe launch now?" | One admission rule for every probe | Lane authority | Both paths refuse identically under a held lane |
+| 17 | Automatic read ungoverned, explicit retry governed | Two answers to "may a probe launch now?" | One admission rule for every probe | `ConversionConfigurationProbeAdmission`, decided by Rust's gate | Both paths refuse identically under a held lane, and neither mutates the configuration state |
 | 18 | A refused operation records a new binding and reports none | Recording an observation without delivering it | Every conversion-bound answer carries the receipt it observed or left current | `AuthorityObserved<T>` | A `BEGIN` refused on the exact-intent proof, having been the first to resolve B, returns B |
 | 19 | Old configuration usable after a newer binding arrives | Invalidation waiting for something later than the arrival | A newer projection carrying a differing receipt invalidates on arrival, before any further action | Frontend, ordering then identity | `Ready(A)` and `Plan(A)` are non-current, and no action is enabled from them, before the next interaction is possible |
 | 20 | The replacement's configuration read twice, or not at all | Ad-hoc refresh paths beside the lifecycle | Exactly one snapshot per newly observed binding, through the ordinary lifecycle | Rust configuration lifecycle | One `ConversionConfigurationSnapshot(B)` is established; the gap before it is a truthful loading state, never A's catalog and never a silent SHIPPED |

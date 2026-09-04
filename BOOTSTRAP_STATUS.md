@@ -7089,8 +7089,9 @@ next edge repaired.
 Sixteen live review threads stand on PR #95 (five of them at outdated diff
 positions, all read) plus the four STOP records. Collapsed by *what made each one
 possible* they are seventeen semantic families, and almost all are one of four
-shapes — the fourth found in this record's own drafts, and named in ADR 0044: a fact and the thing that carries it coming apart; a signal read from a
-proxy that resembles it; a fact about one thing asserted about another.
+shapes: a fact and the thing that carries it coming apart; a signal read from a
+proxy that resembles it; a fact about one thing asserted about another; and a
+fact established and never delivered.
 
 What they share is the boundary. The authority that could have settled each
 question **exists in Rust** and was projected to the frontend as a number or a
@@ -7102,8 +7103,9 @@ The clearest single piece of evidence is that this repository already solved the
 hardest of these once. `OperationAttempt` keeps an installation identity beside a
 preview outcome, and its doc comment states the failure mode verbatim: the two
 "answer different questions and only one of them survives a `?`". Conversion
-resolution returns a bare `Result`, so three separate findings are that `?`
-discarding an identity discovery had already found.
+resolution returns a bare `Result`, so three separate findings are that `?` at
+work: an identity discovery had already found, discarded because the operation
+carrying it failed.
 
 ### What ADR 0044 locks
 
@@ -7116,13 +7118,15 @@ judgements under one binding; a conversion resolution attempt that records **and
 returns** its observation whether or not the capability binding succeeded, so a
 refusal can never erase a newly observed binding; a Rust-owned
 configuration lifecycle keyed by receipt, so React needs no `servedBinding`,
-`catalogGeneration` or `automaticallyAttemptedBinding`; one settings snapshot on
-the wire; availability as a property of an admitted **row**; a preserved
+`catalogGeneration` or `automaticallyAttemptedBinding`; a delivered projection
+that is ordered before its receipt is compared, so a late reply cannot roll the
+session back; one settings snapshot on the wire; availability as a property of an admitted **row**; a preserved
 unrunnable selection stated once at settings level; an explicit plan state
 machine that never says `loading` without a request; plan identity carrying the
-receipt; a mandatory pre-BEGIN intent proof that no busy lane may skip; one lane
-admission rule for every `msconvert --help` probe; and one panel-level owner per
-availability reason.
+receipt; a mandatory pre-BEGIN intent proof that no busy lane may skip; one
+`ConversionConfigurationProbeAdmission` rule — Rust's backend gate, not
+`ConversionLane` — for every `msconvert --help` probe; and one panel-level owner
+per availability reason.
 
 It ends with a thirty-obligation acceptance ledger: seventeen families from
 PR #95, and thirteen more from findings raised against this record's own drafts.
