@@ -44,7 +44,7 @@ coding.
 | Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
 | May the conversion configuration read run now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate **and its quarantine boundary** — for the automatic first read and the explicit retry, not every `--help` a gated operation runs, and not a read for a binding that launches no probe at all. |
 | Who owns catalog request lifecycle and retry? | Rust owns the lifecycle state; the frontend initiates a read or a retry and owns neither. |
-| What does React retain? | The selected intent id; request-in-flight for rendering; per-obligation bookkeeping (in flight, and whether a delivery has landed since — never a judgement that one is *owed*, which Rust's state makes); the never-reset plan request ordinal; the Rust-authored configuration snapshot it is rendering, catalog included; Rust's plan answer, with its identity's receipt for the life of the plan; the revision and receipt of what it is rendering; and presentation. Nothing else. |
+| What does React retain? | The selected intent id; request-in-flight for rendering; per-obligation bookkeeping (in flight, and whether an occasion has passed since — never a judgement that one is *owed*, which Rust's state makes); the never-reset plan request ordinal; the Rust-authored configuration snapshot it is rendering, catalog included; Rust's plan answer, with its identity's receipt for the life of the plan; the revision and receipt of what it is rendering; and presentation. Nothing else. |
 | May the obliged backend check be issued now? | The same predicate the configuration read asks — process ownership, never a verdict about a build. The two differ in what a refusal means, not in what they ask. |
 | At what granularity does availability exist? | The admitted **row** — one composition. There is no per-value availability authority. |
 | What makes a pre-run plan current? | Ordered handles, intent id, conflict policy, binding receipt, document epoch — compared against Rust's own answer. |
@@ -591,11 +591,20 @@ produces no reading of its own and the banner would otherwise describe a build t
 session has left until someone pressed Recheck. Both are the same obligation, admitted
 like any other backend work and owed on the terms below if it cannot be issued.
 
-**At mount that check and the first configuration read share one discovery**, for the
-reason row 115 gives for `BEGIN`: both questions are about one build at one moment, and
-one `DiscoveryResult` carries the verdict *and* msconvert's grammar — Decision 1's own
-premise. Two serial acquisitions would cost two full discoveries, up to a minute of
-probes, to open a panel. One acquisition, one discovery, both answers.
+**They do not share an acquisition with the configuration read, and a draft of this
+document said they should.** The argument was row 115's, made for `BEGIN`: one
+`DiscoveryResult` carries the verdict *and* msconvert's grammar, so two serial
+acquisitions look like waste. It does not transfer. `BEGIN`'s two questions are both
+asked inside `begin_conversion_queue`, under one `try_enter_backend`, so sharing costs
+nothing and changes no discipline. The check is `inspect_backend` and takes the gate by
+**waiting**; the configuration read is a courtesy and must not — Decision 11 and row 55
+forbid a probe queueing on the gate — so a shared acquisition would put the courtesy on
+the duty's lock, which is the one thing this document has been most careful to prevent.
+
+The cost of not sharing is smaller than it looks. The 15-second `PROBE_TIMEOUT` is a
+timeout, not a duration: a healthy `--help` returns in milliseconds, so an ordinary
+mount pays two fast discoveries, and only a broken installation pays twice for being
+broken — which is a session that has worse problems and is about to be told so.
 
 **They share the admission and differ in what a refusal means.** An earlier draft
 said the opposite — "the owing is shared; the admission is not" — and the document's own
@@ -737,13 +746,13 @@ the payload     -> judged by RECEIPT alone: the binding it describes against
                     builds both from one observation, under one hold of
                     the gate, so a catalog probed under A cannot travel
                     under a projection of B. See below: discarding the
-                    projection is not throwing it away. A plan's receipt is
-                    stamped by Rust, from the binding its own resolution
-                    used, in the call that computes it -- the same
-                    one-observation rule, at a smaller scale. It is not
-                    read from a projection: `conversion_queue_plan` takes
-                    no gate, so it is outside Decision 4's delivery
-                    membership
+                    projection is not throwing it away. A plan's receipt is part of the
+                    question, not of the answer: the frontend asks for the
+                    plan *under the binding it is rendering*, and Rust
+                    echoes that identity back. `conversion_queue_plan` is
+                    read-only, takes no gate and runs no discovery, so it
+                    has nothing to observe and is asked to observe nothing;
+                    it is outside Decision 4's delivery membership
                     and carries no projection to read one from)
 
                    a response whose projection is Unresolved names no
@@ -772,6 +781,15 @@ news for a reader who asked for nothing: Decision 5 already says such a refusal 
 no attempt and leaves the read owed, and surfacing it would put an error on screen for
 a settings read the reader never requested. It moves the obligation. An explicit
 retry's refusal, by contrast, answers a press, and is shown.
+
+**A plan's binding is asked, not observed**, and that is what keeps
+`conversion_queue_plan` honest without giving it a discovery it has no business
+running. It cannot stamp from ambient authority — row 122 forbids a plan carrying a
+receipt nothing observed for it — and it does not need to: the frontend already knows
+which binding it is rendering, that receipt is part of the question by Decision 9, and
+a reply is installed only where identity and ordinal both still match. A binding that
+changed under the request makes the reply's identity stale, which is the same test the
+plan machine already applies for every other component of the question.
 
 **Admitted is not installed, for a payload that has an owner.** The receipt test
 is necessary and not sufficient: it says a payload belongs to the binding on
@@ -1063,8 +1081,12 @@ the receipt is replaced by an operation with no catalog to offer
 
 the receipt is replaced by the configuration read that then answers for it
   -> the previous configuration is non-current, exactly as above
-  -> the new binding lands on what its own answer supports:
-         a probe ran and answered       -> Ready  { B, catalog }
+  -> the new binding lands on what its own answer supports, by the same
+     four-way discrimination the Unattempted arm uses:
+         a probe answered and B can convert
+                                        -> Ready  { B, catalog }
+         a probe answered and require_conversion refuses
+                                        -> Failed { B, error }
          a probe ran and did not answer -> Failed { B, error }
          B is NoInstallation            -> UnavailableForBinding
   -> Unattempted is never rendered: it was never true of this binding
@@ -1740,8 +1762,9 @@ React owns:
 the selected admitted intent id
 request-in-flight state needed to render an outstanding command
 per-obligation bookkeeping: whether a read or check is in flight, and whether
-  any delivery has landed since it was issued -- never a *judgement* about
-  whether one is owed, which Rust's configuration state makes
+  any *occasion* has passed since it was issued -- a delivery or a lane fact
+  going false, since a picker closing is one and produces no delivery --
+  never a *judgement* about whether one is owed, which Rust's state makes
 the per-panel plan request ordinal, which is never reset
 the Rust-authored configuration snapshot it is rendering, catalog included
 the Rust-authored plan answer
@@ -1883,8 +1906,11 @@ why the arm exists at all.
 **The first installed observation.** `Unresolved(r0)` → `Installed A` is observed
 → revision `r1 > r0`, receipt A → configuration `Unattempted(A)`.
 
-**Healthy mount.** Settled binding A → configuration `Unattempted(A)` → probe
-admission permits a read → `Ready(A, catalog)` → SHIPPED selected → plan for A.
+**Healthy mount.** `Unresolved` → the owed check runs, settling binding A with its
+verdict in one response → configuration `Unattempted(A)` → probe admission permits a
+read → `Ready(A, catalog)` → SHIPPED selected → plan for A. Two discoveries, one
+waiting on the gate and one refusing rather than waiting, which is what keeps the duty
+and the courtesy apart (row 119).
 
 **The build goes away.** Binding A → `NoInstallation B` is observed → new receipt
 B on a newer revision → A's configuration and plan are non-current immediately →
@@ -2072,7 +2098,7 @@ and no finding may disappear because the old PR was superseded.
 | 60 | A rebinding read whose probe failed left owing another | One transaction with only a successful arm | The new binding lands on what its own answer supports, `Failed` included | Rust configuration lifecycle | A read that discovers B and fails its probe is `Failed(B)`, and no second automatic probe follows |
 | 61 | The ordinal reset by leaving an identity | A counter scoped per question | One per-panel ordinal, never reset | Plan state machine | A reply in flight from before an identity was left and re-entered is discarded, not installed |
 | 62 | The most-shared refusal left without a key | A key set listing seven of eight lane fields | `backendUsable` is a key; action-derived reasons key by action and target | Panel notice registry | Convert and the conversion retry, refused as unusable, render one sentence |
-| 63 | An obligation re-issued by its own refusal | A stimulus rule with no bound, over a projection allowed to be stale | Each owed obligation issues at most once per occasion, and an attempt's own refusal re-issues it only if another occasion has passed meanwhile | Frontend reconciliation | A refused attempt with nothing else having happened does not immediately produce another; one overtaken by a gate holder's answer, or by a picker closing, does |
+| 63 | An obligation re-issued by its own refusal | A stimulus rule with no bound, over a projection allowed to be stale | Each owed obligation issues at most once per occasion, and an attempt's own refusal re-issues it only if another occasion has passed meanwhile — counted as occasions everywhere, including in what React retains | Frontend reconciliation | A refused attempt with nothing else having happened does not immediately produce another; one overtaken by a gate holder's answer, or by a picker closing, does |
 | 64 | The stimulus narrower than the facts it must cover | A delivery scope read as the conversion path only | Delivery membership and gate membership are the same set | Decision 4 + Decision 11 | A preview read finishing issues an owed catalog read, exactly as a drain finishing does |
 | 65 | A build that cannot convert rendered as nine unavailable rows | `Failed` and `Ready`-with-nothing-available left undecided | A build failing `require_conversion` is `Failed`; availability is a property of rows, and it has not got as far as rows | Decision 3 + Decision 7 | A build missing `outdir`, `outfile`, `--zlib` or the format option renders one sentence and a retry, not nine dead controls |
 | 66 | A quarantined session reachable through a remembered verdict | Quarantine reaching `backendUsable` only by corrupting the availability DTO the authority replaces | `backendUsable` names quarantine as its own conjunct, beside the authority's verdict | `ConversionLane` + preview load | A session quarantined after a good verdict starts no conversion and no automatic preview load |
@@ -2128,10 +2154,10 @@ and no finding may disappear because the old PR was superseded.
 | 116 | The slice planned as a panel-only change | A delivery rule over every gate-taker, recorded only in the panel's decision | ADR 0043's M6.4 scope names the viewer contracts the rule reaches | ADR 0043 amendment | The preview and spectrum responses, `BackendStatus`, and the five contracts losing `installationGeneration` are all inside the slice as planned |
 | 117 | A catalog probed under one binding installed under another | A projection defined as "the authority as it stands" with nothing tying it to its payload | Rust builds a response's projection and payload from one observation, under one hold of the gate | Decision 4 + Decision 6 | No snapshot can be admitted as a binding it was not probed against |
 | 118 | A banner asked a question it holds nothing to answer | The counter stripped from `BackendAvailabilityDto` with no receipt put in its place | The DTO carries the receipt, and currency is equality against the authority's | Decision 2 + Decision 4 | "Is this reading current?" is answerable from what the banner already holds |
-| 119 | Two full discoveries to open a panel | The mount-time check and the first configuration read each taking the gate | They share one acquisition and one discovery, as `BEGIN`'s two questions do | Decision 1 + Decision 10 | Opening the panel costs at most one discovery, not two |
+| 119 | A courtesy queued on the duty's lock | A shared acquisition proposed for the mount-time check and the configuration read | They do not share one: the check waits on the gate and the probe may not, so each takes its own | Decision 11 + Decision 10 | No configuration probe ever waits on `enter_backend`, at mount or anywhere |
 | 120 | A binding-only read deferred behind a discovery it does not need | Duty-first ordering applied to a read that takes no gate | The ordering is about the gate, so a `NoInstallation` read is issued immediately | Frontend reconciliation | A session bound to no installation renders `UnavailableForBinding` without waiting for a check |
 | 121 | A contention refusal shown to a reader who asked for nothing | An outcome rule written as though every request were a press | An outcome is shown to whoever made the request; an automatic read's refusal moves the obligation | Frontend, ordering then identity | A settings read refused by a held gate puts no error on screen; an explicit retry's refusal does |
-| 122 | A plan stamped for a binding it was not computed under | A receipt with no stated author or instant | Rust stamps the plan from the binding its own resolution used, in the call that computes it | Decision 9 | No plan can carry a receipt its own computation did not observe |
+| 122 | A plan stamped for a binding it was not computed under | A receipt expected from a call that observes nothing | The binding is part of the question the frontend asks, echoed back, never taken from ambient authority | Decision 9 | `conversion_queue_plan` runs no discovery and stamps no receipt of its own; a binding that changed under the request makes the reply stale |
 
 ## What this interlude does not do
 
