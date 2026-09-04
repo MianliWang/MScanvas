@@ -457,10 +457,22 @@ there are two facts, and the narrower one is the one with authority over a
 process.
 
 And the state owes an exit. **Entering `ObservedButUnsettled` obliges exactly one
-backend check**, issued in the same commit that installs the authority, admitted
-by the same rule as the first configuration read, and — refused — owed on exactly
-the same terms: it stays owed, and every authority delivery is an occasion to
-issue it.
+backend check**, issued in the same commit that installs the authority, and — when
+it cannot be — owed on the same terms as the first configuration read: it stays
+owed, and every authority delivery is an occasion to issue it.
+
+**The owing is shared; the admission is not.** These two obligations are refused
+by different things, and conflating them would put the check under a rule it
+cannot obey. A configuration probe is a courtesy — `msconvert --help`, taken with
+`try_enter_backend`, refused rather than queued, governed by
+`ConversionConfigurationProbeAdmission` (Decision 11). The backend check is
+`inspect_backend`, which is M6.1's, takes the gate by *waiting*, and is a duty: it
+is the operation that ends the unsettled state, and there is nothing else to end
+it with. So the frontend does not dispatch it while its lane projection says
+something owns the backend — the same courtesy that keeps every other action from
+being offered into a refusal — and Rust's quarantine boundary is the one
+definitive refusal it answers to. What the two obligations share is the
+owed-and-discharged rule below, not an admission rule.
 
 **An obligation is owed only while the thing refusing it can stop refusing.** This
 is the rule for both obligations, and it has to be stated, because the same
@@ -710,7 +722,10 @@ the receipt is replaced by an operation with no catalog to offer
 
 the receipt is replaced by the configuration read that then answers for it
   -> the previous configuration is non-current, exactly as above
-  -> the new binding goes straight to Ready { the catalog just read }
+  -> the new binding lands on what its own answer supports:
+         a probe ran and answered       -> Ready  { B, catalog }
+         a probe ran and did not answer -> Failed { B, error }
+         B is NoInstallation            -> UnavailableForBinding
   -> Unattempted is never rendered: it was never true of this binding
 
 receipt replaced mid-request
@@ -747,7 +762,10 @@ observes a replacement — and if that replacement is `Available`, the very same
 call probes it and returns its catalog. Ordering the two halves as separate events
 would mean either discarding a catalog that describes exactly the binding now
 current, or letting `Ready` arrive for a binding the lifecycle had just reset to
-`Unattempted`. Observation and answer are one transaction, and the state that
+`Unattempted`. The same holds when the probe against B *fails*: routing that
+through `Unattempted(B)` would leave an obligation outstanding for a binding whose
+one attempt has just been spent, and a second automatic probe would follow
+immediately. Observation and answer are one transaction, and the state that
 lands is the one the answer supports.
 
 **Transient process contention is not a failed read.** A configuration attempt is
@@ -871,10 +889,22 @@ Stated **once**, at settings level, naming the combination:
 > installation.
 
 Individual controls keep answering their own narrower question — *what happens if
-I change this one axis?* — and Decision 7 already fixes what that answer is: from
-a centroided selection on a build lacking only the peak-picking grammar, every
-one-axis lookup that keeps centroided returns "row exists, unavailable", and the
-one that changes it returns an available row.
+I change this one axis?* — and Decision 7 fixes what those answers are. Worked
+against the real `ADMITTED` table, from centroided / all spectra / 64–64 / zlib on
+a build lacking only the peak-picking grammar, the six one-axis edits that keep
+centroided do **not** answer alike:
+
+```text
+precision -> 32/32       -> row exists (K12), unavailable on this build
+precision -> 64/32, 32/64 -> not qualified: no admitted row, on any build
+population -> MS1, MS2    -> not qualified: no admitted row, on any build
+compression -> off        -> not qualified: no admitted row, on any build
+processing -> not centroided -> row exists, available: the way out
+```
+
+Only two of the eight admitted rows compose processing with anything, which is why
+five of those six are statements about the product's evidence rather than about
+this installation — and why the reader is not told the same sentence six times.
 
 That is the point, and it is about **blame** rather than selectability. No control
 says "64-bit intensity is not offered", because none of them is being asked
@@ -882,7 +912,7 @@ whether 64-bit intensity is offered; the unavailability belongs to the
 combination, is stated once at settings level, and the axis that can leave it is
 the one that shows a way out. Saying instead that "64/64 remains selectable" would
 have contradicted Decision 7 outright, since holding 64/64 while centroided stays
-selected is precisely the lookup that comes back unavailable.
+selected is a lookup that never comes back available.
 
 A four-times-repeated per-value unsupported message is explicitly rejected.
 
@@ -901,12 +931,18 @@ ready   { plan }
 failed  { request identity, request, error }
 ```
 
-**`request` is a per-question ordinal, and it is why a retry is safe.** The
-identity says *which question*, and a retry asks the same one by design (ledger
-row 35) — so identity alone cannot tell a superseded request's late reply from the
-retry's, and the machine would install the answer it just decided to discard. The
-ordinal rises on every request for the same identity, and a reply is installed only
-when identity *and* ordinal both match what is loading. It is the same separation
+**`request` is a per-panel ordinal, and it is why a retry is safe.** The identity
+says *which question*, and a retry asks the same one by design (ledger row 35) — so
+identity alone cannot tell a superseded request's late reply from the retry's, and
+the machine would install the answer it just decided to discard. The ordinal rises
+on every plan request the panel issues, whatever its identity, and a reply is
+installed only when identity *and* ordinal both match what is loading.
+
+Counting per *question* rather than per panel would have reintroduced the defect
+one identity away: leave an identity with a request in flight, come back to it, and
+its count starts again at a value that in-flight reply already carries. One
+counter, never reset, is what makes "the next ordinal" mean the same thing in
+every transition below. It is the same separation
 Decision 4b draws one layer up: identity does not do ordering, and ordering does
 not do identity.
 
@@ -1139,18 +1175,25 @@ own fields**, which already enumerate every way backend work is refused, and bot
 authorities map their refusal onto one of them:
 
 ```text
-backendQuarantined | backendChanging | laneClaimed | previewReading
-| adopting | exportingDiagnostics | workspaceSettling
+backendQuarantined | backendChanging | backendUsable | laneClaimed
+| previewReading | adopting | exportingDiagnostics | workspaceSettling
 ```
+
+All eight, `backendUsable` included — it is shared by every conversion action and
+by nothing else, and omitting it would have left the one refusal two actions reach
+most often with no key at all.
 
 `ConversionLane` maps by construction — its reason *is* the first field that
 refuses, in its own fixed order, and that order is the registry's precedence too,
 so one fact refusing two actions cannot render two sentences in a contested
 sequence. `ConversionConfigurationProbeAdmission` maps its refusals onto the same
 names, which it can, because Decision 11's admitting subset was drawn from these
-fields in the first place. Only a refusal with no lane fact behind it — a
-configuration probe already in flight — mints a key of its own, and it is the one
-refusal no conversion action can share. (The alternative — namespaced
+fields in the first place. Only a refusal with no lane fact behind it mints a key of its own: a
+configuration probe already in flight, which no conversion action can share, and
+the action-derived reasons, which name a target rather than a lane fact. Those
+last are keyed by action *and* target, and need no cross-action deduplication
+because no two actions can be refused by one of them — a missing target is a fact
+about the action asking. (The alternative — namespaced
 per-child notices — is rejected: it multiplies the same sentence and reintroduces
 the "each surface decides again what is wrong" defect ADR 0041 removed.)
 
@@ -1368,7 +1411,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–58).
+plus the findings raised against this document's own drafts (rows 18–62).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1432,6 +1475,10 @@ and no finding may disappear because the old PR was superseded.
 | 56 | A fresh catalog discarded, or `Ready` arriving over `Unattempted` | Observation and answer ordered as two events | A read that observes a new available binding answers for it in one transaction | Rust configuration lifecycle | A configuration read that discovers build B returns `Ready(B)`, and `Unattempted(B)` is never rendered |
 | 57 | Two notices for one refusing fact | A registry key left to be inferred across two vocabularies | The key is a `ConversionLane` field, and its order is the precedence | Panel notice registry | A conversion holding the gate renders one sentence, whether it refused a conversion, a probe, or both |
 | 58 | An unbound session projected preview-usable | A verdict field on a binding that names no build | The verdict is entailed for `NoInstallation`, and `backendUsable` requires `Installed` in the conjunction | Decision 4 projection | No `NoInstallation` authority, settled or not, yields a usable lane |
+| 59 | The obliged check governed by a rule it cannot obey | Two obligations given one admission | The owing is shared; the probe is a courtesy under `try_enter_backend`, the check is `inspect_backend`, a duty | Authority obligations + Decision 11 | The check is not dispatched into a busy lane and not refused by probe admission; quarantine is its one definitive refusal |
+| 60 | A rebinding read whose probe failed left owing another | One transaction with only a successful arm | The new binding lands on what its own answer supports, `Failed` included | Rust configuration lifecycle | A read that discovers B and fails its probe is `Failed(B)`, and no second automatic probe follows |
+| 61 | The ordinal reset by leaving an identity | A counter scoped per question | One per-panel ordinal, never reset | Plan state machine | A reply in flight from before an identity was left and re-entered is discarded, not installed |
+| 62 | The most-shared refusal left without a key | A key set listing seven of eight lane fields | `backendUsable` is a key; action-derived reasons key by action and target | Panel notice registry | Convert and both retries refused as unusable render one sentence |
 
 ## What this interlude does not do
 
