@@ -5,6 +5,7 @@ Date: 2026-09-04
 Related: [0009](0009-mzml-conversion-execution-boundary.md),
 [0011](0011-private-workspace-conversion-path.md),
 [0013](0013-serial-conversion-queue.md),
+[0017](0017-redacted-conversion-diagnostics-export.md),
 [0041](0041-viewer-selection-availability.md),
 [0043](0043-conversion-completion-route.md)
 
@@ -310,8 +311,9 @@ is for a binding that names no build, and only for that.
 **The build-is-gone case is a binding replacement wearing a configuration read's
 clothes**, and naming it `Failed` would have been a third way to spend an attempt on
 something no probe ever asked — the mistake ledger row 32 already forbids one level
-down. `Failed` means a probe ran against a binding and did not answer. A read whose own
-discovery refuses never reaches a probe; it reports a different binding.
+down. `Failed` means a probe ran against a binding and either did not answer or answered
+that the build cannot convert. A read whose own discovery refuses never reaches a
+probe at all; it reports a different binding.
 
 **The no-row-survives case is representable, and its presentation is fixed rather
 than its state.** A build whose baseline grammar is intact but which admits none of the
@@ -403,8 +405,8 @@ the operation answered without discovering at all
 
 The third arm is not a fourth discovery outcome — there is no such thing, since
 `Available`, `Partial` and `Unavailable` map totally onto the two bindings. It is
-the case where **no discovery ran**: the operation refused ahead of it, as
-`inspect_backend` does in a quarantined session, or the request failed before
+the case where **no discovery ran**: the operation answered from what it already had,
+as `inspect_backend` does in a quarantined session, or the request failed before
 reaching one. The authority is then unchanged, which for a session that has never
 discovered means `Unresolved` — the state rows 26 and 31 are about, reached
 without anyone inventing a receipt to describe it.
@@ -632,7 +634,7 @@ is `inspect_backend`, which is M6.1's and takes the gate by **waiting** — and 
 four *ownership* facts and not quarantine, because a quarantined session does not refuse
 it: it answers from `quarantined_availability()` without starting anything. Coding them
 as one predicate would leave the check unissued in exactly the session that most needs
-its reading replaced, which is row 128. The frontend declines to dispatch either while
+its reading replaced, which is row 129. The frontend declines to dispatch either while
 its projection says the backend is owned — a courtesy in both cases — and where both are
 owed at once the check goes first, since whichever starts holds the gate against the
 other.
@@ -1236,9 +1238,12 @@ path short-circuits, so no later observation can move the binding to
 107 rejects one level up, and it goes.
 
 **And this read runs no discovery of its own.** The binding is already
-`NoInstallation`; the configuration follows from it; there is nothing to find out.
-That is what makes the paragraph above safe rather than a licence to send a
-gate-taking discovery into a running drain, and it is also why
+`NoInstallation`; the configuration follows from it; there is nothing to find out. Its
+coherence comes from the authority's own lock rather than from the gate: it reads the
+authority once and answers from that reading, so its projection and its payload describe
+one instant for the same reason a gate-holding read's do (row 117), without holding
+anything a process would need. That is what makes the paragraph above safe rather than a
+licence to send a gate-taking discovery into a running drain, and it is also why
 `UnavailableForBinding` needs no exit inside the panel: the state is left when some
 *other* operation observes a build, which is the banner's owed check, an installation
 change, or a recheck the reader presses. A settings retry is not offered for it,
