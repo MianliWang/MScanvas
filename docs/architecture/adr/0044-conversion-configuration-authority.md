@@ -118,8 +118,25 @@ msaccess.exe, a mismatched pair, a timed-out probe: each is `Partial` or
 `Unavailable`, so each is `NoInstallation`, and the binding needs no third member
 for the ways that can happen.
 
-**It is not derived from `InstallationIdentity::of` returning `Some`,** and a
-draft of this document said it was, wrongly. `ToolIdentity::resolved` needs only a
+**Every observer mints it the same way, and today two of them do not.**
+`bind_help_of` refuses anything but `Available` and then takes the identity, which
+is the rule above. `PreviewProvider::availability` takes the identity only when the
+narrower preview `usable` also holds — folding the verdict into the identity, with
+a comment that is right about preview provenance and wrong as a binding rule. The
+consequence is exactly the case Decision 3 exists for: a build that is `Available`
+with an msaccess help missing one required preview operation is `Installed(A)` to
+the catalog read and `NoInstallation` to the obliged check, so the binding
+oscillates between them and revokes the catalog on every cycle — and row 24's
+"preview-unusable, conversion `Ready`" session can never be reached at all.
+
+So the replacement takes the identity from the discovery, uniformly, and lets the
+verdict travel beside it in `Settled`. That is this decision's whole thesis applied
+to the one place the current tree fuses the two, and the fused comment's reasoning
+is not lost: an unusable installation is still not one a *preview* could have come
+from, which is a statement about the verdict, and the verdict is still carried.
+
+**The binding is not derived from `InstallationIdentity::of` returning `Some`,**
+and a draft of this document said it was, wrongly. `ToolIdentity::resolved` needs only a
 path, and an evaluated candidate always has one, so `of` yields an identity for a
 `Partial` build as readily as for a whole one. That is correct for what an
 identity is for — it answers *are these the same files as before*, a content
@@ -899,13 +916,30 @@ probe admission refuses an explicit retry while Failed
 ```
 
 **`Unattempted` is an obligation, not a resting state.** Refusing the automatic
-read must not strand it, and nothing about a held gate is self-clearing from the
-frontend's side — so the stimulus is named rather than left to a timer. Every
-operation that owns the gate delivers authority when it answers (Decision 4), and
-every such delivery is an occasion to ask whether the one first read is still owed
-and admission now allows it. The operation that was holding the gate is therefore
-the operation that releases the read, and a binding cannot reach a state where its
-catalog is owed, nothing is in flight, and nothing will ever ask again.
+read must not strand it, so the stimulus is named rather than left to a timer, and
+it has two halves because not every deferring fact belongs to an operation that
+answers:
+
+```text
+any authority delivery
+  -- every operation that owns the gate delivers authority when it answers
+     (Decision 4), so the operation that was holding the gate is the one
+     that releases the read
+
+any transition of a lane fact the obligation was deferred on
+  -- which the frontend observes in its own render, needing nothing from Rust
+```
+
+The second half is not redundancy. `laneClaimed` is true while the destination
+picker is open, which owns no gate at all, and cancelling it clears the fact
+without any backend operation running or answering — so a picker cancelled after a
+`BEGIN` observed a replacement would strand both the owed check and the owed first
+read, on a rule that waits for a delivery nothing is going to produce. A fact going
+false is as good an occasion as an answer, and the frontend can see it without
+being told.
+
+Between the two, a binding cannot reach a state where its catalog is owed, nothing
+is in flight, and nothing will ever ask again.
 
 The explicit retry is the reader's floor under that. It is offered whenever a
 binding has no answer and no probe is in flight — from `Failed`, and equally from
@@ -939,7 +973,15 @@ alongside it.
 
 **`UnavailableForBinding` is entered from the binding and from nothing else.** It
 says *this session is bound to no installation, so there are no conversion
-semantics to describe* — a fact about the binding, not a preview verdict. It is
+semantics to describe* — a fact about the binding, not a preview verdict.
+
+**And it is answered without a probe, so probe admission never refuses it.** The
+rule governs a `msconvert --help` probe; a binding that names no build launches
+none, and its configuration follows from the binding alone. A read for such a
+binding therefore answers immediately, under any lane conditions, and cannot leave
+the panel with no configuration state for an answer that required no process —
+which it otherwise would, since the snapshot is the only carrier and Decision 13
+forbids the frontend deriving the state from the binding tag itself. It is
 not entered because `backendUsable` went false, and it is not a place a build
 that previews badly ends up: a build may be truthfully unusable for preview while
 its conversion configuration is `Ready`, which is Decision 3's whole point. Using
@@ -1412,8 +1454,17 @@ else can know and nothing else is being asked to.
 difference stated rather than assumed. React holds the revision and the receipt
 that arrived *on the projection it is showing*, each for exactly one purpose: the
 revision to discard a reply that is older than what is on screen, the receipt to
-notice that a newer reply describes a different installation. It holds one receipt beyond that, and only for the life of a request: **the
-receipt a request was issued under**, which Decision 4b needs to decide whether a
+notice that a newer reply describes a different installation. It holds receipts in two further places, and both are bounded by something other
+than the render. **A plan identity carries one**, because Decision 9 makes the
+binding part of *which question was asked*, and a `loading` or `failed` state
+outlives the request that produced it precisely so a retry can ask the same
+question again (rows 35, 44, 61). That receipt is a component of a question, not a
+claim about the current installation, and the plan is invalidated when the rendered
+binding stops matching it — the retain-list's "not past the render" bounds what
+React may *believe*, not what a recorded question may contain.
+
+The other is for the life of a request: **the receipt a request was issued
+under**, which Decision 4b needs to decide whether a
 reply's payload still belongs anywhere. It is not a second authority — it is a
 copy of what was rendered at the moment of asking, kept exactly as long as the
 answer is outstanding, and it is what lets a stale reply's payload be discarded
@@ -1618,7 +1669,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–79).
+plus the findings raised against this document's own drafts (rows 18–83).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1703,6 +1754,10 @@ and no finding may disappear because the old PR was superseded.
 | 77 | A rebinding read discarded by the receipt it was issued under | One receipt rule for accepted and stale projections alike | An accepted projection's own receipt judges its payload; the request-issued one judges only a stale reply's | Frontend, ordering then identity | A read issued under A that answers `Ready(B)` is installed whole |
 | 78 | Nine dead controls under a truthful `Ready` | A catalog with no available row left to per-row presentation | A `Ready` catalog with nothing available is one settings-level sentence, and offers no recovery, because the shipped row is unavailable too | Decision 3 + Decision 8 | A build admitting none of the nine rows says so once, and no control implies a way through |
 | 79 | The one self-minted key outside the shared order | A precedence covering only the lane's own fields | Probe-in-flight sorts after every lane field | Panel notice registry | A probe in flight beside a lane fact yields to it, and one notice is rendered |
+| 80 | The binding oscillating between two observers | The preview verdict folded into the identity by one of them | Every observer mints the binding from `AvailabilityState::Available`; the verdict travels beside it | Decision 1 + Decision 3 | An `Available` build whose msaccess lacks a required preview operation is one binding to every observer, and its catalog survives a backend check |
+| 81 | An obligation waiting on a delivery nothing will produce | A stimulus that assumed every deferring fact belongs to a gate holder | A lane fact going false is an occasion, observed by the frontend without being told | Frontend reconciliation | A destination picker cancelled after a `BEGIN` observed a replacement issues both owed operations |
+| 82 | No configuration state for an answer needing no process | A binding-only answer routed through probe admission | A read for a binding that names no build answers immediately and is never refused | Decision 5 + Decision 11 | A session bound to no installation renders `UnavailableForBinding` under any lane conditions |
+| 83 | A retained question mistaken for a retained belief | A retain-list bounding receipts by the render alone | A plan identity's receipt is a component of a question, bounded by the plan, not by the render | Decision 9 + Decision 13 | A failed plan can be retried for the same question without React holding a third authority |
 
 ## What this interlude does not do
 
