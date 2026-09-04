@@ -254,13 +254,23 @@ Failed { binding, error }
 Lifecycle:
 
 ```text
-new settled binding        -> the previous configuration state no longer applies
-same binding               -> Ready stays Ready, Failed stays Failed
+the receipt is replaced    -> the previous configuration state no longer applies
+same receipt               -> Ready stays Ready, Failed stays Failed
                               a recheck alone never causes a second probe
 Unattempted                -> one read when the lane permits
 Failed                     -> only an explicit settings retry spends another attempt
-binding changes mid-request-> the stale reply cannot become current
+receipt replaced mid-request -> the stale reply cannot become current
 ```
+
+**Invalidation is triggered by the receipt being replaced, not by a preview
+verdict settling**, and the difference is a real window rather than a wording
+preference. A conversion-bound operation can observe binding B and fail its
+capability resolution, which leaves the authority at `ObservedButUnsettled(B)`
+with no preview verdict for B at all. Keyed on settlement, `Ready(A)` would stay
+current for the whole of that interval — the stale-catalog window this ADR exists
+to close, reopened at the one moment the session already knows better. Keyed on
+the receipt, A's configuration stops being an answer the moment B is observed,
+and B's is `Unattempted` until something reads it.
 
 The frontend may *initiate* the read and the retry. It must not own whether a
 binding has been served, attempted or replaced. After the replacement lands,
@@ -513,7 +523,7 @@ and no finding may disappear because the old PR was superseded.
 |---|---|---|---|---|---|
 | 1 | Admitted graph duplicated or widened | A frontend able to compose axis values | The admitted table is the only compatibility rule | Rust (`ConversionIntent::ADMITTED`) | No TS from which a nine-row graph could be rebuilt; 39 combinations unreachable by any activation sequence |
 | 2 | Preserved unsupported selection unrecoverable | One-axis editing plus a preserved choice, with no escape | A genuine dead end offers one explicit atomic recovery | Selection module | Dead end offers the shipped row; a reachable one-axis route offers no recovery block |
-| 3 | Catalog outlives the backend it described | Catalog lifetime keyed on nothing that expires | A settled unavailable binding revokes the configuration | Rust configuration lifecycle | Settled unavailable → configuration for that binding is gone |
+| 3 | Catalog outlives the backend it described | Catalog lifetime keyed on nothing that expires | A replaced receipt revokes the configuration bound to the old one | Rust configuration lifecycle | A binding observed as `NoInstallation` → the previous configuration is gone, without waiting for a verdict |
 | 4 | In-flight obsolete catalog resurrects state | Revoking rendered state without revoking the request | Revocation is one act over state and request | Rust configuration lifecycle | A reply about a superseded binding cannot install |
 | 5 | BEGIN observes a changed build, nothing reconciles | An observation made by an operation that then refused | Resolution is an observation, complete when it succeeds | Provider attempt + authority | A refused BEGIN that resolved a new build advances the authority |
 | 6 | Catalog read tied to transient checking | `backendUsable` false for the duration of any probe | A check is activity; a binding is a verdict | Authority state | Same-generation recheck: no probe, no revocation, plan preserved |
