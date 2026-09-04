@@ -7124,17 +7124,17 @@ session back; one settings snapshot on the wire; availability as a property of a
 unrunnable selection stated once at settings level; an explicit plan state
 machine that never says `loading` without a request; plan identity carrying the
 receipt; a mandatory pre-BEGIN intent proof that no busy lane may skip; one
-`ConversionConfigurationProbeAdmission` rule — Rust's backend gate, not
-`ConversionLane` — for every `msconvert --help` probe; and one panel-level owner
+`ConversionConfigurationProbeAdmission` rule — Rust's backend gate and quarantine
+boundary, not `ConversionLane` — for every `msconvert --help` probe; and one panel-level owner
 per availability reason.
 
-It ends with a fifty-one-obligation acceptance ledger: seventeen families
-from PR #95, and thirty-four more from findings raised against this record's own
+It ends with a fifty-three-obligation acceptance ledger: seventeen families
+from PR #95, and thirty-six more from findings raised against this record's own
 drafts.
 Every live release-blocking finding maps to at least one obligation, so nothing
 PR #95 measured has to be rediscovered by the replacement.
 
-**Those thirty-four are worth recording, because they are the same shapes one layer
+**Those thirty-six are worth recording, because they are the same shapes one layer
 out.** The first draft said Rust must observe a replacement binding before
 propagating a refusal — and stopped there. Recording an observation without
 *delivering* it leaves the session correct in Rust and stale on screen: a refused

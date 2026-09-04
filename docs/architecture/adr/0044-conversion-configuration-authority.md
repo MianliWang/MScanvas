@@ -38,11 +38,11 @@ coding.
 | Question | Answer |
 |---|---|
 | Who owns installation truth? | Rust, as a typed authority state — never a bare counter the frontend interprets. |
-| Who is obliged to deliver it? | Every conversion-bound operation that can observe it, on its answer, whether that answer succeeds or refuses. |
+| Who is obliged to deliver it? | Every operation that can observe **or replace** it, on its answer, whether that answer succeeds or refuses. |
 | Who owns conversion-capability/catalog truth? | Rust, as a lifecycle keyed by the installation binding. |
 | What identity binds those facts together? | One opaque, session-scoped, path-free `BackendBindingReceipt`. |
 | Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
-| May an `msconvert --help` probe launch now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate. |
+| May an `msconvert --help` probe launch now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate **and its quarantine boundary**. |
 | Who owns catalog request lifecycle and retry? | Rust owns the lifecycle state; the frontend initiates a read or a retry and owns neither. |
 | What does React retain? | The selected intent id, request-in-flight for rendering, Rust's plan answer, the revision and receipt of what it is rendering, and presentation. Nothing else. |
 | At what granularity does availability exist? | The admitted **row** — one composition. There is no per-value availability authority. |
@@ -305,9 +305,17 @@ discovery found installation I, then msconvert help/capability parsing failed
 discovery established that no installation resolves
   -> absence was observed
 
-discovery could not establish either fact
+the operation answered without discovering at all
   -> nothing is observed; nothing is invented
 ```
+
+The third arm is not a fourth discovery outcome — there is no such thing, since
+`Available`, `Partial` and `Unavailable` map totally onto the two bindings. It is
+the case where **no discovery ran**: the operation refused ahead of it, as
+`inspect_backend` does in a quarantined session, or the request failed before
+reaching one. The authority is then unchanged, which for a session that has never
+discovered means `Unresolved` — the state rows 26 and 31 are about, reached
+without anyone inventing a receipt to describe it.
 
 The service consumes the observation **once**, updates the installation
 authority, and only then propagates the operation outcome. No individual call
@@ -416,11 +424,42 @@ overstates by that much. It is still the least wrong sentence available, and
 correcting the vocabulary belongs to the same M6.1 scope already recorded below
 for the msaccess/msconvert conflation — not to M6.4.
 
+**And it must not be wired to probe admission, which is the deadlock this choice
+would otherwise create.** Today `backendChanging: backendBusy`, one flag, and
+Decision 11's first admitting fact is worded the same way. Feed the unsettled
+state into both and the state that *owes* the check becomes the fact that
+*refuses* it: unsettled sets changing, changing refuses admission, admission
+never lets the check run, and rows 39, 42 and 49 deadlock on the one path they
+exist to keep open. So the two readers take two facts, and this is the ADR's own
+thesis applied to itself:
+
+```text
+ConversionLane.backendChanging  -- a check is in flight, OR the authority is
+                                   ObservedButUnsettled   (what the reader is told)
+admission's "a check is in progress"
+                                -- a check is in flight, and nothing else
+                                                          (what refuses a probe)
+```
+
+One word survives on screen because the reader needs one sentence; underneath it
+there are two facts, and the narrower one is the one with authority over a
+process.
+
 And the state owes an exit. **Entering `ObservedButUnsettled` obliges exactly one
 backend check**, issued in the same commit that installs the authority, admitted
 by the same rule as the first configuration read, and — refused — owed on exactly
 the same terms: it stays owed, and every authority delivery is an occasion to
-issue it. The two obligations are one mechanism asked twice, which is what keeps
+issue it.
+
+**The obligation is discharged by a check that answers, settled or not.** A check
+can answer without discovering — a quarantined session refuses ahead of discovery
+— and a session that treats "still unsettled" as grounds to ask again would spin
+against a refusal that never clears, because quarantine is set once and never
+cleared until restart. So an answered check discharges the obligation, and an
+authority that is still `ObservedButUnsettled` afterwards is a true description of
+a session that will not get a verdict. The reader is not misled by it: quarantine
+outranks every other reason in the lane's ordering, so what they are told is
+quarantine, not that a binding is settling. The two obligations are one mechanism asked twice, which is what keeps
 the scenarios below — a `BEGIN` refused after observing a replacement, an
 installation change that refuses, a replacement noticed mid-drain — from parking
 the panel with no verdict and nothing obliged to produce one.
@@ -838,11 +877,14 @@ rows requested, but no plan question can be posed
 a plan question is posed and its request is issued
   -> loading { that request's identity, the next ordinal }
 
-the in-flight request answers, and the answer is for that identity
+a reply arrives for the loading identity **and** its ordinal, and it answers
   -> ready { plan }
 
-the in-flight request fails, for that identity
-  -> failed { identity, error }
+a reply arrives for the loading identity **and** its ordinal, and it failed
+  -> failed { identity, ordinal, error }
+
+a reply arrives for any other identity or any earlier ordinal
+  -> discarded; the state does not move
 
 failed, and the reader asks for the same question again
   -> loading { the same identity, the next ordinal }
@@ -1250,7 +1292,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–51).
+plus the findings raised against this document's own drafts (rows 18–53).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1273,7 +1315,7 @@ and no finding may disappear because the old PR was superseded.
 | 15 | Failed plan described as reloading | A single non-current reason for four situations | A refusal names what the reader can change | Availability rule | A refused plan reads as failed, not as being reread |
 | 16 | Backend loss during drain not recorded | The same `?` as #9, in the execution path | Every conversion-bound resolution observes | `ConversionBackendAttempt` | Loss while the picker is open advances the authority |
 | 17 | Automatic read ungoverned, explicit retry governed | Two answers to "may a probe launch now?" | One admission rule for every probe | `ConversionConfigurationProbeAdmission`, decided by Rust's gate | Both paths refuse identically under a held lane, and neither mutates the configuration state |
-| 18 | A refused operation records a new binding and reports none | Recording an observation without delivering it | Every conversion-bound answer carries the receipt it observed or left current | `AuthorityObserved<T>` | A `BEGIN` refused on the exact-intent proof, having been the first to resolve B, returns B |
+| 18 | A refused operation records a new binding and reports none | Recording an observation without delivering it | Every answer carries the authority projection as it stands — which may be `Unresolved`, and is never a receipt the answer had to invent | `AuthorityObserved<T>` | A `BEGIN` refused on the exact-intent proof, having been the first to resolve B, returns B; a first discovery that establishes nothing returns `Unresolved` |
 | 19 | Old configuration usable after a newer binding arrives | Invalidation waiting for something later than the arrival | A newer projection carrying a differing receipt invalidates on arrival, before any further action | Frontend, ordering then identity | `Ready(A)` and `Plan(A)` are non-current, and no action is enabled from them, before the next interaction is possible |
 | 20 | The replacement's configuration read twice, or not at all | Ad-hoc refresh paths beside the lifecycle | Exactly one snapshot per newly observed binding, through the ordinary lifecycle | Rust configuration lifecycle | One `ConversionConfigurationSnapshot(B)` is established; the gap before it is a truthful loading state, never A's catalog and never a silent SHIPPED |
 | 21 | A refusal becomes a refresh | Treating any error as installation news | An unchanged receipt is not a reason to re-read | Frontend, ordering then identity | A refusal projecting the current A spends no probe and changes no configuration |
@@ -1307,6 +1349,8 @@ and no finding may disappear because the old PR was superseded.
 | 49 | An owed obligation issued only when something changed | The deadlock break placed inside the rules its own case dismisses | Discharging an owed obligation is a third, unconditional step after ordering and identity | Frontend reconciliation | The delivery that breaks the deadlock carries an equal revision and an equal receipt, and still issues the read |
 | 50 | An unsettled session claimed as verdict-bearing | `!backendUsable` outranking every lane fact beneath it | `ObservedButUnsettled` sets `backendChanging` as well, so the reader is told the binding is settling and not that the build is unusable | `ConversionLane` projection | An unsettled authority under a held gate never renders `backend-unavailable` |
 | 51 | A refused discovery spending a configuration attempt | A read that cannot reach a probe reported as a probe that failed | A read whose own discovery refuses replaces the binding; `Failed` needs a probe that ran | Decision 3 + Rust lifecycle | A build that disappears between the verdict and the read is `NoInstallation` → `UnavailableForBinding`, not `Failed` |
+| 52 | The state that owes the check is the fact that refuses it | One `backendChanging` flag read by both the lane and probe admission | Admission reads only a check actually in flight; the lane's word may also mean an unsettled authority | Decision 11 + `ConversionLane` projection | An `ObservedButUnsettled` session with nothing else holding the gate admits its obliged check |
+| 53 | An obliged check re-issued against a refusal that never clears | An obligation discharged only by settling | An answered check discharges it, settled or not | Authority obligations | A quarantined session issues its check once, stays truthfully unsettled, and is told quarantine rather than that a binding is settling |
 
 ## What this interlude does not do
 
