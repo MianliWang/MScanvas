@@ -417,14 +417,14 @@ selectable there, and the plan really is Rust's answer — but the slice reached
 that by reconstructing several Rust-owned authorities in React and writing each
 new repair by hand against the others.
 
-So M6.4A was inserted rather than a fifth repair attempted. It decides, in
-[ADR 0044](docs/architecture/adr/0044-conversion-configuration-authority.md),
-who owns installation truth, who owns conversion-capability truth, the receipt
-that binds them, what React retains, and at what granularity availability
-exists — and carries a hundred-and-twenty-four-obligation finding ledger the replacement
-must prove, so that nothing PR #95 measured has to be rediscovered. PR #95 stays open
-as implementation evidence until the replacement has extracted its tests, copy
-and behaviour; nothing from it is on `main`.
+So M6.4A was inserted rather than a fifth repair attempted. It decides, in [ADR
+0044](docs/architecture/adr/0044-conversion-configuration-authority.md), who owns
+installation truth, who owns conversion-capability truth, the receipt that binds them,
+what React retains, and at what granularity availability exists — and carries a
+hundred-and-twenty-seven-obligation finding ledger the replacement must prove, so that
+nothing PR #95 measured has to be rediscovered. PR #95 stays open as implementation
+evidence until the replacement has extracted its tests, copy and behaviour; nothing from
+it is on `main`.
 
 **M6.1 was first because the audit found the conversion lane had no single
 availability authority**, and it is now closed. `convert` claimed a ref as it
