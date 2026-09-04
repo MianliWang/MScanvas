@@ -7111,7 +7111,8 @@ carrying it failed.
 
 Fourteen decisions, answering twelve questions the replacement must not have to invent
 while coding: a Rust-owned installation authority that is a typed state (`Unresolved |
-ObservedButUnsettled | Settled`) rather than a counter; one opaque, path-free,
+Settled { binding, previewAvailability }`) rather than a counter, in which a binding
+never arrives without the verdict about it; one opaque, path-free,
 session-scoped `BackendBindingReceipt` every fact about one installed build carries;
 preview availability and conversion configuration as two judgements under one binding; a
 conversion resolution attempt that records **and returns** its observation whether or
