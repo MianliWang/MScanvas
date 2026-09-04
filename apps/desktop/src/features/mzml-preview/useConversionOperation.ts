@@ -11,6 +11,7 @@ import type {
 import {
   canRetryConversion,
   canStartConversion,
+  catalogReadAvailability,
   conversionAvailability,
 } from "./conversionAvailability";
 import type { ConversionSettings } from "./conversionIntentSelection";
@@ -205,6 +206,18 @@ export interface ConversionOperation {
    * would not offer.
    */
   readonly chooseIntent: (intentId: string) => void;
+  /**
+   * Asks for the catalog again after a read that did not answer.
+   *
+   * The failure's own recovery, and the only one it has. A catalog read is a
+   * query about an installation that is already settled, so its failing changes
+   * nothing about the installation and nothing keyed on one fires again -- and
+   * `Check again`, which asks a different question, must not secretly double as
+   * this. Refuses unless a read actually failed and the lane can answer.
+   */
+  readonly retryCatalog: () => void;
+  /** Whether that retry may be offered, from the one lane rule. */
+  readonly catalogRetryAvailability: ConversionAvailability;
   /** What a start still needs from the settings, as the guard reads it. */
   readonly settingsReadiness: ConversionSettingsReadiness;
   /** Whether the loaded plan answers the request as it now stands. */
@@ -544,14 +557,23 @@ export function useConversionOperation(
    */
   const installedCatalogGeneration = useRef<number | null>(null);
   /**
-   * The binding this lane has already acted on, as the identity that named it.
+   * The binding whose **one automatic attempt** has already been spent.
    *
-   * Not a second "the catalog needs refreshing" boolean. A boolean would be a
-   * fact of its own, free to disagree with the binding, and the disagreement is
-   * the whole family of defects here. The binding already answers the question:
-   * either this lane has served it or it has not.
+   * Not "the binding this lane has served". It was called that, and the name
+   * was a claim the state could not make: an attempt that failed spends this
+   * just as an attempt that succeeded does, so a `failed` catalog sat behind a
+   * marker asserting it had been served. What is actually known here is
+   * narrower and is all the effect needs -- *this binding has already been
+   * asked about automatically, so becoming active again is not a reason to ask
+   * again*. Whether the asking produced a catalog is `installedCatalogGeneration`,
+   * and whether a failed one may be asked again is the reader's, through the
+   * explicit retry below.
+   *
+   * Not a second "the catalog needs refreshing" boolean either. A boolean would
+   * be a fact of its own, free to disagree with the binding, and the
+   * disagreement is the whole family of defects here.
    */
-  const servedBinding = useRef<string | null>(null);
+  const automaticallyAttemptedBinding = useRef<string | null>(null);
   /**
    * The semantic the user last chose, across catalogs.
    *
@@ -886,18 +908,26 @@ export function useConversionOperation(
    * refuses the conversion for as long as the check runs, which is a sentence
    * about a check rather than about an executable.
    *
-   * Guarded on the binding it last served rather than on the effect having run.
-   * An effect running is a fact about React; a binding changing is a fact about
-   * the installed build, and only the second one is a reason to launch a
+   * Guarded on the binding it last *attempted* rather than on the effect having
+   * run. An effect running is a fact about React; a binding changing is a fact
+   * about the installed build, and only the second one is a reason to launch a
    * process. Recording the identity is what makes the two impossible to
    * confuse, whatever causes this to be evaluated again.
+   *
+   * **One automatic attempt per binding, and no automatic retry of a failed
+   * one.** A read that did not answer says nothing about which build is
+   * installed, so the binding does not change and nothing here fires again --
+   * which is correct, and was also, for one head, the whole of the recovery
+   * story. It is not any more: retrying a failed read is the reader's, through
+   * `retryCatalog`, because the thing that failed was this query and not the
+   * installation it was about.
    */
   useEffect(() => {
     const binding = backendBindingIdentity(backendBinding);
-    if (servedBinding.current === binding) {
+    if (automaticallyAttemptedBinding.current === binding) {
       return;
     }
-    servedBinding.current = binding;
+    automaticallyAttemptedBinding.current = binding;
     if (backendBinding.status === "unresolved") {
       // No verdict has settled, so there is no installation to ask about. The
       // session opens here and leaves it once, and asking anything now would be
@@ -1182,6 +1212,46 @@ export function useConversionOperation(
     planRef.current = plan;
     conflictPolicyRef.current = conflictPolicy;
   }, [settings, plan, conflictPolicy]);
+
+  /**
+   * Reads the catalog again after a read that did not answer.
+   *
+   * **The failure this recovers has no other owner.** A catalog is a query
+   * about an installation that is already settled and already available; when
+   * the query fails the binding has not changed, so nothing about the
+   * installation is news and nothing keyed on it fires again. That is right --
+   * a `Check again` asks whether the backend is usable, and a verdict that
+   * resolves to the same build has answered it truthfully. What it must not do
+   * is silently double as this: two questions with one button is how a reader
+   * comes to believe they have retried something they have not.
+   *
+   * So the retry is explicit, and it is one attempt. Failing again leaves the
+   * same failed state and waits to be asked again; nothing loops, and no effect
+   * can reach this.
+   *
+   * Guarded by the same lane the panel projects the control's own disabled
+   * state from -- read from refs here, because a press arriving during an
+   * installation change must be decided by what is true now. A hand-made call
+   * meets the same guard, so nothing can start a help probe while the
+   * authoritative state says backend work cannot begin.
+   */
+  const retryCatalog = useCallback(() => {
+    // Only a read that failed is retried. A catalog on screen is an answer, and
+    // re-asking for one would be the per-recheck probe this design refuses.
+    if (settingsRef.current.status !== "failed") {
+      return;
+    }
+    if (catalogReadAvailability(readLane()).status !== "available") {
+      return;
+    }
+    readCatalog();
+  }, [readCatalog, readLane]);
+  /**
+   * Whether that retry may be offered, as a render sees it.
+   *
+   * The rendered half of the guard above, from the lane the control is beside.
+   */
+  const catalogRetryAvailability = useMemo(() => catalogReadAvailability(lane), [lane]);
 
   /** What a start still needs from the settings, as a render sees it. */
   const settingsReadiness = settingsReadinessOf(settings);
@@ -1608,6 +1678,8 @@ export function useConversionOperation(
     plan,
     settings,
     chooseIntent,
+    retryCatalog,
+    catalogRetryAvailability,
     settingsReadiness,
     planIsCurrent,
     error,

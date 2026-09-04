@@ -7049,30 +7049,27 @@ cancellation behaviour, no wire vocabulary beyond the integrity property and
 outcome names the new checks required, no dependency and no lockfile. It does not
 decide the mzXML disposition, which remains M6.10's, and it does not start M6.4.
 
-## M6.4 — Visible conversion settings, and a truthful plan — NOT PUBLISHED, 2026-09-03
+## M6.4 — Visible conversion settings, and a truthful plan — COMPLETE, 2026-09-04
 
-**This slice is implemented, validated and still unmerged. It has now stopped
-three times.** The first round found two defects and spent the route's one repair
-pass on them; a second round found three more, so the slice stopped at
-`STOP — M6.4_NOT_PUBLISHABLE`. A bounded authorization closed F1, F2 and F3; the
-review that authorization required found G1 and G2, so it stopped again at
-`STOP — M6.4_CORRECTION_NOT_PUBLISHABLE`. A second bounded authorization closed
-those — the settled-backend-binding and installation-observation model described
-below, which does close both findings and is proved to — and the exact-head
-review of *that* head found a defect the correction itself introduced. So the
-verdict is `STOP — M6.4_SIGNAL_STABILIZATION_NOT_PUBLISHABLE`, the work stays on
-`feat/m6.4-visible-conversion-settings` / PR #95, and **`main` is untouched**.
-
-The blocking finding is at the end of this section. Everything between here and
-there describes what the branch contains, and is accurate.
+**Published after four review rounds and three stops.** The first round found
+two defects and spent the route's one repair pass on them; a second found three
+more, so the slice stopped at `STOP — M6.4_NOT_PUBLISHABLE`. A bounded
+authorization closed F1, F2 and F3; the review it required found G1 and G2, so
+it stopped again at `STOP — M6.4_CORRECTION_NOT_PUBLISHABLE`. A second
+authorization closed those with the settled-backend-binding and
+installation-observation model below -- and the exact-head review of *that* head
+found a defect the correction itself introduced, so it stopped a third time at
+`STOP — M6.4_SIGNAL_STABILIZATION_NOT_PUBLISHABLE`. A third authorization closed
+that one and the three raised beside it.
 
 That history is kept rather than tidied away, because what it says about this
 design is worth more than a clean narrative: the hard part was never the nine-row
 graph, it was the *edges*. A request that outlives the state it produced. An
 observation lost because the operation it belonged to failed. An affordance that
 claimed more than it knew. A signal read from a proxy that resembled it — twice.
-And now a recovery path that existed only as a side effect of the very
-conflation that had to be removed.
+And, last, a recovery that had been living on the very conflation that had to be
+removed, which is the one worth carrying forward: **removing a wrong mechanism
+means finding out what had come to depend on it.**
 
 The first M6 slice that puts the conversion semantics on screen. M6.2 measured
 nine combinations of five axes; M6.3 made those nine the only constructible ones
@@ -7227,6 +7224,16 @@ before a process launches**, rather than a backend failure afterwards. The
 authoritative per-item gate in the command builder is unchanged and still
 refuses fail-closed.
 
+**That guarantee is unconditional, which took a third correction to make true.**
+The block ran only when the one backend lane happened to be free -- the shape a
+`try_enter_backend` was written for -- so a preview or a check holding it meant
+the check was skipped and the promise above was false exactly when an
+installation had changed under a busy session. It now waits for the lane, having
+first refused a request that a running queue already makes invalid, so the one
+unbounded holder of that gate can never be what it waits for. `try_enter_backend`
+is gone with its last caller: a gate that can be declined is a guarantee that can
+be skipped.
+
 `ConversionQueueDto` carries the queue's bound intent, and the running and
 terminal surfaces read it. A Rust test begins a queue under a non-shipped
 semantic, proves the launched process received `--64 --zlib=off`, reads a plan
@@ -7306,6 +7313,15 @@ Rust: `preview/intent_catalog.rs` (new), `preview/dto.rs`, `preview/service.rs`,
 `preview/operation.rs`, `preview/conversion.rs`, `preview/mod.rs`,
 `preview/tests.rs`, `src-tauri/src/lib.rs`.
 
+The test provider gained two switches and lost an inconsistency with the final
+correction. A build can now be made to *go* -- both questions that can name an
+installation report the loss together, because no filesystem produces one and
+not the other -- and a resolution can be made to fail while the build is still
+there, which is the case that must move nothing. And its availability verdict
+now reports the same identity its conversion binding does: the trait says
+production resolves both from one discovery and says why, and a fake answering
+with two identities made every reading look like a change.
+
 Frontend: `conversionIntentSelection.ts` (new), `ConversionSettings.tsx` (new),
 `backendBinding.ts` (new), `conversionAvailability.ts`,
 `useConversionOperation.ts`, `usePreviewWorkspace.ts`, `ConversionPanel.tsx`,
@@ -7327,8 +7343,15 @@ code and adds no dependency.
 
 Repository validation: `scripts/check_repo.py`, for the fixture guard above.
 
-Documentation: this section, `ROADMAP.md`, `docs/product/FEATURE_CATALOG.md` and
-ADR 0043's M6.4 delivery note.
+Documentation: this section, `ROADMAP.md`, `docs/product/FEATURE_CATALOG.md`,
+`docs/product/PRIMARY_WORKFLOWS.md`, `README.md` and ADR 0043's M6.4 delivery
+note. The last two were the closure's own finding: WF-004 still listed the
+semantic settings among what is unreachable, WF-004a's task path had no step for
+the decision this slice adds, and README's conversion paragraph -- written as an
+exhaustive claim -- still named conflict policy and a destination folder as the
+whole of what a user chooses. All four are in the repository's own
+current-status document set; the validator missed them because neither paragraph
+opens with a phrase its missing-list matcher recognises.
 
 ### Validation
 
@@ -7336,54 +7359,55 @@ ADR 0043's M6.4 delivery note.
 --all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
 `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
 `pnpm build`, `pnpm e2e:typecheck`, `pnpm e2e:browser` and `git diff --check`,
-each run directly on the candidate head `db2915a` and each exiting zero, with all
-three CI jobs green on that same SHA. That head is nevertheless **not
-publishable** — see H1 below, which no gate is shaped to catch. Rust **1,400** and
-frontend **1,450**. Browser E2E: **11 spec files, 224 tests**, including the
-sixteen-case M6.4 spec, three of whose cases run at 1920×1080, 1366×768 and
+each run directly on the published head and each exiting zero. Rust **1,404** and
+frontend **1,462**. Browser E2E: **11 spec files, 226 tests**, including the
+eighteen-case M6.4 spec, three of whose cases run at 1920×1080, 1366×768 and
 960×640. Nothing is inherited from any earlier head.
 
-The second correction added **eleven** frontend cases: eight in
-`conversionSignalAuthority.test.tsx`, which is the whole signal model and where
-every assertion is a *count* of `inspect_backend` calls or of catalog reads
-rather than a claim about what is rendered; four in `backendBinding.test.ts` for
-the binding algebra, equality most of all; one rendered same-generation recheck
-in `ConversionSettings.test.tsx`; and one strengthening of the F2 regression,
-which now pins that a refused `BEGIN` reconciles **once** rather than merely that
-it reconciles. Four browser cases were added for the same seam: a check of the
-same installation that leaves the settings, the plan and the probe count exactly
-where they were; a settled disappearance whose held in-flight catalog reply
-cannot resurrect the controls; a running queue polled repeatedly that launches no
-backend process until it lets go, and exactly one then; and a refused `BEGIN` on
-a replacement build that reconciles once, reads one catalog and opens no picker.
+The corrections are where most of that growth is. The second added eleven
+frontend cases -- the eight of `conversionSignalAuthority.test.tsx`, which is the
+whole signal model and where every assertion is a *count* of `inspect_backend`
+calls or of catalog reads rather than a claim about what is rendered; four in
+`backendBinding.test.ts` for the binding algebra, equality most of all; a
+rendered same-generation recheck; and a strengthening of the F2 regression, which
+now pins that a refused `BEGIN` reconciles **once** rather than merely that it
+reconciles. The third added twelve more: seven signal-authority cases for the
+catalog's own retry and the watermark it is keyed on, three unit cases for the
+selected-but-unavailable state, and two rendered ones; four Rust cases for the
+resolution-failure observation, its negative, the busy-lane preflight and the
+single resolution an idle one costs; and two browser cases for the retry control
+and the stranded selection.
 
-Each of five mechanisms was reverted once, on its own, with the tree restored and
-verified by checksum between experiments, and the regression that names it was
-shown to fail for the intended reason:
+Seven mechanisms were reverted one at a time, with the tree restored and verified
+by checksum between experiments, and the regression that names each was shown to
+fail for its intended reason:
 
-1. the catalog effect keyed on transient `backendUsable` again — the
-   same-generation case failed with `{ status: 'noBackend' }` where a ready
-   catalog was expected, and five other cases fell with it;
-2. a settled unavailable verdict setting the state without advancing the catalog
-   token — the late reply put `ready` back where `noBackend` was expected;
-3. the generation observation calling `checkBackend()` directly again — the
-   poll-dedup case failed at *ten readings of one observation, and not one
-   backend process*, with 2 probes where 1 was expected;
-4. the reconciliation losing its per-generation single-flight and its coalescing
-   — the poll-dedup case failed at 2 probes and the coalescing case at 3, and
-   removing the single-flight guard alone produced **9** probes where 2 were
-   expected, which is the retry storm;
-5. the refused-`BEGIN` generation report moved back below the slot-sequence guard
-   — the F2 regression failed with the catalog never re-read.
+1. the same-binding catalog retry removed — four cases fell, the transient
+   recovery among them;
+2. a finished backend check made to retry a failed catalog — six fell, including
+   the authority-separation case that exists for exactly that;
+3. the resolution-failure observation removed —
+   `a_begin_that_cannot_resolve_the_build_observes_that_it_is_gone` failed;
+4. the exact-intent preflight put back under a declinable lane —
+   `a_busy_backend_lane_delays_the_intent_preflight_rather_than_skipping_it`
+   failed;
+5. `choiceState` returning ordinary `selected` before the availability lookup —
+   the unit case and the rendered one failed;
+6. the observation calling `checkBackend` directly again — the poll-dedup case
+   failed at 2 probes where 1 was expected, and two others with it;
+7. the preview-open path applying a generation without recording the sighting —
+   the reconciliation that recovers a failed inline recheck never happened.
 
-Experiment 4 is worth recording in full, because the first attempt at it proved
-nothing and that was the test's fault. With a fake that rejected in the same
-microtask, the busy flag rose and fell inside one commit, so the effect keyed on
-it never ran twice and the storm could not happen — the case passed with the
-guard removed. An IPC reply is never answered in the microtask that made it, so
-the case now models a real turn of the loop, and only then does it discriminate.
-A negative about automatic work is only worth stating when the work had every
-chance to start.
+Two of those took a second attempt, and both times the first attempt was the
+test's fault rather than the mechanism's. Experiment 2's first form edited a
+guard inside an effect that never re-runs, so it proved nothing; the faithful
+mutation is a finished check that retries the catalog, which is what the rule
+actually forbids. Experiment 7's first form was inert because the change it
+reverted was inert: raising the observation watermark beside the ordering one
+changes no decision while the obligation is keyed on the ordering number. That is
+what sent the obligation to the binding instead, which is the repair S2 actually
+needed -- and only then did the revert discriminate. **A negative proof that
+passes is evidence about the test, not about the code.**
 
 The catalog-fixture guard was re-proved the same way, by deleting one admitted
 row and watching `check_repo.py` name it: *lists 8 admitted combinations and
@@ -7658,29 +7682,22 @@ refreshing" boolean — a boolean would be a fact of its own, free to disagree w
 the binding, and that disagreement is the whole family of defects here. The
 binding identity answers the question, and the lane records the one it served.
 
-### The finding that stopped it the third time
+### The finding that stopped it the third time, and the three beside it
 
-Raised by the exact-head review of `db2915aeb9d092a95c79c401162f38be58989fc5` —
+Raised by the exact-head review of `db2915aeb9d092a95c79c401162f38be58989fc5` --
 the head on which every local gate and all three CI jobs passed. Confirmed by
 measurement rather than accepted on the report, and measured in both directions,
-which is what identifies it as a regression this correction introduced rather
-than a defect it uncovered.
+which is what identified the first as a regression the signal correction
+introduced rather than a defect it uncovered.
 
-**H1 — a catalog read that fails once can never be retried. P2,
-release-blocking.**
-
-`readCatalog` has exactly one call site: the catalog effect, which runs only when
-the settled backend binding's identity differs from the one the lane last served.
-When the read rejects, `settings` becomes `failed`, `installedCatalogGeneration`
-stays `null` — and `servedBinding` has already recorded `available:G`. Pressing
-`Check again`, the one affordance the banner offers, resolves the same
-installation, so `sameBackendBinding` keeps the previous object, the binding
-never changes identity, and the effect's own guard would refuse it even if it
-did. `settingsReadiness` is `unavailable` for the rest of the session, `Convert`
-is refused with *MSCanvas could not read which conversion settings this
-ProteoWizard offers*, and the settings block renders that sentence with no retry
-control. Only restarting MSCanvas, or genuinely replacing the installation,
-recovers.
+**C1 (H1) -- a catalog read that failed once could never be retried. P2.**
+`readCatalog` had exactly one call site: the catalog effect, which runs only
+when the settled binding's identity changes. When the read rejected, `settings`
+became `failed` while the marker for that binding had already been recorded --
+so `Check again`, the one affordance the banner offers, resolved the same
+installation, kept the same binding object, and re-read nothing. `Convert` was
+refused for the rest of the session; only a restart, or genuinely replacing the
+installation, recovered.
 
 The trigger is ordinary. `get_workspace_conversion_intents` resolves the backend
 itself, so it is a **second** `msconvert --help` spawn, separate from the one
@@ -7688,130 +7705,196 @@ itself, so it is a **second** `msconvert --help` spawn, separate from the one
 still-finalizing install, or a session that quarantines between the two probes
 fails it while the verdict correctly says the build is available.
 
-**It is this correction's own doing, and the measurement says so.** One probe,
+It was this correction's own doing, and the measurement said so -- one probe,
 run against both keyings, with a catalog read that fails once and then succeeds:
 
 ```text
 pre-correction keying (environment.backendUsable)
   Check again -> catalog reads 2, settings ready,  readiness ready
 
-this correction (settled backend binding)
+settled backend binding
   Check again -> catalog reads 1, settings failed, readiness unavailable
 ```
 
 The old shape recovered by accident: `checkBackend` set `checking`, which drove
-`backendUsable` false and then true, and the false→true edge re-ran the effect.
-That edge is exactly the conflation G1 was raised about — every check read as a
-disappearance, a good in-flight read cancelled, a second help probe spent
-restoring what was already on screen. Removing it was right. Removing it without
-noticing that a failed read had been living on it was not.
+`backendUsable` false and then true, and the false-to-true edge re-ran the
+effect. That edge *is* the conflation G1 was raised about. Removing it was
+right; removing it without noticing that a failed read had been living on it was
+not.
 
-**What this says about the fix, and what a next attempt should weigh.** The
-binding model is correct and is not what needs revisiting: a catalog belongs to a
-settled binding, and a check is not a verdict. What is missing is that *a failed
-read is not a state the binding can clear*, so the retry has to be owned by the
-lane that failed rather than inferred from the installation changing. Two shapes
-are worth weighing, and neither is another conditional on `backendUsable`:
+**C2 -- a `BEGIN` that could not resolve the build said nothing about it. P2.**
+The pre-picker preflight records the identity when resolution *succeeds*, which
+is what lets a build replaced in place be noticed there. When
+`conversion_backend()` itself failed -- a catalogued executable deleted,
+replaced by something that no longer declares what MSCanvas needs, or moved out
+from under a chosen folder -- it returned before reaching that. The session went
+on naming a build that was gone: banner available, catalog offering its
+availability marks, plan current, and every press producing the same refusal.
 
-- make the failure recoverable through the affordance the reader already has —
-  an explicit `Check again` is a request, so it may re-read a catalog whose last
-  read failed even when the binding is unchanged, which is a rule about *the
-  user asking* rather than about the installation;
-- or give the settings surface its own retry control, since *this read failed*
-  is a different situation from *this build offers nothing*, and the panel
-  currently renders the first as though it were terminal.
+**C3 -- the exact-intent preflight was optional. P2.** It sat inside
+`if let Some(running) = self.try_enter_backend()`, whose own contract said it
+was for "work that is a courtesy rather than a duty". A preview, a drop scan or
+another document's check holding the one lane meant the check was skipped
+entirely -- so a build that could no longer express the chosen semantic produced
+a bound queue, a reservation, an opened picker and a chosen folder before
+anything refused. ADR 0043, this record and the code's own comment all stated
+that guarantee unconditionally.
 
-The same question governs three findings the review raised beside it, all of
-which become reachable and permanent once the catalog is stuck: the plan parks at
-`loading` with no request in flight and says *Reading the conversion plan…*
-forever; `plan-superseded` explains a plan that failed or was never asked for
-with *MSCanvas is rereading the conversion plan for the settings you changed*;
-and under a finished queue a failed plan renders a refused control with no error
-text at all. None of those is new to this round, and all of them are the same
-shape: a state that means "nothing is happening" rendered as one that means
-"something is under way".
+**C4 -- a stranded selection rendered as an ordinary one. P2.** `choiceState`
+short-circuited on "this is the selected value" before consulting availability,
+so a preserved semantic the new build cannot run appeared in all four groups as
+a checked, enabled radio carrying only its plain disclosure. Because `reselect`
+keeps such a choice deliberately, that is the *normal* outcome of a narrower
+build rather than an edge case, and the only sentence saying otherwise sat
+several elements away beside `Convert`.
 
-### What the exact-head review found besides it
+### Failure ownership, which is what all four were about
 
-Recorded so the next attempt starts from the whole picture rather than from H1
-alone. None is introduced by this round unless it says so.
+The signal model this slice ended up with distinguishes activity from binding
+and a reading from an observation. What it did not yet distinguish is **whose
+job it is to try again**, and three of the four findings above are that question
+in different places.
 
-**Release-blocking, and older than this round.** The pre-picker
-`require_conversion_intent` gate in `begin_queue` sits inside
-`if let Some(running) = self.try_enter_backend()`, so whenever the one backend
-gate is momentarily held — a preview open, a drop scan, another document's
-check — the gate, `refuse_unevidenced_build` and `note_resolved` are all skipped
-together. The queue then binds an intent this build cannot express, a picker
-opens and a staging area is created, and the refusal happens per item in the
-command builder. ADR 0043 and the comment beside the gate both state the
-guarantee unconditionally. It arrived with F2's correction and no round has
-caught it since.
+```text
+backend verdict failed          -> the banner's Check again
+catalog read failed             -> the settings' own Try again
+automatic reconciliation failed -> nobody; one attempt is the ration
+```
 
-**Truthfulness, older than this round.** `choiceState` short-circuits on
-`current[axis] === value` before consulting availability, so a preserved
-semantic this installation cannot run renders in all four fieldsets as an
-ordinary checked, enabled radio — the *normal* outcome of a narrower build, since
-`reselect` keeps the choice deliberately. The only sentence saying otherwise is
-the availability notice several elements away.
+Each failure has exactly one owner, and no failure triggers another subsystem's
+retry as a side effect. That is the rule the old `backendUsable` keying broke in
+the direction of doing too much, and that the binding keying broke in the
+direction of doing nothing.
 
-**In this round's own code, and worth naming.** `reconciledGeneration` is marked
-spent before `checkBackend()` is known to have settled, which the residual below
-records as deliberate for the banner — but the catalog is now keyed on the same
-binding, so a failed reconciliation also strands the catalog on the replaced
-build, which the residual did not say. And the preview-open path raises
-`appliedGeneration` without raising `highestObservedGeneration`, so it breaks the
-invariant the reconciler's own comment states; that site does its own
-`checkBackend`, so nothing is lost today, but a stated invariant that one writer
-does not maintain is the exact defect class this slice exists to remove.
+**C1's repair is an explicit retry, and deliberately not a smarter signal.** The
+settings' `failed` state renders **Try again**, which points at the error it is
+a retry of. It refuses unless a read actually failed -- a catalog on screen is
+an answer, and re-asking would be the per-press help probe the binding model
+exists to make unnecessary -- and unless the lane can answer, which it asks of
+`catalogReadAvailability`: the same `ConversionLane` struct, the same reasons and
+the same sentences the panel already uses, narrowed to the four facts that are
+actually about the lane. Rust would make a request issued during a conversion
+wait behind the whole queue, so that one is refused here rather than queued. One
+attempt per press; a retry that fails again waits to be asked again, and no
+effect can reach it.
 
-**Documentation.** `docs/product/PRIMARY_WORKFLOWS.md` (WF-004) still says the
-semantic settings are unreachable, and `README.md`'s conversion paragraph still
-enumerates the user's choices as conflict policy and destination. Both are
-`CURRENT_STATUS_DOCUMENTS` in `scripts/check_repo.py`, which misses them because
-neither paragraph opens with a phrase its missing-list matcher recognises. This
-round updated `ROADMAP.md`, `FEATURE_CATALOG.md`, ADR 0043 and this file, and
-should have updated those two as well.
+The marker the effect keeps was renamed with the repair.
+`automaticallyAttemptedBinding` is what is actually known -- *this binding has
+already been asked about automatically* -- where `servedBinding` claimed a
+catalog had been served, which is false exactly when it matters.
 
-**Quality, not blocking.** `conversion_intent_catalog` re-runs a full discovery —
-two spawns and two whole-file digests — for msconvert capabilities the
-availability probe that triggered it had already computed and discarded; the
-plan is re-read on every settings radio click although Rust derives nothing from
-the intent or the policy beyond echoing them back; `catalogGeneration`'s guard is
-now unreachable, since `readCatalog` always revokes before issuing;
-`sameBackendBinding` and `backendBindingIdentity` state one equality rule twice;
-and the two new IPC payloads have no wire-shape assertion on either side.
+**C2's repair asks the provider, not the error.** Two shapes were declined for
+the same reason they were declined for F2: an allowlist of error kinds, and a
+`retryable` heuristic. Both put a second installation authority on the caller.
+What the failure path does instead is ask `stamped_availability()` -- the same
+resolution `inspect_backend` is answered from, which returns the verdict and the
+identity together and yields an identity only where something usable actually
+resolved. It goes through the one counter, so a build that really is gone
+advances the sequence and a failure that establishes nothing advances nothing.
+Both halves are pinned: a lost executable moves the generation and turns the
+session's verdict to `unavailable`; help output that could not be read this time
+moves nothing.
+
+**C3's repair is to wait for the lane rather than to skip the check.** The block
+now takes `enter_backend()` and asks `require_usable_backend()` on the far side
+of it, exactly as the catalog read does. Two things make that safe rather than a
+new long-wait defect. A queue that is already running makes the request invalid,
+and the slot is asked *before* any waiting starts -- it takes only the slot lock
+and launches nothing -- so the one unbounded holder of the gate can never be
+what this waits for; every other holder is a preview read, a check, a chooser or
+a catalog probe. And the gate is taken before the workspace mutation gate and
+the slot lock, so nothing is held while waiting for it.
+
+`try_enter_backend` was deleted with its last caller. Its doc named the
+pre-picker check as the thing it existed for, and a gate that can be declined is
+a guarantee that can be skipped: leaving the shape available to the next caller
+who assumes otherwise is how this defect would return.
+
+**C4's repair is a state that can hold both facts.** `ConversionChoiceState`
+gained `selectedUnavailable`, carrying the refusal reason, and `choiceState`
+consults the *selected row's* availability rather than short-circuiting -- every
+group shows the same selection, so every group says the same thing about it. On
+screen the value stays checked, because it is still the scientific request the
+user made, and carries `aria-disabled` with the reason in what the control
+points at. `aria-disabled` rather than `disabled` on purpose: it is the checked
+item and therefore the group's natural focus, and taking that away would move
+the group's tab stop somewhere the reader did not put it. Every other refused
+value keeps `disabled`, and the handler refuses anything that is not selectable,
+so neither can be chosen by a synthesised change.
+
+### Two internal inconsistencies in the signal model, closed with them
+
+**S1 -- a state that claimed more than it knew.** `reconciledGeneration` was
+advanced when an automatic attempt was *dispatched*, not when a verdict settled,
+so a check that rejected or was superseded left it raised over a generation this
+session never reconciled to. The behaviour is intended -- what is rationed is
+the attempt, because the attempt is the process, and re-arming on failure would
+re-enter the moment the busy flag cleared. The name was not:
+`automaticallyAttemptedGeneration` says what is true, and the comments say why
+a failed attempt is a stop rather than a dead end -- the reader still has
+`Check again`, and the catalog still has `Try again`.
+
+**S2 -- an obligation asked of the wrong number.** The reconciler compared an
+observation with `appliedGeneration`, and `appliedGeneration` is not what its
+name suggests to a reader: a preview open raises it too, deliberately, so that
+the verdict which follows is not read as a change *after* that preview and does
+not discard the very reading which discovered it. It is an **ordering watermark
+over authoritative readings**, and it can stand ahead of the installation the
+session is actually bound to.
+
+So the obligation now asks the question that is actually load-bearing: is
+anything observed ahead of the **settled binding**? The difference is reachable
+and is pinned: a preview finds a replacement, the recheck that preview fires
+does not answer, and the session would otherwise sit bound to the build that is
+gone -- catalog, availability marks and all -- with no automatic route back.
+Keyed on the binding, the sighting the preview recorded is exactly what the one
+automatic attempt is spent on. Both sites that advance the watermarks go through
+one helper, so a reply that can order itself against an installation has also
+recorded seeing one.
 
 ### Residuals
 
-**The browser IPC boundary's missing `installationGeneration` is closed.** It was
-recorded here as a P3 owned by the next M6.4 attempt, and the required rendered
-proof of the reconciliation is exactly the browser case it was a trap for — so it
-was fixed rather than carried: `e2e/support/fixtures.ts` and the M6.1 spec's
-`RETRYABLE_QUEUE` literal now carry the field Rust always serializes, and the
-adjacent `itemCount` / `eligibleItemCount` drift in the same literals went with
-it.
-
 **A recheck that resolves to the same installation does not re-read the
-catalog.** This is now the design rather than an accident of it: the read is
-keyed on the settled backend binding, which changes only when a verdict names a
-different installation or names none, so a user who reinstalls ProteoWizard *in
-place*, at the same location, with a build that declares different options, keeps
-the catalog they had until something advances the generation. The alternative —
-a help probe per recheck — is what G1 turned out to be, and it is now refused by
-a discriminating test rather than merely rejected in prose. What remains open is
-not the behaviour but the *comparison*: whether an installation identity should
+catalog.** This is the design rather than an accident of it: the read is keyed on
+the settled backend binding, which changes only when a verdict names a different
+installation or names none, so a user who reinstalls ProteoWizard *in place*, at
+the same location, with a build that declares different options, keeps the
+catalog they had until something advances the generation. The alternative — a
+help probe per recheck — is what G1 turned out to be. What remains open is not
+the behaviour but the *comparison*: whether an installation identity should
 notice a same-path replacement at all. Severity **P3**. **Owner: M6.11**, or
 whichever slice next re-decides how an installation identity is compared.
 
 **One automatic reconciliation per observation is a ceiling, not a promise of
 eventual consistency.** If the one automatic check an observation gets fails, the
 session keeps the verdict it had until something else moves — a genuinely newer
-generation, or the user pressing `Check again`. That is deliberate: the
-alternative is a retry policy, and a retry policy on the one serialized backend
-lane is the defect G2 was, rearranged. The banner says the check failed, so the
-reader is not misled about what the session knows. Severity **P3**. **Owner:
-M6.11**, alongside the identity question above, since both are about how a
-session decides it is looking at a different build.
+generation, the user pressing `Check again`, or the settings' own `Try again`.
+That is deliberate: the alternative is a retry policy, and a retry policy on the
+one serialized backend lane is the defect G2 was, rearranged. Every one of those
+failures now has a named owner and a control that reaches it, which is what the
+third correction added; what is not offered is an automatic loop. Severity
+**P3**. **Owner: M6.11**, alongside the identity question above.
+
+**A catalog read whose failure the reader never retries stays failed.** The
+retry is explicit by design — see the failure-ownership section — so a reader who
+does not press it keeps a refused `Convert` and the sentence explaining why. That
+is the intended trade: the alternative is an automatic retry on a serialized
+process lane. What it means in practice is that the *control* has to be
+discoverable, and that is a rendered claim rather than a structural one: it is
+pinned by a browser case that reaches it with the keyboard, and nothing beyond
+that has been measured about how readily it is found. Severity **P3**. **Owner:
+whichever slice next reviews the conversion panel's error surfaces**, alongside
+M6.5's own.
+
+**`begin_queue` waits for the backend lane where it used to decline it.** The
+wait is bounded by construction — a running queue is refused before any waiting
+starts, and every other holder of that gate is a preview read, a check, a chooser
+or a catalog probe — and the frontend refuses `Convert` while a preview is being
+read, so the window is one a hand-made call reaches more readily than a user
+does. What has not been measured is how long the longest such wait actually is on
+a slow installation, because the deterministic suite substitutes the backend.
+Severity **P3**. **Owner: M6.8**, which is where what an `msconvert` run actually
+costs is measured.
 
 ### What this slice does not do
 
@@ -7823,5 +7906,4 @@ composition boundary is exactly as wide as it was. It adds no dependency and no
 lockfile change, does not decide the mzXML disposition, which remains M6.10's,
 and it does not start M6.5.
 
-**M6.5 — Destination authority — has not started, and cannot until this slice
-publishes.**
+**M6.5 — Destination authority — is next, and is not started.**

@@ -1,5 +1,7 @@
 import type { ReactElement } from "react";
 
+import type { ConversionAvailability } from "./conversionAvailability";
+import { conversionNoticeId } from "./conversionAvailability";
 import type {
   ConversionCompression,
   ConversionIntent,
@@ -177,6 +179,15 @@ export const CONVERSION_VALUE_LABEL = {
   compression: COMPRESSION_LABEL,
 } as const;
 
+/**
+ * What the catalog failure's own sentence is called.
+ *
+ * The retry points at the error it is a retry *of*, so a reader who reaches the
+ * control by keyboard is told what did not work before being offered another
+ * attempt at it.
+ */
+const CATALOG_RETRY_REASON = "conversion-settings-failure";
+
 /** What one radio is described by: its disclosure, and any refusal. */
 function choiceNote<A extends ConversionAxis>(
   axis: A,
@@ -184,7 +195,7 @@ function choiceNote<A extends ConversionAxis>(
   state: ConversionChoiceState,
 ): string {
   const disclosure = noteFor(axis, value);
-  return state.status === "unavailable"
+  return state.status === "unavailable" || state.status === "selectedUnavailable"
     ? `${REFUSAL_NOTE[state.reason]} ${disclosure}`
     : disclosure;
 }
@@ -207,9 +218,15 @@ function choiceNote<A extends ConversionAxis>(
 export function ConversionSettings({
   settings,
   onChoose,
+  onRetry,
+  retryAvailability,
 }: {
   readonly settings: ConversionSettingsState;
   readonly onChoose: (intentId: string) => void;
+  /** Asks for the catalog again after a read that did not answer. */
+  readonly onRetry: () => void;
+  /** Whether that request may be made right now, from the one lane rule. */
+  readonly retryAvailability: ConversionAvailability;
 }): ReactElement | null {
   if (settings.status === "noBackend") {
     // Nothing is said here. The panel already explains that this session has no
@@ -225,9 +242,36 @@ export function ConversionSettings({
     );
   }
   if (settings.status === "failed") {
+    // **A read that did not answer is not a build that offers nothing.**
+    // Nothing else will ask again: the installation has not changed, so
+    // everything keyed on it correctly stays where it is, and a `Check again`
+    // that resolves the same build answers a different question truthfully.
+    // Without this control a transient help-probe failure would refuse every
+    // conversion for the life of the session.
+    const refusal = retryAvailability.status === "unavailable" ? retryAvailability : null;
     return (
       <div className="conversion-settings" data-settings-state="failed">
-        <p className="quiet-text">{settings.error.summary}</p>
+        <p className="quiet-text" id={CATALOG_RETRY_REASON}>
+          {settings.error.summary}
+        </p>
+        <button
+          aria-describedby={
+            refusal === null
+              ? CATALOG_RETRY_REASON
+              : `${CATALOG_RETRY_REASON} ${conversionNoticeId(refusal.reason)}`
+          }
+          className="link-button"
+          disabled={refusal !== null}
+          onClick={onRetry}
+          type="button"
+        >
+          Try again
+        </button>
+        {refusal === null ? null : (
+          <p className="quiet-text" id={conversionNoticeId(refusal.reason)}>
+            {refusal.message}
+          </p>
+        )}
       </div>
     );
   }
@@ -306,12 +350,20 @@ function AxisFieldset({
           >
             <label>
               <input
+                // Both refusals say so to assistive technology, and they say it
+                // differently on purpose. A value the reader might try to
+                // choose is `disabled`: out of the tab order, out of pointer
+                // reach, refused to every route at once. The value they have
+                // *already* chosen is `aria-disabled` instead -- it is the
+                // checked item, so it is the group's natural focus, and taking
+                // that away would move the group's tab stop somewhere the
+                // reader did not put it. Either way the state is announced as
+                // unavailable and the reason is what the control points at, and
+                // the handler below refuses anything that is not selectable, so
+                // neither can be chosen by a synthesised change.
                 aria-describedby={noteId}
-                checked={state.status === "selected"}
-                // A refused value is refused to every route at once. The
-                // attribute takes it out of the tab order and out of pointer
-                // reach; the handler below refuses it again, so a synthesised
-                // change cannot select what no control would offer.
+                aria-disabled={state.status === "selectedUnavailable" ? true : undefined}
+                checked={state.status === "selected" || state.status === "selectedUnavailable"}
                 disabled={state.status === "unavailable"}
                 name={`conversion-setting-${axis}`}
                 onChange={() => {

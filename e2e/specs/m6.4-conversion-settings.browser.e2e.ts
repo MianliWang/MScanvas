@@ -18,6 +18,7 @@ import {
   ALLOWED_CONSOLE_SUBSTRINGS,
   boxOf,
   consoleEntries,
+  focusedName,
   heldInvokeCount,
   holdInvoke,
   horizontalOverflow,
@@ -742,6 +743,117 @@ describe("M6.4 — visible conversion settings, rendered", () => {
     expect(await catalogProbes()).toBe(catalogsBefore + 1);
     // Nothing was started, and no destination was ever asked for.
     expect(await callsOf("choose_workspace_conversion_destination")).toBe(0);
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("gives a failed catalog read its own retry, which the backend control is not", async () => {
+    // C1, in the shipped bundle. A read that did not answer is not a build that
+    // offers nothing, and nothing else will ask again -- the installation has
+    // not changed, so every signal keyed on one correctly stays where it is.
+    // Two controls, two questions, and neither may quietly do the other's work.
+    await browser.setWindowSize(1_366, 768);
+    await installIpcBoundary({
+      ...ipcTable(),
+      describe_workspace_conversion_queue: planFor(SHIPPED_INTENT),
+      get_workspace_conversion_intents: {
+        __reject: {
+          kind: "provider_unavailable",
+          summary: "MSCanvas could not read the installed ProteoWizard.",
+          detail: null,
+          retryable: true,
+        },
+      },
+    });
+    await browser.url("/");
+    await browser.$(VENDOR).waitForDisplayed({ timeout: 60_000 });
+    await browser.$(VENDOR).click();
+    await browser.$(PANEL).waitForDisplayed({ timeout: 60_000 });
+
+    const retry = `${SETTINGS} button.link-button`;
+    await browser.$(retry).waitForDisplayed({ timeout: 30_000 });
+    expect(await catalogProbes()).toBe(1);
+    // The control points at what did not work before offering another attempt.
+    expect(await describedText(retry)).toContain("could not read the installed ProteoWizard");
+
+    // The banner's own control answers about the backend and leaves this alone.
+    const probesBefore = await backendProbes();
+    await recheckTheBackend();
+    await browser.waitUntil(async () => (await backendProbes()) > probesBefore, {
+      timeout: 30_000,
+      timeoutMsg: "Check again never reached the backend",
+    });
+    await browser.pause(500);
+    expect(await catalogProbes()).toBe(1);
+    expect(await browser.$(retry).isExisting()).toBe(true);
+
+    // This one answers about the catalog, and it is reachable without a
+    // pointer: focused, then activated from the keyboard.
+    await setInvokeResult("get_workspace_conversion_intents", intentCatalog());
+    await browser.execute((target: string) => {
+      (document.querySelector(target) as HTMLElement | null)?.focus();
+    }, retry);
+    expect(await focusedName()).toBe("Try again");
+    await browser.keys(["Enter"]);
+
+    await browser.$(`${SETTINGS} fieldset[data-axis="precision"]`).waitForDisplayed({
+      timeout: 30_000,
+    });
+    expect(await catalogProbes()).toBe(2);
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("shows a preserved unrunnable selection as chosen and unavailable, in every group", async () => {
+    // C4, in the shipped bundle. The chosen semantic survives an installation
+    // change on purpose. What must not survive with it is the appearance of
+    // being runnable: before this, all four groups rendered it as an ordinary
+    // checked, enabled radio with only its plain disclosure beside it, and the
+    // single sentence saying otherwise sat several elements away.
+    await openTheSettings();
+    await setInvokeResult("describe_workspace_conversion_queue", planFor(intentFor({ precision: "mz64Intensity64" })));
+    await browser.$(radio("precision", "mz64Intensity64")).click();
+    await browser.waitUntil(async () => isChecked(radio("precision", "mz64Intensity64")), {
+      timeout: 30_000,
+      timeoutMsg: "the wider precision was never selected",
+    });
+
+    // The installation is replaced by one that runs only what MSCanvas ships,
+    // so the preserved choice is now a row this build cannot express.
+    await setInvokeResult("get_workspace_conversion_intents", narrowedCatalog(1));
+    await setInvokeResult("inspect_backend", { ...availableBackend, installationGeneration: 1 });
+    await recheckTheBackend();
+
+    const chosen = radio("precision", "mz64Intensity64");
+    await browser.waitUntil(
+      async () => (await browser.$(chosen).getAttribute("aria-disabled")) === "true",
+      { timeout: 30_000, timeoutMsg: "the stranded selection never said it was unavailable" },
+    );
+    // Still checked: it is the scientific request the user made.
+    expect(await isChecked(chosen)).toBe(true);
+    // And the reason is what the control itself points at.
+    expect(await describedText(chosen)).toContain(
+      "The installed ProteoWizard build does not offer this option",
+    );
+    // Every group carries the same statement about the one selection.
+    const states = await browser.execute(
+      (selector: string) =>
+        [...document.querySelectorAll(`${selector} input[type="radio"]:checked`)].map((each) => ({
+          axis: each.closest("fieldset")?.getAttribute("data-axis") ?? "",
+          disabled: each.getAttribute("aria-disabled"),
+        })),
+      SETTINGS,
+    );
+    expect(states).toHaveLength(4);
+    for (const state of states) {
+      expect(state.disabled).toBe("true");
+    }
+    // An ordinary route out is still an ordinary enabled control, and it works.
+    await setInvokeResult("describe_workspace_conversion_queue", planFor(SHIPPED_INTENT));
+    expect(await browser.$(radio("precision", "mz64Intensity32")).isEnabled()).toBe(true);
+    await browser.$(radio("precision", "mz64Intensity32")).click();
+    await browser.waitUntil(async () => isChecked(radio("precision", "mz64Intensity32")), {
+      timeout: 30_000,
+      timeoutMsg: "the ordinary route out was not takeable",
+    });
     expect(await unexpectedConsole()).toEqual([]);
   });
 

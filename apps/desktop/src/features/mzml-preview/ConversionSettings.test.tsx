@@ -1251,6 +1251,111 @@ describe("choosing what a conversion will do", () => {
     ).toBeNull();
   });
 
+  it("marks a preserved unrunnable selection unavailable where the reader meets it", async () => {
+    // C4, on screen. The chosen semantic survives an installation change --
+    // that is deliberate, and it is a scientific request rather than a property
+    // of one catalog. What must not survive with it is the *appearance* of
+    // being runnable: before this, all four groups showed the selection as an
+    // ordinary checked, enabled radio carrying only its plain disclosure, and
+    // the single sentence saying otherwise sat several elements away beside
+    // Convert.
+    const everythingElse = intentCatalog()
+      .intents.map((option) => option.intent.id)
+      .filter((id) => id !== SHIPPED_INTENT.id);
+    let replaced = false;
+    const { api, panel } = await openTheSettings({
+      availability: availableBackend,
+      conversionIntents: () =>
+        Promise.resolve(
+          replaced
+            ? intentCatalog({ unsupported: everythingElse, installationGeneration: 1 })
+            : intentCatalog(),
+        ),
+    });
+    await waitFor(() => {
+      expect(choice(panel, "Numeric precision", /64-bit · intensity 64-bit/u)).toBeEnabled();
+    });
+    fireEvent.click(choice(panel, "Numeric precision", /64-bit · intensity 64-bit/u));
+    await waitFor(() => {
+      expect(choice(panel, "Numeric precision", /64-bit · intensity 64-bit/u).checked).toBe(true);
+    });
+
+    replaced = true;
+    api.noteInstallationObserved();
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+
+    const chosen = () => choice(panel, "Numeric precision", /64-bit · intensity 64-bit/u);
+    await waitFor(() => {
+      expect(chosen()).toHaveAttribute("aria-disabled", "true");
+    });
+    // Still checked: it is what the user asked for, and deselecting it would be
+    // the silent substitution this design refuses.
+    expect(chosen().checked).toBe(true);
+    // And the reason is what the control points at, not a sentence elsewhere.
+    expect(describedText(chosen())).toContain(
+      "The installed ProteoWizard build does not offer this option",
+    );
+    // Every group says the same thing about the one selection.
+    for (const [group, label] of [
+      ["Peak processing", "No additional centroiding"],
+      ["Spectra included", "All spectra"],
+      ["Array compression", "zlib compressed"],
+    ] as const) {
+      const selected = choice(panel, group, label);
+      expect(selected.checked).toBe(true);
+      expect(selected).toHaveAttribute("aria-disabled", "true");
+      expect(describedText(selected)).toContain("does not offer this option");
+    }
+    // The lane refuses the conversion from its own authority, as it already did.
+    expect(convertButton(panel)).toBeDisabled();
+    // And an ordinary route out is still an ordinary enabled control.
+    expect(choice(panel, "Numeric precision", /64-bit · intensity 32-bit/u)).toBeEnabled();
+  });
+
+  it("offers the catalog its own retry, which a backend recheck is not", async () => {
+    // C1, on screen. A read that did not answer is not a build that offers
+    // nothing, and nothing else will ask again: the installation has not
+    // changed, so every signal keyed on one correctly stays where it is. Two
+    // controls, two questions -- and pressing the wrong one must not silently
+    // do the other's work.
+    let catalogs = 0;
+    const { api, panel } = await openTheSettings({
+      availability: availableBackend,
+      conversionIntents: () => {
+        catalogs += 1;
+        return catalogs === 1
+          ? Promise.reject({
+              kind: "provider_unavailable",
+              summary: "MSCanvas could not read the installed ProteoWizard.",
+              detail: null,
+              retryable: true,
+            })
+          : Promise.resolve(intentCatalog());
+      },
+    });
+    const retry = await within(panel).findByRole("button", { name: "Try again" });
+    expect(catalogs).toBe(1);
+    expect(describedText(retry)).toContain("could not read the installed ProteoWizard");
+    expect(convertButton(panel)).toBeDisabled();
+
+    // The backend banner's own control answers about the backend, and leaves
+    // this alone.
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => {
+      expect(api.calls().filter((command) => command === "inspectBackend")).toHaveLength(2);
+    });
+    expect(catalogs).toBe(1);
+    expect(within(panel).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+
+    // This one answers about the catalog.
+    fireEvent.click(within(panel).getByRole("button", { name: "Try again" }));
+    await waitFor(() => {
+      expect(within(panel).getByRole("group", { name: "Numeric precision" })).toBeVisible();
+    });
+    expect(catalogs).toBe(2);
+    expect(api.calls().filter((command) => command === "inspectBackend")).toHaveLength(2);
+  });
+
   it("says why it will not convert when the catalog cannot be established", async () => {
     const { api, panel } = await openTheSettings({
       conversionIntents: () =>

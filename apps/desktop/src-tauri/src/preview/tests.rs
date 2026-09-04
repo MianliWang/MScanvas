@@ -6981,6 +6981,22 @@ struct ConvertingProvider<R = FakeConversionRunner> {
     /// here, because the window is real time in production and injected code
     /// in a deterministic test.
     on_conversion_backend: BackendResolutionHook,
+    /// Whether the installed build can still be resolved at all.
+    ///
+    /// Production loses one by deletion, by replacement with something that no
+    /// longer declares what MSCanvas needs, or by a chosen folder moving out
+    /// from under it -- and the two questions that notice are the same two:
+    /// `availability` stops naming an identity, and `conversion_backend` stops
+    /// binding one. Held in one flag so a test cannot make one true and not the
+    /// other, which is a state no filesystem can produce.
+    installed: Arc<AtomicBool>,
+    /// A resolution failure that establishes nothing about the installation.
+    ///
+    /// Production has these too: help output that could not be read this time,
+    /// a spawn that lost a race with something holding the file. The build is
+    /// still there and still answers the availability question, so nothing
+    /// about the installation may move because of it.
+    transient_resolution_failure: Arc<AtomicBool>,
 }
 
 impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
@@ -6994,6 +7010,8 @@ impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
             installation_label: Arc::new(Mutex::new(String::from("msconvert"))),
             bindings: Arc::new(AtomicUsize::new(0)),
             on_conversion_backend: Arc::new(Mutex::new(None)),
+            installed: Arc::new(AtomicBool::new(true)),
+            transient_resolution_failure: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -7006,6 +7024,31 @@ impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
     /// How many backend resolutions this provider has been asked for.
     fn bindings(&self) -> Arc<AtomicUsize> {
         Arc::clone(&self.bindings)
+    }
+
+    /// Whether the build is still installed, as the test can change it.
+    fn installed(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.installed)
+    }
+
+    /// The one installation this provider resolves to.
+    ///
+    /// Read by both questions that can name one -- the availability verdict and
+    /// the conversion binding -- so the two can never disagree about which
+    /// build this session is on.
+    fn resolved_installation(&self) -> InstallationIdentity {
+        backend(
+            &self
+                .installation_label
+                .lock()
+                .expect("the installation label is never poisoned"),
+            EVIDENCED_RELEASE,
+        )
+    }
+
+    /// Whether the next resolutions fail without the build having gone.
+    fn transient_resolution_failure(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.transient_resolution_failure)
     }
 
     /// The name this provider will answer with, changeable from the test.
@@ -7057,7 +7100,36 @@ impl ConvertingProvider<FakeConversionRunner> {
 
 impl<R: ProcessRunner + Send + Sync> PreviewProvider for ConvertingProvider<R> {
     fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
-        self.inner.availability()
+        if !self.installed.load(Ordering::SeqCst) {
+            // No identity, exactly as production reports a build that did not
+            // resolve: an installation that cannot be used is not one anything
+            // could have come from, so it compares equal to nothing.
+            return (
+                BackendAvailabilityDto {
+                    state: "unavailable".to_owned(),
+                    origin: "automatic".to_owned(),
+                    installation_generation: 0,
+                    release: None,
+                    build_date: None,
+                    same_installation: false,
+                    failure: Some(BackendFailureDto {
+                        kind: "backend_not_found".to_owned(),
+                        summary: "ProteoWizard was not found.".to_owned(),
+                        corrective_action: "Install ProteoWizard separately.".to_owned(),
+                    }),
+                },
+                None,
+            );
+        }
+        // The identity this provider's *conversion* binding reports, not the
+        // inner fake's own. Production resolves both from one discovery -- the
+        // trait says so, and says why: asking twice would let the verdict
+        // describe one installation and the identity another. A fake that
+        // answered with two identities would make every reading look like a
+        // change, which is not a state any filesystem can produce.
+        let (verdict, _) = self.inner.availability();
+        let identity = (verdict.state == "available").then(|| self.resolved_installation());
+        (verdict, identity)
     }
 
     fn run(
@@ -7090,7 +7162,24 @@ impl<R: ProcessRunner + Send + Sync> PreviewProvider for ConvertingProvider<R> {
     }
 
     fn conversion_backend(&self) -> Result<ConversionBackend<'_>, PreviewErrorDto> {
+        // Counted before the refusals below, because production does the work
+        // either way: resolving is what discovers that there is nothing to
+        // resolve.
         self.bindings.fetch_add(1, Ordering::SeqCst);
+        if !self.installed.load(Ordering::SeqCst) {
+            return Err(PreviewErrorDto::new(
+                "backend_not_found",
+                "ProteoWizard was not found.",
+                false,
+            ));
+        }
+        if self.transient_resolution_failure.load(Ordering::SeqCst) {
+            return Err(PreviewErrorDto::new(
+                "capability_evidence_unavailable",
+                "The installed ProteoWizard did not describe the commands MSCanvas needs.",
+                false,
+            ));
+        }
         if let Some(hook) = self
             .on_conversion_backend
             .lock()
@@ -7101,13 +7190,7 @@ impl<R: ProcessRunner + Send + Sync> PreviewProvider for ConvertingProvider<R> {
         }
         Ok(ConversionBackend {
             capabilities: self.capabilities.clone(),
-            installation: Some(backend(
-                &self
-                    .installation_label
-                    .lock()
-                    .expect("the installation label is never poisoned"),
-                EVIDENCED_RELEASE,
-            )),
+            installation: Some(self.resolved_installation()),
             runner: &self.runner,
         })
     }
@@ -13168,35 +13251,68 @@ fn a_stopped_retry_keeps_the_failures_it_had_not_reached() {
 fn a_queue_stopped_behind_the_gate_resolves_no_backend() {
     let fixture = TestFile::new("queue-stop-gate-first");
     let destination = destination_root(&fixture, "out");
-    let (provider, observe_start, release_preview) =
-        ConvertingProvider::faithful().parking_the_first_preview();
+    let provider = ConvertingProvider::faithful();
     let bindings = provider.bindings();
+    let hook = provider.on_conversion_backend();
     let service = Arc::new(PreviewService::new(Box::new(provider)));
-    let preview_source = service
-        .add_dataset(&fixture.path)
-        .expect("add the preview dataset");
     let handles: Vec<String> = ["one.raw", "two.raw"]
         .iter()
         .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
         .collect();
 
-    // A preview holds the one backend lane, which is what a queue waits behind.
-    let opening = std::thread::spawn({
-        let service = Arc::clone(&service);
-        let handle = preview_source.handle.clone();
-        move || service.open_preview(&handle)
-    });
-    observe_start
-        .recv_timeout(Duration::from_secs(10))
-        .expect("the preview reached the provider and holds the gate");
-
+    // Admitted with the lane free, so its mandatory pre-picker preflight runs
+    // here rather than becoming part of what this case measures. That preflight
+    // resolves the build once; the whole point below is that the *queue* then
+    // resolves none of its own.
     let document = current_document(&service);
     let reservation = service
         .begin_conversion_queue_shipped(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("the queue is admitted");
+    let bound_by_preflight = bindings.load(Ordering::SeqCst);
+    assert_eq!(
+        bound_by_preflight, 1,
+        "admitting a queue proves the build once, before any picker"
+    );
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("claim it");
+
+    // Something bounded now holds the one backend lane, and that is what the
+    // queue's own worker waits behind.
+    //
+    // A parked *preview* used to be what held it, admitted before the queue
+    // existed. It cannot be any more, and for two independent reasons: a queue
+    // is now admitted only from a free lane, and Rust refuses a preview while a
+    // conversion holds the slot. A catalog read is the honest stand-in -- it
+    // takes the same gate, reads the same installed tools, and is exactly the
+    // kind of bounded work the queue's worker is expected to wait behind.
+    let (holding, observe_hold) = mpsc::channel();
+    let (release_hold, held) = mpsc::channel();
+    {
+        let holding = Mutex::new(Some(holding));
+        let held = Mutex::new(Some(held));
+        *hook.lock().expect("arm the hook") = Some(Box::new(move || {
+            let Some(started) = holding.lock().expect("the hold channel").take() else {
+                return;
+            };
+            started.send(()).expect("announce the held lane");
+            held.lock()
+                .expect("the release channel")
+                .take()
+                .expect("a held lane is released exactly once")
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the held lane is released");
+        }));
+    }
+    let holder = std::thread::spawn({
+        let service = Arc::clone(&service);
+        move || service.conversion_intent_catalog()
+    });
+    observe_hold
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the catalog read reached the provider and holds the gate");
+    let bound_by_holder = bindings.load(Ordering::SeqCst);
+
     let worker = {
         let service = Arc::clone(&service);
         let destination = destination.clone();
@@ -13216,11 +13332,9 @@ fn a_queue_stopped_behind_the_gate_resolves_no_backend() {
         .stop_conversion_queue(&operation.to_string(), document)
         .expect("the running queue of this document is stoppable");
 
-    release_preview
-        .send(())
-        .expect("release the parked preview");
+    release_hold.send(()).expect("release the held lane");
     let update = worker.join().expect("the queue worker finishes");
-    opening.join().expect("the preview finishes").ok();
+    holder.join().expect("the catalog read finishes").ok();
     assert_eq!(
         terminal_reason(&update),
         ConversionQueueTerminalReasonDto::Stopped
@@ -13238,8 +13352,8 @@ fn a_queue_stopped_behind_the_gate_resolves_no_backend() {
     );
     assert_eq!(
         bindings.load(Ordering::SeqCst),
-        0,
-        "no build was resolved for a queue that will convert nothing"
+        bound_by_holder,
+        "the stopped queue resolved no build of its own"
     );
     assert_eq!(
         entry_names(&destination),
@@ -13978,6 +14092,241 @@ fn an_unevidenced_build_refuses_a_queue_before_the_destination_picker() {
             "no reservation was taken"
         );
     }
+}
+
+/// A build that has gone is observed by the `BEGIN` that discovers it, so the
+/// session stops describing it rather than repeating one refusal for ever.
+///
+/// The pre-picker preflight resolves the installed executable. When that
+/// resolution *succeeds* the identity is recorded, which is what lets a build
+/// replaced in place be noticed here. When it failed, nothing was recorded at
+/// all -- so a catalogued executable that had been deleted left the banner
+/// saying available, the catalog offering that build's availability marks, the
+/// plan current, and every press producing the same refusal.
+///
+/// Nothing is inferred from the error. The provider's own availability
+/// authority is asked, and it names an identity only where something usable
+/// actually resolved.
+#[test]
+fn a_begin_that_cannot_resolve_the_build_observes_that_it_is_gone() {
+    let fixture = TestFile::new("begin-resolution-lost");
+    let provider = ConvertingProvider::faithful();
+    let installed = provider.installed();
+    let service = PreviewService::new(Box::new(provider));
+    let handle = add_one_acquisition(&service, &fixture.shimadzu_lcd("one.lcd"));
+    let document = current_document(&service);
+
+    // A catalog is read while the build is there, which is what a session has
+    // on screen before any of this.
+    let before = service
+        .conversion_intent_catalog()
+        .expect("the installed build offers a catalog")
+        .installation_generation;
+
+    // And then the executable is gone.
+    installed.store(false, Ordering::SeqCst);
+
+    let refusal = service
+        .begin_conversion_queue_shipped(
+            std::slice::from_ref(&handle),
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect_err("a build that cannot be resolved converts nothing");
+    assert_eq!(refusal.kind, "backend_not_found");
+
+    // Nothing was created on the way to that refusal.
+    assert!(
+        matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Idle
+        ),
+        "a refused BEGIN leaves the slot exactly where it was"
+    );
+
+    // **And the session knows.** The sequence has moved, so the ordinary slot
+    // read the frontend already makes carries the news: the old verdict is
+    // reconciled and the catalog that described the lost build stops being an
+    // answer.
+    assert!(
+        service.conversion_state().installation_generation > before,
+        "the resolution that failed established that the build is gone"
+    );
+    assert_eq!(
+        service.inspect_backend().state,
+        "unavailable",
+        "and the verdict this session answers with says so"
+    );
+}
+
+/// A resolution that failed without establishing anything must not manufacture
+/// an installation change.
+///
+/// The observation above is a statement about the installed build, and it is
+/// only allowed where the provider's own authority says nothing usable
+/// resolved. Help output that could not be read this time is not that: the
+/// build is still there, still answers the availability question, and a
+/// generation advanced on its account would revoke a catalog and a plan that
+/// are both still true.
+#[test]
+fn a_transient_resolution_failure_does_not_manufacture_an_installation_change() {
+    let fixture = TestFile::new("begin-resolution-transient");
+    let provider = ConvertingProvider::faithful();
+    let transient = provider.transient_resolution_failure();
+    let service = PreviewService::new(Box::new(provider));
+    let handle = add_one_acquisition(&service, &fixture.shimadzu_lcd("one.lcd"));
+    let document = current_document(&service);
+    let before = service
+        .conversion_intent_catalog()
+        .expect("the installed build offers a catalog")
+        .installation_generation;
+
+    transient.store(true, Ordering::SeqCst);
+    let refusal = service
+        .begin_conversion_queue_shipped(
+            std::slice::from_ref(&handle),
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect_err("a resolution that did not answer starts nothing");
+    assert_eq!(refusal.kind, "capability_evidence_unavailable");
+
+    assert_eq!(
+        service.conversion_state().installation_generation,
+        before,
+        "a failure that establishes nothing about the build moves nothing"
+    );
+}
+
+/// The exact-intent preflight is a duty, not a courtesy: a queue is never
+/// admitted without it, however busy the one backend lane is.
+///
+/// It used to run only when the lane happened to be free. A preview, a drop
+/// scan or another document's check holding it meant the check was skipped
+/// entirely -- and a build that could not express the chosen semantic produced
+/// a bound queue, a reservation, an opened picker and a chosen folder before
+/// anything refused. What M6.4 promises is a refusal before all of that, and a
+/// promise that holds only when a lock happens to be free is not one.
+#[test]
+fn a_busy_backend_lane_delays_the_intent_preflight_rather_than_skipping_it() {
+    let fixture = TestFile::new("preflight-busy-lane");
+    let destination = destination_root(&fixture, "out");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    // A build whose help is the wrong tool's: its grammar cannot express any
+    // mzML conversion, so the exact-intent gate is what refuses this queue.
+    let provider = ConvertingProvider::new(
+        conversion_capabilities_for(
+            BackendTool::MsAccess,
+            EVIDENCED_RELEASE,
+            Some(EVIDENCED_REVISION),
+            EVIDENCED_EXECUTABLE_SHA256,
+        ),
+        runner,
+    );
+    let hook = provider.on_conversion_backend();
+    let service = Arc::new(PreviewService::new(Box::new(provider)));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    let document = current_document(&service);
+
+    // Something bounded takes the one backend lane and holds it.
+    let (holding, observe_hold) = mpsc::channel();
+    let (release_hold, held) = mpsc::channel();
+    {
+        let holding = Mutex::new(Some(holding));
+        let held = Mutex::new(Some(held));
+        *hook.lock().expect("arm the hook") = Some(Box::new(move || {
+            let Some(started) = holding.lock().expect("the hold channel").take() else {
+                return;
+            };
+            started.send(()).expect("announce the held lane");
+            held.lock()
+                .expect("the release channel")
+                .take()
+                .expect("a held lane is released exactly once")
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the held lane is released");
+        }));
+    }
+    let holder = std::thread::spawn({
+        let service = Arc::clone(&service);
+        move || service.conversion_intent_catalog()
+    });
+    observe_hold
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the catalog read holds the gate");
+
+    // Convert is pressed while that lane is held. It waits rather than
+    // skipping the check it cannot currently make.
+    let begun = std::thread::spawn({
+        let service = Arc::clone(&service);
+        let handle = handle.clone();
+        move || {
+            service.begin_conversion_queue_shipped(
+                std::slice::from_ref(&handle),
+                ConversionConflictPolicyDto::Fail,
+                document,
+            )
+        }
+    });
+    // It has not answered, because it cannot: the answer needs the lane. And
+    // nothing is reserved meanwhile, which is the half that used to be false.
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Idle
+        ),
+        "nothing is reserved while the preflight waits"
+    );
+
+    release_hold.send(()).expect("release the held lane");
+    holder.join().expect("the catalog read finishes").ok();
+    let refusal = begun
+        .join()
+        .expect("BEGIN finishes")
+        .expect_err("this build cannot express the chosen semantic");
+    assert_eq!(refusal.kind, "conversion_intent_unsupported");
+
+    // No queue, no reservation, no picker, no process, nothing staged.
+    assert!(
+        matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Idle
+        ),
+        "a refused BEGIN creates nothing at all"
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 0);
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+}
+
+/// The same preflight, from an idle lane, runs exactly once.
+///
+/// Making the check mandatory must not make it repeated: resolving the backend
+/// runs the installed tool's help, and a second resolution per press would be a
+/// process spent proving what the first one just proved.
+#[test]
+fn an_idle_begin_resolves_the_build_once_for_its_preflight() {
+    let fixture = TestFile::new("preflight-idle-once");
+    let provider = ConvertingProvider::faithful();
+    let bindings = provider.bindings();
+    let service = PreviewService::new(Box::new(provider));
+    let handle = add_one_acquisition(&service, &fixture.shimadzu_lcd("one.lcd"));
+    let document = current_document(&service);
+
+    let before = bindings.load(Ordering::SeqCst);
+    service
+        .begin_conversion_queue_shipped(
+            std::slice::from_ref(&handle),
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect("an evidenced build admits the shipped semantic");
+    assert_eq!(
+        bindings.load(Ordering::SeqCst) - before,
+        1,
+        "one resolution answers the family evidence and the exact intent alike"
+    );
 }
 
 /// A row removed while the pre-picker preflight is resolving the backend is

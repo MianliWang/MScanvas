@@ -1539,23 +1539,78 @@ impl PreviewService {
             }
             families
         };
-        // Provider evidence for every distinct family in the plan, before the
-        // destination picker opens. Execution re-asks fail-closed per item and
-        // per family regardless; what this adds is that a user is normally
-        // refused before choosing a folder rather than after -- and refused
-        // for *any* unevidenced family in the batch, because a mixed queue is
-        // not authorized by its first item.
+        // **A queue that is already running makes this request invalid, and it
+        // is refused here rather than after the wait below.**
         //
-        // Only when the backend lane is free right now. Resolving the backend
-        // runs the installed tools' help, which is a process, and processes
-        // take the one lane -- but a queue has always been admittable while a
-        // preview holds that lane, with the queue's own worker doing the
-        // waiting rather than this click. Blocking here would change that, so
-        // when the lane is held the pre-picker courtesy is skipped and the
-        // authoritative per-family gate at execution refuses before anything
-        // is staged.
-        if let Some(running) = self.try_enter_backend() {
-            let backend = self.provider.conversion_backend()?;
+        // The slot refuses a second queue anyway, at the very end of this
+        // function. What that cannot do is refuse it *cheaply*: `drain_queue`
+        // holds the backend gate for the whole of a run, so a press landing
+        // during one would otherwise wait for the entire queue on the gate
+        // below only to be told the slot had been busy all along. This is the
+        // same authority asked where no waiting has started yet -- it takes
+        // only the slot lock and launches nothing.
+        if self.conversion_slot().is_busy() {
+            return Err(conversion_busy());
+        }
+        // Provider evidence for every distinct family in the plan, and that
+        // this exact build declares everything this exact intent emits,
+        // **before the destination picker opens**.
+        //
+        // Waited for rather than skipped. This block used to run only when the
+        // backend lane happened to be free, on the reasoning that a queue has
+        // always been admittable while a preview holds that lane and the
+        // authoritative per-item gate at execution refuses fail-closed anyway.
+        // That reasoning is sound for the family evidence it was written for
+        // and wrong for what M6.4 added beside it: an intent the user chose,
+        // read from a catalog, summarised in a plan, and promised -- here, in
+        // ADR 0043 and in the product record -- to be refused before a folder
+        // is chosen. **A guarantee that holds only when a lock happens to be
+        // free is not a guarantee**, and the price of skipping it is a queue
+        // bound to a semantic this build cannot express, a picker opened, a
+        // destination staged, and every item failing afterwards.
+        //
+        // The wait is bounded because every holder of this gate is: a preview
+        // read, a check, a chooser, a catalog probe. The one unbounded holder
+        // is a running queue, and the slot refused this request above before
+        // any waiting began.
+        {
+            let running = self.enter_backend();
+            // Again on this side of the gate, exactly as the catalog read does:
+            // a caller admitted before a stop began waits here for as long as
+            // that conversion takes, and it may have ended by losing track of
+            // its converter.
+            self.require_usable_backend()?;
+            let backend = match self.provider.conversion_backend() {
+                Ok(backend) => backend,
+                Err(error) => {
+                    // **Resolution failing is an observation too, and it is the
+                    // one that used to be lost.**
+                    //
+                    // The catalogued executable can be deleted, replaced by
+                    // something that no longer declares what MSCanvas needs, or
+                    // moved out from under a chosen folder, and `BEGIN` is very
+                    // often what finds out. Returning here without recording it
+                    // left the session naming a build that is gone: the banner
+                    // said available, the catalog went on offering that build's
+                    // availability marks, the plan stayed current, and pressing
+                    // Convert again produced the same refusal for ever.
+                    //
+                    // **Nothing is inferred from the error.** What this asks is
+                    // the provider's own availability authority -- the same
+                    // resolution `inspect_backend` is answered from, which
+                    // returns the verdict and the identity together and yields
+                    // an identity only where something usable actually
+                    // resolved. It goes through the one counter, so a build
+                    // that really is gone advances the sequence and a failure
+                    // that establishes nothing about the installation advances
+                    // nothing. The reading is cached as this session's last
+                    // verdict as well, so the banner a reload recovers is the
+                    // one this refusal was decided against.
+                    self.stamped_availability();
+                    drop(running);
+                    return Err(error);
+                }
+            };
             // **Resolving an executable is an observation, and it is complete
             // the moment it succeeds.**
             //
@@ -1569,10 +1624,9 @@ impl PreviewService {
             // control. The user would then be told this build does not offer
             // the option while the controls still said it did.
             //
-            // Nothing is manufactured. Resolution failing returns above without
-            // reaching this, the generation moves only when the resolved
-            // identity actually differs, and an operation failing never moves
-            // it by itself.
+            // Nothing is manufactured. The generation moves only when the
+            // resolved identity actually differs, and an operation failing
+            // never moves it by itself.
             self.note_resolved(backend.installation.clone());
             for kind in preflight_families {
                 refuse_unevidenced_build(&backend.capabilities, kind)?;
@@ -1584,7 +1638,8 @@ impl PreviewService {
             // licence to run it now. The same gate the command builder applies
             // per item, asked before a picker opens rather than after -- which
             // is what keeps a refusal free of a destination, a staging area and
-            // a launched process.
+            // a launched process, and which is now true of every admitted
+            // queue rather than of the ones that found the lane free.
             backend
                 .capabilities
                 .require_conversion_intent(&intent)
@@ -6468,29 +6523,17 @@ fn differs(left: f64, right: f64) -> bool {
 }
 
 impl PreviewService {
-    /// Takes the right to run a backend operation only if it is free now.
-    ///
-    /// For work that is a courtesy rather than a duty: the queue's pre-picker
-    /// evidence check improves where a refusal lands, and the authoritative
-    /// check at execution does not depend on it having run. Nothing that
-    /// *must* happen may use this.
-    fn try_enter_backend(&self) -> Option<BackendRun<'_>> {
-        match self.backend_gate.try_lock() {
-            Ok(guard) => Some(BackendRun {
-                installation: self.installation_generation.load(Ordering::Relaxed),
-                _guard: guard,
-            }),
-            Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(BackendRun {
-                installation: self.installation_generation.load(Ordering::Relaxed),
-                _guard: poisoned.into_inner(),
-            }),
-            Err(std::sync::TryLockError::WouldBlock) => None,
-        }
-    }
-
     /// Waits for the right to run a backend operation.
     ///
     /// The guard is the permission; dropping it releases the next caller.
+    ///
+    /// There is deliberately no non-blocking variant any more. One existed for
+    /// "work that is a courtesy rather than a duty", and its only caller was
+    /// the queue's pre-picker check -- which M6.4 made a duty, because the
+    /// intent it validates is one the user chose and was promised a refusal
+    /// about before a folder is chosen. A gate that can be declined is a
+    /// guarantee that can be skipped, so the shape that allowed it is gone
+    /// rather than left available to the next caller who assumes otherwise.
     fn enter_backend(&self) -> BackendRun<'_> {
         let guard = self
             .backend_gate

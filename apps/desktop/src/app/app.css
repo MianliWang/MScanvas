@@ -611,8 +611,21 @@ button:disabled {
 }
 
 /* A refused choice, marked by more than the browser's dimming. */
-.conversion-setting-choice[data-choice-state="unavailable"] > label {
+.conversion-setting-choice[data-choice-state="unavailable"] > label,
+.conversion-setting-choice[data-choice-state="selectedUnavailable"] > label {
   color: var(--color-text-muted);
+}
+
+/*
+ * The chosen semantic this build cannot run.
+ *
+ * It stays checked, because it is still what the user asked for, and it reads
+ * as refused like every other refused value. Colour is never the only carrier:
+ * the state is announced through `aria-disabled` and the reason is the sentence
+ * the control points at.
+ */
+.conversion-setting-choice[data-choice-state="selectedUnavailable"] > label {
+  cursor: not-allowed;
 }
 
 /* What the chosen semantic costs, beside the plan that carries it. */

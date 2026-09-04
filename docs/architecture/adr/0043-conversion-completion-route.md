@@ -855,16 +855,16 @@ cancellation change.
 
 *Downstream:* M6.5.
 
-*Implemented, and not published.* One backend-owned catalog, one selected
+*Implemented and published.* One backend-owned catalog, one selected
 identity, and a plan that is Rust's answer rather than the interface's summary of
 its own controls — delivered on `feat/m6.4-visible-conversion-settings`, which
-review has now stopped three times. Three findings stopped it first and a bounded
+review stopped three times. Three findings stopped it first and a bounded
 correction closed them; the fresh review of that corrected head found two more,
 in the seam the correction itself had just widened; a second bounded correction
 closed those and was in turn stopped by a defect it introduced — a catalog read
-that fails once can no longer be retried, because the recovery had been living on
-the very conflation the correction removed. Every round is recorded in
-`BOOTSTRAP_STATUS.md`, and none of it is on `main`.
+that failed once could no longer be retried, because the recovery had been living
+on the very conflation the correction removed. Every round is recorded in
+`BOOTSTRAP_STATUS.md`.
 
 The stops are part of the record. A second review of the head that had passed every
 gate found three further truthfulness defects once the route's single repair pass
@@ -904,10 +904,27 @@ round: a generation alone cannot say whether the executable it names is one this
 session can launch, and a number arriving cannot say whether anyone has yet acted
 on it. Both facts had to be carried with their verdicts.
 
-What the fourth round has to answer is narrower and is not a retreat from that
+The fourth round answered a narrower question, and not by retreating from that
 model: **a read that failed is not a state the binding can clear.** Retrying it
-belongs to the lane that failed, or to the reader asking explicitly — never to
-an installation identity that has not changed.
+belongs to the reader asking explicitly, never to an installation identity that
+has not changed — so each failure has exactly one owner:
+
+```text
+backend verdict failed          ->  the banner's Check again
+catalog read failed             ->  the settings' own Try again
+automatic reconciliation failed ->  nobody; one attempt is the ration
+```
+
+Three consequences followed from asking that question properly. The pre-picker
+intent check became a duty rather than a courtesy the busy lane could decline —
+a guarantee that holds only when a lock is free is not one, and the shape that
+allowed it was deleted with its last caller. A `BEGIN` whose resolution *fails*
+now records what the provider's own availability authority establishes, so a
+build that is gone stops being described rather than producing the same refusal
+for ever; nothing is inferred from the error. And the reconciliation obligation
+was moved off `appliedGeneration` — an ordering watermark a preview open raises
+too — onto the settled binding, which is the thing an observation can actually
+be ahead of.
 
 **The graph stays where the evidence is.**
 `apps/desktop/src-tauri/src/preview/intent_catalog.rs` projects

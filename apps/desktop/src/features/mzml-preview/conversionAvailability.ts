@@ -358,6 +358,57 @@ export function canRetryConversion(
 }
 
 /**
+ * Whether a read of the conversion-intent catalog may be issued right now.
+ *
+ * **A catalog read is backend work, and it is not a conversion.** It launches
+ * `msconvert --help` on the one serialized lane, so it answers to the same lane
+ * facts every conversion answers to -- but only to the ones that are about the
+ * lane. Whether rows are selected, whether the slot has been read, whether a
+ * plan is current and whether the workspace is settling all say nothing about
+ * whether this question can be asked, so none of them is consulted.
+ *
+ * Four facts, in the order the lane already ranks them, each with the sentence
+ * the panel already uses:
+ *
+ * 1. a session that has stopped trusting the backend, which waiting never
+ *    clears;
+ * 2. a check owning the lane -- above usability, for the same reason it is
+ *    above usability everywhere else: a check reports the backend unusable for
+ *    as long as it runs;
+ * 3. a settled verdict this session cannot launch against, which is not a
+ *    catalog to retry but a backend to fix;
+ * 4. a conversion owning the lane. Rust would make this request wait behind the
+ *    whole queue, which is a process held open for minutes for an answer nobody
+ *    can act on until the queue ends.
+ *
+ * It is deliberately not a second busy predicate. The struct is the lane's own,
+ * the reasons and messages are the lane's own, and the only thing this adds is
+ * which of them apply.
+ */
+export function catalogReadAvailability(lane: ConversionLane): ConversionAvailability {
+  const reason = catalogReadRefusal(lane);
+  return reason === null
+    ? { status: "available" }
+    : { status: "unavailable", reason, message: CONVERSION_MESSAGES[reason] };
+}
+
+function catalogReadRefusal(lane: ConversionLane): ConversionUnavailableReason | null {
+  if (lane.backendQuarantined) {
+    return "backend-quarantined";
+  }
+  if (lane.backendChanging) {
+    return "backend-changing";
+  }
+  if (!lane.backendUsable) {
+    return "backend-unavailable";
+  }
+  if (lane.laneClaimed) {
+    return "conversion-running";
+  }
+  return null;
+}
+
+/**
  * Where the conversion panel says why an action is unavailable.
  *
  * One id per reason rather than one per control, because the two controls

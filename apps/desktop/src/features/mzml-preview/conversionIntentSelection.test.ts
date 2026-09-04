@@ -346,3 +346,39 @@ describe("what a conversion settings control may offer", () => {
     ).toBeNull();
   });
 });
+
+describe("a selection this installation cannot run", () => {
+  it("is reported as chosen and unavailable rather than as an ordinary selection", () => {
+    // C4. `reselect` keeps a preserved semantic on purpose, including into a
+    // build that cannot express it -- so "selected" and "available" come apart
+    // routinely, and one member for both said only the first. Every axis shows
+    // the same selection, so every axis has to say the same thing about it.
+    const wide = intentFor({ precision: "mz64Intensity64" });
+    const catalog = intentCatalog({ unsupported: [wide.id] });
+
+    for (const axis of CONVERSION_AXES) {
+      const value = wide[axis];
+      expect(choiceState(catalog, wide, axis, value)).toEqual({
+        status: "selectedUnavailable",
+        reason: "unsupported-by-installation",
+      });
+    }
+  });
+
+  it("is still an ordinary selection where the build can run it", () => {
+    const wide = intentFor({ precision: "mz64Intensity64" });
+    const catalog = intentCatalog();
+    for (const axis of CONVERSION_AXES) {
+      expect(choiceState(catalog, wide, axis, wide[axis])).toEqual({ status: "selected" });
+    }
+  });
+
+  it("is not a choice anything may take", () => {
+    // The recovery predicate counts routes *out*, and a value that cannot run
+    // is not one -- so a selection stranded this way must not make itself look
+    // like the ordinary way out of itself.
+    const wide = intentFor({ precision: "mz64Intensity64" });
+    const catalog = intentCatalog({ unsupported: [wide.id] });
+    expect(canChoose(choiceState(catalog, wide, "precision", wide.precision))).toBe(false);
+  });
+});

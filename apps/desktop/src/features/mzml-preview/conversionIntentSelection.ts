@@ -77,9 +77,21 @@ export type ConversionChoiceRefusal =
   /** The row exists; the installed ProteoWizard does not declare what it emits. */
   | "unsupported-by-installation";
 
-/** What one value of one axis can currently do. */
+/**
+ * What one value of one axis can currently do.
+ *
+ * **Selected and available are two facts, and one member for both was wrong.**
+ * A scientific choice survives an installation change on purpose, including
+ * into a build that cannot run it -- so "this is the value you chose" and "this
+ * value can run" come apart routinely, and a single `selected` said only the
+ * first while every control read as ordinary and usable. The conjunction has
+ * its own member, carrying the reason, because the reader has to see it beside
+ * the control they must change rather than in a sentence several elements away.
+ */
 export type ConversionChoiceState =
   | { readonly status: "selected" }
+  /** Chosen, and this installation cannot run what it names. */
+  | { readonly status: "selectedUnavailable"; readonly reason: ConversionChoiceRefusal }
   /** Choosing it selects exactly this admitted semantic. */
   | { readonly status: "selectable"; readonly intentId: string }
   | { readonly status: "unavailable"; readonly reason: ConversionChoiceRefusal };
@@ -265,7 +277,16 @@ export function choiceState<A extends ConversionAxis>(
   value: ConversionAxisValues[A],
 ): ConversionChoiceState {
   if (current[axis] === value) {
-    return { status: "selected" };
+    // The selected value, and whether it can run is the *selected row's* fact
+    // rather than this axis's -- all four groups show the same selection, so
+    // all four say the same thing about it. Looked up rather than assumed: a
+    // choice preserved across an installation change is still a row of the
+    // catalog, and still the one the user asked for, and may now be one this
+    // build cannot express.
+    const selected = catalogRow(catalog, current.id);
+    return selected !== null && selected.availability.kind !== "available"
+      ? { status: "selectedUnavailable", reason: "unsupported-by-installation" }
+      : { status: "selected" };
   }
   const row = rowForCombination(catalog, {
     format: current.format,

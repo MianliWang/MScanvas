@@ -669,7 +669,12 @@ function PlanState({
     <div className="conversion-plan">
       {/* Above the plan, because the plan is their consequence: the summary
           below is Rust's answer to whatever is selected here. */}
-      <ConversionSettings onChoose={conversion.chooseIntent} settings={conversion.settings} />
+      <ConversionSettings
+        onChoose={conversion.chooseIntent}
+        onRetry={conversion.retryCatalog}
+        retryAvailability={conversion.catalogRetryAvailability}
+        settings={conversion.settings}
+      />
       {/* With a result above it, silence is better than a second empty state --
           but only for the *text*. The settings and the control stay, because a
           conversion that cannot start has to say why wherever it is refused,
