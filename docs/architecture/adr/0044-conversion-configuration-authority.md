@@ -45,7 +45,7 @@ coding.
 | Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
 | May the conversion configuration read run now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate **and its quarantine boundary** — for the automatic first read and the explicit retry, not every `--help` a gated operation runs, and not a read for a binding that launches no probe at all. |
 | Who owns catalog request lifecycle and retry? | Rust owns the lifecycle state; the frontend initiates a read or a retry and owns neither. |
-| What does React retain? | The selected intent id; request-in-flight for rendering; per-obligation bookkeeping (in flight, and whether an occasion has passed since — never a judgement that one is *owed*, which Rust's state makes); the never-reset plan request ordinal; the Rust-authored configuration snapshot it is rendering, catalog included; Rust's plan answer, with its identity's receipt for the life of the plan; the revision and receipt of what it is rendering; and presentation. Nothing else. |
+| What does React retain? | The selected intent id; request-in-flight for rendering; per-obligation bookkeeping (in flight, and whether an occasion has passed since — never a judgement that one is *owed*, which Rust's state makes); the never-reset plan request ordinal; the Rust-authored configuration snapshot it is rendering, catalog included; the `BackendAvailabilityDto` the banner is rendering; Rust's plan answer, with its identity's receipt for the life of the plan; the revision and receipt of what it is rendering; and presentation. Nothing else. |
 | May the obliged backend check be issued now? | Process ownership, never a verdict about a build — the read's predicate minus quarantine, which refuses a probe and answers a check. |
 | At what granularity does availability exist? | The admitted **row** — one composition. There is no per-value availability authority. |
 | What makes a pre-run plan current? | Ordered handles, intent id, conflict policy, binding receipt, document epoch — compared against Rust's own answer. |
@@ -211,7 +211,9 @@ Required properties:
 - **stays equal** through a same-installation recheck, and equally through a
   repeated observation of no installation: the fact it names is the binding, so
   a session that stays unbound keeps one `NoInstallation` receipt however many
-  discoveries confirm it, and a `Partial` build becoming a different `Partial`
+  discoveries confirm it — which is right for a *binding* and is why the
+  reading beside it is refreshed on its own terms (below) — and a `Partial`
+  build becoming a different `Partial`
   build replaces nothing;
 - **sufficient** to decide whether a catalog, a plan or a result describes the
   binding this session is on.
@@ -442,7 +444,18 @@ the old feed would name the build the session has left and call it available, wh
 keeps everything the projection deliberately does not carry — the quarantine sentence,
 the discovery failure, the origin of the installation, all of which
 `quarantined_availability()` exists to keep truthful — and the banner goes on rendering
-it. `BackendAvailabilityDto` **carries the receipt** in place of the
+it. **Every operation that discovers refreshes the stored reading**, not only
+`inspect_backend`. Without that, an unbound session whose *reason* for being unbound
+changes — a folder that held neither tool now holds one, so the failure text should
+change while the binding does not — has nothing to notice it: the receipt is stable
+across `NoInstallation` → `NoInstallation` by design, and the revision advances only
+when what is projected changes, so both currency rules correctly say nothing happened
+while the sentence on screen has gone out of date. A discovery is the only thing that
+can know, so a discovery is what updates it. The stored reading is already there
+(`resolved.last`); this widens who writes it, and changes no rule about who may
+*decide* anything.
+
+`BackendAvailabilityDto` **carries the receipt** in place of the
 `installationGeneration` Decision 2 removes from it — the same substitution made on
 every other contract, and the thing that makes the question below answerable at all.
 
@@ -670,6 +683,15 @@ A request that simply failed before reaching a discovery has stopped nothing
 permanently, so its obligation stays owed and is re-issued on the next occasion;
 discharging that one would leave a session `Unresolved` for its whole life with
 nothing obliged to move it.
+
+**In an `Unresolved` session that occasion may never come, and the floor is a
+control.** The occasion set is deliveries and lane facts going false, and a session
+that has resolved nothing is running nothing — so a mount check whose request failed
+is owed with no automatic stimulus in sight. That is not a stall: `backendBusy` is
+false, so `BackendStatus`'s Recheck and Choose-installation are both live, and the
+banner is showing the failure that the reader would press them about. It is the same
+floor the configuration read has in its own dead end (Decision 5), and for the same
+reason: a reader who can see the problem must always have something to press.
 
 **The projection carries the authority state, not a flattened stand-in for it.**
 Dropping `previewAvailability` from `Settled` — projecting a bare binding and
@@ -2109,7 +2131,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–130).
+plus the findings raised against this document's own drafts (rows 18–132).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2201,7 +2223,7 @@ and no finding may disappear because the old PR was superseded.
 | 84 | Two obligations issued into each other's gate | "Issues both" read as simultaneously | Where both are owed the duty goes first and the courtesy is deferred onto its answer | Frontend reconciliation | An occasion finding a mount-time check and a read both owed strands neither, and issues one process at a time |
 | 85 | An admission rule the frontend cannot evaluate | A rule stated over `ConversionLane` for a fact with no lane field | Admission reads the lane's ownership fields plus the frontend's own probe-in-flight bookkeeping | Decision 4 + Decision 13 | No backend work is issued while a configuration probe is in flight |
 | 86 | Work suppressed by a missing verdict, and never re-issued | One-shot guards behind a verdict that arrives later than the binding | A binding never arrives without its verdict, so nothing `backendUsable` gates is suppressed for want of one | Decision 1 + `backendUsable`'s readers | A document opened as a replacement is observed previews on that observation, and a scan clicked then is not silently lost |
-| 87 | A courtesy abolished with the duty it was mistaken for | One decision covering the exact-intent proof and the pre-picker family check | The proof owns a guarantee and may not be skipped; the pre-picker courtesy owns none and may | Decision 10 | The pre-picker family check is still skipped under a held lane rather than blocking on it, and no picker opens before the exact intent is proved |
+| 87 | A courtesy abolished with the duty it was mistaken for | One decision covering the exact-intent proof and the pre-picker family check | The proof owns a guarantee and may not be skipped; the pre-picker courtesy owns none and stays skippable, sharing the proof's acquisition rather than taking its own | Decision 10 | The family check is never promoted into the proof's guarantee, and no picker opens before the exact intent is proved |
 | 88 | One moment keyed two ways by an order written wrong | An admitting list whose middle two facts were transposed | The list is `ConversionLane`'s precedence exactly: `laneClaimed` before `previewReading` | Decision 11 | A conversion running during a preview read is keyed `conversion-running` by both authorities |
 | 89 | An exemption written for a state the tree cannot produce | A quarantined `NoInstallation` session, protected by a rule of its own | Quarantine follows a resolved build and short-circuits every later discovery, so the pairing cannot arise and needs no exemption | Frontend reconciliation + Decision 5 | The binding-only read has one exemption, from admission, and no second one that protects nothing |
 | 90 | A preview auto-loaded against a build just judged unusable | A re-issue condition abbreviated to "the authority moved" | `backendUsable` is the whole conjunction, quarantine included, wherever it is consulted | `ConversionLane` projection + preview load | An observation settling on an unusable build, or arriving in a quarantined session, loads nothing |
@@ -2245,6 +2267,8 @@ and no finding may disappear because the old PR was superseded.
 | 128 | The stale-banner window reopened by a discharge | Quarantine discharging every obligation it meets, including one it does not refuse | `inspect_backend` answers a quarantined session rather than refusing it, so the check discharges by answering | Authority obligations + Decision 4 | A drain that observes a replacement and quarantines in the same operation still replaces the banner's reading |
 | 129 | The check unissued in the session that most needs it | One predicate coded for the probe and the check alike, in four places | The probe asks all five admitting facts; the check asks the four ownership facts and not quarantine, which does not refuse it; and quarantine discharges only what it refuses | Decision 4 + Decision 11 | A quarantined session issues its owed check and replaces its banner reading |
 | 130 | An owed check with no clause to issue it under | Step three enumerating two of the three conditions an obligation arises from | The enumeration names the configuration read, the unresolved session, and the stale rendered reading | Frontend reconciliation | A check owed after a drain observes a replacement is issued by the only procedural statement of issuance |
+| 131 | A stale failure sentence no rule can notice | A reading refreshed only by an explicit check, under two currency rules that correctly say nothing changed | Every operation that discovers refreshes the stored reading | Decision 2 + Decision 4 | An unbound session whose reason for being unbound changes stops showing the old one at the next discovery |
+| 132 | A mount obligation owed with no occasion in sight | An occasion set that is empty in a session running nothing | The explicit controls are the floor: Recheck and Choose-installation are live in an unresolved session | Authority obligations | A reader who can see a discovery failure always has something to press |
 
 ## What this interlude does not do
 
