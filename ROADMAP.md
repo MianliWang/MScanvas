@@ -383,8 +383,8 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 **Started. The route is locked, the conversion lane has one availability
 authority, the installed `msconvert` has been measured against M6's finite
 candidate set, what a conversion is asked to do is now a type, and the nine
-admitted semantics are selectable with a truthful plan behind them; M6.5 is the
-next slice.**
+admitted semantics are selectable with a truthful plan behind them on an
+unmerged branch; M6.4 is the next slice to publish.**
 
 The route, the live conversion gap audit it was decided from, the nine product
 decisions it surfaces, the twelve exit criteria and the M7/M8 seams are in
@@ -395,8 +395,8 @@ slices:
 - M6.1 — conversion-lane authority. **complete.**
 - M6.2 — `msconvert` capability and evidence. **complete.**
 - M6.3 — typed `ConversionIntent`. **complete.**
-- M6.4 — visible settings, and a truthful plan. **complete.**
-- M6.5 — destination authority. **next, not started.**
+- M6.4 — visible settings, and a truthful plan. **implemented, unmerged.**
+- M6.5 — destination authority. **not started.**
 - M6.6 — destination and conflict UX, including the destructive question.
 - M6.7 — convert selected, convert all.
 - M6.8 — cancellation, capacity, and truthful progress.
@@ -460,8 +460,8 @@ declares the exact invocation each intent emits, rather than trusting that M6.2'
 executable and today's are the same build. Nothing visible changed: the product
 still converts under the shipped intent and still emits the same two flags.
 
-**M6.4 stopped three times before it published, and every stop was about the
-same kind of mistake.** Three findings stopped it first, which a bounded
+**M6.4 has stopped four times, and every stop has been caused by the round
+before it.** Three findings stopped it first, which a bounded
 correction closed; the fresh review of that corrected head found two more — a
 backend *check* being read as "no backend", and a running queue polling a stream
 of backend probes that could not answer while it held the lane. A second bounded
@@ -479,8 +479,20 @@ failed automatic reconciliation is nobody's, because one attempt is the ration.
 It also made the pre-picker intent check mandatory rather than a courtesy the
 busy lane could decline, made a `BEGIN` that cannot resolve the build say so
 through the provider's own authority, and gave a preserved-but-unrunnable
-selection a state that says both things at once. All four rounds are recorded in
-`BOOTSTRAP_STATUS.md`.
+selection a state that says both things at once. The review of that head found
+two more the closure introduced -- a per-row refusal rendered as a per-value one,
+so three of four groups tell the reader something untrue, and a retry control
+duplicating a DOM id the panel already owns. All four rounds are recorded in
+`BOOTSTRAP_STATUS.md`; nothing is on `main`, which is unchanged.
+
+**After four rounds the question is the boundary, not the next edge.** Every
+round closed what it was asked to and was stopped by something it introduced,
+which is what a slice carrying four interacting authorities -- backend binding,
+installation observation, catalog lifecycle, plan identity -- looks like from the
+outside. `BOOTSTRAP_STATUS.md` records the two candidates for extraction:
+installation/backend reconciliation, which Rust already owns and the frontend
+reconstructs from a bare counter; and per-value availability, which is currently
+a fact about a row rendered four times.
 
 **M6.4 made the nine admitted semantics selectable without letting the
 interface re-invent the graph.** The controls a user meets are four scientific
@@ -554,9 +566,11 @@ guard had been unable to see.
 
 - Widen the typed conversion settings the interface can actually express.
   CNV-004 to CNV-007's processing, population, precision and compression choices
-  are visible since M6.4, in the nine combinations M6.2 measured and no others.
-  What remains here is CNV-002's mzXML gate, whose disposition is M6.10's, and
-  CNV-003's output-location choices, which are M6.5's and M6.6's.
+  are visible on M6.4's branch, in the nine combinations M6.2 measured and no
+  others, and are **not on `main`** — that slice is implemented and unmerged.
+  What remains here beyond publishing it is CNV-002's mzXML gate, whose
+  disposition is M6.10's, and CNV-003's output-location choices, which are
+  M6.5's and M6.6's.
 - Queue work beyond the current bounds, **measurement-gated, and neither an exit
   criterion nor a route requiring a disposition**: a re-evaluated queue bound and
   per-item cancellation. Both are admitted only on M6.8's measurement of what an

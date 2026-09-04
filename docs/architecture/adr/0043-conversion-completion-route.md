@@ -855,16 +855,22 @@ cancellation change.
 
 *Downstream:* M6.5.
 
-*Implemented and published.* One backend-owned catalog, one selected
+*Implemented, and not published.* One backend-owned catalog, one selected
 identity, and a plan that is Rust's answer rather than the interface's summary of
 its own controls — delivered on `feat/m6.4-visible-conversion-settings`, which
-review stopped three times. Three findings stopped it first and a bounded
+review has now stopped four times. Three findings stopped it first and a bounded
 correction closed them; the fresh review of that corrected head found two more,
 in the seam the correction itself had just widened; a second bounded correction
 closed those and was in turn stopped by a defect it introduced — a catalog read
 that failed once could no longer be retried, because the recovery had been living
 on the very conflation the correction removed. Every round is recorded in
-`BOOTSTRAP_STATUS.md`.
+`BOOTSTRAP_STATUS.md`, and none of it is on `main`. The fourth round is the one
+that changes what this route should do next: after four corrections each stopped
+by what the one before it introduced, the recommendation on record is to settle
+the slice boundary -- installation/backend reconciliation as an authority Rust
+carries rather than the frontend reconstructs, and per-value availability as a
+fact about a value rather than a row rendered four times -- before a fifth
+attempt at the same head.
 
 The stops are part of the record. A second review of the head that had passed every
 gate found three further truthfulness defects once the route's single repair pass

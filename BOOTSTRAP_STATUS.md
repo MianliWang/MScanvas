@@ -7049,27 +7049,36 @@ cancellation behaviour, no wire vocabulary beyond the integrity property and
 outcome names the new checks required, no dependency and no lockfile. It does not
 decide the mzXML disposition, which remains M6.10's, and it does not start M6.4.
 
-## M6.4 — Visible conversion settings, and a truthful plan — COMPLETE, 2026-09-04
+## M6.4 — Visible conversion settings, and a truthful plan — NOT PUBLISHED, 2026-09-04
 
-**Published after four review rounds and three stops.** The first round found
-two defects and spent the route's one repair pass on them; a second found three
-more, so the slice stopped at `STOP — M6.4_NOT_PUBLISHABLE`. A bounded
-authorization closed F1, F2 and F3; the review it required found G1 and G2, so
-it stopped again at `STOP — M6.4_CORRECTION_NOT_PUBLISHABLE`. A second
-authorization closed those with the settled-backend-binding and
-installation-observation model below -- and the exact-head review of *that* head
-found a defect the correction itself introduced, so it stopped a third time at
+**This slice is implemented, validated and still unmerged. It has now stopped
+four times.** The first round found two defects and spent the route's one repair
+pass on them; a second found three more, so the slice stopped at
+`STOP — M6.4_NOT_PUBLISHABLE`. A bounded authorization closed F1, F2 and F3; the
+review it required found G1 and G2, so it stopped again at
+`STOP — M6.4_CORRECTION_NOT_PUBLISHABLE`. A second authorization closed those
+with the settled-backend-binding and installation-observation model below -- and
+the exact-head review of *that* head found a defect the correction itself
+introduced, so it stopped a third time at
 `STOP — M6.4_SIGNAL_STABILIZATION_NOT_PUBLISHABLE`. A third authorization closed
-that one and the three raised beside it.
+that one and the three raised beside it -- and the review of *that* head found
+two more this closure introduced. So the verdict is
+`STOP — M6.4_CLOSURE_NOT_PUBLISHABLE`, the work stays on
+`feat/m6.4-visible-conversion-settings` / PR #95, and **`main` is untouched**.
+
+The last section of this record is the one to read first: after four rounds the
+question is no longer which edge to repair next, it is where the slice boundary
+should have been.
 
 That history is kept rather than tidied away, because what it says about this
 design is worth more than a clean narrative: the hard part was never the nine-row
 graph, it was the *edges*. A request that outlives the state it produced. An
 observation lost because the operation it belonged to failed. An affordance that
 claimed more than it knew. A signal read from a proxy that resembled it — twice.
-And, last, a recovery that had been living on the very conflation that had to be
-removed, which is the one worth carrying forward: **removing a wrong mechanism
-means finding out what had come to depend on it.**
+A recovery that had been living on the very conflation that had to be removed,
+which is worth carrying forward on its own: **removing a wrong mechanism means
+finding out what had come to depend on it.** And, last, a repair for a false
+statement that made three new ones.
 
 The first M6 slice that puts the conversion semantics on screen. M6.2 measured
 nine combinations of five axes; M6.3 made those nine the only constructible ones
@@ -7359,7 +7368,10 @@ opens with a phrase its missing-list matcher recognises.
 --all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`,
 `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
 `pnpm build`, `pnpm e2e:typecheck`, `pnpm e2e:browser` and `git diff --check`,
-each run directly on the published head and each exiting zero. Rust **1,404** and
+each run directly on the candidate head `b8fa92a` and each exiting zero, with all
+three CI jobs green on that same SHA. That head is nevertheless **not
+publishable** -- see the fourth stop below, which no gate is shaped to catch.
+Rust **1,404** and
 frontend **1,462**. Browser E2E: **11 spec files, 226 tests**, including the
 eighteen-case M6.4 spec, three of whose cases run at 1920×1080, 1366×768 and
 960×640. Nothing is inherited from any earlier head.
@@ -7852,6 +7864,95 @@ automatic attempt is spent on. Both sites that advance the watermarks go through
 one helper, so a reply that can order itself against an installation has also
 recorded seeing one.
 
+### The fourth stop, and why the boundary is the question now
+
+The exact-head review of `b8fa92a249514c82decdc9c83e19992eeb1a3051` -- every local
+gate and all three CI jobs green on it -- found defects this closure itself
+introduced. Two were confirmed by measurement rather than accepted on the report,
+and both are in the changes made to *improve* truthfulness.
+
+**D1 -- the stranded-selection notice says something false in three groups of
+four. P2.** C4 gave the selected value a state that carries the reason it cannot
+run, and every axis shows the same selection, so every axis renders the same
+sentence: *The installed ProteoWizard build does not offer this option.* But the
+fact is about the **row**, not about each value in it. Measured on a build that
+lacks only the peak-picking grammar, with a centroided semantic at 64/64
+selected:
+
+```text
+64/64 without centroiding    -> {"kind":"available"}
+axis processing  (centroiding) -> selectedUnavailable, unsupported-by-installation
+axis population  (all)         -> selectedUnavailable, unsupported-by-installation
+axis precision   (64/64)       -> selectedUnavailable, unsupported-by-installation
+axis compression (zlib)        -> selectedUnavailable, unsupported-by-installation
+```
+
+The build offers 64/64, offers all spectra and offers zlib. Three of those four
+sentences are untrue, and the reader is being told them beside the very controls
+they must use to recover. **The test written for C4 locks the defect in**: it
+asserts that every group says the same thing about the one selection, which is
+exactly what should not be true of a per-value refusal.
+
+**D2 -- the new retry control duplicates a DOM id the panel already owns. P2.**
+`AvailabilityNotice` is the single owner of `conversion-availability-<reason>`,
+and its own doc says so: one element per reason, not per control. The catalog
+failure block renders its refusal under the same id. With the catalog failed and
+a backend check running, both resolve to `backend-changing`, and the document
+carries the id twice:
+
+```text
+DUPLICATED DOM IDS: ["conversion-availability-backend-changing"]
+```
+
+Both buttons' `aria-describedby` then resolve to the first match, so the retry
+control points at the panel's sentence rather than its own, and the document is
+invalid. It is an accessibility defect in a control added to improve a recovery
+path.
+
+**Four more the review raised, not all of them new.** The `drain_queue` arm that
+fails to resolve the build records no observation, so C2's property holds for
+`BEGIN` and not for the sibling path that runs while the destination picker is
+open -- which means the claim this section makes about C2 is narrower than it
+reads. The plan is parked at `loading` with no read in flight whenever there is
+no semantic to ask about, so a failed catalog leaves *Reading the conversion
+plan…* on screen indefinitely. `plan-superseded` explains a plan Rust refused
+with a sentence about rereading. And the automatic catalog read has no lane rule
+at all, while the explicit retry C1 added is gated on one -- so the path that
+fires by itself is the unguarded one, and a verdict settling during a queue can
+put a help probe behind the gate `drain_queue` holds. That last is G2's own
+defect reintroduced through a different door.
+
+**What this says about the slice, rather than about these four repairs.** Every
+round has closed what it was asked to close and been stopped by something the
+closing introduced: F1-F3 made the request/observation seam right and widened
+the signal seam; G1-G2 made the signal seam right and removed the recovery a
+failed read had been living on; C1-C4 gave every failure an owner and, in doing
+so, put a false sentence beside three controls and a duplicate id beside a
+fourth. That is no longer a sequence of unlucky reviews. **The conversion panel
+now carries four interacting authorities -- backend binding, installation
+observation, catalog lifecycle, plan identity -- and a fifth, per-value
+availability, that this round added.** Each is individually defensible and each
+new one is written against the others by hand.
+
+The recommendation this record makes to whoever picks it up is therefore not a
+fifth repair round on the same head. It is to decide the boundary first:
+
+- **installation/backend reconciliation** wants to stop being reconstructed in
+  React from a bare counter. Rust already owns the settled verdict; if the slot
+  read and the catalog reply carried the binding rather than a number, the
+  observation watermarks, the one-attempt ration and the binding type collapse
+  into one keyed value, and the paths that must record a sighting cannot forget
+  to.
+- **per-value availability** wants to be a fact about a value, not a fact about
+  a row rendered four times. Either the catalog says which values this build
+  declares, or the selected row's refusal is stated once where the row is named
+  rather than beside each axis.
+
+Both are slice-boundary questions, and answering them inside M6.4 is what has
+produced four rounds of edge repairs.
+
+**Nothing is on `main`, which remains `3fca4b134652fc72b275983ae3bd5a79ada37cbd`.**
+
 ### Residuals
 
 **A recheck that resolves to the same installation does not re-read the
@@ -7906,4 +8007,5 @@ composition boundary is exactly as wide as it was. It adds no dependency and no
 lockfile change, does not decide the mzXML disposition, which remains M6.10's,
 and it does not start M6.5.
 
-**M6.5 — Destination authority — is next, and is not started.**
+**M6.5 — Destination authority — has not started, and should not until the
+boundary question below is answered.**
