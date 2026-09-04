@@ -399,13 +399,16 @@ name the build the session has left and call it available, while
 `backend-unavailable`'s own message sends the reader to look at it.
 
 **So the banner reads both, and each for what it holds.** `BackendAvailabilityDto`
-keeps everything the projection deliberately does not carry — the quarantine
-sentence, the discovery failure, the origin of the installation, all of which
-`quarantined_availability()` exists to keep truthful — and the banner goes on
-rendering it. What the projection adds is one thing: **whether the verdict beside
-it is current**. Through an unsettled window the banner shows the verdict as
-superseded rather than as fact, and says a check is under way; it does not report
-the left build as available, and it does not lose the reason text it has today.
+keeps everything the projection deliberately does not carry — the quarantine sentence,
+the discovery failure, the origin of the installation, all of which
+`quarantined_availability()` exists to keep truthful — and the banner goes on rendering
+it. What the projection adds is one thing: **whether what it is showing is current**.
+That covers the whole block and not only the verdict — the release, the build date and
+the origin describe a build as much as "available" does, and a banner that marked the
+verdict superseded while still naming the left installation would close half the defect.
+Through an unsettled window the banner presents the entire reading as superseded and
+says a check is under way. It does not report the left build as available, it does not
+name it as the current one, and it loses none of the reason text it has today.
 
 The banner gains no authority of its own by this. It renders what arrives, which is
 what it does now — from one more source, for one more question.
@@ -573,17 +576,26 @@ the build in a session that holds no verdict about it. It is a wording defect,
 deadlocks nothing, and correcting the ordering belongs to the same M6.1 scope
 already recorded below for the msaccess/msconvert conflation — not to M6.4.
 
-**What the unsettled window does cost is one suppressed automatic preview load**,
-because `backendUsableRef` gates it and this decision sets `backendUsable` false there.
-Suppressing it is correct — a preview must not be auto-loaded against a verdict the
-session does not hold — but the guard fires once, so suppression alone would lose the
-load rather than defer it. **`backendUsable` becoming true is the occasion**, and it is
-worth stating as that rather than as "the authority settles": settling on a `Settled {
-Installed, unusable }` build — the msaccess-missing-a-preview-operation case Decision 1
-and row 24 are about — would auto-load a preview against a build just judged
-preview-unusable, and a session quarantined while the check was in flight would do the
-same against row 66. The condition is the whole conjunction above, unchanged and
-unabbreviated. Same stimulus as the obligations, one more thing waiting on it.
+**What the unsettled window costs is everything `backendUsable` gates**, and that
+is more than the conversion panel. `backendUsableRef` has six readers in
+`usePreviewWorkspace` — three automatic first-preview loads after a workspace add,
+the explicit activation path, and the lane projections — and `backendUsable` also
+reaches ADR 0041's spectrum selection lane, which refuses a scan click as
+`backend-unavailable`. So through an unsettled window a reader may find scan clicks
+refused and an activation returning silently, not merely a preview that did not
+start.
+
+Suppressing all of it is correct: none of that work may run against a verdict the
+session does not hold, and the alternative — acting on the previous build's verdict — is
+the stale window this decision exists to close. What is not correct is losing it, and
+these guards fire once, so suppression alone would drop the work rather than defer it.
+**`backendUsable` becoming true is the occasion for all of it**, and it is worth stating
+as that rather than as "the authority settles": settling on a `Settled { Installed,
+unusable }` build — the msaccess-missing-a-preview-operation case Decision 1 and row 24
+are about — would auto-load a preview against a build just judged preview-unusable, and
+a session quarantined while the check was in flight would do the same against row 66.
+The condition is the whole conjunction above, unchanged and unabbreviated. Same stimulus
+as the obligations, one more thing waiting on it.
 
 **Only an `Installed` observation can be unsettled, and the union says so.** A
 verdict is a judgement about a build, so an observation establishing `NoInstallation`
@@ -751,6 +763,12 @@ the payload     -> judged by RECEIPT alone: the binding it describes against
                    the rendered binding -> admitted, whatever the revision did
                    (the receipt is read from the response's own projection --
                     see below: discarding it is not throwing it away)
+
+                   a response whose projection is Unresolved names no
+                   binding, so its payload is NoBinding, and NoBinding
+                   installs only where the rendered authority is also
+                   Unresolved -- a late mount-time snapshot never lands
+                   on top of a Ready(A)
 
 the outcome     -> judged by NEITHER
    (an error,      it answers the request the reader made, and is shown
@@ -1444,29 +1462,28 @@ that click for the length of a preview scan with nothing on screen to explain wh
 proof takes it away deliberately, and cannot also be defended by it.)
 
 **Refuses on a lane fact; waits behind a configuration probe.** Those are the two
-kinds of gate holder, and only one of them can be named to a reader.
-`ConversionLane` already refuses every conversion action while `previewReading` or
-`laneClaimed` holds, so refusing there costs nothing that was available and the
-reader is told which fact it was. A configuration probe has no lane field — by
-Decision 11 it is shared by nothing and refuses no conversion action — so a
-`BEGIN` pressed during one has no fact to be refused with, and it waits instead.
+kinds of gate holder, and only one of them can be named to a reader. `ConversionLane`
+already refuses every conversion action while `previewReading` or `laneClaimed` holds,
+so refusing there costs nothing that was available and the reader is told which fact it
+was. **The proof takes the gate with `try_enter_backend` and refuses if it is held.**
+One rule, no cases, and nothing to decide about who the holder is. Two earlier drafts
+tried to be cleverer than that and both were wrong on the tree: one claimed
+`begin_queue` "already takes the gate by waiting" as a precedent, which it does not — it
+calls `try_enter_backend` once, for the pre-picker courtesy, and waits on the
+workspace-mutation lock, a different thing entirely. The other had `BEGIN` wait behind a
+configuration probe and refuse behind anything else, which needs the gate to name its
+holder *and* is a time-of-check race: the probe can release and a drain acquire between
+the reading and the blocking, hanging the click behind exactly what the rule forbids.
 
-**Rust decides which case it is in, so the gate records its holder.** `backend_gate`
-is a bare `Mutex<()>` today and Rust owns neither `previewReading` nor
-`laneClaimed`, so a rule phrased as "which operation holds the gate" is not
-answerable as the tree stands — leaving the question this decision claims to settle
-back with the implementer. It is answerable cheaply: what holds the gate is always
-one of Rust's own operations, so the gate carries a tag naming it, and `BEGIN`
-refuses when that tag is a preview read or a conversion and waits when it is a
-configuration probe.
-
-The wait is safe where an open-ended one would not be, but the bound is longer than a
-first reading suggests: the read's discovery probes **both** tools, each with the
-15-second `PROBE_TIMEOUT`, so the worst case is around thirty seconds rather than
-fifteen. That is still bounded, still rare, and still better than refusing with no fact
-to name — and `begin_queue` already takes the gate by waiting. What the rule forbids is
-hanging a click behind a preview scan or a conversion, which have no bound and do have
-names. The proof's answer only arises at all in the narrow window where the frontend's
+Refusing on a held gate has none of those problems and loses nothing worth keeping.
+The frontend already refuses every conversion action while a lane fact holds, so
+the common cases are named to the reader before a request is ever sent. What is
+left is the narrow window where that projection was stale, and a probe — where the
+refusal is Rust's own, carries Rust's own reason, and is retriable at once, against
+a probe that lasts at most two 15-second `PROBE_TIMEOUT`s. A refusal a reader can
+act on beats a click that hangs for thirty seconds and beats a rule the gate cannot
+evaluate. What the rule forbids is proceeding without the proof, and that has not
+changed. The proof's answer only arises at all in the narrow window where the frontend's
 projection was stale — and there the truthful thing is to say which fact refused, in the
 lane's own words, rather than to hang. What may not happen is the third option:
 proceeding without the proof. Execution-time revalidation remains, because the
@@ -1939,7 +1956,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–108).
+plus the findings raised against this document's own drafts (rows 18–110).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2030,7 +2047,7 @@ and no finding may disappear because the old PR was superseded.
 | 83 | A retained question mistaken for a retained belief | A retain-list bounding receipts by the render alone | A plan identity's receipt is a component of a question, bounded by the plan, not by the render | Decision 9 + Decision 13 | A failed plan can be retried for the same question without React holding a third authority |
 | 84 | Two obligations issued into each other's gate | "Issues both" read as simultaneously | Where both are owed the duty goes first and the courtesy is deferred onto its answer | Frontend reconciliation | A delivery finding a check and a read both owed strands neither, and issues one probe, not two |
 | 85 | An admission rule the frontend cannot evaluate | A rule stated over `ConversionLane` for a fact with no lane field | The check reads the lane's ownership fields plus its own probe-in-flight bookkeeping | Decision 4 + Decision 13 | The obliged check is not issued while a configuration probe is in flight |
-| 86 | The suppressed automatic preview load never re-issued | A one-shot guard behind a verdict this decision makes temporarily false | `backendUsable` becoming true is an occasion; a load suppressed while unsettled is issued then, and not merely on settling | `ConversionLane` projection + preview load | A document opened during an unsettled window previews once the check answers usable, without a second click |
+| 86 | Work suppressed by an unsettled authority never re-issued | One-shot guards behind a verdict this decision makes temporarily false | `backendUsable` becoming true is an occasion for everything it gates, not the preview load alone | `ConversionLane` projection + `backendUsable`'s readers | A document opened during an unsettled window previews once the check answers usable, and a scan clicked there is not silently lost |
 | 87 | A courtesy abolished with the duty it was mistaken for | One decision covering the exact-intent proof and the pre-picker family check | The proof owns a guarantee and may not be skipped; the pre-picker courtesy owns none and may | Decision 10 | The pre-picker family check is still skipped under a held lane rather than blocking on it, and no picker opens before the exact intent is proved |
 | 88 | One moment keyed two ways by an order written wrong | An admitting list whose middle two facts were transposed | The list is `ConversionLane`'s precedence exactly: `laneClaimed` before `previewReading` | Decision 11 | A conversion running during a preview read is keyed `conversion-running` by both authorities |
 | 89 | A quarantined unbound session with no configuration state | The binding-only exemption stated for admission and not for discharge | A `NoInstallation` binding's read is exempt from both: quarantine discharges only obligations that need the backend | Frontend reconciliation + Decision 5 | A session quarantined before it loses its build still renders `UnavailableForBinding` |
@@ -2045,14 +2062,16 @@ and no finding may disappear because the old PR was superseded.
 | 98 | An occasion bounded only when it was a delivery | The once-per-occasion bound and duty-first ordering written over deliveries alone | Both govern every occasion, a lane fact going false included | Frontend reconciliation | A picker closing issues the check first, exactly as a drain answering does |
 | 99 | Quarantine's own protections read as removed with the route to `backendUsable` | "The short-circuit is gone with it", said of a function rather than of a dependency | `quarantined_availability()` is untouched; only `backendUsable` stops depending on it | Decision 4 | The quarantine banner and the refusal ahead of the gate both survive the authority change |
 | 100 | The route's own acceptance criterion asking for the defect | M6.4's per-value framing left unamended beside a row-level boundary | ADR 0043's M6.4 acceptance states availability as a property of an admitted row | ADR 0043 amendment | The criterion the replacement is measured against and the boundary it is built on ask for the same thing |
-| 101 | A click hung behind a nameable fact, or refused with none to name | One rule for two kinds of gate holder | `BEGIN` refuses on a lane fact and waits only behind a configuration probe, which is bounded and has no name | Decision 10 + Decision 11 | Convert during a preview scan refuses saying so; Convert during an automatic `--help` completes |
+| 101 | A click hung behind whatever holds the gate | A proof that waits on a lock nothing bounds | The proof takes the gate with `try_enter_backend` and refuses if it is held, with Rust's own reason | Decision 10 | No `BEGIN` blocks; a reader refused during a probe can press again at once |
 | 102 | The banner naming a build the session has left | One surface left reading the verdict without the authority beside it | `BackendStatus` reads both: the DTO for the reason, origin and quarantine sentence, the projection for whether the verdict is current | Decision 4 | No window exists in which the banner reports a verdict about the previous build, and none in which it loses the reason text it has today |
 | 103 | A plan installed because it belongs to the binding | A receipt test read as sufficient for a payload with an owner | Receipt admits a payload to the binding; the plan machine's identity-and-ordinal test then decides it | Decision 4b + Decision 9 | A superseded plan reply for the current binding is still discarded |
 | 104 | A plan installed into a state awaiting nothing | A discard rule written only as "any other identity", over states that have none | A reply arriving while `none`, `blocked` or `ready` is discarded | Plan state machine | A reply outstanding across `loading -> blocked` installs nothing |
 | 105 | A build that cannot convert reported `Ready` by the lifecycle | A discriminator asking only whether a probe answered | A probe that answered and found `require_conversion` refusing is `Failed` | Rust configuration lifecycle | Decision 3's cannot-convert case and the lifecycle that implements it agree |
-| 106 | A rule about the gate's holder that Rust cannot evaluate | `backend_gate` as a bare `Mutex<()>` under a rule keyed on who holds it | The gate carries a tag naming its holder | Decision 10 + Rust gate | `BEGIN` can tell a preview read from a configuration probe without consulting the frontend |
+| 106 | A rule about the gate's holder that Rust cannot evaluate, and could not trust | `backend_gate` as a bare `Mutex<()>` under a rule keyed on who holds it, read before blocking on it | No holder is consulted: the gate is taken or the proof refuses | Decision 10 + Rust gate | The proof needs no tag, and no window exists between reading a holder and waiting on one |
 | 107 | An unsettled `NoInstallation` made constructible | A union member typed wider than the state it names | `ObservedButUnsettled` carries `Installed`, not `Binding` | Decision 4's union | The shape row 95 forbids cannot be built |
-| 108 | The wait behind a probe understated by half | "A single `msconvert --help`", where discovery probes both tools | The bound is two `PROBE_TIMEOUT`s, and is stated as such | Decision 10 | The worst-case wait a reader can meet is written down, not implied |
+| 108 | The wait behind a probe understated by half | "A single `msconvert --help`", where discovery probes both tools | A configuration probe is a discovery over both tools, bounded by two `PROBE_TIMEOUT`s, and is described as such wherever its cost is weighed | Decision 10 + Decision 11 | No argument in this document rests on a probe being half as long as it is |
+| 109 | A `NoBinding` payload landing on a rendered binding | A receipt rule with nothing to compare when the projection is `Unresolved` | `NoBinding` installs only where the rendered authority is also `Unresolved` | Frontend, ordering then identity | A late mount-time snapshot never replaces a `Ready(A)` |
+| 110 | A banner naming the left build while marking its verdict superseded | Currency applied to the verdict and not to the identity beside it | The projection governs the whole reading: release, build date and origin included | Decision 4 | Through an unsettled window the banner names no build as current, and keeps every reason it has today |
 
 ## What this interlude does not do
 
