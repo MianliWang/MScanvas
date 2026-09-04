@@ -556,23 +556,39 @@ preview-unusable, and a session quarantined while the check was in flight would 
 same against row 66. The condition is the whole conjunction above, unchanged and
 unabbreviated. Same stimulus as the obligations, one more thing waiting on it.
 
+**Only an `Installed` observation can be unsettled.** A verdict is a judgement
+about a build, so an observation establishing `NoInstallation` has nothing left to
+judge and arrives `Settled` — entailed, exactly as Decision 4's `backendUsable`
+conjunction treats it. `ObservedButUnsettled` names one situation and only one: a
+build was found and no verdict about it has been reached yet.
+
 And the state owes an exit. **Entering `ObservedButUnsettled` obliges exactly one
 backend check**, issued in the same commit that installs the authority, and — when
 it cannot be — owed on the same terms as the first configuration read: it stays
-owed, and every authority delivery is an occasion to issue it.
+owed, and every occasion is an occasion to issue it.
 
-**The owing is shared; the admission is not.** These two obligations are refused
-by different things, and conflating them would put the check under a rule it
-cannot obey. A configuration probe is a courtesy — `msconvert --help`, taken with
-`try_enter_backend`, refused rather than queued, governed by
-`ConversionConfigurationProbeAdmission` (Decision 11). The backend check is
-`inspect_backend`, which is M6.1's, takes the gate by *waiting*, and is a duty: it
-is the operation that ends the unsettled state, and there is nothing else to end
-it with. So the frontend does not dispatch it while its lane projection says
-something owns the backend — the same courtesy that keeps every other action from
-being offered into a refusal — and Rust's quarantine boundary is the one
-definitive refusal it answers to. What the two obligations share is the
-owed-and-discharged rule below, not an admission rule.
+**`Unresolved` owes the same check, incurred at mount.** It is the one state with
+no binding, so the liveness rule below — which is written about bindings — does not
+reach it, and without this it would be the one state a session could sit in with
+nothing obliged to move it and no control to press. A session that has resolved
+nothing owes exactly one backend check, on the same terms as this one, from the
+moment it mounts.
+
+**They share the admission and differ in what a refusal means.** An earlier draft
+said the opposite — "the owing is shared; the admission is not" — and the document's own
+definitions do not support it: both ask the same predicate over the same five
+process-ownership facts, and neither asks `backendUsable`. What differs is what happens
+when the backend is busy. A configuration probe is a courtesy — `msconvert --help`,
+taken with `try_enter_backend`, **refused** rather than queued, which is why it needs
+the owed-and-re-issued machinery at all. The backend check is `inspect_backend`, which
+is M6.1's, takes the gate by **waiting**, and is a duty: it is the operation that ends
+the unsettled state, and there is nothing else to end it with. The frontend declines to
+dispatch either while its projection says the backend is owned — a courtesy in both
+cases — and it is the duty-first rule that decides which goes when both are owed. So the
+frontend does not dispatch it while its lane projection says something owns the backend
+— the same courtesy that keeps every other action from being offered into a refusal —
+and Rust's quarantine boundary is the one definitive refusal it answers to. What the two
+obligations share is the owed-and-discharged rule below, not an admission rule.
 
 **An obligation is owed only while the thing refusing it can stop refusing.** This
 is the rule for both obligations, and it has to be stated, because the same
@@ -686,33 +702,38 @@ absence of one: with nothing rendered there is no revision to be older than, so
 the first projection a session receives is accepted and step two runs against an
 empty rendered binding — which is how the first binding is installed at all.
 
-**Discarding reaches the payload, and stops at the domain outcome.** A stale
-response can carry nothing current *about the binding*: its projection goes, and so
-does any snapshot or plan it carries, because a payload for A may not be installed
-under B. Its domain outcome does not go with them. That outcome is the answer to
-something the reader did — an error to show, a refusal to explain — and swallowing
-it because an unrelated revision moved in the meantime leaves a click with no
-answer at all.
-
-**Which receipt judges the payload follows from whether the projection survived.**
+**A response carries three things, and each is judged by its own rule.** Two
+drafts tried to make one rule cover them, in opposite directions — discard
+everything when the projection is stale, or judge every payload by the receipt its
+request went out under — and each broke a case the other handled. They are
+independent, and this document's own thesis says why: ordering never means, and
+identity never orders.
 
 ```text
-the projection is accepted (equal or newer)
-  -> its own receipt judges the payload, and nothing else does
-  -> a read issued under A that answers Installed(B) with Ready(B) is
-     accepted whole: one transaction, one binding, one snapshot
+the projection  -> judged by REVISION alone
+                   older than what is rendered -> discarded
 
-the projection is discarded as stale
-  -> there is no accepted receipt to judge by, so the receipt the request
-     was issued under does -- which the frontend holds anyway, and which
-     for a stale reply is the binding it was asked about
+the payload     -> judged by RECEIPT alone: the binding it describes against
+   (a snapshot     the binding now rendered
+    or a plan)     a different binding -> discarded
+                   the rendered binding -> installed, whatever the revision did
+
+the outcome     -> judged by NEITHER
+   (an error,      it answers the request the reader made, and is shown
+    a refusal)
 ```
 
-The first line matters as much as the second: judging every payload by the
-request-issued receipt would discard exactly the rebinding read the one-transaction
-rule exists for, and hand row 70 back its double snapshot. An earlier draft made
-staleness a whole-response discard to avoid needing either receipt, and paid for it
-by losing the reader's error.
+The middle line is the one both drafts got wrong, and the case that shows it is
+ordinary: the revision advances on a same-receipt `ObservedButUnsettled → Settled`
+move, so a snapshot for B issued a moment earlier is stale *by revision* while
+describing exactly the binding on screen. Discarding it leaves a `Ready(B)` binding
+with no catalog rendered and nothing owed to fetch one. Judging it by the receipt
+installs it, correctly, because nothing about B changed.
+
+The rebinding read follows from the same line without an exception: a read issued
+under A that answers `Ready(B)` alongside a projection of `Installed(B)` carries a
+payload whose binding *is* the one now rendered, so it installs — one transaction,
+one binding, one snapshot, and no second read owed.
 
 **Otherwise these steps govern the authority projection, and nothing else.** A
 response carries an outcome as well, and the outcome is the answer to the request
@@ -781,8 +802,11 @@ loop at IPC speed against a frontend projection that is explicitly allowed to be
 stale and permissive. The bound is per obligation, and both halves of that matter:
 
 ```text
-each owed obligation is issued at most once per delivery, and where both are
+each owed obligation is issued at most once per occasion, and where both are
 owed the check goes first
+  -- "occasion", not "delivery": Decision 5 adds a second kind, a lane fact
+     going false, and the bound and the ordering govern both alike. A picker
+     closing issues the check first, exactly as a drain answering does
   -- not "one obligation per delivery": a delivery finding both owed must
      leave neither stranded. But they cannot go together, because whichever
      starts holds the gate against the other -- so the duty is issued and
@@ -1569,6 +1593,8 @@ the selected admitted intent id
 request-in-flight state needed to render an outstanding command
 per-obligation bookkeeping: whether a read or check is in flight, whether one
   is owed, and whether any delivery has landed since it was issued
+which automatic preview load, if any, was suppressed by an unsettled authority
+  and is waiting on `backendUsable`
 the Rust-authored plan answer
 the authority revision of the projection it is currently rendering
 the binding receipt carried by that projection, where one exists
@@ -1807,7 +1833,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–93).
+plus the findings raised against this document's own drafts (rows 18–98).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1846,7 +1872,7 @@ and no finding may disappear because the old PR was superseded.
 | 31 | `Unresolved` has no representable snapshot | A snapshot demanding a binding for a state that has none | The snapshot says `NoBinding` where there is no binding | `ConversionConfigurationSnapshot` | A session whose first operation answers without discovering renders no configuration, invents no receipt, and is not called `UnavailableForBinding` |
 | 32 | Contention spends the one automatic attempt | "A read that does not answer" catching a read that never ran | `Failed` requires a probe that ran; a probe that could not start leaves `Unattempted` | Rust configuration lifecycle | A configuration read refused by probe admission leaves the state unchanged and the first read still owed |
 | 33 | The two operations that replace a binding owe nothing | A delivery rule scoped to conversion-bound work | Every operation that can observe **or replace** authority returns it | Authority delivery | Choosing a different ProteoWizard folder invalidates the previous configuration and plan with nothing else required |
-| 34 | A stale reply's payload installed under a newer binding | Ordering applied to the projection but not to what it carries | A binding-bound payload obeys the same ordering as the projection that carries it | Frontend, ordering then identity | A late snapshot or plan for A cannot be installed while B is rendered |
+| 34 | A stale reply's payload installed under a newer binding | A payload with no rule of its own | A payload is judged by receipt: it installs when it describes the binding now rendered, and is discarded when it does not | Frontend, ordering then identity | A late snapshot or plan for A cannot be installed while B is rendered |
 | 35 | A transient plan failure is permanent | A `failed` state with no exit but a new question | An explicit request may re-ask the same plan question | Plan state machine | A failed plan can be retried without changing handles, intent, policy or binding |
 | 36 | A snapshot that contradicts itself | The receipt carried twice with no stated equality | The receipt appears once, in the authority; the configuration describes the binding beside it | `ConversionConfigurationSnapshot` | No snapshot can pair one binding's authority with another's catalog |
 | 37 | The first binding is never installed | An ordering rule defined only for a strictly newer revision | Nothing rendered accepts the first projection; an equal revision changes nothing and re-reads nothing | Frontend, ordering then identity | A session's first projection installs its binding, and a repeated projection spends no probe |
@@ -1871,7 +1897,7 @@ and no finding may disappear because the old PR was superseded.
 | 56 | A fresh catalog discarded, or `Ready` arriving over `Unattempted` | Observation and answer ordered as two events | A read that observes a new available binding answers for it in one transaction | Rust configuration lifecycle | A configuration read that discovers build B returns `Ready(B)`, and `Unattempted(B)` is never rendered |
 | 57 | Two notices for one refusing fact | A registry key left to be inferred across two vocabularies | The key is a `ConversionLane` field, and its order is the precedence | Panel notice registry | A conversion holding the gate renders one sentence, whether it refused a conversion, a probe, or both |
 | 58 | An unbound session projected preview-usable | A verdict field on a binding that names no build | The verdict is entailed for `NoInstallation`, and `backendUsable` requires `Installed` in the conjunction | Decision 4 projection | No `NoInstallation` authority, settled or not, yields a usable lane |
-| 59 | The obliged check governed by a rule it cannot obey | Two obligations given one admission | The owing is shared; the probe is a courtesy under `try_enter_backend`, the check is `inspect_backend`, a duty | Authority obligations + Decision 11 | The check is not dispatched into a busy lane and not refused by probe admission; quarantine is its one definitive refusal |
+| 59 | The obliged check governed by a rule it cannot obey | A courtesy's refusal semantics applied to a duty | One admission predicate, two refusal semantics: the probe refuses under `try_enter_backend`, the check waits under `inspect_backend` | Authority obligations + Decision 11 | The check is not dispatched into a busy lane, and is never left owed by a refusal the probe would have taken |
 | 60 | A rebinding read whose probe failed left owing another | One transaction with only a successful arm | The new binding lands on what its own answer supports, `Failed` included | Rust configuration lifecycle | A read that discovers B and fails its probe is `Failed(B)`, and no second automatic probe follows |
 | 61 | The ordinal reset by leaving an identity | A counter scoped per question | One per-panel ordinal, never reset | Plan state machine | A reply in flight from before an identity was left and re-entered is discarded, not installed |
 | 62 | The most-shared refusal left without a key | A key set listing seven of eight lane fields | `backendUsable` is a key; action-derived reasons key by action and target | Panel notice registry | Convert and the conversion retry, refused as unusable, render one sentence |
@@ -1879,12 +1905,12 @@ and no finding may disappear because the old PR was superseded.
 | 64 | The stimulus narrower than the facts it must cover | A delivery scope read as the conversion path only | Delivery membership and gate membership are the same set | Decision 4 + Decision 11 | A preview read finishing issues an owed catalog read, exactly as a drain finishing does |
 | 65 | A build that cannot convert rendered as nine unavailable rows | `Failed` and `Ready`-with-nothing-available left undecided | A build failing `require_conversion` is `Failed`; availability is a property of rows, and it has not got as far as rows | Decision 3 + Decision 7 | A build missing `outdir`, `outfile`, `--zlib` or the format option renders one sentence and a retry, not nine dead controls |
 | 66 | A quarantined session reachable through a remembered verdict | Quarantine reaching `backendUsable` only by corrupting the availability DTO the authority replaces | `backendUsable` names quarantine as its own conjunct, beside the authority's verdict | `ConversionLane` + preview load | A session quarantined after a good verdict starts no conversion and no automatic preview load |
-| 67 | A stale payload with no binding to check against | The projection discarded separately from what it carried | Projection and binding-bound payload go together; the payload is checked against the receipt the request was issued under | Frontend, ordering then identity | No snapshot or plan from a superseded response is installed, and its domain outcome still answers the reader |
+| 67 | A stale payload with no binding to check against | One rule made to cover projection, payload and outcome together | Three things, three rules: revision judges the projection, receipt judges the payload, neither judges the outcome | Frontend, ordering then identity | A snapshot for the rendered binding is installed even when its projection is stale, and its domain outcome still answers the reader |
 | 68 | An owed read stranded by an out-of-order reply | A re-issue bound that cannot tell a reorder from a spin | An attempt's own refusal re-issues it when another delivery has been processed since it went out | Frontend reconciliation | A gate holder that answers while a refused probe's reply is still in flight still gets the read issued |
 | 69 | The verdict refusing the operation that replaces it | The obliged check gated on the lane rather than on process ownership | The check asks only whether something owns the backend process; `backendUsable` owns none | Authority obligations + Decision 11 | An `ObservedButUnsettled` session with a free gate issues its check, whatever `backendUsable` says |
 | 70 | Two snapshots for one rebinding read | An invalidation rule with no exception for a response that already answers | A response carrying a snapshot for the new binding is the read for it | Frontend reconciliation | Mount and every rebinding read cost one snapshot, not two |
 | 71 | A shared notice phrased about one of its actions | Deduplication defined without saying whose sentence survives | A shared notice states the fact; each control says what it cannot do | Panel notice registry | A settings retry sharing `laneClaimed` with Convert is never described as converting being unavailable |
-| 72 | A reader's error swallowed by an unrelated revision | Staleness applied to the whole response | Staleness reaches the projection and its binding-bound payload, never the domain outcome | Frontend, ordering then identity | A refusal overtaken by a revision bump is still shown to the reader who caused it |
+| 72 | A reader's error swallowed by an unrelated revision | Staleness applied to the whole response | Staleness reaches the projection alone; the outcome answers the request that made it | Frontend, ordering then identity | A refusal overtaken by a revision bump is still shown to the reader who caused it |
 | 73 | Two authorities keying one contended moment differently | An admission with no stated selection order | Probe admission reports in `ConversionLane`'s order, over the ownership facts it is entitled to consider | Decision 11 + panel notice registry | One fact refusing two actions produces one notice; two different facts refusing two actions produce two, and neither is misnamed |
 | 74 | A working replacement landed unprobed | "The build changed" collapsed into "the build is gone" | A read that finds a different working installation lands on its own answer; `UnavailableForBinding` is only for a binding naming no build | Decision 3 + Rust lifecycle | Switching between two good installations mid-read yields `Ready(B)`, never `UnavailableForBinding` |
 | 75 | A request's payload judged against a receipt React was told not to hold | A retain-list closed before the request-scoped receipt was needed | React holds the receipt a request was issued under, for as long as that request is outstanding | Decision 13 | A stale reply's payload is discarded without consulting the projection that carried it |
@@ -1906,6 +1932,11 @@ and no finding may disappear because the old PR was superseded.
 | 91 | A session stranded unsettled by a transient failure | "Answers without discovering" discharging unconditionally | It follows the permanent-or-transient rule like every other refusal | Authority obligations | A check whose request failed stays owed; a quarantined one discharges |
 | 92 | The courtesy put ahead of the duty by the invalidation step | Step two dispatching a read imperatively | Step two decides what is invalid; step three issues, under admission and duty-first ordering | Frontend reconciliation | A `BEGIN` refused mid-drain issues the check first and the read on its answer, never a probe into the drain |
 | 93 | One fact with two sentences and no rule for which is rendered | A fact-phrased notice required over an action-phrased vocabulary | The notice sentence is the panel's, new; `ConversionAvailability.message` is untouched and stays on its control | Panel notice registry | The lane's vocabulary is not rewritten, and the shared element carries exactly one sentence |
+| 94 | A catalog discarded for a revision bump about its own binding | Staleness reaching a payload that describes the rendered binding | Receipt judges the payload; revision judges only the projection | Frontend, ordering then identity | A same-receipt `ObservedButUnsettled → Settled` move does not strand `Ready(B)` with no catalog on screen |
+| 95 | A `NoInstallation` observation left owing a verdict | An unsettled state entered for a binding with nothing to judge | Only an `Installed` observation can be unsettled; `NoInstallation` arrives `Settled` | Authority state | Observing that no installation resolves obliges no check and settles at once |
+| 96 | `Unresolved` with nothing obliged to move it | A liveness rule written about bindings, over a state that has none | A session that has resolved nothing owes one backend check from mount | Authority obligations | No session can sit unresolved with nothing owed and no control to press |
+| 97 | The suppressed preview load forgotten | An exhaustive retain-list with no member for it | Which load was suppressed and is waiting on `backendUsable` is frontend in-flight bookkeeping, and named as such | Decision 13 | The load deferred by an unsettled authority is the one issued when the verdict arrives |
+| 98 | An occasion bounded only when it was a delivery | The once-per-occasion bound and duty-first ordering written over deliveries alone | Both govern every occasion, a lane fact going false included | Frontend reconciliation | A picker closing issues the check first, exactly as a drain answering does |
 
 ## What this interlude does not do
 
