@@ -241,13 +241,13 @@ the build changed between the preview verdict and the catalog read
   -> the new binding's configuration is UnavailableForBinding, unprobed
 ```
 
-The third is a binding replacement wearing a configuration read's clothes, and
+The fourth is a binding replacement wearing a configuration read's clothes, and
 naming it `Failed` would have been a third way to spend an attempt on something no
 probe ever asked — the mistake ledger row 32 already forbids one level down.
 `Failed` means a probe ran against a binding and did not answer. A read whose own
 discovery refuses never reaches a probe; it reports a different binding.
 
-**The fourth is `Failed`, not `Ready` with every row unavailable**, and the
+**The third is `Failed`, not `Ready` with every row unavailable**, and the
 difference is the reader's recovery rather than bookkeeping. `Ready` means a
 catalog was read and each row was judged; a build missing `outdir`, `outfile`,
 `--zlib` or the format option offers no row at all, and rendering that as nine
@@ -645,10 +645,14 @@ different things** (Decision 4's split, stated there): the configuration read as
 `ConversionConfigurationProbeAdmission`, and the backend check asks whether the
 lane is free. Reading them as one would put the duty under the courtesy's rule, and
 let a probe already in flight block the only operation that can end an unsettled
-state. Neither asks about quarantine here, and that is deliberate: a quarantined
-session issues each obligation once, has it permanently refused, and discharges
-it — pre-filtering on quarantine would mean never issuing, and therefore never
-discharging, which is the loop the rule below exists to prevent.
+state. Neither rule is restated or weakened here — quarantine is one of the five facts
+admission answers on (row 40), and `backendQuarantined` is the lane's first
+refusal. It simply never arises at this step, and it is worth saying why, because
+the alternative reading strands rows 53 and 54. **Step three re-issues; it does not
+make first attempts.** Each obligation is issued once when it is incurred, and a
+quarantined session's refusal is permanent, which *discharges* it. A discharged
+obligation is not owed, and step three's first question is whether one is owed —
+so a quarantined session has nothing here to filter, and nothing to strand.
 
 **And step three is bounded, because an unbounded one spins.** A refused attempt
 answers, an answer is a delivery, and a delivery is an occasion — which closes a
@@ -660,8 +664,16 @@ each owed obligation is issued at most once per delivery
   -- not "one obligation per delivery": a delivery that finds a catalog read
      and a backend check both owed issues both, or one of them is stranded
 
-an obligation is not re-issued by the delivery of its own refused attempt
-  -- which is the loop; the answer that refused it is not its own occasion
+an obligation is not re-issued by its own refused attempt's answer, unless
+another delivery has been processed since that attempt was issued
+  -- the first half is the loop: with nothing else having happened, the answer
+     that refused it cannot be the occasion to ask again
+  -- the second half is a reply arriving out of order. The gate holder finishes
+     and delivers while the refused attempt's own reply is still in flight;
+     that delivery sees the attempt in flight and issues nothing, and the
+     refusal lands afterwards into a world that has already changed. One bit
+     -- has anything been delivered since this attempt went out? -- separates
+     the reorder from the spin
 
 it IS re-issued by any other delivery, an obligation's included
   -- the obliged check holds the gate, refuses the read, and then answers;
@@ -1481,7 +1493,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–67).
+plus the findings raised against this document's own drafts (rows 18–68).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -1530,7 +1542,7 @@ and no finding may disappear because the old PR was superseded.
 | 41 | `Partial` has no representable binding | A union read as installed-or-nothing while discovery has three outcomes | `Installed` is `AvailabilityState::Available` and nothing else; `Partial` is `NoInstallation`, and the tag carries no reason | Decision 1's union | A folder with msconvert and no msaccess binds as `NoInstallation`, probes nothing, and is never worded "ProteoWizard is not installed" |
 | 42 | A binding is observed and never settles | An unsettled state with no obligation to produce a verdict | Entering `ObservedButUnsettled` obliges one backend check, owed and re-issued on the same terms as the first configuration read; until it answers the lane is not usable | Authority + `ConversionLane` projection | A replacement observed mid-drain claims no verdict, and its check is issued when the drain answers rather than waiting for a reader |
 | 43 | The two judgements never actually diverge | A split justified by a state the code cannot reach | `Failed` is reached by a capability parse that refuses a probe discovery accepted | Decision 3 | A build whose msconvert help is bound but unparseable is preview-usable with a `Failed` configuration |
-| 44 | A superseded plan reply installed by its own retry | A machine keyed on an identity a retry preserves by design | `loading` and `failed` carry a per-question ordinal, and a reply matches identity **and** ordinal | Plan state machine | A retry issued while an earlier request is in flight ignores the earlier reply, and the plan rendered is the one the reader asked for last |
+| 44 | A superseded plan reply installed by its own retry | A machine keyed on an identity a retry preserves by design | `loading` and `failed` carry an ordinal, and a reply matches identity **and** ordinal | Plan state machine | A retry issued while an earlier request is in flight ignores the earlier reply, and the plan rendered is the one the reader asked for last |
 | 45 | A projection nested inside a projection | Two contracts each carrying authority, with no rule for which applies | One response carries one projection; the snapshot's `authority` **is** the observed authority | Decision 4 + Decision 6 | The configuration read's response has exactly one authority field, and no equality rule is needed because there is nothing to disagree with |
 | 46 | Repeated absence read as repeated replacement | Receipt stability defined only for a same-installation recheck | An unbound session keeps one `NoInstallation` receipt however many discoveries confirm it | `BackendBindingReceipt` | Two consecutive failed discoveries revoke nothing and re-probe nothing |
 | 47 | A binding read as `Installed` on a refused build | The union derived from `InstallationIdentity::of` rather than from availability | `of` yields an identity for `Partial` too; the binding is minted from `Available` | Decision 1's union | A `Partial` build never reaches probe admission, because it never becomes `Installed` |
@@ -1548,12 +1560,13 @@ and no finding may disappear because the old PR was superseded.
 | 59 | The obliged check governed by a rule it cannot obey | Two obligations given one admission | The owing is shared; the probe is a courtesy under `try_enter_backend`, the check is `inspect_backend`, a duty | Authority obligations + Decision 11 | The check is not dispatched into a busy lane and not refused by probe admission; quarantine is its one definitive refusal |
 | 60 | A rebinding read whose probe failed left owing another | One transaction with only a successful arm | The new binding lands on what its own answer supports, `Failed` included | Rust configuration lifecycle | A read that discovers B and fails its probe is `Failed(B)`, and no second automatic probe follows |
 | 61 | The ordinal reset by leaving an identity | A counter scoped per question | One per-panel ordinal, never reset | Plan state machine | A reply in flight from before an identity was left and re-entered is discarded, not installed |
-| 62 | The most-shared refusal left without a key | A key set listing seven of eight lane fields | `backendUsable` is a key; action-derived reasons key by action and target | Panel notice registry | Convert and both retries refused as unusable render one sentence |
+| 62 | The most-shared refusal left without a key | A key set listing seven of eight lane fields | `backendUsable` is a key; action-derived reasons key by action and target | Panel notice registry | Convert and the conversion retry, refused as unusable, render one sentence |
 | 63 | An obligation re-issued by its own refusal | A stimulus rule with no bound, over a projection allowed to be stale | At most one issue per delivery, and a delivery produced by an obligation attempt is not an occasion | Frontend reconciliation | A refused attempt does not immediately produce another; the next real operation to finish does |
 | 64 | The stimulus narrower than the facts it must cover | A delivery scope read as the conversion path only | Delivery membership and gate membership are the same set | Decision 4 + Decision 11 | A preview read finishing issues an owed catalog read, exactly as a drain finishing does |
 | 65 | A build that cannot convert rendered as nine unavailable rows | `Failed` and `Ready`-with-nothing-available left undecided | A build failing `require_conversion` is `Failed`; availability is a property of rows, and it has not got as far as rows | Decision 3 + Decision 7 | A build missing `outdir`, `outfile`, `--zlib` or the format option renders one sentence and a retry, not nine dead controls |
 | 66 | A quarantined session reachable through a remembered verdict | The authority's verdict substituted for the projection rather than added to it | Decision 4 changes where the verdict comes from; every conjunct `backendUsable` already requires survives | `ConversionLane` + preview load | A session quarantined after a good verdict starts no conversion and no automatic preview load |
 | 67 | A stale payload with no binding to check against | The projection discarded separately from what it carried | A response older than what is rendered is discarded whole | Frontend, ordering then identity | No outcome from a superseded response is installed, and none is checked against a receipt that was thrown away |
+| 68 | An owed read stranded by an out-of-order reply | A re-issue bound that cannot tell a reorder from a spin | An attempt's own refusal re-issues it when another delivery has been processed since it went out | Frontend reconciliation | A gate holder that answers while a refused probe's reply is still in flight still gets the read issued |
 
 ## What this interlude does not do
 
