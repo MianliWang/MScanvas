@@ -7128,13 +7128,13 @@ carrying the receipt; a mandatory pre-BEGIN intent proof that no busy lane may s
 boundary, not `ConversionLane` — for the conversion configuration read; and one
 panel-level owner per availability reason.
 
-It ends with a hundred-and-twenty-eight-obligation acceptance ledger: seventeen families
+It ends with a hundred-and-thirty-obligation acceptance ledger: seventeen families
 from PR
-#95, and a hundred and eleven more from findings raised against this record's own drafts. Every
+#95, and a hundred and thirteen more from findings raised against this record's own drafts. Every
 live release-blocking finding maps to at least one obligation, so nothing PR #95
 measured has to be rediscovered by the replacement.
 
-**Those hundred and eleven are worth recording, because they are the same shapes one layer
+**Those hundred and thirteen are worth recording, because they are the same shapes one layer
 out.** The first draft said Rust must observe a replacement binding before
 propagating a refusal — and stopped there. Recording an observation without
 *delivering* it leaves the session correct in Rust and stale on screen: a refused
