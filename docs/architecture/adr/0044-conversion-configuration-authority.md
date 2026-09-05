@@ -433,7 +433,7 @@ So delivery membership is **the gate-takers, plus the poll, plus the binding-onl
 configuration read** — the last because it can neither observe nor replace anything and
 still must carry a projection, or the snapshot it answers with has no binding to be
 judged by (row 109); its projection is the authority it read, which is the same instant
-its answer describes. Concretely: — the configuration
+its answer describes. Concretely, the members are: the configuration
 read, the BEGIN preflight, queue execution and drain, retry preparation, the backend
 check and the installation change, and the preview and spectrum reads, all of which
 can observe or replace the authority; and `conversion_state`, which can do neither
@@ -493,9 +493,10 @@ a refused `BEGIN` observes a new binding without producing a
 `BackendAvailabilityDto` for it, so nothing would replace the superseded reading and
 it would stand until a reader pressed Recheck by hand. So: **a rendered reading whose
 receipt is not the authority's owes a backend check**, which is the same obligation
-`Unresolved` incurs at mount — same admission, same occasions, same discharge — asked
-of one more condition. What they do not share is the *dispatch*: the mount one is
-unconditional, for the reason given below, and this one is issued by step three, into a
+`Unresolved` incurs at mount — same Rust-side admission, same occasions, same
+discharge — asked of one more condition. What they do not share is the *dispatch*: the
+mount one is not gated by the frontend's courtesy projection at all, for the reason
+given below, and this one is issued by step three, into a
 lane the projection says is free. That is why a banner going stale during a drain waits
 for the drain rather than dispatching an `inspect_backend` that would hold `backendBusy`
 for its length. A session that has never resolved anything
@@ -677,13 +678,14 @@ checks this document newly owes — the ones step three issues — and those are
 only into a lane the projection says is free.
 
 It is the state with no binding, so the liveness rule below — written about bindings —
-does not reach it, and without this it would be the
-one state a session could sit in with nothing obliged to move it and no control to
-press. And a rendered `BackendAvailabilityDto` whose receipt is not the authority's
-owes one too (Decision 4), because a binding observed by a drain or a refused `BEGIN`
-produces no reading of its own and the banner would otherwise describe a build the
-session has left until someone pressed Recheck. Both are the same obligation, admitted
-like any other backend work and owed on the terms below if it cannot be issued.
+does not reach it, and without this it would be the one state a session could sit in
+with nothing obliged to move it and no control to press. And a rendered
+`BackendAvailabilityDto` whose receipt is not the authority's owes one too (Decision 4),
+because a binding observed by a drain or a refused `BEGIN` produces no reading of its
+own and the banner would otherwise describe a build the session has left until someone
+pressed Recheck. Both are the same obligation, admitted by Rust like any other backend
+work and owed on the terms below if it cannot be issued. Only the *dispatch* differs,
+and only for the mount one: see below.
 
 **They do not share an acquisition with the configuration read, and a draft of this
 document said they should.** The argument was row 115's, made for `BEGIN`: one
@@ -1595,7 +1597,7 @@ a plan question is posed and its request is issued
   -> loading { that request's identity, the next ordinal }
 
 a reply arrives for the loading identity **and** its ordinal, and it answers
-  -> ready { plan }
+  -> ready { identity, plan }
 
 a reply arrives for the loading identity **and** its ordinal, and it failed
   -> failed { identity, error }
@@ -1760,7 +1762,8 @@ an oversight.** React does hold it (Decision 13) and admission does read it (Dec
 11), so Convert *could* be disabled for its duration — and it is not, because the probe
 is the one gate holder with nothing to tell a reader. Disabling Convert for up to thirty
 seconds under a sentence about a settings read the reader did not ask for buys a refusal
-in advance of a refusal, and Decision 12's "shared by nothing" stops being true the
+in advance of a refusal, and Decision 12's "nothing it refuses is ever rendered" stops
+being true the
 moment a conversion action shares it. The cost is the mirror image: a Convert pressed in
 that window renders enabled and is refused by Rust. It is rare, it is immediately
 retriable, and it says something true. A refusal a reader can act on beats a click that
@@ -2007,6 +2010,7 @@ React owns:
 the Rust-authored authority projection it is rendering, whole -- its state,
   its binding and its `previewAvailability`, not merely the revision and
   receipt it compares with
+the plan request identity, and its receipt, for the life of the plan
 the selected admitted intent id
 request-in-flight state needed to render an outstanding command
 per-obligation bookkeeping: whether a read or check is in flight, and whether
