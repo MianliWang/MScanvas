@@ -1199,8 +1199,7 @@ receipt replaced mid-request
 probe admission refuses while Unattempted
   -> stay Unattempted; nothing is queued behind the lane
   -> the first read is still owed, and is re-issued on the next occasion
-     that finds admission available -- a delivery, or a lane fact going
-     false (Decision 4b, step three)
+     that finds admission available (Decision 4b, step three)
 
 probe admission refuses an explicit retry while Failed
   -> stay Failed; no probe launches
@@ -1213,12 +1212,14 @@ it has two halves because not every deferring fact belongs to an operation that
 answers:
 
 ```text
-any authority delivery
-  -- every operation that owns the gate delivers authority when it answers
-     (Decision 4), so the operation that was holding the gate is the one
-     that releases the read
+a delivery from an operation that took the gate
+  -- every such operation delivers authority when it answers (Decision 4),
+     so the operation that was holding the gate is the one that releases
+     the read. NOT a `conversion_state` poll, which delivers and wakes
+     nothing: a read deferred by a running drain must not be re-issued on
+     every tick of that drain's own polling
 
-any transition of a lane fact the obligation was deferred on
+a lane fact the obligation was deferred on going false
   -- which the frontend observes in its own render, needing nothing from Rust
 ```
 
@@ -2237,12 +2238,12 @@ and no finding may disappear because the old PR was superseded.
 | 56 | A fresh catalog discarded, or `Ready` arriving over `Unattempted` | Observation and answer ordered as two events | A read that observes a new available binding answers for it in one transaction | Rust configuration lifecycle | A configuration read that discovers build B returns `Ready(B)`, and `Unattempted(B)` is never rendered |
 | 57 | Two notices for one refusing fact | A registry key left to be inferred across two vocabularies | The key is a `ConversionLane` field, and its order is the precedence | Panel notice registry | A conversion holding the gate renders one sentence, whether it refused a conversion, a probe, or both |
 | 58 | An unbound session projected preview-usable | A verdict field on a binding that names no build | The verdict is entailed for `NoInstallation`, and `backendUsable` requires `Installed` in the conjunction | Decision 4 projection | No `NoInstallation` authority, settled or not, yields a usable lane |
-| 59 | The obliged read governed by a rule it cannot obey | A courtesy's refusal semantics applied to a duty | One admission predicate, two refusal semantics: the probe refuses under `try_enter_backend`, the mount-time check waits under `inspect_backend` | Authority obligations + Decision 11 | Neither is dispatched into a busy lane, and neither is left owed by a refusal the other would have taken |
+| 59 | The obliged check governed by a rule it cannot obey | A courtesy's refusal semantics applied to a duty | Four admitting facts shared and one not — the probe asks quarantine, the check does not — and two refusal semantics: the probe refuses under `try_enter_backend`, the check waits under `inspect_backend` | Authority obligations + Decision 11 | Neither is dispatched into a busy lane; a quarantined session still issues its check |
 | 60 | A rebinding read whose probe failed left owing another | One transaction with only a successful arm | The new binding lands on what its own answer supports, `Failed` included | Rust configuration lifecycle | A read that discovers B and fails its probe is `Failed(B)`, and no second automatic probe follows |
 | 61 | The ordinal reset by leaving an identity | A counter scoped per question | One per-panel ordinal, never reset | Plan state machine | A reply in flight from before an identity was left and re-entered is discarded, not installed |
 | 62 | The most-shared refusal left without a key | A key set listing seven of eight lane fields | `backendUsable` is a key; action-derived reasons key by action and target | Panel notice registry | Convert and the conversion retry, refused as unusable, render one sentence |
 | 63 | An obligation re-issued by its own refusal | A stimulus rule with no bound, over a projection allowed to be stale | Each owed obligation issues at most once per occasion, and an attempt's own refusal re-issues it only if another occasion has passed meanwhile — counted as occasions everywhere, including in what React retains | Frontend reconciliation | A refused attempt with nothing else having happened does not immediately produce another; one overtaken by a gate holder's answer, or by a picker closing, does |
-| 64 | The stimulus narrower than the facts it must cover | A delivery scope read as the conversion path only | Delivery membership and gate membership are the same set | Decision 4 + Decision 11 | A preview read finishing issues an owed catalog read, exactly as a drain finishing does |
+| 64 | The stimulus narrower than the facts it must cover | A delivery scope read as the conversion path only | Every gate-taker delivers, and the poll delivers without waking anything | Decision 4 + Decision 11 | A preview read finishing issues an owed catalog read, exactly as a drain finishing does |
 | 65 | A build that cannot convert rendered as nine unavailable rows | `Failed` and `Ready`-with-nothing-available left undecided | A build failing `require_conversion` is `Failed`; availability is a property of rows, and it has not got as far as rows | Decision 3 + Decision 7 | A build missing `outdir`, `outfile`, `--zlib` or the format option renders one sentence and a retry, not nine dead controls |
 | 66 | A quarantined session reachable through a remembered verdict | Quarantine reaching `backendUsable` only by corrupting the availability DTO the authority replaces | `backendUsable` names quarantine as its own conjunct, beside the authority's verdict | `ConversionLane` + preview load | A session quarantined after a good verdict starts no conversion and no automatic preview load |
 | 67 | A stale payload with no binding to check against | One rule made to cover projection, payload and outcome together | Three things, three rules: revision judges the projection, receipt judges the payload, neither judges the outcome | Frontend, ordering then identity | A snapshot for the rendered binding is installed even when its projection is stale, and its domain outcome still answers the reader |
@@ -2263,7 +2264,7 @@ and no finding may disappear because the old PR was superseded.
 | 82 | No configuration state for an answer needing no process | A binding-only answer deferred by a gate it does not take | A read for a binding that names no build runs no discovery and consults no admission; it answers from the binding | Decision 5 + Decision 11 | A session bound to no installation renders `UnavailableForBinding` while a drain holds the gate |
 | 83 | A retained question mistaken for a retained belief | A retain-list bounding receipts by the render alone | A plan identity's receipt is a component of a question, bounded by the plan, not by the render | Decision 9 + Decision 13 | A failed plan can be retried for the same question without React holding a third authority |
 | 84 | Two obligations issued into each other's gate | "Issues both" read as simultaneously | Where both are owed the duty goes first and the courtesy is deferred onto its answer | Frontend reconciliation | An occasion finding a mount-time check and a read both owed strands neither, and issues one process at a time |
-| 85 | An admission rule the frontend cannot evaluate | A rule stated over `ConversionLane` for a fact with no lane field | Admission reads the lane's ownership fields plus the frontend's own probe-in-flight bookkeeping | Decision 4 + Decision 13 | No backend work is issued while a configuration probe is in flight |
+| 85 | An admission rule the frontend cannot evaluate | A rule stated over `ConversionLane` for a fact with no lane field | Admission reads the lane's ownership fields plus the frontend's own probe-in-flight bookkeeping | Decision 4 + Decision 13 | No configuration read or backend check is issued while a probe is in flight; Convert, which is not this rule's business, stays enabled |
 | 86 | Work suppressed by a missing verdict, and never re-issued | One-shot guards behind a verdict that arrives later than the binding | A binding never arrives without its verdict, so nothing `backendUsable` gates is suppressed for want of one | Decision 1 + `backendUsable`'s readers | A document opened as a replacement is observed previews on that observation, and a scan clicked then is not silently lost |
 | 87 | A courtesy abolished with the duty it was mistaken for | One decision covering the exact-intent proof and the pre-picker family check | The proof owns a guarantee and may not be skipped; the pre-picker courtesy owns none and stays skippable, sharing the proof's acquisition rather than taking its own | Decision 10 | The family check is never promoted into the proof's guarantee, and no picker opens before the exact intent is proved |
 | 88 | One moment keyed two ways by an order written wrong | An admitting list whose middle two facts were transposed | The list is `ConversionLane`'s precedence exactly: `laneClaimed` before `previewReading` | Decision 11 | A conversion running during a preview read is keyed `conversion-running` by both authorities |
