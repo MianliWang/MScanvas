@@ -751,14 +751,14 @@ discharging that one would leave a session `Unresolved` for its whole life with
 nothing obliged to move it.
 
 **In an `Unresolved` session that occasion may never come, and the floor is a
-control.** The occasion set is gate-takers' answers and lane facts going false — never a
-poll — and a session that has resolved nothing is running nothing, so a mount check
-whose request failed
-is owed with no automatic stimulus in sight. That is not a stall: `backendBusy` is
-false, so `BackendStatus`'s Recheck and Choose-installation are both live, and the
-banner is showing the failure that the reader would press them about. It is the same
-floor the configuration read has in its own dead end (Decision 5), and for the same
-reason: a reader who can see the problem must always have something to press.
+control.** The occasion set is gate-takers' answers and lane facts ceasing to refuse —
+never a poll — and a session that has resolved nothing is running nothing, so a mount
+check whose request failed is owed with no automatic stimulus in sight. That is not a
+stall: `backendBusy` is false, so `BackendStatus`'s Recheck and Choose-installation are
+both live, and the banner is showing the failure that the reader would press them about.
+It is the same floor the configuration read has in its own dead end (Decision 5), and
+for the same reason: a reader who can see the problem must always have something to
+press.
 
 **The projection carries the authority state, not a flattened stand-in for it.**
 Dropping `previewAvailability` from `Settled` — projecting a bare binding and
@@ -956,13 +956,20 @@ payload bound to A is never installed while B is rendered.
 **Step two — identity, by receipt only, and only on a projection just accepted**
 (the first line above included; an equal revision changes nothing and skips it).
 
-**An obligation is issued when it is incurred, and step three is about the ones that
-could not be.** A binding that has just become the rendered one owes a configuration
-read, and that read goes out in the same commit that installs the binding — which is how
-a drain's poll, delivering a replacement mid-queue, gets the new binding's configuration
-read without the poll being an occasion. Step three is the recovery path for an
-obligation that was incurred and refused, and its occasion rule bounds *that*, not the
-first attempt. The mount check is the same shape one step earlier: incurred at mount,
+**An obligation is *attempted* when it is incurred, and step three is about the ones
+that could not be.** A binding that has just become the rendered one owes a
+configuration read, and that read is attempted in the same commit that installs the
+binding — which is how a drain's poll, delivering a replacement mid-queue, gets that
+binding's read attempted without the poll being an occasion.
+
+Attempted is not issued. Admission still answers, and for an `Installed` binding
+mid-drain it refuses, so the read is owed and the drain's own answer is the occasion
+that issues it. Where the attempt *does* go through is the case that needs this rule:
+a `NoInstallation` binding, whose read launches no probe, consults no admission and
+answers at once — so the panel is never left without configuration state for the length
+of someone else's drain, which is rows 82 and 120. Step three is the recovery path for
+an attempt that was refused, and its occasion rule bounds *that*, not the first
+attempt. The mount check is the same shape one step earlier: incurred at mount,
 issued at mount.
 
 **Step three, and it is not conditional on either of the first two — every
@@ -1051,7 +1058,7 @@ rules turn on it:
 ```text
 an occasion is
   a delivery from an operation that took the gate, or
-  a lane fact going false
+  a lane fact that was refusing stopping refusing
 
 it is not
   a `conversion_state` poll, which delivers the authority and wakes nothing
@@ -1068,8 +1075,8 @@ The bound is per obligation, and both halves of that matter:
 each owed obligation is issued at most once per occasion, and where both are
 owed the check goes first
   -- "occasion", not "delivery": Decision 5 adds a second kind, a lane fact
-     going false, and the bound and the ordering govern both alike. A picker
-     closing issues the check first, exactly as a drain answering does
+     ceasing to refuse, and the bound and the ordering govern both alike. A
+     picker closing issues the check first, exactly as a drain answering does
   -- not "one obligation per occasion": an occasion finding both owed must
      leave neither stranded. But they cannot go together, because whichever
      starts holds the gate against the other -- so the duty is issued and
@@ -1258,10 +1265,16 @@ the receipt is replaced by the configuration read that then answers for it
 receipt replaced mid-request
   -> the stale reply cannot become current
 
-probe admission refuses while Unattempted
+probe admission refuses while Unattempted, and the refusal can clear
   -> stay Unattempted; nothing is queued behind the lane
   -> the first read is still owed, and is re-issued on the next occasion
      that finds admission available (Decision 4b, step three)
+
+probe admission refuses while Unattempted, permanently -- the session is
+quarantined, which never clears
+  -> stay Unattempted; the obligation is discharged, not re-asked
+     (Decision 4's permanent-or-transient rule)
+  -> the reader is told quarantine, which outranks every other reason
 
 probe admission refuses an explicit retry while Failed
   -> stay Failed; no probe launches
@@ -1281,10 +1294,13 @@ a delivery from an operation that took the gate
      nothing: a read deferred by a running drain must not be re-issued on
      every tick of that drain's own polling
 
-a lane fact going false
+a lane fact that was refusing stopping refusing
   -- which the frontend observes in its own render, needing nothing from Rust,
      and which is the canonical definition rather than a narrower one: any
-     such fact, not only the one this obligation was deferred on
+     such fact, not only the one this obligation was deferred on. "Stops
+     refusing" rather than "goes false", because `backendUsable` is the one
+     field that refuses when false: a build becoming usable is an occasion,
+     and a build becoming unusable is not
 ```
 
 The second half is not redundancy. `laneClaimed` is true while the destination
@@ -1839,7 +1855,7 @@ picker is open, which owns nothing. Read against Decision 11's criterion the sec
 case does not belong; read against the field, it comes along. Admission takes the
 field — the frontend's projection is a courtesy, and a courtesy is allowed to be
 conservative, deferring a probe a moment longer than Rust would. What makes that
-safe rather than a stall is row 81: a lane fact going false is an occasion, so the
+safe rather than a stall is row 81: a lane fact ceasing to refuse is an occasion, so the
 picker closing issues the deferred read without waiting for anything to answer.
 
 and deliberately not:
@@ -1971,7 +1987,7 @@ the selected admitted intent id
 request-in-flight state needed to render an outstanding command
 per-obligation bookkeeping: whether a read or check is in flight, and whether
   any *occasion* has passed since it was issued -- as Decision 4b defines one:
-  a gate-taker's answer, or a lane fact going false, and never a poll --
+  a gate-taker's answer, or a lane fact ceasing to refuse, never a poll --
   never a *judgement* about whether one is owed, which Rust's state makes
 the per-panel plan request ordinal, which is never reset
 the Rust-authored configuration snapshot it is rendering, catalog included
@@ -2291,7 +2307,7 @@ and no finding may disappear because the old PR was superseded.
 | 36 | A snapshot that contradicts itself | The receipt carried twice with no stated equality | The receipt appears once, in the authority; the configuration describes the binding beside it | `ConversionConfigurationSnapshot` | No snapshot can pair one binding's authority with another's catalog |
 | 37 | The first binding is never installed | An ordering rule defined only for a strictly newer revision | Nothing rendered accepts the first projection; an equal revision changes nothing and re-reads nothing | Frontend, ordering then identity | A session's first projection installs its binding, and a repeated projection spends no probe |
 | 38 | Receipt comparison silently disabled | Two shapes for the one union Rust owns | `Binding` carries its receipt, in one place, wherever the union appears | Decision 1's union | Every comparison in the replacement reads the receipt from the same field |
-| 39 | The first read is owed and never re-issued | An admission refusal with no named stimulus to try again | The read stays owed, and every occasion — a gate-taker's answer or a lane fact going false, never a poll — is an occasion to issue it; the retry is offered from `Unattempted` too | Rust configuration lifecycle + panel | A configuration read refused under a held gate is issued when the holder answers, and a reader is never left with a stuck panel and nothing to press |
+| 39 | The first read is owed and never re-issued | An admission refusal with no named stimulus to try again | The read stays owed, and every occasion — a gate-taker's answer or a lane fact ceasing to refuse, never a poll — is an occasion to issue it; the retry is offered from `Unattempted` too | Rust configuration lifecycle + panel | A configuration read refused under a held gate is issued when the holder answers, and a reader is never left with a stuck panel and nothing to press |
 | 40 | A probe launches in a quarantined session | A membership criterion written as "takes the gate" alone | Admission is what Rust refuses a backend process for: the gate **and** the quarantine boundary | `ConversionConfigurationProbeAdmission` | A quarantined session admits no probe, automatic or explicit, and says so with quarantine's own reason |
 | 41 | `Partial` has no representable binding | A union read as installed-or-nothing while discovery has three outcomes | `Installed` is `AvailabilityState::Available` and nothing else; `Partial` is `NoInstallation`, and the tag carries no reason | Decision 1's union | A folder with msconvert and no msaccess binds as `NoInstallation`, probes nothing, and is never worded "ProteoWizard is not installed" |
 | 42 | A binding is observed and never settles | An observation that carries a binding and no verdict | A binding and its verdict travel together: every observer holds the `DiscoveryResult` both are computed from | Decision 1 + Decision 4 | No response carries a binding whose `previewAvailability` is missing, so no state exists for a check to have to leave |
@@ -2333,7 +2349,7 @@ and no finding may disappear because the old PR was superseded.
 | 78 | Presentation designed for a state the tree cannot produce | A `Ready` catalog with no available row | `require_conversion` and `require_conversion_intent(SHIPPED)` ask for the same set, so a catalog that reached `Ready` always has the shipped row | Decision 3 + Decision 8 | Every `Ready` catalog offers at least one row, and Decision 8's recovery needs no availability condition |
 | 79 | A registry key for a refusal nothing renders | Probe-in-flight given a key and a place in the order | It mints no key: the retry is withdrawn while a probe is in flight, Convert stays enabled, and an automatic read's refusal is bookkeeping | Panel notice registry | The registry's keys are the lane's eight fields and the action-derived reasons, and every one of them can be rendered |
 | 80 | The binding oscillating between two observers | The preview verdict folded into the identity by one of them | Every observer mints the binding from `AvailabilityState::Available`; the verdict travels beside it | Decision 1 + Decision 3 | An `Available` build whose msaccess lacks a required preview operation is one binding to every observer, and its catalog survives a backend check |
-| 81 | An obligation waiting on a delivery nothing will produce | A stimulus that assumed every deferring fact belongs to a gate holder | A lane fact going false is an occasion, observed by the frontend without being told | Frontend reconciliation | A destination picker cancelled after a `BEGIN` observed a replacement issues the owed check, and the read follows on its answer |
+| 81 | An obligation waiting on a delivery nothing will produce | A stimulus that assumed every deferring fact belongs to a gate holder | A lane fact ceasing to refuse is an occasion, observed by the frontend without being told | Frontend reconciliation | A destination picker cancelled after a `BEGIN` observed a replacement issues the owed check, and the read follows on its answer |
 | 82 | No configuration state for an answer needing no process | A binding-only answer deferred by a gate it does not take | A read for a binding that names no build runs no discovery and consults no admission; it answers from the binding | Decision 5 + Decision 11 | A session bound to no installation renders `UnavailableForBinding` while a drain holds the gate |
 | 83 | A retained question mistaken for a retained belief | A retain-list bounding receipts by the render alone | A plan identity's receipt is a component of a question, bounded by the plan, not by the render | Decision 9 + Decision 13 | A failed plan can be retried for the same question without React holding a third authority |
 | 84 | Two obligations issued into each other's gate | "Issues both" read as simultaneously | Where both are owed the duty goes first and the courtesy is deferred onto its answer | Frontend reconciliation | An occasion finding a mount-time check and a read both owed strands neither, and issues one process at a time |
@@ -2350,7 +2366,7 @@ and no finding may disappear because the old PR was superseded.
 | 95 | A verdict owed for a binding that has none to give | A verdict treated as separable from the binding it judges | `NoInstallation` carries no verdict to wait for, and `Installed` never arrives without one | Authority state | Observing that no installation resolves obliges nothing and completes at once |
 | 96 | A reading nothing is obliged to replace | A liveness rule written about bindings only | A session that has resolved nothing, and a rendered reading whose receipt is not the authority's, each owe one backend check | Authority obligations | No session sits unresolved, and no banner describes a build the session has left, with nothing owed and no control to press |
 | 97 | React holding what Rust already answers | A retain-list that grew a flag per rule rather than per fact | React holds what only it can know — its own in-flight work — and never whether an obligation is *owed*, which Rust's configuration state answers | Decision 13 | No frontend flag duplicates `Unattempted` |
-| 98 | An occasion bounded only when it was a delivery | The once-per-occasion bound and duty-first ordering written over deliveries alone | Both govern every occasion, a lane fact going false included | Frontend reconciliation | A picker closing issues the check first, exactly as a drain answering does |
+| 98 | An occasion bounded only when it was a delivery | The once-per-occasion bound and duty-first ordering written over deliveries alone | Both govern every occasion, a lane fact ceasing to refuse included | Frontend reconciliation | A picker closing issues the check first, exactly as a drain answering does |
 | 99 | Quarantine's own protections read as removed with the route to `backendUsable` | "The short-circuit is gone with it", said of a function rather than of a dependency | `quarantined_availability()` keeps its behaviour and carries the receipt like every other reading; only `backendUsable` stops depending on it | Decision 2 + Decision 4 | The quarantine banner and the refusal ahead of the gate both survive, and the quarantined reading is comparable |
 | 100 | The route's own acceptance criterion asking for the defect | M6.4's per-value framing left unamended beside a row-level boundary | ADR 0043's M6.4 acceptance states availability as a property of an admitted row | ADR 0043 amendment | The criterion the replacement is measured against and the boundary it is built on ask for the same thing |
 | 101 | A click hung behind whatever holds the gate | A proof that waits on a lock nothing bounds | The proof takes the gate with `try_enter_backend` and refuses if it is held, with Rust's own reason | Decision 10 | No `BEGIN` blocks; a reader refused during a probe can press again at once |
@@ -2385,12 +2401,12 @@ and no finding may disappear because the old PR was superseded.
 | 130 | An owed check with no clause to issue it under | Step three enumerating two of the three conditions an obligation arises from | The enumeration names the configuration read, the unresolved session, and the stale rendered reading | Frontend reconciliation | A check owed after a drain observes a replacement is issued by the only procedural statement of issuance |
 | 131 | A stale failure sentence no rule can notice | A reading refreshed only by an explicit check, under two currency rules that correctly say nothing changed | Recorded as a residual, not answered by a store nothing reads: the controls that refresh it are live throughout | Decision 2 + Decision 4 | An unbound session whose reason for being unbound changes shows the old sentence beside a live Recheck, and no rule pretends otherwise |
 | 132 | A mount obligation owed with no occasion in sight | An occasion set that is empty in a session running nothing | The explicit controls are the floor: Recheck and Choose-installation are live in an unresolved session | Authority obligations | A reader who can see a discovery failure always has something to press |
-| 133 | Delivery and occasion left as one word | A bound written over "any delivery" after one delivery stopped being a stimulus | An occasion is defined once: a gate-taker's answer, or a lane fact going false — never a poll | Decision 4b | An owed read deferred by a running drain is not re-issued on every tick of that drain's own poll |
+| 133 | Delivery and occasion left as one word | A bound written over "any delivery" after one delivery stopped being a stimulus | An occasion is defined once: a gate-taker's answer, or a lane fact ceasing to refuse — never a poll | Decision 4b | An owed read deferred by a running drain is not re-issued on every tick of that drain's own poll |
 | 134 | The delivery rule stated without the operation it was widened for | "Observe or replace" kept as the whole scope after the poll joined it | The rule names the poll where it is stated in full, and in the summary that answers for it | Decision 4 | Coding the normative sentence closes the drain window rather than reopening it |
 | 135 | A quarantined reading judged as though it described a build | A currency test applied to a statement about the session | The quarantined reading claims no build, is exempt from the test, and discharges its check by answering | Decision 2 + Decision 4 | A drain that observes a replacement and quarantines in the same operation leaves no check owed for the rest of the run |
 | 136 | The mount check deferred by a fact only it can clear | `backendBusy` initialising to true, gating the dispatch that would make it truthful | The mount dispatch is unconditional; nothing else clears that flag, so bypassing it would raise the deadlock for the run | Authority obligations + `ConversionLane` projection | A session mounts, checks and settles untouched, and no condition on that dispatch can leave `backendBusy` raised |
 | 137 | A waiting check locking out the controls that would end it | A duty on a waiting primitive, dispatched without bound | The checks this document owes are dispatched only into a lane the projection says is free; the mount dispatch is the tree's own and unchanged | Authority obligations | No check step three issues waits behind a drain the frontend can see |
-| 138 | A newly incurred obligation waiting for an occasion | Step three read as the only statement of issuance | An obligation is issued when it is incurred; step three recovers the ones that could not be | Frontend reconciliation | A drain's poll that delivers a replacement gets that binding's configuration read, without the poll being an occasion |
+| 138 | A newly incurred obligation waiting for an occasion | Step three read as the only statement of issuance | An obligation is attempted when it is incurred; admission still answers, and step three recovers the ones it refused | Frontend reconciliation | A drain's poll that delivers a replacement attempts that binding's read, which answers at once where no probe is needed and is owed where one is |
 | 139 | A banner with no reading at all, and no clause to get one | An enumeration written for a stale reading and not for a missing one | An obligation is owed where the rendered reading names a different binding *or where there is none* | Frontend reconciliation | A panel remounting onto a recovered queue gets a reading when the drain answers, rather than none for the run |
 
 ## What this interlude does not do
