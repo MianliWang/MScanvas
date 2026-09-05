@@ -228,7 +228,13 @@ the frontend issues that could race another for ordering — the
 recheck-after-a-failed-open included, and an installation change in flight counts as
 one; the quarantine dispatch is outside it, because its answer launches nothing and is
 exempt from both ordering tests (Decision 4), so it races nothing and must not be
-blocked by a mount check that may be waiting out a whole drain** — the recheck's own
+blocked by a mount check that may be waiting out a whole drain. It neither raises nor
+clears `backendBusy` either, which is the other half of being outside: two dispatches
+sharing one boolean would have the quarantine one's immediate return clear a flag a
+mount `inspect_backend` is still blocked on, making `backendChanging` false while a
+check is in flight — falsifying its stated meaning, Decision 11's admitting fact and
+Decision 4's own bound in one stroke. It launches nothing, so it has no claim on a flag
+that means something is running** — the recheck's own
 `installationChanges.current > 0` deferral is that constraint already written down, and
 it is what stops a stale check reading rolling `origin` back from `chosen` to
 `automatic` when a chosen folder resolves to the bound build. What the recheck bypasses
@@ -1665,9 +1671,11 @@ one instant for the same reason a gate-holding read's do (row 117), without hold
 anything a process would need. That is what makes the paragraph above safe rather than a
 licence to send a gate-taking discovery into a running drain, and it is also why
 `UnavailableForBinding` needs no exit inside the panel: the state is left when some
-*other* operation observes a build, which is the banner's owed check, an installation
-change, or a recheck the reader presses. A settings retry is not offered for it,
-because there is nothing to retry.
+*other* operation observes a build. In a settled `NoInstallation` session with a current
+reading, none of Decision 4's three check-owing conditions fires — which is row 131's
+recorded residual rather than an oversight — so the exits are the two reader controls,
+Recheck and Choose-installation, both live throughout. A settings retry is not among
+them, because there is nothing to retry.
 
 **`UnavailableForBinding` is not entered because `backendUsable` went false**, and
 that rule belongs here rather than to the read above it — splitting the paragraph in an
@@ -2291,7 +2299,14 @@ ever needed to do: a diagnostics export refuses a conversion, is keyed on its ow
 and has nothing to tie with. The action-derived reasons name a target rather than a
 lane fact, and are keyed by action *and* target; they need no cross-action
 deduplication, because no two actions can be refused by one of them — a missing target
-is a fact about the action asking. (The alternative — namespaced
+is a fact about the action asking.
+
+**A plan state is the third kind of key**, and Decision 9 needs it: the Convert refusal
+must distinguish a plan that *failed* from one being recomputed, because the reader can
+act on the first and can only wait for the second. That is neither a lane fact nor a
+target, so it keys on the plan state — read only by Convert, shared with nothing, and
+requiring no change to `ConversionLane`'s vocabulary, which is what row 15 asks for and
+what this decision otherwise forbids touching. (The alternative — namespaced
 per-child notices — is rejected: it multiplies the same sentence and reintroduces the
 "each surface decides again what is wrong" defect ADR 0041 removed.)
 

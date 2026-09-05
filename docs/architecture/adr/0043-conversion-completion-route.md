@@ -937,7 +937,10 @@ refused once, naming the combination, and no individual control is marked unsupp
 its account ([ADR 0044](0044-conversion-configuration-authority.md), Decisions 7 and 8;
 the per-value framing this criterion carried until the M6.4A amendment is what produced
 the last round's blocking defect). A control whose own one-axis target is unavailable
-says so for that target, and none is shown inert. **Of the plan facts that exist before
+says so for that target; one whose target is **not qualified** — no admitted row on any
+build, which is thirty-nine of the forty-eight combinations — says that instead, and as
+a fact about the product's evidence rather than about this installation. None is shown
+inert. **Of the plan facts that exist before
 dispatch** — membership, order, conflict policy and intent — the summary names the ones
 that will be bound, and moving a control after `BEGIN` changes nothing about the running
 queue. A lossy processing choice is marked lossy where the user chooses it.
