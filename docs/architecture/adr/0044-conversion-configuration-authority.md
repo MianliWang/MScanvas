@@ -587,11 +587,18 @@ comment explains what it protects — the banner that keeps naming the installat
 session was using, and the refusal that keeps `inspect_backend` from launching help
 probes after MSCanvas has lost a converter process. Both survive untouched. What
 changes is that it builds its DTO with the **receipt** rather than
-`installation_generation`, like every other reading, because a quarantined banner whose
-reading carried no receipt could never satisfy the currency test in Decision 4 — its
-owed check would answer and the reading would still not be comparable, so the obligation
-could never discharge. And `backendUsable` no longer *depends* on this function for the
-quarantine half of its meaning, and says so itself.
+`installation_generation`, like every other reading.
+
+**And the currency test does not apply to what it returns**, which is the half that
+matters. A quarantined reading is a statement about the *session* — the code says so
+itself, returning `release: None` and `build_date: None` with the note that "nothing is
+claimed about a build" — so asking whether it describes the current binding is asking
+the wrong question of it. It keeps `origin`, which names where MSCanvas was looking
+rather than what it found, and it discharges the owed check **by answering**. Without
+that exemption the reading would be permanently non-current against a binding observed
+in the same operation that quarantined the session, and the check would be owed for the
+rest of the run against an answer that will never change. And `backendUsable` no longer
+*depends* on this function for the quarantine half of its meaning, and says so itself.
 
 So the projection is stated in full, and quarantine is a conjunct of its own:
 
@@ -629,8 +636,17 @@ disables its own exits is not a state to add, which is the second reason Decisio
 does not add one.
 
 **The authority obliges a backend check in two conditions, and they are one rule.**
-`Unresolved` owes one at mount: it is the state with no binding, so the liveness rule
-below — written about bindings — does not reach it, and without this it would be the
+`Unresolved` owes one at mount, **and that one dispatch is not gated by the
+frontend's projection.** `backendBusy` initialises to `true` with nothing in flight —
+correctly, since nothing is known yet — so a mount check deferred by it would be
+deferred by a fact only its own answer can clear, and no occasion could clear it. The
+check is what *makes* the projection truthful, so it cannot be gated by it. That is not
+a new exception: the recheck-after-a-failed-open in `usePreviewWorkspace` already
+"passes straight through `backendBusy`", for the same reason and with the same
+justification recorded beside it.
+
+It is the state with no binding, so the liveness rule below — written about bindings —
+does not reach it, and without this it would be the
 one state a session could sit in with nothing obliged to move it and no control to
 press. And a rendered `BackendAvailabilityDto` whose receipt is not the authority's
 owes one too (Decision 4), because a binding observed by a drain or a refused `BEGIN`
@@ -665,9 +681,17 @@ four *ownership* facts and not quarantine, because a quarantined session does no
 it: it answers from `quarantined_availability()` without starting anything. Coding them
 as one predicate would leave the check unissued in exactly the session that most needs
 its reading replaced, which is row 129. The frontend declines to dispatch either while
-its projection says the backend is owned — a courtesy in both cases — and where both are
-owed at once the check goes first, since whichever starts holds the gate against the
-other.
+its projection says the backend is owned — a courtesy in both cases, and the mount
+dispatch above the one exception — and where both are owed at once the check goes
+first, since whichever starts holds the gate against the other.
+
+**A check that does get dispatched into a busy lane holds `backendBusy` while it
+waits**, which disables Convert, Recheck and Choose-installation for as long as the
+holder runs. That is the cost of the check being a duty on a waiting primitive, and it
+is bounded by the courtesy above rather than by the primitive: the frontend only
+dispatches into a lane its projection says is free, so this is reachable exactly in the
+stale window the projection is allowed to have — one delivery wide — and not while a
+drain the frontend knows about is running.
 
 **An obligation is owed only while the thing refusing it can stop refusing.** This
 is the rule for both obligations, and it has to be stated, because the same
@@ -2183,7 +2207,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–134).
+plus the findings raised against this document's own drafts (rows 18–137).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2323,6 +2347,9 @@ and no finding may disappear because the old PR was superseded.
 | 132 | A mount obligation owed with no occasion in sight | An occasion set that is empty in a session running nothing | The explicit controls are the floor: Recheck and Choose-installation are live in an unresolved session | Authority obligations | A reader who can see a discovery failure always has something to press |
 | 133 | Delivery and occasion left as one word | A bound written over "any delivery" after one delivery stopped being a stimulus | An occasion is defined once: a gate-taker's answer, or a lane fact going false — never a poll | Decision 4b | An owed read deferred by a running drain is not re-issued on every tick of that drain's own poll |
 | 134 | The delivery rule stated without the operation it was widened for | "Observe or replace" kept as the whole scope after the poll joined it | The rule names the poll where it is stated in full, and in the summary that answers for it | Decision 4 | Coding the normative sentence closes the drain window rather than reopening it |
+| 135 | A quarantined reading judged as though it described a build | A currency test applied to a statement about the session | The quarantined reading claims no build, is exempt from the test, and discharges its check by answering | Decision 2 + Decision 4 | A drain that observes a replacement and quarantines in the same operation leaves no check owed for the rest of the run |
+| 136 | The mount check deferred by a fact only it can clear | `backendBusy` initialising to true, gating the dispatch that would make it truthful | The mount dispatch passes through the projection, as the existing recheck-after-a-failed-open already does | Authority obligations + `ConversionLane` projection | A session mounts, checks, and settles without a reader touching anything |
+| 137 | A waiting check locking out the controls that would end it | A duty on a waiting primitive, dispatched without bound | It is dispatched only into a lane the projection says is free, so the lockout is one stale-window wide and never spans a known drain | Authority obligations | No automatic check waits behind a drain the frontend can see |
 
 ## What this interlude does not do
 
