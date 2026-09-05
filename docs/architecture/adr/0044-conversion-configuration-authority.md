@@ -477,17 +477,24 @@ its projection is the authority it read, which is the same instant its answer de
 Concretely, the members are: the BEGIN preflight, queue execution and drain, retry
 preparation, the backend check and the installation change, the preview and spectrum
 reads, and the configuration read that runs a discovery — all of which can observe or
-replace the authority; and three kinds that can do neither: **every operation
-answering with a `WorkspaceConversionUpdateDto`** — the state poll,
-`stop_conversion_queue`, `cancel_conversion` and the diagnostics-export paths, none of
-which takes a gate and all of which answer with the same shape; the rule is over the
-shape for exactly this reason, since naming carriers one at a time has already missed
-three — the
+replace the authority; and three kinds added on top: **every operation
+answering with a `WorkspaceConversionUpdateDto`** — the rule is over the shape because
+naming carriers one at a time has already missed three — the
 binding-only configuration read, and a configuration read Rust's admission refuses
 before it discovers — that last because it is the only path by which `Unattempted`
 reaches the wire (Decision 5), so a response that carried no projection would leave its
 snapshot unjudgeable. Anything later that takes the gate joins the first group
 automatically.
+
+**The groups are not exclusive, and gate-taking wins.**
+`retry_workspace_conversion_queue` and `choose_workspace_conversion_destination` answer
+with the queue update's shape *and* run `drain_queue`, which takes the gate and
+observes — so they are in both. The shape group adds carriers; it subtracts nothing. An
+operation that takes the gate delivers *and* its answer is an occasion, whatever shape
+it answers with; only a carrier that takes no gate — the poll, a stop, a cancel, a
+diagnostics export — delivers and wakes nothing. Reading the shape group as exclusive
+would class a drain's own answer a non-occasion and starve the read it is supposed to
+release.
 
 The first group is not a scope to be narrowed to the conversion path: Decision 11's gate
 membership and this rule's are the same set there, which is what lets `Unattempted`'s
@@ -819,7 +826,12 @@ can launch nothing. `usePreviewWorkspace`'s `projectedQuarantine` effect already
 exactly this — one `checkBackend()` on the transition, once, since the state never
 clears and a second read would ask a question whose answer cannot have changed, and
 through the ordinary path because Rust answers a quarantined session without launching
-anything. This decision names that effect rather than inventing it, and preserves it.
+anything. This decision names that effect rather than inventing it, and preserves it
+with one change: it dispatches without raising `backendBusy`. `checkBackend` raises and
+clears that flag today, and a quarantine dispatch that did so would clear one a blocked
+mount check is still holding (row 178) — so the effect keeps its condition, its
+once-latch and its ordinary path, and loses only its claim on a flag that means
+something is running.
 
 All three are the same obligation, admitted by Rust like any other backend work and owed
 on the terms below where the frontend declines to issue it. Rust refuses none of them:
@@ -1199,8 +1211,13 @@ flight for it, and may it be issued? Both of those last clauses are the courtesy
 both are asked only of what the courtesy governs: the configuration read and the
 stale-reading check. The quarantine dispatch is outside the in-flight bit as well as
 outside the projection (row 169), because its answer launches nothing and races nothing.
-A mount or quarantine dispatch owed because its request failed is re-issued ungated, as
-its first attempt was — putting it behind the projection here would deadlock the mount
+A mount dispatch owed because its request failed is re-issued ungated, as its first
+attempt was. The quarantine one is not: `projectedQuarantine` latches before
+dispatching, so it is attempted exactly once, and that bound is the point — it is exempt
+from the in-flight bit and from the projection, so the latch is the only thing left
+holding it. A quarantine check whose request fails leaves the banner on its last reading
+with Recheck and Choose-installation live, which is the same floor `Unresolved` has and
+the one row 132 records — putting it behind the projection here would deadlock the mount
 one on a `backendBusy` only it can clear, and suppress the quarantine one behind an
 in-flight mount check, which are rows 136 and 169. Invalidation is what steps one and
 two decide. Issuing is not invalidation, and a binding that has never been read must not
@@ -2635,7 +2652,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–179).
+plus the findings raised against this document's own drafts (rows 18–180).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2816,10 +2833,11 @@ and no finding may disappear because the old PR was superseded.
 | 173 | An empty selection explained with a sentence about the backend | A plan machine with no transition back to `none` | Emptying the selection returns the plan to `none`, not to `blocked` | Plan state machine | Deselecting every row says nothing about the build |
 | 174 | The banner's owed check cancelled by a catalog answer | Step two's exception written over every obligation the arm mentions | The exception cancels the configuration read only; a configuration read carries no reading, so the banner's check is exactly as owed as it was | Frontend reconciliation | A read answering `Ready(B)` leaves the banner's stale reading still owed a check |
 | 175 | Carriers of the queue update left to be invented | Delivery membership naming carriers one at a time rather than the shape they answer with | Every operation answering with a `WorkspaceConversionUpdateDto` delivers — the poll, `stop_conversion_queue`, `cancel_conversion` and the diagnostics-export paths | Decision 4 | A stop, a cancel or a diagnostics export carries the authority, exactly as the poll does |
-| 176 | A once-latch React is forbidden to hold | A ban on judging owedness, over a fact Rust cannot supply | The quarantine once-latch is in-flight bookkeeping: `backendQuarantined` never clears, so only the frontend knows whether it has dispatched for the transition | Decision 13 | The quarantine check is dispatched once and not on every reconciliation |
+| 176 | A once-latch React is forbidden to hold | A ban on judging owedness, over a fact Rust cannot supply | The quarantine once-latch is in-flight bookkeeping: `backendQuarantined` never clears, so only the frontend knows whether it has dispatched for the transition — and the latch is the only bound on a dispatch exempt from both the in-flight bit and the projection | Decision 13 | The quarantine check is dispatched once, not on every reconciliation and not again if its request fails |
 | 177 | The plan's own refusal with no key, fact or owner | A registry closed to lane fields and target reasons, over a refusal that is neither | A plan state is a third kind of key, read only by Convert, needing no change to the lane's vocabulary | Decision 12 + Decision 9 | A failed plan and one being recomputed refuse Convert differently, and row 15's owner exists |
 | 178 | Two dispatches sharing one busy flag | The quarantine dispatch exempted from the constraint but not from the flag | It neither raises nor clears `backendBusy`, because it launches nothing | Decision 2 + Decision 11 | A quarantine check's immediate return does not clear a flag a blocked mount check is still holding |
 | 179 | The not-qualified branch with no acceptance criterion | An amendment restating the row-level rule and dropping the other branch | The criterion names both: an unavailable target and a not-qualified one, said differently | ADR 0043 amendment | Thirty-nine of forty-eight combinations have a criterion, not only the nine |
+| 180 | A drain's own answer classed a non-occasion | Two membership groups read as exclusive, over operations that are in both | Gate-taking wins: an operation that takes the gate delivers and is an occasion, whatever shape it answers with | Decision 4 + Decision 4b | A retry or a destination choice, which drain and answer with the queue's shape, still releases the read it deferred |
 
 ## What this interlude does not do
 
