@@ -898,8 +898,9 @@ and processing**; and the binding of the chosen intent into the queue at `BEGIN`
 delivery rule is over every operation that takes the backend gate **and the queue's
 state poll**, which includes the preview and spectrum reads — so their responses carry
 the authority projection too, and `BackendStatus` reads it beside the availability DTO
-it already renders. `ConversionQueue` is among the contracts the poll answers with, so
-its `installationGeneration` is replaced by the receipt rather than merely removed.
+it already renders. `ConversionQueue` is the poll's own payload, so removing its
+`installationGeneration` is what makes room for the projection the poll now carries —
+the identity moves into that projection rather than being re-added beside it.
 `installationGeneration` leaves the five contracts that carry it in the same change.
 None of that is new *behaviour* for the viewer; it is the same facts on a typed carrier,
 and it is named here so the slice is not planned as a panel-only one.
