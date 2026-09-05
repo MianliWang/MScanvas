@@ -303,10 +303,17 @@ describe("adding converted outputs to the workspace", () => {
     expect(
       within(panel).getByText("run-2.mzML was not added: changed since it was converted."),
     ).toBeVisible();
-    // No path anywhere in what a refusal says.
-    for (const separator of ["\\", "/"]) {
-      expect(panel.textContent ?? "").not.toContain(separator);
-    }
+    // No path anywhere. A bare "/" is no longer the test: `m/z` is scientific
+    // notation and appears in the settings labels, so what must be absent is a
+    // path *shape* -- a backslash, a drive letter, or a token that begins at a
+    // separator. Each of those is what an absolute path would look like here,
+    // and none of them is something a display name or a unit can produce.
+    const noPaths = (text: string): void => {
+      expect(text).not.toMatch(/\\/);
+      expect(text).not.toMatch(/(?:^|\s)\//);
+      expect(text).not.toMatch(/\b[A-Za-z]:[\\\/]/);
+    };
+    noPaths(panel.textContent ?? "");
   });
 
   it("offers adoption for a stopped queue that finalized something", async () => {

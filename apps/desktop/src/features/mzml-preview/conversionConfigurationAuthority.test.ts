@@ -196,8 +196,9 @@ describe("an occasion", () => {
   });
 
   it("is not an unchanged world", () => {
-    // The poll ticks through a whole drain without anything moving. A read
-    // deferred by that drain must not be re-issued on every tick of it.
+    // The poll ticks through a whole drain without anything moving, and the
+    // answer to the last attempt arrives without anything moving either. A
+    // read deferred by that drain must not be re-issued on either.
     expect(admissionStoppedRefusing(FREE, FREE)).toBe(false);
     const busy = { ...FREE, laneClaimed: true };
     expect(admissionStoppedRefusing(busy, busy)).toBe(false);

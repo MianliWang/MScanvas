@@ -44,6 +44,10 @@ import {
   receiptOf,
   type RenderedAuthority,
 } from "./backendAuthority";
+import {
+  useConversionConfiguration,
+  type ConversionConfigurationView,
+} from "./useConversionConfiguration";
 import { toPreviewError } from "./contracts";
 import { describeDropResult } from "./dropNotice";
 import { useWorkspaceDropTransport } from "./dropTransport";
@@ -493,6 +497,15 @@ export interface PreviewWorkspace {
    * hold in their head.
    */
   readonly conversion: ConversionOperation;
+  /**
+   * What conversion semantics are known for the installation this session is
+   * bound to, and what the reader may change about them.
+   *
+   * Beside the operation rather than inside it: the settings describe a build,
+   * the operation runs a queue, and one of them is answerable while the other
+   * is refused.
+   */
+  readonly conversionConfiguration: ConversionConfigurationView;
   readonly backend: BackendState;
   readonly preview: PreviewState;
   readonly spectrum: SpectrumState;
@@ -1328,6 +1341,31 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       return true;
     },
     [discardBackendDerivedState, noteAuthority, noticeQuarantine],
+  );
+
+  /**
+   * Installs a projection an operation delivered, without a reading of its own.
+   *
+   * Step one, then step two: ordering by revision, and invalidation only where
+   * the *binding* was replaced. A verdict moving at one receipt is news about a
+   * build rather than a different build, and discarding the table and the
+   * spectrum for it would throw away work the reader can still see is theirs.
+   *
+   * The reading on screen is not replaced here -- this carries none -- so it
+   * becomes superseded, which is what obliges the check.
+   */
+  const acceptDeliveredAuthority = useCallback(
+    (incoming: BackendAuthorityProjection) => {
+      const arrived = acceptProjection(renderedAuthority.current, incoming);
+      if (!arrived.accepted) {
+        return;
+      }
+      noteAuthority(incoming);
+      if (arrived.bindingReplaced && activeOpen.current === null) {
+        discardBackendDerivedState();
+      }
+    },
+    [discardBackendDerivedState, noteAuthority],
   );
 
   const checkBackend = useCallback(() => {
@@ -3575,6 +3613,29 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     conversionEnvironment,
     readConversionEnvironment,
   );
+  /**
+   * The facts a configuration read consults, as a render sees them.
+   *
+   * Deliberately not `ConversionLane`. That struct answers *may a conversion
+   * action start?* and begins with a preview verdict; a settings probe asks
+   * *may another backend process begin right now?* -- and the four facts here
+   * are the ones that name an operation genuinely owning one.
+   */
+  const configurationEnvironment = useMemo(
+    () => ({
+      backendQuarantined,
+      backendChanging: backendBusy,
+      laneClaimed: conversion.lane.laneClaimed,
+      previewReading: previewBackendBusy,
+    }),
+    [backendBusy, backendQuarantined, conversion.lane.laneClaimed, previewBackendBusy],
+  );
+  const conversionConfiguration = useConversionConfiguration(
+    api,
+    projection,
+    configurationEnvironment,
+    acceptDeliveredAuthority,
+  );
   // A stop that could not be confirmed makes this session's backend unusable
   // without changing the installation, so nothing about it advances the
   // installation sequence and the reconciler above would never fire. Left
@@ -4023,6 +4084,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     completeRenderMeasurements,
     recordMeasurement,
     conversion,
+    conversionConfiguration,
   };
 }
 

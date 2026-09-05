@@ -14,8 +14,10 @@ import type {
   ConversionAvailability,
   ConversionUnavailableReason,
 } from "./conversionAvailability";
+import { ConversionSettings } from "./ConversionSettings";
 import { conversionAvailability, conversionNoticeId } from "./conversionAvailability";
 import { formatByteLength, formatCount, formatDuration } from "./format";
+import type { ConversionConfigurationView } from "./useConversionConfiguration";
 import type { ConversionOperation } from "./useConversionOperation";
 
 /**
@@ -189,6 +191,14 @@ const ADOPTION_REFUSAL_LABEL: Record<string, string> = {
 export interface ConversionPanelProps {
   readonly conversion: ConversionOperation;
   /**
+   * What conversion semantics are known for the bound installation.
+   *
+   * Rendered inside this panel because it is what the next conversion will do,
+   * and a reader deciding whether to press `Convert` is entitled to see it
+   * before they do rather than after.
+   */
+  readonly configuration: ConversionConfigurationView;
+  /**
    * Where the rows came from, which is what the action may call them.
    *
    * One selected row is still a selected row: labelling it `Convert focused…`
@@ -213,6 +223,7 @@ export interface ConversionPanelProps {
  */
 export function ConversionPanel({
   conversion,
+  configuration,
   scope,
   handles,
   excludedSelectedCount,
@@ -298,6 +309,8 @@ export function ConversionPanel({
         retry={retryOffered ? retryAvailability : null}
         start={startOffered ? startAvailability : null}
       />
+
+      <ConversionSettings configuration={configuration} onChoose={configuration.select} />
 
       {conversion.busy || terminal ? (
         <QueueState

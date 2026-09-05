@@ -182,6 +182,11 @@ export function retryIsOffered(held: ConfigurationHolding, probeInFlight: boolea
  * the frontend observes this in its own render and needs nothing from Rust for
  * it.
  *
+ * This is what makes refusing safe. A read that is owed and cannot run now stays
+ * owed; nothing re-asks on a timer, and nothing re-asks because the *answer to
+ * the last attempt* arrived — which would be this document reacting to its own
+ * bookkeeping and asking again immediately, for ever.
+ *
  * Deliberately not every change. A conversion-state poll delivers and wakes
  * nothing, so a read deferred by a running drain is not re-issued on every tick
  * of that drain's own polling.

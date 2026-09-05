@@ -636,6 +636,7 @@ export function PreviewWorkspace() {
             state={roster}
           />
           <ConversionPanel
+            configuration={workspace.conversionConfiguration}
             conversion={workspace.conversion}
             excludedSelectedCount={excludedSelectedCount}
             handles={queueHandlesToConvert}

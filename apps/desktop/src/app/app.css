@@ -1880,3 +1880,95 @@ button:disabled {
   overflow-wrap: anywhere;
   margin: 0;
 }
+
+/* The conversion settings, inside the panel whose action they describe. */
+.conversion-settings {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/*
+ * That the chosen combination cannot run here, said once.
+ *
+ * Above the groups rather than beside a control, because all four groups show
+ * the same selection: a per-control sentence would say the same thing four
+ * times, and three of those would sit beside values this build offers.
+ */
+.conversion-settings-unavailable {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+/*
+ * The way out of a combination this build cannot run, where the ordinary
+ * controls are not one. Labelled and atomic rather than a silent rewrite.
+ */
+.conversion-settings-recovery {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.conversion-settings-recovery > p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.conversion-setting {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  gap: 6px;
+}
+
+.conversion-setting > legend {
+  padding: 0 4px;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.conversion-setting-choice {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.conversion-setting-choice > label {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/*
+ * What a choice does to the data, and why it cannot be taken.
+ *
+ * Indented under its own control so the association is visible as well as
+ * programmatic, and rendered as ordinary text rather than as a colour: a reader
+ * who cannot see the difference between an enabled and a disabled radio still
+ * reads the sentence that says so.
+ */
+.conversion-setting-note {
+  margin: 0;
+  padding-left: 22px;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+/* A refused choice, marked by more than the browser's dimming. */
+.conversion-setting-choice[data-choice-state="unavailable"] > label {
+  color: var(--color-text-muted);
+}

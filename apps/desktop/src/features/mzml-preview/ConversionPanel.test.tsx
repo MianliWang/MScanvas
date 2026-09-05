@@ -841,9 +841,17 @@ describe("queueing selected Thermo RAW conversions", () => {
     const rendered = panel.textContent ?? "";
     expect(rendered).toContain("run-1.raw");
     expect(rendered).toContain("run-1.mzML");
-    for (const separator of ["\\", "/", ":"]) {
-      expect(rendered).not.toContain(separator);
-    }
+    // No path anywhere. A bare "/" is no longer the test: `m/z` is scientific
+    // notation and appears in the settings labels, so what must be absent is a
+    // path *shape* -- a backslash, a drive letter, or a token that begins at a
+    // separator. Each of those is what an absolute path would look like here,
+    // and none of them is something a display name or a unit can produce.
+    const noPaths = (text: string): void => {
+      expect(text).not.toMatch(/\\/);
+      expect(text).not.toMatch(/(?:^|\s)\//);
+      expect(text).not.toMatch(/\b[A-Za-z]:[\\\/]/);
+    };
+    noPaths(rendered);
     // A skipped item is never described as validated.
     expect(within(panel).getAllByText(/a file of that name was already there/i).length).toBeGreaterThan(
       0,
