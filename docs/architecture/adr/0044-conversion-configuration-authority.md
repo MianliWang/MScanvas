@@ -218,6 +218,15 @@ Required properties:
 - **sufficient** to decide whether a catalog, a plan or a result describes the
   binding this session is on.
 
+**Two replies about the same binding are ordered by not being in flight together.**
+An equal receipt and an equal revision leave nothing to compare, which is what the
+current code's "equal generation, the token decides" tie-break was for — and the
+successor is not a comparison but a constraint: the frontend holds an in-flight bit per
+obligation (Decision 13) and does not issue a second read or a second check while one is
+outstanding, so the case the tie-break settled does not arise. A plan is the exception
+that proves it, and carries an ordinal, because a retry is *meant* to ask the same
+question again while an answer may still be coming.
+
 An internal monotonic counter may remain the implementation. What must not
 happen again is exposing that counter and letting call sites supply its meaning:
 a receipt is a typed identity, not a number with arithmetic performed on it by
@@ -606,7 +615,10 @@ currency test does not apply to this reading either way, and it discharges its c
 answering.
 
 **And the currency test does not apply to what it returns**, which is the half that
-matters. A quarantined reading is a statement about the *session* — the code says so
+matters. The discriminator is on the reading itself and needs no new field: its failure
+kind is `backend_quarantined`, which no other reading carries. A rule applied uniformly,
+without looking at it, produces the permanent re-issue loop this paragraph exists to
+prevent. A quarantined reading is a statement about the *session* — the code says so
 itself, returning `release: None` and `build_date: None` with the note that "nothing is
 claimed about a build" — so asking whether it describes the current binding is asking
 the wrong question of it. It discharges the owed check **by answering**. Without that
@@ -875,8 +887,9 @@ the projection  -> judged by REVISION alone
                    older than what is rendered -> discarded
 
 the payload     -> judged by RECEIPT alone: the binding it describes against
-   (a snapshot     the binding now rendered
-    or a plan)     a different binding -> discarded
+   (a snapshot,    the binding now rendered
+    a plan, or     a different binding -> discarded
+    a reading)
                    the rendered binding -> admitted, whatever the revision did
                    (a snapshot's receipt is read from the response's own
                     projection, which describes the same instant: Rust
@@ -933,6 +946,13 @@ which binding it is rendering, that receipt is part of the question by Decision 
 a reply is installed only where identity and ordinal both still match. A binding that
 changed under the request makes the reply's identity stale, which is the same test the
 plan machine already applies for every other component of the question.
+
+**A `BackendAvailabilityDto` is a payload like the others**, and a draft's enumeration
+left it out. It describes a build, so it is judged by the receipt it carries against the
+binding now rendered — which is what stops a late `inspect_backend` reply about the
+build the session has left from replacing a current reading. `applyVerdict` refuses
+exactly that today, using the counter Decision 2 removes; the receipt is its successor,
+and saying so is what keeps the removal from taking a guard with it.
 
 **Admitted is not installed, for a payload that has an owner.** The receipt test
 is necessary and not sufficient: it says a payload belongs to the binding on
@@ -2339,7 +2359,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–145).
+plus the findings raised against this document's own drafts (rows 18–148).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2490,6 +2510,9 @@ and no finding may disappear because the old PR was superseded.
 | 143 | `Unattempted` on the wire and produced by nothing | A refused read answering with no snapshot, in a contract whose member says the catalog is unread | A read Rust refuses answers with the authority and the configuration as it stands; where no request is sent, React holds no snapshot and owes a read, which decides nothing | Decision 5 + Decision 13 | `Unattempted` is read from a snapshot when one exists, and its absence is an observation about React rather than a judgement about the configuration |
 | 144 | A read cancelled by the snapshot that says it is owed | An exception keyed on a snapshot arriving, not on it answering | A carried snapshot cancels the read only where it answers; `Unattempted` says the catalog is unread | Frontend reconciliation | A refused read's own reply does not persuade the frontend the read is done |
 | 145 | A control that waits without saying so | A new gate holder that is deliberately not a lane fact | The wait is bounded by the probe and recorded as a cost; disabling the control instead was rejected as a refusal in advance of a wait | Decision 10 + Decision 11 | Recheck stays live during a probe, and the pause it may meet is written down |
+| 146 | A late reading replacing a current one | A payload rule enumerated as snapshots and plans | A `BackendAvailabilityDto` is a payload, judged by its receipt against the binding rendered | Decision 4b | The guard `applyVerdict` performs with the counter survives its removal |
+| 147 | Two replies about one binding with nothing to order them | A tie-break removed with the counter and not replaced | The frontend issues no second read or check while one is in flight, so the case does not arise; a plan carries an ordinal because a retry is meant to re-ask | Decision 13 + Decision 9 | No pair of same-binding replies can race, and a retry's can |
+| 148 | An exemption stated without a discriminator | A quarantined reading identified by properties ordinary readings share | Its failure kind is `backend_quarantined`, which no other reading carries | Decision 4 | The exemption is evaluable from the reading, and a uniform rule cannot swallow it |
 
 ## What this interlude does not do
 
