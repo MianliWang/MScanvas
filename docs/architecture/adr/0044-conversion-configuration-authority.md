@@ -658,14 +658,14 @@ the availability reading. That matters because `backendUsableRef` is written *fr
 reading: sourcing the conjunct there instead would make it circular, or drop it, which
 is rows 66 and 90.
 
-which also puts each fact where it belongs — the verdict stays a statement about a
-build, quarantine stays a statement about the session, and neither is expressed by
-corrupting the other. `backendUsableRef` gates the automatic preview load as well as the
-lane, and this is what keeps both unreachable in a quarantined session. (Forking the
-union so the field exists only on the `Installed` arm would make it unrepresentable
-outright, and is deliberately not done: it costs the single-shape property ledger row 38
-bought, for a value nothing can author but Rust and no reader can reach past the
-conjunction.)
+Stating the conjunction in full also puts each fact where it belongs — the verdict stays
+a statement about a build, quarantine stays a statement about the session, and neither
+is expressed by corrupting the other. `backendUsableRef` gates the automatic preview
+load as well as the lane, and this is what keeps both unreachable in a quarantined
+session. (Forking the union so the field exists only on the `Installed` arm would make
+it unrepresentable outright, and is deliberately not done: it costs the single-shape
+property ledger row 38 bought, for a value nothing can author but Rust and no reader can
+reach past the conjunction.)
 
 **Every response that carries a binding carries its verdict** (Decision 1), so
 `backendUsable` has an answer at every moment the authority has a binding, and there
@@ -684,7 +684,7 @@ session held in it loses the two controls a reader would reach for. A state that
 disables its own exits is not a state to add, which is the second reason Decision 1
 does not add one.
 
-**The authority obliges a backend check in two conditions, and they are one rule.**
+**The authority obliges a backend check in three conditions, and they are one rule.**
 `Unresolved` owes one at mount, **and that one dispatch is not gated by the
 frontend's projection.** `backendBusy` initialises to `true` with nothing in flight —
 correctly, since nothing is known yet — so a mount check deferred by it would be
@@ -731,8 +731,9 @@ exactly this — one `checkBackend()` on the transition, once, since the state n
 clears and a second read would ask a question whose answer cannot have changed, and
 through the ordinary path because Rust answers a quarantined session without launching
 anything. This decision names that effect rather than inventing it, and preserves it.
-Both are the same obligation, admitted by Rust like any other backend work and owed on
-the terms below if it cannot be issued. Only the *dispatch* differs, and only for the
+
+All three are the same obligation, admitted by Rust like any other backend work and owed
+on the terms below if it cannot be issued. Only the *dispatch* differs, and only for the
 mount one: see below.
 
 **They do not share an acquisition with the configuration read, and a draft of this
@@ -1054,10 +1055,11 @@ changed, so the revision is equal and the receipt is equal and both steps above
 correctly do nothing — and that is exactly the moment the owed first configuration read
 and the obliged backend check become admissible. So after ordering and identity have had
 their say, the frontend asks one more question: is an obligation owed — a configuration
-read for the binding now rendered, a check by a session that has resolved nothing, or a
+read for the binding now rendered; a check by a session that has resolved nothing; a
 check by one whose rendered reading names a different binding than the authority does
 *or holds no reading at all*, which is where a panel remounting onto a recovered queue
-starts — is nothing in flight for it, and may it be issued? Invalidation is what steps
+starts; or a check owed by a session that has just become quarantined — is nothing in
+flight for it, and may it be issued? Invalidation is what steps
 one and two decide. Issuing is not invalidation, and a binding that has never been read
 must not be kept unread by a rule about a binding that did not change.
 
@@ -1811,6 +1813,12 @@ authoritative per-family gate at execution refuses before anything is staged, so
 blocking on it would buy nothing and cost a wait. A courtesy that owns no guarantee
 may be skipped. The proof above owns one, and may not.
 
+**They share one gate acquisition.** Two questions about one build asked at one moment,
+and taking the gate twice would run two full discoveries — up to a minute of probes —
+for a single `BEGIN`. One acquisition answers both: the proof, which refuses the request
+when it fails, and the family check, which is where a refusal lands better and does not
+run when the acquisition does not succeed.
+
 **Sharing one acquisition changes what the skip means, and it is worth saying what is
 left.** With both behind one `try_enter_backend`, a held gate refuses the whole
 `BEGIN` and the family check does not run — so the skip is no longer a case a reader
@@ -1837,18 +1845,14 @@ that click for the length of a preview scan with nothing on screen to explain wh
 (The admittability the paragraph above discusses is not an argument here: this
 proof takes it away deliberately, and cannot also be defended by it.)
 
-**Refused twice, by two authorities, for two different reasons.** The frontend
-refuses first and names the fact: `ConversionLane` already refuses every conversion
-action while `previewReading` or `laneClaimed` holds, so the common cases never
-reach Rust and the reader is told which fact it
-was. **The proof and the pre-picker courtesy share one gate acquisition.** They are two
-questions about one build asked at one moment, and taking the gate twice would run
-two full discoveries — up to a minute of probes — for a single `BEGIN`. One
-acquisition answers both: the proof, which refuses the request when it fails, and
-the family check, which is where a refusal lands better and is skipped when the
-acquisition does not succeed. Row 87's acceptance case is about that skip and is
-unaffected: what the courtesy loses under a held gate it loses because the proof
-refused first, and the reader is told so.
+**Refused twice, by two authorities, for two different reasons.** The frontend refuses
+first and names the fact: `ConversionLane` already refuses every conversion action while
+`previewReading` or `laneClaimed` holds, so the common cases never reach Rust and the
+reader is told which fact it was. Rust refuses second, and says only what Rust knows —
+that the backend is busy — because `backend_gate` is a `Mutex<()>` and no holder is
+consulted (row 106). The first refusal is the informative one and covers everything the
+projection is right about; the second is the backstop for the window it is allowed to be
+wrong in.
 
 **The proof takes that gate with `try_enter_backend` and refuses if it is held.**
 One rule, no cases, and nothing to decide about who the holder is. Two earlier drafts
@@ -1992,7 +1996,7 @@ conservative, deferring a probe a moment longer than Rust would. What makes that
 safe rather than a stall is row 81: a lane fact ceasing to refuse is an occasion, so the
 picker closing issues the deferred read without waiting for anything to answer.
 
-and deliberately not:
+**Deliberately absent from that subset**, and for the reason the criterion gives:
 
 ```text
 the preview "usable" verdict            -- a judgement, not process ownership
