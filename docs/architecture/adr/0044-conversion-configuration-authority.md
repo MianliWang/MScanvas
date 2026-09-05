@@ -598,7 +598,12 @@ probes after MSCanvas has lost a converter process. Both survive untouched. What
 changes is that it builds its DTO with a **receipt** rather than
 `installation_generation` — and specifically with the receipt of the reading it is
 echoing, not the live one, because the `origin` it carries is that reading's and a
-receipt naming a different binding would misdescribe it.
+receipt naming a different binding would misdescribe it. Where there is no prior
+reading to echo — `resolved.last` is an `Option`, and the existing code already falls
+back to `"automatic"` for `origin` there — it carries **no receipt**, which is the
+truthful answer for a reading that echoes nothing. Nothing is lost by that: the
+currency test does not apply to this reading either way, and it discharges its check by
+answering.
 
 **And the currency test does not apply to what it returns**, which is the half that
 matters. A quarantined reading is a statement about the *session* — the code says so
@@ -1134,8 +1139,12 @@ the accepted projection's receipt differs from the rendered one
 
      (the separation matters: step two decides what is *invalid*, and an
       imperative read here would put the courtesy ahead of the duty in the
-      very case -- a BEGIN refused mid-drain -- where both obligations arise
-      at once. It would not spend the attempt: a probe that cannot start
+      case where both obligations arise at once -- a drain's own
+      start-of-queue observation, delivered mid-queue by the poll, which
+      leaves the new binding owing a read and the banner's reading owing a
+      check. A `BEGIN` refused mid-drain is *not* that case, and a draft
+      used it: the proof refuses on a held gate before discovering, so it
+      observes nothing and neither obligation arises. It would not spend the attempt: a probe that cannot start
       spends nothing, by Decision 5 and row 32. The cost is the ordering,
       which is all row 92 needs it to be.
       And the exception is not an optimisation: without it, mount and every
@@ -2408,7 +2417,7 @@ and no finding may disappear because the old PR was superseded.
 | 89 | An exemption written for a state the tree cannot produce | A quarantined `NoInstallation` session, protected by a rule of its own | Quarantine follows a resolved build and short-circuits every later discovery, so the pairing cannot arise and needs no exemption | Frontend reconciliation + Decision 5 | The binding-only read has one exemption, from admission, and no second one that protects nothing |
 | 90 | A preview auto-loaded against a build just judged unusable | A re-issue condition abbreviated to "the authority moved" | `backendUsable` is the whole conjunction, quarantine included, wherever it is consulted | `ConversionLane` projection + preview load | An observation settling on an unusable build, or arriving in a quarantined session, loads nothing |
 | 91 | A session stranded `Unresolved` by a transient failure | "Answers without discovering" discharging unconditionally | It follows the permanent-or-transient rule like every other refusal | Authority obligations | An operation whose request failed leaves the mount-time obligation owed, and a session that has never resolved anything is never quarantined |
-| 92 | The courtesy put ahead of the duty by the invalidation step | Step two dispatching a read imperatively | Step two decides what is invalid; step three issues, under admission and duty-first ordering | Frontend reconciliation | A `BEGIN` refused mid-drain issues the check first and the read on its answer, never a probe into the drain |
+| 92 | The courtesy put ahead of the duty by the invalidation step | Step two dispatching a read imperatively | Step two decides what is invalid; issuance is attempted on incurrence and recovered by step three, under admission and duty-first ordering | Frontend reconciliation | A drain's start-of-queue observation, delivered by the poll, leaves a read and a check both owed; the check goes first and the read follows on its answer |
 | 93 | One fact with two sentences and no rule for which is rendered | A fact-phrased notice required over an action-phrased vocabulary | The notice sentence is the panel's, new; `ConversionAvailability.message` is untouched and stays on its control | Panel notice registry | The lane's vocabulary is not rewritten, and the shared element carries exactly one sentence |
 | 94 | A payload judged by the rule about ordering | Staleness reaching a payload, which is a question about bindings | Receipt judges the payload; revision judges only the projection | Frontend, ordering then identity | A snapshot for the rendered binding is installed even when its projection is stale, and the payload test never consults a revision |
 | 95 | A verdict owed for a binding that has none to give | A verdict treated as separable from the binding it judges | `NoInstallation` carries no verdict to wait for, and `Installed` never arrives without one | Authority state | Observing that no installation resolves obliges nothing and completes at once |
