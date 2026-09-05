@@ -450,12 +450,15 @@ So delivery membership is **the gate-takers, plus the poll, plus the binding-onl
 configuration read** — the last because it can neither observe nor replace anything and
 still must carry a projection, or the snapshot it answers with has no binding to be
 judged by (row 109); its projection is the authority it read, which is the same instant
-its answer describes. Concretely, the members are: the BEGIN preflight, queue
-execution and drain, retry preparation, the backend check and the installation change,
-the preview and spectrum reads, and the configuration read that runs a discovery — all
-of which can observe or replace the authority; and two that can do neither,
-`conversion_state` and the binding-only configuration read, each added for the reason
-given above it. Anything later that takes the gate joins the first group automatically.
+its answer describes. Concretely, the members are: the BEGIN preflight, queue execution
+and drain, retry preparation, the backend check and the installation change, the preview
+and spectrum reads, and the configuration read that runs a discovery — all of which can
+observe or replace the authority; and three that can do neither: `conversion_state`, the
+binding-only configuration read, and a configuration read Rust's admission refuses
+before it discovers — that last because it is the only path by which `Unattempted`
+reaches the wire (Decision 5), so a response that carried no projection would leave its
+snapshot unjudgeable. Anything later that takes the gate joins the first group
+automatically.
 
 The first group is not a scope to be narrowed to the conversion path: Decision 11's gate
 membership and this rule's are the same set there, which is what lets `Unattempted`'s
@@ -733,8 +736,12 @@ through the ordinary path because Rust answers a quarantined session without lau
 anything. This decision names that effect rather than inventing it, and preserves it.
 
 All three are the same obligation, admitted by Rust like any other backend work and owed
-on the terms below if it cannot be issued. Only the *dispatch* differs, and only for the
-mount one: see below.
+on the terms below if it cannot be issued. What differs is the *dispatch*, and two of
+the three are ungated by the frontend's courtesy projection: the mount one, for the
+reason below, and the quarantine one, because gating it would defer the quarantine
+banner behind the drain that caused the quarantine — row 153's own defect, and why
+`projectedQuarantine` is written the way it is. Only the stale-reading condition's check
+is issued by step three, into a lane the projection says is free.
 
 **They do not share an acquisition with the configuration read, and a draft of this
 document said they should.** The argument was row 115's, made for `BEGIN`: one
@@ -778,11 +785,14 @@ interpret. It is recorded as a cost rather than hidden.
 
 **And a check that gets dispatched into a busy lane holds `backendBusy` while it
 waits**, which disables Convert, Recheck and Choose-installation for as long as the
-holder runs. That is the cost of the check being a duty on a waiting primitive, and it
-is bounded by the courtesy above rather than by the primitive: the frontend only
-dispatches into a lane its projection says is free, so this is reachable exactly in the
-stale window the projection is allowed to have — one delivery wide — and not while a
-drain the frontend knows about is running.
+holder runs. That is the cost of the check being a duty on a waiting primitive, and the
+courtesy above bounds it only for the holders the projection can see. Two it cannot: a
+configuration probe, which is deliberately not a lane fact, and whatever holds the gate
+when an ungated dispatch goes out. So the honest statement is narrower than a draft's:
+**a step-three check never waits behind a drain or a preview the frontend knows about**,
+which is the case that would last; the waits it can still meet are behind a probe, which
+is bounded by two `PROBE_TIMEOUT`s, and behind whatever a mount or quarantine dispatch
+happens to find, which is the tree's existing behaviour and unchanged.
 
 **An obligation is owed only while the thing refusing it can stop refusing.** This
 is the rule for both obligations, and it has to be stated, because the same
@@ -1417,11 +1427,11 @@ being told.
 Between the two, a binding cannot reach a state where its catalog is owed, nothing
 is in flight, and nothing will ever ask again.
 
-The explicit retry is the reader's floor under that. It is offered whenever a
-binding has no answer and no probe is in flight — from `Failed`, and equally from
-an `Unattempted` whose automatic read was refused — because a control that says
-"read the settings" is truthful in both, and the alternative is a panel a reader
-can see is stuck with nothing to press.
+The explicit retry is the reader's floor under that. It is offered whenever a binding
+has **no usable answer** and no probe is in flight — from `Failed`, whose answer is that
+there is none, and equally from an `Unattempted` whose automatic read was refused —
+because a control that says "read the settings" is truthful in both, and the alternative
+is a panel a reader can see is stuck with nothing to press.
 
 **A read that finds a new build answers for that build, in one step.** A
 configuration read performs its own discovery, so it can be the operation that
@@ -1538,8 +1548,17 @@ ConversionConfigurationSnapshot {
                  | Unattempted
                  | Ready  { catalog: admitted rows, shipped intent identity }
                  | Failed { error }
+    outcome:       Answered
+                 | Refused { reason }
 }
 ```
+
+**Three fields, because the read has an answer of its own.** It is Decision 4's
+`AuthorityObserved` shape with the payload spelled out rather than nested: the
+authority, the configuration as Rust holds it, and what happened to *this request*.
+Without the third, a read Rust refuses could carry `Unattempted` or carry a refusal but
+not both — and rows 121 and 143 need it to carry both, since the refusal is bookkeeping
+for the frontend's obligation and the configuration is the news for the panel.
 
 **The receipt appears once, in the authority.** The configuration describes the
 binding the authority in the same snapshot names, and carries no second copy of
@@ -2419,7 +2438,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–155).
+plus the findings raised against this document's own drafts (rows 18–158).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2580,6 +2599,9 @@ and no finding may disappear because the old PR was superseded.
 | 153 | An `available` banner in a session that can launch nothing | Quarantine moving neither the receipt nor the revision, so neither currency rule fires | Becoming quarantined is the third condition owing a reading; `projectedQuarantine` is that rule, named and preserved | Decision 4 | The banner shows quarantine from the transition, without waiting for a reader |
 | 154 | The quarantine conjunct circular or dropped | `backendUsable` sourcing quarantine from the reading it is derived from | It reads the conversion state, where the lane's own first refusal reads it | Decision 4 | `backendUsable` is false in a quarantined session without consulting the reading |
 | 155 | An installation change racing a check | An in-flight constraint covering reads and checks only | A change in flight counts; the recheck's `installationChanges` deferral is that constraint | Decision 2 + Decision 13 | No stale reading rolls `origin` back from `chosen` to `automatic` |
+| 156 | A response that can carry the state or the refusal, not both | A snapshot with two fields under rules needing three | The snapshot carries the authority, the configuration and this request's own outcome | Decision 6 | A read Rust refuses says `Unattempted` and says it was refused |
+| 157 | The quarantine dispatch gated behind the drain that caused it | "Only the mount dispatch is ungated", over an effect that is also ungated | Two of the three check conditions dispatch ungated: mount, and becoming quarantined | Decision 4 | The quarantine banner does not wait for the drain whose failed stop produced it |
+| 158 | A wait bound assuming every holder is visible | A courtesy projection that cannot see a probe or an ungated dispatch | A step-three check never waits behind a drain or preview the frontend knows about; the waits it can meet are bounded and named | Authority obligations | The bound claims only what the projection can deliver |
 
 ## What this interlude does not do
 

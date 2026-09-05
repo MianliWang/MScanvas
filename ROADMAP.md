@@ -421,7 +421,7 @@ So M6.4A was inserted rather than a fifth repair attempted. It decides, in [ADR
 0044](docs/architecture/adr/0044-conversion-configuration-authority.md), who owns
 installation truth, who owns conversion-capability truth, the receipt that binds them,
 what React retains, and at what granularity availability exists — and carries a
-hundred-and-fifty-five-obligation finding ledger the replacement must prove, so that
+hundred-and-fifty-eight-obligation finding ledger the replacement must prove, so that
 nothing PR #95 measured has to be rediscovered. PR #95 stays open as implementation
 evidence until the replacement has extracted its tests, copy and behaviour; nothing from
 it is on `main`.
