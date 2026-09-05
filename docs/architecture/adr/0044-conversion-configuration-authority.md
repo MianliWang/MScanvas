@@ -430,16 +430,17 @@ and `Plan(A)` stay installed for the length of the whole queue, which is the exa
 window this decision exists to close, reopened by the one operation slow enough to
 matter. So the poll carries the authority as it stands, and stimulates nothing.
 
-The rule must hold for every operation that resolves an installation, which is
-every operation that takes the backend gate — the configuration read, the BEGIN
-preflight, queue execution and drain, retry preparation, the backend check and the
-installation change, and the preview and spectrum reads — and anything added later
-that joins them. The list is not a scope to be narrowed to the conversion path:
-Decision 11's gate membership and this rule's membership are the same set, which
-is what lets `Unattempted`'s stimulus below be stated as "every operation that owns
-the gate delivers authority when it answers" without qualification. A preview read
-that finishes is as much an occasion to issue an owed catalog read as a drain
-is.
+So delivery membership is **the gate-takers, plus the poll** — the configuration
+read, the BEGIN preflight, queue execution and drain, retry preparation, the backend
+check and the installation change, and the preview and spectrum reads, all of which
+can observe or replace the authority; and `conversion_state`, which can do neither
+and is added for the one reason above. Anything later that takes the gate joins the
+first group automatically.
+
+The first group is not a scope to be narrowed to the conversion path: Decision 11's gate
+membership and this rule's are the same set there, which is what lets `Unattempted`'s
+stimulus below be stated over gate-takers without qualification. A preview read that
+finishes is as much an occasion to issue an owed catalog read as a drain is.
 
 ### The banner is a reader of this authority, not a second one
 
@@ -983,10 +984,24 @@ can never discharge — which is what rows 53 and 54 require, and what an earlie
 "issued once, answered once" could not deliver for an obligation quarantine arrived
 *after*.
 
+**An occasion is not simply any response.** It is defined once, here, because three
+rules turn on it:
+
+```text
+an occasion is
+  a delivery from an operation that took the gate, or
+  a lane fact going false
+
+it is not
+  a `conversion_state` poll, which delivers the authority and wakes nothing
+  (Decision 4, row 123): a running queue polls, and an owed read deferred
+  by that very queue must not be re-issued on every tick
+```
+
 **And step three is bounded, because an unbounded one spins.** A refused attempt
-answers, an answer is a delivery, and a delivery is an occasion — which closes a
-loop at IPC speed against a frontend projection that is explicitly allowed to be
-stale and permissive. The bound is per obligation, and both halves of that matter:
+answers, a gate-taker's answer is an occasion — which closes a loop at IPC speed
+against a frontend projection that is explicitly allowed to be stale and permissive.
+The bound is per obligation, and both halves of that matter:
 
 ```text
 each owed obligation is issued at most once per occasion, and where both are
@@ -1021,7 +1036,7 @@ another occasion has passed since that attempt was issued
      -- has anything been delivered since this attempt went out? -- separates
      the reorder from the spin
 
-it IS re-issued by any other delivery, an obligation's included
+it IS re-issued by any other occasion, an obligation's own answer included
   -- the obliged check holds the gate, refuses the read, and then answers;
      that answer is the occasion the read has been waiting for
 ```
@@ -2140,12 +2155,14 @@ remain current. The delivery rule is not `BEGIN`-specific, and this is the path 
 shows why: the operation that *found* the loss answers first, and is not permitted to
 answer silently.
 
-The state poll behind the queue does **not** carry it. `conversion_state` takes no
-gate and runs no discovery, so it is outside Decision 4's delivery membership for
-exactly the reason `conversion_queue_plan` is — and it must stay outside, because a
-poll that counted as a delivery would make every tick an occasion under step three,
-re-issuing owed obligations at poll frequency. The bound would hold, and it would hold
-against a loop the bound was never meant to have to stop.
+The state poll behind the queue **carries it too**, and that is what makes this path
+survivable rather than merely correct at its ends. `drain_queue` observes the loss
+before its first item and answers when the queue ends, so on a long queue the refusal
+above is minutes away; the poll is the session's only voice in between, and a banner
+naming build A for that whole stretch is the window this decision exists to close.
+What the poll does *not* do is wake anything: it is a delivery and never an occasion
+(Decision 4b), so an owed read deferred by this very drain is not re-issued on every
+tick.
 
 **Plan blocked.** No configuration or no selected intent → no plan request → no
 "Reading the conversion plan…".
@@ -2156,7 +2173,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–132).
+plus the findings raised against this document's own drafts (rows 18–133).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2294,6 +2311,7 @@ and no finding may disappear because the old PR was superseded.
 | 130 | An owed check with no clause to issue it under | Step three enumerating two of the three conditions an obligation arises from | The enumeration names the configuration read, the unresolved session, and the stale rendered reading | Frontend reconciliation | A check owed after a drain observes a replacement is issued by the only procedural statement of issuance |
 | 131 | A stale failure sentence no rule can notice | A reading refreshed only by an explicit check, under two currency rules that correctly say nothing changed | Recorded as a residual, not answered by a store nothing reads: the controls that refresh it are live throughout | Decision 2 + Decision 4 | An unbound session whose reason for being unbound changes shows the old sentence beside a live Recheck, and no rule pretends otherwise |
 | 132 | A mount obligation owed with no occasion in sight | An occasion set that is empty in a session running nothing | The explicit controls are the floor: Recheck and Choose-installation are live in an unresolved session | Authority obligations | A reader who can see a discovery failure always has something to press |
+| 133 | Delivery and occasion left as one word | A bound written over "any delivery" after one delivery stopped being a stimulus | An occasion is defined once: a gate-taker's answer, or a lane fact going false — never a poll | Decision 4b | An owed read deferred by a running drain is not re-issued on every tick of that drain's own poll |
 
 ## What this interlude does not do
 
