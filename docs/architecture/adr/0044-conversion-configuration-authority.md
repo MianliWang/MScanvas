@@ -672,9 +672,12 @@ backendUsable = not quarantined
 
 **The quarantine conjunct reads the fact where it already arrives**, on the conversion
 state — the same place `ConversionLane.backendQuarantined` reads it, and independent of
-the availability reading. That matters because `backendUsableRef` is written *from* the
-reading: sourcing the conjunct there instead would make it circular, or drop it, which
-is rows 66 and 90.
+the availability reading. **It is evaluated where `backendUsable` is read**, not baked
+into a ref when a reading arrives: `backendUsableRef` is written only when one does, so
+a write-time conjunction would leave it true through a quarantine that arrives
+afterwards, and the automatic preview loads reachable — rows 66 and 90's own defect.
+That matters because `backendUsableRef` is written *from* the reading: sourcing the
+conjunct there instead would make it circular, or drop it, which is rows 66 and 90.
 
 Stating the conjunction in full also puts each fact where it belongs — the verdict stays
 a statement about a build, quarantine stays a statement about the session, and neither
@@ -953,8 +956,10 @@ the projection  -> judged by REVISION alone
 
 the payload     -> judged by RECEIPT alone: the binding it describes against
    (a snapshot,    the binding now rendered
-    a plan, or     a different binding -> discarded
-    a reading)
+    a plan, a      a different binding -> discarded, and where the payload was
+    reading, or                           what a surface is waiting for, that
+    a preview)                            surface is told so rather than left
+                                          waiting
                    the rendered binding -> admitted, whatever the revision did
                    (a snapshot's receipt is read from the response's own
                     projection, which describes the same instant: Rust
@@ -1011,6 +1016,15 @@ which binding it is rendering, that receipt is part of the question by Decision 
 a reply is installed only where identity and ordinal both still match. A binding that
 changed under the request makes the reply's identity stale, which is the same test the
 plan machine already applies for every other component of the question.
+
+**Discarding a preview is not dropping it**, and the difference is a stall. A preview
+produced by a replaced build is discarded for the same reason a catalog is — the gate is
+released before a table of that size is converted and transferred, so a folder switch
+can complete while it is still in flight — but the workspace is *waiting* on it, and
+returning without a word leaves it reading "Reading the file…" with nothing else coming.
+`usePreviewWorkspace` already calls `discardBackendDerivedState` on both open paths for
+exactly that reason. The rule is general: a discarded payload that some surface was
+waiting for takes that surface out of waiting.
 
 **A `BackendAvailabilityDto` is a payload like the others**, and a draft's enumeration
 left it out. It describes a build, so it is judged by the receipt it carries against the
@@ -2254,12 +2268,19 @@ question, not a claim about the current installation, and the plan is invalidate
 the rendered binding stops matching it — the retain-list's "not past the render" bounds
 what React may *believe*, not what a recorded question may contain.
 
-**A request-issued receipt is not among them, and an earlier draft added one here.**
-It was needed only by a payload rule Decision 4b has since retracted: under the rule
-that stands, a payload is judged by the binding *it* describes against the binding now
-rendered, and what the request went out under does not enter into it. Keeping the extra
-copy would not merely be spare — it would answer the question differently, discarding
-exactly the rebinding read that carries a snapshot for the binding on screen. React does
+**A request-issued receipt is held for one case, and an earlier draft first added it
+for the wrong one and then removed it entirely.** It is not the payload rule's: under
+the rule that stands, a payload is judged by the binding *it* describes against the
+binding now rendered, and what the request went out under does not enter into it —
+keeping a copy for that would answer the question differently, discarding exactly the
+rebinding read that carries a snapshot for the binding on screen.
+
+But a *failure* carries no payload, and so carries no binding. The only thing that can
+say whether it describes the build in use is what its request went out under, which is
+why `usePreviewWorkspace` compares against `generationAtRequest` on the open path's
+catch today. So React holds the receipt a request was issued under **for the life of
+that request, and consults it only where the answer carries no binding of its own** — a
+failure, and nothing else. React does
 not order receipts, does not derive meaning from a revision, does not hold either past
 the render or the request it belongs to, and does not reconstruct *observed*,
 *settled*, *attempted* or *ready* from them — all four remain Rust-authored typed
@@ -2482,7 +2503,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–162).
+plus the findings raised against this document's own drafts (rows 18–165).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2562,7 +2583,7 @@ and no finding may disappear because the old PR was superseded.
 | 72 | A reader's error swallowed by an unrelated revision | Staleness applied to the whole response | Staleness reaches the projection alone; the outcome answers the request that made it | Frontend, ordering then identity | A refusal overtaken by a revision bump is still shown to the reader who caused it |
 | 73 | Two authorities keying one contended moment differently | An admission with no stated selection order | Probe admission reports in `ConversionLane`'s order, over the ownership facts it is entitled to consider | Decision 11 + panel notice registry | One fact refusing two actions produces one notice; two different facts refusing two actions produce two, and neither is misnamed |
 | 74 | A working replacement landed unprobed | "The build changed" collapsed into "the build is gone" | A read that finds a different working installation lands on its own answer; `UnavailableForBinding` is only for a binding naming no build | Decision 3 + Rust lifecycle | Switching between two good installations mid-read yields `Ready(B)`, never `UnavailableForBinding` |
-| 75 | A request's payload judged against a receipt React was told not to hold | A retain-list closed before a plan identity's receipt was accounted for | React holds a plan identity's receipt for the life of the plan, and holds no request-issued copy at all | Decision 13 | A payload is judged by the binding it describes against the binding rendered, needing neither the projection that carried it nor what its request went out under |
+| 75 | A request's payload judged against a receipt React was told not to hold | A retain-list closed before a plan identity's receipt was accounted for | React holds a plan identity's receipt for the life of the plan, and a request-issued copy for the life of a request — consulted only where the answer carries no binding of its own | Decision 13 | A payload is judged by the binding it describes; a failure, which describes none, is judged by what its request went out under |
 | 76 | An admission rule capturing the operations it lists as refusing it | A scope written as the tool invocation rather than the read | The rule governs the automatic first configuration read and the explicit retry, and no other `--help` | Decision 11 | A preview read and the BEGIN preflight run their own discovery without consulting probe admission |
 | 77 | A rebinding read discarded by the receipt it was issued under | A payload judged by its request rather than by itself | A payload is judged by the binding it describes against the binding now rendered | Frontend, ordering then identity | A read issued under A that answers `Ready(B)` is installed whole |
 | 78 | Presentation designed for a state the tree cannot produce | A `Ready` catalog with no available row | `require_conversion` and `require_conversion_intent(SHIPPED)` ask for the same set, so a catalog that reached `Ready` always has the shipped row | Decision 3 + Decision 8 | Every `Ready` catalog offers at least one row, and Decision 8's recovery needs no availability condition |
@@ -2647,9 +2668,12 @@ and no finding may disappear because the old PR was superseded.
 | 157 | The quarantine dispatch gated behind the drain that caused it | "Only the mount dispatch is ungated", over an effect that is also ungated | Two of the three check conditions dispatch ungated: mount, and becoming quarantined | Decision 4 | The quarantine banner does not wait for the drain whose failed stop produced it |
 | 158 | A wait bound assuming every holder is visible | A courtesy projection that cannot see a probe or an ungated dispatch | A step-three check never waits behind a drain or preview the frontend knows about; the waits it can meet are bounded and named | Authority obligations | The bound claims only what the projection can deliver |
 | 159 | Rust's identity comparisons replaced by a session-scoped token | "No comparison of installation identity survives", written unscoped | Only frontend comparisons are in scope; the queue's identity-keyed retry admission stays, because switching away and back restores a build and mints a new receipt | Decision 2 | A retry is still admitted after an installation is switched away from and back |
-| 160 | A stale spectrum table beside a new binding's catalog | The counter's removal deleting `discardBackendDerivedState`'s only call site | A replaced receipt invalidates the visible preview and the roster's backend-derived rows, not only the configuration and plan — and the in-flight-open exemption survives unchanged | Decision 4b | Build A's spectrum table does not survive the observation of build B, and no discard fires mid-open |
+| 160 | A stale spectrum table beside a new binding's catalog | The counter's removal deleting the call sites `discardBackendDerivedState` is reached from — four of them, two on the open path | A replaced receipt invalidates the visible preview and the roster's backend-derived rows, not only the configuration and plan; the in-flight-open exemption survives, and a discarded payload something was waiting for takes that surface out of waiting | Decision 4b | Build A's spectrum table does not survive the observation of build B; no discard fires mid-open; and no surface is left reading with nothing coming |
 | 161 | A retry offered for a state no read can change | A predicate written over "no usable answer" | The retry is offered where a read could improve the answer; `UnavailableForBinding` follows from the binding and only a different binding changes it | Decision 5 | No retry is offered beside a binding that names no build |
 | 162 | The delivery rule naming two of its three exceptions | A rule stated in full before the third was added | The rule in full, and the summary that quotes it, name the poll, the binding-only read and the refused read | Decision 4 | Every operation that answers with a snapshot carries a projection to judge it by |
+| 163 | A workspace left reading with nothing coming | A stale preview reply dropped rather than discarded | A discarded payload some surface was waiting for takes that surface out of waiting | Decision 4b | A preview from a replaced build clears the reading state instead of stalling it |
+| 164 | A failure with no binding and nothing to judge it by | A retain-list that removed the only fact such an answer can be judged against | React holds the receipt a request was issued under, for that request, and consults it only for an answer carrying no binding | Decision 13 | The replaced build's failure is not shown under the new banner |
+| 165 | The quarantine conjunct evaluated when a reading arrives | A conjunction baked into a ref written only on a reading | It is evaluated where `backendUsable` is read | Decision 4 | A quarantine arriving after the last reading still makes `backendUsable` false |
 
 ## What this interlude does not do
 
