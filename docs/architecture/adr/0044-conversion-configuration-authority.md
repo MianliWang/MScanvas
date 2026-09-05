@@ -735,8 +735,9 @@ discharging that one would leave a session `Unresolved` for its whole life with
 nothing obliged to move it.
 
 **In an `Unresolved` session that occasion may never come, and the floor is a
-control.** The occasion set is deliveries and lane facts going false, and a session
-that has resolved nothing is running nothing — so a mount check whose request failed
+control.** The occasion set is gate-takers' answers and lane facts going false — never a
+poll — and a session that has resolved nothing is running nothing, so a mount check
+whose request failed
 is owed with no automatic stimulus in sight. That is not a stall: `backendBusy` is
 false, so `BackendStatus`'s Recheck and Choose-installation are both live, and the
 banner is showing the failure that the reader would press them about. It is the same
@@ -957,10 +958,11 @@ correctly do nothing — and that is exactly the moment the owed first configura
 and the obliged backend check become admissible. So after ordering and identity have had
 their say, the frontend asks one more question: is an obligation owed — a configuration
 read for the binding now rendered, a check by a session that has resolved nothing, or a
-check by one whose rendered reading names a different binding than the authority does —
-is nothing in flight for it, and may it be issued? Invalidation is what steps one and
-two decide. Issuing is not invalidation, and a binding that has never been read must not
-be kept unread by a rule about a binding that did not change.
+check by one whose rendered reading names a different binding than the authority does
+*or holds no reading at all*, which is where a panel remounting onto a recovered queue
+starts — is nothing in flight for it, and may it be issued? Invalidation is what steps
+one and two decide. Issuing is not invalidation, and a binding that has never been read
+must not be kept unread by a rule about a binding that did not change.
 
 **"May it be issued" is nearly one question for both**, over the process-ownership
 facts and no verdict — Decision 4 states it, and states the one place they part: the
@@ -2224,7 +2226,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–138).
+plus the findings raised against this document's own drafts (rows 18–139).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2268,7 +2270,7 @@ and no finding may disappear because the old PR was superseded.
 | 36 | A snapshot that contradicts itself | The receipt carried twice with no stated equality | The receipt appears once, in the authority; the configuration describes the binding beside it | `ConversionConfigurationSnapshot` | No snapshot can pair one binding's authority with another's catalog |
 | 37 | The first binding is never installed | An ordering rule defined only for a strictly newer revision | Nothing rendered accepts the first projection; an equal revision changes nothing and re-reads nothing | Frontend, ordering then identity | A session's first projection installs its binding, and a repeated projection spends no probe |
 | 38 | Receipt comparison silently disabled | Two shapes for the one union Rust owns | `Binding` carries its receipt, in one place, wherever the union appears | Decision 1's union | Every comparison in the replacement reads the receipt from the same field |
-| 39 | The first read is owed and never re-issued | An admission refusal with no named stimulus to try again | The read stays owed, and every authority delivery is an occasion to issue it; the retry is offered from `Unattempted` too | Rust configuration lifecycle + panel | A configuration read refused under a held gate is issued when the holder answers, and a reader is never left with a stuck panel and nothing to press |
+| 39 | The first read is owed and never re-issued | An admission refusal with no named stimulus to try again | The read stays owed, and every occasion — a gate-taker's answer or a lane fact going false, never a poll — is an occasion to issue it; the retry is offered from `Unattempted` too | Rust configuration lifecycle + panel | A configuration read refused under a held gate is issued when the holder answers, and a reader is never left with a stuck panel and nothing to press |
 | 40 | A probe launches in a quarantined session | A membership criterion written as "takes the gate" alone | Admission is what Rust refuses a backend process for: the gate **and** the quarantine boundary | `ConversionConfigurationProbeAdmission` | A quarantined session admits no probe, automatic or explicit, and says so with quarantine's own reason |
 | 41 | `Partial` has no representable binding | A union read as installed-or-nothing while discovery has three outcomes | `Installed` is `AvailabilityState::Available` and nothing else; `Partial` is `NoInstallation`, and the tag carries no reason | Decision 1's union | A folder with msconvert and no msaccess binds as `NoInstallation`, probes nothing, and is never worded "ProteoWizard is not installed" |
 | 42 | A binding is observed and never settles | An observation that carries a binding and no verdict | A binding and its verdict travel together: every observer holds the `DiscoveryResult` both are computed from | Decision 1 + Decision 4 | No response carries a binding whose `previewAvailability` is missing, so no state exists for a check to have to leave |
@@ -2297,7 +2299,7 @@ and no finding may disappear because the old PR was superseded.
 | 65 | A build that cannot convert rendered as nine unavailable rows | `Failed` and `Ready`-with-nothing-available left undecided | A build failing `require_conversion` is `Failed`; availability is a property of rows, and it has not got as far as rows | Decision 3 + Decision 7 | A build missing `outdir`, `outfile`, `--zlib` or the format option renders one sentence and a retry, not nine dead controls |
 | 66 | A quarantined session reachable through a remembered verdict | Quarantine reaching `backendUsable` only by corrupting the availability DTO the authority replaces | `backendUsable` names quarantine as its own conjunct, beside the authority's verdict | `ConversionLane` + preview load | A session quarantined after a good verdict starts no conversion and no automatic preview load |
 | 67 | A stale payload with no binding to check against | One rule made to cover projection, payload and outcome together | Three things, three rules: revision judges the projection, receipt judges the payload, neither judges the outcome | Frontend, ordering then identity | A snapshot for the rendered binding is installed even when its projection is stale, and its domain outcome still answers the reader |
-| 68 | An owed read stranded by an out-of-order reply | A re-issue bound that cannot tell a reorder from a spin | An attempt's own refusal re-issues it when another delivery has been processed since it went out | Frontend reconciliation | A gate holder that answers while a refused probe's reply is still in flight still gets the read issued |
+| 68 | An owed read stranded by an out-of-order reply | A re-issue bound that cannot tell a reorder from a spin | An attempt's own refusal re-issues it when another *occasion* has passed since it went out | Frontend reconciliation | A gate holder that answers, or a picker that closes, while a refused probe's reply is still in flight still gets the read issued |
 | 69 | The verdict refusing the operation that would produce one | The mount-time check gated on the lane rather than on process ownership | The check asks only whether something owns the backend process; `backendUsable` owns none | Authority obligations + Decision 11 | A session that has resolved nothing issues its check with a free gate, whatever `backendUsable` says |
 | 70 | Two snapshots for one rebinding read | An invalidation rule with no exception for a response that already answers | A response carrying a snapshot for the new binding is the read for it | Frontend reconciliation | Mount and every rebinding read cost one snapshot, not two |
 | 71 | A shared notice phrased about one of its actions | Deduplication defined without saying whose sentence survives | A shared notice states the fact; each control says what it cannot do | Panel notice registry | A settings retry sharing `laneClaimed` with Convert is never described as converting being unavailable |
@@ -2368,6 +2370,7 @@ and no finding may disappear because the old PR was superseded.
 | 136 | The mount check deferred by a fact only it can clear | `backendBusy` initialising to true, gating the dispatch that would make it truthful | The mount dispatch passes through the projection's ignorance, and is bypassed by a recovered running queue, which is knowledge | Authority obligations + `ConversionLane` projection | A session mounts, checks and settles untouched; a panel remounting mid-drain waits for the drain rather than locking out its own controls |
 | 137 | A waiting check locking out the controls that would end it | A duty on a waiting primitive, dispatched without bound | It is dispatched only into a lane the projection says is free, so the lockout is one stale-window wide and never spans a known drain | Authority obligations | No automatic check waits behind a drain the frontend can see |
 | 138 | A newly incurred obligation waiting for an occasion | Step three read as the only statement of issuance | An obligation is issued when it is incurred; step three recovers the ones that could not be | Frontend reconciliation | A drain's poll that delivers a replacement gets that binding's configuration read, without the poll being an occasion |
+| 139 | A banner with no reading at all, and no clause to get one | An enumeration written for a stale reading and not for a missing one | An obligation is owed where the rendered reading names a different binding *or where there is none* | Frontend reconciliation | A panel remounting onto a recovered queue gets a reading when the drain answers, rather than none for the run |
 
 ## What this interlude does not do
 
