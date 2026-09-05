@@ -39,7 +39,7 @@ coding.
 | Question | Answer |
 |---|---|
 | Who owns installation truth? | Rust, as a typed authority state — never a bare counter the frontend interprets. |
-| Who is obliged to deliver it? | Every operation that can observe **or replace** it, on its answer, whether that answer succeeds or refuses. |
+| Who is obliged to deliver it? | Every operation that can observe **or replace** it, on its answer, whether that answer succeeds or refuses — and the queue's state poll, which does neither and is the only thing that speaks during a drain. |
 | Who owns conversion-capability/catalog truth? | Rust, as a lifecycle keyed by the installation binding. |
 | What identity binds those facts together? | One opaque, session-scoped, path-free `BackendBindingReceipt`. |
 | Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
@@ -522,7 +522,8 @@ So the rule is stated in full:
 
 > **Every operation that can observe or replace installation authority returns
 > the authority as it stands when the operation answers — whether its domain
-> outcome succeeds or refuses.**
+> outcome succeeds or refuses — and so does the queue's state poll, which can do
+> neither and is the session's only voice while a drain runs.**
 
 "Conversion-bound" would have been too narrow by exactly the two operations that
 *replace* a binding rather than merely notice one: the backend check and the
@@ -1162,12 +1163,14 @@ Binding = Installed { receipt }
   -> the lifecycle begins at Unattempted { binding }
 
 Unattempted, Installed
-  -> a probe ran, answered, and the build can convert
-                                          -> Ready  { binding, catalog }
-  -> a probe ran, answered, and require_conversion refuses
+  -> the read's own discovery is still Available, and msconvert's grammar
+     yields a catalog                     -> Ready  { binding, catalog }
+  -> the read's own discovery is still Available, and that grammar cannot be
+     used -- its bound help will not parse, or require_conversion refuses
                                           -> Failed { binding, error }
-  -> a probe ran and did not answer       -> Failed { binding, error }
-  -> a probe could not start              -> Unattempted, unchanged
+  -> the read's own discovery is no longer Available
+                                          -> the binding is replaced; see below
+  -> the read could not start             -> Unattempted, unchanged
 
 Failed
   -> only an explicit settings retry spends another attempt
@@ -1184,12 +1187,11 @@ the receipt is replaced by an operation with no catalog to offer
 the receipt is replaced by the configuration read that then answers for it
   -> the previous configuration is non-current, exactly as above
   -> the new binding lands on what its own answer supports, by the same
-     four-way discrimination the Unattempted arm uses:
-         a probe answered and B can convert
+     discrimination the Unattempted arm uses:
+         B is Available and its grammar yields a catalog
                                         -> Ready  { B, catalog }
-         a probe answered and require_conversion refuses
+         B is Available and that grammar cannot be used
                                         -> Failed { B, error }
-         a probe ran and did not answer -> Failed { B, error }
          B is NoInstallation            -> UnavailableForBinding
   -> Unattempted is never rendered: it was never true of this binding
 
@@ -1252,8 +1254,15 @@ one attempt has just been spent, and a second automatic probe would follow
 immediately. Observation and answer are one transaction, and the state that
 lands is the one the answer supports.
 
-**Transient process contention is not a failed read.** A configuration attempt is
-spent when a probe *ran* and did not answer, never when one could not start: a
+**There is no "the probe ran and did not answer" arm, and a draft had one.** A
+`--help` that fails to launch, times out or exits unacceptably sets `overall_failure`,
+so the discovery is not `Available` and the read reports a replaced binding rather than
+a failed configuration (Decision 3). `Failed` is reached where the probe *did* answer
+and its answer cannot be used: a bound help stream that will not parse, which is
+Decision 3's load-bearing case, or a grammar that `require_conversion` refuses.
+
+**Transient process contention is not a failed read either.** A configuration attempt
+is spent when a probe ran and answered unusably, never when one could not start: a
 conversion holding the backend lane says nothing about what the installed build
 offers. Turning contention into `Failed` would spend the binding's one automatic
 attempt on a queue, and leave the reader with a retry control as the only way
@@ -1896,8 +1905,8 @@ React owns:
 the selected admitted intent id
 request-in-flight state needed to render an outstanding command
 per-obligation bookkeeping: whether a read or check is in flight, and whether
-  any *occasion* has passed since it was issued -- a delivery or a lane fact
-  going false, since a picker closing is one and produces no delivery --
+  any *occasion* has passed since it was issued -- as Decision 4b defines one:
+  a gate-taker's answer, or a lane fact going false, and never a poll --
   never a *judgement* about whether one is owed, which Rust's state makes
 the per-panel plan request ordinal, which is never reset
 the Rust-authored configuration snapshot it is rendering, catalog included
@@ -2174,7 +2183,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–133).
+plus the findings raised against this document's own drafts (rows 18–134).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2284,7 +2293,7 @@ and no finding may disappear because the old PR was superseded.
 | 102 | The banner naming a build the session has left | One surface left reading the verdict without the authority beside it | `BackendStatus` reads both: the DTO for the reason, origin and quarantine sentence, the projection for whether the verdict is current | Decision 4 | No window exists in which the banner reports a verdict about the previous build, and none in which it loses the reason text it has today |
 | 103 | A plan installed because it belongs to the binding | A receipt test read as sufficient for a payload with an owner | Receipt admits a payload to the binding; the plan machine's identity-and-ordinal test then decides it | Decision 4b + Decision 9 | A superseded plan reply for the current binding is still discarded |
 | 104 | A plan installed into a state awaiting nothing | A discard rule written only as "any other identity", over states that have none or that still match | A reply arriving while `none`, `blocked`, `ready` or `failed` is discarded | Plan state machine | A reply outstanding across `loading -> blocked` installs nothing, and neither does one arriving after the same request already failed |
-| 105 | A build that cannot convert reported `Ready` by the lifecycle | A discriminator asking only whether a probe answered | A probe that answered and found `require_conversion` refusing is `Failed` | Rust configuration lifecycle | Decision 3's cannot-convert case and the lifecycle that implements it agree |
+| 105 | A build that cannot convert reported `Ready` by the lifecycle | A discriminator asking only whether a probe answered, with an arm for a case that lands elsewhere | `Failed` is a probe that answered unusably — help that will not parse, or `require_conversion` refusing; a probe that did not answer is a replaced binding | Rust configuration lifecycle | Decision 3's four divergent states and the lifecycle that implements them agree arm for arm |
 | 106 | A rule about the gate's holder that Rust cannot evaluate, and could not trust | `backend_gate` as a bare `Mutex<()>` under a rule keyed on who holds it, read before blocking on it | No holder is consulted: the gate is taken or the proof refuses | Decision 10 + Rust gate | The proof needs no tag, and no window exists between reading a holder and waiting on one |
 | 107 | A third authority member for a state the tree cannot produce | A union member added for an observation that carries no verdict | The union is `Unresolved` or `Settled`; every observer computes the verdict from the discovery it already holds | Decision 1's union | No `DiscoveryResult` reaches a caller that could not have produced a verdict from it |
 | 108 | The wait behind a probe understated by half | "A single `msconvert --help`", where discovery probes both tools | A configuration probe is a discovery over both tools, bounded by two `PROBE_TIMEOUT`s, and is described as such wherever its cost is weighed | Decision 10 + Decision 11 | No argument in this document rests on a probe being half as long as it is |
@@ -2313,6 +2322,7 @@ and no finding may disappear because the old PR was superseded.
 | 131 | A stale failure sentence no rule can notice | A reading refreshed only by an explicit check, under two currency rules that correctly say nothing changed | Recorded as a residual, not answered by a store nothing reads: the controls that refresh it are live throughout | Decision 2 + Decision 4 | An unbound session whose reason for being unbound changes shows the old sentence beside a live Recheck, and no rule pretends otherwise |
 | 132 | A mount obligation owed with no occasion in sight | An occasion set that is empty in a session running nothing | The explicit controls are the floor: Recheck and Choose-installation are live in an unresolved session | Authority obligations | A reader who can see a discovery failure always has something to press |
 | 133 | Delivery and occasion left as one word | A bound written over "any delivery" after one delivery stopped being a stimulus | An occasion is defined once: a gate-taker's answer, or a lane fact going false — never a poll | Decision 4b | An owed read deferred by a running drain is not re-issued on every tick of that drain's own poll |
+| 134 | The delivery rule stated without the operation it was widened for | "Observe or replace" kept as the whole scope after the poll joined it | The rule names the poll where it is stated in full, and in the summary that answers for it | Decision 4 | Coding the normative sentence closes the drain window rather than reopening it |
 
 ## What this interlude does not do
 
