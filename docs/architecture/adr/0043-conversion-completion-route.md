@@ -912,9 +912,9 @@ and processing**; and the binding of the chosen intent into the queue at `BEGIN`
 delivery rule is over every operation that takes the backend gate — which includes the
 preview and spectrum reads, so their responses carry the authority projection too, and
 `BackendStatus` reads it beside the availability DTO it already renders — and over three
-kinds that take none: everything answering with a `WorkspaceConversionUpdateDto` — the
-state poll, `stop_conversion_queue` and `cancel_conversion` — the binding-only
-configuration read, and a read Rust's admission refuses. `ConversionQueue` is the poll's
+kinds that take none: everything answering with a `WorkspaceConversionUpdateDto`,
+whichever operation that is; the binding-only configuration read; and a read Rust's
+admission refuses. `ConversionQueue` is the poll's
 own payload, and the response carries the current authority, so its
 `installationGeneration` is replaced by the queue's own receipt: the build it is bound
 to, absent until the first drain pass binds one and fixed thereafter, which the M7 seam
