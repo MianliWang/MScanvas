@@ -45,7 +45,7 @@ coding.
 | Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
 | May the conversion configuration read run now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate **and its quarantine boundary** — for the automatic first read and the explicit retry, not every `--help` a gated operation runs, and not a read for a binding that launches no probe at all. |
 | Who owns catalog request lifecycle and retry? | Rust owns the lifecycle state; the frontend initiates a read or a retry and owns neither. |
-| What does React retain? | The Rust-authored authority projection it is rendering, whole; the selected intent id; request-in-flight for rendering; per-obligation bookkeeping (in flight, and whether an occasion has passed since — never a judgement that one is *owed*, which Rust's state makes); the never-reset plan request ordinal; the Rust-authored configuration snapshot it is rendering, catalog included; the `BackendAvailabilityDto` the banner is rendering; Rust's plan answer, with its identity's receipt for the life of the plan; the receipt a request was issued under, for that request, consulted only for an answer carrying no binding; and presentation. Nothing else. |
+| What does React retain? | The Rust-authored authority projection it is rendering, whole; the selected intent id; request-in-flight for rendering; per-obligation bookkeeping (in flight, whether the quarantine transition has been dispatched for, and whether an occasion has passed since — never a judgement that one is *owed*, which Rust's state makes); the never-reset plan request ordinal; the Rust-authored configuration snapshot it is rendering, catalog included; the `BackendAvailabilityDto` the banner is rendering; Rust's plan answer, with its identity's receipt for the life of the plan; the receipt a request was issued under, for that request, consulted only for an answer carrying no binding; and presentation. Nothing else. |
 | May the obliged backend check be issued now? | Process ownership, never a verdict about a build — the read's predicate minus quarantine, which refuses a probe and answers a check. |
 | At what granularity does availability exist? | The admitted **row** — one composition. There is no per-value availability authority. |
 | What makes a pre-run plan current? | Ordered handles, intent id, conflict policy, binding receipt, document epoch — compared against Rust's own answer. |
@@ -462,8 +462,9 @@ and `Plan(A)` stay installed for the length of the whole queue, which is the exa
 window this decision exists to close, reopened by the one operation slow enough to
 matter. So the poll carries the authority as it stands, and stimulates nothing.
 
-So delivery membership is **the gate-takers, plus three that take none: the poll, the
-binding-only configuration read, and a configuration read Rust's admission refuses** —
+So delivery membership is **the gate-takers, plus three kinds that take none:
+everything answering with a `WorkspaceConversionUpdateDto`, the binding-only
+configuration read, and a configuration read Rust's admission refuses** —
 the last because it can neither observe nor replace anything and still must carry a
 projection, or the snapshot it answers with has no binding to be judged by (row 109);
 its projection is the authority it read, which is the same instant its answer describes.
@@ -822,11 +823,15 @@ the three are ungated by the frontend's courtesy projection: the mount one, for 
 reason below, and the quarantine one, because gating it would defer the quarantine
 banner behind the drain that caused the quarantine — row 153's own defect, and why
 `projectedQuarantine` is written the way it is. Only the stale-reading condition's check
-has its *first* attempt made by step three, into a lane the projection says is free —
-and it is the only one step three ever recovers. The other two go out ungated, and a
-dispatch that goes out is answered or blocked, never refused, so it discharges by
-answering and leaves nothing owed. "Owed" is what the frontend's own courtesy creates,
-and the courtesy holds back only that third one.
+has its *first* attempt made by step three, into a lane the projection says is free; the
+other two go out ungated, and a dispatch that goes out is answered or blocked, never
+refused, so it discharges by answering.
+
+Owed arises two ways, then, and step three recovers both. The frontend's own courtesy
+holds a dispatch back — which happens only to that third check and to the configuration
+read — and a dispatch that goes out can still *fail* before reaching an answer, which is
+the transient arm above and leaves any of the four owed. A mount check whose request
+failed is exactly that case, and rows 130 and 132 turn on it.
 
 **They do not share an acquisition with the configuration read, and a draft of this
 document said they should.** The argument was row 115's, made for `BEGIN`: one
@@ -1183,7 +1188,12 @@ read for the binding now rendered; a check by a session that has resolved nothin
 check by one whose rendered reading names a different binding than the authority does
 *or holds no reading at all*, which is where a panel remounting onto a recovered queue
 starts; or a check owed by a session that has just become quarantined — is nothing in
-flight for it, and may it be issued? Invalidation is what steps
+flight for it, and may it be issued? That last clause is the courtesy's, and it is
+asked only of what the courtesy governs: the configuration read and the stale-reading
+check. A mount or quarantine dispatch owed because its request failed is re-issued
+ungated, as its first attempt was — putting it behind the projection here would deadlock
+the mount one on a `backendBusy` only it can clear, and suppress the quarantine one
+behind an in-flight mount check, which are rows 136 and 169. Invalidation is what steps
 one and two decide. Issuing is not invalidation, and a binding that has never been read
 must not be kept unread by a rule about a binding that did not change.
 
