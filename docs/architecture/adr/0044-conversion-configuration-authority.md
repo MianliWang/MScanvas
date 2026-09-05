@@ -419,6 +419,17 @@ site may have to remember to record an observation after its own success or
 failure branch — which is precisely the discipline that failed at
 `conversion_intent_catalog`, at `begin_queue`'s error arm, and at `drain_queue`.
 
+**Delivery membership and occasion membership are two lists, and this is where they
+part.** A response *carrying* the projection and a response *waking* an owed obligation
+are different powers, and one operation needs the first without the second:
+`conversion_state`. The queue's poll observes nothing and takes no gate, so it can wake
+nothing — row 123 — but it is the only thing that speaks during a long drain, and
+`drain_queue` observes its replacement at the start and answers at the end. Without the
+poll carrying the projection, a banner reports the left build as current and `Ready(A)`
+and `Plan(A)` stay installed for the length of the whole queue, which is the exact
+window this decision exists to close, reopened by the one operation slow enough to
+matter. So the poll carries the authority as it stands, and stimulates nothing.
+
 The rule must hold for every operation that resolves an installation, which is
 every operation that takes the backend gate — the configuration read, the BEGIN
 preflight, queue execution and drain, retry preparation, the backend check and the
@@ -444,16 +455,20 @@ the old feed would name the build the session has left and call it available, wh
 keeps everything the projection deliberately does not carry — the quarantine sentence,
 the discovery failure, the origin of the installation, all of which
 `quarantined_availability()` exists to keep truthful — and the banner goes on rendering
-it. **Every operation that discovers refreshes the stored reading**, not only
-`inspect_backend`. Without that, an unbound session whose *reason* for being unbound
-changes — a folder that held neither tool now holds one, so the failure text should
-change while the binding does not — has nothing to notice it: the receipt is stable
-across `NoInstallation` → `NoInstallation` by design, and the revision advances only
-when what is projected changes, so both currency rules correctly say nothing happened
-while the sentence on screen has gone out of date. A discovery is the only thing that
-can know, so a discovery is what updates it. The stored reading is already there
-(`resolved.last`); this widens who writes it, and changes no rule about who may
-*decide* anything.
+it. **An unbound session's reason for being unbound is refreshed by an explicit
+check, and that is a stated residual rather than a rule.** A folder that held neither
+tool and now holds one changes the failure text while the binding does not: the receipt
+is stable across `NoInstallation` → `NoInstallation` by design, the revision advances
+only when what is projected changes, and so both currency rules correctly report that
+nothing happened while the sentence on screen has gone out of date.
+
+A draft answered this by having every discovering operation refresh the stored reading.
+That records without delivering — the store's only reader is
+`quarantined_availability()`, nothing is owed by it, and nothing pushes it anywhere —
+which is Decision 4's own "recording it is only half", one layer down. The honest
+answer is smaller: nothing automatic notices, because nothing in the session learned
+anything; Recheck and Choose-installation are live throughout, and the banner is
+showing the very sentence the reader would press them about.
 
 `BackendAvailabilityDto` **carries the receipt** in place of the
 `installationGeneration` Decision 2 removes from it — the same substitution made on
@@ -803,11 +818,10 @@ the payload     -> judged by RECEIPT alone: the binding it describes against
                     it is outside Decision 4's delivery membership
                     and carries no projection to read one from)
 
-                   a response whose projection is Unresolved names no
-                   binding, so its payload is NoBinding, and NoBinding
-                   installs only where the rendered authority is also
-                   Unresolved -- a late mount-time snapshot never lands
-                   on top of a Ready(A)
+                   no snapshot ever carries an Unresolved projection: a
+                   read is issued only for a rendered binding, and one
+                   that finds nothing has replaced it rather than
+                   unresolved it
 
 the outcome     -> judged by NEITHER
    (an error,      it answers the request that was made, and is shown to
@@ -1298,30 +1312,36 @@ nothing equivalent to `servedBinding`, `catalogGeneration` or
 ```text
 ConversionConfigurationSnapshot {
     authority: BackendAuthorityProjection
-    configuration:
-        NoBinding
-      | ForBinding {
-            state: UnavailableForBinding
+    configuration: UnavailableForBinding
                  | Unattempted
                  | Ready  { catalog: admitted rows, shipped intent identity }
                  | Failed { error }
-        }
 }
 ```
 
-**The receipt appears once, in the authority.** `ForBinding` describes the
+**The receipt appears once, in the authority.** The configuration describes the
 binding the authority in the same snapshot names, and carries no second copy of
 its identity: two copies with no stated equality would make a self-contradictory
 snapshot representable — one binding's authority beside another's catalog — and
 the frontend, comparing the projection's receipt, would install the wrong one.
 
-`NoBinding` is the member the authority makes necessary. `Unresolved` is a state this
-session really reaches — every session opens in it, and the panel renders before any
-operation has resolved anything — and a snapshot that demanded a binding would have no
-representable answer for it, leaving only the two exits ledger rows 24 and 26 forbid:
-invent a receipt, or route it to `UnavailableForBinding`, which is a statement about a
-binding that does not exist. `NoBinding` says the true thing: nothing is installed *or
-not installed* yet, so there is no configuration to describe.
+**There is no member for "no binding", and a draft added one.** The reasoning was that
+`Unresolved` is a state the session really reaches — every session opens in it — and a
+snapshot demanding a binding would have no representable answer for it, leaving only the
+two exits rows 24 and 26 forbid: invent a receipt, or say `UnavailableForBinding`, which
+is a statement about a binding that does not exist.
+
+The premise is true and the conclusion does not follow, because **no snapshot is ever
+produced while the authority is `Unresolved`.** A snapshot is a configuration read's
+answer; a read is issued only for a rendered binding (Decision 4b, step three); and an
+unresolved session has none, which is why what it owes is a check and not a read. The
+state the draft was protecting is real, and it is answered by there being no snapshot at
+all — not by a snapshot that says there is nothing to say.
+
+The authority still crosses in the snapshot, because a read that observes a replacement
+must deliver it (Decision 4). What cannot happen is a snapshot whose authority is
+`Unresolved`: the read that produced it was issued for a binding, and a read that finds
+nothing has *replaced* that binding rather than unresolved it.
 
 The catalog lives **inside** `Ready`, exactly as it does in the lifecycle this
 projects. Carried as a sibling field it would be representable beside a `Failed`
@@ -1688,9 +1708,14 @@ gate would sit behind the whole conversion and surface minutes later against a
 binding that may no longer exist — the unbounded hidden probe this decision exists
 to forbid, arriving through the mechanism meant to prevent it. The non-blocking
 form is documented for "work that is a courtesy rather than a duty… nothing that
-*must* happen may use this", and a single probe attempt is exactly that: the
-*catalog* must eventually be read, but no individual attempt must succeed, because
-a refused one stays owed and is re-issued on the next delivery. That is what the
+*must* happen may use this" — **a sentence the replacement amends**, because Decision
+10 puts the mandatory exact-intent proof on this same primitive and the comment as
+written forbids it. The rule the comment means, and the one true of both callers, is
+that nothing which must *succeed* may use it. A proof that must happen before a picker
+opens is satisfied by refusing; a probe that must eventually run is satisfied by staying
+owed. A single probe attempt is exactly that courtesy: the *catalog* must eventually be
+read, but no individual attempt must succeed, because a refused one stays owed and is
+re-issued on the next occasion. That is what the
 obligation machinery above buys — it is what makes refusing safe, and therefore
 what makes not waiting possible.
 
@@ -2167,7 +2192,7 @@ and no finding may disappear because the old PR was superseded.
 | 28 | A revision read as meaning | One token carrying an ordering and a semantics | The revision's only frontend meaning is staleness; observed, settled, attempted and ready arrive as typed state | Frontend contract | Nothing in React derives an authority state from a revision comparison |
 | 29 | The plan reaches no successful state | A machine with no transition into `ready` | Every state has an entry, and a matching answer reaches `ready { plan }` | Plan state machine | A plan request that answers for its own identity renders the plan; one that fails renders the failure |
 | 30 | The route record contradicts itself | An amended ADR left reading as though it were not | ADR 0043 records the M6.4A amendment, links ADR 0044, and keeps its original decisions and date | ADR 0043 metadata | Its status, amendment note and `Related` name ADR 0044, and its chain wording matches ROADMAP |
-| 31 | `Unresolved` has no representable snapshot | A snapshot demanding a binding for a state that has none | The snapshot says `NoBinding` where there is no binding | `ConversionConfigurationSnapshot` | A session whose first operation answers without discovering renders no configuration, invents no receipt, and is not called `UnavailableForBinding` |
+| 31 | `Unresolved` has no representable snapshot | A member invented for a snapshot that is never produced | No snapshot exists while the authority is `Unresolved`: a read is issued only for a rendered binding | `ConversionConfigurationSnapshot` | A session that has resolved nothing renders no configuration, invents no receipt, and is not called `UnavailableForBinding` |
 | 32 | Contention spends the one automatic attempt | "A read that does not answer" catching a read that never ran | `Failed` requires a probe that ran; a probe that could not start leaves `Unattempted` | Rust configuration lifecycle | A configuration read refused by probe admission leaves the state unchanged and the first read still owed |
 | 33 | The two operations that replace a binding owe nothing | A delivery rule scoped to conversion-bound work | Every operation that can observe **or replace** authority returns it | Authority delivery | Choosing a different ProteoWizard folder invalidates the previous configuration and plan with nothing else required |
 | 34 | A stale reply's payload installed under a newer binding | A payload with no rule of its own | A payload is judged by receipt: it installs when it describes the binding now rendered, and is discarded when it does not | Frontend, ordering then identity | A late snapshot or plan for A cannot be installed while B is rendered |
@@ -2245,7 +2270,7 @@ and no finding may disappear because the old PR was superseded.
 | 106 | A rule about the gate's holder that Rust cannot evaluate, and could not trust | `backend_gate` as a bare `Mutex<()>` under a rule keyed on who holds it, read before blocking on it | No holder is consulted: the gate is taken or the proof refuses | Decision 10 + Rust gate | The proof needs no tag, and no window exists between reading a holder and waiting on one |
 | 107 | A third authority member for a state the tree cannot produce | A union member added for an observation that carries no verdict | The union is `Unresolved` or `Settled`; every observer computes the verdict from the discovery it already holds | Decision 1's union | No `DiscoveryResult` reaches a caller that could not have produced a verdict from it |
 | 108 | The wait behind a probe understated by half | "A single `msconvert --help`", where discovery probes both tools | A configuration probe is a discovery over both tools, bounded by two `PROBE_TIMEOUT`s, and is described as such wherever its cost is weighed | Decision 10 + Decision 11 | No argument in this document rests on a probe being half as long as it is |
-| 109 | A `NoBinding` payload landing on a rendered binding | A receipt rule with nothing to compare when the projection is `Unresolved` | `NoBinding` installs only where the rendered authority is also `Unresolved` | Frontend, ordering then identity | A late mount-time snapshot never replaces a `Ready(A)` |
+| 109 | A payload with nothing to compare against | A receipt rule with no answer when a projection names no binding | No snapshot carries an `Unresolved` projection, so every payload has a binding to be judged by | Frontend, ordering then identity | The receipt test is total over the snapshots that exist |
 | 110 | A banner naming the left build while marking its verdict superseded | Currency applied to the verdict and not to the identity beside it | The projection governs the whole reading: release, build date and origin included | Decision 4 | Between an observation and the render that consumes it, the banner names no build as current, and keeps every reason it has today |
 | 111 | The counter kept beside the receipt that replaced it | A boundary that adds an identity without retiring the one it supersedes | `installationGeneration` leaves every live contract, and no installation comparison survives that is not receipt equality; the versioned diagnostics export keeps its durable field, which is ADR 0017's | Decision 1 + wire contracts | No `Math.max` over installation numbers remains anywhere in the frontend, and no export schema changes |
 | 112 | A plan judged by a projection its reply does not carry | A payload rule sourcing the receipt from a projection uniformly | A snapshot's receipt comes from its response's projection; a plan's from its own identity | Decision 4b + Decision 9 | `conversion_queue_plan`, which takes no gate and delivers no authority, still yields a plan that can be judged |
@@ -2259,7 +2284,7 @@ and no finding may disappear because the old PR was superseded.
 | 120 | A binding-only read deferred behind a discovery it does not need | Duty-first ordering applied to a read that takes no gate | The ordering is about the gate, so a `NoInstallation` read is issued immediately | Frontend reconciliation | A session bound to no installation renders `UnavailableForBinding` without waiting for a check |
 | 121 | A contention refusal shown to a reader who asked for nothing | An outcome rule written as though every request were a press | An outcome is shown to whoever made the request; an automatic read's refusal moves the obligation | Frontend, ordering then identity | A settings read refused by a held gate puts no error on screen; an explicit retry's refusal does |
 | 122 | A plan stamped for a binding it was not computed under | A receipt expected from a call that observes nothing | The binding is part of the question the frontend asks, echoed back, never taken from ambient authority | Decision 9 | `conversion_queue_plan` runs no discovery and stamps no receipt of its own; a binding that changed under the request makes the reply stale |
-| 123 | Owed obligations re-issued at poll frequency | A state poll counted as a delivery | `conversion_state` takes no gate and delivers no authority, exactly as `conversion_queue_plan` does not | Decision 4 + Decision 4b | A running queue's polling produces no occasions, and re-issues nothing |
+| 123 | Owed obligations re-issued at poll frequency | A state poll counted as an occasion | `conversion_state` carries the authority and is never an occasion: delivery and stimulus are two lists | Decision 4 + Decision 4b | A running queue's polling re-issues nothing, and still replaces a banner and a catalog the drain invalidated at its start |
 | 124 | A notice sentence that changes when a second action appears | Fact-phrasing required only where a fact is shared | A notice element is fact-phrased whether one action points at it or three | Panel notice registry | The same `laneClaimed` refusal reads identically with Convert alone and with the settings retry beside it |
 | 125 | A durable export field replaced by a session-scoped token | "Leaves the wire" read over a persisted schema as well as the live one | The diagnostics export keeps `installationGeneration`; it outlives the session a receipt is scoped to, and its schema is ADR 0017's | Decision 2 + ADR 0017 | The export is byte-identical in shape after the counter leaves the live contracts |
 | 126 | A rule justified by cases its own identity model forbids, then by an impossibility | Two drafts offering an in-place repair and a timed-out probe; a third claiming no case exists | The case is the msaccess help capture: a truncated stream moves `usable` at one identity, which is the revision rule's third clause | Decision 3 + Decision 4b | A verdict that flips on an unchanged build advances the revision, and the payload is still judged by receipt |
@@ -2267,7 +2292,7 @@ and no finding may disappear because the old PR was superseded.
 | 128 | The stale-banner window reopened by a discharge | Quarantine discharging every obligation it meets, including one it does not refuse | `inspect_backend` answers a quarantined session rather than refusing it, so the check discharges by answering | Authority obligations + Decision 4 | A drain that observes a replacement and quarantines in the same operation still replaces the banner's reading |
 | 129 | The check unissued in the session that most needs it | One predicate coded for the probe and the check alike, in four places | The probe asks all five admitting facts; the check asks the four ownership facts and not quarantine, which does not refuse it; and quarantine discharges only what it refuses | Decision 4 + Decision 11 | A quarantined session issues its owed check and replaces its banner reading |
 | 130 | An owed check with no clause to issue it under | Step three enumerating two of the three conditions an obligation arises from | The enumeration names the configuration read, the unresolved session, and the stale rendered reading | Frontend reconciliation | A check owed after a drain observes a replacement is issued by the only procedural statement of issuance |
-| 131 | A stale failure sentence no rule can notice | A reading refreshed only by an explicit check, under two currency rules that correctly say nothing changed | Every operation that discovers refreshes the stored reading | Decision 2 + Decision 4 | An unbound session whose reason for being unbound changes stops showing the old one at the next discovery |
+| 131 | A stale failure sentence no rule can notice | A reading refreshed only by an explicit check, under two currency rules that correctly say nothing changed | Recorded as a residual, not answered by a store nothing reads: the controls that refresh it are live throughout | Decision 2 + Decision 4 | An unbound session whose reason for being unbound changes shows the old sentence beside a live Recheck, and no rule pretends otherwise |
 | 132 | A mount obligation owed with no occasion in sight | An occasion set that is empty in a session running nothing | The explicit controls are the floor: Recheck and Choose-installation are live in an unresolved session | Authority obligations | A reader who can see a discovery failure always has something to press |
 
 ## What this interlude does not do
