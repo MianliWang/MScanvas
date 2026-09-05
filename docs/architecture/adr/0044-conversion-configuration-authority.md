@@ -223,8 +223,12 @@ An equal receipt and an equal revision leave nothing to compare, which is what t
 current code's "equal generation, the token decides" tie-break was for — and the
 successor is not a comparison but a constraint: the frontend holds an in-flight bit per
 obligation (Decision 13) and does not issue a second read or a second check while one is
-outstanding, so the case the tie-break settled does not arise. A plan is the exception
-that proves it, and carries an ordinal, because a retry is *meant* to ask the same
+outstanding, so the case the tie-break settled does not arise. **That covers every check
+the frontend issues, the recheck-after-a-failed-open included** — what that recheck
+bypasses is `backendBusy`, the courtesy projection, and not the in-flight bit; otherwise
+it could land behind the mount check and restore the older reading, which is the half of
+`applyVerdict`'s guard that ordering alone does not replace. A plan is the exception
+that proves the rule, and carries an ordinal, because a retry is *meant* to ask the same
 question again while an answer may still be coming.
 
 An internal monotonic counter may remain the implementation. What must not
@@ -614,9 +618,15 @@ truthful answer for a reading that echoes nothing. Nothing is lost by that: the
 currency test does not apply to this reading either way, and it discharges its check by
 answering.
 
-**And the currency test does not apply to what it returns**, which is the half that
-matters. The discriminator is on the reading itself and needs no new field: its failure
-kind is `backend_quarantined`, which no other reading carries. A rule applied uniformly,
+**And neither the currency test nor the receipt test applies to what it returns**,
+which is the half that matters. Both ask about a binding, and this reading is about the
+session — so the receipt it carries is provenance rather than a claim, and judging it as
+a payload would discard the quarantine sentence in the one case that most needs it: a
+drain that observes B and quarantines in the same operation returns a reading stamped A,
+which the payload rule would drop while the check discharged by answering, leaving the
+banner naming A with nothing owed. The discriminator is on the reading itself and needs
+no new field: its failure kind is `backend_quarantined`, which no other reading
+carries. A rule applied uniformly,
 without looking at it, produces the permanent re-issue loop this paragraph exists to
 prevent. A quarantined reading is a statement about the *session* — the code says so
 itself, returning `release: None` and `build_date: None` with the note that "nothing is
@@ -1107,9 +1117,20 @@ it is not
   a `conversion_state` poll, which delivers the authority and wakes nothing
   (Decision 4, row 123): a running queue polls, and an owed read deferred
   by that very queue must not be re-issued on every tick
+
+it is never an occasion FOR THE OBLIGATION THAT PRODUCED IT
+  every frontend-issued check raises `backendChanging` and clears it in a
+  `finally`, so the clearing is a lane fact ceasing to refuse -- an occasion
+  by the definition above, produced by the attempt itself. A mount check
+  whose request fails would otherwise be re-issued by its own cleanup,
+  forever, at IPC speed. This is the general form of the loop bound below,
+  which an earlier draft stated only for an attempt that was *refused*
 ```
 
-**And step three is bounded, because an unbounded one spins.** A refused attempt
+**And step three is bounded, because an unbounded one spins.** The general rule is the
+last line above — an obligation is never woken by an occasion its own attempt produced,
+whether that attempt was refused, failed, or merely finished. The bound below is that
+rule's sharpest case. A refused attempt
 answers, a gate-taker's answer is an occasion — which closes a loop at IPC speed
 against a frontend projection that is explicitly allowed to be stale and permissive.
 The bound is per obligation, and both halves of that matter:
@@ -1120,6 +1141,12 @@ owed the check goes first
   -- "occasion", not "delivery": Decision 5 adds a second kind, a lane fact
      ceasing to refuse, and the bound and the ordering govern both alike. A
      picker closing issues the check first, exactly as a drain answering does
+  -- and the ordering governs incurrence as well, not only recovery: a
+     `BEGIN` that resolves B on a free gate and refuses leaves a read and a
+     check both owed at once, and a read attempted first would take the
+     gate for a two-tool discovery and defer the duty behind it, which is
+     the courtesy ahead of the duty in the case this document calls its
+     flagship
   -- not "one obligation per occasion": an occasion finding both owed must
      leave neither stranded. But they cannot go together, because whichever
      starts holds the gate against the other -- so the duty is issued and
@@ -1160,9 +1187,11 @@ the accepted projection's receipt differs from the rendered one
   -> configuration and plan for the rendered binding are non-current, immediately
   -> no conversion action stays enabled from them
   -> the new binding owes a configuration read, which is attempted on
-     incurrence and subject to admission -- so a NoInstallation binding
-     answers at once and an Installed one is owed until an occasion; step
-     three recovers the refused attempt, and step two decides none of this
+     incurrence, subject to admission AND to the duty-first ordering -- so
+     where a check is owed too, the check is attempted first and the read
+     follows on its answer; a NoInstallation binding's read takes no gate
+     and so answers at once regardless; step three recovers what was
+     refused, and step two decides none of this
   -> unless this very response already carries a snapshot for the new binding
      that *answers* -- Ready, Failed or UnavailableForBinding -- in which case
      nothing is owed and nothing is issued. A snapshot of Unattempted is not
@@ -2359,7 +2388,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–148).
+plus the findings raised against this document's own drafts (rows 18–152).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2513,6 +2542,10 @@ and no finding may disappear because the old PR was superseded.
 | 146 | A late reading replacing a current one | A payload rule enumerated as snapshots and plans | A `BackendAvailabilityDto` is a payload, judged by its receipt against the binding rendered | Decision 4b | The guard `applyVerdict` performs with the counter survives its removal |
 | 147 | Two replies about one binding with nothing to order them | A tie-break removed with the counter and not replaced | The frontend issues no second read or check while one is in flight, so the case does not arise; a plan carries an ordinal because a retry is meant to re-ask | Decision 13 + Decision 9 | No pair of same-binding replies can race, and a retry's can |
 | 148 | An exemption stated without a discriminator | A quarantined reading identified by properties ordinary readings share | Its failure kind is `backend_quarantined`, which no other reading carries | Decision 4 | The exemption is evaluable from the reading, and a uniform rule cannot swallow it |
+| 149 | The quarantine sentence dropped by the payload rule | An exemption scoped to currency and not to identity | A `backend_quarantined` reading is exempt from both tests: it is about the session, and both ask about a binding | Decision 4 + Decision 4b | A drain that observes a replacement and quarantines in one operation still replaces the banner's reading |
+| 150 | The courtesy ahead of the duty at incurrence | Duty-first ordering written for recovery only | The ordering governs incurrence too: where both are owed at once the check is attempted first | Frontend reconciliation | A `BEGIN` that resolves B on a free gate and refuses does not take the gate for a discovery before its check runs |
+| 151 | An obligation re-issued by its own cleanup | A loop bound keyed on a refused attempt's answer | An obligation is never woken by an occasion its own attempt produced — refused, failed or merely finished | Frontend reconciliation | A mount check whose request fails is not re-issued by its own `finally` clearing `backendChanging` |
+| 152 | Two checks outstanding at one revision and one receipt | An in-flight constraint read as not covering the bypassing recheck | The bit covers every check the frontend issues; what the recheck bypasses is `backendBusy` | Decision 2 + Decision 13 | No older reading can land last and restore a stale sentence |
 
 ## What this interlude does not do
 
