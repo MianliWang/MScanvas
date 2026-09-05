@@ -45,7 +45,7 @@ coding.
 | Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
 | May the conversion configuration read run now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate **and its quarantine boundary** — for the automatic first read and the explicit retry, not every `--help` a gated operation runs, and not a read for a binding that launches no probe at all. |
 | Who owns catalog request lifecycle and retry? | Rust owns the lifecycle state; the frontend initiates a read or a retry and owns neither. |
-| What does React retain? | The selected intent id; request-in-flight for rendering; per-obligation bookkeeping (in flight, and whether an occasion has passed since — never a judgement that one is *owed*, which Rust's state makes); the never-reset plan request ordinal; the Rust-authored configuration snapshot it is rendering, catalog included; the `BackendAvailabilityDto` the banner is rendering; Rust's plan answer, with its identity's receipt for the life of the plan; the revision and receipt of what it is rendering; and presentation. Nothing else. |
+| What does React retain? | The Rust-authored authority projection it is rendering, whole; the selected intent id; request-in-flight for rendering; per-obligation bookkeeping (in flight, and whether an occasion has passed since — never a judgement that one is *owed*, which Rust's state makes); the never-reset plan request ordinal; the Rust-authored configuration snapshot it is rendering, catalog included; the `BackendAvailabilityDto` the banner is rendering; Rust's plan answer, with its identity's receipt for the life of the plan; and presentation. Nothing else. |
 | May the obliged backend check be issued now? | Process ownership, never a verdict about a build — the read's predicate minus quarantine, which refuses a probe and answers a check. |
 | At what granularity does availability exist? | The admitted **row** — one composition. There is no per-value availability authority. |
 | What makes a pre-run plan current? | Ordered handles, intent id, conflict policy, binding receipt, document epoch — compared against Rust's own answer. |
@@ -429,7 +429,11 @@ and `Plan(A)` stay installed for the length of the whole queue, which is the exa
 window this decision exists to close, reopened by the one operation slow enough to
 matter. So the poll carries the authority as it stands, and stimulates nothing.
 
-So delivery membership is **the gate-takers, plus the poll** — the configuration
+So delivery membership is **the gate-takers, plus the poll, plus the binding-only
+configuration read** — the last because it can neither observe nor replace anything and
+still must carry a projection, or the snapshot it answers with has no binding to be
+judged by (row 109); its projection is the authority it read, which is the same instant
+its answer describes. Concretely: — the configuration
 read, the BEGIN preflight, queue execution and drain, retry preparation, the backend
 check and the installation change, and the preview and spectrum reads, all of which
 can observe or replace the authority; and `conversion_state`, which can do neither
@@ -1539,12 +1543,20 @@ MSCanvas ships" action; and that action is never a silent fallback.
 ```text
 none
 blocked
-loading { request identity, request }
-ready   { plan }
-failed  { request identity, request, error }
+loading { request identity, ordinal }
+ready   { request identity, plan }
+failed  { request identity, ordinal, error }
 ```
 
-**`request` is a per-panel ordinal, and it is why a retry is safe.** The identity
+**`ready` keeps the identity and drops the ordinal.** The identity is what the
+answer is *about*, and the closing rule below — that an answer which stops describing
+the current question may not continue to stand for it — is a comparison against it, so
+a `ready` without one cannot be checked for currency at all. The ordinal is a property
+of the request rather than of the answer, and once the answer is installed there is no
+outstanding request for it to disambiguate; Decision 13 holds a plan identity's receipt
+for the life of the plan, `ready` included, for this reason.
+
+**The ordinal is per-panel, and it is why a retry is safe.** The identity
 says *which question*, and a retry asks the same one by design (ledger row 35) — so
 identity alone cannot tell a superseded request's late reply from the retry's, and
 the machine would install the answer it just decided to discard. The ordinal rises
@@ -1983,6 +1995,9 @@ per-child notices — is rejected: it multiplies the same sentence and reintrodu
 React owns:
 
 ```text
+the Rust-authored authority projection it is rendering, whole -- its state,
+  its binding and its `previewAvailability`, not merely the revision and
+  receipt it compares with
 the selected admitted intent id
 request-in-flight state needed to render an outstanding command
 per-obligation bookkeeping: whether a read or check is in flight, and whether
@@ -2011,6 +2026,13 @@ different only in that React holds *no snapshot for it at all*, which is not a
 judgement about the configuration but an observation about React's own state — it
 has nothing for the binding on screen, so it asks. That is the same act as a mount,
 one binding later, and it decides nothing Rust has not been asked yet.
+
+**The projection heads that list because three rules read it.** `backendUsable` is a
+conjunction over its state, its binding and its verdict (Decision 4); Decision 5's
+admission exemption asks whether the rendered binding is `NoInstallation`; and step
+three asks whether the session has resolved anything at all. A retain-list that granted
+only the revision and the receipt would forbid all three — the same omission rows 114
+and 127 were raised for, at the member those two are fields of.
 
 **Holding Rust's answers is not owning them.** The configuration snapshot is on
 that list because Decisions 4b, 6, 7 and 8 all require React to render it and to
@@ -2263,7 +2285,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–139).
+plus the findings raised against this document's own drafts (rows 18–142).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2408,6 +2430,9 @@ and no finding may disappear because the old PR was superseded.
 | 137 | A waiting check locking out the controls that would end it | A duty on a waiting primitive, dispatched without bound | The checks this document owes are dispatched only into a lane the projection says is free; the mount dispatch is the tree's own and unchanged | Authority obligations | No check step three issues waits behind a drain the frontend can see |
 | 138 | A newly incurred obligation waiting for an occasion | Step three read as the only statement of issuance | An obligation is attempted when it is incurred; admission still answers, and step three recovers the ones it refused | Frontend reconciliation | A drain's poll that delivers a replacement attempts that binding's read, which answers at once where no probe is needed and is owed where one is |
 | 139 | A banner with no reading at all, and no clause to get one | An enumeration written for a stale reading and not for a missing one | An obligation is owed where the rendered reading names a different binding *or where there is none* | Frontend reconciliation | A panel remounting onto a recovered queue gets a reading when the drain answers, rather than none for the run |
+| 140 | React forbidden to hold the projection three rules read | A retain-list granting the revision and the receipt but not the state they are fields of | The authority projection is retained whole: state, binding and `previewAvailability` | Decision 13 | `backendUsable`, the `NoInstallation` exemption and step three's unresolved clause are all answerable from what React holds |
+| 141 | A `ready` plan that cannot be checked for currency | An answer stored without the question it answers | `ready` carries the request identity; the ordinal, being a property of the request, does not outlive it | Plan state machine | An answer that stops describing the current question is noticed, rather than standing until something else replaces it |
+| 142 | A snapshot from an operation outside the delivery rule | Membership drawn from gate-taking, over a read that takes none | The binding-only configuration read is a member: it carries the authority it read | Decision 4 + Decision 5 | Every snapshot that exists carries a projection to be judged against |
 
 ## What this interlude does not do
 

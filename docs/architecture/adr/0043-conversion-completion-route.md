@@ -880,7 +880,20 @@ implementation must prove.
 `ConversionIntent::ADMITTED`, no destination decision. PR #95 remains open as
 implementation evidence and is not merged.
 
+*Acceptance:* every question the first M6.4 attempt answered twice has exactly one
+owner named, and the check that says so is written into the ADR rather than left to a
+reader. Every live finding and STOP record from that attempt maps to at least one
+acceptance obligation, so nothing it measured has to be rediscovered. No production
+code changes.
+
 *Downstream:* M6.4.
+
+*Delivered.* [ADR 0044](0044-conversion-configuration-authority.md) — fourteen
+decisions over twelve questions, a one-answer-per-question cross-check, a state graph
+the replacement implements, and a finding ledger the replacement must prove. This
+document's own amendment is the other half: the interlude in the route, M6.1's edge
+landing on it, and M6.4's prerequisites and acceptance restated against a boundary that
+did not exist when they were first written.
 
 ### M6.4 — Visible settings, and a truthful plan
 
