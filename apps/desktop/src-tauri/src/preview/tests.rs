@@ -3584,6 +3584,108 @@ fn a_candidate_name_is_bounded_and_is_never_more_than_a_file_name() {
     );
 }
 
+/// Every dimension value the webview may receive is one it has a name for.
+///
+/// The contract declares these as closed unions so a value with no rendering
+/// cannot be represented -- which only holds while the two lists agree. A
+/// dimension that grows a variant fails here, before it can arrive as an
+/// unlabelled control or a silently dropped option.
+///
+/// Asserted against the source rather than against a serialization, because
+/// what is at issue is the *type* the webview compiles against: a value can be
+/// serialized correctly and still have nowhere to go on screen.
+#[test]
+fn every_conversion_dimension_value_is_one_the_frontend_declares() {
+    let contracts = include_str!("../../../src/features/mzml-preview/contracts.ts");
+
+    /// The one union a dimension's members must appear in.
+    ///
+    /// Read out of the declaration rather than searched for anywhere in the
+    /// file: `"none"` and `"all"` are ordinary words, and a check that took
+    /// them from a doc comment somewhere else would pass without the type ever
+    /// admitting them.
+    fn union_of<'a>(contracts: &'a str, name: &str) -> &'a str {
+        let declaration = format!("export type {name} =");
+        let start = contracts
+            .find(&declaration)
+            .unwrap_or_else(|| panic!("the frontend declares no {name}"))
+            + declaration.len();
+        let body = &contracts[start..];
+        &body[..body.find(';').expect("a type declaration ends")]
+    }
+
+    // Read from the dimensions themselves, so a variant no admitted row uses is
+    // still checked: the union is about what may cross, and a row added later
+    // would carry it without touching this test.
+    let mut declared: Vec<(&str, String)> = vec![(
+        "ConversionIntentFormat",
+        OutputFormat::MzMl.stable_id().to_owned(),
+    )];
+    for processing in [
+        ProcessingIntent::NoAdditionalCentroiding,
+        ProcessingIntent::UnscopedDefaultCentroiding,
+    ] {
+        declared.push(("ConversionProcessing", processing.stable_id().to_owned()));
+    }
+    for population in [
+        SpectrumPopulation::All,
+        SpectrumPopulation::Ms1Only,
+        SpectrumPopulation::Ms2Only,
+    ] {
+        declared.push((
+            "ConversionSpectrumPopulation",
+            population.stable_id().to_owned(),
+        ));
+    }
+    for precision in [
+        NumericPrecision::Mz64Intensity32,
+        NumericPrecision::Mz64Intensity64,
+        NumericPrecision::Mz32Intensity32,
+        NumericPrecision::Mz32Intensity64,
+    ] {
+        declared.push((
+            "ConversionNumericPrecision",
+            precision.stable_id().to_owned(),
+        ));
+    }
+    for compression in [CompressionIntent::Zlib, CompressionIntent::NoCompression] {
+        declared.push(("ConversionCompression", compression.stable_id().to_owned()));
+    }
+
+    for (union, value) in &declared {
+        assert!(
+            union_of(contracts, union).contains(&format!("\"{value}\"")),
+            "{union} declares no member for {value}"
+        );
+    }
+
+    // And nothing extra: a member the crate cannot produce is a control the
+    // reader could be offered and Rust would never admit.
+    for (union, _) in &declared {
+        let members = union_of(contracts, union).matches('"').count() / 2;
+        let mine = declared.iter().filter(|(name, _)| name == union).count();
+        assert_eq!(members, mine, "{union} declares members the crate does not");
+    }
+
+    // And the identity the webview compares is composed the one way, from the
+    // same five parts. A row whose id did not follow this would be looked up by
+    // a string nothing else produces.
+    for admitted in ConversionIntent::ADMITTED {
+        let intent = admitted.intent();
+        assert_eq!(
+            intent.stable_id(),
+            format!(
+                "{}+{}+{}+{}+{}",
+                intent.format().stable_id(),
+                intent.processing().stable_id(),
+                intent.population().stable_id(),
+                intent.precision().stable_id(),
+                intent.compression().stable_id(),
+            )
+        );
+    }
+}
+
 #[test]
 fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // Asserted against the source, because a registration list is the one thing

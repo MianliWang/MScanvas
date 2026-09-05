@@ -16,6 +16,10 @@ import type {
   BackendAuthorityState,
   BackendAvailability,
   ConversionCatalogRow,
+  ConversionCompression,
+  ConversionNumericPrecision,
+  ConversionProcessing,
+  ConversionSpectrumPopulation,
   ConversionConfigurationSnapshot,
   ConversionIntentDescriptor,
   ChromatogramCopyOutcome,
@@ -205,10 +209,10 @@ export const admittedIntents: readonly ConversionIntentDescriptor[] = [
 export const shippedIntent: ConversionIntentDescriptor = admittedIntents[0];
 
 function intent(
-  processing: string,
-  population: string,
-  precision: string,
-  compression: string,
+  processing: ConversionProcessing,
+  population: ConversionSpectrumPopulation,
+  precision: ConversionNumericPrecision,
+  compression: ConversionCompression,
 ): ConversionIntentDescriptor {
   return {
     id: `mzml+${processing}+${population}+${precision}+${compression}`,

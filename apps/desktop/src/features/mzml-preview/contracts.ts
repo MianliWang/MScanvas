@@ -60,6 +60,36 @@ export interface BackendAuthorityProjection {
 }
 
 /**
+ * The vocabulary of each conversion dimension, as Rust spells it.
+ *
+ * Closed unions rather than strings, so a value this side has no rendering for
+ * cannot be represented at all. They are the crate's own stable identifiers,
+ * and a Rust test holds this file to them: a dimension that grows a variant
+ * fails there rather than arriving as an unlabelled control.
+ *
+ * Listing the *members* of a dimension is not listing the *combinations* of
+ * them. A free cross-product of these is forty-eight; nine were measured, and
+ * which nine is a question only the catalog answers.
+ */
+/**
+ * The one format the admitted table names, as an intent spells it.
+ *
+ * Deliberately not `ConversionOutputFormat`, which is the same format as an
+ * *output* names it. The two are the same value seen from either end of the
+ * conversion and they are spelled differently at the boundary, so one type
+ * standing for both would have to pick a spelling and misdescribe the other.
+ */
+export type ConversionIntentFormat = "mzml";
+export type ConversionProcessing = "no_additional_centroiding" | "unscoped_default_centroiding";
+export type ConversionSpectrumPopulation = "all" | "ms1_only" | "ms2_only";
+export type ConversionNumericPrecision =
+  | "mz64_intensity32"
+  | "mz64_intensity64"
+  | "mz32_intensity32"
+  | "mz32_intensity64";
+export type ConversionCompression = "zlib" | "none";
+
+/**
  * One admitted conversion combination, named by its five axes.
  *
  * `id` is what this side compares and echoes back; the five axis fields are
@@ -68,11 +98,11 @@ export interface BackendAuthorityProjection {
  */
 export interface ConversionIntentDescriptor {
   readonly id: string;
-  readonly format: string;
-  readonly processing: string;
-  readonly population: string;
-  readonly precision: string;
-  readonly compression: string;
+  readonly format: ConversionIntentFormat;
+  readonly processing: ConversionProcessing;
+  readonly population: ConversionSpectrumPopulation;
+  readonly precision: ConversionNumericPrecision;
+  readonly compression: ConversionCompression;
 }
 
 /**
