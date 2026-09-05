@@ -489,19 +489,18 @@ available, it does not name it as the current one, and it loses none of the reas
 it has today.
 
 **And that state owes its own exit, on the mount-time rule generalised.** A drain or
-a refused `BEGIN` observes a new binding without producing a
-`BackendAvailabilityDto` for it, so nothing would replace the superseded reading and
-it would stand until a reader pressed Recheck by hand. So: **a rendered reading whose
-receipt is not the authority's owes a backend check**, which is the same obligation
-`Unresolved` incurs at mount — same Rust-side admission, same occasions, same
-discharge — asked of one more condition. What they do not share is the *dispatch*: the
-mount one is not gated by the frontend's courtesy projection at all, for the reason
-given below, and this one is issued by step three, into a
-lane the projection says is free. That is why a banner going stale during a drain waits
-for the drain rather than dispatching an `inspect_backend` that would hold `backendBusy`
-for its length. A session that has never resolved anything
-and a session whose banner describes a build it has left are the same problem, and
-they get the same answer.
+a refused `BEGIN` observes a new binding without producing a `BackendAvailabilityDto`
+for it, so nothing would replace the superseded reading and it would stand until a
+reader pressed Recheck by hand. So: **a rendered reading whose receipt is not the
+authority's — or the absence of a rendered reading at all — owes a backend check**,
+which is the same obligation `Unresolved` incurs at mount — same Rust-side admission,
+same occasions, same discharge — asked of one more condition. What they do not share is
+the *dispatch*: the mount one is not gated by the frontend's courtesy projection at all,
+for the reason given below, and this one is issued by step three, into a lane the
+projection says is free. That is why a banner going stale during a drain waits for the
+drain rather than dispatching an `inspect_backend` that would hold `backendBusy` for its
+length. A session that has never resolved anything and a session whose banner describes
+a build it has left are the same problem, and they get the same answer.
 
 The banner gains no authority of its own by this. It renders what arrives, which is
 what it does now — from one more source, for one more question.
@@ -680,12 +679,13 @@ only into a lane the projection says is free.
 It is the state with no binding, so the liveness rule below — written about bindings —
 does not reach it, and without this it would be the one state a session could sit in
 with nothing obliged to move it and no control to press. And a rendered
-`BackendAvailabilityDto` whose receipt is not the authority's owes one too (Decision 4),
-because a binding observed by a drain or a refused `BEGIN` produces no reading of its
-own and the banner would otherwise describe a build the session has left until someone
-pressed Recheck. Both are the same obligation, admitted by Rust like any other backend
-work and owed on the terms below if it cannot be issued. Only the *dispatch* differs,
-and only for the mount one: see below.
+`BackendAvailabilityDto` whose receipt is not the authority's owes one too, as does
+having no rendered reading at all (Decision 4) — because a binding observed by a drain
+or a refused `BEGIN` produces no reading of its own, and a mount check whose request
+failed produces none either, so the banner would otherwise describe a build the session
+has left, or nothing, until someone pressed Recheck. Both are the same obligation,
+admitted by Rust like any other backend work and owed on the terms below if it cannot be
+issued. Only the *dispatch* differs, and only for the mount one: see below.
 
 **They do not share an acquisition with the configuration read, and a draft of this
 document said they should.** The argument was row 115's, made for `BEGIN`: one
@@ -1124,9 +1124,10 @@ excluded every obligation-produced delivery and starved it.
 the accepted projection's receipt differs from the rendered one
   -> configuration and plan for the rendered binding are non-current, immediately
   -> no conversion action stays enabled from them
-  -> the new binding owes a configuration read; step three issues it, subject
-     to admission and to the duty-first ordering, and step two dispatches
-     nothing itself
+  -> the new binding owes a configuration read, which is attempted on
+     incurrence and subject to admission -- so a NoInstallation binding
+     answers at once and an Installed one is owed until an occasion; step
+     three recovers the refused attempt, and step two decides none of this
   -> unless this very response already carries a snapshot for the new binding,
      in which case nothing is owed and nothing is issued
   -> render only the snapshot that carries it
@@ -2400,7 +2401,7 @@ and no finding may disappear because the old PR was superseded.
 | 93 | One fact with two sentences and no rule for which is rendered | A fact-phrased notice required over an action-phrased vocabulary | The notice sentence is the panel's, new; `ConversionAvailability.message` is untouched and stays on its control | Panel notice registry | The lane's vocabulary is not rewritten, and the shared element carries exactly one sentence |
 | 94 | A payload judged by the rule about ordering | Staleness reaching a payload, which is a question about bindings | Receipt judges the payload; revision judges only the projection | Frontend, ordering then identity | A snapshot for the rendered binding is installed even when its projection is stale, and the payload test never consults a revision |
 | 95 | A verdict owed for a binding that has none to give | A verdict treated as separable from the binding it judges | `NoInstallation` carries no verdict to wait for, and `Installed` never arrives without one | Authority state | Observing that no installation resolves obliges nothing and completes at once |
-| 96 | A reading nothing is obliged to replace | A liveness rule written about bindings only | A session that has resolved nothing, and a rendered reading whose receipt is not the authority's, each owe one backend check | Authority obligations | No session sits unresolved, and no banner describes a build the session has left, with nothing owed and no control to press |
+| 96 | A reading nothing is obliged to replace | A liveness rule written about bindings only | A session that has resolved nothing, a rendered reading whose receipt is not the authority's, and the absence of a reading at all each owe one backend check | Authority obligations | No session sits unresolved, and no banner describes a build the session has left or shows nothing, with nothing owed and no control to press |
 | 97 | React holding what Rust already answers | A retain-list that grew a flag per rule rather than per fact | React holds what only it can know — its own in-flight work — and never whether an obligation is *owed*, which Rust's configuration state answers | Decision 13 | No frontend flag duplicates `Unattempted` |
 | 98 | An occasion bounded only when it was a delivery | The once-per-occasion bound and duty-first ordering written over deliveries alone | Both govern every occasion, a lane fact ceasing to refuse included | Frontend reconciliation | A picker closing issues the check first, exactly as a drain answering does |
 | 99 | Quarantine's own protections read as removed with the route to `backendUsable` | "The short-circuit is gone with it", said of a function rather than of a dependency | `quarantined_availability()` keeps its behaviour and carries the receipt like every other reading; only `backendUsable` stops depending on it | Decision 2 + Decision 4 | The quarantine banner and the refusal ahead of the gate both survive, and the quarantined reading is comparable |
