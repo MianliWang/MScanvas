@@ -515,9 +515,26 @@ showing the very sentence the reader would press them about.
 `installationGeneration` Decision 2 removes from it — the thing that makes the question
 below answerable at all.
 
-**That substitution is not made on every contract, and the queue is the exception worth
-naming.** `ConversionQueue` is the state poll's own payload, and the response already
-carries the current authority, so the queue needs no copy of *that*. What it does need,
+**The substitution is made on all five, and it carries two different meanings**, which
+is what needs naming rather than an exception:
+
+```text
+BackendAvailabilityDto  -> the receipt of the reading it is
+                           a statement about the binding in use, judged by
+                           Decision 4b's payload rule
+Preview                 -> the receipt of the build that produced it
+                           likewise a statement about the binding in use
+
+ConversionQueue         -> the receipt the last pass resolved
+ConversionReport        -> the receipt the pass that produced it resolved
+ConversionOutputSetReport  likewise
+                           historical facts about work already done, and
+                           exempt from that rule: they are EXPECTED to differ
+                           from the binding in use after a replacement
+```
+
+**The queue is the one worth walking through.** It is the state poll's own payload, and the response already carries the
+current authority, so the queue needs no copy of *that*. What it does need,
 and what ADR 0043's M7 seam promises as a bound plan fact, is the identity of the build
 this queue **last resolved** — a different question from what the session is bound to
 now, and one allowed to differ from it for the length of a drain.
@@ -675,7 +692,16 @@ without looking at it, produces the permanent re-issue loop this paragraph exist
 prevent. A quarantined reading is a statement about the *session* — the code says so
 itself, returning `release: None` and `build_date: None` with the note that "nothing is
 claimed about a build" — so asking whether it describes the current binding is asking
-the wrong question of it. It discharges the owed check **by answering**. Without that
+the wrong question of it. It discharges the owed check **by answering**.
+
+**And once rendered, only another quarantine reading replaces it.** Quarantine moves
+neither the receipt nor the revision, so an ordinary check reply landing afterwards
+carries an equal revision and an equal receipt, passes both tests, and would put
+`available` back on the banner of a session that can launch nothing — row 153's defect,
+reached through the one dispatch row 169 exempts from the in-flight constraint. The rule
+that closes it needs no ordering token, because quarantine is permanent: any
+non-quarantine reading arriving after one is necessarily older news, whatever its
+revision says. Without that
 exemption the two halves fight: the reading truthfully carries the older binding's
 receipt, the currency test truthfully calls it non-current, and the check is owed for
 the rest of the run against an answer that will never change. And `backendUsable` no
@@ -2534,7 +2560,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–169).
+plus the findings raised against this document's own drafts (rows 18–171).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2686,7 +2712,7 @@ and no finding may disappear because the old PR was superseded.
 | 144 | A read cancelled by the snapshot that says it is owed | An exception keyed on a snapshot arriving, not on it answering | A carried snapshot cancels the read only where it answers; `Unattempted` says the catalog is unread | Frontend reconciliation | A refused read's own reply does not persuade the frontend the read is done |
 | 145 | A control that waits without saying so | A new gate holder that is deliberately not a lane fact | The wait is bounded by the probe and recorded as a cost; disabling the control instead was rejected as a refusal in advance of a wait | Decision 10 + Decision 11 | Recheck stays live during a probe, and the pause it may meet is written down |
 | 146 | A late reading replacing a current one | A payload rule enumerated as snapshots and plans | A `BackendAvailabilityDto` is a payload, judged by its receipt against the binding rendered | Decision 4b | The guard `applyVerdict` performs with the counter survives its removal |
-| 147 | Two replies about one binding with nothing to order them | A tie-break removed with the counter and not replaced | The frontend issues no second read or check while one is in flight, so the case does not arise; a plan carries an ordinal because a retry is meant to re-ask | Decision 13 + Decision 9 | No pair of same-binding replies can race, and a retry's can |
+| 147 | Two replies about one binding with nothing to order them | A tie-break removed with the counter and not replaced | The frontend issues no second read or check while one is in flight, so the case does not arise for those; the quarantine dispatch is exempt from that constraint and its reading is terminal instead; a plan carries an ordinal because a retry is meant to re-ask | Decision 13 + Decision 9 | No pair of same-binding replies can race except a quarantine one, which nothing non-quarantine may replace |
 | 148 | An exemption stated without a discriminator | A quarantined reading identified by properties ordinary readings share | Its failure kind is `backend_quarantined`, which no other reading carries | Decision 4 | The exemption is evaluable from the reading, and a uniform rule cannot swallow it |
 | 149 | The quarantine sentence dropped by the payload rule | An exemption scoped to currency and not to identity | A `backend_quarantined` reading is exempt from both tests: it is about the session, and both ask about a binding | Decision 4 + Decision 4b | A drain that observes a replacement and quarantines in one operation still replaces the banner's reading |
 | 150 | The courtesy ahead of the duty at incurrence | Duty-first ordering written for recovery only | The ordering governs incurrence too: where both are owed at once the check is attempted first | Frontend reconciliation | A `BEGIN` that resolves B on a free gate and refuses does not take the gate for a discovery before its check runs |
@@ -2709,6 +2735,8 @@ and no finding may disappear because the old PR was superseded.
 | 167 | The M7 seam promising a fact the amendment removed | A bound plan fact whose only live carrier was the counter | The seam names the queue's per-pass receipt, and that it may differ from the current authority during a drain | ADR 0043 amendment | The seam's promise and the contract that keeps it describe the same thing |
 | 168 | A running queue's updates discarded for reporting the build that ran them | A payload rule applied to a receipt that describes the past | Payloads claiming to describe the binding in use are judged by receipt; a queue's or an item report's is a historical fact and is exempt | Decision 4b | A mid-drain replacement does not stop the queue's poll updates being installed |
 | 169 | The quarantine check blocked by a mount check waiting out a drain | An in-flight constraint written over every check | The quarantine dispatch is outside it: its answer launches nothing and is exempt from both ordering tests, so it races nothing | Decision 2 + Decision 4 | A drain that quarantines while a mount check waits still replaces the banner's reading |
+| 170 | An `available` reading landing after a quarantine one | The quarantine dispatch exempted from the in-flight constraint, with nothing ordering its reply | A rendered quarantine reading is replaced only by another; quarantine is permanent, so anything else arriving after it is older news | Decision 2 + Decision 4 | The banner does not go back to `available` in a session that can launch nothing |
+| 171 | Three contracts carrying an identity nothing names | A substitution described as skipping the queue | It is made on all five, with two meanings: a statement about the binding in use, judged by the payload rule, or a historical fact about work done, exempt from it | Decision 2 + Decision 4b | Every contract that carried the counter carries a receipt, and each says which of the two it is |
 
 ## What this interlude does not do
 
