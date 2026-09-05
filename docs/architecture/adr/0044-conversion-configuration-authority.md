@@ -810,7 +810,10 @@ through the ordinary path because Rust answers a quarantined session without lau
 anything. This decision names that effect rather than inventing it, and preserves it.
 
 All three are the same obligation, admitted by Rust like any other backend work and owed
-on the terms below if it cannot be issued. What differs is the *dispatch*, and two of
+on the terms below where the frontend declines to issue it. Rust refuses none of them:
+`inspect_backend` answers a quarantined session and otherwise waits, so a dispatch that
+goes out is answered rather than refused, and what "owed" recovers is a dispatch the
+frontend's own courtesy held back. What differs is the *dispatch*, and two of
 the three are ungated by the frontend's courtesy projection: the mount one, for the
 reason below, and the quarantine one, because gating it would defer the quarantine
 banner behind the drain that caused the quarantine — row 153's own defect, and why
@@ -862,9 +865,13 @@ interpret. It is recorded as a cost rather than hidden.
 **And a check that gets dispatched into a busy lane holds `backendBusy` while it
 waits**, which disables Convert, Recheck and Choose-installation for as long as the
 holder runs. That is the cost of the check being a duty on a waiting primitive, and the
-courtesy above bounds it only for the holders the projection can see. Two it cannot: a
-configuration probe, which is deliberately not a lane fact, and whatever holds the gate
-when an ungated dispatch goes out. So the honest statement is narrower than a draft's:
+courtesy above bounds it only for the holders the frontend can see. A configuration
+probe is one it *can*: the lane has no field for it, but Decision 13 gives the frontend
+its own probe-in-flight bit and the check's dispatch predicate reads it (row 85). What
+it cannot see is whatever holds the gate when an ungated dispatch goes out — and an
+ungated dispatch has no refusal to fall back on, since `inspect_backend` answers a
+quarantined session and otherwise waits, so it blocks and holds `backendBusy` rather
+than leaving anything owed. So the honest statement is narrower than a draft's:
 **a step-three check never waits behind a drain or a preview the frontend has been told
 about.** A drain that started within the projection's stale window is not one of those,
 and a check dispatched into it holds `backendBusy` for the queue — which is why the
@@ -1882,8 +1889,8 @@ the selection empties -- no rows are asked about any more
   -> none
   -> stated separately because `blocked` is a sentence about the backend, and
      an empty selection is not one: routing it there explains a reader's own
-     deselection with a fact about the build, which is the conflation row 14
-     forbids
+     deselection with a fact about the build, which is the conflation
+     row 173 forbids
 
 any of those change while no replacement request is yet eligible
   -> blocked
@@ -2258,8 +2265,9 @@ notice behind it is dead specification carrying a test obligation, so it goes, a
 registry's keys are the lane's eight fields and the action-derived reasons.
 
 The lane fields that refuse no probe — `adopting`, `exportingDiagnostics` and
-`workspaceSettling`, which Decision 11 excludes because they
-own no backend process — key a conversion refusal and nothing else, which is all they
+`workspaceSettling`, which Decision 11 excludes because they own no backend process, and
+`backendUsable`, which it excludes because a verdict is not an owner — key a conversion
+refusal and nothing else, which is all they
 ever needed to do: a diagnostics export refuses a conversion, is keyed on its own name,
 and has nothing to tie with. The action-derived reasons name a target rather than a
 lane fact, and are keyed by action *and* target; they need no cross-action
