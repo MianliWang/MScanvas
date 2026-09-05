@@ -13,6 +13,7 @@ import type { WorkspaceDropUpdate } from "../features/mzml-preview/contracts";
 import type { WorkspaceDropTransport } from "../features/mzml-preview/dropTransport";
 import type {
   BackendAuthorityProjection,
+  BackendAuthorityState,
   BackendAvailability,
   ConversionCatalogRow,
   ConversionConfigurationSnapshot,
@@ -159,12 +160,26 @@ export function createFakeWorkspaceDropTransport(): FakeWorkspaceDropTransport {
 export const availableBackend: BackendAvailability = {
   state: "available",
   origin: "automatic",
-  installationGeneration: 0,
+  authority: settledAt(1, 1),
   release: "3.0.25000",
   buildDate: "2026-05-04",
   sameInstallation: true,
   failure: null,
 };
+
+/**
+ * A settled binding, as a reading carries it.
+ *
+ * `receipt` is opaque and only ever compared, so the numbers here mean nothing
+ * beyond "the same binding" and "a different one". A fixture that ordered them
+ * would be reading an implementation detail as a contract.
+ */
+export function settledAt(revision: number, receipt: number): BackendAuthorityProjection {
+  return {
+    revision,
+    state: { state: "settled", receipt, binding: "installed", previewAvailability: "usable" },
+  };
+}
 
 /**
  * Every combination the evidence admits, in the order Rust states them.
@@ -225,7 +240,10 @@ export const completeCatalog: readonly ConversionCatalogRow[] = admittedIntents.
 export const quarantinedBackend: BackendAvailability = {
   state: "unavailable",
   origin: "automatic",
-  installationGeneration: 0,
+  // The reading a quarantined session echoes is whatever it last had. This
+  // fixture stands for a session that had read a build before losing its
+  // converter, so it carries that build's binding.
+  authority: settledAt(1, 1),
   release: null,
   buildDate: null,
   sameInstallation: true,
@@ -240,7 +258,9 @@ export const quarantinedBackend: BackendAvailability = {
 export const chosenBackend: BackendAvailability = {
   state: "available",
   origin: "chosen",
-  installationGeneration: 1,
+  // A different folder that resolved a different build: a later reading, and a
+  // different binding.
+  authority: settledAt(2, 2),
   release: "3.0.26013",
   buildDate: "2026-07-01",
   sameInstallation: true,
@@ -253,7 +273,17 @@ export const chosenBackend: BackendAvailability = {
 export const chosenFolderWithoutTools: BackendAvailability = {
   state: "unavailable",
   origin: "chosen",
-  installationGeneration: 1,
+  // An observed absence is a binding like any other, and it replaces the build
+  // the session was on.
+  authority: {
+    revision: 2,
+    state: {
+      state: "settled",
+      receipt: 2,
+      binding: "noInstallation",
+      previewAvailability: "unusable",
+    },
+  },
   release: null,
   buildDate: null,
   sameInstallation: false,
@@ -268,7 +298,15 @@ export const chosenFolderWithoutTools: BackendAvailability = {
 export const unavailableBackend: BackendAvailability = {
   state: "unavailable",
   origin: "automatic",
-  installationGeneration: 0,
+  authority: {
+    revision: 1,
+    state: {
+      state: "settled",
+      receipt: 1,
+      binding: "noInstallation",
+      previewAvailability: "unusable",
+    },
+  },
   release: null,
   buildDate: null,
   sameInstallation: false,
@@ -361,10 +399,10 @@ export function buildRows(count: number): SpectrumRow[] {
   return rows;
 }
 
-export function buildPreview(rowCount = 6, truncated = false, installationGeneration = 0): Preview {
+export function buildPreview(rowCount = 6, truncated = false, receipt = 1): Preview {
   const rows = buildRows(rowCount);
   return {
-    installationGeneration,
+    authority: settledAt(receipt, receipt),
     // Issued exactly where Rust issues one: for a run the viewer would draw. A
     // truncated table has no chromatogram on screen and no chromatogram export.
     chromatogramExportToken: truncated || rowCount === 0 ? null : "chromatogram-token",
@@ -1055,7 +1093,7 @@ export function outputSetReport(
     },
     partial: null,
     completeSetAdoptable: true,
-    installationGeneration: 0,
+    receipt: 1,
     ...overrides,
   };
 }
@@ -1098,6 +1136,8 @@ export function queueOf(items: readonly ConversionQueueItem[]) {
         ? items.filter((item) => item.state !== "pending").length
         : items.findIndex((item) => item.state === "running"),
     itemCount: items.length,
+    // Bound on the first drain pass, which every queue this builds has had.
+    receipt: 1,
     retryRound: 0,
     conflictPolicy: "fail" as const,
     finalizedCount: count("finalized"),
@@ -1123,7 +1163,6 @@ export function queueOf(items: readonly ConversionQueueItem[]) {
         0,
       ),
     error: null,
-    installationGeneration: 0,
   };
 }
 
@@ -1221,6 +1260,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     state: conversion,
     diagnostics: diagnosticsState(),
     backendQuarantined,
+    // Delivered by every answer in this shape, the poll included.
+    authority: currentAuthority(),
   });
   const defaultDiagnosticsExport = (operationId: string): ConversionDiagnosticsExport => ({
     operationId,
@@ -1272,7 +1313,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
             },
             backend: { exitCode: 0, elapsedMilliseconds: 663 },
             stagingResidue: null,
-            installationGeneration: 0,
+            receipt: 1,
             },
           },
         }),
@@ -1286,10 +1327,30 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   // ordering rule untestable, and one that never advanced would make every
   // change look older than what is already on screen.
   let generation = 0;
+  /**
+   * The authority this fake's service currently stands at.
+   *
+   * One counter behind both numbers, because in this fake everything that
+   * advances the sequence also changes which installation resolves. The
+   * *shape* of the binding still comes from the fixture -- a folder holding no
+   * tools reports an absence, and stamping it as installed would invent a
+   * build the test said was not there.
+   */
+  const stamped = (state: BackendAuthorityState): BackendAuthorityProjection => ({
+    revision: generation + 1,
+    state: state.state === "settled" ? { ...state, receipt: generation + 1 } : state,
+  });
+  const currentAuthority = (): BackendAuthorityProjection =>
+    stamped({
+      state: "settled",
+      receipt: 0,
+      binding: "installed",
+      previewAvailability: "usable",
+    });
   const deliver = (verdict: BackendAvailability) => {
-    const stamped = { ...verdict, installationGeneration: generation };
-    deliveredVerdicts.push(stamped);
-    return stamped;
+    const reading = { ...verdict, authority: stamped(verdict.authority.state) };
+    deliveredVerdicts.push(reading);
+    return reading;
   };
   const deliverChange = (verdict: BackendAvailability): BackendAvailability => {
     generation += 1;
@@ -1389,15 +1450,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       // Modelled on Rust's own ordering rather than canned: quarantine outranks
       // every other reason and never clears, so a test that quarantines the
       // session cannot then be handed a catalog.
-      const authority: BackendAuthorityProjection = {
-        revision: deliveredVerdicts.length + 1,
-        state: {
-          state: "settled",
-          receipt: 1,
-          binding: "installed",
-          previewAvailability: "usable",
-        },
-      };
+      const authority = currentAuthority();
       if (backendQuarantined) {
         return Promise.resolve({
           authority,
@@ -1523,16 +1576,24 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           : Promise.resolve(options.preview ?? buildPreview())
       ).then((preview) => ({
         ...preview,
-        installationGeneration: generation,
+        authority: currentAuthority(),
         // The preview describes the row that was asked for, as Rust's does.
         file: datasets().find((dataset) => dataset.handle === handle) ?? preview.file,
       }));
     },
     loadSpectrum: (_handle, index) => {
       requestedSpectra.push(index);
-      return options.spectrum === undefined
-        ? Promise.resolve({ outcome: "spectrum", spectrum: buildSpectrum(index, 12) })
-        : options.spectrum(index);
+      // Wrapped here rather than in every test's own option, so a test says
+      // what the spectrum is and this fake says what the session was bound to
+      // when it was read -- which is the split the contract makes.
+      return (
+        options.spectrum === undefined
+          ? Promise.resolve<SelectedSpectrumOutcome>({
+              outcome: "spectrum",
+              spectrum: buildSpectrum(index, 12),
+            })
+          : options.spectrum(index)
+      ).then((outcome) => ({ authority: currentAuthority(), outcome }));
     },
     describeConversion: (handles) => {
       if (options.conversionPlan !== undefined) {

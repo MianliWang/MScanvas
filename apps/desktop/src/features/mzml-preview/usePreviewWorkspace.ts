@@ -12,6 +12,7 @@ import { usePreviewApi } from "./api";
 import type { ConversionOperation } from "./useConversionOperation";
 import { useConversionOperation } from "./useConversionOperation";
 import type {
+  BackendAuthorityProjection,
   BackendAvailability,
   ChromatogramExportFormat,
   ChromatogramRange,
@@ -36,6 +37,12 @@ import type {
   WorkspaceDropUpdate,
   WorkspaceOutputAdoptionResult,
 } from "./contracts";
+import {
+  acceptProjection,
+  readingIsSuperseded,
+  receiptOf,
+  type RenderedAuthority,
+} from "./backendAuthority";
 import { toPreviewError } from "./contracts";
 import { describeDropResult } from "./dropNotice";
 import { useWorkspaceDropTransport } from "./dropTransport";
@@ -987,14 +994,19 @@ export function usePreviewWorkspace(): PreviewWorkspace {
 
   const backendToken = useRef(0);
   /**
-   * The highest installation generation applied to the banner.
+   * The Rust-authored projection this document has accepted.
    *
-   * Rust decides which verdict is current, because it is where the two commands
-   * are actually ordered. This only refuses anything older than what is already
+   * Two fields, because two questions are asked of it and neither answers the
+   * other. `revision` orders: it refuses anything older than what is already
    * shown, which is what stops a recheck begun before a change from describing
-   * the installation that change replaced.
+   * the installation that change replaced. `receipt` identifies: it says which
+   * binding everything on screen was read from, and a payload naming a
+   * different one is not this session's.
+   *
+   * `null` until the first answer arrives. Nothing rendered means no revision
+   * to be older than, which is how the first projection is installed at all.
    */
-  const appliedGeneration = useRef(-1);
+  const renderedAuthority = useRef<RenderedAuthority | null>(null);
   /**
    * How many installation changes are outstanding.
    *
@@ -1234,15 +1246,31 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    */
   const applyVerdict = useCallback(
     (availability: BackendAvailability, token: number): boolean => {
-      const generation = availability.installationGeneration;
-      if (generation < appliedGeneration.current) {
-        return false;
+      const rendered = renderedAuthority.current;
+      const incoming = availability.authority;
+      // Ordering first, and by revision alone. An equal revision is the
+      // publication already accepted, so nothing about the session changed --
+      // but the reading beside it may still be the newest one this document
+      // asked for, and the token is what decides that.
+      if (rendered !== null) {
+        if (incoming.revision < rendered.revision) {
+          return false;
+        }
+        if (incoming.revision === rendered.revision && token !== backendToken.current) {
+          return false;
+        }
       }
-      if (generation === appliedGeneration.current && token !== backendToken.current) {
-        return false;
-      }
-      const changed = generation > appliedGeneration.current && appliedGeneration.current >= 0;
-      appliedGeneration.current = generation;
+      // Then identity, which is a different question and asks a different
+      // field. What invalidates everything read from the previous build is the
+      // *binding* being replaced -- not the revision advancing, because a
+      // verdict can move at one receipt and that is news about a build rather
+      // than a different build.
+      const arrived = acceptProjection(rendered, incoming);
+      const changed = arrived.accepted && arrived.bindingReplaced;
+      renderedAuthority.current = {
+        revision: incoming.revision,
+        receipt: receiptOf(incoming),
+      };
       showBackend({ status: "resolved", availability });
       // Not while an open is in flight. That open has already emptied the
       // screen and is about to fill it, and its reply is judged on its own
@@ -1408,7 +1436,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       // What had been applied when this was asked for. A failed change means the
       // installation did not change, so it is still worth reporting -- but only
       // while nothing newer has been shown, which this failure cannot speak for.
-      const generationAtRequest = appliedGeneration.current;
+      const revisionAtRequest = renderedAuthority.current?.revision ?? -1;
       markBackendBusy(true);
       if (announceChecking) {
         showBackend({ status: "checking" });
@@ -1429,7 +1457,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           }
         })
         .catch((cause: unknown) => {
-          if (mounted.current && appliedGeneration.current <= generationAtRequest) {
+          if (
+            mounted.current &&
+            (renderedAuthority.current?.revision ?? -1) <= revisionAtRequest
+          ) {
             showBackend({ status: "failed", error: toPreviewError(cause) });
             refreshed = true;
           }
@@ -1503,7 +1534,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       // Where the sequence stood when this read began. A failure carries no
       // generation of its own, so this is the only way to tell an answer about
       // the backend in use from an answer about one that has been replaced.
-      const generationAtRequest = appliedGeneration.current;
+      const revisionAtRequest = renderedAuthority.current?.revision ?? -1;
       void api
         .openPreview(handle)
         .then((loaded) => {
@@ -1529,13 +1560,25 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           // showing it would put the old backend's rows under the new one's
           // banner. Discarded rather than merely dropped: returning here left
           // the workspace reading "Reading the file…" with nothing else coming.
-          if (loaded.installationGeneration < appliedGeneration.current) {
+          const arrived = acceptProjection(renderedAuthority.current, loaded.authority);
+          if (
+            renderedAuthority.current !== null &&
+            loaded.authority.revision < renderedAuthority.current.revision
+          ) {
             discardBackendDerivedState();
             return;
           }
-          const noticedAChange = loaded.installationGeneration > appliedGeneration.current;
-          if (noticedAChange) {
-            appliedGeneration.current = loaded.installationGeneration;
+          // An open that was the first to see a replacement is the one reply
+          // that both carries the news and *is* the news: its rows came from
+          // the build the projection names. So the projection is adopted and
+          // the preview kept, and the discard below is only for what the
+          // *previous* build left behind.
+          const noticedAChange = arrived.accepted && arrived.bindingReplaced;
+          if (arrived.accepted) {
+            renderedAuthority.current = {
+              revision: loaded.authority.revision,
+              receipt: receiptOf(loaded.authority),
+            };
           }
           setPreview({ status: "loaded", preview: loaded });
           dispatchRoster({ type: "rowStateChanged", handle, state: "loaded" });
@@ -1575,7 +1618,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           // A failure from a backend that has since been replaced says
           // nothing about the one in use, and showing it under the new
           // banner strands the user.
-          if (appliedGeneration.current > generationAtRequest) {
+          if ((renderedAuthority.current?.revision ?? -1) > revisionAtRequest) {
             discardBackendDerivedState();
             return;
           }
@@ -2366,7 +2409,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       beginViewerRequest();
       void api
         .loadSpectrum(handle, index)
-        .then((outcome) => {
+        .then(({ authority, outcome }) => {
           // Keyed by token, so a stale reply cannot clear the guard belonging
           // to a newer request for the same index.
           if (inFlightSpectrum.current?.token === token) {
@@ -2374,6 +2417,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           }
           if (!mounted.current || token !== spectrumToken.current) {
             return;
+          }
+          // A spectrum read takes the backend lane, so it can be the operation
+          // that observes a replacement -- and this is the only answer that
+          // would carry the news. Judged like any other projection: newer than
+          // what is rendered means the banner has stopped describing the
+          // session, and a check is owed.
+          if (readingIsSuperseded(renderedAuthority.current, authority)) {
+            checkBackend();
           }
           setSpectrum(
             outcome.outcome === "spectrum"
@@ -3373,8 +3424,16 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   // from the previous installation are stale -- so the backend is re-read
   // through the one path that knows how to discard them.
   const reconcileConversionGeneration = useCallback(
-    (generation: number) => {
-      if (generation > appliedGeneration.current) {
+    (authority: BackendAuthorityProjection) => {
+      // Ordering decides, not identity. A projection newer than what is
+      // rendered means the banner has stopped describing the session -- whether
+      // because the build was replaced or because what it can do has changed --
+      // and either way the reading on screen is superseded and a check is owed.
+      //
+      // Rust is not asked here for the *catalog*: this is the courtesy path,
+      // and the duty is the check. A read issued alongside would put the
+      // courtesy ahead of the duty in exactly the case where both are owed.
+      if (readingIsSuperseded(renderedAuthority.current, authority)) {
         checkBackend();
       }
     },

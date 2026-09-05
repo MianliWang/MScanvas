@@ -81,15 +81,6 @@ pub struct BackendAvailabilityDto {
     /// `available` or `unavailable`. MSCanvas never bundles or installs a
     /// backend, so unavailability is an ordinary user-facing state.
     pub state: String,
-    /// How many times the installation in use has changed, counted in Rust.
-    ///
-    /// Which verdict is current is decided by the order the service granted,
-    /// not the order the caller asked. Two commands contend for the same lock
-    /// and it does not grant in request order, so a recheck started after a
-    /// folder choice can be served before it and describe the installation the
-    /// choice replaced. A caller applies a verdict only when this is at least
-    /// the highest it has applied.
-    pub installation_generation: u64,
     /// `automatic` or `chosen`: which installation this verdict describes.
     ///
     /// Carried with the verdict rather than tracked separately, so a reading
@@ -102,6 +93,34 @@ pub struct BackendAvailabilityDto {
     pub build_date: Option<String>,
     pub same_installation: bool,
     pub failure: Option<BackendFailureDto>,
+}
+
+/// One reading of the backend, and the authority it was taken at.
+///
+/// Flattened, so the webview receives one object rather than a reading nested
+/// inside an envelope: what it replaces is a number that sat on the reading
+/// itself, and moving the rest of the block a level down would be churn in
+/// every reader for no gain.
+///
+/// The projection here is *this reading's*, not necessarily the session's now.
+/// A quarantined session echoes the reading it already had rather than probing
+/// again, and that reading describes the binding it was taken of; carrying the
+/// live projection instead would misdescribe the origin and the build beside
+/// it. Where there is no earlier reading to echo, the projection is
+/// `Unresolved` and carries no receipt, which is the truthful answer for a
+/// reading that echoes nothing.
+///
+/// What the webview does with it: a rendered reading whose revision is no
+/// longer the authority's is superseded *entire* -- the release, the build date
+/// and the origin describe a build as much as the verdict does, and marking
+/// only the verdict stale would leave the left installation named as the
+/// current one.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendReadingDto {
+    pub authority: BackendAuthorityProjectionDto,
+    #[serde(flatten)]
+    pub availability: BackendAvailabilityDto,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1093,6 +1112,17 @@ pub struct WorkspaceConversionUpdateDto {
     /// reload recovers the quarantine with the queue that caused it rather
     /// than needing a second question.
     pub backend_quarantined: bool,
+    /// The authority as it stands when this answer is made.
+    ///
+    /// Carried by *every* operation answering in this shape, which is a rule
+    /// over the shape rather than a list of carriers -- naming them one at a
+    /// time had already missed three. Several of them take the backend gate and
+    /// observe; the poll can neither observe nor replace anything, and carries
+    /// it because it is the session's only voice while a drain runs.
+    ///
+    /// The poll is deliberately *not* an occasion: a read deferred by a running
+    /// drain must not be re-issued on every tick of that drain's own polling.
+    pub authority: BackendAuthorityProjectionDto,
 }
 
 /// The complete conversion-state vocabulary exposed to the webview.
@@ -1206,15 +1236,22 @@ pub struct ConversionQueueDto {
     /// destination this boundary will not write to, a backend that cannot
     /// convert, a reservation that is no longer valid.
     pub error: Option<PreviewErrorDto>,
-    /// Where the sequence of backend changes stood when this queue last
-    /// resolved one.
+    /// Which installation this queue is bound to.
     ///
     /// Carried by the queue and not only by its items, because the pass that
     /// matters most for this may produce no item at all: a queue refused for
     /// running on a different installation resolved that installation first,
     /// and a reader with only the old items' reports would go on showing the
     /// installation those results came from.
-    pub installation_generation: u64,
+    ///
+    /// `null` through `awaitingDestination`, where there is nothing truthful to
+    /// say -- nothing is bound at `BEGIN`, and the first drain pass is what
+    /// binds one. From there it is the build the queue ran on, and a later pass
+    /// that resolves a different one is refused rather than rebinding.
+    ///
+    /// A different question from what the *session* is bound to now, and
+    /// allowed to differ from it for the length of a drain.
+    pub receipt: Option<BackendBindingReceiptDto>,
 }
 
 /// One item of a queue.
@@ -1364,7 +1401,12 @@ pub struct ConversionReportDto {
     /// conversion can succeed and still leave something behind, and the two are
     /// different things to tell a user.
     pub staging_residue: Option<String>,
-    pub installation_generation: u64,
+    /// Which installation produced this result.
+    ///
+    /// A historical fact, and one that is *expected* to differ from the binding
+    /// the session is on once the installation has changed -- so it is read as
+    /// provenance rather than judged for currency.
+    pub receipt: Option<BackendBindingReceiptDto>,
 }
 
 /// What was measured of a finalized output.
@@ -1510,7 +1552,12 @@ pub struct ConversionOutputSetReportDto {
     /// completeness was not established has no authority, and an interface
     /// deriving one from the other would offer an action Rust will refuse.
     pub complete_set_adoptable: bool,
-    pub installation_generation: u64,
+    /// Which installation produced this result.
+    ///
+    /// A historical fact, and one that is *expected* to differ from the binding
+    /// the session is on once the installation has changed -- so it is read as
+    /// provenance rather than judged for currency.
+    pub receipt: Option<BackendBindingReceiptDto>,
 }
 
 impl std::fmt::Debug for ConversionOutputSetReportDto {
@@ -1981,14 +2028,19 @@ pub struct SpectrumTableDto {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewDto {
-    /// Where the sequence of backend changes stood when this was read.
+    /// The authority as this open left it.
     ///
     /// An open is a look at the backend, so it can be the first thing to see a
-    /// change and can advance the sequence itself. Without carrying that, a
-    /// caller comparing a later verdict against what it last applied would read
-    /// this open's own advance as a change that happened after it, and discard
-    /// the very preview that produced it.
-    pub installation_generation: u64,
+    /// change and can settle a new binding itself. Without carrying that, a
+    /// caller comparing a later projection against what it last applied would
+    /// read this open's own advance as a change that happened after it, and
+    /// discard the very preview that produced it.
+    ///
+    /// The receipt of the build that produced this preview is read from here,
+    /// and is not repeated beside it: one hold of the gate produced both, so
+    /// they describe one instant, and a second copy would be an identity with
+    /// no stated equality to the first.
+    pub authority: BackendAuthorityProjectionDto,
     pub file: SelectedFileDto,
     pub metadata: MetadataDto,
     pub run_summary: RunSummaryDto,
@@ -2469,6 +2521,26 @@ pub fn figure_clipboard_unavailable() -> PreviewErrorDto {
     )
 }
 
+/// One answer from an operation that looks at the backend, and the authority it
+/// left behind.
+///
+/// The delivery half of ADR 0044's Decision 4: recording an observation is only
+/// half of it, and an observation recorded and not delivered leaves the session
+/// correct in Rust and stale on screen. Every operation that can observe or
+/// replace the binding answers in this shape, whatever its own outcome was --
+/// including the ones that refuse, because a refusal that discovered a
+/// replacement on the way still has to say so.
+///
+/// The two fields are judged by different rules and neither by the other's:
+/// the projection by revision, which orders; the outcome by whatever question
+/// the request was asking.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthorityObservedDto<T> {
+    pub authority: BackendAuthorityProjectionDto,
+    pub outcome: T,
+}
+
 /// A selected-spectrum request either produced a spectrum or produced the
 /// backend's typed "this index does not exist" answer. A spectrum with no peaks
 /// is the first case, not the second.
@@ -2611,6 +2683,26 @@ pub enum BackendAuthorityStateDto {
 pub struct BackendAuthorityProjectionDto {
     pub revision: u64,
     pub state: BackendAuthorityStateDto,
+}
+
+impl BackendAuthorityProjectionDto {
+    /// A session that has observed nothing, which is where every session opens.
+    #[must_use]
+    pub const fn unresolved() -> Self {
+        Self {
+            revision: 0,
+            state: BackendAuthorityStateDto::Unresolved,
+        }
+    }
+
+    /// Which binding this projection names, where it names one.
+    #[must_use]
+    pub const fn receipt(self) -> Option<BackendBindingReceiptDto> {
+        match self.state {
+            BackendAuthorityStateDto::Unresolved => None,
+            BackendAuthorityStateDto::Settled { receipt, .. } => Some(receipt),
+        }
+    }
 }
 
 /// One admitted conversion combination, named by its five axes.

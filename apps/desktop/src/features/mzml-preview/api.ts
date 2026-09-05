@@ -12,6 +12,7 @@ import type {
   ChromatogramExportOutcome,
   ChromatogramRange,
   ChromatogramTraceSet,
+  AuthorityObserved,
   ConversionConfigurationSnapshot,
   ConversionConflictPolicy,
   ConversionQueuePlan,
@@ -134,7 +135,18 @@ export interface PreviewApi {
   /** Empties the workspace. Source files are never touched. */
   clearWorkspace(): Promise<WorkspaceRoster>;
   openPreview(handle: string): Promise<Preview>;
-  loadSpectrum(handle: string, index: number): Promise<SelectedSpectrumOutcome>;
+  /**
+   * Reads one spectrum of the open file.
+   *
+   * A backend operation, so it can be the first thing to notice the
+   * installation changed — and it answers with the authority it left behind
+   * beside its own outcome. A read that *fails* carries none: a failure is
+   * judged by the binding its request went out under, not by one it reports.
+   */
+  loadSpectrum(
+    handle: string,
+    index: number,
+  ): Promise<AuthorityObserved<SelectedSpectrumOutcome>>;
   /**
    * Describes the conversion one row would get. Starts nothing: no picker, no
    * reservation, no process.
@@ -381,7 +393,7 @@ export const tauriPreviewApi: PreviewApi = {
   clearWorkspace: () => invoke<WorkspaceRoster>("clear_workspace"),
   openPreview: (handle) => invoke<Preview>("open_mzml_preview", { handle }),
   loadSpectrum: (handle, index) =>
-    invoke<SelectedSpectrumOutcome>("load_selected_spectrum", { handle, index }),
+    invoke<AuthorityObserved<SelectedSpectrumOutcome>>("load_selected_spectrum", { handle, index }),
   describeConversion: (handles) =>
     invoke<ConversionQueuePlan>("describe_workspace_conversion_queue", { handles }),
   getConversionState: () =>

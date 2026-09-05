@@ -38,8 +38,9 @@ use super::drop_ingestion::{
     expand_drop_paths_with_budget_using, normalize_window_drop_event,
 };
 use super::dto::{
-    BackendAuthorityStateDto, BackendBindingDto, BackendPreviewAvailabilityDto,
-    ConversionCatalogRowDto, ConversionConfigurationDto, ConversionConfigurationOutcomeDto,
+    AuthorityObservedDto, BackendAuthorityProjectionDto, BackendAuthorityStateDto,
+    BackendBindingDto, BackendPreviewAvailabilityDto, ConversionCatalogRowDto,
+    ConversionConfigurationDto, ConversionConfigurationOutcomeDto,
     ConversionConfigurationRefusalDto, ConversionConfigurationSnapshotDto,
 };
 use super::dto::{
@@ -415,7 +416,6 @@ impl FakeProvider {
             availability: BackendAvailabilityDto {
                 state: "available".to_owned(),
                 origin: "automatic".to_owned(),
-                installation_generation: 0,
                 release: Some("3.0.26204".to_owned()),
                 build_date: Some("Jul 23 2026".to_owned()),
                 same_installation: true,
@@ -434,7 +434,6 @@ impl FakeProvider {
             availability: BackendAvailabilityDto {
                 state: "unavailable".to_owned(),
                 origin: "automatic".to_owned(),
-                installation_generation: 0,
                 release: None,
                 build_date: None,
                 same_installation: false,
@@ -466,7 +465,6 @@ impl FakeProvider {
         provider.chosen_availability = Some(BackendAvailabilityDto {
             state: "available".to_owned(),
             origin: "chosen".to_owned(),
-            installation_generation: 0,
             release: Some("3.0.26204".to_owned()),
             build_date: Some("Jul 23 2026".to_owned()),
             same_installation: true,
@@ -497,7 +495,6 @@ impl FakeProvider {
             None => BackendAvailabilityDto {
                 state: "unavailable".to_owned(),
                 origin: "chosen".to_owned(),
-                installation_generation: 0,
                 release: None,
                 build_date: None,
                 same_installation: false,
@@ -733,11 +730,12 @@ fn an_unavailable_backend_is_a_typed_state_not_an_error() {
 
     let availability = service.inspect_backend();
 
-    assert_eq!(availability.state, "unavailable");
+    assert_eq!(availability.availability.state, "unavailable");
     // MSCanvas never claims to supply a backend.
     let rendered = serde_json::to_string(&availability).expect("availability serializes");
     assert!(!rendered.to_lowercase().contains("bundled"));
     let failure = availability
+        .availability
         .failure
         .expect("an unavailable backend explains itself");
     assert_eq!(failure.kind, "backend_not_found");
@@ -751,16 +749,16 @@ fn choosing_an_installation_reports_that_installation_and_not_the_previous_one()
     // window in which "available" is shown for an installation nobody is using.
     let service = PreviewService::new(Box::new(FakeProvider::only_when_chosen()));
     let before = service.inspect_backend();
-    assert_eq!(before.state, "unavailable");
-    assert_eq!(before.origin, "automatic");
+    assert_eq!(before.availability.state, "unavailable");
+    assert_eq!(before.availability.origin, "automatic");
 
     let after = service.use_installation(Some(PathBuf::from("C:\\pwiz")));
 
-    assert_eq!(after.state, "available");
-    assert_eq!(after.origin, "chosen");
-    assert!(after.failure.is_none());
+    assert_eq!(after.availability.state, "available");
+    assert_eq!(after.availability.origin, "chosen");
+    assert!(after.availability.failure.is_none());
     // And it stays that way for later readings, not just the one that changed it.
-    assert_eq!(service.inspect_backend().origin, "chosen");
+    assert_eq!(service.inspect_backend().availability.origin, "chosen");
 }
 
 #[test]
@@ -770,18 +768,19 @@ fn a_chosen_folder_with_no_installation_can_be_undone() {
     // sits unused with nothing to say so.
     let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
     let failed = service.use_installation(Some(PathBuf::from("C:\\not-an-installation")));
-    assert_eq!(failed.state, "unavailable");
-    assert_eq!(failed.origin, "chosen");
+    assert_eq!(failed.availability.state, "unavailable");
+    assert_eq!(failed.availability.origin, "chosen");
     let failure = failed
+        .availability
         .failure
         .expect("a folder that holds no installation explains itself");
     assert!(!failure.corrective_action.is_empty());
 
     let restored = service.use_installation(None);
 
-    assert_eq!(restored.state, "available");
-    assert_eq!(restored.origin, "automatic");
-    assert!(restored.failure.is_none());
+    assert_eq!(restored.availability.state, "available");
+    assert_eq!(restored.availability.origin, "automatic");
+    assert!(restored.availability.failure.is_none());
 }
 
 /// A provider that says when its batch has finished, so a test can queue an
@@ -926,8 +925,8 @@ fn asking_for_the_installation_already_in_use_is_not_a_change() {
     // sequence already stands at one; what this asserts is that a no-op switch
     // leaves it there.
     let again = service.use_installation(None);
-    assert_eq!(again.installation_generation, 1);
-    assert_eq!(again.origin, "automatic");
+    assert_eq!(again.authority.revision, 1);
+    assert_eq!(again.availability.origin, "automatic");
 
     // And what the previous reading produced is still usable, rather than
     // refused as another installation's work.
@@ -938,11 +937,11 @@ fn asking_for_the_installation_already_in_use_is_not_a_change() {
     // A real switch still advances it, and asking for that same folder again
     // does not.
     let chosen = service.use_installation(Some(PathBuf::from(r"C:\pwiz")));
-    assert_eq!(chosen.installation_generation, 2);
+    assert_eq!(chosen.authority.revision, 2);
     let same = service.use_installation(Some(PathBuf::from(r"C:\pwiz")));
-    assert_eq!(same.installation_generation, 2);
+    assert_eq!(same.authority.revision, 2);
     // Switching back is a change again.
-    assert_eq!(service.use_installation(None).installation_generation, 3);
+    assert_eq!(service.use_installation(None).authority.revision, 3);
 }
 
 #[test]
@@ -959,16 +958,16 @@ fn a_verdict_says_where_it_belongs_in_the_sequence_of_installation_changes() {
     // it settles on is an absence. A reading that reported zero would be
     // indistinguishable from one issued before the backend was ever examined.
     let service = PreviewService::new(Box::new(FakeProvider::only_when_chosen()));
-    assert_eq!(service.inspect_backend().installation_generation, 1);
+    assert_eq!(service.inspect_backend().authority.revision, 1);
 
     let chosen = service.use_installation(Some(PathBuf::from("C:\\pwiz")));
-    assert_eq!(chosen.installation_generation, 2);
+    assert_eq!(chosen.authority.revision, 2);
     // A plain reading does not advance it -- only a change does.
-    assert_eq!(service.inspect_backend().installation_generation, 2);
+    assert_eq!(service.inspect_backend().authority.revision, 2);
 
     let restored = service.use_installation(None);
-    assert_eq!(restored.installation_generation, 3);
-    assert_eq!(restored.origin, "automatic");
+    assert_eq!(restored.authority.revision, 3);
+    assert_eq!(restored.availability.origin, "automatic");
 }
 
 #[test]
@@ -1119,7 +1118,7 @@ fn a_selected_spectrum_returns_its_arrays_and_canonical_identity() {
         .load_spectrum(&selected.handle, 0)
         .expect("the spectrum loads");
 
-    let SelectedSpectrumOutcomeDto::Spectrum { spectrum } = outcome else {
+    let SelectedSpectrumOutcomeDto::Spectrum { spectrum } = outcome.outcome else {
         panic!("a present spectrum is not the unavailable outcome");
     };
     assert_eq!(spectrum.index, 0);
@@ -1146,7 +1145,7 @@ fn a_spectrum_with_no_peaks_is_a_valid_spectrum_not_a_no_result() {
         .load_spectrum(&selected.handle, 2)
         .expect("an empty spectrum loads");
 
-    let SelectedSpectrumOutcomeDto::Spectrum { spectrum } = outcome else {
+    let SelectedSpectrumOutcomeDto::Spectrum { spectrum } = outcome.outcome else {
         panic!("an empty spectrum is still a spectrum");
     };
     assert_eq!(spectrum.point_count, 0);
@@ -1165,7 +1164,7 @@ fn an_unavailable_index_is_a_typed_no_result() {
         .expect("an unavailable index is not an error");
 
     assert_eq!(
-        outcome,
+        outcome.outcome,
         SelectedSpectrumOutcomeDto::Unavailable {
             requested_index: 4_096
         }
@@ -1827,7 +1826,6 @@ fn usable_either_way(responses: Vec<Response>) -> FakeProvider {
     provider.chosen_availability = Some(BackendAvailabilityDto {
         state: "available".to_owned(),
         origin: "chosen".to_owned(),
-        installation_generation: 0,
         release: Some("3.0.26013".to_owned()),
         build_date: None,
         same_installation: true,
@@ -1855,14 +1853,14 @@ fn automatic_discovery_resolving_to_a_different_installation_is_a_change() {
     let service = PreviewService::new(provider);
     // One for the look that settled the session, not zero: zero is the window
     // before anything looked.
-    assert_eq!(service.inspect_backend().installation_generation, 1);
+    assert_eq!(service.inspect_backend().authority.revision, 1);
 
     world.resolves_to(Some(backend("elsewhere", "3.0.25000")));
 
-    assert_eq!(service.inspect_backend().installation_generation, 2);
+    assert_eq!(service.inspect_backend().authority.revision, 2);
     // Still automatic: what changed is which backend that resolves to, which is
     // a different question from what was asked for.
-    assert_eq!(service.inspect_backend().origin, "automatic");
+    assert_eq!(service.inspect_backend().availability.origin, "automatic");
 }
 
 #[test]
@@ -1875,14 +1873,14 @@ fn a_chosen_folder_that_resolves_to_the_tools_already_in_use_is_not_a_change() {
     service
         .open_preview(&selected.handle)
         .expect("the file opens");
-    let before = service.inspect_backend().installation_generation;
+    let before = service.inspect_backend().authority.revision;
 
     let chosen = service.use_installation(Some(PathBuf::from(r"C:\fake\installed")));
 
-    assert_eq!(chosen.origin, "chosen");
+    assert_eq!(chosen.availability.origin, "chosen");
     // Origin is about the request; the generation is about the backend. This is
     // the case that shows they are not the same question.
-    assert_eq!(chosen.installation_generation, before);
+    assert_eq!(chosen.authority.revision, before);
     service
         .load_spectrum(&selected.handle, 0)
         .expect("the preview is still the work of the backend still in use");
@@ -1956,15 +1954,15 @@ fn an_in_place_upgrade_advances_the_sequence_even_though_nothing_was_requested()
     let provider = Box::new(FakeProvider::available(Vec::new()));
     let world = provider.clone_world();
     let service = PreviewService::new(provider);
-    assert_eq!(service.inspect_backend().installation_generation, 1);
+    assert_eq!(service.inspect_backend().authority.revision, 1);
 
     // Same paths, different build. This is what an installer that upgrades in
     // place leaves behind, and it is invisible to anything comparing requests.
     world.resolves_to(Some(backend("installed", "3.0.99999")));
 
-    assert_eq!(service.inspect_backend().installation_generation, 2);
+    assert_eq!(service.inspect_backend().authority.revision, 2);
     // And looking again at an unchanged backend is not another change.
-    assert_eq!(service.inspect_backend().installation_generation, 2);
+    assert_eq!(service.inspect_backend().authority.revision, 2);
 }
 
 #[test]
@@ -1973,13 +1971,13 @@ fn a_backend_that_disappears_and_returns_unchanged_is_one_change_each_way() {
     let world = provider.clone_world();
     let service = PreviewService::new(provider);
     let original = world.resolved_backend();
-    assert_eq!(service.inspect_backend().installation_generation, 1);
+    assert_eq!(service.inspect_backend().authority.revision, 1);
 
     world.resolves_to(None);
-    assert_eq!(service.inspect_backend().installation_generation, 2);
+    assert_eq!(service.inspect_backend().authority.revision, 2);
 
     world.resolves_to(original);
-    assert_eq!(service.inspect_backend().installation_generation, 3);
+    assert_eq!(service.inspect_backend().authority.revision, 3);
 }
 
 #[test]
@@ -2077,7 +2075,7 @@ fn a_retryable_failure_under_a_replaced_backend_is_reported_as_the_change_it_is(
     service
         .open_preview(&selected.handle)
         .expect("the file opens under the installation it found");
-    let before = service.inspect_backend().installation_generation;
+    let before = service.inspect_backend().authority.revision;
 
     world.resolves_to(Some(backend("replacement", "3.0.26999")));
 
@@ -2091,7 +2089,7 @@ fn a_retryable_failure_under_a_replaced_backend_is_reported_as_the_change_it_is(
     assert!(error.summary.contains("Open the file again"));
     // And the change was observed rather than lost with the failure, so the
     // banner cannot stay on the installation that is no longer running.
-    assert!(service.inspect_backend().installation_generation > before);
+    assert!(service.inspect_backend().authority.revision > before);
 }
 
 #[test]
@@ -2113,7 +2111,7 @@ fn a_retryable_failure_under_the_same_backend_keeps_its_own_error() {
     service
         .open_preview(&selected.handle)
         .expect("the file opens");
-    let before = service.inspect_backend().installation_generation;
+    let before = service.inspect_backend().authority.revision;
 
     let error = service
         .load_spectrum(&selected.handle, 0)
@@ -2121,7 +2119,7 @@ fn a_retryable_failure_under_the_same_backend_keeps_its_own_error() {
 
     assert_eq!(error.kind, "backend_launch_failed");
     assert!(error.retryable);
-    assert_eq!(service.inspect_backend().installation_generation, before);
+    assert_eq!(service.inspect_backend().authority.revision, before);
 }
 
 #[test]
@@ -2491,8 +2489,10 @@ fn two_datasets_each_keep_their_own_preview_facts() {
         "the second dataset was read as itself"
     );
     for (handle, scan) in [(&first.handle, 19_u64), (&second.handle, 807)] {
-        let Ok(SelectedSpectrumOutcomeDto::Spectrum { spectrum }) =
-            service.load_spectrum(handle, 0)
+        let Ok(AuthorityObservedDto {
+            outcome: SelectedSpectrumOutcomeDto::Spectrum { spectrum },
+            ..
+        }) = service.load_spectrum(handle, 0)
         else {
             panic!("each dataset reconciles a spectrum against its own rows");
         };
@@ -2731,8 +2731,10 @@ fn an_open_that_had_already_started_cannot_commit_after_a_newer_one() {
         .expect("the newer open finished")
         .expect("the newer open is the one that answers");
 
-    let Ok(SelectedSpectrumOutcomeDto::Spectrum { spectrum }) =
-        service.load_spectrum(&selected.handle, 0)
+    let Ok(AuthorityObservedDto {
+        outcome: SelectedSpectrumOutcomeDto::Spectrum { spectrum },
+        ..
+    }) = service.load_spectrum(&selected.handle, 0)
     else {
         panic!("the spectrum reconciles against the rows the newer open recorded");
     };
@@ -2825,8 +2827,10 @@ fn beginning_an_open_drops_what_the_previous_open_recorded() {
         !service.holds_preview_state(&selected.handle),
         "a failed reopen leaves no preview behind"
     );
-    let Ok(SelectedSpectrumOutcomeDto::Spectrum { spectrum }) =
-        service.load_spectrum(&selected.handle, 0)
+    let Ok(AuthorityObservedDto {
+        outcome: SelectedSpectrumOutcomeDto::Spectrum { spectrum },
+        ..
+    }) = service.load_spectrum(&selected.handle, 0)
     else {
         panic!("with no recorded table there is nothing to reconcile against");
     };
@@ -8186,9 +8190,9 @@ fn a_conversion_is_stamped_with_the_installation_it_ran_on() {
         .expect("the second conversion reaches an outcome");
 
     assert_eq!(
-        first.to_dto().installation_generation,
-        second.to_dto().installation_generation,
-        "two runs on one unchanged installation belong to one point in the sequence"
+        first.to_dto().receipt,
+        second.to_dto().receipt,
+        "two runs on one unchanged installation name one binding"
     );
 }
 
@@ -10879,11 +10883,11 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "error",
             "failedCount",
             "finalizedCount",
-            "installationGeneration",
             "itemCount",
             "items",
             "nonRetryableFailedCount",
             "notRunCount",
+            "receipt",
             "retryRound",
             "retryableFailedCount",
             "skippedCount",
@@ -10925,10 +10929,10 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "backend",
             "datasetHandle",
             "detailedOutcome",
-            "installationGeneration",
             "outcome",
             "output",
             "outputFileName",
+            "receipt",
             "sourceKind",
             "stagingResidue",
             "validation",
@@ -13007,7 +13011,7 @@ fn a_binding_that_names_no_installation_is_answered_without_a_probe() {
     let service = PreviewService::new(provider);
     // Settle the session on an absence first, which is what a mount's backend
     // check does.
-    assert_eq!(service.inspect_backend().state, "unavailable");
+    assert_eq!(service.inspect_backend().availability.state, "unavailable");
     let looks = world.availability_count();
 
     let snapshot = service
@@ -13047,7 +13051,7 @@ fn a_read_refused_by_a_busy_backend_spends_no_attempt() {
     // The session is settled first, as a mount settles it: an unresolved
     // session owes a backend check, not a settings read, so a read arriving
     // before one has ever run is not a state this exercises.
-    assert_eq!(service.inspect_backend().state, "available");
+    assert_eq!(service.inspect_backend().availability.state, "available");
     let selected = service.accept_file(&file.path).expect("accepted");
 
     let opening = {
@@ -13238,8 +13242,9 @@ fn a_quarantined_session_rechecks_without_launching_anything() {
     );
     // Not a stale "available". The banner renders this failure, so the one
     // thing the user must know is where they will look for it.
-    assert_eq!(before.state, "unavailable");
+    assert_eq!(before.availability.state, "unavailable");
     let failure = before
+        .availability
         .failure
         .clone()
         .expect("a quarantined session says why");
@@ -13248,7 +13253,28 @@ fn a_quarantined_session_rechecks_without_launching_anything() {
         failure.corrective_action,
         "Restart MSCanvas before starting another preview or conversion."
     );
-    assert_eq!(before.release, None, "no build is claimed by a refusal");
+    assert_eq!(
+        before.availability.release, None,
+        "no build is claimed by a refusal"
+    );
+    // And the projection beside it is the *echoed* reading's, not the live one:
+    // the origin above belongs to the reading this repeats, so a receipt naming
+    // any other binding would say that block was read somewhere it was not.
+    assert_eq!(
+        before.authority, after.authority,
+        "a quarantined session echoes one reading, projection and all"
+    );
+    // Here there is nothing to echo, and it invents nothing. This session was
+    // quarantined by a conversion, and a conversion observes the backend
+    // without producing a reading of it -- so the banner's first reading is
+    // this refusal, which is about the session rather than about a build. The
+    // receipt it would otherwise borrow is the live one, and stamping this
+    // block with it would claim the origin and the build were read at a binding
+    // no reading of them was ever taken at.
+    assert_eq!(before.authority.state, BackendAuthorityStateDto::Unresolved);
+    // The session itself is settled all the same. The two are different
+    // questions, which is the whole reason the reading carries its own.
+    assert!(service.conversion_state().backend_quarantined);
     // The settings read is a `msconvert --help` probe like any other, so it is
     // refused for the same reason -- and it still answers, carrying the
     // configuration as it stands so the panel is told something rather than
@@ -13267,7 +13293,7 @@ fn a_quarantined_session_rechecks_without_launching_anything() {
     let elsewhere = service.use_installation(Some(PathBuf::from("elsewhere")));
     assert_eq!(elsewhere, before);
     assert_eq!(
-        elsewhere.installation_generation, before.installation_generation,
+        elsewhere.authority.revision, before.authority.revision,
         "a refused change is not a change"
     );
 }
@@ -13402,7 +13428,11 @@ fn a_stopped_retry_keeps_the_failures_it_had_not_reached() {
     ));
     slot.finish(operation, None, TerminalReason::Stopped);
 
-    let update = slot.read(false, ConversionDiagnosticsStateDto::default());
+    let update = slot.read(
+        false,
+        ConversionDiagnosticsStateDto::default(),
+        BackendAuthorityProjectionDto::unresolved(),
+    );
     let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
         panic!("the queue reaches a terminal state");
     };
@@ -13549,7 +13579,11 @@ fn a_stop_accepted_while_a_queue_settles_is_not_overwritten_by_completion() {
     ));
     slot.finish(operation, None, TerminalReason::Completed);
 
-    let update = slot.read(false, ConversionDiagnosticsStateDto::default());
+    let update = slot.read(
+        false,
+        ConversionDiagnosticsStateDto::default(),
+        BackendAuthorityProjectionDto::unresolved(),
+    );
     assert_eq!(
         terminal_reason(&update),
         ConversionQueueTerminalReasonDto::Stopped,
@@ -13726,9 +13760,10 @@ fn a_recheck_waiting_on_the_gate_launches_nothing_after_a_lost_converter() {
         probes_before,
         "no probe was spent beside a converter the session may have lost"
     );
-    assert_eq!(answered.state, "unavailable");
+    assert_eq!(answered.availability.state, "unavailable");
     assert_eq!(
         answered
+            .availability
             .failure
             .expect("a quarantined session says why")
             .kind,
@@ -13768,7 +13803,11 @@ fn test_destination() -> AdmittedDestination {
 
 /// The reservation the slot currently holds, as the webview would return it.
 fn reservation_handle(slot: &ConversionSlot) -> String {
-    let update = slot.read(false, ConversionDiagnosticsStateDto::default());
+    let update = slot.read(
+        false,
+        ConversionDiagnosticsStateDto::default(),
+        BackendAuthorityProjectionDto::unresolved(),
+    );
     match update.state {
         WorkspaceConversionStateDto::AwaitingDestination { operation_id, .. } => {
             format!("conversion-reservation-{operation_id}")
@@ -15606,9 +15645,13 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
     );
     assert!(!rendered.contains("one.raw"), "{rendered}");
     assert_eq!(
-        slot.read(false, ConversionDiagnosticsStateDto::default())
-            .diagnostics
-            .eligible_item_count,
+        slot.read(
+            false,
+            ConversionDiagnosticsStateDto::default(),
+            BackendAuthorityProjectionDto::unresolved(),
+        )
+        .diagnostics
+        .eligible_item_count,
         1
     );
 
@@ -15661,9 +15704,13 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
     let _ = slot.begin(replacement).expect("reservation");
     assert!(slot.terminal_diagnostics(operation).is_none());
     assert_eq!(
-        slot.read(false, ConversionDiagnosticsStateDto::default())
-            .diagnostics
-            .eligible_item_count,
+        slot.read(
+            false,
+            ConversionDiagnosticsStateDto::default(),
+            BackendAuthorityProjectionDto::unresolved(),
+        )
+        .diagnostics
+        .eligible_item_count,
         0
     );
 }
@@ -16894,11 +16941,15 @@ fn a_bundle_dataset_converts_to_a_published_output_set() {
         conversion.report().backend_facts().is_some(),
         "a run that ran has facts"
     );
-    // One, for the resolution this run itself performed: zero names the window
-    // before anything has looked, which no run that ran can have been stamped
-    // with. What matters is that the stamp comes from this run's own
-    // observation rather than from a later look.
-    assert_eq!(conversion.report().installation_generation(), 1);
+    // A run that ran resolved a build, so it names one -- and it names it by
+    // receipt, which is what the webview compares, rather than by a number
+    // anybody could do arithmetic on. What matters is that the stamp comes from
+    // this run's own observation rather than from a later look.
+    assert_eq!(
+        conversion.report().authority().receipt(),
+        Some(1),
+        "the first build a session resolves is its first binding"
+    );
 
     // The exact finalized objects survive the handoff, one per published
     // member. This is what a later adoption decision would rest on.
@@ -21163,7 +21214,7 @@ fn loaded_export_token(service: &PreviewService, handle: &str, index: u64) -> St
     let outcome = service
         .load_spectrum(handle, index)
         .expect("the spectrum loads");
-    let SelectedSpectrumOutcomeDto::Spectrum { spectrum } = outcome else {
+    let SelectedSpectrumOutcomeDto::Spectrum { spectrum } = outcome.outcome else {
         panic!("a present spectrum is not the unavailable outcome");
     };
     spectrum.export_token.clone()
@@ -21411,7 +21462,7 @@ fn a_spectrum_that_turns_out_unavailable_revokes_the_retained_one() {
         .load_spectrum(&selected.handle, 1)
         .expect("an absent index is an answer, not a failure");
     assert!(matches!(
-        outcome,
+        outcome.outcome,
         SelectedSpectrumOutcomeDto::Unavailable { .. }
     ));
 
@@ -23739,7 +23790,7 @@ fn loaded_spectrum(
     let outcome = service
         .load_spectrum(handle, index)
         .expect("the spectrum loads");
-    let SelectedSpectrumOutcomeDto::Spectrum { spectrum } = outcome else {
+    let SelectedSpectrumOutcomeDto::Spectrum { spectrum } = outcome.outcome else {
         panic!("a present spectrum is not the unavailable outcome");
     };
     *spectrum

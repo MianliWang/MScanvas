@@ -8,6 +8,7 @@ import {
   conversionAvailability,
 } from "./conversionAvailability";
 import type {
+  BackendAuthorityProjection,
   ConversionConflictPolicy,
   ConversionDiagnosticsExport,
   ConversionDiagnosticsState,
@@ -343,7 +344,7 @@ function reportsAQueueOtherThan(
 }
 
 export function useConversionOperation(
-  onInstallationGeneration: (generation: number) => void,
+  onAuthority: (authority: BackendAuthorityProjection) => void,
   onOutputsAdopted: AdoptedOutputsSink,
   /** The lane facts this operation does not own, as a render sees them. */
   environment: ConversionEnvironment,
@@ -538,27 +539,20 @@ export function useConversionOperation(
     // screen beside a conversion done by its successor, until some later
     // backend operation happened to reconcile them.
     if (update.state.status === "terminal") {
-      // Once for the queue, not once per item. Every item of one queue ran on
-      // one installation, so their generations agree -- and reporting each of
-      // them separately would start a backend probe per item before any of them
-      // had answered, which for a full queue is sixteen serial help probes with
-      // preview and conversion disabled throughout.
-      const generations = [
-        // The queue's own reading first. A pass refused for running on a
-        // different installation produced no item, so the reports alone would
-        // leave the banner naming the installation the earlier results came
-        // from until the user rechecked by hand.
-        update.state.queue.installationGeneration,
-        // Whichever cardinality the item's latest attempt had. Both reports
-        // carry the sequence they ran under, and an item is never described by
-        // both at once.
-        ...update.state.queue.items
-          .map((item) => item.result?.report.installationGeneration)
-          .filter((generation): generation is number => generation !== undefined),
-      ];
-      onInstallationGeneration(Math.max(...generations));
+      // The response's own projection, and nothing derived from the queue or
+      // its items. Those carry the *build each ran on*, which is a historical
+      // fact and is expected to differ from the binding in use -- and picking
+      // the largest of several numbers to decide which installation is current
+      // was this document deciding something Rust owns. There is one authority
+      // here, Rust authored it, and it arrived with this very answer.
+      //
+      // Once for the queue, not once per item, for the same reason it always
+      // was: reporting each item separately would start a backend probe per
+      // item before any of them had answered, which for a full queue is sixteen
+      // serial help probes with preview and conversion disabled throughout.
+      onAuthority(update.authority);
     }
-  }, [claimLane, onInstallationGeneration]);
+  }, [claimLane, onAuthority]);
 
   const readState = useCallback(() => {
     // One at a time. The token below lets only the newest read install, so two

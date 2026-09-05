@@ -11,11 +11,11 @@ use tauri::webview::PageLoadEvent;
 use tauri::{Manager, State};
 
 use preview::dto::{
-    BackendAvailabilityDto, ConversionConfigurationSnapshotDto, ConversionConflictPolicyDto,
-    ConversionDiagnosticsReservationDto, ConversionQueuePlanDto, FolderImportReservationDto,
-    FolderIngestionResultDto, PreviewDto, PreviewErrorDto, SelectedSpectrumOutcomeDto,
-    WorkspaceAddResultDto, WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto,
-    WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
+    AuthorityObservedDto, BackendReadingDto, ConversionConfigurationSnapshotDto,
+    ConversionConflictPolicyDto, ConversionDiagnosticsReservationDto, ConversionQueuePlanDto,
+    FolderImportReservationDto, FolderIngestionResultDto, PreviewDto, PreviewErrorDto,
+    SelectedSpectrumOutcomeDto, WorkspaceAddResultDto, WorkspaceConversionReservationDto,
+    WorkspaceConversionUpdateDto, WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
     WorkspaceOutputAdoptionResultDto, WorkspaceRemoveResultDto, WorkspaceRosterDto,
     diagnostics_picker_unavailable, invalid_conversion_reservation,
     invalid_workspace_drop_subscription, spectrum_picker_unavailable,
@@ -36,7 +36,7 @@ fn get_bootstrap_status() -> BootstrapStatus {
 #[tauri::command]
 async fn inspect_backend(
     service: State<'_, SharedService>,
-) -> Result<BackendAvailabilityDto, PreviewErrorDto> {
+) -> Result<BackendReadingDto, PreviewErrorDto> {
     let service = Arc::clone(&service);
     off_the_async_runtime(move || service.inspect_backend()).await
 }
@@ -1026,7 +1026,7 @@ fn picker_unavailable() -> PreviewErrorDto {
 async fn choose_backend_installation(
     app: tauri::AppHandle,
     service: State<'_, SharedService>,
-) -> Result<Option<BackendAvailabilityDto>, PreviewErrorDto> {
+) -> Result<Option<BackendReadingDto>, PreviewErrorDto> {
     let owner = main_window_handle(&app);
     let service = Arc::clone(&service);
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -1053,7 +1053,7 @@ async fn choose_backend_installation(
 #[tauri::command]
 async fn use_automatic_backend_discovery(
     service: State<'_, SharedService>,
-) -> Result<BackendAvailabilityDto, PreviewErrorDto> {
+) -> Result<BackendReadingDto, PreviewErrorDto> {
     let service = Arc::clone(&service);
     off_the_async_runtime(move || service.use_installation(None)).await
 }
@@ -1082,7 +1082,7 @@ async fn load_selected_spectrum(
     handle: String,
     index: u64,
     service: State<'_, SharedService>,
-) -> Result<SelectedSpectrumOutcomeDto, PreviewErrorDto> {
+) -> Result<AuthorityObservedDto<SelectedSpectrumOutcomeDto>, PreviewErrorDto> {
     let service = Arc::clone(&service);
     off_the_async_runtime(move || service.load_spectrum(&handle, index)).await?
 }

@@ -38,6 +38,7 @@ use super::diagnostics::{
     ConversionFailureDiagnosticTicket, DiagnosticItemIdentity, DiagnosticsProviderFacts,
     DiagnosticsQueueFacts,
 };
+use super::dto::BackendAuthorityProjectionDto;
 use super::dto::{
     AdoptionCandidateIdentityDto, ConversionAttemptResultDto, ConversionCancellationDto,
     ConversionConflictPolicyDto, ConversionDiagnosticsStateDto, ConversionOutputPlanDto,
@@ -662,8 +663,15 @@ pub(super) struct ConversionQueue {
     /// Set when a destination has been admitted, and kept for the queue's life
     /// so a retry does not ask for one again.
     destination: Option<AdmittedDestination>,
-    /// Where the backend sequence stood when this queue last resolved one.
-    installation_generation: u64,
+    /// The authority this queue last resolved a backend at.
+    ///
+    /// Two things at once, deliberately: its revision is the durable record of
+    /// which reading the queue ran under, which the diagnostics export writes
+    /// under ADR 0017's schema and which outlives the session; its receipt is
+    /// the session-scoped identity the webview compares. Kept as one value
+    /// because both come from one observation, and two fields updated
+    /// separately are how they come to disagree.
+    authority: BackendAuthorityProjectionDto,
     /// Which installation this queue's items were converted on.
     ///
     /// The identity itself, not the sequence that counts changes to it. A
@@ -713,7 +721,11 @@ impl ConversionQueue {
             current: 0,
             retry_round: 0,
             destination: None,
-            installation_generation: 0,
+            // Nothing is bound at BEGIN. `ConversionQueue::new` runs before
+            // the picker, and the first drain pass is what records a build --
+            // so an unresolved projection here is the truthful answer rather
+            // than a placeholder, and it carries no receipt.
+            authority: BackendAuthorityProjectionDto::unresolved(),
             installation: None,
             error: None,
         })
@@ -934,7 +946,7 @@ impl ConversionQueue {
             cancelled_count: self.count(ItemState::Cancelled),
             not_run_count: self.count(ItemState::NotRun),
             cancellation_failed_count: self.count(ItemState::CancellationFailed),
-            installation_generation: self.installation_generation,
+            installation_generation: self.authority.revision,
             queue_error: self.error.as_ref().map(|error| error.kind.clone()),
         }
     }
@@ -978,7 +990,7 @@ impl ConversionQueue {
                 0
             },
             error: self.error.clone(),
-            installation_generation: self.installation_generation,
+            receipt: self.authority.receipt(),
         }
     }
 }
@@ -1452,7 +1464,7 @@ impl ConversionSlot {
         &mut self,
         operation: u64,
         installation: Option<InstallationIdentity>,
-        generation: u64,
+        projection: BackendAuthorityProjectionDto,
     ) -> Result<(), PreviewErrorDto> {
         let Some(queue) = self.running_mut(operation) else {
             // Not this worker's queue any more. Whatever replaced it will bind
@@ -1464,7 +1476,7 @@ impl ConversionSlot {
         // pass produces no item and therefore no report, and a reader with only
         // the earlier reports would go on naming the installation those results
         // came from until the user rechecked by hand.
-        queue.installation_generation = generation;
+        queue.authority = projection;
         match &queue.installation {
             // Both sides must say which build they are. An installation that
             // will not identify itself is not evidence that it is the same one,
@@ -2076,6 +2088,7 @@ impl ConversionSlot {
         &self,
         backend_quarantined: bool,
         diagnostics: ConversionDiagnosticsStateDto,
+        authority: BackendAuthorityProjectionDto,
     ) -> WorkspaceConversionUpdateDto {
         let operation_id = self.operation.to_string();
         let state = match &self.state {
@@ -2110,6 +2123,7 @@ impl ConversionSlot {
                 ..diagnostics
             },
             backend_quarantined,
+            authority,
         }
     }
 

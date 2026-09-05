@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type {
+  BackendAuthorityProjection,
   ConversionCancellation,
   ConversionConflictPolicy,
   ConversionDiagnosticsExport,
@@ -141,7 +142,7 @@ const FINALIZED_REPORT = {
   },
   backend: { exitCode: 0, elapsedMilliseconds: 568 },
   stagingResidue: null,
-  installationGeneration: 0,
+  receipt: 1,
 } as const satisfies ConversionReport;
 
 const CONVERTED_ITEM = {
@@ -191,7 +192,7 @@ const QUEUE = {
   cancellationFailedCount: 0,
   adoptableOutputCount: 1,
   error: null,
-  installationGeneration: 0,
+  receipt: 1,
 } as const satisfies ConversionQueue;
 
 /** What a stop establishes, as the M3.4 head reports it. */
@@ -247,8 +248,25 @@ const STOPPED_QUEUE = {
   cancellationFailedCount: 0,
   adoptableOutputCount: 1,
   error: null,
-  installationGeneration: 0,
+  receipt: 1,
 } as const satisfies ConversionQueue;
+
+/**
+ * The authority every answer in this shape carries.
+ *
+ * One value across the sequence below, because none of these transitions is an
+ * installation change: what the poll delivers is what the session is bound to,
+ * and it is unchanged for the length of one queue.
+ */
+const SETTLED = {
+  revision: 1,
+  state: {
+    state: "settled",
+    receipt: 1,
+    binding: "installed",
+    previewAvailability: "usable",
+  },
+} as const satisfies BackendAuthorityProjection;
 
 /** Every string the value carries, at any depth, keys included. */
 function stringsWithin(value: unknown): readonly string[] {
@@ -292,24 +310,28 @@ describe("the conversion wire contract", () => {
         state: { status: "idle" },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+        authority: SETTLED,
       },
       {
         sequence: 1,
         state: { status: "awaitingDestination", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+        authority: SETTLED,
       },
       {
         sequence: 2,
         state: { status: "running", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+        authority: SETTLED,
       },
       {
         sequence: 3,
         state: { status: "stopping", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+        authority: SETTLED,
       },
       {
         sequence: 4,
@@ -321,6 +343,7 @@ describe("the conversion wire contract", () => {
         },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+        authority: SETTLED,
       },
       {
         sequence: 5,
@@ -332,12 +355,14 @@ describe("the conversion wire contract", () => {
         },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: true,
+        authority: SETTLED,
       },
       {
         sequence: 6,
         state: { status: "terminal", operationId: "1", reason: "completed", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+        authority: SETTLED,
       },
     ] as const satisfies readonly WorkspaceConversionUpdate[];
 
@@ -347,6 +372,10 @@ describe("the conversion wire contract", () => {
       "state",
       "diagnostics",
       "backendQuarantined",
+      // Every answer in this shape delivers it, the poll included: while a
+      // drain runs this is the session's only voice, and a replacement it
+      // observed would otherwise reach nobody until the drain ended.
+      "authority",
     ]);
     expect(updates.map((update) => update.state.status)).toEqual([
       "idle",
@@ -374,18 +403,21 @@ describe("the conversion wire contract", () => {
         state: { status: "awaitingDestination", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+        authority: SETTLED,
       },
       {
         sequence: 2,
         state: { status: "running", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+        authority: SETTLED,
       },
       {
         sequence: 3,
         state: { status: "stopping", operationId: "1", queue: QUEUE },
         diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
+        authority: SETTLED,
       },
     ] as const satisfies readonly WorkspaceConversionUpdate[]) {
       expect(Object.keys(update.state).sort()).toEqual(["operationId", "queue", "status"]);
@@ -418,7 +450,7 @@ describe("the conversion wire contract", () => {
         "error",
         "failedCount",
         "finalizedCount",
-        "installationGeneration",
+        "receipt",
         "itemCount",
         "items",
         "nonRetryableFailedCount",
@@ -470,7 +502,7 @@ describe("the conversion wire contract", () => {
         "backend",
         "datasetHandle",
         "detailedOutcome",
-        "installationGeneration",
+        "receipt",
         "outcome",
         "output",
         "outputFileName",

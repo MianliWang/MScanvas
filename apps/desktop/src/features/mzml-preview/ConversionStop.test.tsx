@@ -89,7 +89,7 @@ function converted(handle: string, name: string): ConversionQueueItem {
         },
         backend: { exitCode: 0, elapsedMilliseconds: 568 },
         stagingResidue: null,
-        installationGeneration: 0,
+        receipt: 1,
       },
     },
   });

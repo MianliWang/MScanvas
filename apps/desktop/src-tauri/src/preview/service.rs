@@ -88,6 +88,11 @@ use super::dto::{
     require_finite_option, workspace_full,
 };
 use super::dto::{
+    AuthorityObservedDto, BackendAuthorityProjectionDto, BackendAuthorityStateDto,
+    BackendReadingDto, ConversionConfigurationOutcomeDto, ConversionConfigurationRefusalDto,
+    ConversionConfigurationSnapshotDto,
+};
+use super::dto::{
     ChromatogramCopyOutcomeDto, ChromatogramExportOutcomeDto, ChromatogramRangeDto,
     ChromatogramTracesDto, CopiedFigureDto, ExportedFigureDto, FigureSettingsDto,
     LinkedFigureCopyOutcomeDto, LinkedFigureExportOutcomeDto, SpectrumCopyOutcomeDto,
@@ -100,10 +105,6 @@ use super::dto::{
     spectrum_destination_unusable, spectrum_export_in_progress, spectrum_export_refused,
     spectrum_export_stale, spectrum_not_finalized, spectrum_not_written,
     spectrum_range_outside_source, spectrum_range_unavailable, spectrum_range_unusable,
-};
-use super::dto::{
-    ConversionConfigurationOutcomeDto, ConversionConfigurationRefusalDto,
-    ConversionConfigurationSnapshotDto,
 };
 use super::dto::{
     ConversionDiagnosticsExportDto, ConversionDiagnosticsReservationDto,
@@ -630,9 +631,16 @@ struct ObservedBackend {
     /// projection with A's configuration -- a snapshot the frontend cannot
     /// detect as wrong, since the configuration carries no receipt of its own.
     configurations: ConversionConfigurations,
-    /// The verdict that look produced, kept so a quarantined session can answer
-    /// a recheck without launching the very tools it has stopped trusting.
-    last: Option<BackendAvailabilityDto>,
+    /// The reading that look produced, kept so a quarantined session can
+    /// answer a recheck without launching the very tools it has stopped
+    /// trusting.
+    ///
+    /// The whole reading, projection included: what a quarantined session
+    /// echoes is the reading it had, and the binding that reading was taken of
+    /// is part of what makes it truthful. Echoing the block under the live
+    /// projection would say the origin and the build belong to a binding they
+    /// were never read at.
+    last: Option<BackendReadingDto>,
 }
 
 impl PreviewService {
@@ -673,7 +681,7 @@ impl PreviewService {
     /// Behind the same gate as every other backend work: discovery runs the
     /// installed tools' help, which is as much a process as a preview is, and
     /// "at most one at a time" has to mean all of them or it means nothing.
-    pub fn inspect_backend(&self) -> BackendAvailabilityDto {
+    pub fn inspect_backend(&self) -> BackendReadingDto {
         // A probe launches the tools it is probing, so it is a backend
         // operation like any other. A quarantined session answers without
         // starting two more processes beside one it may have lost track of.
@@ -702,7 +710,7 @@ impl PreviewService {
     /// the installation it just stopped using, and a caller that then had to ask
     /// separately could render the old answer in between. There is no interval
     /// here in which the two can disagree.
-    pub fn use_installation(&self, home: Option<PathBuf>) -> BackendAvailabilityDto {
+    pub fn use_installation(&self, home: Option<PathBuf>) -> BackendReadingDto {
         // Changing installation re-probes, which launches processes. Refused
         // without making the change either: pointing a quarantined session at
         // another folder would leave it describing an installation nothing has
@@ -846,8 +854,8 @@ impl PreviewService {
     ///
     /// All of it under the gate, so the number describes the installation the
     /// verdict actually came from.
-    fn stamped_availability(&self) -> BackendAvailabilityDto {
-        let (mut availability, identity) = self.provider.availability();
+    fn stamped_availability(&self) -> BackendReadingDto {
+        let (availability, identity) = self.provider.availability();
         // The verdict this reading reports *is* the preview verdict, so the
         // observation carries what the reading already says rather than asking
         // a second time and risking a different answer.
@@ -856,13 +864,15 @@ impl PreviewService {
         } else {
             PreviewAvailability::Unusable
         };
-        let projection = self.note_resolved(identity, verdict);
-        availability.installation_generation = projection.revision.wire();
+        let reading = BackendReadingDto {
+            authority: self.note_resolved(identity, verdict).to_dto(),
+            availability,
+        };
         self.resolved
             .lock()
             .expect("the installation lock is never poisoned by user code")
-            .last = Some(availability.clone());
-        availability
+            .last = Some(reading.clone());
+        reading
     }
 
     /// The verdict a quarantined session answers every backend question with,
@@ -877,7 +887,7 @@ impl PreviewService {
     ///
     /// `None` when the session is not quarantined, which is every ordinary
     /// session.
-    fn quarantined_availability(&self) -> Option<BackendAvailabilityDto> {
+    fn quarantined_availability(&self) -> Option<BackendReadingDto> {
         if !self.backend_is_quarantined() {
             return None;
         }
@@ -887,28 +897,44 @@ impl PreviewService {
             .expect("the installation lock is never poisoned by user code")
             .last
             .clone();
-        Some(BackendAvailabilityDto {
-            state: String::from("unavailable"),
-            installation_generation: self.authority_projection().revision.wire(),
-            // Kept from the last reading where there was one, so the banner
-            // still names the installation this session was using rather than
-            // claiming it went back to automatic discovery.
-            origin: last.map_or_else(|| String::from("automatic"), |reading| reading.origin),
-            // Nothing is claimed about a build. This verdict is not a reading of
-            // one, and carrying a release beside `unavailable` would invite it
-            // to be read as one.
-            release: None,
-            build_date: None,
-            same_installation: true,
-            failure: Some(BackendFailureDto {
-                kind: String::from("backend_quarantined"),
-                summary: String::from(
-                    "MSCanvas could not confirm that the converter process stopped.",
+        Some(BackendReadingDto {
+            // The projection of the reading being echoed, not the live one: the
+            // origin below is that reading's, and a receipt naming a different
+            // binding would misdescribe it. Where nothing has been read yet
+            // there is nothing to echo, and the projection carries no receipt
+            // rather than borrowing one.
+            authority: last.as_ref().map_or(
+                BackendAuthorityProjectionDto {
+                    revision: 0,
+                    state: BackendAuthorityStateDto::Unresolved,
+                },
+                |reading| reading.authority,
+            ),
+            availability: BackendAvailabilityDto {
+                state: String::from("unavailable"),
+                // Kept from the last reading where there was one, so the banner
+                // still names the installation this session was using rather
+                // than claiming it went back to automatic discovery.
+                origin: last.map_or_else(
+                    || String::from("automatic"),
+                    |reading| reading.availability.origin,
                 ),
-                corrective_action: String::from(
-                    "Restart MSCanvas before starting another preview or conversion.",
-                ),
-            }),
+                // Nothing is claimed about a build. This verdict is not a
+                // reading of one, and carrying a release beside `unavailable`
+                // would invite it to be read as one.
+                release: None,
+                build_date: None,
+                same_installation: true,
+                failure: Some(BackendFailureDto {
+                    kind: String::from("backend_quarantined"),
+                    summary: String::from(
+                        "MSCanvas could not confirm that the converter process stopped.",
+                    ),
+                    corrective_action: String::from(
+                        "Restart MSCanvas before starting another preview or conversion.",
+                    ),
+                }),
+            },
         })
     }
 
@@ -1389,7 +1415,16 @@ impl PreviewService {
         let slot = self.conversion_slot();
         let quarantined = self.backend_is_quarantined();
         let diagnostics = self.diagnostics_read();
-        slot.read(quarantined, diagnostics)
+        // Delivered by the poll as by everything else answering in this shape.
+        // The poll observes nothing -- it launches no process and resolves no
+        // build -- and carries the authority because it is the session's only
+        // voice while a drain runs, which is exactly when a drain's own
+        // observation would otherwise reach nobody until the drain ended.
+        slot.read(
+            quarantined,
+            diagnostics,
+            self.authority_projection().to_dto(),
+        )
     }
 
     /// Whether this session has stopped trusting the backend.
@@ -1441,7 +1476,11 @@ impl PreviewService {
         }
         let accepted = slot.request_stop(operation)?;
         self.publish_conversion_busy(&slot);
-        let update = slot.read(self.backend_is_quarantined(), self.diagnostics_read());
+        let update = slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.authority_projection().to_dto(),
+        );
         drop(slot);
 
         if let StopAccepted::Requested(Some(request)) = accepted {
@@ -1731,7 +1770,11 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.cancel(operation);
         self.publish_conversion_busy(&slot);
-        slot.read(self.backend_is_quarantined(), self.diagnostics_read())
+        slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.authority_projection().to_dto(),
+        )
     }
 
     /// Runs one claimed queue into one chosen folder.
@@ -3711,8 +3754,7 @@ impl PreviewService {
         // changes, would have moved on and refused the retry for ever.
         let generation = self
             .note_resolved(backend.installation.clone(), backend.preview_availability)
-            .revision
-            .wire();
+            .to_dto();
         // Bound to a local first, and every lock below it likewise. A guard
         // produced inside an `if` condition lives until the end of that `if`,
         // body included -- and each of these bodies takes the same lock again.
@@ -3883,7 +3925,11 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.finish(operation, None, reason);
         self.publish_conversion_busy(&slot);
-        let update = slot.read(self.backend_is_quarantined(), self.diagnostics_read());
+        let update = slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.authority_projection().to_dto(),
+        );
         drop(slot);
         update
     }
@@ -3994,7 +4040,7 @@ impl PreviewService {
         &self,
         run: QueuedItemRun<'_>,
         backend: &ConversionBackend<'_>,
-        generation: u64,
+        generation: BackendAuthorityProjectionDto,
         cancellation: ConversionCancellation,
     ) -> QueueItemAttempt {
         let item = run.item;
@@ -4136,7 +4182,7 @@ impl PreviewService {
         &self,
         run: QueuedItemRun<'_>,
         backend: &ConversionBackend<'_>,
-        generation: u64,
+        generation: BackendAuthorityProjectionDto,
         cancellation: &ConversionCancellation,
         remembered: AcceptedFile,
     ) -> QueueItemAttempt {
@@ -4212,7 +4258,7 @@ impl PreviewService {
                     dataset: item.dataset(),
                     source_kind: file.source_kind(),
                     bound_source_objects,
-                    installation_generation: generation,
+                    authority: generation,
                     destination: destination.clone(),
                 },
             ))
@@ -4253,7 +4299,11 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.refuse(operation, error);
         self.publish_conversion_busy(&slot);
-        slot.read(self.backend_is_quarantined(), self.diagnostics_read())
+        slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.authority_projection().to_dto(),
+        )
     }
 
     /// Reserves the right to claim the workspace's next state without opening
@@ -5581,8 +5631,7 @@ impl PreviewService {
         );
         let generation = self
             .note_resolved(backend.installation.clone(), backend.preview_availability)
-            .revision
-            .wire();
+            .to_dto();
         drop(guards);
         drop(running);
         Ok(SciexConversion::of(
@@ -5592,7 +5641,7 @@ impl PreviewService {
                 dataset: id,
                 source_kind: file.source_kind(),
                 bound_source_objects,
-                installation_generation: generation,
+                authority: generation,
                 destination: AdmittedDestination::new(destination_root, destination_identity),
             },
         ))
@@ -5753,8 +5802,7 @@ impl PreviewService {
         let report = run_planned_conversion(&plan, &backend);
         let generation = self
             .note_resolved(backend.installation.clone(), backend.preview_availability)
-            .revision
-            .wire();
+            .to_dto();
         drop(guard);
         drop(running);
         Ok(WorkspaceConversionReport::of(
@@ -5915,15 +5963,13 @@ impl PreviewService {
         // the authority as it already stood. Recording an absence there would
         // say MSCanvas looked and found no installation, which is not what
         // happened.
-        let generation = observed
-            .map_or_else(
-                || self.authority_projection(),
-                |(installation, preview_availability)| {
-                    self.note_resolved(installation, preview_availability)
-                },
-            )
-            .revision
-            .wire();
+        let projection = observed.map_or_else(
+            || self.authority_projection(),
+            |(installation, preview_availability)| {
+                self.note_resolved(installation, preview_availability)
+            },
+        );
+        let generation = projection.revision.wire();
         drop(guard);
         drop(running);
         if SourceGeneration::capture(file.path()) != before {
@@ -6059,7 +6105,7 @@ impl PreviewService {
         );
 
         Ok(PreviewDto {
-            installation_generation: generation,
+            authority: projection.to_dto(),
             chromatogram_export_token,
             file: described,
             metadata,
@@ -6082,7 +6128,7 @@ impl PreviewService {
         &self,
         handle: &str,
         index: u64,
-    ) -> Result<SelectedSpectrumOutcomeDto, PreviewErrorDto> {
+    ) -> Result<AuthorityObservedDto<SelectedSpectrumOutcomeDto>, PreviewErrorDto> {
         // Which spectrum the slot held when this read began. Two reads can be in
         // flight, and the later one can reach the backend gate first and be the
         // spectrum on screen by the time this one comes back to say it failed --
@@ -6093,7 +6139,22 @@ impl PreviewService {
         if !matches!(outcome, Ok(SelectedSpectrumOutcomeDto::Spectrum { .. })) {
             self.spectrum_export_slot().forget_if_current(owned);
         }
-        outcome
+        // A spectrum read launches the backend, so it observes like every other
+        // gate-taker and must deliver what it observed. Read after the outcome
+        // rather than beside it: the read's own `note_resolved` has already run
+        // by then, so this is the authority its own observation left, not the
+        // one it found on the way in.
+        //
+        // A read that *fails* carries no projection, and that is the rule
+        // rather than an omission: a failure is judged by the receipt its
+        // request went out under, not by one it reports. What must not happen
+        // is a domain refusal answering in band and leaving the projection out
+        // -- the `BEGIN` case -- and this is not that: a failed spectrum read
+        // has no in-band answer to attach one to.
+        outcome.map(|outcome| AuthorityObservedDto {
+            authority: self.authority_projection().to_dto(),
+            outcome,
+        })
     }
 
     /// The read itself. Requests stay direct and uncached in this slice.
@@ -7102,7 +7163,10 @@ pub(super) struct SciexRunFacts {
     pub(super) dataset: DatasetId,
     pub(super) source_kind: DatasetSourceKind,
     pub(super) bound_source_objects: usize,
-    pub(super) installation_generation: u64,
+    /// The authority this run was stamped with. Its revision is the durable
+    /// record the diagnostics export keeps; its receipt is what the webview
+    /// compares.
+    pub(super) authority: BackendAuthorityProjectionDto,
     pub(super) destination: AdmittedDestination,
 }
 
@@ -7126,7 +7190,7 @@ impl SciexConversion {
                 about.dataset.handle(),
                 about.source_kind,
                 about.bound_source_objects,
-                about.installation_generation,
+                about.authority,
                 &run.report,
                 run.completeness,
             ),

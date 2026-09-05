@@ -110,7 +110,7 @@ function adoptable(handle: string, name: string): ConversionQueueItem {
         },
         backend: null,
         stagingResidue: null,
-        installationGeneration: 0,
+        receipt: 1,
       },
     },
   });
