@@ -39,7 +39,7 @@ coding.
 | Question | Answer |
 |---|---|
 | Who owns installation truth? | Rust, as a typed authority state — never a bare counter the frontend interprets. |
-| Who is obliged to deliver it? | Every operation that can observe **or replace** it, on its answer, whether that answer succeeds or refuses — and two that do neither: the queue's state poll, the only thing that speaks during a drain, and the binding-only configuration read, whose answer needs a projection to be judged against. |
+| Who is obliged to deliver it? | Every operation that can observe **or replace** it, on its answer, whether that answer succeeds or refuses — and three that do neither: the queue's state poll, the only thing that speaks during a drain, plus the binding-only configuration read and a read Rust's admission refuses, each of which answers with a snapshot needing a projection to be judged against. |
 | Who owns conversion-capability/catalog truth? | Rust, as a lifecycle keyed by the installation binding. |
 | What identity binds those facts together? | One opaque, session-scoped, path-free `BackendBindingReceipt`. |
 | Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
@@ -563,8 +563,9 @@ So the rule is stated in full:
 > **Every operation that can observe or replace installation authority returns
 > the authority as it stands when the operation answers — whether its domain
 > outcome succeeds or refuses. So does the queue's state poll, which can do
-> neither and is the session's only voice while a drain runs, and so does the
-> binding-only configuration read, whose answer would otherwise have no
+> neither and is the session's only voice while a drain runs; so does the
+> binding-only configuration read; and so does a configuration read Rust's admission
+> refuses, since each of those answers with a snapshot that would otherwise have no
 > projection to be judged against.**
 
 "Conversion-bound" would have been too narrow by exactly the two operations that
@@ -700,14 +701,17 @@ disables its own exits is not a state to add, which is the second reason Decisio
 does not add one.
 
 **The authority obliges a backend check in three conditions, and they are one rule.**
-`Unresolved` owes one at mount, **and that one dispatch is not gated by the
-frontend's projection.** `backendBusy` initialises to `true` with nothing in flight —
-correctly, since nothing is known yet — so a mount check deferred by it would be
-deferred by a fact only its own answer can clear, and no occasion could clear it. The
-check is what *makes* the projection truthful, so it cannot be gated by it. That is not
-a new exception: the recheck-after-a-failed-open in `usePreviewWorkspace` already
-"passes straight through `backendBusy`", for the same reason and with the same
-justification recorded beside it.
+`Unresolved` owes one at mount, **and that one dispatch is not gated by the frontend's
+projection.** `backendBusy` initialises to `true` with nothing in flight — correctly,
+since nothing is known yet — so a mount check deferred by it would be deferred by a fact
+only its own answer can clear, and no occasion could clear it. The check is what *makes*
+the projection truthful, so it cannot be gated by it. That is not a new exception in
+kind: the recheck-after-a-failed-open in `usePreviewWorkspace` already "passes straight
+through `backendBusy`" — for its own reason, that a failed open may be the
+installation's fault and the banner must not insist otherwise, and gated on
+`installationChanges` in a way the mount check must not be. What the two share is only
+the precedent that a check the reader did not ask for may be dispatched through that
+projection; the mount check's reason for needing it is its own.
 
 **It is unconditional, and a draft tried to make it conditional.** The idea was to
 bypass the dispatch when the session already knows the backend is owned — a panel
@@ -1252,13 +1256,6 @@ the accepted projection's receipt differs from the rendered one
      an answer: it says the catalog is unread, so the read stays owed
   -> render only the snapshot that carries it
 
-The preview half is easy to leave out and expensive to lose: `applyVerdict` calls
-`discardBackendDerivedState` on an advanced generation today, and the removal of that
-counter deletes the call site rather than the need. Without it, build A's spectrum table
-stays on screen beside B's banner and B's catalog — a stale window in the one surface
-this document does not otherwise talk about, opened by its own cleanup.
-
-```text
      (the separation matters: step two decides what is *invalid*, and an
       imperative read here would put the courtesy ahead of the duty in the
       case where both obligations arise at once -- a drain's own
@@ -1288,6 +1285,12 @@ the accepted projection is Unresolved
   -> there is no receipt to compare; there is no binding to hold a
      configuration, so no configuration is current
 ```
+
+**The preview half is easy to leave out and expensive to lose.** `applyVerdict` calls
+`discardBackendDerivedState` on an advanced generation today, and the removal of that
+counter deletes the call site rather than the need. Without it, build A's spectrum table
+stays on screen beside B's banner and B's catalog — a stale window in the one surface
+this document does not otherwise talk about, opened by its own cleanup.
 
 Both halves of step two are load-bearing. The first closes the stale-on-screen
 window above. The second is what keeps a refusal from becoming a refresh: an
@@ -1456,10 +1459,12 @@ Between the two, a binding cannot reach a state where its catalog is owed, nothi
 is in flight, and nothing will ever ask again.
 
 The explicit retry is the reader's floor under that. It is offered whenever a binding
-has **no usable answer** and no probe is in flight — from `Failed`, whose answer is that
-there is none, and equally from an `Unattempted` whose automatic read was refused —
-because a control that says "read the settings" is truthful in both, and the alternative
-is a panel a reader can see is stuck with nothing to press.
+has **an answer it could improve on** — `Failed`, whose answer is that there is none,
+and an `Unattempted` whose automatic read was refused — and no probe is in flight — and
+never from `UnavailableForBinding`, which is not a state a read can improve: it follows
+from the binding, and only a different binding changes it. A control that says "read the
+settings" is truthful in the first two, and the alternative is a panel a reader can see
+is stuck with nothing to press.
 
 **A read that finds a new build answers for that build, in one step.** A
 configuration read performs its own discovery, so it can be the operation that
@@ -2466,7 +2471,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–160).
+plus the findings raised against this document's own drafts (rows 18–162).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2479,7 +2484,7 @@ and no finding may disappear because the old PR was superseded.
 | 5 | BEGIN observes a changed build, nothing reconciles | An observation made by an operation that then refused | An observation is complete once discovery establishes an installed binding **or** an absence; later capability or domain failure does not erase it | Provider attempt + authority | A refused BEGIN that resolved a new build advances the authority |
 | 6 | Catalog read tied to transient checking | `backendUsable` false for the duration of a backend check | A check is activity; a binding is a verdict | Authority state | A recheck settling on the same receipt: no probe, no revocation, plan preserved |
 | 7 | Repeated polls, repeated reconciliation | A reply carrying a number treated as a request | An arriving fact is not a request | Authority state | N polls of one observation → at most one backend probe |
-| 8 | Catalog failure with no retry owner | Recovery living on a conflation that was removed | A failed read is not a state a binding can clear | Rust lifecycle + explicit retry | Transient failure → recheck does not retry it; explicit retry does |
+| 8 | Catalog failure with no retry owner | Recovery living on a conflation that was removed | A failed read is not a state a binding can clear; the explicit retry is offered where a read could improve the answer, and not for `UnavailableForBinding` | Rust lifecycle + explicit retry | Transient failure → recheck does not retry it; explicit retry does; a binding that names no build offers none |
 | 9 | Provider-resolution failure loses the observation | `?` propagating an error past a found identity | Resolution returns the observation either way | `ConversionBackendAttempt` | Resolution failure that established absence advances the authority; one that established nothing does not |
 | 10 | Mandatory preflight under an optional courtesy | A gate that may be declined owning a guarantee | Admission proof is never skippable, and a lane that cannot answer refuses rather than blocks the click | Rust BEGIN | Busy lane → BEGIN refuses, naming the lane fact; never a queue without the proof, and never a hung click |
 | 11 | Selected-but-unavailable rendered as usable | A state that could hold only one of the two facts | Selected and available are two facts | Selection module | The preserved unrunnable selection reads as unavailable |
@@ -2632,6 +2637,8 @@ and no finding may disappear because the old PR was superseded.
 | 158 | A wait bound assuming every holder is visible | A courtesy projection that cannot see a probe or an ungated dispatch | A step-three check never waits behind a drain or preview the frontend knows about; the waits it can meet are bounded and named | Authority obligations | The bound claims only what the projection can deliver |
 | 159 | Rust's identity comparisons replaced by a session-scoped token | "No comparison of installation identity survives", written unscoped | Only frontend comparisons are in scope; the queue's identity-keyed retry admission stays, because switching away and back restores a build and mints a new receipt | Decision 2 | A retry is still admitted after an installation is switched away from and back |
 | 160 | A stale spectrum table beside a new binding's catalog | The counter's removal deleting `discardBackendDerivedState`'s only call site | A replaced receipt invalidates the visible preview and the roster's backend-derived rows, not only the configuration and plan | Decision 4b | Build A's spectrum table does not survive the observation of build B |
+| 161 | A retry offered for a state no read can change | A predicate written over "no usable answer" | The retry is offered where a read could improve the answer; `UnavailableForBinding` follows from the binding and only a different binding changes it | Decision 5 | No retry is offered beside a binding that names no build |
+| 162 | The delivery rule naming two of its three exceptions | A rule stated in full before the third was added | The rule in full, and the summary that quotes it, name the poll, the binding-only read and the refused read | Decision 4 | Every operation that answers with a snapshot carries a projection to judge it by |
 
 ## What this interlude does not do
 
