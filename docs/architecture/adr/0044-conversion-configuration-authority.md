@@ -458,14 +458,15 @@ and `Plan(A)` stay installed for the length of the whole queue, which is the exa
 window this decision exists to close, reopened by the one operation slow enough to
 matter. So the poll carries the authority as it stands, and stimulates nothing.
 
-So delivery membership is **the gate-takers, plus the poll, plus the binding-only
-configuration read** — the last because it can neither observe nor replace anything and
-still must carry a projection, or the snapshot it answers with has no binding to be
-judged by (row 109); its projection is the authority it read, which is the same instant
-its answer describes. Concretely, the members are: the BEGIN preflight, queue execution
-and drain, retry preparation, the backend check and the installation change, the preview
-and spectrum reads, and the configuration read that runs a discovery — all of which can
-observe or replace the authority; and three that can do neither: `conversion_state`, the
+So delivery membership is **the gate-takers, plus three that take none: the poll, the
+binding-only configuration read, and a configuration read Rust's admission refuses** —
+the last because it can neither observe nor replace anything and still must carry a
+projection, or the snapshot it answers with has no binding to be judged by (row 109);
+its projection is the authority it read, which is the same instant its answer describes.
+Concretely, the members are: the BEGIN preflight, queue execution and drain, retry
+preparation, the backend check and the installation change, the preview and spectrum
+reads, and the configuration read that runs a discovery — all of which can observe or
+replace the authority; and three that can do neither: `conversion_state`, the
 binding-only configuration read, and a configuration read Rust's admission refuses
 before it discovers — that last because it is the only path by which `Unattempted`
 reaches the wire (Decision 5), so a response that carried no projection would leave its
@@ -527,9 +528,10 @@ reader pressed Recheck by hand. So: **a rendered reading whose receipt is not th
 authority's, the absence of a rendered reading at all, or the session becoming
 quarantined, each owe a backend check**, which is the same obligation `Unresolved`
 incurs at mount — same Rust-side admission,
-same occasions, same discharge — asked of one more condition. What they do not share is
-the *dispatch*: the mount one is not gated by the frontend's courtesy projection at all,
-for the reason given below, and this one is issued by step three, into a lane the
+same occasions, same discharge — asked of two more conditions. What they do not share is
+the *dispatch*: the mount and quarantine ones are not gated by the frontend's courtesy
+projection at all, for the reasons given below, and the stale-reading one is issued by
+step three, into a lane the
 projection says is free. That is why a banner going stale during a drain waits for the
 drain rather than dispatching an `inspect_backend` that would hold `backendBusy` for its
 length. A session that has never resolved anything and a session whose banner describes

@@ -910,14 +910,15 @@ and processing**; and the binding of the chosen intent into the queue at `BEGIN`
 
 **The slice reaches past the conversion panel, and is sized for it.** ADR 0044's
 delivery rule is over every operation that takes the backend gate, **the queue's state
-poll and the binding-only configuration read**, which includes the preview and spectrum
-reads — so their responses carry the authority projection too, and `BackendStatus` reads
-it beside the availability DTO it already renders. `ConversionQueue` is the poll's own
-payload, so removing its `installationGeneration` is what makes room for the projection
-the poll now carries — the identity moves into that projection rather than being
-re-added beside it. `installationGeneration` leaves the five contracts that carry it in
-the same change. None of that is new *behaviour* for the viewer; it is the same facts on
-a typed carrier, and it is named here so the slice is not planned as a panel-only one.
+poll, the binding-only configuration read and a read Rust's admission refuses**, which
+includes the preview and spectrum reads — so their responses carry the authority
+projection too, and `BackendStatus` reads it beside the availability DTO it already
+renders. `ConversionQueue` is the poll's own payload, so removing its
+`installationGeneration` is what makes room for the projection the poll now carries —
+the identity moves into that projection rather than being re-added beside it.
+`installationGeneration` leaves the five contracts that carry it in the same change.
+None of that is new *behaviour* for the viewer; it is the same facts on a typed carrier,
+and it is named here so the slice is not planned as a panel-only one.
 
 **CNV-009's output-root half is not M6.4's, and cannot be.** In the live flow the
 destination is chosen *after* the queue is created — the slot passes through
