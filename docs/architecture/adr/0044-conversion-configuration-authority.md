@@ -585,18 +585,20 @@ other reading.** It is not the route being removed: it is a function whose own d
 comment explains what it protects — the banner that keeps naming the installation the
 session was using, and the refusal that keeps `inspect_backend` from launching help
 probes after MSCanvas has lost a converter process. Both survive untouched. What
-changes is that it builds its DTO with the **receipt** rather than
-`installation_generation`, like every other reading.
+changes is that it builds its DTO with a **receipt** rather than
+`installation_generation` — and specifically with the receipt of the reading it is
+echoing, not the live one, because the `origin` it carries is that reading's and a
+receipt naming a different binding would misdescribe it.
 
 **And the currency test does not apply to what it returns**, which is the half that
 matters. A quarantined reading is a statement about the *session* — the code says so
 itself, returning `release: None` and `build_date: None` with the note that "nothing is
 claimed about a build" — so asking whether it describes the current binding is asking
-the wrong question of it. It keeps `origin`, which names where MSCanvas was looking
-rather than what it found, and it discharges the owed check **by answering**. Without
-that exemption the reading would be permanently non-current against a binding observed
-in the same operation that quarantined the session, and the check would be owed for the
-rest of the run against an answer that will never change. And `backendUsable` no longer
+the wrong question of it. It discharges the owed check **by answering**. Without that
+exemption the two halves fight: the reading truthfully carries the older binding's
+receipt, the currency test truthfully calls it non-current, and the check is owed for
+the rest of the run against an answer that will never change. And `backendUsable` no
+longer
 *depends* on this function for the quarantine half of its meaning, and says so itself.
 
 So the projection is stated in full, and quarantine is a conjunct of its own:
@@ -644,15 +646,25 @@ a new exception: the recheck-after-a-failed-open in `usePreviewWorkspace` alread
 "passes straight through `backendBusy`", for the same reason and with the same
 justification recorded beside it.
 
-**It passes through the projection's ignorance, not through what the session knows.**
-`begin_webview_document` keeps a running queue alive across a reload, so a panel
-remounting mid-drain is a session that *does* know the backend is owned — its recovered
-queue says so — and dispatching an unconditional `inspect_backend` there would wait out
-the whole queue with `backendBusy` held, disabling Convert, Recheck and
-Choose-installation for the duration and taking away the floor row 132 relies on. So the
-mount dispatch is bypassed by exactly one thing: a recovered running queue. The
-obligation stays owed, and the drain's own answer is the occasion that issues it —
-which is the ordinary path, reached by the ordinary rule.
+**It is unconditional, and a draft tried to make it conditional.** The idea was to
+bypass the dispatch when the session already knows the backend is owned — a panel
+remounting onto the queue `begin_webview_document` keeps alive across a reload — so that
+an `inspect_backend` would not wait out the whole drain with `backendBusy` held. It does
+not work, twice over. `backendBusy` starts `true` and is cleared by nothing except this
+check's own completion (and an installation change's), so bypassing it leaves the flag
+raised for the run: the owed check is then refused by admission's own changing fact,
+Convert, Recheck and Choose-installation stay dead, and rows 52, 132 and 136 are all
+false. And the condition is not knowable when it must be evaluated — the mount effect
+runs on the first commit, while the recovered queue is not known until the Drop
+subscription settles — so the unconditional dispatch would go out anyway.
+
+**A remount mid-drain therefore waits for the drain, and that is the tree's behaviour
+rather than this boundary's.** `usePreviewWorkspace` dispatches this check at mount
+today, `inspect_backend` takes the gate by waiting today, and the lockout that follows
+is M6.1's and M6.3's. This decision does not add it and does not fix it: the rule here
+is only that the check is *issued*, which it already is. Row 137's bound is about the
+checks this document newly owes — the ones step three issues — and those are dispatched
+only into a lane the projection says is free.
 
 It is the state with no binding, so the liveness rule below — written about bindings —
 does not reach it, and without this it would be the
@@ -1802,7 +1814,10 @@ another configuration probe is already in flight
 ```
 
 Listed in `ConversionLane`'s own precedence — quarantined, changing, *`laneClaimed`
-before `previewReading`*, with probe-in-flight last as row 79 requires. A draft had
+before `previewReading`* — with probe-in-flight last because it is the narrowest fact
+here, and *not* because it has a place in the registry's order: row 79 removes its key
+entirely, since nothing it refuses is ever rendered. This list is admission's, and
+admission is not the registry. A draft had
 the middle two the other way round, which is enough to break row 73 on its own:
 `previewReading` is an independent counter and both are routinely true together, so
 one moment would have been keyed `conversion-running` by the lane and
@@ -2367,8 +2382,8 @@ and no finding may disappear because the old PR was superseded.
 | 133 | Delivery and occasion left as one word | A bound written over "any delivery" after one delivery stopped being a stimulus | An occasion is defined once: a gate-taker's answer, or a lane fact going false — never a poll | Decision 4b | An owed read deferred by a running drain is not re-issued on every tick of that drain's own poll |
 | 134 | The delivery rule stated without the operation it was widened for | "Observe or replace" kept as the whole scope after the poll joined it | The rule names the poll where it is stated in full, and in the summary that answers for it | Decision 4 | Coding the normative sentence closes the drain window rather than reopening it |
 | 135 | A quarantined reading judged as though it described a build | A currency test applied to a statement about the session | The quarantined reading claims no build, is exempt from the test, and discharges its check by answering | Decision 2 + Decision 4 | A drain that observes a replacement and quarantines in the same operation leaves no check owed for the rest of the run |
-| 136 | The mount check deferred by a fact only it can clear | `backendBusy` initialising to true, gating the dispatch that would make it truthful | The mount dispatch passes through the projection's ignorance, and is bypassed by a recovered running queue, which is knowledge | Authority obligations + `ConversionLane` projection | A session mounts, checks and settles untouched; a panel remounting mid-drain waits for the drain rather than locking out its own controls |
-| 137 | A waiting check locking out the controls that would end it | A duty on a waiting primitive, dispatched without bound | It is dispatched only into a lane the projection says is free, so the lockout is one stale-window wide and never spans a known drain | Authority obligations | No automatic check waits behind a drain the frontend can see |
+| 136 | The mount check deferred by a fact only it can clear | `backendBusy` initialising to true, gating the dispatch that would make it truthful | The mount dispatch is unconditional; nothing else clears that flag, so bypassing it would raise the deadlock for the run | Authority obligations + `ConversionLane` projection | A session mounts, checks and settles untouched, and no condition on that dispatch can leave `backendBusy` raised |
+| 137 | A waiting check locking out the controls that would end it | A duty on a waiting primitive, dispatched without bound | The checks this document owes are dispatched only into a lane the projection says is free; the mount dispatch is the tree's own and unchanged | Authority obligations | No check step three issues waits behind a drain the frontend can see |
 | 138 | A newly incurred obligation waiting for an occasion | Step three read as the only statement of issuance | An obligation is issued when it is incurred; step three recovers the ones that could not be | Frontend reconciliation | A drain's poll that delivers a replacement gets that binding's configuration read, without the poll being an occasion |
 | 139 | A banner with no reading at all, and no clause to get one | An enumeration written for a stale reading and not for a missing one | An obligation is owed where the rendered reading names a different binding *or where there is none* | Frontend reconciliation | A panel remounting onto a recovered queue gets a reading when the drain answers, rather than none for the run |
 
