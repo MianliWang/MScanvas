@@ -488,9 +488,13 @@ it has today.
 a refused `BEGIN` observes a new binding without producing a
 `BackendAvailabilityDto` for it, so nothing would replace the superseded reading and
 it would stand until a reader pressed Recheck by hand. So: **a rendered reading whose
-receipt is not the authority's owes a backend check**, which is exactly the
-obligation `Unresolved` incurs at mount — same admission, same occasions, same
-discharge — asked of one more condition. A session that has never resolved anything
+receipt is not the authority's owes a backend check**, which is the same obligation
+`Unresolved` incurs at mount — same admission, same occasions, same discharge — asked
+of one more condition. What they do not share is the *dispatch*: the mount one is
+unconditional, for the reason given below, and this one is issued by step three, into a
+lane the projection says is free. That is why a banner going stale during a drain waits
+for the drain rather than dispatching an `inspect_backend` that would hold `backendBusy`
+for its length. A session that has never resolved anything
 and a session whose banner describes a build it has left are the same problem, and
 they get the same answer.
 
@@ -1090,7 +1094,7 @@ another occasion has passed since that attempt was issued
      and delivers while the refused attempt's own reply is still in flight;
      that delivery sees the attempt in flight and issues nothing, and the
      refusal lands afterwards into a world that has already changed. One bit
-     -- has anything been delivered since this attempt went out? -- separates
+     -- has any occasion passed since this attempt went out? -- separates
      the reorder from the spin
 
 it IS re-issued by any other occasion, an obligation's own answer included
@@ -1277,8 +1281,10 @@ a delivery from an operation that took the gate
      nothing: a read deferred by a running drain must not be re-issued on
      every tick of that drain's own polling
 
-a lane fact the obligation was deferred on going false
-  -- which the frontend observes in its own render, needing nothing from Rust
+a lane fact going false
+  -- which the frontend observes in its own render, needing nothing from Rust,
+     and which is the canonical definition rather than a narrower one: any
+     such fact, not only the one this obligation was deferred on
 ```
 
 The second half is not redundancy. `laneClaimed` is true while the destination
@@ -2331,8 +2337,8 @@ and no finding may disappear because the old PR was superseded.
 | 82 | No configuration state for an answer needing no process | A binding-only answer deferred by a gate it does not take | A read for a binding that names no build runs no discovery and consults no admission; it answers from the binding | Decision 5 + Decision 11 | A session bound to no installation renders `UnavailableForBinding` while a drain holds the gate |
 | 83 | A retained question mistaken for a retained belief | A retain-list bounding receipts by the render alone | A plan identity's receipt is a component of a question, bounded by the plan, not by the render | Decision 9 + Decision 13 | A failed plan can be retried for the same question without React holding a third authority |
 | 84 | Two obligations issued into each other's gate | "Issues both" read as simultaneously | Where both are owed the duty goes first and the courtesy is deferred onto its answer | Frontend reconciliation | An occasion finding a mount-time check and a read both owed strands neither, and issues one process at a time |
-| 85 | An admission rule the frontend cannot evaluate | A rule stated over `ConversionLane` for a fact with no lane field | Admission reads the lane's ownership fields plus the frontend's own probe-in-flight bookkeeping | Decision 4 + Decision 13 | No configuration read or backend check is issued while a probe is in flight; Convert, which is not this rule's business, stays enabled |
-| 86 | Work suppressed by a missing verdict, and never re-issued | One-shot guards behind a verdict that arrives later than the binding | A binding never arrives without its verdict, so nothing `backendUsable` gates is suppressed for want of one | Decision 1 + `backendUsable`'s readers | A document opened as a replacement is observed previews on that observation, and a scan clicked then is not silently lost |
+| 85 | An admission rule the frontend cannot evaluate | A rule stated over `ConversionLane` for a fact with no lane field | Admission reads the lane's ownership fields plus the frontend's own probe-in-flight bookkeeping | Decision 4 + Decision 13 | No configuration read that launches a probe, and no backend check, is issued while a probe is in flight; a binding-only read, which launches none, still is |
+| 86 | Work suppressed by a missing verdict, and never re-issued | One-shot guards behind a verdict that arrives later than the binding | A binding never arrives without its verdict, so nothing `backendUsable` gates is suppressed for want of one | Decision 1 + `backendUsable`'s readers | A document opened as a replacement is observed previews on that same observation, and a scan clicked then is not silently lost |
 | 87 | A courtesy abolished with the duty it was mistaken for | One decision covering the exact-intent proof and the pre-picker family check | The proof owns a guarantee and may not be skipped; the pre-picker courtesy owns none and stays skippable, sharing the proof's acquisition rather than taking its own | Decision 10 | The family check is never promoted into the proof's guarantee, and no picker opens before the exact intent is proved |
 | 88 | One moment keyed two ways by an order written wrong | An admitting list whose middle two facts were transposed | The list is `ConversionLane`'s precedence exactly: `laneClaimed` before `previewReading` | Decision 11 | A conversion running during a preview read is keyed `conversion-running` by both authorities |
 | 89 | An exemption written for a state the tree cannot produce | A quarantined `NoInstallation` session, protected by a rule of its own | Quarantine follows a resolved build and short-circuits every later discovery, so the pairing cannot arise and needs no exemption | Frontend reconciliation + Decision 5 | The binding-only read has one exemption, from admission, and no second one that protects nothing |

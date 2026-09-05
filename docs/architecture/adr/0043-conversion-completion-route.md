@@ -25,13 +25,14 @@ Related: [0002](0002-external-proteowizard.md),
 **Amended 2026-09-04 by M6.4A.** The route gains one authority interlude where
 M6.1 and M6.3 converge, immediately before M6.4, and with it three edges, M6.4's
 prerequisites and acceptance, and the chain wording. M6.1's edge now lands on the
-interlude rather than on M6.4, because the boundary is normative over the lane's field
-set and refusal precedence, which it reads rather than rewrites; M6.4 inherits the edge
-through M6.4A. Where M6.4 owns the conversion configuration's *ownership boundary*, that
-is now [ADR 0044](0044-conversion-configuration-authority.md)'s, and this document
-defers to it there. Everything else here is the route as it was locked on 2026-09-01 and
-is **not** rewritten as though ADR 0044 had existed then: the first M6.4 attempt, its
-four stops and the reasoning that produced them are history this document keeps.
+interlude rather than on M6.4, because the boundary is written against the lane's field
+set and refusal precedence — it reads them, defers to them, and forbids the replacement
+changing them; M6.4 inherits the edge through M6.4A. Where M6.4 owns the conversion
+configuration's *ownership boundary*, that is now [ADR
+0044](0044-conversion-configuration-authority.md)'s, and this document defers to it
+there. Everything else here is the route as it was locked on 2026-09-01 and is **not**
+rewritten as though ADR 0044 had existed then: the first M6.4 attempt, its four stops
+and the reasoning that produced them are history this document keeps.
 
 ## What this ADR is, and what it is not
 
