@@ -1348,6 +1348,16 @@ a failed configuration (Decision 3). `Failed` is reached where the probe *did* a
 and its answer cannot be used: a bound help stream that will not parse, which is
 Decision 3's load-bearing case, or a grammar that `require_conversion` refuses.
 
+**A refused read still answers, with the snapshot as it stands.** That is how
+`Unattempted` reaches the wire at all: the read is attempted, admission refuses, and the
+response carries the authority and a configuration of `Unattempted` — the state Rust
+holds for that binding, unchanged. Without it the member would be one no operation
+produces, and Decision 13's "Rust's `Unattempted` says the catalog is unread" would have
+nothing to read it from, leaving React to derive owedness from the absence of a snapshot
+— which is the derivation that decision forbids. The refusal is the *domain outcome*,
+and by Decision 4b it is bookkeeping rather than an error on screen; the snapshot beside
+it is the news.
+
 **Transient process contention is not a failed read either.** A configuration attempt
 is spent when a probe ran and answered unusably, never when one could not start: a
 conversion holding the backend lane says nothing about what the installed build
@@ -1608,9 +1618,10 @@ a reply arrives for any other identity or any earlier ordinal
 
 a reply arrives while the state is none, blocked, ready or failed
   -> discarded; nothing is loading, so nothing is awaiting an answer
-  -> `failed` is named explicitly because it is the one non-loading state
-     that still holds a matchable identity and ordinal, so a rule keyed on
-     matching would install into it
+  -> `ready` and `failed` are named explicitly because both still hold a
+     matchable identity, so a rule keyed on identity alone would install
+     into them; only `loading` carries an ordinal, and only `loading` is
+     awaiting an answer
   -> stated because `blocked` has no loading identity to fail to match,
      and a rule written only as "any other identity" leaves a plan built
      under the previous binding installable
@@ -2300,7 +2311,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–142).
+plus the findings raised against this document's own drafts (rows 18–143).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2448,6 +2459,7 @@ and no finding may disappear because the old PR was superseded.
 | 140 | React forbidden to hold the projection three rules read | A retain-list granting the revision and the receipt but not the state they are fields of | The authority projection is retained whole: state, binding and `previewAvailability` | Decision 13 | `backendUsable`, the `NoInstallation` exemption and step three's unresolved clause are all answerable from what React holds |
 | 141 | A `ready` plan that cannot be checked for currency | An answer stored without the question it answers | `ready` and `failed` carry the request identity; only `loading` carries an ordinal, which is the state where a reply is matched | Plan state machine + Decision 13 | An answer that stops describing the current question is noticed, and no state holds a field nothing reads |
 | 142 | A snapshot from an operation outside the delivery rule | Membership drawn from gate-taking, over a read that takes none | The binding-only configuration read is a member: it carries the authority it read | Decision 4 + Decision 5 | Every snapshot that exists carries a projection to be judged against |
+| 143 | `Unattempted` on the wire and produced by nothing | A refused read answering with no snapshot, in a contract whose member says the catalog is unread | A refused read answers with the authority and the configuration as it stands | Decision 5 + Decision 13 | React reads `Unattempted` from a snapshot rather than deriving it from a snapshot's absence |
 
 ## What this interlude does not do
 
