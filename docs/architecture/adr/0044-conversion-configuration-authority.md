@@ -2344,6 +2344,12 @@ frontend
   -> its receipt differs from A
   -> Ready(A) is invalidated
   -> Plan(A) is invalidated
+  -> two obligations are incurred at once: the banner's reading still carries
+     A's receipt, so a backend check is owed, and B owes a configuration read
+  -> the check goes first, by the duty-first ordering -- a read attempted here
+     would take the gate for a two-tool discovery and leave the duty waiting
+     behind it
+  -> the check answers, which is the occasion that issues the read
   -> ConversionConfigurationSnapshot(B) is read, once, through the ordinary
      lifecycle
   -> the selected admitted intent identity is preserved wherever B's catalog
