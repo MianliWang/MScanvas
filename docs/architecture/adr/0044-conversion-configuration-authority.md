@@ -228,12 +228,14 @@ the frontend issues, the recheck-after-a-failed-open included, and an installati
 change in flight counts as one** — the recheck's own `installationChanges.current > 0`
 deferral is that constraint already written down, and it is what stops a stale check
 reading rolling `origin` back from `chosen` to `automatic` when a chosen folder resolves
-to the bound build. What the recheck bypasses is `backendBusy`, the courtesy projection,
-and not the in-flight bit; otherwise it could land behind the mount check and restore
-the older reading, which is the half of `applyVerdict`'s guard that ordering alone does
-not replace. A plan is the exception that proves the rule, and carries an ordinal,
-because a retry is *meant* to ask the same question again while an answer may still be
-coming.
+to the bound build. What the recheck bypasses is the *rendered* `backendBusy`, which is
+React state and lags a commit behind; the in-flight bit is a ref, read at dispatch. They
+carry the same fact and are read at different moments, which is the distinction ADR 0041
+draws for every lane field and this one inherits -- and it is what stops the recheck
+landing behind the mount check and restoring the older reading, the half of
+`applyVerdict`'s guard that ordering alone does not replace. A plan is the exception
+that proves the rule, and carries an ordinal, because a retry is *meant* to ask the same
+question again while an answer may still be coming.
 
 An internal monotonic counter may remain the implementation. What must not
 happen again is exposing that counter and letting call sites supply its meaning:
@@ -259,8 +261,18 @@ the defect this decision names. A replacement that adds the receipt and leaves t
 counter beside it satisfies every other rule here and keeps the whole family
 alive: two identities on one payload, one of them arithmetic. The field is removed
 from every **live** contract that carries it — the five in `contracts.ts` and their
-`dto.rs` counterparts — and no comparison of installation identity
+`dto.rs` counterparts — and no *frontend* comparison of installation identity
 survives that is not receipt equality.
+
+**Rust's own identity comparisons are not in scope, and a draft's unscoped sentence
+would have broken one.** `InstallationIdentity` stays where it is and keeps doing what
+it does — most pointedly at the queue's retry admission, which holds the *identity*
+rather than any counter precisely so that switching installation away and back, which
+restores the same build, still admits the retry. A receipt cannot serve there: it is
+session-scoped and changes on every replacement, so two switches mint a new one for the
+same build and the retry would be refused for ever, which is the defect that call site's
+own comment describes. The receipt is the **wire** identity, and it answers one
+question — is this the binding you are rendering.
 
 This closes the family in which a plan stamped from one reading and a catalog
 stamped from another are compared for equality, and disagree for reasons neither
@@ -741,7 +753,9 @@ the three are ungated by the frontend's courtesy projection: the mount one, for 
 reason below, and the quarantine one, because gating it would defer the quarantine
 banner behind the drain that caused the quarantine — row 153's own defect, and why
 `projectedQuarantine` is written the way it is. Only the stale-reading condition's check
-is issued by step three, into a lane the projection says is free.
+has its *first* attempt made by step three, into a lane the projection says is free.
+Step three then recovers all three alike: an ungated dispatch that Rust refuses leaves
+its obligation owed, and owed is owed whoever attempted it first.
 
 **They do not share an acquisition with the configuration read, and a draft of this
 document said they should.** The argument was row 115's, made for `BEGIN`: one
@@ -789,10 +803,13 @@ holder runs. That is the cost of the check being a duty on a waiting primitive, 
 courtesy above bounds it only for the holders the projection can see. Two it cannot: a
 configuration probe, which is deliberately not a lane fact, and whatever holds the gate
 when an ungated dispatch goes out. So the honest statement is narrower than a draft's:
-**a step-three check never waits behind a drain or a preview the frontend knows about**,
-which is the case that would last; the waits it can still meet are behind a probe, which
-is bounded by two `PROBE_TIMEOUT`s, and behind whatever a mount or quarantine dispatch
-happens to find, which is the tree's existing behaviour and unchanged.
+**a step-three check never waits behind a drain or a preview the frontend has been told
+about.** A drain that started within the projection's stale window is not one of those,
+and a check dispatched into it holds `backendBusy` for the queue — which is why the
+stale window's width is the real bound here, and why nothing in this document widens it.
+The other waits it can meet are behind a probe, bounded by two `PROBE_TIMEOUT`s, and
+behind whatever a mount or quarantine dispatch happens to find, which is the tree's
+existing behaviour and unchanged.
 
 **An obligation is owed only while the thing refusing it can stop refusing.** This
 is the rule for both obligations, and it has to be stated, because the same
@@ -1218,6 +1235,10 @@ excluded every obligation-produced delivery and starved it.
 ```text
 the accepted projection's receipt differs from the rendered one
   -> configuration and plan for the rendered binding are non-current, immediately
+  -> so is everything else that build produced: the visible preview and the
+     roster's backend-derived rows, which `discardBackendDerivedState` clears
+     today on an advanced generation and which nothing else would clear once
+     that counter is gone
   -> no conversion action stays enabled from them
   -> the new binding owes a configuration read, which is attempted on
      incurrence, subject to admission AND to the duty-first ordering -- so
@@ -1231,6 +1252,13 @@ the accepted projection's receipt differs from the rendered one
      an answer: it says the catalog is unread, so the read stays owed
   -> render only the snapshot that carries it
 
+The preview half is easy to leave out and expensive to lose: `applyVerdict` calls
+`discardBackendDerivedState` on an advanced generation today, and the removal of that
+counter deletes the call site rather than the need. Without it, build A's spectrum table
+stays on screen beside B's banner and B's catalog — a stale window in the one surface
+this document does not otherwise talk about, opened by its own cleanup.
+
+```text
      (the separation matters: step two decides what is *invalid*, and an
       imperative read here would put the courtesy ahead of the duty in the
       case where both obligations arise at once -- a drain's own
@@ -2438,7 +2466,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–158).
+plus the findings raised against this document's own drafts (rows 18–160).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2554,7 +2582,7 @@ and no finding may disappear because the old PR was superseded.
 | 108 | The wait behind a probe understated by half | "A single `msconvert --help`", where discovery probes both tools | A configuration probe is a discovery over both tools, bounded by two `PROBE_TIMEOUT`s, and is described as such wherever its cost is weighed | Decision 10 + Decision 11 | No argument in this document rests on a probe being half as long as it is |
 | 109 | A payload with nothing to compare against | A receipt rule with no answer when a projection names no binding | No snapshot carries an `Unresolved` projection, so every payload has a binding to be judged by | Frontend, ordering then identity | The receipt test is total over the snapshots that exist |
 | 110 | A banner naming the left build while marking its verdict superseded | Currency applied to the verdict and not to the identity beside it | The projection governs the whole reading: release, build date and origin included | Decision 4 | Between an observation and the render that consumes it, the banner names no build as current, and keeps every reason it has today |
-| 111 | The counter kept beside the receipt that replaced it | A boundary that adds an identity without retiring the one it supersedes | `installationGeneration` leaves every live contract, and no installation comparison survives that is not receipt equality; the versioned diagnostics export keeps its durable field, which is ADR 0017's | Decision 1 + wire contracts | No `Math.max` over installation numbers remains anywhere in the frontend, and no export schema changes |
+| 111 | The counter kept beside the receipt that replaced it | A boundary that adds an identity without retiring the one it supersedes | `installationGeneration` leaves every live contract, and no *frontend* installation comparison survives that is not receipt equality; Rust's `InstallationIdentity` and the diagnostics export are untouched | Decision 1 + wire contracts | No `Math.max` over installation numbers remains in the frontend; the queue's identity-keyed retry admission and the export schema both survive |
 | 112 | A plan judged by a projection its reply does not carry | A payload rule sourcing the receipt from a projection uniformly | A snapshot's receipt comes from its response's projection; a plan's from its own identity | Decision 4b + Decision 9 | `conversion_queue_plan`, which takes no gate and delivers no authority, still yields a plan that can be judged |
 | 113 | A masking window this boundary opens | `!backendUsable` outranking the lane facts, in a state this decision creates | No such state is created: the verdict arrives with the binding, so `backendUsable` is never false for want of one | Decision 1 | No window exists in which a lane fact is the real reason and a verdict is the one reported |
 | 114 | React forbidden to hold the answer it must render | An exhaustive retain-list omitting the configuration snapshot | The Rust-authored snapshot and its catalog are retained as the plan answer is: kept as they arrived, never recomputed | Decision 13 | Rendering a catalog and looking a row up in it needs no exception to the retain list |
@@ -2602,6 +2630,8 @@ and no finding may disappear because the old PR was superseded.
 | 156 | A response that can carry the state or the refusal, not both | A snapshot with two fields under rules needing three | The snapshot carries the authority, the configuration and this request's own outcome | Decision 6 | A read Rust refuses says `Unattempted` and says it was refused |
 | 157 | The quarantine dispatch gated behind the drain that caused it | "Only the mount dispatch is ungated", over an effect that is also ungated | Two of the three check conditions dispatch ungated: mount, and becoming quarantined | Decision 4 | The quarantine banner does not wait for the drain whose failed stop produced it |
 | 158 | A wait bound assuming every holder is visible | A courtesy projection that cannot see a probe or an ungated dispatch | A step-three check never waits behind a drain or preview the frontend knows about; the waits it can meet are bounded and named | Authority obligations | The bound claims only what the projection can deliver |
+| 159 | Rust's identity comparisons replaced by a session-scoped token | "No comparison of installation identity survives", written unscoped | Only frontend comparisons are in scope; the queue's identity-keyed retry admission stays, because switching away and back restores a build and mints a new receipt | Decision 2 | A retry is still admitted after an installation is switched away from and back |
+| 160 | A stale spectrum table beside a new binding's catalog | The counter's removal deleting `discardBackendDerivedState`'s only call site | A replaced receipt invalidates the visible preview and the roster's backend-derived rows, not only the configuration and plan | Decision 4b | Build A's spectrum table does not survive the observation of build B |
 
 ## What this interlude does not do
 
