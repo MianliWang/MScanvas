@@ -470,7 +470,10 @@ its projection is the authority it read, which is the same instant its answer de
 Concretely, the members are: the BEGIN preflight, queue execution and drain, retry
 preparation, the backend check and the installation change, the preview and spectrum
 reads, and the configuration read that runs a discovery — all of which can observe or
-replace the authority; and three that can do neither: `conversion_state`, the
+replace the authority; and three kinds that can do neither: **every operation
+answering with a `WorkspaceConversionUpdateDto`** — the state poll, and
+`stop_conversion_queue` and `cancel_conversion`, which take no gate and answer with the
+same shape, so a rule naming only the poll would leave two carriers to be invented — the
 binding-only configuration read, and a configuration read Rust's admission refuses
 before it discovers — that last because it is the only path by which `Unattempted`
 reaches the wire (Decision 5), so a response that carried no projection would leave its
@@ -818,9 +821,11 @@ the three are ungated by the frontend's courtesy projection: the mount one, for 
 reason below, and the quarantine one, because gating it would defer the quarantine
 banner behind the drain that caused the quarantine — row 153's own defect, and why
 `projectedQuarantine` is written the way it is. Only the stale-reading condition's check
-has its *first* attempt made by step three, into a lane the projection says is free.
-Step three then recovers all three alike: an ungated dispatch that Rust refuses leaves
-its obligation owed, and owed is owed whoever attempted it first.
+has its *first* attempt made by step three, into a lane the projection says is free —
+and it is the only one step three ever recovers. The other two go out ungated, and a
+dispatch that goes out is answered or blocked, never refused, so it discharges by
+answering and leaves nothing owed. "Owed" is what the frontend's own courtesy creates,
+and the courtesy holds back only that third one.
 
 **They do not share an acquisition with the configuration read, and a draft of this
 document said they should.** The argument was row 115's, made for `BEGIN`: one
@@ -876,9 +881,9 @@ than leaving anything owed. So the honest statement is narrower than a draft's:
 about.** A drain that started within the projection's stale window is not one of those,
 and a check dispatched into it holds `backendBusy` for the queue — which is why the
 stale window's width is the real bound here, and why nothing in this document widens it.
-The other waits it can meet are behind a probe, bounded by two `PROBE_TIMEOUT`s, and
-behind whatever a mount or quarantine dispatch happens to find, which is the tree's
-existing behaviour and unchanged.
+It cannot wait behind a probe: the probe-in-flight bit is in its dispatch predicate.
+The other waits in this area are the ungated dispatches', behind whatever they happen to
+find, which is the tree's existing behaviour and unchanged.
 
 **An obligation is owed only while the thing refusing it can stop refusing.** This
 is the rule for both obligations, and it has to be stated, because the same
@@ -2591,7 +2596,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–174).
+plus the findings raised against this document's own drafts (rows 18–175).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2754,7 +2759,7 @@ and no finding may disappear because the old PR was superseded.
 | 155 | An installation change racing a check | An in-flight constraint covering reads and checks only | A change in flight counts; the recheck's `installationChanges` deferral is that constraint | Decision 2 + Decision 13 | No stale reading rolls `origin` back from `chosen` to `automatic` |
 | 156 | A response that can carry the state or the refusal, not both | A snapshot with two fields under rules needing three | The snapshot carries the authority, the configuration and this request's own outcome | Decision 6 | A read Rust refuses says `Unattempted` and says it was refused |
 | 157 | The quarantine dispatch gated behind the drain that caused it | "Only the mount dispatch is ungated", over an effect that is also ungated | Two of the three check conditions dispatch ungated: mount, and becoming quarantined | Decision 4 | The quarantine banner does not wait for the drain whose failed stop produced it |
-| 158 | A wait bound assuming every holder is visible | A courtesy projection that cannot see a probe or an ungated dispatch | A step-three check never waits behind a drain or preview the frontend knows about; the waits it can meet are bounded and named | Authority obligations | The bound claims only what the projection can deliver |
+| 158 | A wait bound assuming every holder is visible | A bound written before the frontend's own probe-in-flight bit was in the check's predicate | A step-three check waits behind neither a probe nor a drain the frontend has been told about; what it cannot see is a drain started inside the stale window | Authority obligations | The bound claims only what the frontend can actually see |
 | 159 | Rust's identity comparisons replaced by a session-scoped token | "No comparison of installation identity survives", written unscoped | Only frontend comparisons are in scope; the queue's identity-keyed retry admission stays, because switching away and back restores a build and mints a new receipt | Decision 2 | A retry is still admitted after an installation is switched away from and back |
 | 160 | A stale spectrum table beside a new binding's catalog | The counter's removal deleting the call sites `discardBackendDerivedState` is reached from — four of them, two on the open path | A replaced receipt invalidates the visible preview and the roster's backend-derived rows, not only the configuration and plan; the in-flight-open exemption survives, and a discarded payload something was waiting for takes that surface out of waiting | Decision 4b | Build A's spectrum table does not survive the observation of build B; no discard fires mid-open; and no surface is left reading with nothing coming |
 | 161 | A retry offered for a state no read can change | A predicate written over "no usable answer" | The retry is offered where a read could improve the answer; `UnavailableForBinding` follows from the binding and only a different binding changes it | Decision 5 | No retry is offered beside a binding that names no build |
@@ -2771,6 +2776,7 @@ and no finding may disappear because the old PR was superseded.
 | 172 | One queue mixing two builds | A queue identity described as rewritten per pass, where the code writes it once and compares | The identity is bound on the first pass that resolves one and fixed; the counter is what was per pass | Decision 2 | `queue_installation_changed` still refuses a pass that resolved a different build |
 | 173 | An empty selection explained with a sentence about the backend | A plan machine with no transition back to `none` | Emptying the selection returns the plan to `none`, not to `blocked` | Plan state machine | Deselecting every row says nothing about the build |
 | 174 | The banner's owed check cancelled by a catalog answer | Step two's exception written over every obligation the arm mentions | The exception cancels the configuration read only; a configuration read carries no reading, so the banner's check is exactly as owed as it was | Frontend reconciliation | A read answering `Ready(B)` leaves the banner's stale reading still owed a check |
+| 175 | Two carriers of the queue update left to be invented | Delivery membership naming the state poll rather than the shape it answers with | Every operation answering with a `WorkspaceConversionUpdateDto` delivers — the poll, `stop_conversion_queue` and `cancel_conversion` | Decision 4 | A stop or a cancel carries the authority, exactly as the poll does |
 
 ## What this interlude does not do
 
