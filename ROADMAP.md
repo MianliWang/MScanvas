@@ -382,26 +382,49 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 
 **Started. The route is locked, the conversion lane has one availability
 authority, the installed `msconvert` has been measured against M6's finite
-candidate set, and what a conversion is asked to do is now a type; M6.4 is the
-next slice.**
+candidate set, what a conversion is asked to do is now a type, and the ownership
+boundary the visible settings sit on is decided; the M6.4 replacement
+implementation is the next slice.**
 
 The route, the live conversion gap audit it was decided from, the nine product
 decisions it surfaces, the twelve exit criteria and the M7/M8 seams are in
-[ADR 0043](docs/architecture/adr/0043-conversion-completion-route.md). Twelve
-slices:
+[ADR 0043](docs/architecture/adr/0043-conversion-completion-route.md), and the
+conversion-configuration ownership boundary is in
+[ADR 0044](docs/architecture/adr/0044-conversion-configuration-authority.md).
+Twelve slices, plus one authority interlude:
 
 - M6.0 — **complete** (route lock, documentation only).
 - M6.1 — conversion-lane authority. **complete.**
 - M6.2 — `msconvert` capability and evidence. **complete.**
 - M6.3 — typed `ConversionIntent`. **complete.**
-- M6.4 — visible settings, and a truthful plan. **Next.**
-- M6.5 — destination authority.
+- M6.4A — conversion configuration authority boundary. **complete**
+  (documentation only).
+- M6.4 — visible settings, and a truthful plan. **replacement implementation
+  next.** A first attempt is unmerged evidence on PR #95; see below.
+- M6.5 — destination authority. **not started.**
 - M6.6 — destination and conflict UX, including the destructive question.
 - M6.7 — convert selected, convert all.
 - M6.8 — cancellation, capacity, and truthful progress.
 - M6.9 — output completion and adoption.
 - M6.10 — evidence-gated side routes.
 - M6.11 — closure.
+
+**M6.4 was attempted once and is not published.** The attempt is on
+`feat/m6.4-visible-conversion-settings` / PR #95, which stopped four times: each
+bounded correction round closed the findings it was given and was stopped by
+something that closing introduced. The nine admitted semantics really are
+selectable there, and the plan really is Rust's answer — but the slice reached
+that by reconstructing several Rust-owned authorities in React and writing each
+new repair by hand against the others.
+
+So M6.4A was inserted rather than a fifth repair attempted. It decides, in [ADR
+0044](docs/architecture/adr/0044-conversion-configuration-authority.md), who owns
+installation truth, who owns conversion-capability truth, the receipt that binds them,
+what React retains, and at what granularity availability exists — and carries a
+hundred-and-eighty-seven-obligation finding ledger the replacement must prove, so that
+nothing PR #95 measured has to be rediscovered. PR #95 stays open as implementation
+evidence until the replacement has extracted its tests, copy and behaviour; nothing from
+it is on `main`.
 
 **M6.1 was first because the audit found the conversion lane had no single
 availability authority**, and it is now closed. `convert` claimed a ref as it
@@ -416,9 +439,9 @@ later slice adds a control that must say truthfully whether pressing it will do
 something, and each of them now has one rule to ask.
 
 **M6.2 measured the installed build rather than reading its help.** Twelve
-candidates, twelve terminal states: nine admitted on a decoded output, two
-refused on a decoded output, one evidence-blocked with what is missing and who
-owns it. Four findings change what later slices may assume. The provider's precision default is
+candidates, twelve terminal states: nine admitted on a decoded output, two refused on a
+decoded output, one evidence-blocked with what is missing and who owns it. Four findings
+change what later slices may assume. The provider's precision default is
 **mixed** — m/z at 64 bits, intensity narrowed to 32 — so every conversion this
 product has performed has silently narrowed its intensities, and M6.3 types that
 decision rather than inheriting it. `--zlib` is **already the default**, so the

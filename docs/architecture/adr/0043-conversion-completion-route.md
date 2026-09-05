@@ -1,6 +1,6 @@
 # ADR 0043 — Conversion Completion is the next milestone, and this is its route
 
-Status: accepted
+Status: accepted, amended 2026-09-04
 Date: 2026-09-01
 Related: [0002](0002-external-proteowizard.md),
 [0009](0009-mzml-conversion-execution-boundary.md),
@@ -19,7 +19,20 @@ Related: [0002](0002-external-proteowizard.md),
 [0027](0027-first-visible-sciex-wiff-workflow.md),
 [0037](0037-viewer-completion-route.md),
 [0041](0041-viewer-selection-availability.md),
-[0042](0042-viewer-completion-closure-and-handoff.md)
+[0042](0042-viewer-completion-closure-and-handoff.md),
+[0044](0044-conversion-configuration-authority.md)
+
+**Amended 2026-09-04 by M6.4A.** The route gains one authority interlude where
+M6.1 and M6.3 converge, immediately before M6.4, and with it three edges, M6.4's
+prerequisites and acceptance, and the chain wording. M6.1's edge now lands on the
+interlude rather than on M6.4, because the boundary is written against the lane's field
+set and refusal precedence — it reads them, defers to them, and forbids the replacement
+changing them; M6.4 inherits the edge through M6.4A. Where M6.4 owns the conversion
+configuration's *ownership boundary*, that is now [ADR
+0044](0044-conversion-configuration-authority.md)'s, and this document defers to it
+there. Everything else here is the route as it was locked on 2026-09-01 and is **not**
+rewritten as though ADR 0044 had existed then: the first M6.4 attempt, its four stops
+and the reasoning that produced them are history this document keeps.
 
 ## What this ADR is, and what it is not
 
@@ -374,7 +387,10 @@ as it bound `msaccess` in M5.
 
 ## The M6 route
 
-Twelve slices. The order is not a preference: the dependency graph below has no
+Twelve slices, and one authority interlude — M6.4A — inserted where M6.1 and M6.3
+converge, immediately before M6.4, after the first M6.4 attempt stopped four
+times. The order is not a
+preference: the dependency graph below has no
 cycle, and every edge is a real one — a slice consumes an authority an earlier
 slice established, or measures something a later slice may not assume.
 
@@ -390,6 +406,8 @@ slice established, or measures something a later slice may not assume.
                     |        M6.3 ConversionIntent              |
                     |                 |                         |
                     +--------+--------+                         |
+                             |                                  |
+                     M6.4A authority boundary                   |
                              |                                  |
                      M6.4 visible settings                      |
                              |                                  |
@@ -413,7 +431,7 @@ appears in the diagram. **M6.2 has two children** — M6.3 and M6.10. It no long
 feeds M6.6: the destructive question is answered by MSCanvas's own finalization
 boundary, so the edge that existed only to wait on a provider measurement is
 gone. M6.10 descends from M6.2 alone — a measurement branch, not a stage of the
-M6.4-to-M6.9 chain — and converges only at closure.
+M6.4A-to-M6.9 chain — and converges only at closure.
 
 **M6.11 is downstream of every slice that owns a core criterion**, transitively:
 M6.1 through M6.9 along the spine, and M6.10 along the branch. There is no core
@@ -425,9 +443,10 @@ Read as edges, with the reason each exists:
 | --- | --- |
 | M6.0 -> M6.1 | M6.1 needs the audit that says which rules disagree and where |
 | M6.0 -> M6.2 | M6.2 needs the frozen evidence contract and the fixture/identity baseline |
-| M6.1 -> M6.4 | A visible setting is a control; a control needs one availability rule |
+| M6.1 -> M6.4A | The boundary is written *against* the lane's field set and refusal precedence — it reads them, defers to them and forbids changing them — so it can only be written against a lane that exists |
 | M6.2 -> M6.3 | An intent may only name semantics the build was measured performing |
-| M6.3 -> M6.4 | A visible setting projects a typed intent; it does not create one |
+| M6.3 -> M6.4A | Making the intent visible needs an owner for the installation it is valid against |
+| M6.4A -> M6.4 | A visible setting projects a typed intent through one Rust-owned authority; it creates neither |
 | M6.4 -> M6.5 | The plan the destination is admitted for must already be truthful |
 | M6.5 -> M6.6 | Conflict and destructive UX act on a resolved destination |
 | M6.6 -> M6.7 | A scope control must display, per row, the destination policy and conflict vocabulary M6.6 establishes — a plan of many rows cannot show what each will do before that exists |
@@ -437,7 +456,7 @@ Read as edges, with the reason each exists:
 | M6.9, M6.10 -> M6.11 | Closure answers criteria the two of them settle |
 
 M6.1 and M6.2 are independent of each other and may run in either order or
-together. **M6.4 through M6.9 are a chain**; M6.10 needs only M6.2 and may run
+together. **M6.4A through M6.9 are a chain**; M6.10 needs only M6.2 and may run
 any time after it.
 
 ### M6.0 — Conversion Completion orientation and route lock
@@ -483,7 +502,7 @@ Everything backend-free stays available while the lane says no.
 *Non-goals:* no new setting, no new command, no queue-model change, no viewer
 change. This slice makes an existing set of controls truthful.
 
-*Downstream:* M6.4, and every slice that adds a control.
+*Downstream:* M6.4A, and through it M6.4 and every slice that adds a control.
 
 *Delivered.* `conversionAvailability.ts` holds one `ConversionLane` of eight
 facts, one `ConversionAction` discriminated by `start` and `retry`, and one
@@ -653,7 +672,7 @@ against the request, never as proof, with absence recorded as unverified.
 *Non-goals:* no UI, no new visible capability, no relaxation of the no-implicit-
 centroiding rule.
 
-*Downstream:* M6.4.
+*Downstream:* M6.4A, and through it M6.4.
 
 *Delivered.* `crates/proteowizard/src/intent.rs` holds five closed enums and one
 `ConversionIntent` whose five fields are private and whose only constructor is
@@ -823,17 +842,86 @@ requested result under one intent and as `RepresentationChange` under the other.
 retry — asserted with an intent that is deliberately not `SHIPPED`, so a
 re-derivation would be visible rather than accidentally right.
 
+### M6.4A — Conversion configuration authority boundary
+
+*Purpose:* decide who owns installation truth, conversion-capability truth and
+the identity that binds them, before the visible settings are built a second
+time.
+
+*Prerequisites:* M6.1 (there is a conversion lane whose field set and refusal
+precedence the boundary reads, defers to, and forbids the replacement changing) and
+M6.3 (there is a typed intent to be valid *about*).
+
+*Establishes:* [ADR 0044](0044-conversion-configuration-authority.md) — a
+Rust-owned installation authority that is a typed state rather than a counter; a
+single opaque binding receipt every fact about one installed ProteoWizard
+carries; preview availability and conversion configuration as two judgements
+under one binding; a conversion resolution attempt that records and returns its
+observation whether or not the capability binding succeeded, so a refusal cannot
+erase a newly observed binding; a Rust-owned configuration
+lifecycle keyed by that receipt; availability as a property of an admitted
+**row** rather than of an axis value; an explicit plan state machine; a mandatory
+pre-BEGIN intent proof; one probe-admission rule, decided by Rust's backend gate
+and quarantine boundary rather than by the conversion lane, for the conversion
+configuration read; and one DOM owner per availability reason.
+
+*Why it exists.* M6.4 was attempted on `feat/m6.4-visible-conversion-settings` /
+PR #95 and stopped four times, each round closing what it was given and being
+stopped by what that closing introduced. The measurements are real and are kept:
+sixteen live findings and four STOP records collapse into seventeen semantic
+families, and reviews of the record itself added further obligations in the same
+shape one layer out. Almost all of them are one shape: an authority that exists
+in Rust, projected to the frontend as a number or a boolean, leaving the frontend
+to reconstruct its meaning. ADR 0044 removes the reconstruction rather than
+correcting its arithmetic, and carries the finding ledger the replacement
+implementation must prove.
+
+*Non-goals:* no implementation, no new provider measurement, no change to
+`ConversionIntent::ADMITTED`, no destination decision. PR #95 remains open as
+implementation evidence and is not merged.
+
+*Acceptance:* every question the first M6.4 attempt answered twice has exactly one
+owner named, and the check that says so is written into the ADR rather than left to a
+reader. Every live finding and STOP record from that attempt maps to at least one
+acceptance obligation, so nothing it measured has to be rediscovered. No production
+code changes.
+
+*Downstream:* M6.4.
+
+*Delivered.* [ADR 0044](0044-conversion-configuration-authority.md) — fourteen
+decisions over twelve questions, a one-answer-per-question cross-check, a state graph
+the replacement implements, and a finding ledger the replacement must prove. This
+document's own amendment is the other half: the interlude in the route, M6.1's edge
+landing on it, and M6.4's prerequisites and acceptance restated against a boundary that
+did not exist when they were first written.
+
 ### M6.4 — Visible settings, and a truthful plan
 
 *Purpose:* make admitted intents selectable, and make the pre-run summary
 describe the plan that will actually be bound.
 
-*Prerequisites:* M6.1 (a control needs one availability rule), M6.3 (a control
-projects a typed intent).
+*Prerequisites:* M6.4A (a control needs one owner for the installation its
+semantics are valid against, and carries M6.3's typed intent through it — and
+through M6.4A, M6.1's one availability rule).
 
 *Establishes:* the visible controls for whatever M6.2 admitted; CNV-009's
 natural-language summary widened from item count and ordered list to **format
 and processing**; and the binding of the chosen intent into the queue at `BEGIN`.
+
+**The slice reaches past the conversion panel, and is sized for it.** ADR 0044's
+delivery rule is over every operation that takes the backend gate — which includes the
+preview and spectrum reads, so their responses carry the authority projection too, and
+`BackendStatus` reads it beside the availability DTO it already renders — and over three
+kinds that take none: everything answering with a `WorkspaceConversionUpdateDto`,
+whichever operation that is; the binding-only configuration read; and a read Rust's
+admission refuses. `ConversionQueue` is the poll's
+own payload, and the response carries the current authority, so its
+`installationGeneration` is replaced by the queue's own receipt: the build it is bound
+to, absent until the first drain pass binds one and fixed thereafter, which the M7 seam
+promises and which is a different fact from what the session is bound to now.
+`installationGeneration` leaves the five contracts that carry it in the same change.
+None of that is new *behaviour* for the viewer; it is the same facts on a typed carrier,
+and it is named here so the slice is not planned as a panel-only one.
 
 **CNV-009's output-root half is not M6.4's, and cannot be.** In the live flow the
 destination is chosen *after* the queue is created — the slot passes through
@@ -843,12 +931,19 @@ destination is chosen *after* the queue is created — the slot passes through
 **M6.5** and its visible form in **M6.6**. Until then the summary says the
 destination is chosen next, which is what the panel says today and is true.
 
-*Acceptance:* every visible setting traces to an evidence row. A setting the
-installed build does not support is absent or refused with a reason, never shown
-inert. **Of the plan facts that exist before dispatch** — membership, order,
-conflict policy and intent — the summary names the ones that will be bound, and
-moving a control after `BEGIN` changes nothing about the running queue. A lossy
-processing choice is marked lossy where the user chooses it.
+*Acceptance:* every visible setting traces to an evidence row. **Availability is a
+property of an admitted row, never of an axis value** — an unsupported *combination* is
+refused once, naming the combination, and no individual control is marked unsupported on
+its account ([ADR 0044](0044-conversion-configuration-authority.md), Decisions 7 and 8;
+the per-value framing this criterion carried until the M6.4A amendment is what produced
+the last round's blocking defect). A control whose own one-axis target is unavailable
+says so for that target; one whose target is **not qualified** — no admitted row on any
+build, which is thirty-nine of the forty-eight combinations — says that instead, and as
+a fact about the product's evidence rather than about this installation. None is shown
+inert. **Of the plan facts that exist before
+dispatch** — membership, order, conflict policy and intent — the summary names the ones
+that will be bound, and moving a control after `BEGIN` changes nothing about the running
+queue. A lossy processing choice is marked lossy where the user chooses it.
 
 *Non-goals:* no destination choice, no destination display, no scope control, no
 cancellation change.
@@ -2431,7 +2526,7 @@ The seams, each named with the slice that freezes it:
 | --- | --- | --- |
 | Command availability | One conversion-lane authority with a reason and a message, read identically by the operation and by every surface | M6.1 |
 | Conversion operation state | The slot's five states and three terminal reasons, on one sequence key that never rewinds | M6.1 (already true; stated) |
-| Bound plan facts | Membership, order, conflict policy, intent, destination policy and installation identity, fixed at `BEGIN` and readable — plus, per pass, any destructive authorization, if CNV-D4 admits one at all | M6.3, M6.4, M6.5, M6.6, M6.7 |
+| Bound plan facts | Membership, order, conflict policy, intent and destination policy, fixed at `BEGIN` and readable; installation identity fixed at the first pass that resolves one, since the picker precedes it — carried after M6.4A as the queue's own receipt, distinct from the session's current authority and allowed to differ from it while a drain runs — plus, per pass, any destructive authorization, if CNV-D4 admits one at all | M6.3, M6.4, M6.5, M6.6, M6.7 |
 | Destination identity | The bound policy, plus the resolved directory object for each item it applies to — one identity per item under a source-relative policy, possibly one shared identity under a custom folder. Never a path on the wire | M6.5 |
 | Conversion intent | A typed value, projected for display, never re-derived from controls | M6.3, M6.4 |
 | Per-item outcome | Eight item states plus all five judgements separated per item — process, staged output, finalized output, integrity, adoption — with artifact facts readable beside them | M6.9 |

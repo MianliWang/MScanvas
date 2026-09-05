@@ -7047,3 +7047,144 @@ and no new measurement was taken. It changes no destination, conflict or
 cancellation behaviour, no wire vocabulary beyond the integrity property and
 outcome names the new checks required, no dependency and no lockfile. It does not
 decide the mzXML disposition, which remains M6.10's, and it does not start M6.4.
+
+## M6.4A — Conversion configuration authority boundary, 2026-09-04
+
+**Documentation only.** No Rust, no TypeScript, no CSS, no test, no repository
+validator, no dependency and no provider evidence changes with this slice. What
+it produces is [ADR 0044](docs/architecture/adr/0044-conversion-configuration-authority.md)
+and the amendments that put it into the M6 route.
+
+Baseline `3fca4b134652fc72b275983ae3bd5a79ada37cbd`, clean and level with
+`origin/main`.
+
+### Why an interlude rather than a fifth correction
+
+M6.4 was attempted on `feat/m6.4-visible-conversion-settings` / PR #95. It
+stopped four times:
+
+```text
+STOP — M6.4_NOT_PUBLISHABLE
+STOP — M6.4_CORRECTION_NOT_PUBLISHABLE
+STOP — M6.4_SIGNAL_STABILIZATION_NOT_PUBLISHABLE
+STOP — M6.4_CLOSURE_NOT_PUBLISHABLE
+```
+
+Each round closed exactly what it was given, was gated green locally and in CI,
+and was stopped by something that closing had introduced. F1–F3 fixed the
+request/observation seam and widened the signal seam; G1–G2 fixed the signal seam
+and removed the recovery a failed catalog read had been living on; C1–C4 gave
+every failure an owner and, in doing so, rendered a row-level refusal against
+four axis values and gave two components one DOM id.
+
+**Four rounds with that shape is a measurement, not luck.** The conversion panel
+had come to carry four interacting authorities — backend binding, installation
+observation, catalog lifecycle, plan identity — and the last round added a fifth,
+per-value availability. Each was individually defensible; each new one had to be
+written by hand against the others. So the boundary was decided rather than the
+next edge repaired.
+
+### What the findings turned out to be about
+
+Sixteen live review threads stand on PR #95 (five of them at outdated diff
+positions, all read) plus the four STOP records. Collapsed by *what made each one
+possible* they are seventeen semantic families, and almost all are one of four
+shapes: a fact and the thing that carries it coming apart; a signal read from a
+proxy that resembles it; a fact about one thing asserted about another; and a
+fact established and never delivered.
+
+What they share is the boundary. The authority that could have settled each
+question **exists in Rust** and was projected to the frontend as a number or a
+boolean, leaving the frontend to rebuild the meaning — four separate notions of
+what had happened to one counter, three refs deciding whether a catalog was still
+an answer, and a compatibility question answered per value rather than per row.
+
+The clearest single piece of evidence is that this repository already solved the
+hardest of these once. `OperationAttempt` keeps an installation identity beside a
+preview outcome, and its doc comment states the failure mode verbatim: the two
+"answer different questions and only one of them survives a `?`". Conversion
+resolution returns a bare `Result`, so three separate findings are that `?` at
+work: an identity discovery had already found, discarded because the operation
+carrying it failed.
+
+### What ADR 0044 locks
+
+Fourteen decisions, answering twelve questions the replacement must not have to invent
+while coding: a Rust-owned installation authority that is a typed state (`Unresolved |
+Settled { binding, previewAvailability }`) rather than a counter, in which a binding
+never arrives without the verdict about it; one opaque, path-free,
+session-scoped `BackendBindingReceipt` every fact about one installed build carries;
+preview availability and conversion configuration as two judgements under one binding; a
+conversion resolution attempt that records **and returns** its observation whether or
+not the capability binding succeeded, so a refusal can never erase a newly observed
+binding; a Rust-owned configuration lifecycle keyed by receipt, so React needs no
+`servedBinding`, `catalogGeneration` or `automaticallyAttemptedBinding`; a delivered
+projection that is ordered before its receipt is compared, so a late reply cannot roll
+the session back; one settings snapshot on the wire; availability as a property of an
+admitted **row**; a preserved unrunnable selection stated once at settings level; an
+explicit plan state machine that never says `loading` without a request, whose identity
+carries the receipt; a mandatory pre-BEGIN intent proof that no busy lane may skip; one
+`ConversionConfigurationProbeAdmission` rule — Rust's backend gate and quarantine
+boundary, not `ConversionLane` — for the conversion configuration read; one panel-level
+owner per availability reason; and a closed list of what React retains, which holds
+Rust's answers and reconstructs none of them.
+
+It ends with a hundred-and-eighty-seven-obligation acceptance ledger: seventeen
+families from PR
+#95, and a hundred and seventy more from findings raised against this record's own drafts. Every
+live release-blocking finding maps to at least one obligation, so nothing PR #95
+measured has to be rediscovered by the replacement.
+
+**Those hundred and seventy are worth recording, because they are the same shapes one layer
+out.** The first draft said Rust must observe a replacement binding before
+propagating a refusal — and stopped there. Recording an observation without
+*delivering* it leaves the session correct in Rust and stale on screen: a refused
+`BEGIN` creates no queue, so there is no slot to poll and nothing else arrives to
+correct it, and the reader may go on pressing an action Rust is now certain to
+refuse. A boundary that says who *owns* a fact had not yet said who is obliged to
+*carry* it.
+
+The delivery rule then had to be made expressible twice more. `Unresolved` has no
+binding, so a contract demanding a receipt on every answer would have forced the
+first discovery failure to invent one — the response projects the *authority*,
+which may be `Unresolved`, rather than a receipt. And an opaque receipt can say
+that two things differ but not which is newer, so a delayed reply about the build
+the session has left would have revoked the build it is on: ordering is a
+Rust-authored `BackendAuthorityRevision`, applied first, and receipt equality
+decides identity only on a projection that has already been accepted as newer.
+
+Two more gaps were structural rather than new: `UnavailableForBinding` was named
+with no entry or exit, whose natural guess reinstates the `backendUsable`
+conflation; and the probe-admission rule was promised "stated once" and never
+stated, while being hung on `ConversionLane` — an authority for a different
+question, headed by a preview verdict.
+
+### PR #95's disposition
+
+**NOT PUBLISHED experimental implementation evidence.** It is not merged, not
+closed and not deleted: it holds tests, copy and measured behaviour the
+replacement should extract — the nine-row selection graph, the refusal
+vocabulary, the dead-end recovery, the browser spec — and the replacement M6.4
+decides the retirement point. Nothing from it is on `main`, which is unchanged at
+the baseline above.
+
+The replacement implementation starts from the new canonical main rather than
+continuing another correction round on the existing cross-layer state machine.
+
+### Validation
+
+`python -B scripts/check_repo.py` and `git diff --check`, each run directly on
+the reviewed head and each exiting zero. No other gate applies: this slice
+changes no Rust, no TypeScript and no test, so `cargo`, `pnpm` and the browser
+suite have nothing of this slice to run — `apps/desktop/AGENTS.md` requires a
+rendered pass for *rendered UI work*, and there is none here.
+
+### What this slice does not do
+
+It implements nothing, and takes no new provider measurement: the nine admitted
+rows are M6.2's nine and M6.3's type boundary around them is unchanged. It adds
+no visible setting, changes no destination, conflict, scope or cancellation
+behaviour, adds no dependency and no lockfile change, does not decide the mzXML
+disposition, which remains M6.10's, and it does not start M6.5.
+
+**M6.4 — the replacement implementation — is next. M6.5 has not started.**
