@@ -2620,7 +2620,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–176).
+plus the findings raised against this document's own drafts (rows 18–179).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2802,6 +2802,9 @@ and no finding may disappear because the old PR was superseded.
 | 174 | The banner's owed check cancelled by a catalog answer | Step two's exception written over every obligation the arm mentions | The exception cancels the configuration read only; a configuration read carries no reading, so the banner's check is exactly as owed as it was | Frontend reconciliation | A read answering `Ready(B)` leaves the banner's stale reading still owed a check |
 | 175 | Carriers of the queue update left to be invented | Delivery membership naming carriers one at a time rather than the shape they answer with | Every operation answering with a `WorkspaceConversionUpdateDto` delivers — the poll, `stop_conversion_queue`, `cancel_conversion` and the diagnostics-export paths | Decision 4 | A stop, a cancel or a diagnostics export carries the authority, exactly as the poll does |
 | 176 | A once-latch React is forbidden to hold | A ban on judging owedness, over a fact Rust cannot supply | The quarantine once-latch is in-flight bookkeeping: `backendQuarantined` never clears, so only the frontend knows whether it has dispatched for the transition | Decision 13 | The quarantine check is dispatched once and not on every reconciliation |
+| 177 | The plan's own refusal with no key, fact or owner | A registry closed to lane fields and target reasons, over a refusal that is neither | A plan state is a third kind of key, read only by Convert, needing no change to the lane's vocabulary | Decision 12 + Decision 9 | A failed plan and one being recomputed refuse Convert differently, and row 15's owner exists |
+| 178 | Two dispatches sharing one busy flag | The quarantine dispatch exempted from the constraint but not from the flag | It neither raises nor clears `backendBusy`, because it launches nothing | Decision 2 + Decision 11 | A quarantine check's immediate return does not clear a flag a blocked mount check is still holding |
+| 179 | The not-qualified branch with no acceptance criterion | An amendment restating the row-level rule and dropping the other branch | The criterion names both: an unavailable target and a not-qualified one, said differently | ADR 0043 amendment | Thirty-nine of forty-eight combinations have a criterion, not only the nine |
 
 ## What this interlude does not do
 
