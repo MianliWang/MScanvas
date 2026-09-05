@@ -912,12 +912,13 @@ and processing**; and the binding of the chosen intent into the queue at `BEGIN`
 delivery rule is over every operation that takes the backend gate — which includes the
 preview and spectrum reads, so their responses carry the authority projection too, and
 `BackendStatus` reads it beside the availability DTO it already renders — and over three
-operations that take none: the queue's state poll, the binding-only configuration read,
-and a read Rust's admission refuses. `ConversionQueue` is the poll's own payload, and
-the response carries the current authority, so its `installationGeneration` is replaced
-by the queue's own receipt: the build it is bound to, absent until the first drain pass
-binds one and fixed thereafter, which the M7 seam promises and which is a different fact
-from what the session is bound to now.
+kinds that take none: everything answering with a `WorkspaceConversionUpdateDto` — the
+state poll, `stop_conversion_queue` and `cancel_conversion` — the binding-only
+configuration read, and a read Rust's admission refuses. `ConversionQueue` is the poll's
+own payload, and the response carries the current authority, so its
+`installationGeneration` is replaced by the queue's own receipt: the build it is bound
+to, absent until the first drain pass binds one and fixed thereafter, which the M7 seam
+promises and which is a different fact from what the session is bound to now.
 `installationGeneration` leaves the five contracts that carry it in the same change.
 None of that is new *behaviour* for the viewer; it is the same facts on a typed carrier,
 and it is named here so the slice is not planned as a panel-only one.

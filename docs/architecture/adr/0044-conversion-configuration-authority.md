@@ -39,7 +39,7 @@ coding.
 | Question | Answer |
 |---|---|
 | Who owns installation truth? | Rust, as a typed authority state — never a bare counter the frontend interprets. |
-| Who is obliged to deliver it? | Every operation that can observe **or replace** it, on its answer, whether that answer succeeds or refuses — and three that do neither: the queue's state poll, the only thing that speaks during a drain, plus the binding-only configuration read and a read Rust's admission refuses, each of which answers with a snapshot needing a projection to be judged against. |
+| Who is obliged to deliver it? | Every operation that can observe **or replace** it, on its answer, whether that answer succeeds or refuses — and three kinds that do neither: everything answering with a `WorkspaceConversionUpdateDto` (the state poll, `stop_conversion_queue`, `cancel_conversion`), plus the binding-only configuration read and a read Rust's admission refuses, each of which answers with a snapshot needing a projection to be judged against. |
 | Who owns conversion-capability/catalog truth? | Rust, as a lifecycle keyed by the installation binding. |
 | What identity binds those facts together? | One opaque, session-scoped, path-free `BackendBindingReceipt`. |
 | Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
@@ -612,10 +612,11 @@ So the rule is stated in full:
 > **Every operation that can observe or replace installation authority returns
 > the authority as it stands when the operation answers — whether its domain
 > outcome succeeds or refuses. So does the queue's state poll, which can do
-> neither and is the session's only voice while a drain runs; so does the
-> binding-only configuration read; and so does a configuration read Rust's admission
-> refuses, since each of those answers with a snapshot that would otherwise have no
-> projection to be judged against.**
+> neither and is the session's only voice while a drain runs — as does every other
+> operation answering with its shape, `stop_conversion_queue` and `cancel_conversion`
+> among them; so does the binding-only configuration read; and so does a configuration
+> read Rust's admission refuses, since each of those answers with a snapshot that would
+> otherwise have no projection to be judged against.**
 
 "Conversion-bound" would have been too narrow by exactly the two operations that
 *replace* a binding rather than merely notice one: the backend check and the
@@ -2294,7 +2295,9 @@ the receipt a request was issued under, for the life of that request, consulted
   only where an answer carries no binding of its own -- a failure
 the selected admitted intent id
 request-in-flight state needed to render an outstanding command
-per-obligation bookkeeping: whether a read or check is in flight, and whether
+per-obligation bookkeeping: whether a read or check is in flight, whether the
+  quarantine transition has already been dispatched for (a once-latch: Rust
+  cannot supply it, since `backendQuarantined` never clears), and whether
   any *occasion* has passed since it was issued -- as Decision 4b defines one:
   a gate-taker's answer, or a lane fact ceasing to refuse, never a poll --
   never a *judgement* about whether one is owed, which Rust's state makes
@@ -2311,6 +2314,14 @@ ordinary presentation state
 React does **not** own reconstructed authorities for installation observation
 watermarks, an applied generation, an automatic reconciliation quota, a settled
 binding, a catalog-served binding, or catalog-generation ordering.
+
+**The quarantine once-latch is bookkeeping, not a judgement.** `projectedQuarantine`
+records that this frontend has already dispatched for the transition — a fact about its
+own work, which only it can know, and which Rust cannot supply because
+`backendQuarantined` never clears and so cannot distinguish "just became" from "has been
+for a while". Without it the quarantine check, which row 169 exempts from the in-flight
+constraint, re-dispatches on every reconciliation; with the condition dropped instead,
+row 153 reopens. It is the same category as the in-flight bits beside it.
 
 **"Owed" is read, not derived — and the one case where React has nothing to read
 from is not an exception.** A binding whose snapshot React holds says for itself
@@ -2596,7 +2607,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–175).
+plus the findings raised against this document's own drafts (rows 18–176).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2763,7 +2774,7 @@ and no finding may disappear because the old PR was superseded.
 | 159 | Rust's identity comparisons replaced by a session-scoped token | "No comparison of installation identity survives", written unscoped | Only frontend comparisons are in scope; the queue's identity-keyed retry admission stays, because switching away and back restores a build and mints a new receipt | Decision 2 | A retry is still admitted after an installation is switched away from and back |
 | 160 | A stale spectrum table beside a new binding's catalog | The counter's removal deleting the call sites `discardBackendDerivedState` is reached from — four of them, two on the open path | A replaced receipt invalidates the visible preview and the roster's backend-derived rows, not only the configuration and plan; the in-flight-open exemption survives, and a discarded payload something was waiting for takes that surface out of waiting | Decision 4b | Build A's spectrum table does not survive the observation of build B; no discard fires mid-open; and no surface is left reading with nothing coming |
 | 161 | A retry offered for a state no read can change | A predicate written over "no usable answer" | The retry is offered where a read could improve the answer; `UnavailableForBinding` follows from the binding and only a different binding changes it | Decision 5 | No retry is offered beside a binding that names no build |
-| 162 | The delivery rule naming two of its three exceptions | A rule stated in full before the third was added | The rule in full, and the summary that quotes it, name the poll, the binding-only read and the refused read | Decision 4 | Every operation that answers with a snapshot carries a projection to judge it by |
+| 162 | The delivery rule naming fewer non-observers than it has | A rule stated in full before each addition | The rule in full, and the summary that quotes it, name all three kinds: the `WorkspaceConversionUpdateDto` carriers, the binding-only read and the refused read | Decision 4 | Every operation that answers with a snapshot or a queue update carries a projection to judge it by |
 | 163 | A workspace left reading with nothing coming | A stale preview reply dropped rather than discarded | A discarded payload some surface was waiting for takes that surface out of waiting | Decision 4b | A preview from a replaced build clears the reading state instead of stalling it |
 | 164 | A failure with no binding and nothing to judge it by | A retain-list that removed the only fact such an answer can be judged against | React holds the receipt a request was issued under, for that request, and consults it only for an answer carrying no binding | Decision 13 | The replaced build's failure is not shown under the new banner |
 | 165 | The quarantine conjunct evaluated when a reading arrives | A conjunction baked into a ref written only on a reading | It is evaluated where `backendUsable` is read | Decision 4 | A quarantine arriving after the last reading still makes `backendUsable` false |
@@ -2777,6 +2788,7 @@ and no finding may disappear because the old PR was superseded.
 | 173 | An empty selection explained with a sentence about the backend | A plan machine with no transition back to `none` | Emptying the selection returns the plan to `none`, not to `blocked` | Plan state machine | Deselecting every row says nothing about the build |
 | 174 | The banner's owed check cancelled by a catalog answer | Step two's exception written over every obligation the arm mentions | The exception cancels the configuration read only; a configuration read carries no reading, so the banner's check is exactly as owed as it was | Frontend reconciliation | A read answering `Ready(B)` leaves the banner's stale reading still owed a check |
 | 175 | Two carriers of the queue update left to be invented | Delivery membership naming the state poll rather than the shape it answers with | Every operation answering with a `WorkspaceConversionUpdateDto` delivers — the poll, `stop_conversion_queue` and `cancel_conversion` | Decision 4 | A stop or a cancel carries the authority, exactly as the poll does |
+| 176 | A once-latch React is forbidden to hold | A ban on judging owedness, over a fact Rust cannot supply | The quarantine once-latch is in-flight bookkeeping: `backendQuarantined` never clears, so only the frontend knows whether it has dispatched for the transition | Decision 13 | The quarantine check is dispatched once and not on every reconciliation |
 
 ## What this interlude does not do
 
