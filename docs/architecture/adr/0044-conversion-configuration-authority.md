@@ -1243,8 +1243,8 @@ the accepted projection's receipt differs from the rendered one
   -> configuration and plan for the rendered binding are non-current, immediately
   -> so is everything else that build produced: the visible preview and the
      roster's backend-derived rows, which `discardBackendDerivedState` clears
-     today on an advanced generation and which nothing else would clear once
-     that counter is gone
+     today and which nothing else would clear once the counter it keys on is
+     gone -- *unless an open is in flight*, which keeps its own exemption
   -> no conversion action stays enabled from them
   -> the new binding owes a configuration read, which is attempted on
      incurrence, subject to admission AND to the duty-first ordering -- so
@@ -1289,10 +1289,19 @@ the accepted projection is Unresolved
 ```
 
 **The preview half is easy to leave out and expensive to lose.** `applyVerdict` calls
-`discardBackendDerivedState` on an advanced generation today, and the removal of that
-counter deletes the call site rather than the need. Without it, build A's spectrum table
-stays on screen beside B's banner and B's catalog — a stale window in the one surface
-this document does not otherwise talk about, opened by its own cleanup.
+`discardBackendDerivedState` today when the generation advanced *and no open is in
+flight*, and the removal of that counter deletes the call site rather than the need.
+Without it, build A's spectrum table stays on screen beside B's banner and B's catalog —
+a stale window in the one surface this document does not otherwise talk about, opened by
+its own cleanup.
+
+**The in-flight-open exemption survives the receipt, unchanged.** An open in flight has
+already emptied the screen and is about to fill it, and its own reply is judged on its
+own binding when it lands — so discarding here would reject a reading that may well be
+the one that caused this verdict, which is what that guard's comment says and why it is
+written the way it is. A draft of this decision stated the discard unconditionally,
+which would have cleared the preview and dispatched `previewDiscarded` mid-open. What
+changes is the key the discard is triggered by, not the condition it is guarded on.
 
 Both halves of step two are load-bearing. The first closes the stale-on-screen
 window above. The second is what keeps a refusal from becoming a refresh: an
@@ -2638,7 +2647,7 @@ and no finding may disappear because the old PR was superseded.
 | 157 | The quarantine dispatch gated behind the drain that caused it | "Only the mount dispatch is ungated", over an effect that is also ungated | Two of the three check conditions dispatch ungated: mount, and becoming quarantined | Decision 4 | The quarantine banner does not wait for the drain whose failed stop produced it |
 | 158 | A wait bound assuming every holder is visible | A courtesy projection that cannot see a probe or an ungated dispatch | A step-three check never waits behind a drain or preview the frontend knows about; the waits it can meet are bounded and named | Authority obligations | The bound claims only what the projection can deliver |
 | 159 | Rust's identity comparisons replaced by a session-scoped token | "No comparison of installation identity survives", written unscoped | Only frontend comparisons are in scope; the queue's identity-keyed retry admission stays, because switching away and back restores a build and mints a new receipt | Decision 2 | A retry is still admitted after an installation is switched away from and back |
-| 160 | A stale spectrum table beside a new binding's catalog | The counter's removal deleting `discardBackendDerivedState`'s only call site | A replaced receipt invalidates the visible preview and the roster's backend-derived rows, not only the configuration and plan | Decision 4b | Build A's spectrum table does not survive the observation of build B |
+| 160 | A stale spectrum table beside a new binding's catalog | The counter's removal deleting `discardBackendDerivedState`'s only call site | A replaced receipt invalidates the visible preview and the roster's backend-derived rows, not only the configuration and plan — and the in-flight-open exemption survives unchanged | Decision 4b | Build A's spectrum table does not survive the observation of build B, and no discard fires mid-open |
 | 161 | A retry offered for a state no read can change | A predicate written over "no usable answer" | The retry is offered where a read could improve the answer; `UnavailableForBinding` follows from the binding and only a different binding changes it | Decision 5 | No retry is offered beside a binding that names no build |
 | 162 | The delivery rule naming two of its three exceptions | A rule stated in full before the third was added | The rule in full, and the summary that quotes it, name the poll, the binding-only read and the refused read | Decision 4 | Every operation that answers with a snapshot carries a projection to judge it by |
 
