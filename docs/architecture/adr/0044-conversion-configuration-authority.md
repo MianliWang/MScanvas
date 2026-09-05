@@ -723,7 +723,16 @@ its projection says the backend is owned — a courtesy in both cases, and the m
 dispatch above the one exception — and where both are owed at once the check goes
 first, since whichever starts holds the gate against the other.
 
-**A check that does get dispatched into a busy lane holds `backendBusy` while it
+**A reader's Recheck pressed during a configuration probe waits for that probe**, and
+that is a wait this decision introduces rather than one it inherits: the probe is a new
+gate holder, and it is deliberately not a lane fact, so nothing disables Recheck for its
+duration and nothing warns of the pause. The bound is the probe's — at most two
+15-second `PROBE_TIMEOUT`s, and ordinarily milliseconds — and the alternative was
+rejected one decision over: disabling a control for the length of a settings read the
+reader did not ask for buys a refusal in advance of a wait, under a sentence they cannot
+interpret. It is recorded as a cost rather than hidden.
+
+**And a check that gets dispatched into a busy lane holds `backendBusy` while it
 waits**, which disables Convert, Recheck and Choose-installation for as long as the
 holder runs. That is the cost of the check being a duty on a waiting primitive, and it
 is bounded by the courtesy above rather than by the primitive: the frontend only
@@ -871,9 +880,10 @@ the payload     -> judged by RECEIPT alone: the binding it describes against
                    the rendered binding -> admitted, whatever the revision did
                    (a snapshot's receipt is read from the response's own
                     projection, which describes the same instant: Rust
-                    builds both from one observation, under one hold of
-                    the gate, so a catalog probed under A cannot travel
-                    under a projection of B. See below: discarding the
+                    builds both from one reading of the authority -- under
+                    one hold of the gate where it takes one, and under the
+                    authority's own lock where it does not -- so a catalog
+                    probed under A cannot travel under a projection of B. See below: discarding the
                     projection is not throwing it away. A plan's receipt is part of the
                     question, not of the answer: the frontend asks for the
                     plan *under the binding it is rendering*, and Rust
@@ -1133,8 +1143,10 @@ the accepted projection's receipt differs from the rendered one
      incurrence and subject to admission -- so a NoInstallation binding
      answers at once and an Installed one is owed until an occasion; step
      three recovers the refused attempt, and step two decides none of this
-  -> unless this very response already carries a snapshot for the new binding,
-     in which case nothing is owed and nothing is issued
+  -> unless this very response already carries a snapshot for the new binding
+     that *answers* -- Ready, Failed or UnavailableForBinding -- in which case
+     nothing is owed and nothing is issued. A snapshot of Unattempted is not
+     an answer: it says the catalog is unread, so the read stays owed
   -> render only the snapshot that carries it
 
      (the separation matters: step two decides what is *invalid*, and an
@@ -2327,7 +2339,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–143).
+plus the findings raised against this document's own drafts (rows 18–145).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2449,7 +2461,7 @@ and no finding may disappear because the old PR was superseded.
 | 114 | React forbidden to hold the answer it must render | An exhaustive retain-list omitting the configuration snapshot | The Rust-authored snapshot and its catalog are retained as the plan answer is: kept as they arrived, never recomputed | Decision 13 | Rendering a catalog and looking a row up in it needs no exception to the retain list |
 | 115 | Two discoveries for one `BEGIN` | The proof and the pre-picker courtesy each taking the gate | One acquisition answers both | Decision 10 | A single Convert click costs at most one discovery, not two |
 | 116 | The slice planned as a panel-only change | A delivery rule over every gate-taker, recorded only in the panel's decision | ADR 0043's M6.4 scope names the viewer contracts the rule reaches | ADR 0043 amendment | The preview and spectrum responses, `BackendStatus`, and the five contracts losing `installationGeneration` are all inside the slice as planned |
-| 117 | A catalog probed under one binding installed under another | A projection defined as "the authority as it stands" with nothing tying it to its payload | Rust builds a response's projection and payload from one observation, under one hold of the gate | Decision 4 + Decision 6 | No snapshot can be admitted as a binding it was not probed against |
+| 117 | A catalog probed under one binding installed under another | A projection defined as "the authority as it stands" with nothing tying it to its payload | Rust builds a response's projection and payload from one reading of the authority — under the gate where the operation takes one, under the authority's own lock where it does not | Decision 4 + Decision 6 | No snapshot can be admitted as a binding it was not probed against, the binding-only read included |
 | 118 | A banner asked a question it holds nothing to answer | The counter stripped from `BackendAvailabilityDto` with no receipt put in its place | The DTO carries the receipt, and currency is equality against the authority's | Decision 2 + Decision 4 | "Is this reading current?" is answerable from what the banner already holds |
 | 119 | A courtesy queued on the duty's lock | A shared acquisition proposed for the mount-time check and the configuration read | They do not share one: the check waits on the gate and the probe may not, so each takes its own | Decision 11 + Decision 10 | No configuration probe ever waits on `enter_backend`, at mount or anywhere |
 | 120 | A binding-only read deferred behind a discovery it does not need | Duty-first ordering applied to a read that takes no gate | The ordering is about the gate, so a `NoInstallation` read is issued immediately | Frontend reconciliation | A session bound to no installation renders `UnavailableForBinding` without waiting for a check |
@@ -2476,6 +2488,8 @@ and no finding may disappear because the old PR was superseded.
 | 141 | A `ready` plan that cannot be checked for currency | An answer stored without the question it answers | `ready` and `failed` carry the request identity; only `loading` carries an ordinal, which is the state where a reply is matched | Plan state machine + Decision 13 | An answer that stops describing the current question is noticed, and no state holds a field nothing reads |
 | 142 | A snapshot from an operation outside the delivery rule | Membership drawn from gate-taking, over a read that takes none | The binding-only configuration read is a member: it carries the authority it read | Decision 4 + Decision 5 | Every snapshot that exists carries a projection to be judged against |
 | 143 | `Unattempted` on the wire and produced by nothing | A refused read answering with no snapshot, in a contract whose member says the catalog is unread | A read Rust refuses answers with the authority and the configuration as it stands; where no request is sent, React holds no snapshot and owes a read, which decides nothing | Decision 5 + Decision 13 | `Unattempted` is read from a snapshot when one exists, and its absence is an observation about React rather than a judgement about the configuration |
+| 144 | A read cancelled by the snapshot that says it is owed | An exception keyed on a snapshot arriving, not on it answering | A carried snapshot cancels the read only where it answers; `Unattempted` says the catalog is unread | Frontend reconciliation | A refused read's own reply does not persuade the frontend the read is done |
+| 145 | A control that waits without saying so | A new gate holder that is deliberately not a lane fact | The wait is bounded by the probe and recorded as a cost; disabling the control instead was rejected as a refusal in advance of a wait | Decision 10 + Decision 11 | Recheck stays live during a probe, and the pause it may meet is written down |
 
 ## What this interlude does not do
 
