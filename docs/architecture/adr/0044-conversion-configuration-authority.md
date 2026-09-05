@@ -525,8 +525,8 @@ BackendAvailabilityDto  -> the receipt of the reading it is
 Preview                 -> the receipt of the build that produced it
                            likewise a statement about the binding in use
 
-ConversionQueue         -> the receipt the last pass resolved
-ConversionReport        -> the receipt the pass that produced it resolved
+ConversionQueue         -> the receipt of the build this queue is bound to
+ConversionReport        -> the receipt of the build that produced it
 ConversionOutputSetReport  likewise
                            historical facts about work already done, and
                            exempt from that rule: they are EXPECTED to differ
@@ -539,15 +539,21 @@ and what ADR 0043's M7 seam promises as a bound plan fact, is the identity of th
 this queue **last resolved** — a different question from what the session is bound to
 now, and one allowed to differ from it for the length of a drain.
 
-The wording matters, and a draft got it wrong: nothing is bound at `BEGIN`.
-`ConversionQueue::new` sets `installation: None`, and `bind_installation` first records
-one on the drain pass, after the picker — then rewrites it on every pass, deliberately,
-so that a queue refused *for* the installation having changed still reports the one it
-resolved. So the queue's receipt is **optional and per-pass**: absent through
-`AwaitingDestination`, where there is nothing truthful to say, and thereafter the last
-one resolved. One identity about the queue, beside one about the session, answering two
-questions — not the shape rows 36 and 45 forbid, which is two copies of the *same*
-identity with no equality rule between them.
+The wording matters, and two drafts got it wrong in opposite directions. Nothing is
+bound at `BEGIN`: `ConversionQueue::new` sets `installation: None`, and
+`bind_installation` first records one on the drain pass, after the picker. Nor is it
+rewritten per pass: the identity is written **once**, on that first pass, and every
+later pass is compared against it and refused with `queue_installation_changed` if it
+resolved a different build — which is the invariant that keeps one queue from mixing two
+builds, and which nothing here touches. What *is* per pass is `installation_generation`,
+the counter, recorded before that comparison so a queue refused for the change still
+reports the build it resolved.
+
+So the queue's receipt is **optional and then fixed**: absent through
+`AwaitingDestination`, where there is nothing truthful to say, and from the first pass
+onwards the build this queue is bound to. One identity about the queue, beside one about
+the session, answering two questions — not the shape rows 36 and 45 forbid, which is two
+copies of the *same* identity with no equality rule between them.
 
 What the projection adds is one thing: **whether what it is showing is current**,
 which is receipt equality against the authority and nothing more.
@@ -1865,6 +1871,13 @@ handles, intent, conflict policy, binding receipt or document authority
 change, and a replacement request is issued
   -> loading { the replacement's identity, the next ordinal }
 
+the selection empties -- no rows are asked about any more
+  -> none
+  -> stated separately because `blocked` is a sentence about the backend, and
+     an empty selection is not one: routing it there explains a reader's own
+     deselection with a fact about the build, which is the conflation row 14
+     forbids
+
 any of those change while no replacement request is yet eligible
   -> blocked
 
@@ -2560,7 +2573,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–171).
+plus the findings raised against this document's own drafts (rows 18–173).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2731,12 +2744,14 @@ and no finding may disappear because the old PR was superseded.
 | 163 | A workspace left reading with nothing coming | A stale preview reply dropped rather than discarded | A discarded payload some surface was waiting for takes that surface out of waiting | Decision 4b | A preview from a replaced build clears the reading state instead of stalling it |
 | 164 | A failure with no binding and nothing to judge it by | A retain-list that removed the only fact such an answer can be judged against | React holds the receipt a request was issued under, for that request, and consults it only for an answer carrying no binding | Decision 13 | The replaced build's failure is not shown under the new banner |
 | 165 | The quarantine conjunct evaluated when a reading arrives | A conjunction baked into a ref written only on a reading | It is evaluated where `backendUsable` is read | Decision 4 | A quarantine arriving after the last reading still makes `backendUsable` false |
-| 166 | The queue left with no identity, or with two of the same | "The receipt substitution is made on every contract", beside an amendment removing the queue's and adding none | `ConversionQueue` carries an optional per-pass receipt — the build it last resolved, absent through `AwaitingDestination` — beside the response's current authority: two questions, not two copies | Decision 2 + ADR 0043's M7 seam | A running queue can still say which build it is running on, and that fact may differ from the session's while it runs |
-| 167 | The M7 seam promising a fact the amendment removed | A bound plan fact whose only live carrier was the counter | The seam names the queue's per-pass receipt, and that it may differ from the current authority during a drain | ADR 0043 amendment | The seam's promise and the contract that keeps it describe the same thing |
+| 166 | The queue left with no identity, or with two of the same | "The receipt substitution is made on every contract", beside an amendment removing the queue's and adding none | `ConversionQueue` carries its own receipt — absent through `AwaitingDestination`, then the build the first pass bound and every later pass is checked against — beside the response's current authority: two questions, not two copies | Decision 2 + ADR 0043's M7 seam | A running queue can still say which build it is running on, that fact may differ from the session's while it runs, and `queue_installation_changed` still refuses a pass that resolved another |
+| 167 | The M7 seam promising a fact the amendment removed | A bound plan fact whose only live carrier was the counter, listed as fixed at `BEGIN` when the picker precedes it | The seam names the queue's own receipt, fixed at the first pass that resolves one, and that it may differ from the current authority during a drain | ADR 0043 amendment | The seam's promise and the contract that keeps it describe the same thing |
 | 168 | A running queue's updates discarded for reporting the build that ran them | A payload rule applied to a receipt that describes the past | Payloads claiming to describe the binding in use are judged by receipt; a queue's or an item report's is a historical fact and is exempt | Decision 4b | A mid-drain replacement does not stop the queue's poll updates being installed |
 | 169 | The quarantine check blocked by a mount check waiting out a drain | An in-flight constraint written over every check | The quarantine dispatch is outside it: its answer launches nothing and is exempt from both ordering tests, so it races nothing | Decision 2 + Decision 4 | A drain that quarantines while a mount check waits still replaces the banner's reading |
 | 170 | An `available` reading landing after a quarantine one | The quarantine dispatch exempted from the in-flight constraint, with nothing ordering its reply | A rendered quarantine reading is replaced only by another; quarantine is permanent, so anything else arriving after it is older news | Decision 2 + Decision 4 | The banner does not go back to `available` in a session that can launch nothing |
 | 171 | Three contracts carrying an identity nothing names | A substitution described as skipping the queue | It is made on all five, with two meanings: a statement about the binding in use, judged by the payload rule, or a historical fact about work done, exempt from it | Decision 2 + Decision 4b | Every contract that carried the counter carries a receipt, and each says which of the two it is |
+| 172 | One queue mixing two builds | A queue identity described as rewritten per pass, where the code writes it once and compares | The identity is bound on the first pass that resolves one and fixed; the counter is what was per pass | Decision 2 | `queue_installation_changed` still refuses a pass that resolved a different build |
+| 173 | An empty selection explained with a sentence about the backend | A plan machine with no transition back to `none` | Emptying the selection returns the plan to `none`, not to `blocked` | Plan state machine | Deselecting every row says nothing about the build |
 
 ## What this interlude does not do
 
