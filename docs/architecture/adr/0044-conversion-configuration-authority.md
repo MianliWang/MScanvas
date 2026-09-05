@@ -433,12 +433,12 @@ So delivery membership is **the gate-takers, plus the poll, plus the binding-onl
 configuration read** — the last because it can neither observe nor replace anything and
 still must carry a projection, or the snapshot it answers with has no binding to be
 judged by (row 109); its projection is the authority it read, which is the same instant
-its answer describes. Concretely, the members are: the configuration
-read, the BEGIN preflight, queue execution and drain, retry preparation, the backend
-check and the installation change, and the preview and spectrum reads, all of which
-can observe or replace the authority; and `conversion_state`, which can do neither
-and is added for the one reason above. Anything later that takes the gate joins the
-first group automatically.
+its answer describes. Concretely, the members are: the BEGIN preflight, queue
+execution and drain, retry preparation, the backend check and the installation change,
+the preview and spectrum reads, and the configuration read that runs a discovery — all
+of which can observe or replace the authority; and two that can do neither,
+`conversion_state` and the binding-only configuration read, each added for the reason
+given above it. Anything later that takes the gate joins the first group automatically.
 
 The first group is not a scope to be narrowed to the conversion path: Decision 11's gate
 membership and this rule's are the same set there, which is what lets `Unattempted`'s
@@ -1144,9 +1144,10 @@ the accepted projection's receipt differs from the rendered one
       leaves the new binding owing a read and the banner's reading owing a
       check. A `BEGIN` refused mid-drain is *not* that case, and a draft
       used it: the proof refuses on a held gate before discovering, so it
-      observes nothing and neither obligation arises. It would not spend the attempt: a probe that cannot start
-      spends nothing, by Decision 5 and row 32. The cost is the ordering,
-      which is all row 92 needs it to be.
+      observes nothing and neither obligation arises. An imperative read
+      would not spend the attempt either: a probe that cannot start spends
+      nothing, by Decision 5 and row 32. The cost is the ordering, which
+      is all row 92 needs it to be.
       And the exception is not an optimisation: without it, mount and every
       rebinding read cost two snapshots, and the second would contradict
       rows 20 and 56 by asking again for what the first already answered.
@@ -1357,15 +1358,21 @@ a failed configuration (Decision 3). `Failed` is reached where the probe *did* a
 and its answer cannot be used: a bound help stream that will not parse, which is
 Decision 3's load-bearing case, or a grammar that `require_conversion` refuses.
 
-**A refused read still answers, with the snapshot as it stands.** That is how
-`Unattempted` reaches the wire at all: the read is attempted, admission refuses, and the
-response carries the authority and a configuration of `Unattempted` — the state Rust
-holds for that binding, unchanged. Without it the member would be one no operation
-produces, and Decision 13's "Rust's `Unattempted` says the catalog is unread" would have
-nothing to read it from, leaving React to derive owedness from the absence of a snapshot
-— which is the derivation that decision forbids. The refusal is the *domain outcome*,
-and by Decision 4b it is bookkeeping rather than an error on screen; the snapshot beside
-it is the news.
+**A read that Rust refuses still answers, with the snapshot as it stands**, and that
+is how `Unattempted` reaches the wire. It is reachable through exactly one path, and
+worth tracing because a draft claimed a wider one. The frontend does not dispatch into
+a lane its projection says is busy, so mid-drain no request is normally sent at all —
+but the projection is allowed to be stale, and a dispatch in that window meets Rust's
+admission, which refuses. That response carries the authority and a configuration of
+`Unattempted`: the state Rust holds for that binding, unchanged. The refusal is the
+*domain outcome*, and by Decision 4b it is bookkeeping rather than an error on screen;
+the snapshot beside it is the news.
+
+**Where no request is sent, React holds no snapshot, and that is not a derivation.**
+For an `Installed` binding mid-drain it simply has nothing for the binding on screen and
+a read owed — which is what Decision 13 permits in as many words, and is different from
+the thing that decision forbids: deriving the configuration *state* from the binding
+tag. Noticing you hold nothing is not deciding what is true.
 
 **Transient process contention is not a failed read either.** A configuration attempt
 is spent when a probe ran and answered unusably, never when one could not start: a
@@ -2468,7 +2475,7 @@ and no finding may disappear because the old PR was superseded.
 | 140 | React forbidden to hold the projection three rules read | A retain-list granting the revision and the receipt but not the state they are fields of | The authority projection is retained whole: state, binding and `previewAvailability` | Decision 13 | `backendUsable`, the `NoInstallation` exemption and step three's unresolved clause are all answerable from what React holds |
 | 141 | A `ready` plan that cannot be checked for currency | An answer stored without the question it answers | `ready` and `failed` carry the request identity; only `loading` carries an ordinal, which is the state where a reply is matched | Plan state machine + Decision 13 | An answer that stops describing the current question is noticed, and no state holds a field nothing reads |
 | 142 | A snapshot from an operation outside the delivery rule | Membership drawn from gate-taking, over a read that takes none | The binding-only configuration read is a member: it carries the authority it read | Decision 4 + Decision 5 | Every snapshot that exists carries a projection to be judged against |
-| 143 | `Unattempted` on the wire and produced by nothing | A refused read answering with no snapshot, in a contract whose member says the catalog is unread | A refused read answers with the authority and the configuration as it stands | Decision 5 + Decision 13 | React reads `Unattempted` from a snapshot rather than deriving it from a snapshot's absence |
+| 143 | `Unattempted` on the wire and produced by nothing | A refused read answering with no snapshot, in a contract whose member says the catalog is unread | A read Rust refuses answers with the authority and the configuration as it stands; where no request is sent, React holds no snapshot and owes a read, which decides nothing | Decision 5 + Decision 13 | `Unattempted` is read from a snapshot when one exists, and its absence is an observation about React rather than a judgement about the configuration |
 
 ## What this interlude does not do
 
