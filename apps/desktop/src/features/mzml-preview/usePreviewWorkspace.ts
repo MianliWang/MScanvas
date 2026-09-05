@@ -39,6 +39,7 @@ import type {
 } from "./contracts";
 import {
   acceptProjection,
+  backendIsUsable,
   readingIsSuperseded,
   receiptOf,
   type RenderedAuthority,
@@ -987,8 +988,6 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    */
   const backendUsableRef = useRef(false);
   const showBackend = useCallback((next: BackendState) => {
-    backendUsableRef.current =
-      next.status === "resolved" && next.availability.state === "available";
     setBackend(next);
   }, []);
 
@@ -1005,8 +1004,43 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    *
    * `null` until the first answer arrives. Nothing rendered means no revision
    * to be older than, which is how the first projection is installed at all.
+   *
+   * Held twice, deliberately, like every other fact this hook both renders and
+   * guards on: the ref is what a dispatch reads, and the state is what a render
+   * sees. They are written together, so the two are one fact rather than two
+   * that resemble each other.
    */
   const renderedAuthority = useRef<RenderedAuthority | null>(null);
+  const [projection, setProjection] = useState<RenderedAuthority | null>(null);
+  /**
+   * Whether this session has stopped trusting the backend.
+   *
+   * Owned here because `backendUsable` is a conjunction that includes it, and
+   * because it used to arrive by accident: the availability reading
+   * short-circuits to `unavailable` when quarantined, and everything derived
+   * from that block inherited the answer without naming it. Sourced from the
+   * authority instead, the conjunct has to be written down -- which is the
+   * point, since a quarantined session's projection is perfectly true about the
+   * build and says nothing about the converter MSCanvas lost track of.
+   */
+  const backendQuarantinedRef = useRef(false);
+  const [backendQuarantined, setBackendQuarantined] = useState(false);
+  /**
+   * Records the projection this document is now rendering.
+   *
+   * The one place `renderedAuthority` and the usability guard are written, so a
+   * new binding can never be on screen with the previous one's permission.
+   */
+  const noteAuthority = useCallback((next: RenderedAuthority) => {
+    renderedAuthority.current = next;
+    backendUsableRef.current = backendIsUsable(next, backendQuarantinedRef.current);
+    setProjection(next);
+  }, []);
+  const noticeQuarantine = useCallback(() => {
+    backendQuarantinedRef.current = true;
+    backendUsableRef.current = false;
+    setBackendQuarantined(true);
+  }, []);
   /**
    * How many installation changes are outstanding.
    *
@@ -1212,6 +1246,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     dispatchRoster({ type: "previewDiscarded" });
   }, [clearVisiblePreview]);
 
+
+/** The failure kind that means the session has lost track of a converter. */
+const QUARANTINED_BACKEND_KIND = "backend_quarantined";
+
   /**
    * The one rule for whether a reply may be shown. Every verdict goes through
    * here; no caller compares anything itself.
@@ -1267,7 +1305,18 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       // than a different build.
       const arrived = acceptProjection(rendered, incoming);
       const changed = arrived.accepted && arrived.bindingReplaced;
-      renderedAuthority.current = incoming;
+      noteAuthority(incoming);
+      // Quarantine reaches this document on two carriers and they are one Rust
+      // fact: the conversion state, where an unconfirmed stop sets it, and a
+      // reading, whose `backend_quarantined` failure no other reading carries.
+      // A reload that rechecks the backend before it polls the slot learns it
+      // here. Monotonic, so two carriers cannot disagree -- and it is the
+      // *session* fact rather than the reading's verdict, which stays
+      // perfectly true about the build and says nothing about a converter
+      // process MSCanvas has lost track of.
+      if (availability.failure?.kind === QUARANTINED_BACKEND_KIND) {
+        noticeQuarantine();
+      }
       showBackend({ status: "resolved", availability });
       // Not while an open is in flight. That open has already emptied the
       // screen and is about to fill it, and its reply is judged on its own
@@ -1278,7 +1327,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       }
       return true;
     },
-    [discardBackendDerivedState],
+    [discardBackendDerivedState, noteAuthority, noticeQuarantine],
   );
 
   const checkBackend = useCallback(() => {
@@ -1572,7 +1621,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           // *previous* build left behind.
           const noticedAChange = arrived.accepted && arrived.bindingReplaced;
           if (arrived.accepted) {
-            renderedAuthority.current = loaded.authority;
+            noteAuthority(loaded.authority);
           }
           setPreview({ status: "loaded", preview: loaded });
           dispatchRoster({ type: "rowStateChanged", handle, state: "loaded" });
@@ -3475,8 +3524,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * lane needs it first: this is one of the four facts that decide whether a
    * conversion may start, and the operation is created on the next line.
    */
-  const backendUsable =
-    backend.status === "resolved" && backend.availability.state === "available";
+  const backendUsable = backendIsUsable(projection, backendQuarantined);
   /**
    * The conversion lane's facts that this hook owns, as a render sees them.
    *
@@ -3522,6 +3570,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   );
   const conversion = useConversionOperation(
     reconcileConversionGeneration,
+    noticeQuarantine,
     adoptOutputs,
     conversionEnvironment,
     readConversionEnvironment,

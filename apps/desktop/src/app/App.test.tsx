@@ -281,10 +281,20 @@ describe("mzML preview workspace", () => {
     const readsBefore = api.requestedSpectra.length;
     expect(readsBefore).toBeGreaterThan(0);
 
-    // The verdict a quarantined session answers with, arriving through the
-    // ordinary recheck -- which is the path a stop that could not be confirmed
-    // takes.
+    // Quarantine reaches the session the way it really does: on the conversion
+    // state, which is where an unconfirmed stop sets it and the one read a
+    // reload recovers it with. It is a fact about the *session*, and the guard
+    // that stops another row read is that fact -- not the reading, whose
+    // authority stays perfectly true about the build this session resolved and
+    // says nothing about the converter MSCanvas lost track of.
+    //
+    // It reaches this document on two carriers, and they are one fact: the
+    // conversion state, which is where an unconfirmed stop sets it, and a
+    // reading, whose `backend_quarantined` failure no other reading carries. A
+    // reload that rechecks before it polls the slot learns it here; the latch
+    // is monotonic, so the two can never disagree.
     trusted = false;
+    api.quarantineBackend();
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
     expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
     expect(

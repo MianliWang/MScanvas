@@ -345,6 +345,17 @@ function reportsAQueueOtherThan(
 
 export function useConversionOperation(
   onAuthority: (authority: BackendAuthorityProjection) => void,
+  /**
+   * Told once, when this session stops trusting the backend.
+   *
+   * Reported rather than only held, because quarantine is a conjunct of
+   * `backendUsable` and that conjunction belongs to the caller: it guards
+   * preview reads as well as conversion actions, and this operation is not the
+   * authority for those. Never withdrawn -- Rust sets it once and cannot unset
+   * it, so a document that lowered it would be claiming something the session
+   * does not know.
+   */
+  onBackendQuarantined: () => void,
   onOutputsAdopted: AdoptedOutputsSink,
   /** The lane facts this operation does not own, as a render sees them. */
   environment: ConversionEnvironment,
@@ -526,6 +537,7 @@ export function useConversionOperation(
     if (update.backendQuarantined) {
       backendQuarantinedRef.current = true;
       setBackendQuarantined(true);
+      onBackendQuarantined();
     }
     // The queue is over, so this document is no longer inside a stop it asked
     // for. Cleared from the authoritative state rather than from the reply to
@@ -552,7 +564,7 @@ export function useConversionOperation(
       // serial help probes with preview and conversion disabled throughout.
       onAuthority(update.authority);
     }
-  }, [claimLane, onAuthority]);
+  }, [claimLane, onAuthority, onBackendQuarantined]);
 
   const readState = useCallback(() => {
     // One at a time. The token below lets only the newest read install, so two
