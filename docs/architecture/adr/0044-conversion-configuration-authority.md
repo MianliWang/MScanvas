@@ -39,7 +39,7 @@ coding.
 | Question | Answer |
 |---|---|
 | Who owns installation truth? | Rust, as a typed authority state — never a bare counter the frontend interprets. |
-| Who is obliged to deliver it? | Every operation that can observe **or replace** it, on its answer, whether that answer succeeds or refuses — and three kinds that do neither: everything answering with a `WorkspaceConversionUpdateDto` (the state poll, `stop_conversion_queue`, `cancel_conversion`), plus the binding-only configuration read and a read Rust's admission refuses, each of which answers with a snapshot needing a projection to be judged against. |
+| Who is obliged to deliver it? | Every operation that can observe **or replace** it, on its answer, whether that answer succeeds or refuses — and three kinds that do neither: everything answering with a `WorkspaceConversionUpdateDto`, whichever operation that is, plus the binding-only configuration read and a read Rust's admission refuses, each of which answers with a snapshot needing a projection to be judged against. |
 | Who owns conversion-capability/catalog truth? | Rust, as a lifecycle keyed by the installation binding. |
 | What identity binds those facts together? | One opaque, session-scoped, path-free `BackendBindingReceipt`. |
 | Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
@@ -55,8 +55,8 @@ coding.
 
 Sixteen live findings stand on PR #95 — five of them at outdated diff positions,
 all read — plus four committed STOP records. Read as
-a list they look like sixteen defects in six files. Collapsed by *what made each
-one possible*, they are seventeen semantic families and almost all of them are
+a list they look like twenty separate defects in six files. Collapsed by *what made
+each one possible*, they are seventeen semantic families and almost all of them are
 one of four shapes:
 
 **A fact and the thing that carries it come apart.** A request outlives the state
@@ -472,9 +472,11 @@ Concretely, the members are: the BEGIN preflight, queue execution and drain, ret
 preparation, the backend check and the installation change, the preview and spectrum
 reads, and the configuration read that runs a discovery — all of which can observe or
 replace the authority; and three kinds that can do neither: **every operation
-answering with a `WorkspaceConversionUpdateDto`** — the state poll, and
-`stop_conversion_queue` and `cancel_conversion`, which take no gate and answer with the
-same shape, so a rule naming only the poll would leave two carriers to be invented — the
+answering with a `WorkspaceConversionUpdateDto`** — the state poll,
+`stop_conversion_queue`, `cancel_conversion` and the diagnostics-export paths, none of
+which takes a gate and all of which answer with the same shape; the rule is over the
+shape for exactly this reason, since naming carriers one at a time has already missed
+three — the
 binding-only configuration read, and a configuration read Rust's admission refuses
 before it discovers — that last because it is the only path by which `Unattempted`
 reaches the wire (Decision 5), so a response that carried no projection would leave its
@@ -614,8 +616,7 @@ So the rule is stated in full:
 > the authority as it stands when the operation answers — whether its domain
 > outcome succeeds or refuses. So does the queue's state poll, which can do
 > neither and is the session's only voice while a drain runs — as does every other
-> operation answering with its shape, `stop_conversion_queue` and `cancel_conversion`
-> among them; so does the binding-only configuration read; and so does a configuration
+> operation answering with its shape, whichever operation that is; so does the binding-only configuration read; and so does a configuration
 > read Rust's admission refuses, since each of those answers with a snapshot that would
 > otherwise have no projection to be judged against.**
 
@@ -1188,14 +1189,16 @@ read for the binding now rendered; a check by a session that has resolved nothin
 check by one whose rendered reading names a different binding than the authority does
 *or holds no reading at all*, which is where a panel remounting onto a recovered queue
 starts; or a check owed by a session that has just become quarantined — is nothing in
-flight for it, and may it be issued? That last clause is the courtesy's, and it is
-asked only of what the courtesy governs: the configuration read and the stale-reading
-check. A mount or quarantine dispatch owed because its request failed is re-issued
-ungated, as its first attempt was — putting it behind the projection here would deadlock
-the mount one on a `backendBusy` only it can clear, and suppress the quarantine one
-behind an in-flight mount check, which are rows 136 and 169. Invalidation is what steps
-one and two decide. Issuing is not invalidation, and a binding that has never been read
-must not be kept unread by a rule about a binding that did not change.
+flight for it, and may it be issued? Both of those last clauses are the courtesy's, and
+both are asked only of what the courtesy governs: the configuration read and the
+stale-reading check. The quarantine dispatch is outside the in-flight bit as well as
+outside the projection (row 169), because its answer launches nothing and races nothing.
+A mount or quarantine dispatch owed because its request failed is re-issued ungated, as
+its first attempt was — putting it behind the projection here would deadlock the mount
+one on a `backendBusy` only it can clear, and suppress the quarantine one behind an
+in-flight mount check, which are rows 136 and 169. Invalidation is what steps one and
+two decide. Issuing is not invalidation, and a binding that has never been read must not
+be kept unread by a rule about a binding that did not change.
 
 **"May it be issued" is nearly one question for both**, over the process-ownership
 facts and no verdict — Decision 4 states it, and states the one place they part: the
@@ -2797,7 +2800,7 @@ and no finding may disappear because the old PR was superseded.
 | 172 | One queue mixing two builds | A queue identity described as rewritten per pass, where the code writes it once and compares | The identity is bound on the first pass that resolves one and fixed; the counter is what was per pass | Decision 2 | `queue_installation_changed` still refuses a pass that resolved a different build |
 | 173 | An empty selection explained with a sentence about the backend | A plan machine with no transition back to `none` | Emptying the selection returns the plan to `none`, not to `blocked` | Plan state machine | Deselecting every row says nothing about the build |
 | 174 | The banner's owed check cancelled by a catalog answer | Step two's exception written over every obligation the arm mentions | The exception cancels the configuration read only; a configuration read carries no reading, so the banner's check is exactly as owed as it was | Frontend reconciliation | A read answering `Ready(B)` leaves the banner's stale reading still owed a check |
-| 175 | Two carriers of the queue update left to be invented | Delivery membership naming the state poll rather than the shape it answers with | Every operation answering with a `WorkspaceConversionUpdateDto` delivers — the poll, `stop_conversion_queue` and `cancel_conversion` | Decision 4 | A stop or a cancel carries the authority, exactly as the poll does |
+| 175 | Carriers of the queue update left to be invented | Delivery membership naming carriers one at a time rather than the shape they answer with | Every operation answering with a `WorkspaceConversionUpdateDto` delivers — the poll, `stop_conversion_queue`, `cancel_conversion` and the diagnostics-export paths | Decision 4 | A stop, a cancel or a diagnostics export carries the authority, exactly as the poll does |
 | 176 | A once-latch React is forbidden to hold | A ban on judging owedness, over a fact Rust cannot supply | The quarantine once-latch is in-flight bookkeeping: `backendQuarantined` never clears, so only the frontend knows whether it has dispatched for the transition | Decision 13 | The quarantine check is dispatched once and not on every reconciliation |
 
 ## What this interlude does not do
