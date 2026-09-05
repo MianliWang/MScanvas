@@ -39,7 +39,7 @@ coding.
 | Question | Answer |
 |---|---|
 | Who owns installation truth? | Rust, as a typed authority state — never a bare counter the frontend interprets. |
-| Who is obliged to deliver it? | Every operation that can observe **or replace** it, on its answer, whether that answer succeeds or refuses — and the queue's state poll, which does neither and is the only thing that speaks during a drain. |
+| Who is obliged to deliver it? | Every operation that can observe **or replace** it, on its answer, whether that answer succeeds or refuses — and two that do neither: the queue's state poll, the only thing that speaks during a drain, and the binding-only configuration read, whose answer needs a projection to be judged against. |
 | Who owns conversion-capability/catalog truth? | Rust, as a lifecycle keyed by the installation binding. |
 | What identity binds those facts together? | One opaque, session-scoped, path-free `BackendBindingReceipt`. |
 | Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
@@ -529,8 +529,10 @@ So the rule is stated in full:
 
 > **Every operation that can observe or replace installation authority returns
 > the authority as it stands when the operation answers — whether its domain
-> outcome succeeds or refuses — and so does the queue's state poll, which can do
-> neither and is the session's only voice while a drain runs.**
+> outcome succeeds or refuses. So does the queue's state poll, which can do
+> neither and is the session's only voice while a drain runs, and so does the
+> binding-only configuration read, whose answer would otherwise have no
+> projection to be judged against.**
 
 "Conversion-bound" would have been too narrow by exactly the two operations that
 *replace* a binding rather than merely notice one: the backend check and the
@@ -1545,10 +1547,17 @@ none
 blocked
 loading { request identity, ordinal }
 ready   { request identity, plan }
-failed  { request identity, ordinal, error }
+failed  { request identity, error }
 ```
 
-**`ready` keeps the identity and drops the ordinal.** The identity is what the
+**Only `loading` carries an ordinal.** It is the state where a reply must be matched,
+and matching is the only thing an ordinal is for; `ready` and `failed` are answers, and
+an answer has no outstanding request to disambiguate. A draft left one on `failed`,
+where no transition reads it — and a field nothing reads is a hazard that then needs a
+prose rule to defend against, which is how row 104 came to need `failed` named
+explicitly among the states that discard an arriving reply.
+
+**`ready` and `failed` keep the identity.** The identity is what the
 answer is *about*, and the closing rule below — that an answer which stops describing
 the current question may not continue to stand for it — is a comparison against it, so
 a `ready` without one cannot be checked for currency at all. The ordinal is a property
@@ -1589,7 +1598,7 @@ a reply arrives for the loading identity **and** its ordinal, and it answers
   -> ready { plan }
 
 a reply arrives for the loading identity **and** its ordinal, and it failed
-  -> failed { identity, ordinal, error }
+  -> failed { identity, error }
 
 a reply arrives for any other identity or any earlier ordinal
   -> discarded; the state does not move
@@ -2055,13 +2064,14 @@ difference stated rather than assumed. React holds the revision and the receipt 
 arrived *on the projection it is showing*, each for exactly one purpose: the revision to
 discard a reply that is older than what is on screen, the receipt to notice that a newer
 reply describes a different installation. It holds a receipt in one further place,
-bounded by something other than the render. **A plan identity carries one**, because
-Decision 9 makes the binding part of *which question was asked*, and a `loading` or
-`failed` state outlives the request that produced it precisely so a retry can ask the
-same question again (rows 35, 44, 61). That receipt is a component of a question, not a
-claim about the current installation, and the plan is invalidated when the rendered
-binding stops matching it — the retain-list's "not past the render" bounds what React
-may *believe*, not what a recorded question may contain.
+bounded by something other than the render. **A plan identity carries one**, in
+`loading`, `failed` and `ready` alike, because Decision 9 makes the binding part of
+*which question was asked* — and every one of those states outlives the request that
+produced it, `ready` so its currency can be checked at all and the other two so a retry
+can ask the same question again (rows 35, 44, 61). That receipt is a component of a
+question, not a claim about the current installation, and the plan is invalidated when
+the rendered binding stops matching it — the retain-list's "not past the render" bounds
+what React may *believe*, not what a recorded question may contain.
 
 **A request-issued receipt is not among them, and an earlier draft added one here.**
 It was needed only by a payload rule Decision 4b has since retracted: under the rule
@@ -2175,10 +2185,10 @@ configuration for A is preserved → conversion is unavailable *because backend
 activity is in progress*, and for no other reason → the verdict settles on A
 again → no catalog probe.
 
-**Installation replacement.** A → B observed → the authority's binding changes →
-A's configuration and plan cannot remain current → the preview verdict settles on
-B → configuration for B is read once → the user's selection is preserved where
-the row still exists.
+**Installation replacement.** A → B observed, with B's verdict in the same
+observation (Decision 1) → the authority's binding and verdict change together → A's
+configuration and plan cannot remain current → configuration for B is read once → the
+user's selection is preserved where the row still exists.
 
 **Catalog transient failure.** Binding A → the read fails → `Failed(A)` → no
 automatic retry loop → the reader takes the explicit settings retry → `Ready(A)`.
@@ -2334,7 +2344,7 @@ and no finding may disappear because the old PR was superseded.
 | 41 | `Partial` has no representable binding | A union read as installed-or-nothing while discovery has three outcomes | `Installed` is `AvailabilityState::Available` and nothing else; `Partial` is `NoInstallation`, and the tag carries no reason | Decision 1's union | A folder with msconvert and no msaccess binds as `NoInstallation`, probes nothing, and is never worded "ProteoWizard is not installed" |
 | 42 | A binding is observed and never settles | An observation that carries a binding and no verdict | A binding and its verdict travel together: every observer holds the `DiscoveryResult` both are computed from | Decision 1 + Decision 4 | No response carries a binding whose `previewAvailability` is missing, so no state exists for a check to have to leave |
 | 43 | The two judgements never actually diverge | A split justified by a state the code cannot reach | `Failed` is reached by a capability parse that refuses a probe discovery accepted | Decision 3 | A build whose msconvert help is bound but unparseable is preview-usable with a `Failed` configuration |
-| 44 | A superseded plan reply installed by its own retry | A machine keyed on an identity a retry preserves by design | `loading` and `failed` carry an ordinal, and a reply matches identity **and** ordinal | Plan state machine | A retry issued while an earlier request is in flight ignores the earlier reply, and the plan rendered is the one the reader asked for last |
+| 44 | A superseded plan reply installed by its own retry | A machine keyed on an identity a retry preserves by design | `loading` carries an ordinal beside the identity, and a reply matches both | Plan state machine | A retry issued while an earlier request is in flight ignores the earlier reply, and the plan rendered is the one the reader asked for last |
 | 45 | A projection nested inside a projection | Two contracts each carrying authority, with no rule for which applies | One response carries one projection; the snapshot's `authority` **is** the observed authority | Decision 4 + Decision 6 | The configuration read's response has exactly one authority field, and no equality rule is needed because there is nothing to disagree with |
 | 46 | Repeated absence read as repeated replacement | Receipt stability defined only for a same-installation recheck | An unbound session keeps one `NoInstallation` receipt however many discoveries confirm it | `BackendBindingReceipt` | Two consecutive failed discoveries revoke nothing and re-probe nothing |
 | 47 | A binding read as `Installed` on a refused build | The union derived from `InstallationIdentity::of` rather than from availability | `of` yields an identity for `Partial` too; the binding is minted from `Available` | Decision 1's union | A `Partial` build never reaches probe admission, because it never becomes `Installed` |
@@ -2349,7 +2359,7 @@ and no finding may disappear because the old PR was superseded.
 | 56 | A fresh catalog discarded, or `Ready` arriving over `Unattempted` | Observation and answer ordered as two events | A read that observes a new available binding answers for it in one transaction | Rust configuration lifecycle | A configuration read that discovers build B returns `Ready(B)`, and `Unattempted(B)` is never rendered |
 | 57 | Two notices for one refusing fact | A registry key left to be inferred across two vocabularies | The key is a `ConversionLane` field, and its order is the precedence | Panel notice registry | A conversion holding the gate renders one sentence, whether it refused a conversion, a probe, or both |
 | 58 | An unbound session projected preview-usable | A verdict field on a binding that names no build | The verdict is entailed for `NoInstallation`, and `backendUsable` requires `Installed` in the conjunction | Decision 4 projection | No `NoInstallation` authority, settled or not, yields a usable lane |
-| 59 | The obliged check governed by a rule it cannot obey | A courtesy's refusal semantics applied to a duty | Four admitting facts shared and one not — the probe asks quarantine, the check does not — and two refusal semantics: the probe refuses under `try_enter_backend`, the check waits under `inspect_backend` | Authority obligations + Decision 11 | Neither is dispatched into a busy lane; a quarantined session still issues its check |
+| 59 | The obliged check governed by a rule it cannot obey | A courtesy's refusal semantics applied to a duty | Four admitting facts shared and one not — the probe asks quarantine, the check does not — and two refusal semantics: the probe refuses under `try_enter_backend`, the check waits under `inspect_backend` | Authority obligations + Decision 11 | Neither is dispatched into a lane the projection says is busy, the unconditional mount check aside; a quarantined session still issues its check |
 | 60 | A rebinding read whose probe failed left owing another | One transaction with only a successful arm | The new binding lands on what its own answer supports, `Failed` included | Rust configuration lifecycle | A read that discovers B and fails its probe is `Failed(B)`, and no second automatic probe follows |
 | 61 | The ordinal reset by leaving an identity | A counter scoped per question | One per-panel ordinal, never reset | Plan state machine | A reply in flight from before an identity was left and re-entered is discarded, not installed |
 | 62 | The most-shared refusal left without a key | A key set listing seven of eight lane fields | `backendUsable` is a key; action-derived reasons key by action and target | Panel notice registry | Convert and the conversion retry, refused as unusable, render one sentence |
@@ -2431,7 +2441,7 @@ and no finding may disappear because the old PR was superseded.
 | 138 | A newly incurred obligation waiting for an occasion | Step three read as the only statement of issuance | An obligation is attempted when it is incurred; admission still answers, and step three recovers the ones it refused | Frontend reconciliation | A drain's poll that delivers a replacement attempts that binding's read, which answers at once where no probe is needed and is owed where one is |
 | 139 | A banner with no reading at all, and no clause to get one | An enumeration written for a stale reading and not for a missing one | An obligation is owed where the rendered reading names a different binding *or where there is none* | Frontend reconciliation | A panel remounting onto a recovered queue gets a reading when the drain answers, rather than none for the run |
 | 140 | React forbidden to hold the projection three rules read | A retain-list granting the revision and the receipt but not the state they are fields of | The authority projection is retained whole: state, binding and `previewAvailability` | Decision 13 | `backendUsable`, the `NoInstallation` exemption and step three's unresolved clause are all answerable from what React holds |
-| 141 | A `ready` plan that cannot be checked for currency | An answer stored without the question it answers | `ready` carries the request identity; the ordinal, being a property of the request, does not outlive it | Plan state machine | An answer that stops describing the current question is noticed, rather than standing until something else replaces it |
+| 141 | A `ready` plan that cannot be checked for currency | An answer stored without the question it answers | `ready` and `failed` carry the request identity; only `loading` carries an ordinal, which is the state where a reply is matched | Plan state machine + Decision 13 | An answer that stops describing the current question is noticed, and no state holds a field nothing reads |
 | 142 | A snapshot from an operation outside the delivery rule | Membership drawn from gate-taking, over a read that takes none | The binding-only configuration read is a member: it carries the authority it read | Decision 4 + Decision 5 | Every snapshot that exists carries a projection to be judged against |
 
 ## What this interlude does not do
