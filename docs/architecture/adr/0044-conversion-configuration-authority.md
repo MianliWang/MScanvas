@@ -224,12 +224,16 @@ current code's "equal generation, the token decides" tie-break was for — and t
 successor is not a comparison but a constraint: the frontend holds an in-flight bit per
 obligation (Decision 13) and does not issue a second read or a second check while one is
 outstanding, so the case the tie-break settled does not arise. **That covers every check
-the frontend issues, the recheck-after-a-failed-open included** — what that recheck
-bypasses is `backendBusy`, the courtesy projection, and not the in-flight bit; otherwise
-it could land behind the mount check and restore the older reading, which is the half of
-`applyVerdict`'s guard that ordering alone does not replace. A plan is the exception
-that proves the rule, and carries an ordinal, because a retry is *meant* to ask the same
-question again while an answer may still be coming.
+the frontend issues, the recheck-after-a-failed-open included, and an installation
+change in flight counts as one** — the recheck's own `installationChanges.current > 0`
+deferral is that constraint already written down, and it is what stops a stale check
+reading rolling `origin` back from `chosen` to `automatic` when a chosen folder resolves
+to the bound build. What the recheck bypasses is `backendBusy`, the courtesy projection,
+and not the in-flight bit; otherwise it could land behind the mount check and restore
+the older reading, which is the half of `applyVerdict`'s guard that ordering alone does
+not replace. A plan is the exception that proves the rule, and carries an ordinal,
+because a retry is *meant* to ask the same question again while an answer may still be
+coming.
 
 An internal monotonic counter may remain the implementation. What must not
 happen again is exposing that counter and letting call sites supply its meaning:
@@ -505,8 +509,9 @@ it has today.
 a refused `BEGIN` observes a new binding without producing a `BackendAvailabilityDto`
 for it, so nothing would replace the superseded reading and it would stand until a
 reader pressed Recheck by hand. So: **a rendered reading whose receipt is not the
-authority's — or the absence of a rendered reading at all — owes a backend check**,
-which is the same obligation `Unresolved` incurs at mount — same Rust-side admission,
+authority's, the absence of a rendered reading at all, or the session becoming
+quarantined, each owe a backend check**, which is the same obligation `Unresolved`
+incurs at mount — same Rust-side admission,
 same occasions, same discharge — asked of one more condition. What they do not share is
 the *dispatch*: the mount one is not gated by the frontend's courtesy projection at all,
 for the reason given below, and this one is issued by step three, into a lane the
@@ -647,6 +652,12 @@ backendUsable = not quarantined
                 AND its previewAvailability is usable
 ```
 
+**The quarantine conjunct reads the fact where it already arrives**, on the conversion
+state — the same place `ConversionLane.backendQuarantined` reads it, and independent of
+the availability reading. That matters because `backendUsableRef` is written *from* the
+reading: sourcing the conjunct there instead would make it circular, or drop it, which
+is rows 66 and 90.
+
 which also puts each fact where it belongs — the verdict stays a statement about a
 build, quarantine stays a statement about the session, and neither is expressed by
 corrupting the other. `backendUsableRef` gates the automatic preview load as well as the
@@ -710,9 +721,19 @@ with nothing obliged to move it and no control to press. And a rendered
 having no rendered reading at all (Decision 4) — because a binding observed by a drain
 or a refused `BEGIN` produces no reading of its own, and a mount check whose request
 failed produces none either, so the banner would otherwise describe a build the session
-has left, or nothing, until someone pressed Recheck. Both are the same obligation,
-admitted by Rust like any other backend work and owed on the terms below if it cannot be
-issued. Only the *dispatch* differs, and only for the mount one: see below.
+has left, or nothing, until someone pressed Recheck.
+
+**And so does the session becoming quarantined**, which is the third condition and the
+one neither of the first two catches: quarantine moves neither the receipt nor the
+revision, so a banner reading `available` from before it would stand while the session
+can launch nothing. `usePreviewWorkspace`'s `projectedQuarantine` effect already does
+exactly this — one `checkBackend()` on the transition, once, since the state never
+clears and a second read would ask a question whose answer cannot have changed, and
+through the ordinary path because Rust answers a quarantined session without launching
+anything. This decision names that effect rather than inventing it, and preserves it.
+Both are the same obligation, admitted by Rust like any other backend work and owed on
+the terms below if it cannot be issued. Only the *dispatch* differs, and only for the
+mount one: see below.
 
 **They do not share an acquisition with the configuration read, and a draft of this
 document said they should.** The argument was row 115's, made for `BEGIN`: one
@@ -2388,7 +2409,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–152).
+plus the findings raised against this document's own drafts (rows 18–155).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2546,6 +2567,9 @@ and no finding may disappear because the old PR was superseded.
 | 150 | The courtesy ahead of the duty at incurrence | Duty-first ordering written for recovery only | The ordering governs incurrence too: where both are owed at once the check is attempted first | Frontend reconciliation | A `BEGIN` that resolves B on a free gate and refuses does not take the gate for a discovery before its check runs |
 | 151 | An obligation re-issued by its own cleanup | A loop bound keyed on a refused attempt's answer | An obligation is never woken by an occasion its own attempt produced — refused, failed or merely finished | Frontend reconciliation | A mount check whose request fails is not re-issued by its own `finally` clearing `backendChanging` |
 | 152 | Two checks outstanding at one revision and one receipt | An in-flight constraint read as not covering the bypassing recheck | The bit covers every check the frontend issues; what the recheck bypasses is `backendBusy` | Decision 2 + Decision 13 | No older reading can land last and restore a stale sentence |
+| 153 | An `available` banner in a session that can launch nothing | Quarantine moving neither the receipt nor the revision, so neither currency rule fires | Becoming quarantined is the third condition owing a reading; `projectedQuarantine` is that rule, named and preserved | Decision 4 | The banner shows quarantine from the transition, without waiting for a reader |
+| 154 | The quarantine conjunct circular or dropped | `backendUsable` sourcing quarantine from the reading it is derived from | It reads the conversion state, where the lane's own first refusal reads it | Decision 4 | `backendUsable` is false in a quarantined session without consulting the reading |
+| 155 | An installation change racing a check | An in-flight constraint covering reads and checks only | A change in flight counts; the recheck's `installationChanges` deferral is that constraint | Decision 2 + Decision 13 | No stale reading rolls `origin` back from `chosen` to `automatic` |
 
 ## What this interlude does not do
 
