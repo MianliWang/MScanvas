@@ -7129,13 +7129,13 @@ boundary, not `ConversionLane` — for the conversion configuration read; one pa
 owner per availability reason; and a closed list of what React retains, which holds
 Rust's answers and reconstructs none of them.
 
-It ends with a hundred-and-sixty-seven-obligation acceptance ledger: seventeen families
+It ends with a hundred-and-sixty-nine-obligation acceptance ledger: seventeen families
 from PR
-#95, and a hundred and fifty more from findings raised against this record's own drafts. Every
+#95, and a hundred and fifty-two more from findings raised against this record's own drafts. Every
 live release-blocking finding maps to at least one obligation, so nothing PR #95
 measured has to be rediscovered by the replacement.
 
-**Those hundred and fifty are worth recording, because they are the same shapes one layer
+**Those hundred and fifty-two are worth recording, because they are the same shapes one layer
 out.** The first draft said Rust must observe a replacement binding before
 propagating a refusal — and stopped there. Recording an observation without
 *delivering* it leaves the session correct in Rust and stale on screen: a refused

@@ -224,18 +224,22 @@ current code's "equal generation, the token decides" tie-break was for — and t
 successor is not a comparison but a constraint: the frontend holds an in-flight bit per
 obligation (Decision 13) and does not issue a second read or a second check while one is
 outstanding, so the case the tie-break settled does not arise. **That covers every check
-the frontend issues, the recheck-after-a-failed-open included, and an installation
-change in flight counts as one** — the recheck's own `installationChanges.current > 0`
-deferral is that constraint already written down, and it is what stops a stale check
-reading rolling `origin` back from `chosen` to `automatic` when a chosen folder resolves
-to the bound build. What the recheck bypasses is the *rendered* `backendBusy`, which is
-React state and lags a commit behind; the in-flight bit is a ref, read at dispatch. They
-carry the same fact and are read at different moments, which is the distinction ADR 0041
-draws for every lane field and this one inherits -- and it is what stops the recheck
-landing behind the mount check and restoring the older reading, the half of
-`applyVerdict`'s guard that ordering alone does not replace. A plan is the exception
-that proves the rule, and carries an ordinal, because a retry is *meant* to ask the same
-question again while an answer may still be coming.
+the frontend issues that could race another for ordering — the
+recheck-after-a-failed-open included, and an installation change in flight counts as
+one; the quarantine dispatch is outside it, because its answer launches nothing and is
+exempt from both ordering tests (Decision 4), so it races nothing and must not be
+blocked by a mount check that may be waiting out a whole drain** — the recheck's own
+`installationChanges.current > 0` deferral is that constraint already written down, and
+it is what stops a stale check reading rolling `origin` back from `chosen` to
+`automatic` when a chosen folder resolves to the bound build. What the recheck bypasses
+is the *rendered* `backendBusy`, which is React state and lags a commit behind; the
+in-flight bit is a ref, read at dispatch. They carry the same fact and are read at
+different moments, which is the distinction ADR 0041 draws for every lane field and this
+one inherits -- and it is what stops the recheck landing behind the mount check and
+restoring the older reading, the half of `applyVerdict`'s guard that ordering alone does
+not replace. A plan is the exception that proves the rule, and carries an ordinal,
+because a retry is *meant* to ask the same question again while an answer may still be
+coming.
 
 An internal monotonic counter may remain the implementation. What must not
 happen again is exposing that counter and letting call sites supply its meaning:
@@ -515,11 +519,18 @@ below answerable at all.
 naming.** `ConversionQueue` is the state poll's own payload, and the response already
 carries the current authority, so the queue needs no copy of *that*. What it does need,
 and what ADR 0043's M7 seam promises as a bound plan fact, is the identity of the build
-it was **bound to at `BEGIN`** — which is a different question from what the session is
-bound to now, and is allowed to differ from it for the length of a drain. So the queue
-carries a **bound receipt**: one identity about the queue, beside one about the session,
-answering two questions. That is not the shape rows 36 and 45 forbid, which is two
-copies of the *same* identity with no equality rule between them.
+this queue **last resolved** — a different question from what the session is bound to
+now, and one allowed to differ from it for the length of a drain.
+
+The wording matters, and a draft got it wrong: nothing is bound at `BEGIN`.
+`ConversionQueue::new` sets `installation: None`, and `bind_installation` first records
+one on the drain pass, after the picker — then rewrites it on every pass, deliberately,
+so that a queue refused *for* the installation having changed still reports the one it
+resolved. So the queue's receipt is **optional and per-pass**: absent through
+`AwaitingDestination`, where there is nothing truthful to say, and thereafter the last
+one resolved. One identity about the queue, beside one about the session, answering two
+questions — not the shape rows 36 and 45 forbid, which is two copies of the *same*
+identity with no equality rule between them.
 
 What the projection adds is one thing: **whether what it is showing is current**,
 which is receipt equality against the authority and nothing more.
@@ -1026,6 +1037,14 @@ which binding it is rendering, that receipt is part of the question by Decision 
 a reply is installed only where identity and ordinal both still match. A binding that
 changed under the request makes the reply's identity stale, which is the same test the
 plan machine already applies for every other component of the question.
+
+**A payload that describes the past is exempt from the receipt test.** The rule judges
+payloads that claim to describe *the binding in use* — a snapshot, a plan, a reading, a
+preview. A queue's per-pass receipt and an item report's are not claims of that kind:
+they say which build did the work, which is a historical fact and is *expected* to
+differ from the current binding after a mid-drain replacement. Judging them by the rule
+would discard the running queue's poll updates at exactly the moment the reader most
+needs them — the shape row 146 was raised for, at the other end.
 
 **Discarding a preview is not dropping it**, and the difference is a stall. A preview
 produced by a replaced build is discarded for the same reason a catalog is — the gate is
@@ -2515,7 +2534,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–167).
+plus the findings raised against this document's own drafts (rows 18–169).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2686,8 +2705,10 @@ and no finding may disappear because the old PR was superseded.
 | 163 | A workspace left reading with nothing coming | A stale preview reply dropped rather than discarded | A discarded payload some surface was waiting for takes that surface out of waiting | Decision 4b | A preview from a replaced build clears the reading state instead of stalling it |
 | 164 | A failure with no binding and nothing to judge it by | A retain-list that removed the only fact such an answer can be judged against | React holds the receipt a request was issued under, for that request, and consults it only for an answer carrying no binding | Decision 13 | The replaced build's failure is not shown under the new banner |
 | 165 | The quarantine conjunct evaluated when a reading arrives | A conjunction baked into a ref written only on a reading | It is evaluated where `backendUsable` is read | Decision 4 | A quarantine arriving after the last reading still makes `backendUsable` false |
-| 166 | The queue left with no identity, or with two of the same | "The receipt substitution is made on every contract", beside an amendment removing the queue's and adding none | `ConversionQueue` carries a **bound** receipt — the build it was bound to at `BEGIN` — beside the response's current authority: two questions, not two copies | Decision 2 + ADR 0043's M7 seam | A running queue can still say which build it is running on, and that fact may differ from the session's while it runs |
-| 167 | The M7 seam promising a fact the amendment removed | A bound plan fact whose only live carrier was the counter | The seam names the bound receipt, and that it may differ from the current authority during a drain | ADR 0043 amendment | The seam's promise and the contract that keeps it describe the same thing |
+| 166 | The queue left with no identity, or with two of the same | "The receipt substitution is made on every contract", beside an amendment removing the queue's and adding none | `ConversionQueue` carries an optional per-pass receipt — the build it last resolved, absent through `AwaitingDestination` — beside the response's current authority: two questions, not two copies | Decision 2 + ADR 0043's M7 seam | A running queue can still say which build it is running on, and that fact may differ from the session's while it runs |
+| 167 | The M7 seam promising a fact the amendment removed | A bound plan fact whose only live carrier was the counter | The seam names the queue's per-pass receipt, and that it may differ from the current authority during a drain | ADR 0043 amendment | The seam's promise and the contract that keeps it describe the same thing |
+| 168 | A running queue's updates discarded for reporting the build that ran them | A payload rule applied to a receipt that describes the past | Payloads claiming to describe the binding in use are judged by receipt; a queue's or an item report's is a historical fact and is exempt | Decision 4b | A mid-drain replacement does not stop the queue's poll updates being installed |
+| 169 | The quarantine check blocked by a mount check waiting out a drain | An in-flight constraint written over every check | The quarantine dispatch is outside it: its answer launches nothing and is exempt from both ordering tests, so it races nothing | Decision 2 + Decision 4 | A drain that quarantines while a mount check waits still replaces the banner's reading |
 
 ## What this interlude does not do
 
