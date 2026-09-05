@@ -292,11 +292,6 @@ msconvert's grammar cannot express conversion at all
   -> preview is unaffected
   -> the configuration is Failed (conversion_capability_unavailable)
 
-msconvert can convert, but no admitted row survives require_conversion_intent
-  -> preview is unaffected
-  -> the configuration is Ready, with a catalog in which every row is
-     unavailable
-
 the build is gone between the preview verdict and the catalog read
   -> the read's own discovery is no longer Available, so it establishes
      NoInstallation: the authority is replaced, not the configuration
@@ -317,14 +312,18 @@ down. `Failed` means a probe ran against a binding and either did not answer or 
 that the build cannot convert. A read whose own discovery refuses never reaches a
 probe at all; it reports a different binding.
 
-**The no-row-survives case is representable, and its presentation is fixed rather
-than its state.** A build whose baseline grammar is intact but which admits none of the
-nine rows is genuinely `Ready`: a catalog was read and every row was judged, and the
-judgements are true. What must not follow is nine individual refusals. It is a
-settings-level statement — one sentence, exactly Decision 8's shape — and Decision 8's
-atomic recovery is not offered, because row 2 already conditions it on the shipped row
-being available and here it is not. The reader is told the build cannot run any
-configuration MSCanvas offers, once, and no control implies otherwise.
+**A `Ready` catalog always has at least one available row, and a draft of this
+document invented a case where it has none.** The two requirement sets coincide:
+`require_conversion(MzMl)` asks for the tool, `outdir`, `outfile`, zlib and the `mzML`
+flag, and `SHIPPED` lowers to exactly `[Flag("mzML"), ZlibOption]` — its precision
+posture emits nothing, so it depends on nothing, as `segments()` says in as many words.
+So a build that reaches `Ready` at all can run the row MSCanvas ships, and "`Ready` with
+every row unavailable" is a state the tree cannot produce.
+
+That is worth stating rather than quietly dropping, because it removes a condition from
+Decision 8: **a genuine dead end always has the shipped row available**, so the explicit
+atomic recovery is always offerable, and no reader can reach a dead end with nothing to
+press.
 
 **The cannot-convert-at-all case is `Failed`, not `Ready` with every row
 unavailable**, and the
@@ -645,6 +644,16 @@ a new exception: the recheck-after-a-failed-open in `usePreviewWorkspace` alread
 "passes straight through `backendBusy`", for the same reason and with the same
 justification recorded beside it.
 
+**It passes through the projection's ignorance, not through what the session knows.**
+`begin_webview_document` keeps a running queue alive across a reload, so a panel
+remounting mid-drain is a session that *does* know the backend is owned — its recovered
+queue says so — and dispatching an unconditional `inspect_backend` there would wait out
+the whole queue with `backendBusy` held, disabling Convert, Recheck and
+Choose-installation for the duration and taking away the floor row 132 relies on. So the
+mount dispatch is bypassed by exactly one thing: a recovered running queue. The
+obligation stays owed, and the drain's own answer is the occasion that issues it —
+which is the ordinary path, reached by the ordinary rule.
+
 It is the state with no binding, so the liveness rule below — written about bindings —
 does not reach it, and without this it would be the
 one state a session could sit in with nothing obliged to move it and no control to
@@ -930,19 +939,28 @@ payload bound to A is never installed while B is rendered.
 **Step two — identity, by receipt only, and only on a projection just accepted**
 (the first line above included; an equal revision changes nothing and skips it).
 
+**An obligation is issued when it is incurred, and step three is about the ones that
+could not be.** A binding that has just become the rendered one owes a configuration
+read, and that read goes out in the same commit that installs the binding — which is how
+a drain's poll, delivering a replacement mid-queue, gets the new binding's configuration
+read without the poll being an occasion. Step three is the recovery path for an
+obligation that was incurred and refused, and its occasion rule bounds *that*, not the
+first attempt. The mount check is the same shape one step earlier: incurred at mount,
+issued at mount.
+
 **Step three, and it is not conditional on either of the first two — every
-occasion is an occasion to discharge an owed obligation.** This is deliberately outside
-the ordering rules, because the case rows 39 and 49 exist for is precisely the one the
-ordering rules dismiss: a gate holder finishes, nothing about the binding changed, so
-the revision is equal and the receipt is equal and both steps above correctly do nothing
-— and that is exactly the moment the owed first configuration read and the obliged
-backend check become admissible. So after ordering and identity have had their say, the
-frontend asks one more question: is an obligation owed — a configuration read for the
-binding now rendered, a check by a session that has resolved nothing, or a check by one
-whose rendered reading names a different binding than the authority does — is nothing in
-flight for it, and may it be issued? Invalidation is what steps one and two decide.
-Issuing is not invalidation, and a binding that has never been read must not be kept
-unread by a rule about a binding that did not change.
+occasion is an occasion to discharge an obligation still owed.** This is deliberately
+outside the ordering rules, because the case rows 39 and 49 exist for is precisely the
+one the ordering rules dismiss: a gate holder finishes, nothing about the binding
+changed, so the revision is equal and the receipt is equal and both steps above
+correctly do nothing — and that is exactly the moment the owed first configuration read
+and the obliged backend check become admissible. So after ordering and identity have had
+their say, the frontend asks one more question: is an obligation owed — a configuration
+read for the binding now rendered, a check by a session that has resolved nothing, or a
+check by one whose rendered reading names a different binding than the authority does —
+is nothing in flight for it, and may it be issued? Invalidation is what steps one and
+two decide. Issuing is not invalidation, and a binding that has never been read must not
+be kept unread by a rule about a binding that did not change.
 
 **"May it be issued" is nearly one question for both**, over the process-ownership
 facts and no verdict — Decision 4 states it, and states the one place they part: the
@@ -2109,11 +2127,10 @@ selection is preserved → **one** row-level statement → axis values are not
 labelled unsupported → one-axis alternatives remain reachable.
 
 **True dead end.** The selected row is unavailable and no one-axis transition is
-available. *If* the shipped row is itself available, the explicit atomic recovery
-is offered; if it is not, nothing is offered, because a control that selects a
-row this build cannot run would be an action Rust is certain to refuse. The
-availability of the shipped row is a condition on offering the recovery, not a
-step that follows from reaching the dead end.
+available → the explicit atomic recovery is offered. It always can be: a catalog
+that reached `Ready` has the shipped row available, because the two requirement sets
+coincide (Decision 3). A draft conditioned the recovery on that availability, which
+reads as prudence and is a condition on a state the tree cannot produce.
 
 **BEGIN is the first thing to see the replacement, and refuses.** This is the
 case the authority-delivery rule exists for, and it is written out in full
@@ -2207,14 +2224,14 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–137).
+plus the findings raised against this document's own drafts (rows 18–138).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
 | # | Family | What permitted it | Required invariant | Owner | Replacement acceptance case |
 |---|---|---|---|---|---|
 | 1 | Admitted graph duplicated or widened | A frontend able to compose axis values | The admitted table is the only compatibility rule | Rust (`ConversionIntent::ADMITTED`) | No TS from which a nine-row graph could be rebuilt; 39 combinations unreachable by any activation sequence |
-| 2 | Preserved unsupported selection unrecoverable | One-axis editing plus a preserved choice, with no escape | A genuine dead end offers one explicit atomic recovery, when the shipped row is itself available | Selection module | Dead end with an available shipped row offers it; a reachable one-axis route offers no recovery block; a dead end whose shipped row is unavailable offers nothing |
+| 2 | Preserved unsupported selection unrecoverable | One-axis editing plus a preserved choice, with no escape | A genuine dead end offers one explicit atomic recovery, which is always offerable because a `Ready` catalog always has the shipped row | Selection module | Dead end offers the shipped row; a reachable one-axis route offers no recovery block |
 | 3 | Catalog outlives the backend it described | Catalog lifetime keyed on nothing that expires | A replaced receipt revokes the configuration bound to the old one | Rust configuration lifecycle | A binding observed as `NoInstallation` → the previous configuration is gone, without waiting for a verdict |
 | 4 | In-flight obsolete catalog resurrects state | Revoking rendered state without revoking the request | Revocation is one act over state and request | Rust configuration lifecycle | A reply about a superseded binding cannot install |
 | 5 | BEGIN observes a changed build, nothing reconciles | An observation made by an operation that then refused | An observation is complete once discovery establishes an installed binding **or** an absence; later capability or domain failure does not erase it | Provider attempt + authority | A refused BEGIN that resolved a new build advances the authority |
@@ -2290,7 +2307,7 @@ and no finding may disappear because the old PR was superseded.
 | 75 | A request's payload judged against a receipt React was told not to hold | A retain-list closed before a plan identity's receipt was accounted for | React holds a plan identity's receipt for the life of the plan, and holds no request-issued copy at all | Decision 13 | A payload is judged by the binding it describes against the binding rendered, needing neither the projection that carried it nor what its request went out under |
 | 76 | An admission rule capturing the operations it lists as refusing it | A scope written as the tool invocation rather than the read | The rule governs the automatic first configuration read and the explicit retry, and no other `--help` | Decision 11 | A preview read and the BEGIN preflight run their own discovery without consulting probe admission |
 | 77 | A rebinding read discarded by the receipt it was issued under | A payload judged by its request rather than by itself | A payload is judged by the binding it describes against the binding now rendered | Frontend, ordering then identity | A read issued under A that answers `Ready(B)` is installed whole |
-| 78 | Nine dead controls under a truthful `Ready` | A catalog with no available row left to per-row presentation | A `Ready` catalog with nothing available is one settings-level sentence, and offers no recovery, because the shipped row is unavailable too | Decision 3 + Decision 8 | A build admitting none of the nine rows says so once, and no control implies a way through |
+| 78 | Presentation designed for a state the tree cannot produce | A `Ready` catalog with no available row | `require_conversion` and `require_conversion_intent(SHIPPED)` ask for the same set, so a catalog that reached `Ready` always has the shipped row | Decision 3 + Decision 8 | Every `Ready` catalog offers at least one row, and Decision 8's recovery needs no availability condition |
 | 79 | A registry key for a refusal nothing renders | Probe-in-flight given a key and a place in the order | It mints no key: the retry is withdrawn while a probe is in flight, Convert stays enabled, and an automatic read's refusal is bookkeeping | Panel notice registry | The registry's keys are the lane's eight fields and the action-derived reasons, and every one of them can be rendered |
 | 80 | The binding oscillating between two observers | The preview verdict folded into the identity by one of them | Every observer mints the binding from `AvailabilityState::Available`; the verdict travels beside it | Decision 1 + Decision 3 | An `Available` build whose msaccess lacks a required preview operation is one binding to every observer, and its catalog survives a backend check |
 | 81 | An obligation waiting on a delivery nothing will produce | A stimulus that assumed every deferring fact belongs to a gate holder | A lane fact going false is an occasion, observed by the frontend without being told | Frontend reconciliation | A destination picker cancelled after a `BEGIN` observed a replacement issues the owed check, and the read follows on its answer |
@@ -2348,8 +2365,9 @@ and no finding may disappear because the old PR was superseded.
 | 133 | Delivery and occasion left as one word | A bound written over "any delivery" after one delivery stopped being a stimulus | An occasion is defined once: a gate-taker's answer, or a lane fact going false — never a poll | Decision 4b | An owed read deferred by a running drain is not re-issued on every tick of that drain's own poll |
 | 134 | The delivery rule stated without the operation it was widened for | "Observe or replace" kept as the whole scope after the poll joined it | The rule names the poll where it is stated in full, and in the summary that answers for it | Decision 4 | Coding the normative sentence closes the drain window rather than reopening it |
 | 135 | A quarantined reading judged as though it described a build | A currency test applied to a statement about the session | The quarantined reading claims no build, is exempt from the test, and discharges its check by answering | Decision 2 + Decision 4 | A drain that observes a replacement and quarantines in the same operation leaves no check owed for the rest of the run |
-| 136 | The mount check deferred by a fact only it can clear | `backendBusy` initialising to true, gating the dispatch that would make it truthful | The mount dispatch passes through the projection, as the existing recheck-after-a-failed-open already does | Authority obligations + `ConversionLane` projection | A session mounts, checks, and settles without a reader touching anything |
+| 136 | The mount check deferred by a fact only it can clear | `backendBusy` initialising to true, gating the dispatch that would make it truthful | The mount dispatch passes through the projection's ignorance, and is bypassed by a recovered running queue, which is knowledge | Authority obligations + `ConversionLane` projection | A session mounts, checks and settles untouched; a panel remounting mid-drain waits for the drain rather than locking out its own controls |
 | 137 | A waiting check locking out the controls that would end it | A duty on a waiting primitive, dispatched without bound | It is dispatched only into a lane the projection says is free, so the lockout is one stale-window wide and never spans a known drain | Authority obligations | No automatic check waits behind a drain the frontend can see |
+| 138 | A newly incurred obligation waiting for an occasion | Step three read as the only statement of issuance | An obligation is issued when it is incurred; step three recovers the ones that could not be | Frontend reconciliation | A drain's poll that delivers a replacement gets that binding's configuration read, without the poll being an occasion |
 
 ## What this interlude does not do
 
