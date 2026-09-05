@@ -2551,6 +2551,179 @@ fn redact_line(line: &str) -> String {
     }
 }
 
+/// Which installation a fact is about, on the wire.
+///
+/// Opaque. Equality is the only operation the webview may perform on it: it
+/// answers *is this the binding you are rendering*, and nothing else. The
+/// counter it is made from is deliberately not a promise -- a reader that
+/// subtracted two of these, or assumed the next one is one greater, would be
+/// reading an implementation detail as a contract.
+pub type BackendBindingReceiptDto = u64;
+
+/// Whether this session is bound to an installation it may launch.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum BackendBindingDto {
+    Installed,
+    /// MSCanvas looked and found nothing usable. Not the absence of a binding:
+    /// an observed absence is a binding like any other, and it revokes what the
+    /// build before it bound.
+    NoInstallation,
+}
+
+/// Whether preview may run on the bound build.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum BackendPreviewAvailabilityDto {
+    Usable,
+    Unusable,
+}
+
+/// Whether a verdict about the bound installation exists at all.
+///
+/// Tagged, so "nothing has been observed yet" is a state the webview must
+/// handle rather than a receipt of zero it could compare against a real one.
+/// No receipt is invented for it.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum BackendAuthorityStateDto {
+    Unresolved,
+    #[serde(rename_all = "camelCase")]
+    Settled {
+        receipt: BackendBindingReceiptDto,
+        binding: BackendBindingDto,
+        preview_availability: BackendPreviewAvailabilityDto,
+    },
+}
+
+/// What every backend-observing operation reports beside its own outcome.
+///
+/// The ordering and the state travel together. Separating them is what let a
+/// late reply about a build the session had already left revoke the build it
+/// was on: an opaque receipt can say that two things differ, and cannot say
+/// which of them is newer.
+///
+/// `revision` is ordering and nothing else. A projection with a lower revision
+/// is stale and may not replace a higher one; that is the single meaning the
+/// webview is permitted to read from it.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendAuthorityProjectionDto {
+    pub revision: u64,
+    pub state: BackendAuthorityStateDto,
+}
+
+/// One admitted conversion combination, named by its five axes.
+///
+/// `id` is the identity the webview compares and echoes back; the five axis
+/// fields are what it renders. Both come from the same value, so a control
+/// cannot describe one combination while selecting another.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionIntentDto {
+    pub id: String,
+    pub format: String,
+    pub processing: String,
+    pub population: String,
+    pub precision: String,
+    pub compression: String,
+}
+
+/// One row of the admitted table, and whether this installation can run it.
+///
+/// Availability belongs to the row. There is deliberately no per-axis-value
+/// availability anywhere in this contract: a build lacking only the
+/// peak-picking grammar must not be able to tell a reader it does not offer
+/// 64-bit intensity, all spectra, or zlib, and a contract that carried those
+/// four booleans is how it did.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionCatalogRowDto {
+    pub intent: ConversionIntentDto,
+    pub available: bool,
+}
+
+/// What is known about conversion settings for the binding the authority in the
+/// same snapshot names.
+///
+/// Carries no second copy of that binding's identity. Two copies with no stated
+/// equality would make a self-contradictory snapshot representable -- one
+/// build's authority beside another build's catalog -- and the webview,
+/// comparing the projection's receipt, would install the wrong one.
+///
+/// The catalog lives *inside* `ready`. As a sibling field it would be
+/// representable beside `failed` or `unattempted`: a payload asserting both
+/// that the settings could not be established and what they are.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "configuration", rename_all = "camelCase")]
+pub enum ConversionConfigurationDto {
+    /// The session is bound to no installation, so there are no conversion
+    /// semantics to describe. A fact about the binding, not a preview verdict,
+    /// and not a state a read could improve on.
+    UnavailableForBinding,
+    /// The catalog for this binding is unread. An obligation rather than a
+    /// resting state: something still owes this binding its first read.
+    Unattempted,
+    #[serde(rename_all = "camelCase")]
+    Ready {
+        catalog: Vec<ConversionCatalogRowDto>,
+        /// The identity of the combination MSCanvas ships, so the webview names
+        /// the fallback row rather than re-deriving which one it is.
+        shipped: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Failed { error: PreviewErrorDto },
+}
+
+/// Why Rust refused to run a configuration read.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ConversionConfigurationRefusalDto {
+    /// The session has stopped trusting the installed backend. Outranks every
+    /// other reason, and never clears.
+    BackendQuarantined,
+    /// Another backend operation holds the lane. Transient: no attempt was
+    /// spent, the read is still owed, and it is re-issued on the next occasion.
+    BackendBusy,
+}
+
+/// What happened to *this* configuration request.
+///
+/// Separate from the configuration itself, because a read Rust refuses must
+/// carry both: the refusal is bookkeeping for the reader's obligation, and the
+/// configuration beside it is the news for the panel. A contract with one field
+/// could carry one or the other.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "camelCase")]
+pub enum ConversionConfigurationOutcomeDto {
+    Answered,
+    #[serde(rename_all = "camelCase")]
+    Refused {
+        reason: ConversionConfigurationRefusalDto,
+    },
+}
+
+/// One conversion-settings snapshot, as one response.
+///
+/// Three fields, and the webview never has to join a generation from one
+/// response with a catalog from another to answer the single question this
+/// asks:
+///
+/// > What conversion semantics are known for the installation MSCanvas is
+/// > currently bound to?
+///
+/// That join is what made a stale catalog installable, and what made a plan and
+/// a catalog disagree about a number neither of them still described.
+///
+/// Path-free; no argv; no installation identity.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionConfigurationSnapshotDto {
+    pub authority: BackendAuthorityProjectionDto,
+    pub configuration: ConversionConfigurationDto,
+    pub outcome: ConversionConfigurationOutcomeDto,
+}
+
 /// Rejects any value that cannot round-trip through JSON.
 ///
 /// The typed parsers already refuse non-finite numbers, so reaching this is a

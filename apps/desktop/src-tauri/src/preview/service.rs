@@ -37,10 +37,14 @@ use mscanvas_proteowizard::{BackendRunFacts, ConversionAttempt, ConversionCancel
 use super::adoption::FinalizedOutputSetAdoptionTicket;
 use super::adoption::SciexAttemptSettlement;
 use super::adoption::{AdmittedOutput, AdoptionRefusal, FinalizedOutputAdoptionTicket};
+use super::authority::{
+    BackendAuthority, BackendAuthorityProjection, DiscoveryTarget, Observation, PreviewAvailability,
+};
 use super::backend::{
     ConversionBackend, PreviewProvider, open_operations, reporting_redactor,
     selected_spectrum_operation,
 };
+use super::configuration::{ConversionConfigurations, ReadAnswer, read_configuration};
 use super::conversion::WorkspaceMultiOutputConversionReport;
 #[cfg(test)]
 use super::conversion::run_planned_conversion;
@@ -96,6 +100,10 @@ use super::dto::{
     spectrum_destination_unusable, spectrum_export_in_progress, spectrum_export_refused,
     spectrum_export_stale, spectrum_not_finalized, spectrum_not_written,
     spectrum_range_outside_source, spectrum_range_unavailable, spectrum_range_unusable,
+};
+use super::dto::{
+    ConversionConfigurationOutcomeDto, ConversionConfigurationRefusalDto,
+    ConversionConfigurationSnapshotDto,
 };
 use super::dto::{
     ConversionDiagnosticsExportDto, ConversionDiagnosticsReservationDto,
@@ -511,15 +519,6 @@ pub struct PreviewService {
     /// subscriber. Its delivery gate is always acquired before the workspace
     /// mutation gate, and `Channel::send` runs after all workspace locks drop.
     drop_updates: DropUpdateHub,
-    /// How many times the installation in use has changed.
-    ///
-    /// Stamped onto every verdict under the same gate that serves it, so the
-    /// verdict says where in that sequence it belongs. Request order is not
-    /// service order -- two commands contend for this gate and it does not
-    /// grant in the order they were called -- so a caller that trusted its own
-    /// ordering could show the installation a choice replaced while every
-    /// later operation used the chosen one.
-    installation_generation: AtomicU64,
     /// The session's one conversion slot.
     ///
     /// A leaf: never held while any other lock is taken, and never held across
@@ -606,14 +605,31 @@ pub struct PreviewService {
 /// What the service has observed about which backend resolves.
 #[derive(Default)]
 struct ObservedBackend {
-    /// False until something has actually looked. The first look is not a
-    /// change: there is nothing before it to differ from, and counting it would
-    /// make every session open by telling its callers to discard readings that
-    /// do not exist yet.
-    looked: bool,
-    /// What the last look resolved. `None` means nothing usable resolved, which
-    /// is a state a later look can differ from like any other.
-    identity: Option<InstallationIdentity>,
+    /// The typed authority ADR 0044 replaces `installation_generation` with.
+    ///
+    /// It owns the receipt, the revision and the state, and it is the only
+    /// thing that mints receipts. "Nothing has looked yet" is
+    /// `BackendAuthorityState::Unresolved` rather than a `looked` flag beside
+    /// an identity, because the first look being a non-change is a property of
+    /// the state rather than a rule a caller has to remember.
+    authority: BackendAuthority,
+    /// Where the session is currently pointed, so an absence can be told from
+    /// another absence.
+    ///
+    /// Recorded here rather than asked of the provider: what a `NoInstallation`
+    /// binding names is *where MSCanvas looked and found nothing*, and two
+    /// unusable folders are two bindings. The provider reports a verdict about
+    /// a target it was already given.
+    target: DiscoveryTarget,
+    /// What is known about conversion settings for the binding above.
+    ///
+    /// Under the same lock, which ADR 0044 requires rather than merely permits:
+    /// a read that answers from the binding alone must project its authority
+    /// and its payload from one instant, or an owed check running concurrently
+    /// can install B between the two reads and the response pairs B's
+    /// projection with A's configuration -- a snapshot the frontend cannot
+    /// detect as wrong, since the configuration carries no receipt of its own.
+    configurations: ConversionConfigurations,
     /// The verdict that look produced, kept so a quarantined session can answer
     /// a recheck without launching the very tools it has stopped trusting.
     last: Option<BackendAvailabilityDto>,
@@ -641,7 +657,6 @@ impl PreviewService {
             diagnostics_export: Mutex::new(DiagnosticsExportSlot::default()),
             diagnostics_exporting: AtomicBool::new(false),
             spectrum_export: Mutex::new(ScientificExportSlots::default()),
-            installation_generation: AtomicU64::new(0),
             resolved: Mutex::new(ObservedBackend::default()),
         }
     }
@@ -705,8 +720,125 @@ impl PreviewService {
         // was asked for -- the same request can resolve to a different backend
         // and a different request to the same one -- so it is decided below, by
         // what the reading that follows actually resolves to.
-        self.provider.use_installation(home);
+        self.provider.use_installation(home.clone());
+        // And the session records where it is now pointed. An absence is only
+        // distinguishable from the absence before it by the folder it is an
+        // absence at, so a `NoInstallation` binding is minted against this and
+        // not against the reading -- the reading of two unusable folders is the
+        // same reading twice.
+        self.note_discovery_target(home);
         self.stamped_availability()
+    }
+
+    /// What conversion semantics are known for the installation this session is
+    /// bound to.
+    ///
+    /// Always answers, and the answer is always three facts: the authority as
+    /// it stands, the configuration as Rust holds it, and what happened to this
+    /// request. A refusal is the third of those and never suppresses the other
+    /// two -- the refusal is bookkeeping for the reader's obligation, and the
+    /// configuration beside it is the news for the panel.
+    ///
+    /// Three paths, in this order, and the order is the contract:
+    ///
+    /// 1. A binding that names no installation answers from the binding alone.
+    ///    There is no probe to admit, so admission does not apply and a held
+    ///    gate does not defer it -- which is what keeps the panel from having
+    ///    no configuration state for the length of someone else's drain.
+    /// 2. A quarantined session refuses, which outranks every other reason and
+    ///    never clears.
+    /// 3. Otherwise the read takes the gate and performs its own discovery, so
+    ///    it may be the operation that observes a replacement. If it is, it
+    ///    answers for the *new* binding in the same transaction: ordering the
+    ///    two halves apart would either discard a catalog describing exactly
+    ///    the binding now current, or let `Ready` arrive for a binding the
+    ///    lifecycle had just reset to `Unattempted`.
+    pub fn read_conversion_configuration(
+        &self,
+    ) -> Result<ConversionConfigurationSnapshotDto, PreviewErrorDto> {
+        if self.bound_to_no_installation() {
+            return self.configuration_snapshot(ConversionConfigurationOutcomeDto::Answered);
+        }
+        if self.backend_is_quarantined() {
+            return self.configuration_snapshot(ConversionConfigurationOutcomeDto::Refused {
+                reason: ConversionConfigurationRefusalDto::BackendQuarantined,
+            });
+        }
+        // Taken rather than waited for. A read deferred behind a drain would
+        // hold a request open for the length of a conversion, and the
+        // obligation it leaves behind is re-issued on the next occasion --
+        // which is cheaper than the wait and does not put this courtesy on the
+        // queue's own lock.
+        let Some(_running) = self.try_enter_backend() else {
+            return self.configuration_snapshot(ConversionConfigurationOutcomeDto::Refused {
+                reason: ConversionConfigurationRefusalDto::BackendBusy,
+            });
+        };
+        let reading = self.provider.read_conversion_configuration();
+        let answer = match reading.conversion {
+            None => ReadAnswer::NoInstallation,
+            Some(Ok(capabilities)) => read_configuration(&capabilities),
+            Some(Err(error)) => ReadAnswer::Unusable(error),
+        };
+        let mut observed = self
+            .resolved
+            .lock()
+            .expect("the installation lock is never poisoned by user code");
+        let target = observed.target.clone();
+        let projection = observed.authority.observe(Observation {
+            installed: reading.installation,
+            preview_availability: reading.preview_availability,
+            target,
+        });
+        let Some(binding) = projection.state.binding() else {
+            return Err(configuration_without_a_binding());
+        };
+        observed.configurations.answer(binding, answer);
+        let configuration = observed.configurations.for_binding(binding).to_dto();
+        Ok(ConversionConfigurationSnapshotDto {
+            authority: projection.to_dto(),
+            configuration,
+            outcome: ConversionConfigurationOutcomeDto::Answered,
+        })
+    }
+
+    /// Whether the session is settled on a binding that names no installation.
+    fn bound_to_no_installation(&self) -> bool {
+        self.resolved
+            .lock()
+            .expect("the installation lock is never poisoned by user code")
+            .authority
+            .projection()
+            .state
+            .binding()
+            .is_some_and(|binding| !binding.is_installed())
+    }
+
+    /// The snapshot as it stands, for a read that established nothing.
+    ///
+    /// The authority and the configuration are read in one critical section,
+    /// which is the requirement rather than an optimisation: a check running
+    /// concurrently must not be able to install a new binding between the two
+    /// reads, leaving a response that pairs one binding's projection with
+    /// another's configuration.
+    fn configuration_snapshot(
+        &self,
+        outcome: ConversionConfigurationOutcomeDto,
+    ) -> Result<ConversionConfigurationSnapshotDto, PreviewErrorDto> {
+        let mut observed = self
+            .resolved
+            .lock()
+            .expect("the installation lock is never poisoned by user code");
+        let projection = observed.authority.projection();
+        let Some(binding) = projection.state.binding() else {
+            return Err(configuration_without_a_binding());
+        };
+        let configuration = observed.configurations.for_binding(binding).to_dto();
+        Ok(ConversionConfigurationSnapshotDto {
+            authority: projection.to_dto(),
+            configuration,
+            outcome,
+        })
     }
 
     /// Reads the backend, notes which one that turned out to be, and stamps the
@@ -716,8 +848,16 @@ impl PreviewService {
     /// verdict actually came from.
     fn stamped_availability(&self) -> BackendAvailabilityDto {
         let (mut availability, identity) = self.provider.availability();
-        self.note_resolved(identity);
-        availability.installation_generation = self.installation_generation.load(Ordering::Relaxed);
+        // The verdict this reading reports *is* the preview verdict, so the
+        // observation carries what the reading already says rather than asking
+        // a second time and risking a different answer.
+        let verdict = if availability.state == "available" {
+            PreviewAvailability::Usable
+        } else {
+            PreviewAvailability::Unusable
+        };
+        let projection = self.note_resolved(identity, verdict);
+        availability.installation_generation = projection.revision.wire();
         self.resolved
             .lock()
             .expect("the installation lock is never poisoned by user code")
@@ -749,7 +889,7 @@ impl PreviewService {
             .clone();
         Some(BackendAvailabilityDto {
             state: String::from("unavailable"),
-            installation_generation: self.installation_generation.load(Ordering::Relaxed),
+            installation_generation: self.authority_projection().revision.wire(),
             // Kept from the last reading where there was one, so the banner
             // still names the installation this session was using rather than
             // claiming it went back to automatic discovery.
@@ -780,20 +920,61 @@ impl PreviewService {
     /// that resolves to the very tools automatic discovery was already using is
     /// not either. Only comparing what resolved gets all three right.
     ///
-    /// Returns where the sequence stands afterwards, so a caller that records
+    /// Returns the authority as it stands afterwards, so a caller that records
     /// it records the value its own observation produced rather than the one it
     /// found on the way in.
-    fn note_resolved(&self, identity: Option<InstallationIdentity>) -> u64 {
+    ///
+    /// The verdict travels with the identity because a binding never arrives
+    /// without one: both come from the discovery this caller already ran, and
+    /// separating them is what let one observer call a build `Installed` while
+    /// another called the same build absent.
+    fn note_resolved(
+        &self,
+        identity: Option<InstallationIdentity>,
+        preview_availability: PreviewAvailability,
+    ) -> BackendAuthorityProjection {
         let mut observed = self
             .resolved
             .lock()
             .expect("the installation lock is never poisoned by user code");
-        if observed.looked && observed.identity != identity {
-            self.installation_generation.fetch_add(1, Ordering::Relaxed);
+        let target = observed.target.clone();
+        let projection = observed.authority.observe(Observation {
+            installed: identity,
+            preview_availability,
+            target,
+        });
+        // The configuration follows the binding in the same critical section.
+        // An observation with no catalog to offer initializes a replaced
+        // binding from what it is and retains an unchanged one, which is what
+        // keeps a recheck of the same build from demoting a catalog it did not
+        // re-read.
+        if let Some(binding) = projection.state.binding() {
+            observed.configurations.observe(binding);
         }
-        observed.looked = true;
-        observed.identity = identity;
-        self.installation_generation.load(Ordering::Relaxed)
+        projection
+    }
+
+    /// The authority as it stands, for an operation that observed nothing.
+    ///
+    /// Every response carries this whether its own outcome succeeded or
+    /// refused: an observation recorded and not delivered leaves the session
+    /// correct in Rust and stale on screen, which is the half of the rule that
+    /// four separate findings were about.
+    fn authority_projection(&self) -> BackendAuthorityProjection {
+        self.resolved
+            .lock()
+            .expect("the installation lock is never poisoned by user code")
+            .authority
+            .projection()
+    }
+
+    /// Points the session at a discovery target, so a later absence can be
+    /// told from the absence before it.
+    fn note_discovery_target(&self, home: Option<PathBuf>) {
+        self.resolved
+            .lock()
+            .expect("the installation lock is never poisoned by user code")
+            .target = DiscoveryTarget::of(home);
     }
 
     /// Declares the start of a new webview document.
@@ -3528,7 +3709,10 @@ impl PreviewService {
         // below returns. Switching away and back is a real thing to do, and it
         // restores the same build -- while the generation, which only counts
         // changes, would have moved on and refused the retry for ever.
-        let generation = self.note_resolved(backend.installation.clone());
+        let generation = self
+            .note_resolved(backend.installation.clone(), backend.preview_availability)
+            .revision
+            .wire();
         // Bound to a local first, and every lock below it likewise. A guard
         // produced inside an `if` condition lives until the end of that `if`,
         // body included -- and each of these bodies takes the same lock again.
@@ -5395,7 +5579,10 @@ impl PreviewService {
                 before_member_publication,
             },
         );
-        let generation = self.note_resolved(backend.installation.clone());
+        let generation = self
+            .note_resolved(backend.installation.clone(), backend.preview_availability)
+            .revision
+            .wire();
         drop(guards);
         drop(running);
         Ok(SciexConversion::of(
@@ -5564,7 +5751,10 @@ impl PreviewService {
             ConversionIntent::SHIPPED,
         )?;
         let report = run_planned_conversion(&plan, &backend);
-        let generation = self.note_resolved(backend.installation.clone());
+        let generation = self
+            .note_resolved(backend.installation.clone(), backend.preview_availability)
+            .revision
+            .wire();
         drop(guard);
         drop(running);
         Ok(WorkspaceConversionReport::of(
@@ -5700,9 +5890,16 @@ impl PreviewService {
         // report the same one; taking the first is taking that resolution. Read
         // before any of the outcomes, so a failed operation does not take the
         // answer with it.
-        let installation = attempts
+        // Both halves of one observation, from one attempt: the batch shares a
+        // resolution, so every attempt reports the same binding and the same
+        // verdict about it, and taking them from the same attempt is what keeps
+        // them from being two different discoveries' answers.
+        let observed = attempts
             .first()
-            .and_then(|attempt| attempt.installation.clone());
+            .map(|attempt| (attempt.installation.clone(), attempt.preview_availability));
+        let installation = observed
+            .as_ref()
+            .and_then(|(installation, _)| installation.clone());
         // An open is a look at the backend like any other, and it is recorded
         // as one -- still under the gate. An open that resolved a backend
         // nothing had seen yet and kept it to itself left the sequence naming
@@ -5713,7 +5910,20 @@ impl PreviewService {
         //
         // The value recorded is the one this observation leaves behind, not the
         // one this run found on the way in.
-        let generation = self.note_resolved(installation.clone());
+        //
+        // A batch that produced no attempt at all observed nothing, and reports
+        // the authority as it already stood. Recording an absence there would
+        // say MSCanvas looked and found no installation, which is not what
+        // happened.
+        let generation = observed
+            .map_or_else(
+                || self.authority_projection(),
+                |(installation, preview_availability)| {
+                    self.note_resolved(installation, preview_availability)
+                },
+            )
+            .revision
+            .wire();
         drop(guard);
         drop(running);
         if SourceGeneration::capture(file.path()) != before {
@@ -6006,7 +6216,7 @@ impl PreviewService {
         // fact that says whether it even came from the installation this
         // preview belongs to. The banner would then keep describing the old
         // installation while every retry ran the new one.
-        self.note_resolved(attempt.installation.clone());
+        self.note_resolved(attempt.installation.clone(), attempt.preview_availability);
         // And once more on what actually ran. The pre-flight above looked at
         // the recorded tools a moment before this launched, which leaves a
         // window the size of that moment; this closes it with the identity the
@@ -6277,11 +6487,11 @@ impl PreviewService {
     fn try_enter_backend(&self) -> Option<BackendRun<'_>> {
         match self.backend_gate.try_lock() {
             Ok(guard) => Some(BackendRun {
-                installation: self.installation_generation.load(Ordering::Relaxed),
+                installation: self.authority_projection().revision.wire(),
                 _guard: guard,
             }),
             Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(BackendRun {
-                installation: self.installation_generation.load(Ordering::Relaxed),
+                installation: self.authority_projection().revision.wire(),
                 _guard: poisoned.into_inner(),
             }),
             Err(std::sync::TryLockError::WouldBlock) => None,
@@ -6297,7 +6507,7 @@ impl PreviewService {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         BackendRun {
-            installation: self.installation_generation.load(Ordering::Relaxed),
+            installation: self.authority_projection().revision.wire(),
             _guard: guard,
         }
     }
@@ -6312,9 +6522,9 @@ impl PreviewService {
 /// recorded -- and a preview stamped that way passes the check that exists to
 /// refuse it, putting one installation's spectrum beside another's rows.
 ///
-/// `use_installation` deliberately does not use this field: it advances the
-/// generation after taking the gate, so the value it must report is the one
-/// after its own change, not the one it found.
+/// `use_installation` deliberately does not use this field: it observes after
+/// taking the gate, so the value it must report is the revision after its own
+/// observation, not the one it found.
 struct BackendRun<'a> {
     _guard: std::sync::MutexGuard<'a, ()>,
     installation: u64,
@@ -6451,6 +6661,23 @@ fn source_changed_since_preview() -> PreviewErrorDto {
         "The file has changed since it was opened, so this spectrum was not shown \
          beside metadata that no longer describes it. Open the file again to continue.",
         false,
+    )
+}
+
+/// What a configuration read answers when the session is bound to nothing.
+///
+/// A read is issued only for a rendered binding, and an unresolved session has
+/// none -- what it owes is a backend check, not a settings read. So this is a
+/// caller that asked a question with no representable answer, and it is refused
+/// rather than answered with an invented one: the two exits ADR 0044 forbids are
+/// inventing a receipt and saying `UnavailableForBinding`, which is a statement
+/// about a binding that does not exist.
+fn configuration_without_a_binding() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "configuration_without_a_binding",
+        "MSCanvas has not established which ProteoWizard installation it is using, so there are \
+         no conversion settings to describe yet.",
+        true,
     )
 }
 

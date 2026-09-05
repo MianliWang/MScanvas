@@ -21,7 +21,11 @@ use mscanvas_proteowizard::{
     Termination, interpret_preview,
 };
 
-use super::backend::{ConversionBackend, OperationAttempt, PreviewProvider, interpretation_error};
+use super::authority::PreviewAvailability;
+use super::backend::{
+    ConfigurationReading, ConversionBackend, OperationAttempt, PreviewProvider,
+    interpretation_error,
+};
 use super::conversion::{conversion_source_kind, is_convertible};
 #[cfg(windows)]
 use super::discovery::inspect_drop_root;
@@ -32,6 +36,11 @@ use super::drop_ingestion::{
     DropBatch, DropBudget, DropIngestionSummary, MAX_DROP_ROOTS, NativeDropDispatch,
     NativeDropSignal, NativeDropWork, expand_drop_paths, expand_drop_paths_with_budget,
     expand_drop_paths_with_budget_using, normalize_window_drop_event,
+};
+use super::dto::{
+    BackendAuthorityStateDto, BackendBindingDto, BackendPreviewAvailabilityDto,
+    ConversionCatalogRowDto, ConversionConfigurationDto, ConversionConfigurationOutcomeDto,
+    ConversionConfigurationRefusalDto, ConversionConfigurationSnapshotDto,
 };
 use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, ChromatogramRangeDto, ChromatogramTracesDto,
@@ -271,6 +280,12 @@ fn backend(label: &str, release: &str) -> InstallationIdentity {
     InstallationIdentity::for_test(&home.join(MSCONVERT), &home.join(MSACCESS), release)
 }
 
+/// The name every fake installation answers to unless a test moves it.
+///
+/// Shared, so `FakeProvider`'s world and `ConvertingProvider`'s label start on
+/// one build rather than on two that differ only in a string.
+const INSTALLED_LABEL: &str = "installed";
+
 const MSCONVERT: &str = "msconvert.exe";
 const MSACCESS: &str = "msaccess.exe";
 
@@ -344,6 +359,22 @@ impl FakeWorld {
         self.resolved.lock().expect("test lock").clone()
     }
 
+    /// The preview verdict that belongs with the identity above.
+    ///
+    /// This world holds no build that resolves and cannot preview, so resolving
+    /// one *is* the usable verdict. The pair is derived here, from one place,
+    /// for the same reason production derives it from one discovery: a fake
+    /// that let the two drift would be inventing a state the backend cannot
+    /// produce. Tests that need them to disagree drive the authority directly,
+    /// where that pair is the input rather than a consequence.
+    fn resolved_preview_availability(&self) -> PreviewAvailability {
+        if self.resolved_backend().is_some() {
+            PreviewAvailability::Usable
+        } else {
+            PreviewAvailability::Unusable
+        }
+    }
+
     /// How many backend operations have actually been run, so a test can say
     /// that something was refused *before* one was spent on it.
     fn requested_count(&self) -> usize {
@@ -392,7 +423,7 @@ impl FakeProvider {
             },
             chosen_availability: None,
             chosen: Mutex::new(None),
-            world: FakeWorld::new(Some(backend("installed", "3.0.26013"))),
+            world: FakeWorld::new(Some(backend(INSTALLED_LABEL, EVIDENCED_RELEASE))),
             responses: Mutex::new(responses),
             batches: Mutex::new(0),
         }
@@ -547,6 +578,7 @@ impl PreviewProvider for FakeProvider {
             Response::Error(error) => {
                 return Ok(OperationAttempt {
                     installation: self.resolved_backend(),
+                    preview_availability: self.world.resolved_preview_availability(),
                     outcome: Err(error),
                 });
             }
@@ -555,6 +587,7 @@ impl PreviewProvider for FakeProvider {
             interpret_preview(operation, &process, &manifest).map_err(interpretation_error)?;
         Ok(OperationAttempt {
             installation: self.resolved_backend(),
+            preview_availability: self.world.resolved_preview_availability(),
             outcome: Ok(outcome),
         })
     }
@@ -888,9 +921,12 @@ fn asking_for_the_installation_already_in_use_is_not_a_change() {
         .open_preview(&selected.handle)
         .expect("the file opens");
 
-    // Already on automatic discovery, so this switches nothing.
+    // Already on automatic discovery, so this switches nothing. The open above
+    // was the session's first observation and settled the authority, so the
+    // sequence already stands at one; what this asserts is that a no-op switch
+    // leaves it there.
     let again = service.use_installation(None);
-    assert_eq!(again.installation_generation, 0);
+    assert_eq!(again.installation_generation, 1);
     assert_eq!(again.origin, "automatic");
 
     // And what the previous reading produced is still usable, rather than
@@ -902,11 +938,11 @@ fn asking_for_the_installation_already_in_use_is_not_a_change() {
     // A real switch still advances it, and asking for that same folder again
     // does not.
     let chosen = service.use_installation(Some(PathBuf::from(r"C:\pwiz")));
-    assert_eq!(chosen.installation_generation, 1);
+    assert_eq!(chosen.installation_generation, 2);
     let same = service.use_installation(Some(PathBuf::from(r"C:\pwiz")));
-    assert_eq!(same.installation_generation, 1);
+    assert_eq!(same.installation_generation, 2);
     // Switching back is a change again.
-    assert_eq!(service.use_installation(None).installation_generation, 2);
+    assert_eq!(service.use_installation(None).installation_generation, 3);
 }
 
 #[test]
@@ -916,16 +952,22 @@ fn a_verdict_says_where_it_belongs_in_the_sequence_of_installation_changes() {
     // trusted its own ordering could show the installation a choice replaced
     // while every later operation used the chosen one. The number is what lets
     // it tell, and it is read under the gate that served the verdict.
+    //
+    // Zero is not a verdict's number. It names the window before anything has
+    // looked -- the state every session opens in -- so it has to sort before
+    // every settled answer, and the first look advances past it even when what
+    // it settles on is an absence. A reading that reported zero would be
+    // indistinguishable from one issued before the backend was ever examined.
     let service = PreviewService::new(Box::new(FakeProvider::only_when_chosen()));
-    assert_eq!(service.inspect_backend().installation_generation, 0);
-
-    let chosen = service.use_installation(Some(PathBuf::from("C:\\pwiz")));
-    assert_eq!(chosen.installation_generation, 1);
-    // A plain reading does not advance it -- only a change does.
     assert_eq!(service.inspect_backend().installation_generation, 1);
 
+    let chosen = service.use_installation(Some(PathBuf::from("C:\\pwiz")));
+    assert_eq!(chosen.installation_generation, 2);
+    // A plain reading does not advance it -- only a change does.
+    assert_eq!(service.inspect_backend().installation_generation, 2);
+
     let restored = service.use_installation(None);
-    assert_eq!(restored.installation_generation, 2);
+    assert_eq!(restored.installation_generation, 3);
     assert_eq!(restored.origin, "automatic");
 }
 
@@ -1811,11 +1853,13 @@ fn automatic_discovery_resolving_to_a_different_installation_is_a_change() {
     let provider = Box::new(FakeProvider::available(Vec::new()));
     let world = provider.clone_world();
     let service = PreviewService::new(provider);
-    assert_eq!(service.inspect_backend().installation_generation, 0);
+    // One for the look that settled the session, not zero: zero is the window
+    // before anything looked.
+    assert_eq!(service.inspect_backend().installation_generation, 1);
 
     world.resolves_to(Some(backend("elsewhere", "3.0.25000")));
 
-    assert_eq!(service.inspect_backend().installation_generation, 1);
+    assert_eq!(service.inspect_backend().installation_generation, 2);
     // Still automatic: what changed is which backend that resolves to, which is
     // a different question from what was asked for.
     assert_eq!(service.inspect_backend().origin, "automatic");
@@ -1912,15 +1956,15 @@ fn an_in_place_upgrade_advances_the_sequence_even_though_nothing_was_requested()
     let provider = Box::new(FakeProvider::available(Vec::new()));
     let world = provider.clone_world();
     let service = PreviewService::new(provider);
-    assert_eq!(service.inspect_backend().installation_generation, 0);
+    assert_eq!(service.inspect_backend().installation_generation, 1);
 
     // Same paths, different build. This is what an installer that upgrades in
     // place leaves behind, and it is invisible to anything comparing requests.
     world.resolves_to(Some(backend("installed", "3.0.99999")));
 
-    assert_eq!(service.inspect_backend().installation_generation, 1);
+    assert_eq!(service.inspect_backend().installation_generation, 2);
     // And looking again at an unchanged backend is not another change.
-    assert_eq!(service.inspect_backend().installation_generation, 1);
+    assert_eq!(service.inspect_backend().installation_generation, 2);
 }
 
 #[test]
@@ -1929,13 +1973,13 @@ fn a_backend_that_disappears_and_returns_unchanged_is_one_change_each_way() {
     let world = provider.clone_world();
     let service = PreviewService::new(provider);
     let original = world.resolved_backend();
-    assert_eq!(service.inspect_backend().installation_generation, 0);
-
-    world.resolves_to(None);
     assert_eq!(service.inspect_backend().installation_generation, 1);
 
-    world.resolves_to(original);
+    world.resolves_to(None);
     assert_eq!(service.inspect_backend().installation_generation, 2);
+
+    world.resolves_to(original);
+    assert_eq!(service.inspect_backend().installation_generation, 3);
 }
 
 #[test]
@@ -3565,6 +3609,12 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "inspect_backend",
             "choose_backend_installation",
             "use_automatic_backend_discovery",
+            // The conversion-settings read, beside the two that change which
+            // installation is bound: it answers for whichever binding those two
+            // leave behind, and it is one command because the answer is one
+            // snapshot -- which binding, what is known for it, and what became
+            // of this request.
+            "read_conversion_configuration",
             "get_workspace_roster",
             "choose_workspace_files",
             "begin_mzml_folder_import",
@@ -6894,7 +6944,7 @@ impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
             runner,
             preview_started: Mutex::new(None),
             preview_release: Mutex::new(None),
-            installation_label: Arc::new(Mutex::new(String::from("msconvert"))),
+            installation_label: Arc::new(Mutex::new(String::from(INSTALLED_LABEL))),
             bindings: Arc::new(AtomicUsize::new(0)),
             on_conversion_backend: Arc::new(Mutex::new(None)),
         }
@@ -6958,9 +7008,30 @@ impl ConvertingProvider<FakeConversionRunner> {
     }
 }
 
+impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
+    /// The one installation this provider is on, named by the shared label.
+    ///
+    /// Every question that names a build reads it here. Three separate sources
+    /// -- the inner world's, the label's and a literal -- is how a fake comes to
+    /// report one build to the banner and another to the queue, which advances
+    /// the session's binding on every alternating call and would hide exactly
+    /// the defects the receipt exists to catch.
+    fn labelled_installation(&self) -> InstallationIdentity {
+        backend(
+            &self
+                .installation_label
+                .lock()
+                .expect("the installation label is never poisoned"),
+            EVIDENCED_RELEASE,
+        )
+    }
+}
+
 impl<R: ProcessRunner + Send + Sync> PreviewProvider for ConvertingProvider<R> {
     fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
-        self.inner.availability()
+        let (verdict, _) = self.inner.availability();
+        let installed = verdict.state == "available";
+        (verdict, installed.then(|| self.labelled_installation()))
     }
 
     fn run(
@@ -6992,6 +7063,27 @@ impl<R: ProcessRunner + Send + Sync> PreviewProvider for ConvertingProvider<R> {
         self.inner.use_installation(home);
     }
 
+    /// The build's own msconvert grammar, from the same capabilities every
+    /// conversion here plans against -- so a catalog and a plan cannot describe
+    /// two different builds in one test.
+    ///
+    /// Which installation it is, from the same shared label `conversion_backend`
+    /// reads, for the same reason: a test that moves this provider onto another
+    /// build must move it for both, or the catalog and the queue would disagree
+    /// about which build the session is on and neither would be wrong.
+    fn read_conversion_configuration(&self) -> ConfigurationReading {
+        let installed = self.inner.verdict().state == "available";
+        ConfigurationReading {
+            preview_availability: if installed {
+                PreviewAvailability::Usable
+            } else {
+                PreviewAvailability::Unusable
+            },
+            conversion: installed.then(|| Ok(self.capabilities.clone())),
+            installation: installed.then(|| self.labelled_installation()),
+        }
+    }
+
     fn conversion_backend(&self) -> Result<ConversionBackend<'_>, PreviewErrorDto> {
         self.bindings.fetch_add(1, Ordering::SeqCst);
         if let Some(hook) = self
@@ -7004,13 +7096,8 @@ impl<R: ProcessRunner + Send + Sync> PreviewProvider for ConvertingProvider<R> {
         }
         Ok(ConversionBackend {
             capabilities: self.capabilities.clone(),
-            installation: Some(backend(
-                &self
-                    .installation_label
-                    .lock()
-                    .expect("the installation label is never poisoned"),
-                EVIDENCED_RELEASE,
-            )),
+            preview_availability: PreviewAvailability::Usable,
+            installation: Some(self.labelled_installation()),
             runner: &self.runner,
         })
     }
@@ -11527,7 +11614,7 @@ fn restoring_the_original_installation_makes_the_queue_retryable_again() {
     );
 
     // ...and back. The same build, whatever the change counter now reads.
-    *label.lock().expect("the installation label") = String::from("msconvert");
+    *label.lock().expect("the installation label") = String::from(INSTALLED_LABEL);
     let retried = service
         .retry_conversion_queue(current_document(&service))
         .expect("the original installation is back, so the queue can run again");
@@ -12846,6 +12933,288 @@ fn a_stop_arriving_before_the_handle_is_bound_still_reaches_that_attempt() {
     );
 }
 
+/// The receipt a snapshot's authority names, or a panic saying what it was.
+fn snapshot_receipt(snapshot: &ConversionConfigurationSnapshotDto) -> u64 {
+    match snapshot.authority.state {
+        BackendAuthorityStateDto::Settled { receipt, .. } => receipt,
+        BackendAuthorityStateDto::Unresolved => {
+            panic!("a snapshot is never produced for an unresolved session")
+        }
+    }
+}
+
+/// The rows a ready snapshot carries, or a panic saying what it carried.
+fn snapshot_catalog(snapshot: &ConversionConfigurationSnapshotDto) -> &[ConversionCatalogRowDto] {
+    match &snapshot.configuration {
+        ConversionConfigurationDto::Ready { catalog, .. } => catalog,
+        other => panic!("expected a ready configuration, found {other:?}"),
+    }
+}
+
+/// The first read of a session resolves it, rather than answering that nothing
+/// is resolved.
+///
+/// A configuration read performs its own discovery, so an unresolved session is
+/// not a case it has to represent: it is a case it settles. The snapshot has no
+/// member for "no binding" precisely because the read that would need one has
+/// just minted the binding it answers for.
+#[test]
+fn the_first_configuration_read_settles_the_session_it_answers_for() {
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let snapshot = service
+        .read_conversion_configuration()
+        .expect("a read that resolves a build answers for it");
+
+    assert_eq!(
+        snapshot.outcome,
+        ConversionConfigurationOutcomeDto::Answered
+    );
+    assert_eq!(
+        snapshot.authority.state,
+        BackendAuthorityStateDto::Settled {
+            receipt: snapshot_receipt(&snapshot),
+            binding: BackendBindingDto::Installed,
+            preview_availability: BackendPreviewAvailabilityDto::Usable,
+        }
+    );
+    // Every admitted row, not only the runnable ones -- the reader has to be
+    // able to tell "this build cannot" from "the product never measured it",
+    // and only a complete table makes that difference visible.
+    let catalog = snapshot_catalog(&snapshot);
+    assert_eq!(catalog.len(), ConversionIntent::ADMITTED.len());
+    // This fixture's help declares mzML and zlib and nothing else, so exactly
+    // the shipped row runs on it. That is a real build's shape, not a
+    // degenerate one: the settings panel must open on it with a selection.
+    let shipped: Vec<_> = catalog
+        .iter()
+        .filter(|row| row.intent.id == ConversionIntent::SHIPPED.stable_id())
+        .collect();
+    assert_eq!(shipped.len(), 1);
+    assert!(shipped[0].available);
+}
+
+/// A session bound to no installation answers from the binding, and probes
+/// nothing to do it.
+///
+/// There is nothing to probe: the configuration follows from the binding alone.
+/// Anything that guards a backend process is therefore not consulted, which is
+/// what keeps the panel from having no configuration state for the length of
+/// somebody else's conversion.
+#[test]
+fn a_binding_that_names_no_installation_is_answered_without_a_probe() {
+    let provider = Box::new(FakeProvider::only_when_chosen());
+    let world = provider.clone_world();
+    let service = PreviewService::new(provider);
+    // Settle the session on an absence first, which is what a mount's backend
+    // check does.
+    assert_eq!(service.inspect_backend().state, "unavailable");
+    let looks = world.availability_count();
+
+    let snapshot = service
+        .read_conversion_configuration()
+        .expect("a settled absence is a binding, and a binding has an answer");
+    assert_eq!(
+        snapshot.configuration,
+        ConversionConfigurationDto::UnavailableForBinding
+    );
+    assert_eq!(
+        snapshot.outcome,
+        ConversionConfigurationOutcomeDto::Answered
+    );
+    assert_eq!(
+        world.availability_count(),
+        looks,
+        "a binding that names no installation is not probed to learn it has none"
+    );
+}
+
+/// A read refused because the backend is busy spends no attempt, and says both
+/// things at once.
+///
+/// The refusal is bookkeeping for the reader's obligation and the configuration
+/// beside it is the news for the panel, so a response that carried only one of
+/// them would leave the panel unable to tell "unread" from "unreadable". And
+/// contention is not a failed read: the same request, made once the lane is
+/// free, answers.
+#[test]
+fn a_read_refused_by_a_busy_backend_spends_no_attempt() {
+    use std::sync::Arc;
+
+    let file = TestFile::new("configuration-contention");
+    let (provider, observe_start, release) =
+        ConvertingProvider::faithful().parking_the_first_preview();
+    let service = Arc::new(PreviewService::new(Box::new(provider)));
+    // The session is settled first, as a mount settles it: an unresolved
+    // session owes a backend check, not a settings read, so a read arriving
+    // before one has ever run is not a state this exercises.
+    assert_eq!(service.inspect_backend().state, "available");
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let opening = {
+        let service = Arc::clone(&service);
+        let handle = selected.handle.clone();
+        std::thread::spawn(move || service.open_preview(&handle))
+    };
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the open reached the provider and is holding the lane");
+
+    let refused = service
+        .read_conversion_configuration()
+        .expect("a refused read still answers");
+    assert_eq!(
+        refused.outcome,
+        ConversionConfigurationOutcomeDto::Refused {
+            reason: ConversionConfigurationRefusalDto::BackendBusy,
+        }
+    );
+    // Unread, not unreadable. Nothing was attempted, so nothing failed.
+    assert_eq!(
+        refused.configuration,
+        ConversionConfigurationDto::Unattempted
+    );
+
+    release.send(()).expect("the parked preview is released");
+    opening
+        .join()
+        .expect("the open finished")
+        .expect("it opens");
+
+    // And the attempt the refusal did not spend is still there to spend.
+    let answered = service
+        .read_conversion_configuration()
+        .expect("the lane is free now");
+    assert_eq!(
+        answered.outcome,
+        ConversionConfigurationOutcomeDto::Answered
+    );
+    assert!(matches!(
+        answered.configuration,
+        ConversionConfigurationDto::Ready { .. }
+    ));
+}
+
+/// A read that cannot resolve anything, in a session that never has, is refused
+/// rather than answered with an invented binding.
+///
+/// The snapshot has no member for "no binding", and the two exits that would
+/// give it one are both forbidden: inventing a receipt, and saying the settings
+/// are unavailable for a binding that does not exist. A read is issued only for
+/// a rendered binding, so this is a caller asking a question with no
+/// representable answer -- and the honest reply is that there is none yet.
+///
+/// Reachable only past the frontend's own rule, which is why it is stated here
+/// rather than left to that rule to hold.
+#[test]
+fn a_read_that_never_reaches_a_binding_answers_no_snapshot_at_all() {
+    use std::sync::Arc;
+
+    let file = TestFile::new("configuration-unresolved");
+    let (provider, observe_start, release) =
+        ConvertingProvider::faithful().parking_the_first_preview();
+    let service = Arc::new(PreviewService::new(Box::new(provider)));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    // Nothing has checked the backend, so nothing is settled -- and the open
+    // takes the lane before it observes anything.
+    let opening = {
+        let service = Arc::clone(&service);
+        let handle = selected.handle.clone();
+        std::thread::spawn(move || service.open_preview(&handle))
+    };
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the open reached the provider and is holding the lane");
+
+    let error = service
+        .read_conversion_configuration()
+        .expect_err("there is no binding for a snapshot to be about");
+    assert_eq!(error.kind, "configuration_without_a_binding");
+    assert!(
+        error.retryable,
+        "the binding this needs is one the session is about to have"
+    );
+
+    release.send(()).expect("the parked preview is released");
+    opening
+        .join()
+        .expect("the open finished")
+        .expect("it opens");
+
+    // And once that open has settled the session, the same request answers.
+    let snapshot = service
+        .read_conversion_configuration()
+        .expect("a settled session has a binding to answer for");
+    assert!(matches!(
+        snapshot.configuration,
+        ConversionConfigurationDto::Ready { .. }
+    ));
+}
+
+/// A read that observes a replacement answers for the new build, in one
+/// response.
+///
+/// Splitting the two would mean either discarding a catalog that describes
+/// exactly the binding now current, or letting a catalog arrive for a binding
+/// the lifecycle had just reset to unread. The receipt in the response is the
+/// new one, and the configuration beside it is the new build's.
+#[test]
+fn a_read_that_observes_a_replacement_answers_for_the_new_binding() {
+    let provider = ConvertingProvider::faithful();
+    let label = provider.installation_label();
+    let service = PreviewService::new(Box::new(provider));
+
+    let first = service
+        .read_conversion_configuration()
+        .expect("the first read settles and answers");
+    assert!(matches!(
+        first.configuration,
+        ConversionConfigurationDto::Ready { .. }
+    ));
+
+    // The same paths, another build -- what an installer that upgrades in place
+    // leaves behind, and invisible to anything comparing requests.
+    *label.lock().expect("the installation label") = String::from("msconvert-elsewhere");
+
+    let second = service
+        .read_conversion_configuration()
+        .expect("the read that finds the replacement answers for it");
+    assert_ne!(
+        snapshot_receipt(&second),
+        snapshot_receipt(&first),
+        "a different build is a different binding"
+    );
+    assert!(
+        matches!(
+            second.configuration,
+            ConversionConfigurationDto::Ready { .. }
+        ),
+        "the new binding's first rendered state is its answer, never the \
+         obligation it never sat in"
+    );
+    assert!(second.authority.revision > first.authority.revision);
+}
+
+/// A recheck that finds the same build does not cause a second probe.
+///
+/// The catalog is retained across it. Demoting it to unread would re-probe,
+/// which would re-plan, for a build nothing had said anything new about.
+#[test]
+fn a_recheck_between_two_reads_does_not_disturb_the_catalog() {
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let first = service
+        .read_conversion_configuration()
+        .expect("the first read answers");
+    service.inspect_backend();
+    let after = service
+        .read_conversion_configuration()
+        .expect("the second read answers");
+
+    assert_eq!(snapshot_receipt(&after), snapshot_receipt(&first));
+    assert_eq!(after.configuration, first.configuration);
+    assert_eq!(after.authority.revision, first.authority.revision);
+}
+
 /// A session that lost track of a converter starts no probe, even for the
 /// cheapest backend question there is.
 ///
@@ -12880,6 +13249,19 @@ fn a_quarantined_session_rechecks_without_launching_anything() {
         "Restart MSCanvas before starting another preview or conversion."
     );
     assert_eq!(before.release, None, "no build is claimed by a refusal");
+    // The settings read is a `msconvert --help` probe like any other, so it is
+    // refused for the same reason -- and it still answers, carrying the
+    // configuration as it stands so the panel is told something rather than
+    // shown an error it can do nothing about.
+    let snapshot = service
+        .read_conversion_configuration()
+        .expect("a quarantined session still answers with what it holds");
+    assert_eq!(
+        snapshot.outcome,
+        ConversionConfigurationOutcomeDto::Refused {
+            reason: ConversionConfigurationRefusalDto::BackendQuarantined,
+        }
+    );
     // And pointing it somewhere else is refused rather than probed, so the
     // session never ends up describing an installation nothing has examined.
     let elsewhere = service.use_installation(Some(PathBuf::from("elsewhere")));
@@ -16512,9 +16894,11 @@ fn a_bundle_dataset_converts_to_a_published_output_set() {
         conversion.report().backend_facts().is_some(),
         "a run that ran has facts"
     );
-    // The first resolution of a session is generation zero; what matters is
-    // that the stamp comes from the gate guard rather than from a later look.
-    assert_eq!(conversion.report().installation_generation(), 0);
+    // One, for the resolution this run itself performed: zero names the window
+    // before anything has looked, which no run that ran can have been stamped
+    // with. What matters is that the stamp comes from this run's own
+    // observation rather than from a later look.
+    assert_eq!(conversion.report().installation_generation(), 1);
 
     // The exact finalized objects survive the handoff, one per published
     // member. This is what a later adoption decision would rest on.

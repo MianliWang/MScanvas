@@ -11,10 +11,10 @@ use tauri::webview::PageLoadEvent;
 use tauri::{Manager, State};
 
 use preview::dto::{
-    BackendAvailabilityDto, ConversionConflictPolicyDto, ConversionDiagnosticsReservationDto,
-    ConversionQueuePlanDto, FolderImportReservationDto, FolderIngestionResultDto, PreviewDto,
-    PreviewErrorDto, SelectedSpectrumOutcomeDto, WorkspaceAddResultDto,
-    WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto,
+    BackendAvailabilityDto, ConversionConfigurationSnapshotDto, ConversionConflictPolicyDto,
+    ConversionDiagnosticsReservationDto, ConversionQueuePlanDto, FolderImportReservationDto,
+    FolderIngestionResultDto, PreviewDto, PreviewErrorDto, SelectedSpectrumOutcomeDto,
+    WorkspaceAddResultDto, WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto,
     WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
     WorkspaceOutputAdoptionResultDto, WorkspaceRemoveResultDto, WorkspaceRosterDto,
     diagnostics_picker_unavailable, invalid_conversion_reservation,
@@ -39,6 +39,26 @@ async fn inspect_backend(
 ) -> Result<BackendAvailabilityDto, PreviewErrorDto> {
     let service = Arc::clone(&service);
     off_the_async_runtime(move || service.inspect_backend()).await
+}
+
+/// Reports what conversion semantics are known for the installation MSCanvas is
+/// currently bound to.
+///
+/// One response answers the whole question: which binding it is about, what is
+/// known for that binding, and what happened to this request. The webview never
+/// joins a receipt from one response with a catalog from another -- that join is
+/// what made a stale catalog installable.
+///
+/// It may run a `msconvert --help` probe, so it is subject to the same backend
+/// lane every other process is; a refusal is reported in the response's own
+/// outcome rather than as an error, because the snapshot beside it is still the
+/// news for the panel.
+#[tauri::command]
+async fn read_conversion_configuration(
+    service: State<'_, SharedService>,
+) -> Result<ConversionConfigurationSnapshotDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.read_conversion_configuration()).await?
 }
 
 /// Reports every dataset the session holds, in the order they were added.
@@ -1175,6 +1195,7 @@ pub fn run() {
             inspect_backend,
             choose_backend_installation,
             use_automatic_backend_discovery,
+            read_conversion_configuration,
             get_workspace_roster,
             choose_workspace_files,
             begin_mzml_folder_import,

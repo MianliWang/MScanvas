@@ -190,6 +190,8 @@ function harness(
     inspectBackend: () => service.inspectBackend(),
     chooseInstallation: () => service.chooseInstallation(options.dismissPicker ?? false),
     useAutomaticDiscovery: () => service.useAutomaticDiscovery(),
+    readConversionConfiguration: () =>
+      Promise.reject(new Error("this test never reads the conversion settings")),
     getRoster: () => Promise.resolve(empty),
     copySelectedSpectrumPlot: () =>
       Promise.reject(new Error("this test never copies a plot")),

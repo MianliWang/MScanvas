@@ -12,7 +12,11 @@ import type { PreviewApi } from "../features/mzml-preview/api";
 import type { WorkspaceDropUpdate } from "../features/mzml-preview/contracts";
 import type { WorkspaceDropTransport } from "../features/mzml-preview/dropTransport";
 import type {
+  BackendAuthorityProjection,
   BackendAvailability,
+  ConversionCatalogRow,
+  ConversionConfigurationSnapshot,
+  ConversionIntentDescriptor,
   ChromatogramCopyOutcome,
   LinkedFigureCopyOutcome,
   LinkedFigureExportOutcome,
@@ -161,6 +165,56 @@ export const availableBackend: BackendAvailability = {
   sameInstallation: true,
   failure: null,
 };
+
+/**
+ * Every combination the evidence admits, in the order Rust states them.
+ *
+ * Transcribed rather than derived, because a fixture that rebuilt the table
+ * from axis values would be re-deriving the very boundary the table exists to
+ * be — a free cross-product of the five axes is forty-eight combinations, and
+ * nine were measured.
+ */
+export const admittedIntents: readonly ConversionIntentDescriptor[] = [
+  intent("no_additional_centroiding", "all", "mz64_intensity32", "zlib"),
+  intent("no_additional_centroiding", "all", "mz64_intensity64", "zlib"),
+  intent("no_additional_centroiding", "all", "mz32_intensity32", "zlib"),
+  intent("no_additional_centroiding", "all", "mz32_intensity64", "zlib"),
+  intent("no_additional_centroiding", "all", "mz64_intensity64", "none"),
+  intent("no_additional_centroiding", "ms1_only", "mz64_intensity64", "zlib"),
+  intent("no_additional_centroiding", "ms2_only", "mz64_intensity64", "zlib"),
+  intent("unscoped_default_centroiding", "all", "mz64_intensity64", "zlib"),
+  intent("unscoped_default_centroiding", "all", "mz32_intensity32", "zlib"),
+];
+
+/** The combination MSCanvas ships, which is the table's first row. */
+export const shippedIntent: ConversionIntentDescriptor = admittedIntents[0];
+
+function intent(
+  processing: string,
+  population: string,
+  precision: string,
+  compression: string,
+): ConversionIntentDescriptor {
+  return {
+    id: `mzml+${processing}+${population}+${precision}+${compression}`,
+    format: "mzml",
+    processing,
+    population,
+    precision,
+    compression,
+  };
+}
+
+/**
+ * The catalog of a build that declares everything, so every row runs.
+ *
+ * A test about a build that cannot run some row supplies its own, which is the
+ * point of availability being a property of the row.
+ */
+export const completeCatalog: readonly ConversionCatalogRow[] = admittedIntents.map((row) => ({
+  intent: row,
+  available: true,
+}));
 
 /**
  * What a session that lost track of a converter reports about the backend.
@@ -660,6 +714,14 @@ export function fakeCopiedFigure(settings: FigureSettings): CopiedFigure {
 
 export interface FakePreviewApiOptions {
   readonly availability?: BackendAvailability | (() => Promise<BackendAvailability>);
+  /**
+   * What the conversion-settings read answers with.
+   *
+   * Defaults to a build that runs every admitted row. A quarantined session
+   * still refuses regardless of this, because that ordering is Rust's and a
+   * test must not be able to opt out of it.
+   */
+  readonly conversionConfiguration?: ConversionConfigurationSnapshot;
   /** What the folder picker resolves to. `null` stands for a dismissed picker. */
   readonly chosenInstallation?:
     | BackendAvailability
@@ -1323,6 +1385,38 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     diagnosticsExportRequests,
     adoptionRequests,
     conversionRequests,
+    readConversionConfiguration: () => {
+      // Modelled on Rust's own ordering rather than canned: quarantine outranks
+      // every other reason and never clears, so a test that quarantines the
+      // session cannot then be handed a catalog.
+      const authority: BackendAuthorityProjection = {
+        revision: deliveredVerdicts.length + 1,
+        state: {
+          state: "settled",
+          receipt: 1,
+          binding: "installed",
+          previewAvailability: "usable",
+        },
+      };
+      if (backendQuarantined) {
+        return Promise.resolve({
+          authority,
+          configuration: { configuration: "unattempted" },
+          outcome: { outcome: "refused", reason: "backendQuarantined" },
+        });
+      }
+      return Promise.resolve(
+        options.conversionConfiguration ?? {
+          authority,
+          configuration: {
+            configuration: "ready",
+            catalog: completeCatalog,
+            shipped: shippedIntent.id,
+          },
+          outcome: { outcome: "answered" },
+        },
+      );
+    },
     inspectBackend: () =>
       // A quarantined session answers every backend question the same way and
       // launches nothing to do it, exactly as Rust does. Modelled here rather
@@ -1800,6 +1894,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     "clearWorkspace",
     "openPreview",
     "loadSpectrum",
+    "readConversionConfiguration",
   ] as const satisfies readonly (keyof PreviewApi)[];
   const recorded: Record<string, unknown> = { ...fake };
   for (const command of commands) {

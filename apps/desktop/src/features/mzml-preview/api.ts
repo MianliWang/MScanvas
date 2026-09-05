@@ -12,6 +12,7 @@ import type {
   ChromatogramExportOutcome,
   ChromatogramRange,
   ChromatogramTraceSet,
+  ConversionConfigurationSnapshot,
   ConversionConflictPolicy,
   ConversionQueuePlan,
   FolderIngestionResult,
@@ -88,6 +89,16 @@ export interface PreviewApi {
   chooseInstallation(): Promise<BackendAvailability | null>;
   /** Goes back to searching automatically, and reports what that finds. */
   useAutomaticDiscovery(): Promise<BackendAvailability>;
+  /**
+   * What conversion semantics are known for the installation currently bound.
+   *
+   * One call, one answer: which binding it is about, what is known for that
+   * binding, and what became of this request. It may run a `msconvert --help`
+   * probe, so Rust can refuse it while the backend lane is busy — and a refusal
+   * still resolves, carrying the snapshot as it stands, because the refusal is
+   * bookkeeping and the snapshot beside it is the news.
+   */
+  readConversionConfiguration(): Promise<ConversionConfigurationSnapshot>;
   /**
    * Everything the session holds, in the order Rust holds it. Reads stored
    * facts: no file is revalidated and no backend work is started.
@@ -353,6 +364,8 @@ export const tauriPreviewApi: PreviewApi = {
   inspectBackend: () => invoke<BackendAvailability>("inspect_backend"),
   chooseInstallation: () => invoke<BackendAvailability | null>("choose_backend_installation"),
   useAutomaticDiscovery: () => invoke<BackendAvailability>("use_automatic_backend_discovery"),
+  readConversionConfiguration: () =>
+    invoke<ConversionConfigurationSnapshot>("read_conversion_configuration"),
   getRoster: () => invoke<WorkspaceRoster>("get_workspace_roster"),
   chooseFiles: () => invoke<WorkspaceAddResult | null>("choose_workspace_files"),
   chooseFolder: (onReserved) =>
