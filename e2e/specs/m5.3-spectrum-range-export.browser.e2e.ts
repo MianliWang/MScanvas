@@ -28,7 +28,12 @@ import {
   ipcCalls,
   setInvokeResult,
 } from "../support/harness";
-import { COMPLETE_POINT_COUNT, ipcTable, secondSpectrum } from "../support/fixtures";
+import {
+  COMPLETE_POINT_COUNT,
+  ipcTable,
+  secondSpectrum,
+  SETTLED_AUTHORITY,
+} from "../support/fixtures";
 import {
   SPECTRUM,
   SPECTRUM_PLOT,
@@ -360,8 +365,8 @@ describe("the selected spectrum's range chooser", () => {
     // table, so a second row alone would be a redelivery of the same spectrum
     // -- which correctly resets nothing.
     await setInvokeResult("load_selected_spectrum", {
-      outcome: "spectrum",
-      spectrum: secondSpectrum(),
+      authority: SETTLED_AUTHORITY,
+      outcome: { outcome: "spectrum", spectrum: secondSpectrum() },
     });
     await browser.execute(() => {
       document

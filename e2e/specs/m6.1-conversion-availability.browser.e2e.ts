@@ -24,13 +24,18 @@ import {
   ipcCalls,
   setInvokeResult,
 } from "../support/harness";
-import { ipcTable, VENDOR_ROW } from "../support/fixtures";
+import { ipcTable, SETTLED_AUTHORITY, VENDOR_ROW } from "../support/fixtures";
 import {
   availableBackend,
+  firstBindingReceipt,
   queueItem,
   queueOf,
+  shippedIntent,
   unavailableBackend,
 } from "../../apps/desktop/src/test/previewFixtures";
+
+/** The binding every answer in this run describes, as a plan carries it. */
+const SETTLED_RECEIPT = firstBindingReceipt;
 
 const VIEWPORTS = [
   { name: "1920x1080", width: 1_920, height: 1_080 },
@@ -63,7 +68,17 @@ const PLAN = {
   compression: "zlib",
   validationMode: "output_only",
   capacity: 16,
+  // The combination, the policy and the binding this plan is *about*. The panel
+  // renders them from here rather than from the controls beside it, and refuses
+  // to start anything the plan does not describe -- so a plan that named none of
+  // them would be a plan nothing could act on.
+  intent: shippedIntent,
+  conflictPolicy: "fail",
+  receipt: SETTLED_RECEIPT,
 };
+
+/** The plan question's answer, as the boundary now shapes it. */
+const PLANNED = { outcome: "planned", plan: PLAN };
 
 /** A finished queue holding one failure another attempt could change. */
 const RETRYABLE_QUEUE = {
@@ -97,7 +112,7 @@ async function openTheWorkspace(
   await browser.setWindowSize(options.width ?? 1_366, options.height ?? 768);
   await installIpcBoundary({
     ...ipcTable(),
-    describe_workspace_conversion_queue: PLAN,
+    describe_workspace_conversion_queue: PLANNED,
     get_workspace_conversion_state: RETRYABLE_QUEUE,
   });
   await browser.url("/");
@@ -302,7 +317,10 @@ describe("M6.1 — conversion-lane availability, rendered", () => {
     // finished queue's own controls go with it rather than standing under a
     // sentence saying something else is starting.
     await openTheWorkspace();
-    await setInvokeResult("begin_workspace_conversion_queue", { reservationId: "reservation-1" });
+    await setInvokeResult("begin_workspace_conversion_queue", {
+      authority: SETTLED_AUTHORITY,
+      outcome: { outcome: "reserved", reservation: { reservationId: "reservation-1" } },
+    });
     // A destination command that never answers, which is what an open native
     // folder picker is: the reservation has landed and Rust has no queue to
     // report until the user has chosen. The table can only resolve or reject,
@@ -329,12 +347,14 @@ describe("M6.1 — conversion-lane availability, rendered", () => {
     // sentence below the fold is absent as far as both a reader and the driver
     // are concerned, which is the reason to bring it into view rather than to
     // read around it.
+    //
+    // Scrolled to the block rather than to the top of the panel. The settings
+    // sit above it and are taller than one screen, so "the top" and "where this
+    // sentence is" stopped being the same place; a reader reaches it by
+    // scrolling, and so does this.
     await browser.execute((selector: string) => {
-      const panel = document.querySelector(selector);
-      if (panel !== null) {
-        panel.scrollTop = 0;
-      }
-    }, PANEL);
+      document.querySelector(selector)?.scrollIntoView({ block: "center" });
+    }, `${PANEL} .conversion-running`);
     const started = await browser.$(`${PANEL} .conversion-running`);
     expect(await started.getText()).toContain("Starting the conversion");
     expect(await browser.$(`${PANEL} button.secondary-button`).isExisting()).toBe(false);

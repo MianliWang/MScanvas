@@ -63,9 +63,9 @@ impl ConversionReservationId {
     }
 
     /// Reads an identifier the webview sent back.
-    ///
-    /// Byte-equal or nothing, the same rule a dataset handle follows: without
-    /// the round-trip, several spellings of one number would all reach the same
+    //
+    // Byte-equal or nothing, the same rule a dataset handle follows: without
+    // the round-trip, several spellings of one number would all reach the same
     /// reservation, and only one of them was ever issued.
     fn parse(handle: &str) -> Option<Self> {
         let id = Self(
@@ -85,16 +85,16 @@ impl fmt::Debug for ConversionReservationId {
 }
 
 /// The folder a whole queue writes into, and the object it was admitted as.
-///
-/// Retained for the length of the queue so a retry runs against the same
-/// directory without asking for it again — and so it can be *proved* to be the
+//
+// Retained for the length of the queue so a retry runs against the same
+// directory without asking for it again — and so it can be *proved* to be the
 /// same directory rather than assumed. The path never leaves this module.
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct AdmittedDestination {
     root: PathBuf,
     /// The volume serial and file id the directory was admitted with, where the
-    /// platform names objects that way. A path is not an object, and a queue
-    /// that retried on a name alone could write into whatever had since taken
+    // platform names objects that way. A path is not an object, and a queue
+    // that retried on a name alone could write into whatever had since taken
     /// it.
     identity: Option<DestinationIdentity>,
 }
@@ -109,9 +109,9 @@ impl AdmittedDestination {
     }
 
     /// Whether a fresh admission of the same name reached the same object.
-    ///
-    /// A platform that will not answer with an identity says so, and every
-    /// caller here reads that as a refusal rather than as agreement: there is
+    //
+    // A platform that will not answer with an identity says so, and every
+    // caller here reads that as a refusal rather than as agreement: there is
     /// no weaker comparison to fall back to.
     pub(super) fn is_still(&self, other: &Self) -> bool {
         self.root == other.root && self.identity.is_some() && self.identity == other.identity
@@ -127,57 +127,57 @@ impl fmt::Debug for AdmittedDestination {
 }
 
 /// Folds one output name the way the destination volume will resolve it.
-///
-/// The one implementation, because two would be two answers to one question.
-/// Windows folds by upcasing: a volume keeps an uppercase table and maps names
-/// through it. Lowercasing is a different relation and misses real collisions
-/// -- Greek final sigma is the plain example, since `to_lowercase` leaves `Σ`
-/// and `ς` as `σ` and `ς` while a volume upcases both to `Σ`.
-///
-/// Rust's uppercasing is full Unicode rather than a volume's fixed table, so
-/// the two still disagree at the edges: `ß` expands to `SS` here and does not
-/// there. Where they disagree this refuses a pair the volume might have kept
-/// apart, which is the safe direction for a rule whose whole purpose is to
-/// refuse, and the honest limit of comparing names without asking the volume.
-///
-/// The crate's staged-member duplicate check is deliberately *not* this. It
-/// folds ASCII only, over names one backend wrote into one private directory,
+//
+// The one implementation, because two would be two answers to one question.
+// Windows folds by upcasing: a volume keeps an uppercase table and maps names
+// through it. Lowercasing is a different relation and misses real collisions
+// -- Greek final sigma is the plain example, since `to_lowercase` leaves `Σ`
+// and `ς` as `σ` and `ς` while a volume upcases both to `Σ`.
+//
+// Rust's uppercasing is full Unicode rather than a volume's fixed table, so
+// the two still disagree at the edges: `ß` expands to `SS` here and does not
+// there. Where they disagree this refuses a pair the volume might have kept
+// apart, which is the safe direction for a rule whose whole purpose is to
+// refuse, and the honest limit of comparing names without asking the volume.
+//
+// The crate's staged-member duplicate check is deliberately *not* this. It
+// folds ASCII only, over names one backend wrote into one private directory,
 /// and its narrowness is argued where it lives.
 pub(super) fn folded_output_name(name: &str) -> String {
     name.to_uppercase()
 }
 
 /// What one queue item's outputs look like before it runs.
-///
-/// The distinction the queue could previously not make. A Thermo or Shimadzu
-/// row has exactly one output and its name is decided by the row's own name, so
-/// two items that would fight over a name are refused before a picker opens. A
-/// SCIEX acquisition has one to twenty-four outputs whose names the backend
-/// chooses, and **no name exists until it has run** -- so there is nothing to
-/// compare at planning time and nothing a placeholder could honestly stand for.
-///
-/// Two named cases rather than `Option<String>`, because `None` would have to
-/// mean unknown, absent, failed and multi-output at once, and the four are
+//
+// The distinction the queue could previously not make. A Thermo or Shimadzu
+// row has exactly one output and its name is decided by the row's own name, so
+// two items that would fight over a name are refused before a picker opens. A
+// SCIEX acquisition has one to twenty-four outputs whose names the backend
+// chooses, and **no name exists until it has run** -- so there is nothing to
+// compare at planning time and nothing a placeholder could honestly stand for.
+//
+// Two named cases rather than `Option<String>`, because `None` would have to
+// mean unknown, absent, failed and multi-output at once, and the four are
 /// different facts.
 #[derive(Clone)]
 pub(super) enum ItemOutputTopology {
     /// One document, named before anything runs.
     KnownSingle { basename: String },
     /// One to `max_members` documents the backend names itself.
-    ///
-    /// Reachable now, and only through explicit family admission. A row gets
-    /// this shape because it was admitted as a family whose conversion boundary
-    /// declares that its backend names its own outputs -- never because of an
+    //
+    // Reachable now, and only through explicit family admission. A row gets
+    // this shape because it was admitted as a family whose conversion boundary
+    // declares that its backend names its own outputs -- never because of an
     /// extension, and never because a caller asked for it.
     BackendNamedSet { max_members: usize },
 }
 
 impl ItemOutputTopology {
     /// What a visible queue projects for this item.
-    ///
-    /// A discriminated projection rather than a string, so there is no value to
-    /// choose for a set that has no name. The empty string this used to
-    /// project was not a filename, and a wire contract that carried one would
+    //
+    // A discriminated projection rather than a string, so there is no value to
+    // choose for a set that has no name. The empty string this used to
+    // project was not a filename, and a wire contract that carried one would
     /// have made a blank output column the interface's problem to avoid.
     pub(super) fn to_dto(&self) -> ConversionOutputPlanDto {
         match self {
@@ -191,8 +191,8 @@ impl ItemOutputTopology {
     }
 
     /// The name this item owns from the moment it is planned, if it owns one.
-    ///
-    /// A set owns nothing until it has published: its names are unknown, and a
+    //
+    // A set owns nothing until it has published: its names are unknown, and a
     /// claim on an unknown name is not a claim.
     pub(super) fn planned_name(&self) -> Option<&str> {
         match self {
@@ -202,8 +202,8 @@ impl ItemOutputTopology {
     }
 
     /// The shape an export states for this item before it has run.
-    ///
-    /// `None` for a known single output, which says all it needs to by naming
+    //
+    // `None` for a known single output, which says all it needs to by naming
     /// its one document.
     pub(super) fn diagnostic_shape(&self) -> Option<super::diagnostics::OutputSetDiagnosticFacts> {
         match self {
@@ -215,7 +215,7 @@ impl ItemOutputTopology {
     }
 
     /// How many names this item could ever own.
-    ///
+    //
     /// The per-item half of the queue name authority's bound.
     pub(super) const fn max_names(&self) -> usize {
         match self {
@@ -240,18 +240,18 @@ impl fmt::Debug for ItemOutputTopology {
 }
 
 /// One output name a queue item owns, and which item owns it.
-///
-/// Derived from the items rather than accumulated beside them, so there is no
-/// second list to keep in step. Bounded by construction: at most
-/// `MAX_CONVERSION_QUEUE_ITEMS` items, each owning at most
-/// `MAX_CONVERSION_OUTPUTS_PER_SOURCE` names -- 16 × 24 = 384 with today's
-/// numbers, and [`ConversionQueue::max_output_names`] states it from the
+//
+// Derived from the items rather than accumulated beside them, so there is no
+// second list to keep in step. Bounded by construction: at most
+// `MAX_CONVERSION_QUEUE_ITEMS` items, each owning at most
+// `MAX_CONVERSION_OUTPUTS_PER_SOURCE` names -- 16 × 24 = 384 with today's
+// numbers, and [`ConversionQueue::max_output_names`] states it from the
 /// constants rather than from a comment.
 pub(super) struct ClaimedOutputName {
     /// Folded once, at derivation, because every use of it is a comparison.
     pub(super) folded: String,
     /// As the backend or the planner spelled it. Read by the queue's own
-    /// refusals; the conversion lifecycle is never handed it, and names the
+    // refusals; the conversion lifecycle is never handed it, and names the
     /// member from its own validated list instead.
     pub(super) display: String,
     /// Which item owns it.
@@ -270,10 +270,10 @@ impl fmt::Debug for ClaimedOutputName {
 }
 
 /// The authority to admit one settled item's outputs into the workspace.
-///
-/// Cardinality-aware rather than flattened. A set is one authority over many
-/// members, not many authorities: rebuilding one from its members after the
-/// fact would be assembling a set ticket from parts, which is the thing the
+//
+// Cardinality-aware rather than flattened. A set is one authority over many
+// members, not many authorities: rebuilding one from its members after the
+// fact would be assembling a set ticket from parts, which is the thing the
 /// output-set boundary exists to refuse.
 #[derive(Clone)]
 pub(super) enum QueueAdoptionAuthority {
@@ -319,9 +319,9 @@ impl ItemState {
     }
 
     /// Whether this item is still waiting for its turn.
-    ///
-    /// The queue's own position counts everything that is not this, so a state
-    /// added later that forgot to answer here would silently be counted as
+    //
+    // The queue's own position counts everything that is not this, so a state
+    // added later that forgot to answer here would silently be counted as
     /// finished.
     const fn is_pending(self) -> bool {
         matches!(self, Self::Pending)
@@ -338,16 +338,21 @@ pub(super) const fn item_state_of(class: super::conversion::OutcomeClass) -> Ite
 }
 
 /// What this row's outputs will look like, or why it cannot be queued.
-///
-/// One definition, asked of every visible planner. The two answers are the two
-/// cardinalities the queue can hold, and which one a row gets is decided by the
-/// family it was **admitted** as — never by its extension and never by a flag a
-/// caller passes in. A family reaches the set arm only by having been through
-/// its own evidenced admission and by declaring, at the conversion boundary,
+//
+// One definition, asked of every visible planner. The two answers are the two
+// cardinalities the queue can hold, and which one a row gets is decided by the
+// family it was **admitted** as — never by its extension and never by a flag a
+// caller passes in. A family reaches the set arm only by having been through
+// its own evidenced admission and by declaring, at the conversion boundary,
 /// that its backend names its own outputs.
+///
+/// The intent decides the name's extension, so it is passed in rather than
+/// reached for: a topology built from the shipped posture would state a name
+/// the run under another admitted combination would not write.
 pub(super) fn item_output_topology(
     kind: DatasetSourceKind,
     file_name: &str,
+    intent: ConversionIntent,
 ) -> Result<ItemOutputTopology, PreviewErrorDto> {
     // Convertibility first, and for both arms. Producing an output set is a
     // statement about cardinality rather than a licence to convert: a family the
@@ -367,7 +372,7 @@ pub(super) fn item_output_topology(
         });
     }
     Ok(ItemOutputTopology::KnownSingle {
-        basename: super::conversion::planned_output_name(file_name, ConversionIntent::SHIPPED)
+        basename: super::conversion::planned_output_name(file_name, intent)
             .ok_or_else(super::dto::dataset_not_convertible)?,
     })
 }
@@ -377,40 +382,40 @@ pub(super) fn item_output_topology(
 pub(super) struct QueueItem {
     dataset: DatasetId,
     /// The dataset's request epoch as it stood when the queue was created, read
-    /// rather than claimed. Claiming would supersede whatever the user was
+    // rather than claimed. Claiming would supersede whatever the user was
     /// already doing with the row merely by opening a picker they might cancel.
     request_epoch: u64,
     kind: DatasetSourceKind,
     dataset_dto: SelectedFileDto,
     /// What this item's outputs look like, and for a known single output what
-    /// it will be called.
-    ///
-    /// Derived before the queue existed, so two items that would fight over one
-    /// name are refused before a picker opens -- for the items whose names can
-    /// be known that early. A backend-named set has none to compare, and says
+    // it will be called.
+    //
+    // Derived before the queue existed, so two items that would fight over one
+    // name are refused before a picker opens -- for the items whose names can
+    // be known that early. A backend-named set has none to compare, and says
     /// so rather than carrying a placeholder.
     output: ItemOutputTopology,
     state: ItemState,
     attempts: u64,
     report: Option<super::conversion::WorkspaceConversionReport>,
     /// The group report of a backend-named set's latest attempt.
-    ///
-    /// Its own field rather than a variant of `report`, because the two
-    /// describe different shapes and nothing reads both. Boxed because it is
+    //
+    // Its own field rather than a variant of `report`, because the two
+    // describe different shapes and nothing reads both. Boxed because it is
     /// much the larger of the two and the queue is cloned on every read.
     set_report: Option<Box<super::conversion::WorkspaceMultiOutputConversionReport>>,
     /// What the latest set attempt settled into.
-    ///
-    /// A set item that ran keeps this even while a retry has moved it back to
-    /// pending, because that is the only place its result lives: the group
-    /// report is its own field, so the two restoration paths below would
-    /// otherwise see an item with no `error` and no single-output `report` and
+    //
+    // A set item that ran keeps this even while a retry has moved it back to
+    // pending, because that is the only place its result lives: the group
+    // report is its own field, so the two restoration paths below would
+    // otherwise see an item with no `error` and no single-output `report` and
     /// call it never-run.
     set_state: Option<ItemState>,
     /// Which conversion the latest set attempt was.
-    ///
-    /// Allocated when that attempt finished, so a retry cannot be described by
-    /// the attempt before it and cannot inherit its authority. Never reaches
+    //
+    // Allocated when that attempt finished, so a retry cannot be described by
+    // the attempt before it and cannot inherit its authority. Never reaches
     /// disk and never reaches the wire.
     set_run: Option<u64>,
     /// An attempt that never reached a conversion at all.
@@ -419,25 +424,25 @@ pub(super) struct QueueItem {
     /// What a stop established about this item's attempt, when one reached it.
     cancellation: Option<CancellationFacts>,
     /// The authority to admit this item's output into the workspace later.
-    ///
-    /// Shared rather than owned, because the queue this sits in is cloned on
-    /// every read: one retention, however many descriptions of it. Present only
-    /// for an item that finalized, dropped with the queue that made it, and
+    //
+    // Shared rather than owned, because the queue this sits in is cloned on
+    // every read: one retention, however many descriptions of it. Present only
+    // for an item that finalized, dropped with the queue that made it, and
     /// never rebuilt from a name.
     adoption: Option<QueueAdoptionAuthority>,
     /// The names this item actually published, once it has.
-    ///
-    /// Only a backend-named set contributes to this. A known single output owns
-    /// its planned name from the moment the queue existed, whether or not it
-    /// ran, so recording it again would count it twice — and a set owns nothing
-    /// until it has published, because until then nobody knows what it will be
+    //
+    // Only a backend-named set contributes to this. A known single output owns
+    // its planned name from the moment the queue existed, whether or not it
+    // ran, so recording it again would count it twice — and a set owns nothing
+    // until it has published, because until then nobody knows what it will be
     /// called.
     published: Vec<String>,
     /// What an export may say about this item's latest attempt.
-    ///
-    /// Shared for the reason the adoption ticket is: the queue is cloned on
-    /// every read and the redacted text is the largest thing on it. Present only
-    /// where the latest attempt is worth diagnosing, replaced whole when a later
+    //
+    // Shared for the reason the adoption ticket is: the queue is cloned on
+    // every read and the redacted text is the largest thing on it. Present only
+    // where the latest attempt is worth diagnosing, replaced whole when a later
     /// attempt settles, and dropped with the queue.
     diagnostic: Option<Arc<ConversionFailureDiagnosticTicket>>,
 }
@@ -448,8 +453,8 @@ pub(super) struct CancellationFacts {
     pub(super) process_launched: bool,
     pub(super) tree_termination_confirmed: bool,
     /// From the moment the stop was accepted to the moment the attempt settled,
-    /// which is the interval the user actually waited. Not the interval the
-    /// process ran: an attempt that had been converting for a minute before the
+    // which is the interval the user actually waited. Not the interval the
+    // process ran: an attempt that had been converting for a minute before the
     /// request would otherwise report a minute as the cost of stopping it.
     pub(super) elapsed: Duration,
     pub(super) termination: Option<Termination>,
@@ -550,11 +555,11 @@ impl QueueItem {
     }
 
     /// The state this item earned by running, if it has run.
-    ///
-    /// `None` means it never has, which is the one case a stop may call not-run.
-    /// Read by both restoration paths, so an item that ran once and was moved
-    /// back to pending by a retry keeps the result the user has already seen --
-    /// its place in the counts, its reason, and the diagnostic ticket whose
+    //
+    // `None` means it never has, which is the one case a stop may call not-run.
+    // Read by both restoration paths, so an item that ran once and was moved
+    // back to pending by a retry keeps the result the user has already seen --
+    // its place in the counts, its reason, and the diagnostic ticket whose
     /// state must still match.
     fn earned_state(&self) -> Option<ItemState> {
         if self.error.is_some() {
@@ -570,9 +575,9 @@ impl QueueItem {
     }
 
     /// Which item a diagnostic built here is about.
-    ///
-    /// Read from the item rather than assembled by the caller, so a ticket can
-    /// never be given a display name or an attempt number belonging to another
+    //
+    // Read from the item rather than assembled by the caller, so a ticket can
+    // never be given a display name or an attempt number belonging to another
     /// row.
     fn diagnostic_identity(&self, operation: u64, item_index: usize) -> DiagnosticItemIdentity {
         DiagnosticItemIdentity {
@@ -586,10 +591,10 @@ impl QueueItem {
     }
 
     /// How many output files this item would contribute to an adoption.
-    ///
-    /// The same predicate the expansion applies, in the same order: finalized,
-    /// then whatever the authority holds. Written once here and read by both,
-    /// so the count the interface shows and the outcomes it later receives
+    //
+    // The same predicate the expansion applies, in the same order: finalized,
+    // then whatever the authority holds. Written once here and read by both,
+    // so the count the interface shows and the outcomes it later receives
     /// cannot disagree about how many there were.
     fn adoptable_output_count(&self) -> usize {
         if self.state != ItemState::Finalized {
@@ -648,13 +653,13 @@ pub(super) struct ConversionQueue {
     document_epoch: u64,
     conflict: ConversionConflictPolicyDto,
     /// What every item of this queue is converted under.
-    ///
-    /// Bound once, when the queue is made, and never reassigned afterwards --
-    /// there is no setter and the field is private, so a retry re-reads this
-    /// same value rather than deciding again. That is the whole point of
-    /// keeping it here: a retry that re-derived an intent could convert the
-    /// second time under something the first attempt was never judged against,
-    /// and the user asked for one thing.
+    //
+    // Bound once, when the queue is made, and never reassigned afterwards --
+    // there is no setter and the field is private, so a retry re-reads this
+    // same value rather than deciding again. That is the whole point of
+    // keeping it here: a retry that re-derived an intent could convert the
+    // second time under something the first attempt was never judged against,
+    // and the user asked for one thing.
     intent: ConversionIntent,
     items: Vec<QueueItem>,
     /// Which item is running, or how many have finished when none is.
@@ -664,20 +669,20 @@ pub(super) struct ConversionQueue {
     /// so a retry does not ask for one again.
     destination: Option<AdmittedDestination>,
     /// The authority this queue last resolved a backend at.
-    ///
-    /// Two things at once, deliberately: its revision is the durable record of
-    /// which reading the queue ran under, which the diagnostics export writes
-    /// under ADR 0017's schema and which outlives the session; its receipt is
-    /// the session-scoped identity the webview compares. Kept as one value
-    /// because both come from one observation, and two fields updated
+    //
+    // Two things at once, deliberately: its revision is the durable record of
+    // which reading the queue ran under, which the diagnostics export writes
+    // under ADR 0017's schema and which outlives the session; its receipt is
+    // the session-scoped identity the webview compares. Kept as one value
+    // because both come from one observation, and two fields updated
     /// separately are how they come to disagree.
     authority: BackendAuthorityProjectionDto,
     /// Which installation this queue's items were converted on.
-    ///
-    /// The identity itself, not the sequence that counts changes to it. A
-    /// counter only ever goes up, so a user who switched away from an
-    /// installation and back again would have a queue that could never be
-    /// retried -- the restored installation is the same build wearing a higher
+    //
+    // The identity itself, not the sequence that counts changes to it. A
+    // counter only ever goes up, so a user who switched away from an
+    // installation and back again would have a queue that could never be
+    // retried -- the restored installation is the same build wearing a higher
     /// number.
     installation: Option<InstallationIdentity>,
     /// A refusal that stopped the whole queue rather than one item.
@@ -686,9 +691,9 @@ pub(super) struct ConversionQueue {
 
 impl ConversionQueue {
     /// Builds one queue from an ordered list, or says why it is not a queue.
-    ///
-    /// Every refusal here happens before a picker opens and before anything is
-    /// created: an empty selection, a list longer than one session may run, and
+    //
+    // Every refusal here happens before a picker opens and before anything is
+    // created: an empty selection, a list longer than one session may run, and
     /// a list naming one dataset twice.
     pub(super) fn new(
         document_epoch: u64,
@@ -750,11 +755,11 @@ impl ConversionQueue {
     }
 
     /// The distinct source families of this queue's items, in first-appearance
-    /// order.
-    ///
-    /// For the provider-evidence gate, which is asked once per family rather
-    /// than once per queue: a queue may now mix families, and the evidence a
-    /// conversion is gated on is a statement about one family on one build. A
+    // order.
+    //
+    // For the provider-evidence gate, which is asked once per family rather
+    // than once per queue: a queue may now mix families, and the evidence a
+    // conversion is gated on is a statement about one family on one build. A
     /// set of one is the common case and costs nothing.
     pub(super) fn distinct_source_kinds(&self) -> Vec<DatasetSourceKind> {
         let mut kinds = Vec::new();
@@ -767,15 +772,15 @@ impl ConversionQueue {
     }
 
     /// Every output name this queue owns right now, and which item owns it.
-    ///
-    /// Two sources, and they are different in kind. A known single output owns
-    /// its name from the moment the queue was planned, whether or not it has
-    /// run. A backend-named set owns nothing until it has published, because
-    /// until then nobody knows what it will be called -- so what it contributes
-    /// is exactly the names it did publish.
-    ///
-    /// Derived on demand rather than accumulated, so there is no second list to
-    /// keep in step with the items, and bounded by
+    //
+    // Two sources, and they are different in kind. A known single output owns
+    // its name from the moment the queue was planned, whether or not it has
+    // run. A backend-named set owns nothing until it has published, because
+    // until then nobody knows what it will be called -- so what it contributes
+    // is exactly the names it did publish.
+    //
+    // Derived on demand rather than accumulated, so there is no second list to
+    // keep in step with the items, and bounded by
     /// [`Self::max_output_names`].
     pub(super) fn claimed_output_names(&self) -> Vec<ClaimedOutputName> {
         let mut claimed = Vec::new();
@@ -802,13 +807,13 @@ impl ConversionQueue {
     }
 
     /// The most names this queue could ever own.
-    ///
-    /// Stated from the items' own bounds rather than from the two constants, so
-    /// a queue of one single-output item is bounded at one rather than at the
-    /// whole-queue worst case. The worst case itself is
-    /// `MAX_CONVERSION_QUEUE_ITEMS × MAX_CONVERSION_OUTPUTS_PER_SOURCE`, which
-    /// is 384 today; a known single output contributes one name and a
-    /// backend-named set contributes its published members, never more than its
+    //
+    // Stated from the items' own bounds rather than from the two constants, so
+    // a queue of one single-output item is bounded at one rather than at the
+    // whole-queue worst case. The worst case itself is
+    // `MAX_CONVERSION_QUEUE_ITEMS × MAX_CONVERSION_OUTPUTS_PER_SOURCE`, which
+    // is 384 today; a known single output contributes one name and a
+    // backend-named set contributes its published members, never more than its
     /// own bound.
     pub(super) fn max_output_names(&self) -> usize {
         self.items
@@ -818,10 +823,10 @@ impl ConversionQueue {
     }
 
     /// Which name of `names` some *other* item already owns.
-    ///
-    /// Asked by an item that is about to publish, about the set it discovered.
-    /// Its own claims are skipped: an item does not collide with itself, and a
-    /// set republishing the names it published on an earlier attempt is a
+    //
+    // Asked by an item that is about to publish, about the set it discovered.
+    // Its own claims are skipped: an item does not collide with itself, and a
+    // set republishing the names it published on an earlier attempt is a
     /// retry, not a conflict.
     pub(super) fn name_claimed_by_another(
         &self,
@@ -856,10 +861,10 @@ impl ConversionQueue {
     }
 
     /// Whether any failed item could plausibly succeed on another attempt.
-    ///
-    /// Only an ordinary failure counts. A cancelled item has nothing to
-    /// correct, a not-run item never ran, and an unconfirmed cancellation is a
-    /// state in which running anything at all is refused -- so none of the
+    //
+    // Only an ordinary failure counts. A cancelled item has nothing to
+    // correct, a not-run item never ran, and an unconfirmed cancellation is a
+    // state in which running anything at all is refused -- so none of the
     /// three is a failure a second attempt could change.
     pub(super) fn has_retryable_failure(&self) -> bool {
         self.items
@@ -872,17 +877,17 @@ impl ConversionQueue {
     }
 
     /// Marks everything that never began as not run, and reports how many.
-    ///
-    /// Deliberately not `Failed`. Nothing was launched, nothing was created and
-    /// nothing went wrong; calling it a failure would report work the user
-    /// stopped as work that broke, and would make it look retryable.
-    ///
-    /// "Never began" is decided by what the item carries, not by its pending
-    /// state alone. A retry moves every retryable failure back to pending, so a
-    /// stop landing in the middle of one finds items that are pending *now* and
-    /// did run in the pass before -- and calling those not run would delete a
-    /// failure the user has already seen, hide the reason for it, take it out of
-    /// the failure count, and contradict the attempt count sitting beside it.
+    //
+    // Deliberately not `Failed`. Nothing was launched, nothing was created and
+    // nothing went wrong; calling it a failure would report work the user
+    // stopped as work that broke, and would make it look retryable.
+    //
+    // "Never began" is decided by what the item carries, not by its pending
+    // state alone. A retry moves every retryable failure back to pending, so a
+    // stop landing in the middle of one finds items that are pending *now* and
+    // did run in the pass before -- and calling those not run would delete a
+    // failure the user has already seen, hide the reason for it, take it out of
+    // the failure count, and contradict the attempt count sitting beside it.
     /// Those keep the result they earned.
     fn strand_pending(&mut self) -> usize {
         let mut stranded = 0;
@@ -912,10 +917,10 @@ impl ConversionQueue {
     }
 
     /// Every diagnostic-worthy item of this queue, in queue order.
-    ///
-    /// A ticket answers only for the state it was built for. A retry moves a
-    /// failure back to pending while its ticket survives -- deliberately, so a
-    /// stopped retry keeps the diagnostics of failures it never reran -- and an
+    //
+    // A ticket answers only for the state it was built for. A retry moves a
+    // failure back to pending while its ticket survives -- deliberately, so a
+    // stopped retry keeps the diagnostics of failures it never reran -- and an
     /// item in some other state now must not be described by what it used to be.
     fn diagnostic_tickets(&self, operation: u64) -> Vec<Arc<ConversionFailureDiagnosticTicket>> {
         self.items
@@ -952,9 +957,9 @@ impl ConversionQueue {
     }
 
     /// This queue, as the webview reads it.
-    ///
-    /// `terminal` decides only the adoptable count, which is zero until the
-    /// queue is over for the reason the diagnostics count is: an offer to add
+    //
+    // `terminal` decides only the adoptable count, which is zero until the
+    // queue is over for the reason the diagnostics count is: an offer to add
     /// outputs from a queue still running would be an offer Rust refuses.
     fn to_dto(&self, terminal: bool) -> ConversionQueueDto {
         let failed = self.count(ItemState::Failed);
@@ -1000,7 +1005,7 @@ impl ConversionQueue {
 enum SlotState {
     Idle,
     /// A reservation was issued and has not been claimed, or has been claimed
-    /// and its picker is open. Both are the same fact to a reader: no
+    // and its picker is open. Both are the same fact to a reader: no
     /// destination has been accepted, so nothing has been created.
     AwaitingDestination {
         reservation: ConversionReservationId,
@@ -1011,8 +1016,8 @@ enum SlotState {
         queue: ConversionQueue,
     },
     /// A stop was accepted and the worker has not settled the queue yet.
-    ///
-    /// Its own state rather than a flag beside `Running`, so nothing can read
+    //
+    // Its own state rather than a flag beside `Running`, so nothing can read
     /// "running" and conclude that another item may start.
     Stopping {
         queue: ConversionQueue,
@@ -1043,10 +1048,10 @@ impl TerminalReason {
     }
 
     /// The identifier an export writes for this reason.
-    ///
-    /// Snake case, like every other stable identifier in that document, and
-    /// deliberately not the wire spelling: the file is a separate contract from
-    /// the transfer object and neither should be read as evidence about the
+    //
+    // Snake case, like every other stable identifier in that document, and
+    // deliberately not the wire spelling: the file is a separate contract from
+    // the transfer object and neither should be read as evidence about the
     /// other.
     const fn stable_id(self) -> &'static str {
         match self {
@@ -1057,10 +1062,10 @@ impl TerminalReason {
     }
 
     /// Whether this queue may be retried in place.
-    ///
-    /// Only a queue that ran to its own end. A stopped queue is a decision the
-    /// user made about the whole batch, and rerunning part of it in place would
-    /// answer a question they did not ask; a queue whose stop could not be
+    //
+    // Only a queue that ran to its own end. A stopped queue is a decision the
+    // user made about the whole batch, and rerunning part of it in place would
+    // answer a question they did not ask; a queue whose stop could not be
     /// confirmed must not launch anything at all.
     const fn is_retryable(self) -> bool {
         matches!(self, Self::Completed)
@@ -1068,9 +1073,9 @@ impl TerminalReason {
 }
 
 /// The exact attempt a stop request may reach.
-///
-/// Bound to the operation, the item index *and* the attempt number, so a handle
-/// left over from an earlier item or an earlier retry round cannot be mistaken
+//
+// Bound to the operation, the item index *and* the attempt number, so a handle
+// left over from an earlier item or an earlier retry round cannot be mistaken
 /// for the live one. The queue clears it when that exact attempt settles.
 struct CurrentAttempt {
     operation: u64,
@@ -1105,9 +1110,9 @@ pub(super) enum StopAccepted {
 }
 
 /// The session's single conversion slot, holding at most one queue.
-///
-/// `sequence` is the ordering key the interface uses to discard a stale read.
-/// It advances on every observable transition and never rewinds, so a reply
+//
+// `sequence` is the ordering key the interface uses to discard a stale read.
+// It advances on every observable transition and never rewinds, so a reply
 /// that overtook another cannot install an older state.
 #[derive(Debug)]
 pub(super) struct ConversionSlot {
@@ -1117,7 +1122,7 @@ pub(super) struct ConversionSlot {
     operation: u64,
     state: SlotState,
     /// Monotonic for the life of one operation, and reset only when a new one
-    /// begins. Independent of which attempt is running, so a stop that lands
+    // begins. Independent of which attempt is running, so a stop that lands
     /// between two items is still a stop.
     stop_requested: bool,
     /// When the stop was accepted, so what is reported is what the user waited
@@ -1146,8 +1151,8 @@ impl Default for ConversionSlot {
 
 impl ConversionSlot {
     /// Whether a queue currently occupies the machine or the workspace.
-    ///
-    /// A terminal queue does not: it is a thing to read, not work in flight.
+    //
+    // A terminal queue does not: it is a thing to read, not work in flight.
     /// This is what every workspace mutation asks before it proceeds.
     pub(super) const fn is_busy(&self) -> bool {
         matches!(
@@ -1159,13 +1164,13 @@ impl ConversionSlot {
     }
 
     /// Whether a busy queue holds this row.
-    ///
-    /// Used to refuse removing any row a live queue names while leaving every
-    /// other row removable. A terminal queue protects nothing: the work is over,
-    /// and its report is about rows the user may now curate.
-    ///
-    /// A stopping queue protects its rows exactly as a running one does. The
-    /// request has been made and the attempt has not settled, so the row may
+    //
+    // Used to refuse removing any row a live queue names while leaving every
+    // other row removable. A terminal queue protects nothing: the work is over,
+    // and its report is about rows the user may now curate.
+    //
+    // A stopping queue protects its rows exactly as a running one does. The
+    // request has been made and the attempt has not settled, so the row may
     /// still be being read.
     pub(super) fn busy_holds(&self, dataset: DatasetId) -> bool {
         match &self.state {
@@ -1177,9 +1182,9 @@ impl ConversionSlot {
     }
 
     /// Issues one reservation for one queue, refusing while another is live.
-    ///
-    /// Replaces a terminal queue rather than accumulating beside it: starting a
-    /// conversion is the user saying the previous result is no longer what they
+    //
+    // Replaces a terminal queue rather than accumulating beside it: starting a
+    // conversion is the user saying the previous result is no longer what they
     /// are looking at.
     pub(super) fn begin(
         &mut self,
@@ -1217,10 +1222,10 @@ impl ConversionSlot {
     }
 
     /// Consumes one exact reservation before its picker is dispatched.
-    ///
-    /// An unknown, already-claimed or replaced identifier is refused without
-    /// disturbing the live slot. A reservation issued to a document that has
-    /// since been replaced is refused for the same reason a folder import is:
+    //
+    // An unknown, already-claimed or replaced identifier is refused without
+    // disturbing the live slot. A reservation issued to a document that has
+    // since been replaced is refused for the same reason a folder import is:
     /// the document that would receive the answer is gone.
     pub(super) fn claim(
         &mut self,
@@ -1253,9 +1258,9 @@ impl ConversionSlot {
     }
 
     /// The queue a claimed reservation bound, for the run that follows.
-    ///
-    /// Read from the slot rather than handed back by `claim`, so the value that
-    /// decides what is converted never leaves this module and a caller cannot
+    //
+    // Read from the slot rather than handed back by `claim`, so the value that
+    // decides what is converted never leaves this module and a caller cannot
     /// run a queue it was not given.
     pub(super) fn claimed(&self) -> Option<(u64, ConversionQueue)> {
         match &self.state {
@@ -1273,10 +1278,10 @@ impl ConversionSlot {
     }
 
     /// The queue this worker owns, running or stopping.
-    ///
-    /// A stopping queue is still the worker's: the attempt it holds has to be
-    /// settled and the queue has to be terminalized, and only the worker can do
-    /// either. What stopping changes is that no further item may begin, which
+    //
+    // A stopping queue is still the worker's: the attempt it holds has to be
+    // settled and the queue has to be terminalized, and only the worker can do
+    // either. What stopping changes is that no further item may begin, which
     /// is asked separately.
     pub(super) fn running(&self, operation: u64) -> Option<ConversionQueue> {
         match &self.state {
@@ -1290,10 +1295,10 @@ impl ConversionSlot {
     }
 
     /// Whether a stop has been requested for this exact operation.
-    ///
-    /// Asked by the worker after the backend gate, before every item and after
-    /// every settle. It is one boolean rather than a state comparison so that a
-    /// request accepted while the worker was inside a process is not missed by
+    //
+    // Asked by the worker after the backend gate, before every item and after
+    // every settle. It is one boolean rather than a state comparison so that a
+    // request accepted while the worker was inside a process is not missed by
     /// a worker that only ever looked at the state it left behind.
     pub(super) fn stop_requested(&self, operation: u64) -> bool {
         self.operation == operation && self.stop_requested
@@ -1308,14 +1313,14 @@ impl ConversionSlot {
     }
 
     /// Accepts one stop for the running or stopping queue of this document.
-    ///
-    /// Everything it does is under the caller's lock and none of it terminates
-    /// anything: it records the request, moves the state, and hands back the
-    /// one handle the caller should ask outside the lock. Asking a job to end
-    /// while holding the lock every reader needs would make the interface stop
-    /// answering for as long as termination took.
-    /// The document is proved by the caller, exactly as a retry proves it: the
-    /// authority that matters is being the *current* document, not the one that
+    //
+    // Everything it does is under the caller's lock and none of it terminates
+    // anything: it records the request, moves the state, and hands back the
+    // one handle the caller should ask outside the lock. Asking a job to end
+    // while holding the lock every reader needs would make the interface stop
+    // answering for as long as termination took.
+    // The document is proved by the caller, exactly as a retry proves it: the
+    // authority that matters is being the *current* document, not the one that
     /// built the queue, because a reload is entitled to stop what it recovered.
     pub(super) fn request_stop(&mut self, operation: u64) -> Result<StopAccepted, PreviewErrorDto> {
         if self.operation != operation {
@@ -1350,9 +1355,9 @@ impl ConversionSlot {
     }
 
     /// Binds the one attempt a stop may reach.
-    ///
-    /// Replaces whatever was there: only one attempt of one queue runs at a
-    /// time, and an entry that outlived its attempt is exactly what must not be
+    //
+    // Replaces whatever was there: only one attempt of one queue runs at a
+    // time, and an entry that outlived its attempt is exactly what must not be
     /// reachable.
     pub(super) fn bind_attempt(
         &mut self,
@@ -1383,8 +1388,8 @@ impl ConversionSlot {
     }
 
     /// Releases the handle of one exact attempt.
-    ///
-    /// Named by operation, item and attempt number so a late release cannot
+    //
+    // Named by operation, item and attempt number so a late release cannot
     /// clear a newer attempt's handle and leave a stop with nothing to ask.
     pub(super) fn release_attempt(&mut self, operation: u64, index: usize, attempt: u64) {
         if self
@@ -1397,15 +1402,15 @@ impl ConversionSlot {
     }
 
     /// Releases a reservation whose document is gone.
-    ///
-    /// A webview can reload between Rust issuing a reservation and the document
-    /// receiving it. The replacement never learns the identifier, so it can
-    /// neither claim it nor begin another queue -- and the slot would stay busy,
-    /// with adding, clearing and previewing refused, until the application
-    /// restarted.
-    ///
-    /// A queue already running is deliberately left alone. Its process is under
-    /// way, its results are what the replacement document will read, and
+    //
+    // A webview can reload between Rust issuing a reservation and the document
+    // receiving it. The replacement never learns the identifier, so it can
+    // neither claim it nor begin another queue -- and the slot would stay busy,
+    // with adding, clearing and previewing refused, until the application
+    // restarted.
+    //
+    // A queue already running is deliberately left alone. Its process is under
+    // way, its results are what the replacement document will read, and
     /// nothing here can stop it.
     pub(super) fn release_awaiting_destination(&mut self) {
         if matches!(self.state, SlotState::AwaitingDestination { .. }) {
@@ -1415,11 +1420,11 @@ impl ConversionSlot {
     }
 
     /// Marks one exact claimed operation as running, against one destination.
-    ///
-    /// Named rather than implied, because the slot lock is released while a
-    /// destination is admitted -- filesystem work that takes as long as it
-    /// takes. A reload in that window releases the slot, and a caller that
-    /// transitioned whatever it found could mark a *replacement* operation as
+    //
+    // Named rather than implied, because the slot lock is released while a
+    // destination is admitted -- filesystem work that takes as long as it
+    // takes. A reload in that window releases the slot, and a caller that
+    // transitioned whatever it found could mark a *replacement* operation as
     /// running and then overwrite it with the old one's results.
     pub(super) fn start_running(
         &mut self,
@@ -1441,9 +1446,9 @@ impl ConversionSlot {
     }
 
     /// Returns the slot to idle after a cancelled picker.
-    ///
-    /// An ordinary no-op, not a failure: the user closed a dialog. The operation
-    /// identifier is not reused and the allocator does not rewind, so a reply
+    //
+    // An ordinary no-op, not a failure: the user closed a dialog. The operation
+    // identifier is not reused and the allocator does not rewind, so a reply
     /// still in flight for it cannot land on whatever is started next.
     pub(super) fn cancel(&mut self, operation: u64) {
         if self.operation == operation
@@ -1455,10 +1460,10 @@ impl ConversionSlot {
     }
 
     /// Fixes the installation this queue runs on, or refuses a changed one.
-    ///
-    /// The first pass records what it bound; every later pass must find the
-    /// same answer. A queue whose files came from two ProteoWizard builds is
-    /// not a batch, and silently mixing them would put outputs that cannot be
+    //
+    // The first pass records what it bound; every later pass must find the
+    // same answer. A queue whose files came from two ProteoWizard builds is
+    // not a batch, and silently mixing them would put outputs that cannot be
     /// compared under one result.
     pub(super) fn bind_installation(
         &mut self,
@@ -1497,12 +1502,12 @@ impl ConversionSlot {
     }
 
     /// Marks one item of the running queue as under way, and says which attempt
-    /// it is.
-    ///
-    /// Refuses once a stop has been requested, whatever the worker believed
-    /// when it decided to start. The worker checks first, but the request can
-    /// land in the interval between that check and this call, and an item that
-    /// began after the user asked for the queue to stop is the one thing this
+    // it is.
+    //
+    // Refuses once a stop has been requested, whatever the worker believed
+    // when it decided to start. The worker checks first, but the request can
+    // land in the interval between that check and this call, and an item that
+    // began after the user asked for the queue to stop is the one thing this
     /// action promises will not happen.
     pub(super) fn start_item(&mut self, operation: u64, index: usize) -> Option<u64> {
         if self.stop_requested {
@@ -1525,8 +1530,8 @@ impl ConversionSlot {
     }
 
     /// Records what one item's attempt did, and moves on.
-    ///
-    /// The item's own outcome, never the queue's: one file failing marks that
+    //
+    // The item's own outcome, never the queue's: one file failing marks that
     /// file and nothing else, and everything already finalized stays finalized.
     pub(super) fn settle_item(
         &mut self,
@@ -1673,9 +1678,9 @@ impl ConversionSlot {
     }
 
     /// Ends the running queue, with an optional queue-level refusal.
-    ///
-    /// The reason is the caller's, not inferred from the items: a queue of
-    /// nothing but failures completed, and a queue stopped after one success
+    //
+    // The reason is the caller's, not inferred from the items: a queue of
+    // nothing but failures completed, and a queue stopped after one success
     /// did not, and no count of item states tells those apart.
     pub(super) fn finish(
         &mut self,
@@ -1716,15 +1721,15 @@ impl ConversionSlot {
     }
 
     /// Refuses the whole queue before any item of this pass ran.
-    ///
-    /// Distinct from an item failing: nothing was converted by this pass, and
-    /// the queue becomes terminal carrying the refusal.
-    ///
-    /// Anything a retry moved back to pending is put back as it was. Without
-    /// that, a refused retry would leave its failures neither failed nor run --
-    /// counted nowhere, and no longer retryable, so a user whose retry was
-    /// refused for a reason they can fix would have lost the failures they
-    /// meant to fix. A pass that never started cannot have moved anything, so
+    //
+    // Distinct from an item failing: nothing was converted by this pass, and
+    // the queue becomes terminal carrying the refusal.
+    //
+    // Anything a retry moved back to pending is put back as it was. Without
+    // that, a refused retry would leave its failures neither failed nor run --
+    // counted nowhere, and no longer retryable, so a user whose retry was
+    // refused for a reason they can fix would have lost the failures they
+    // meant to fix. A pass that never started cannot have moved anything, so
     /// on a first pass this restores nothing.
     pub(super) fn refuse(&mut self, operation: u64, error: PreviewErrorDto) {
         if self.operation != operation {
@@ -1767,13 +1772,13 @@ impl ConversionSlot {
     }
 
     /// Marks one failed item of a terminal queue as worth another attempt.
-    ///
-    /// There is no other way to reach the interval this exists for. A set
-    /// failure is retryable only when the destination could not be opened or
-    /// inspected -- a physical condition a deterministic test cannot produce --
-    /// so no test can otherwise get a set item back to pending while its result
-    /// lives only in its group report, which is exactly the state a stop
-    /// landing mid-retry must not mistake for never-run. This forges that
+    //
+    // There is no other way to reach the interval this exists for. A set
+    // failure is retryable only when the destination could not be opened or
+    // inspected -- a physical condition a deterministic test cannot produce --
+    // so no test can otherwise get a set item back to pending while its result
+    // lives only in its group report, which is exactly the state a stop
+    // landing mid-retry must not mistake for never-run. This forges that
     /// state rather than waiting for one to exist, and changes nothing else.
     #[cfg(test)]
     pub(super) fn mark_retryable_for_test(&mut self, operation: u64, index: usize) -> bool {
@@ -1794,9 +1799,9 @@ impl ConversionSlot {
     }
 
     /// Moves every retryable failure back to pending for another pass.
-    ///
-    /// Successes, skips and non-retryable failures are left exactly as they
-    /// are, and the order never changes: a retry is the same queue again, not a
+    //
+    // Successes, skips and non-retryable failures are left exactly as they
+    // are, and the order never changes: a retry is the same queue again, not a
     /// new one made of what is left.
     pub(super) fn begin_retry(&mut self) -> Option<u64> {
         let SlotState::Terminal { reason, queue } = &self.state else {
@@ -1865,20 +1870,20 @@ impl ConversionSlot {
     }
 
     /// Every finalized output of a terminal queue this caller named, in queue
-    /// order, paired with the item each belongs to.
-    ///
-    /// `None` for anything that is not exactly that: a different operation, a
-    /// queue still under way, an idle slot. The caller is asking about a result
-    /// on screen, and only a terminal queue has one.
-    ///
-    /// Order is the queue's own and never the registry's. What the user is
-    /// looking at is the list the panel drew, and rows arriving in some other
-    /// order would be a different answer to the question they asked.
-    /// Which settling of a terminal queue this caller named, if it is the one
-    /// the slot holds.
-    ///
-    /// A retry settles the same operation again, so an answer that carried only
-    /// the identifier could not tell a result about the first settling from one
+    // order, paired with the item each belongs to.
+    //
+    // `None` for anything that is not exactly that: a different operation, a
+    // queue still under way, an idle slot. The caller is asking about a result
+    // on screen, and only a terminal queue has one.
+    //
+    // Order is the queue's own and never the registry's. What the user is
+    // looking at is the list the panel drew, and rows arriving in some other
+    // order would be a different answer to the question they asked.
+    // Which settling of a terminal queue this caller named, if it is the one
+    // the slot holds.
+    //
+    // A retry settles the same operation again, so an answer that carried only
+    // the identifier could not tell a result about the first settling from one
     /// about the second.
     pub(super) fn terminal_retry_round(&self, operation: u64) -> Option<u64> {
         if self.operation != operation {
@@ -1922,10 +1927,10 @@ impl ConversionSlot {
     }
 
     /// What the queue in this slot owns of the destination's namespace, and the
-    /// most it ever could.
-    ///
-    /// `None` when no queue is here to ask. Reads whichever queue the slot
-    /// holds -- waiting, running or over -- because the authority is a property
+    // most it ever could.
+    //
+    // `None` when no queue is here to ask. Reads whichever queue the slot
+    // holds -- waiting, running or over -- because the authority is a property
     /// of the plan rather than of the run.
     #[cfg(test)]
     pub(super) fn output_name_authority(&self) -> Option<(Vec<String>, usize)> {
@@ -1947,17 +1952,17 @@ impl ConversionSlot {
     }
 
     /// Every output this terminal queue offers to adopt, in the order it offers
-    /// them.
-    ///
-    /// Ordered by queue item, then by publication order within one item's set,
-    /// so a mixed queue's outcomes read down the screen the way the queue does.
-    ///
-    /// A set authority is **expanded here and only here**, from a ticket that
-    /// has already been authenticated as a set. That is the difference between
-    /// expanding an authority and reconstructing one: nothing is rebuilt from a
-    /// filename or a member report, the member tickets are the ones the set was
-    /// minted with, and the `Arc`s are cloned so the retained objects stay in
-    /// the set ticket. A second attempt asks the same objects the same
+    // them.
+    //
+    // Ordered by queue item, then by publication order within one item's set,
+    // so a mixed queue's outcomes read down the screen the way the queue does.
+    //
+    // A set authority is **expanded here and only here**, from a ticket that
+    // has already been authenticated as a set. That is the difference between
+    // expanding an authority and reconstructing one: nothing is rebuilt from a
+    // filename or a member report, the member tickets are the ones the set was
+    // minted with, and the `Arc`s are cloned so the retained objects stay in
+    // the set ticket. A second attempt asks the same objects the same
     /// questions.
     pub(super) fn terminal_adoption_tickets(
         &self,
@@ -2030,14 +2035,14 @@ impl ConversionSlot {
     }
 
     /// Everything one diagnostics export of this exact queue would describe.
-    ///
-    /// `None` for anything that is not exactly that: a different operation, a
-    /// queue still under way, an idle slot. The caller is asking about a result
-    /// on screen, and only a terminal queue has one.
-    ///
-    /// A queue whose stop could not be confirmed answers even when no item
-    /// carries a ticket. What that queue records about *itself* -- that MSCanvas
-    /// cannot say whether a converter process survived -- is the diagnosis, and
+    //
+    // `None` for anything that is not exactly that: a different operation, a
+    // queue still under way, an idle slot. The caller is asking about a result
+    // on screen, and only a terminal queue has one.
+    //
+    // A queue whose stop could not be confirmed answers even when no item
+    // carries a ticket. What that queue records about *itself* -- that MSCanvas
+    // cannot say whether a converter process survived -- is the diagnosis, and
     /// it belongs to the queue rather than to any one item.
     pub(super) fn terminal_diagnostics(
         &self,
@@ -2071,9 +2076,9 @@ impl ConversionSlot {
     }
 
     /// How many items an export of the current queue would describe.
-    ///
-    /// Zero unless the slot holds a terminal queue, which is what makes the
-    /// action's availability a projection of this rule rather than a second one
+    //
+    // Zero unless the slot holds a terminal queue, which is what makes the
+    // action's availability a projection of this rule rather than a second one
     /// the interface keeps in step.
     fn terminal_diagnostic_summary(&self) -> (usize, bool) {
         let SlotState::Terminal { reason, queue } = &self.state else {
@@ -2128,10 +2133,10 @@ impl ConversionSlot {
     }
 
     /// Records that something a reader can see about diagnostics has changed.
-    ///
-    /// The diagnostics state rides on this update, so it shares this update's
-    /// ordering key. Without this a document would reject every read carrying a
-    /// diagnostics change -- it installs by sequence, and the sequence would not
+    //
+    // The diagnostics state rides on this update, so it shares this update's
+    // ordering key. Without this a document would reject every read carrying a
+    // diagnostics change -- it installs by sequence, and the sequence would not
     /// have moved -- and an export would appear to run for ever.
     pub(super) fn note_diagnostics_change(&mut self) {
         self.advance();
@@ -2146,10 +2151,10 @@ impl ConversionSlot {
 }
 
 /// What one item's attempt reached, before the queue decides what to record.
-///
-/// Three answers rather than two. A stopped attempt is neither a conversion that
-/// reached an outcome nor a refusal that never reached one, and the queue needs
-/// the boundary's own two cancellation results to tell a confirmed stop from an
+//
+// Three answers rather than two. A stopped attempt is neither a conversion that
+// reached an outcome nor a refusal that never reached one, and the queue needs
+// the boundary's own two cancellation results to tell a confirmed stop from an
 /// unconfirmed one.
 #[derive(Debug)]
 pub(super) enum QueueItemAttempt {
@@ -2157,30 +2162,30 @@ pub(super) enum QueueItemAttempt {
     Cancelled(CancellationReport),
     CancellationFailed(CancellationFailure),
     /// A stop reached a backend-named set attempt.
-    ///
-    /// Its own variant because the multi-output lifecycle reports cancellation
-    /// in its own vocabulary rather than through the single-output boundary's
-    /// two result types. What it means is identical, and `classify_attempt`
+    //
+    // Its own variant because the multi-output lifecycle reports cancellation
+    // in its own vocabulary rather than through the single-output boundary's
+    // two result types. What it means is identical, and `classify_attempt`
     /// turns both into the same two item states.
     SetStopped(Box<SetStopFacts>),
 }
 
 /// What a stop established about one backend-named set attempt.
-///
-/// Everything [`CancellationFacts`] holds except the interval, which only the
-/// worker knows: it is measured from the moment the stop was accepted, and the
+//
+// Everything [`CancellationFacts`] holds except the interval, which only the
+// worker knows: it is measured from the moment the stop was accepted, and the
 /// run has no view of that.
 #[derive(Debug)]
 pub(super) struct SetStopFacts {
     /// How many objects the acquisition was bound to for the run.
-    ///
-    /// The one set-shaped fact a stop knows, and the reason it is carried: a
-    /// stopped set item is still a set item, and an export that dropped every
-    /// trace of that would leave a reader unable to tell one from a stopped
+    //
+    // The one set-shaped fact a stop knows, and the reason it is carried: a
+    // stopped set item is still a set item, and an export that dropped every
+    // trace of that would leave a reader unable to tell one from a stopped
     /// single-output item.
     pub(super) bound_source_objects: usize,
     /// Whether the owned process tree was confirmed gone. `false` is the
-    /// admission that it was not, and it quarantines the backend exactly as the
+    // admission that it was not, and it quarantines the backend exactly as the
     /// single-output path's does.
     pub(super) confirmed: bool,
     pub(super) process_launched: bool,
@@ -2199,15 +2204,15 @@ pub(super) enum ItemOutcome {
         retryable: bool,
         report: Box<super::conversion::WorkspaceConversionReport>,
         /// The retained output, present exactly when the run finalized one.
-        /// Everything a later adoption needs beyond this is already on the
-        /// queue, so the ticket is assembled where the item settles rather than
+        // Everything a later adoption needs beyond this is already on the
+        // queue, so the ticket is assembled where the item settles rather than
         /// carried around half-built.
         finalized: Option<Box<FinalizedOutput>>,
         /// The redacted backend text, taken out of the run's own report.
-        ///
-        /// Present exactly where the run kept any, which is where it failed.
-        /// It arrives already redacted and already bounded: this side has no
-        /// way to obtain the raw streams and no paths with which to redact
+        //
+        // Present exactly where the run kept any, which is where it failed.
+        // It arrives already redacted and already bounded: this side has no
+        // way to obtain the raw streams and no paths with which to redact
         /// them.
         diagnostics: Option<Box<BackendDiagnosticText>>,
     },
@@ -2217,26 +2222,26 @@ pub(super) enum ItemOutcome {
         error: PreviewErrorDto,
     },
     /// One backend-named set attempt, settled.
-    ///
-    /// One value rather than a report beside a ticket beside an identity.
-    /// Everything in it was derived together from one owned conversion, so
-    /// nothing here can pair one attempt's report with another attempt's
+    //
+    // One value rather than a report beside a ticket beside an identity.
+    // Everything in it was derived together from one owned conversion, so
+    // nothing here can pair one attempt's report with another attempt's
     /// objects -- see [`super::adoption::SciexAttemptSettlement`].
     ReportedSet(Box<super::adoption::SciexAttemptSettlement>),
     /// A stop reached the attempt while it was running.
-    ///
-    /// Carries no conversion report by construction: a stopped attempt produced
-    /// no output, so there is nothing for a report to describe, and an item in
+    //
+    // Carries no conversion report by construction: a stopped attempt produced
+    // no output, so there is nothing for a report to describe, and an item in
     /// this state can never name an output file.
     Stopped {
         state: ItemState,
         facts: CancellationFacts,
         /// Present exactly when the attempt was a backend-named set's.
-        ///
-        /// A stop reaches the run before it settles, so there are no member
-        /// facts to report — the counts are zero by construction, because the
-        /// two cancellation refusals this is translated from publish nothing.
-        /// What it carries is the shape: this was a set, of at most this many
+        //
+        // A stop reaches the run before it settles, so there are no member
+        // facts to report — the counts are zero by construction, because the
+        // two cancellation refusals this is translated from publish nothing.
+        // What it carries is the shape: this was a set, of at most this many
         /// members, of an acquisition bound to this many objects.
         set: Option<super::diagnostics::OutputSetDiagnosticFacts>,
         /// Present only where the stop could not be confirmed, which is the

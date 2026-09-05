@@ -1342,6 +1342,43 @@ pub struct ConversionCancellationDto {
     pub staging_residue: Option<String>,
 }
 
+/// The exact question one plan answers.
+///
+/// Every fact that changes what the future queue *means*, and nothing that does
+/// not. [ADR 0044] Decision 9 fixes the membership: the ordered rows, the
+/// selected admitted semantic, the conflict policy and the binding the reader
+/// is looking at.
+///
+/// **The receipt is part of the question, not a stamp on the answer.**
+/// `conversion_queue_plan` runs no discovery, so it has nothing to observe and
+/// may not take a receipt from ambient authority (ledger row 122). The caller
+/// says which binding it is asking under, and Rust *checks* that rather than
+/// echoing it: a plan asked under A while Rust is already on B is refused, and
+/// the refusal is how the panel learns of B (row 182).
+///
+/// **`BackendAuthorityRevision` is deliberately absent.** A revision orders
+/// publications; it does not say which installation a plan is about. The same
+/// receipt legitimately appears under a later revision -- a preview verdict can
+/// move on an unchanged build -- and a question that carried the revision would
+/// call the scientific plan stale for a fact about msaccess's grammar.
+///
+/// [ADR 0044]: ../../../../../docs/architecture/adr/0044-conversion-configuration-authority.md
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionPlanRequestDto {
+    /// The rows, in the order they would run, which is the order on screen.
+    pub handles: Vec<String>,
+    /// The admitted combination this plan is asked under, by stable identity.
+    ///
+    /// A caller-supplied string and never more than that: it is looked up in
+    /// `ConversionIntent::ADMITTED`, and an identity that table does not hold
+    /// never becomes an intent.
+    pub intent_id: String,
+    pub conflict_policy: ConversionConflictPolicyDto,
+    /// The binding the caller is rendering, which Rust compares with its own.
+    pub expected_receipt: BackendBindingReceiptDto,
+}
+
 /// What the interface shows before a queue is started.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -1349,12 +1386,97 @@ pub struct ConversionQueuePlanDto {
     pub items: Vec<ConversionQueuePlanItemDto>,
     pub output_format: ConversionOutputFormatDto,
     /// The compression every binary array in every output must carry, taken
-    /// from the policy the plans are fixed with.
+    /// from the intent this plan was asked under.
     pub compression: String,
     pub validation_mode: ValidationModeDto,
     /// The most items one queue may hold, carried with the plan so the
     /// interface states the limit Rust enforces rather than one of its own.
     pub capacity: usize,
+    /// The admitted combination this plan describes, whole.
+    ///
+    /// Rust reconstructs it through the admitted table and returns what it
+    /// resolved, so what the panel renders is the semantic the queue would be
+    /// bound with rather than the identity the panel happened to send.
+    pub intent: ConversionIntentDto,
+    /// The conflict policy this plan was asked under, answered back for the
+    /// same reason: the summary a reader acts on states the plan's own facts,
+    /// not the controls' current values.
+    pub conflict_policy: ConversionConflictPolicyDto,
+    /// The binding this plan is about.
+    ///
+    /// Echoed from the question after Rust has checked it against its own
+    /// authority, so a reader holding this plan can tell whether it still
+    /// describes the installation on screen.
+    pub receipt: BackendBindingReceiptDto,
+}
+
+/// What a plan request produced.
+///
+/// Two arms, because a plan asked under a binding Rust has already left is not
+/// an error about the rows: it is news about the installation, and the only
+/// useful thing to answer with is the authority itself. Ordinary domain
+/// refusals -- an unknown handle, two rows that would write one name, an empty
+/// or oversized list -- stay `Err`, because they carry no claim about a binding
+/// and are judged by the receipt their request went out under.
+///
+/// A successful plan carries **no** authority projection. This operation takes
+/// no gate and runs no discovery, so it observes nothing and has nothing to
+/// project; its receipt is a component of the question, checked and echoed.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "camelCase")]
+pub enum ConversionPlanOutcomeDto {
+    #[serde(rename_all = "camelCase")]
+    Planned { plan: ConversionQueuePlanDto },
+    /// The requested binding is not the one Rust holds. The current authority
+    /// travels with the refusal, so the panel learns of the replacement from
+    /// the refusal itself rather than from an unrelated delivery.
+    #[serde(rename_all = "camelCase")]
+    BindingReplaced {
+        authority: BackendAuthorityProjectionDto,
+    },
+}
+
+/// The exact question one `BEGIN` acts on.
+///
+/// Every fact the plan on screen was computed from, so Rust can prove the
+/// action still means what the reader was looking at rather than trusting the
+/// panel's own judgement that it does. It is deliberately the plan question's
+/// membership, minus nothing: a `BEGIN` that took fewer facts could be right
+/// about the rows and wrong about the build, or right about the build and
+/// wrong about the semantic.
+///
+/// The document authority is not a field here. It travels as the header every
+/// authority-bearing command already proves the calling document with, and is
+/// checked against the live document epoch under the slot lock.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionBeginRequestDto {
+    pub handles: Vec<String>,
+    pub intent_id: String,
+    pub conflict_policy: ConversionConflictPolicyDto,
+    /// The binding the plan on screen was authored under.
+    pub expected_receipt: BackendBindingReceiptDto,
+}
+
+/// What one `BEGIN` produced.
+///
+/// In band, both arms, because [ADR 0044] Decision 4 obliges every operation
+/// that can observe or replace installation authority to return the authority
+/// as it stands *whether its domain outcome succeeds or refuses* -- and a
+/// refused `BEGIN` creates no queue, so there is no slot to poll and nothing
+/// else would arrive to correct the screen. An out-of-band refusal is exactly
+/// the hole ledger row 18 names.
+///
+/// [ADR 0044]: ../../../../../docs/architecture/adr/0044-conversion-configuration-authority.md
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "camelCase")]
+pub enum ConversionBeginOutcomeDto {
+    #[serde(rename_all = "camelCase")]
+    Reserved {
+        reservation: WorkspaceConversionReservationDto,
+    },
+    #[serde(rename_all = "camelCase")]
+    Refused { error: PreviewErrorDto },
 }
 
 /// One row of a queue plan.
@@ -1735,6 +1857,101 @@ pub fn queue_installation_changed() -> PreviewErrorDto {
         "queue_installation_changed",
         "The installed ProteoWizard has changed since those conversions ran, so nothing was \
          retried. Start a new conversion so every file in it comes from one installation.",
+        false,
+    )
+}
+
+/// What a plan or a `BEGIN` answers with when the combination it names is not
+/// one MSCanvas has measured.
+///
+/// Not retryable: no ProteoWizard build changes what the product's own evidence
+/// admits, so there is nothing for a reader to wait for. Reaching it at all
+/// means the caller composed an identity rather than echoing one of the
+/// catalog's.
+pub fn conversion_intent_not_admitted() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_intent_not_admitted",
+        "MSCanvas has not qualified that combination of conversion settings.",
+        false,
+    )
+}
+
+/// What a plan or a `BEGIN` answers with when the combination it names is a
+/// real row the installed build cannot run.
+///
+/// A different sentence from the one above, because a reader can act on this
+/// one: the row exists, and another ProteoWizard build offers it.
+pub fn conversion_intent_unavailable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_intent_unavailable",
+        "The installed ProteoWizard does not offer that combination of conversion settings.",
+        false,
+    )
+}
+
+/// What a plan answers with before this binding's settings have been read.
+///
+/// Retryable, and the thing that clears it is the ordinary configuration read
+/// the binding already owes -- so a reader waits for something that is coming
+/// rather than for nothing.
+pub fn conversion_configuration_unread() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_configuration_unread",
+        "MSCanvas has not read this ProteoWizard installation's conversion settings yet.",
+        true,
+    )
+}
+
+/// What a `BEGIN` answers with when another backend operation holds the one
+/// lane.
+///
+/// [ADR 0044] Decision 10: the pre-`BEGIN` proof takes the gate with
+/// `try_enter_backend` and refuses when it is held, rather than waiting. A
+/// click blocked for the length of a probe or a drain is a worse answer than a
+/// refusal the reader can act on at once, and proceeding without the proof is
+/// not an option at all.
+///
+/// It says only what Rust knows -- that the backend is busy -- because the gate
+/// is a bare mutex and no holder is consulted. Naming which lane fact it was is
+/// the frontend's job, done before the request was ever sent.
+///
+/// [ADR 0044]: ../../../../../docs/architecture/adr/0044-conversion-configuration-authority.md
+pub fn conversion_backend_busy() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_backend_busy",
+        "MSCanvas is using the ProteoWizard backend for something else. \
+         Try converting again in a moment.",
+        true,
+    )
+}
+
+/// What a plan or a `BEGIN` answers with when it names a ProteoWizard
+/// installation that is not the one this session is bound to.
+///
+/// The authority travels beside it, so the panel learns which binding it is
+/// actually on from this refusal rather than from an unrelated delivery. The
+/// sentence says what happened rather than what to press: the settings and the
+/// plan for the new binding are already on their way.
+pub fn conversion_binding_replaced() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_binding_replaced",
+        "The installed ProteoWizard changed, so this conversion was not started. \
+         Check the settings below and convert again.",
+        true,
+    )
+}
+
+/// What a `BEGIN` answers with when this session is bound to no installation at
+/// all.
+///
+/// Distinct from a replaced binding, because there is nothing to re-read and
+/// nothing further to wait for: what the reader has to change is which
+/// ProteoWizard MSCanvas is pointed at.
+pub fn conversion_without_an_installation() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_without_an_installation",
+        "MSCanvas is not using a ProteoWizard installation that can convert. \
+         See the backend status above.",
         false,
     )
 }

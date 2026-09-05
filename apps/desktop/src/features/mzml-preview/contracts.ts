@@ -1388,6 +1388,35 @@ export interface ConversionQueuePlanItem {
   readonly output: ConversionOutputPlan;
 }
 
+/**
+ * The exact question one plan answers.
+ *
+ * Every fact that changes what the future queue *means*, and nothing that does
+ * not. Two rows in this order, this combination, this policy, on this
+ * installation — change any of them and the answer describes a different
+ * conversion.
+ *
+ * **The receipt is part of the question.** This side knows which binding it is
+ * rendering, so it says so; Rust compares that with its own and refuses when
+ * they differ, rather than echoing it back. Without it a plan computed under
+ * one installation could be shown, and started, under another.
+ *
+ * **`BackendAuthorityRevision` is deliberately absent.** A revision orders
+ * publications; it does not say which installation a plan is about. The same
+ * receipt legitimately arrives under a later revision — a preview verdict can
+ * move on a build that has not changed — and a question carrying the revision
+ * would call its own answer stale for a fact about msaccess's grammar.
+ */
+export interface ConversionPlanRequest {
+  /** The rows, in the order they would run, which is the order on screen. */
+  readonly handles: readonly string[];
+  /** The admitted combination, by the identity Rust's catalog gave it. */
+  readonly intentId: string;
+  readonly conflictPolicy: ConversionConflictPolicy;
+  /** The binding this side is rendering. */
+  readonly expectedReceipt: BackendBindingReceipt;
+}
+
 /** What the interface shows before a queue is started. */
 export interface ConversionQueuePlan {
   readonly items: readonly ConversionQueuePlanItem[];
@@ -1396,7 +1425,89 @@ export interface ConversionQueuePlan {
   readonly validationMode: ValidationMode;
   /** The most items one queue may hold, as Rust enforces it. */
   readonly capacity: number;
+  /**
+   * The combination this plan describes, whole.
+   *
+   * Rust reconstructs it from the admitted table and answers with what it
+   * resolved, so the panel renders the semantic the queue would be bound with
+   * rather than the identity it happened to send.
+   */
+  readonly intent: ConversionIntentDescriptor;
+  /** The conflict policy this plan was asked under. */
+  readonly conflictPolicy: ConversionConflictPolicy;
+  /** The binding this plan is about, checked by Rust and given back. */
+  readonly receipt: BackendBindingReceipt;
 }
+
+/**
+ * What a plan request produced.
+ *
+ * A plan asked under a binding Rust has already left is not an error about the
+ * rows: it is news about the installation, and the only useful thing to answer
+ * with is the authority itself. Ordinary refusals — an unknown handle, two rows
+ * that would write one name — arrive as a rejected promise, because they carry
+ * no claim about a binding.
+ *
+ * A successful plan carries no authority projection, and that is not an
+ * omission. This operation takes no gate and runs no discovery, so it observes
+ * nothing and has nothing to project; its receipt is a component of the
+ * question, checked and echoed.
+ */
+export type ConversionPlanOutcome =
+  | { readonly outcome: "planned"; readonly plan: ConversionQueuePlan }
+  | {
+      readonly outcome: "bindingReplaced";
+      readonly authority: BackendAuthorityProjection;
+    };
+
+/**
+ * The exact question one `BEGIN` acts on.
+ *
+ * The plan question's membership, minus nothing. A start that took fewer facts
+ * could be right about the rows and wrong about the build, or right about the
+ * build and wrong about the semantic — and Rust proves all of them again rather
+ * than trusting that this side checked.
+ */
+export interface ConversionBeginRequest {
+  readonly handles: readonly string[];
+  readonly intentId: string;
+  readonly conflictPolicy: ConversionConflictPolicy;
+  /** The binding the plan on screen was authored under. */
+  readonly expectedReceipt: BackendBindingReceipt;
+}
+
+/**
+ * What one `BEGIN` produced, before any folder was chosen.
+ *
+ * In band, both arms. A refused `BEGIN` creates no queue, so there is no slot
+ * to poll and nothing else would arrive to correct a screen still showing the
+ * build the session has left — which is why the refusal travels inside an
+ * {@link AuthorityObserved} rather than as a bare rejection.
+ */
+export type ConversionBeginOutcome =
+  | { readonly outcome: "reserved"; readonly reservation: ConversionReservation }
+  | { readonly outcome: "refused"; readonly error: PreviewError };
+
+/**
+ * One Rust-issued claim on the right to choose a destination and convert.
+ *
+ * Opaque, path-free and single-use. It grants no filesystem authority: what it
+ * names is one bound decision Rust already made.
+ */
+export interface ConversionReservation {
+  readonly reservationId: string;
+}
+
+/**
+ * What one start did, from the click to the folder.
+ *
+ * Two commands and one answer, because the reader made one decision. A start
+ * that Rust refused never reaches a picker, so there is no queue to report and
+ * the refusal is the outcome.
+ */
+export type ConversionStartOutcome =
+  | { readonly outcome: "converted"; readonly update: WorkspaceConversionUpdate }
+  | { readonly outcome: "refused"; readonly error: PreviewError };
 
 /**
  * Whether one queue item's latest attempt actually judged an output.

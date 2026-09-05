@@ -50,6 +50,7 @@ import {
   createFakePreviewApi,
   createFakeWorkspaceDropTransport,
   deferred,
+  planIdentity,
   queueItem,
   queueOf,
   selectedFile,
@@ -259,7 +260,7 @@ describe("the conversion lane's one authority, as it ships", () => {
       api.publishConversion(retryableQueue(2));
     });
     act(() => {
-      workspace.result.current.conversion.convert([vendorRow.handle]);
+      workspace.result.current.conversion.convert(planIdentity([vendorRow.handle]));
     });
     expect(api.conversionRequests).toHaveLength(1);
 
@@ -274,7 +275,7 @@ describe("the conversion lane's one authority, as it ships", () => {
     // And the claim stands through it, so the operation still refuses.
     expect(workspace.result.current.conversion.lane.laneClaimed).toBe(true);
     await act(async () => {
-      workspace.result.current.conversion.convert([vendorRow.handle]);
+      workspace.result.current.conversion.convert(planIdentity([vendorRow.handle]));
       await Promise.resolve();
     });
     expect(api.conversionRequests).toHaveLength(1);
@@ -504,7 +505,7 @@ describe("the conversion lane's one authority, as it ships", () => {
       // The operation refuses, from the facts as they stand rather than from
       // the render the closure was made in.
       await act(async () => {
-        workspace.result.current.conversion.convert([vendorRow.handle]);
+        workspace.result.current.conversion.convert(planIdentity([vendorRow.handle]));
         await Promise.resolve();
       });
       expect(api.conversionRequests, scenario.name).toEqual([]);

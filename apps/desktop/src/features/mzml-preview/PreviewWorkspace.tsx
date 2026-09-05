@@ -265,7 +265,12 @@ export function PreviewWorkspace() {
     [selectedConvertible, focusedConvertible, focusedDataset],
   );
 
-  const { describe: describeConversion } = workspace.conversion;
+  const { describe: describeConversion } = workspace.conversionPlan;
+  // The rows this panel would convert, handed to the plan the moment they
+  // change. Everything *else* about the question -- the combination, the
+  // policy, the binding -- the plan reads from authorities of its own; the rows
+  // are the screen's, because search, sort and focus resolve them here.
+  //
   // The joined key is the dependency; the array itself is the input. A fresh
   // array is built on every render, so depending on it would re-describe the
   // same queue on every keystroke in the search box -- and splitting the key
@@ -638,6 +643,7 @@ export function PreviewWorkspace() {
           <ConversionPanel
             configuration={workspace.conversionConfiguration}
             conversion={workspace.conversion}
+            plan={workspace.conversionPlan}
             excludedSelectedCount={excludedSelectedCount}
             handles={queueHandlesToConvert}
             scope={selectedConvertible.length > 0 ? "selection" : "focused"}

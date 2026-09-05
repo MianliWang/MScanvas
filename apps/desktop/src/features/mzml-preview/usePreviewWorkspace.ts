@@ -11,6 +11,8 @@ import {
 import { usePreviewApi } from "./api";
 import type { ConversionOperation } from "./useConversionOperation";
 import { useConversionOperation } from "./useConversionOperation";
+import type { ConversionPlanView } from "./useConversionPlan";
+import { useConversionPlan } from "./useConversionPlan";
 import type {
   BackendAuthorityProjection,
   BackendAvailability,
@@ -506,6 +508,14 @@ export interface PreviewWorkspace {
    * is refused.
    */
   readonly conversionConfiguration: ConversionConfigurationView;
+  /**
+   * The plan this document is asking about, and what Rust has told it.
+   *
+   * Beside the two above rather than inside either: the settings describe a
+   * build, the operation runs a queue, and the plan is the one question that
+   * spans them -- which rows, under which combination, on which installation.
+   */
+  readonly conversionPlan: ConversionPlanView;
   readonly backend: BackendState;
   readonly preview: PreviewState;
   readonly spectrum: SpectrumState;
@@ -3608,6 +3618,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
   );
   const conversion = useConversionOperation(
     reconcileConversionGeneration,
+    acceptDeliveredAuthority,
     noticeQuarantine,
     adoptOutputs,
     conversionEnvironment,
@@ -3634,6 +3645,16 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     api,
     projection,
     configurationEnvironment,
+    acceptDeliveredAuthority,
+  );
+  // After both, because a plan question is posed out of what they answer: the
+  // binding this document renders, the catalog held for it, the row chosen in
+  // that catalog, and the policy the operation holds.
+  const conversionPlan = useConversionPlan(
+    api,
+    projection,
+    conversionConfiguration,
+    conversion.conflictPolicy,
     acceptDeliveredAuthority,
   );
   // A stop that could not be confirmed makes this session's backend unusable
@@ -4085,6 +4106,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     recordMeasurement,
     conversion,
     conversionConfiguration,
+    conversionPlan,
   };
 }
 

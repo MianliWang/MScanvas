@@ -16,6 +16,8 @@
  * both directions.
  */
 
+import type { ConversionStartPlan } from "./conversionPlanAuthority";
+
 /**
  * The lane facts every conversion action shares.
  *
@@ -75,6 +77,17 @@ export type ConversionAction =
       readonly kind: "start";
       /** How many convertible rows the queue would hold. */
       readonly targetCount: number;
+      /**
+       * What the plan contributes.
+       *
+       * A start is an action on a *described* conversion: the reader presses
+       * `Convert` beside a summary, and what runs must be what that summary
+       * described. So the plan is part of the target rather than a second
+       * condition beside this rule -- a control that consulted the lane here
+       * and the plan somewhere else is exactly how the button and the sentence
+       * beneath it come to answer different questions.
+       */
+      readonly plan: ConversionStartPlan;
     }
   | {
       readonly kind: "retry";
@@ -101,6 +114,10 @@ export type ConversionUnavailableReason =
   | "diagnostics-exporting"
   | "workspace-settling"
   | "no-convertible-target"
+  | "plan-reading"
+  | "plan-failed"
+  | "plan-settings-unknown"
+  | "plan-selection-unavailable"
   | "queue-not-retryable"
   | "nothing-to-retry";
 
@@ -152,6 +169,19 @@ const CONVERSION_MESSAGES: Record<ConversionUnavailableReason, string> = {
     "Converting is unavailable while failure diagnostics are being saved.",
   "workspace-settling": "Converting is unavailable while the file list is being changed.",
   "no-convertible-target": "Select or focus a supported vendor acquisition to convert.",
+  // Three sentences for three situations a single "no plan" could not tell
+  // apart, and the difference is what the reader can do. One is a wait, one is
+  // a control to press, and one is a change to make above.
+  "plan-reading": "MSCanvas is working out what this conversion would do.",
+  "plan-failed":
+    "MSCanvas could not work out what this conversion would do. " +
+    "Try describing it again.",
+  "plan-settings-unknown":
+    "MSCanvas does not yet know what this ProteoWizard installation can convert, " +
+    "so it cannot describe this conversion. See the conversion settings above.",
+  "plan-selection-unavailable":
+    "The installed ProteoWizard does not offer the conversion settings you chose, " +
+    "so there is nothing to convert with. Choose settings it offers above.",
   "queue-not-retryable":
     "A stopped queue is not rerun in place. Convert those acquisitions again from the list.",
   "nothing-to-retry": "Nothing in this queue would change on another attempt.",
@@ -235,12 +265,45 @@ function unavailableReason(
 function targetReason(action: ConversionAction): ConversionUnavailableReason | null {
   switch (action.kind) {
     case "start":
-      return action.targetCount === 0 ? "no-convertible-target" : null;
+      // The rows first: "MSCanvas is working out what this conversion would
+      // do" said over an empty selection is a true sentence about the wrong
+      // problem, and the plan is `absent` for exactly that case anyway.
+      if (action.targetCount === 0) {
+        return "no-convertible-target";
+      }
+      return planReason(action.plan);
     case "retry":
       if (!action.queueCompleted) {
         return "queue-not-retryable";
       }
       return action.retryableFailureCount === 0 ? "nothing-to-retry" : null;
+  }
+}
+
+/**
+ * Why the plan refuses a start, or `null` where it does not.
+ *
+ * Exhaustive over the plan's own vocabulary rather than over booleans, so a
+ * state added to the machine cannot reach the end of this function without a
+ * sentence of its own.
+ */
+function planReason(plan: ConversionStartPlan): ConversionUnavailableReason | null {
+  switch (plan) {
+    case "ready":
+      return null;
+    case "reading":
+      return "plan-reading";
+    case "failed":
+      return "plan-failed";
+    case "settingsUnknown":
+      return "plan-settings-unknown";
+    case "selectionUnavailable":
+      return "plan-selection-unavailable";
+    case "absent":
+      // Rows were asked about and the plan says none were. Unreachable past
+      // the count above, and answered here rather than left to fall through:
+      // a target reason is what an action with nothing to act on is short of.
+      return "no-convertible-target";
   }
 }
 
@@ -251,8 +314,12 @@ function targetReason(action: ConversionAction): ConversionUnavailableReason | n
  * that offers it evaluate the same code rather than two expressions that
  * merely looked alike.
  */
-export function canStartConversion(lane: ConversionLane, targetCount: number): boolean {
-  return conversionAvailability(lane, { kind: "start", targetCount }).status === "available";
+export function canStartConversion(
+  lane: ConversionLane,
+  targetCount: number,
+  plan: ConversionStartPlan,
+): boolean {
+  return conversionAvailability(lane, { kind: "start", targetCount, plan }).status === "available";
 }
 
 /**

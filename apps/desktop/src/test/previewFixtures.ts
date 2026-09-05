@@ -34,7 +34,11 @@ import type {
   ConversionDiagnosticsExport,
   ConversionDiagnosticsState,
   ConversionOutputSetReport,
+  ConversionBeginRequest,
+  ConversionPlanOutcome,
+  ConversionPlanRequest,
   ConversionQueuePlan,
+  ConversionStartOutcome,
   ConversionQueueItem,
   FolderDiscoverySummary,
   FolderIngestionResult,
@@ -62,6 +66,7 @@ import type {
   ExportedSpectrumRange,
   SpectrumRange,
 } from "../features/mzml-preview/contracts";
+import type { ConversionPlanIdentity } from "../features/mzml-preview/conversionPlanAuthority";
 
 /**
  * How many points the fake says a complete exported spectrum carries.
@@ -230,6 +235,36 @@ function intent(
  * A test about a build that cannot run some row supplies its own, which is the
  * point of availability being a property of the row.
  */
+/**
+ * The binding a session is on before anything has replaced it.
+ *
+ * This fake mints its first receipt as 1 and advances it only where the
+ * installation actually changes, so a test that is not about a replacement asks
+ * its questions under this one. It is opaque like any other receipt: what
+ * matters is that it is the one the fake would answer for.
+ */
+export const firstBindingReceipt = 1;
+
+/**
+ * The plan question a test starts a conversion under.
+ *
+ * Everything a `BEGIN` carries, so a test about the *lane* can dispatch one
+ * without also being a test about which combination or which build. A test that
+ * is about one of those names it.
+ */
+export function planIdentity(
+  handles: readonly string[],
+  overrides: Partial<Omit<ConversionPlanIdentity, "handles">> = {},
+): ConversionPlanIdentity {
+  return {
+    handles,
+    intentId: shippedIntent.id,
+    conflictPolicy: "fail",
+    receipt: firstBindingReceipt,
+    ...overrides,
+  };
+}
+
 export const completeCatalog: readonly ConversionCatalogRow[] = admittedIntents.map((row) => ({
   intent: row,
   available: true,
@@ -844,8 +879,30 @@ export interface FakePreviewApiOptions {
   readonly initialDatasets?: readonly HeldFile[];
   /** What the conversion slot holds when the webview mounts. */
   readonly initialConversion?: WorkspaceConversionState;
-  /** What `describeConversion` answers. Defaults to a plan for the named row. */
-  readonly conversionPlan?: (handles: readonly string[]) => Promise<ConversionQueuePlan>;
+  /**
+   * What `describeConversion` answers.
+   *
+   * Defaults to Rust's own order over the session this fake is modelling: the
+   * requested binding is checked, then the chosen combination is looked up in
+   * the catalog, then the rows are resolved. A test supplies its own only when
+   * it needs an answer that order does not produce -- a controlled promise it
+   * resolves by hand, a failure, a plan for a binding nobody asked about.
+   */
+  readonly conversionPlan?: (
+    request: ConversionPlanRequest,
+  ) => Promise<ConversionPlanOutcome>;
+  /**
+   * What a `BEGIN` is refused with before anything is created, or `null` to let
+   * it through.
+   *
+   * The receipt check above is modelled unconditionally, because a test must
+   * not be able to opt out of it. This is for the refusals a build decides --
+   * an unrunnable combination, a busy lane -- which is exactly the set a test
+   * about `BEGIN`'s gates needs to name.
+   */
+  readonly conversionRefusal?: (
+    request: ConversionBeginRequest,
+  ) => ConversionStartOutcome | null;
   /**
    * What one conversion does.
    *
@@ -1004,6 +1061,32 @@ export interface FakePreviewApi extends PreviewApi {
   readonly adoptionRequests: readonly string[];
   /** Every conversion this fake was asked to start, in order. */
   readonly conversionRequests: readonly ConversionRequest[];
+  /**
+   * Every plan question this fake was asked, in order.
+   *
+   * The question rather than the answer, because what a test about staleness
+   * needs to say is which questions were *asked* -- that a superseded one was
+   * asked once, and that its replacement was asked after it.
+   */
+  readonly planRequests: () => readonly ConversionPlanRequest[];
+  /** Every `BEGIN` this fake was asked for, in order, question and all. */
+  readonly beginRequests: () => readonly ConversionBeginRequest[];
+  /**
+   * Replaces the installation this fake is bound to, silently.
+   *
+   * No verdict is delivered and no response carries the new authority, so the
+   * document under test goes on rendering the binding it had -- which is the
+   * only state in which a receipt gate has anything to catch.
+   */
+  readonly replaceTheBindingSilently: () => void;
+  /**
+   * Judges the bound build unusable for preview, without changing the build.
+   *
+   * Advances the revision at an unchanged receipt, which is the one shape that
+   * tells an ordering token from an identity. Delivered by the next backend
+   * check, as production delivers it.
+   */
+  readonly judgeTheBuildUnpreviewable: () => void;
 }
 
 /** One conversion the fake was asked for. */
@@ -1325,6 +1408,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     ),
   });
 
+  const planRequests: ConversionPlanRequest[] = [];
+  const beginRequests: ConversionBeginRequest[] = [];
   const deliveredVerdicts: BackendAvailability[] = [];
   // Counted here as the service counts it: a change advances it, a plain
   // reading does not. A fake that returned a fixed number would make the
@@ -1332,17 +1417,37 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   // change look older than what is already on screen.
   let generation = 0;
   /**
+   * How many times the bound build's *verdict* has moved without the build
+   * changing.
+   *
+   * A second counter, and it is the whole reason there are two tokens. A
+   * truncated `msaccess --help` capture makes the same installation judged
+   * unusable on one reading and usable on the next: the files are the same, so
+   * the receipt cannot move, and what is projected did change, so the revision
+   * must. A fake with one counter could not produce that, and a test about the
+   * identity/ordering split would have nothing to stand on.
+   */
+  let verdictMoves = 0;
+  let previewable = true;
+  /**
    * The authority this fake's service currently stands at.
    *
-   * One counter behind both numbers, because in this fake everything that
-   * advances the sequence also changes which installation resolves. The
-   * *shape* of the binding still comes from the fixture -- a folder holding no
-   * tools reports an absence, and stamping it as installed would invent a
-   * build the test said was not there.
+   * The receipt follows the installation and the revision follows *anything
+   * projected*, which is the split the application depends on. The *shape* of
+   * the binding still comes from the fixture -- a folder holding no tools
+   * reports an absence, and stamping it as installed would invent a build the
+   * test said was not there.
    */
   const stamped = (state: BackendAuthorityState): BackendAuthorityProjection => ({
-    revision: generation + 1,
-    state: state.state === "settled" ? { ...state, receipt: generation + 1 } : state,
+    revision: generation + verdictMoves + 1,
+    state:
+      state.state === "settled"
+        ? {
+            ...state,
+            receipt: generation + 1,
+            previewAvailability: previewable ? state.previewAvailability : "unusable",
+          }
+        : state,
   });
   const currentAuthority = (): BackendAuthorityProjection =>
     stamped({
@@ -1359,6 +1464,30 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   const deliverChange = (verdict: BackendAvailability): BackendAvailability => {
     generation += 1;
     return deliver(verdict);
+  };
+  /**
+   * The installation this fake's service is on is replaced, and nothing is
+   * delivered saying so.
+   *
+   * The window every receipt gate exists for: Rust has moved on and the panel
+   * has not heard, because the response that would tell it has not arrived --
+   * or was never produced, a refused start creating no queue to poll. A test
+   * that changed the binding through a delivering path could not reach it.
+   */
+  const replaceTheBindingSilently = () => {
+    generation += 1;
+  };
+  /**
+   * The bound build is judged again, and judged unusable for preview.
+   *
+   * The same files and the same binding, so the receipt cannot move; a
+   * different thing projected, so the revision must. Every later answer carries
+   * it, and a check delivers it -- which is how a session learns of a verdict
+   * that moved without anything about the installation having.
+   */
+  const judgeTheBuildUnpreviewable = () => {
+    verdictMoves += 1;
+    previewable = false;
   };
 
   /**
@@ -1450,6 +1579,10 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     diagnosticsExportRequests,
     adoptionRequests,
     conversionRequests,
+    planRequests: () => [...planRequests],
+    beginRequests: () => [...beginRequests],
+    replaceTheBindingSilently,
+    judgeTheBuildUnpreviewable,
     readConversionConfiguration: () => {
       // Modelled on Rust's own ordering rather than canned: quarantine outranks
       // every other reason and never clears, so a test that quarantines the
@@ -1599,11 +1732,39 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           : options.spectrum(index)
       ).then((outcome) => ({ authority: currentAuthority(), outcome }));
     },
-    describeConversion: (handles) => {
+    describeConversion: (request) => {
+      planRequests.push(request);
       if (options.conversionPlan !== undefined) {
-        return options.conversionPlan(handles);
+        return options.conversionPlan(request);
       }
-      const rows = handles.map((handle) =>
+      // Modelled on Rust's own order rather than canned. The binding is checked
+      // before the rows are resolved, so a test that moves the session on
+      // cannot be handed a plan for the build it has left -- which is the whole
+      // property these fakes exist to let a test observe.
+      const bound = currentAuthority();
+      if (
+        bound.state.state !== "settled" ||
+        bound.state.receipt !== request.expectedReceipt
+      ) {
+        return Promise.resolve({
+          outcome: "bindingReplaced" as const,
+          authority: bound,
+        });
+      }
+      const admitted = completeCatalog.find((row) => row.intent.id === request.intentId);
+      if (admitted === undefined || !admitted.available) {
+        return Promise.reject(
+          previewError({
+            kind:
+              admitted === undefined
+                ? "conversion_intent_not_admitted"
+                : "conversion_intent_unavailable",
+            summary: "Those conversion settings cannot be used here.",
+            retryable: false,
+          }),
+        );
+      }
+      const rows = request.handles.map((handle) =>
         snapshot().datasets.find((dataset) => dataset.handle === handle),
       );
       if (rows.some((row) => row === undefined)) {
@@ -1612,22 +1773,28 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         );
       }
       return Promise.resolve({
-        items: rows.map((row) => ({
-          datasetHandle: row!.handle,
-          fileName: row!.fileName,
-          sourceKind: row!.sourceKind,
-          output:
-      row!.sourceKind === "sciex_wiff"
-        ? { kind: "backendNamedSet" as const, maxMembers: 24 }
-        : {
-            kind: "knownSingle" as const,
-            fileName: plannedOutputName(row!.fileName),
-          },
-        })),
-        outputFormat: "mzML",
-        compression: "zlib",
-        validationMode: "output_only",
-        capacity: 16,
+        outcome: "planned" as const,
+        plan: {
+          items: rows.map((row) => ({
+            datasetHandle: row!.handle,
+            fileName: row!.fileName,
+            sourceKind: row!.sourceKind,
+            output:
+              row!.sourceKind === "sciex_wiff"
+                ? { kind: "backendNamedSet" as const, maxMembers: 24 }
+                : {
+                    kind: "knownSingle" as const,
+                    fileName: plannedOutputName(row!.fileName),
+                  },
+          })),
+          outputFormat: "mzML" as const,
+          compression: admitted.intent.compression === "zlib" ? "zlib" : "none",
+          validationMode: "output_only" as const,
+          capacity: 16,
+          intent: admitted.intent,
+          conflictPolicy: request.conflictPolicy,
+          receipt: request.expectedReceipt,
+        },
       });
     },
     // Answered after whatever round trip the test models, and reading the slot
@@ -1644,8 +1811,31 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       publishConversion(settled);
       return conversionUpdate();
     },
-    convertDatasets: async (handles, conflictPolicy, onReserved) => {
-      const request = { handles, conflictPolicy };
+    convertDatasets: async (begun, onReserved) => {
+      beginRequests.push(begun);
+      // Rust proves the binding before anything is created, so a start naming
+      // one the session has left never reaches a picker and answers with the
+      // authority it is actually on.
+      const bound = currentAuthority();
+      if (bound.state.state !== "settled" || bound.state.receipt !== begun.expectedReceipt) {
+        return {
+          authority: bound,
+          outcome: {
+            outcome: "refused" as const,
+            error: previewError({
+              kind: "conversion_binding_replaced",
+              summary: "The installed ProteoWizard changed, so this conversion was not started.",
+            }),
+          },
+        };
+      }
+      if (options.conversionRefusal !== undefined) {
+        const refusal = options.conversionRefusal(begun);
+        if (refusal !== null) {
+          return { authority: currentAuthority(), outcome: refusal };
+        }
+      }
+      const request = { handles: begun.handles, conflictPolicy: begun.conflictPolicy };
       conversionRequests.push(request);
       // A new queue replaces the previous one, and this session's memory of
       // having exported its diagnostics goes with it. The file does not.
@@ -1662,7 +1852,10 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       onReserved();
       const settled = await settling;
       publishConversion(settled);
-      return conversionUpdate();
+      return {
+        authority: currentAuthority(),
+        outcome: { outcome: "converted" as const, update: conversionUpdate() },
+      };
     },
     // Modelled as Rust behaves: every finalized item of the terminal queue, in
     // queue order, admitted unless the session already holds a row of that

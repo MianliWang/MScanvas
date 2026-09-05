@@ -14,6 +14,7 @@ import {
   sciexQueueItem,
   selectedFile,
 } from "../../test/previewFixtures";
+import { pressConvert } from "../../test/conversionPanelInteractions";
 import type { FakePreviewApi } from "../../test/previewFixtures";
 import type { SelectedFile } from "./contracts";
 
@@ -99,7 +100,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     expect((output?.textContent ?? "").trim()).not.toBe("");
 
     // And the action takes the row.
-    fireEvent.click(within(panel).getByRole("button", { name: "Convert focused…" }));
+    await pressConvert(panel, "Convert focused…");
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([{ handles: ["file-9"], conflictPolicy: "fail" }]);
     });

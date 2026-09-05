@@ -12,12 +12,12 @@ import type {
   ConversionConflictPolicy,
   ConversionDiagnosticsExport,
   ConversionDiagnosticsState,
-  ConversionQueuePlan,
   PreviewError,
   WorkspaceConversionState,
   WorkspaceConversionUpdate,
   WorkspaceOutputAdoptionResult,
 } from "./contracts";
+import type { ConversionPlanIdentity } from "./conversionPlanAuthority";
 import { toPreviewError } from "./contracts";
 
 /**
@@ -67,13 +67,6 @@ function describes(
   );
 }
 
-/** The plan summary for one row, and how the reading of it went. */
-export type ConversionPlanState =
-  | { readonly status: "none" }
-  | { readonly status: "loading"; readonly handles: readonly string[] }
-  | { readonly status: "loaded"; readonly plan: ConversionQueuePlan }
-  | { readonly status: "failed"; readonly handles: readonly string[]; readonly error: PreviewError };
-
 export interface ConversionOperation {
   /** The authoritative slot, as Rust last reported it. */
   readonly state: WorkspaceConversionState;
@@ -111,14 +104,20 @@ export interface ConversionOperation {
    * {@link conversionAvailability}; they do not assemble one of their own.
    */
   readonly lane: ConversionLane;
-  readonly plan: ConversionPlanState;
   /** A request that never reached Rust's slot, kept apart from a conversion's own outcome. */
   readonly error: PreviewError | null;
   readonly conflictPolicy: ConversionConflictPolicy;
   readonly setConflictPolicy: (policy: ConversionConflictPolicy) => void;
-  /** Describes the queue these rows would get, or clears the description. */
-  readonly describe: (handles: readonly string[]) => void;
-  readonly convert: (handles: readonly string[]) => void;
+  /**
+   * Starts the conversion one plan describes.
+   *
+   * Takes the plan's own question rather than a list of rows, because that is
+   * what the reader pressed: the rows, the combination, the policy and the
+   * installation the summary on screen was computed under. Rust proves every
+   * one of them again before anything is created, and refuses with the
+   * authority it is actually on when the last of them has moved.
+   */
+  readonly convert: (identity: ConversionPlanIdentity) => void;
   /** Reruns every retryable failure of the terminal queue. */
   readonly retry: () => void;
   /**
@@ -344,7 +343,27 @@ function reportsAQueueOtherThan(
 }
 
 export function useConversionOperation(
-  onAuthority: (authority: BackendAuthorityProjection) => void,
+  /**
+   * Where the authority a *finished queue's* report carried is delivered.
+   *
+   * A queue's report is a statement about work already done, and the projection
+   * beside it obliges the reader's banner to be checked rather than replacing
+   * anything by itself. Kept apart from the delivery below, which is a
+   * different kind of answer to a different question.
+   */
+  onQueueAuthority: (authority: BackendAuthorityProjection) => void,
+  /**
+   * Where the authority a `BEGIN`'s *own discovery* left is delivered.
+   *
+   * A start resolves the installed build, so it may be the first thing in the
+   * session to see a replacement -- and a refused one creates no queue, so
+   * nothing else would arrive to correct a screen still showing the build the
+   * session has left. This is the projection ADR 0044 Decision 4 obliges that
+   * answer to carry, and it is installed by the ordinary rule -- ordering by
+   * revision, then identity by receipt -- rather than by asking the backend
+   * again for something the refusal already said.
+   */
+  onObservedAuthority: (authority: BackendAuthorityProjection) => void,
   /**
    * Told once, when this session stops trusting the backend.
    *
@@ -371,7 +390,6 @@ export function useConversionOperation(
 ): ConversionOperation {
   const api = usePreviewApi();
   const [state, setState] = useState<WorkspaceConversionState>({ status: "idle" });
-  const [plan, setPlan] = useState<ConversionPlanState>({ status: "none" });
   const [error, setError] = useState<PreviewError | null>(null);
   const [conflictPolicy, setConflictPolicy] = useState<ConversionConflictPolicy>("fail");
   /**
@@ -387,7 +405,6 @@ export function useConversionOperation(
   // observable transition and never rewinds, so a read that arrives with a
   // lower one is describing a slot that has already moved.
   const installedSequence = useRef(-1);
-  const planToken = useRef(0);
   const stateToken = useRef(0);
   // Whether a slot read is outstanding. Paired with the token above rather than
   // replacing it: the token decides which reply may install, and this decides
@@ -562,9 +579,9 @@ export function useConversionOperation(
       // was: reporting each item separately would start a backend probe per
       // item before any of them had answered, which for a full queue is sixteen
       // serial help probes with preview and conversion disabled throughout.
-      onAuthority(update.authority);
+      onQueueAuthority(update.authority);
     }
-  }, [claimLane, onAuthority, onBackendQuarantined]);
+  }, [claimLane, onBackendQuarantined, onQueueAuthority]);
 
   const readState = useCallback(() => {
     // One at a time. The token below lets only the newest read install, so two
@@ -733,33 +750,9 @@ export function useConversionOperation(
     };
   }, [awaitingRetryTransition, busy, readState]);
 
-  const describe = useCallback(
-    (handles: readonly string[]) => {
-      planToken.current += 1;
-      const token = planToken.current;
-      if (handles.length === 0) {
-        setPlan({ status: "none" });
-        return;
-      }
-      setPlan({ status: "loading", handles });
-      api
-        .describeConversion(handles)
-        .then((summary) => {
-          if (mounted.current && token === planToken.current) {
-            setPlan({ status: "loaded", plan: summary });
-          }
-        })
-        .catch((cause: unknown) => {
-          if (mounted.current && token === planToken.current) {
-            setPlan({ status: "failed", handles, error: toPreviewError(cause) });
-          }
-        });
-    },
-    [api],
-  );
-
   const convert = useCallback(
-    (handles: readonly string[]) => {
+    (identity: ConversionPlanIdentity) => {
+      const handles = identity.handles;
       // The one rule, re-read at dispatch from the facts as they stand.
       //
       // Not a second expression that resembles the control's: the same function
@@ -770,7 +763,12 @@ export function useConversionOperation(
       // answer. VS Code ships the opposite choice and says so in its own schema;
       // for something that claims a backend lane and spawns a process, an
       // explicit refusal is the only safe end of that window.
-      if (!canStartConversion(readLane(), handles.length)) {
+      // The plan half is `ready` by construction: this handler is reached only
+      // with an identity, and an identity exists only where a plan answers it.
+      // Naming it rather than omitting it keeps the guard and the control
+      // evaluating one rule over one struct -- the omission is how the two came
+      // to answer different questions before M6.1.
+      if (!canStartConversion(readLane(), handles.length, "ready")) {
         return;
       }
       // Claimed before the request leaves, so a second activation inside the
@@ -785,22 +783,48 @@ export function useConversionOperation(
       });
       setError(null);
       api
-        .convertDatasets(handles, conflictPolicy, () => {
-          // The reservation exists and the claim has been dispatched. From here
-          // the operation is Rust's, and a read will find it even if this
-          // document goes away.
-          readState();
-        })
-        .then((update) => {
+        .convertDatasets(
+          {
+            handles: identity.handles,
+            intentId: identity.intentId,
+            conflictPolicy: identity.conflictPolicy,
+            expectedReceipt: identity.receipt,
+          },
+          () => {
+            // The reservation exists and the claim has been dispatched. From
+            // here the operation is Rust's, and a read will find it even if
+            // this document goes away.
+            readState();
+          },
+        )
+        .then((started) => {
+          if (!mounted.current) {
+            return;
+          }
+          // The projection first, whichever way this went: a `BEGIN` resolves
+          // the installed build, so it may be the first thing in the session to
+          // see a replacement -- and a refused one creates no queue, so nothing
+          // else would arrive to correct the screen.
+          //
+          // Installed by the ordinary rule rather than answered with a second
+          // discovery. The refusal already carries what a check would go and
+          // ask for, and asking anyway is the "special BEGIN refresh" the
+          // authority envelope exists to replace.
+          onObservedAuthority(started.authority);
+          if (started.outcome.outcome === "refused") {
+            // Rust refused before anything was created. The claim was never
+            // Rust's to hold, and the refusal is the reader's answer.
+            claimLane(null);
+            setError(started.outcome.error);
+            return;
+          }
           // The state first, the claim second. This is the reply to the very
           // dispatch that raised the claim, so it is the one observation
           // entitled to lower it -- and lowering it only once the slot it
           // describes is installed is what stops the release reading a lane
           // from before its own queue existed. Both commit together.
-          applyUpdate(update);
-          if (mounted.current) {
-            claimLane(null);
-          }
+          applyUpdate(started.outcome.update);
+          claimLane(null);
         })
         .catch((cause: unknown) => {
           if (!mounted.current) {
@@ -813,7 +837,7 @@ export function useConversionOperation(
           readState();
         });
     },
-    [api, applyUpdate, claimLane, conflictPolicy, readLane, readState],
+    [api, applyUpdate, claimLane, onObservedAuthority, readLane, readState],
   );
 
   // Every row a live queue holds, not only the one running: a queued row
@@ -1123,11 +1147,9 @@ export function useConversionOperation(
     retry,
     retrying,
     converting,
-    plan,
     error,
     conflictPolicy,
     setConflictPolicy,
-    describe,
     convert,
     dismissError,
     stop,

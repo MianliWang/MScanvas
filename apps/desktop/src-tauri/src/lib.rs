@@ -11,13 +11,13 @@ use tauri::webview::PageLoadEvent;
 use tauri::{Manager, State};
 
 use preview::dto::{
-    AuthorityObservedDto, BackendReadingDto, ConversionConfigurationSnapshotDto,
-    ConversionConflictPolicyDto, ConversionDiagnosticsReservationDto, ConversionQueuePlanDto,
-    FolderImportReservationDto, FolderIngestionResultDto, PreviewDto, PreviewErrorDto,
-    SelectedSpectrumOutcomeDto, WorkspaceAddResultDto, WorkspaceConversionReservationDto,
-    WorkspaceConversionUpdateDto, WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
-    WorkspaceOutputAdoptionResultDto, WorkspaceRemoveResultDto, WorkspaceRosterDto,
-    diagnostics_picker_unavailable, invalid_conversion_reservation,
+    AuthorityObservedDto, BackendReadingDto, ConversionBeginOutcomeDto, ConversionBeginRequestDto,
+    ConversionConfigurationSnapshotDto, ConversionDiagnosticsReservationDto,
+    ConversionPlanOutcomeDto, ConversionPlanRequestDto, FolderImportReservationDto,
+    FolderIngestionResultDto, PreviewDto, PreviewErrorDto, SelectedSpectrumOutcomeDto,
+    WorkspaceAddResultDto, WorkspaceConversionUpdateDto, WorkspaceDropSubscriptionReservationDto,
+    WorkspaceDropUpdateDto, WorkspaceOutputAdoptionResultDto, WorkspaceRemoveResultDto,
+    WorkspaceRosterDto, diagnostics_picker_unavailable, invalid_conversion_reservation,
     invalid_workspace_drop_subscription, spectrum_picker_unavailable,
 };
 use preview::{PreviewService, ProteoWizardProvider, normalize_window_drop_event};
@@ -287,19 +287,25 @@ async fn subscribe_workspace_drop_updates(
     }
 }
 
-/// Describes the conversion one focused row would get, without starting one.
+/// Answers one exact plan question, without starting anything.
 ///
-/// Read-only and free: no picker, no reservation, no process. It exists so the
-/// summary the user reads before deciding is derived from what the run will
-/// actually do, rather than composed in the webview from constants that are
+/// Read-only and free: no gate, no picker, no reservation, no process. It exists
+/// so the summary the user reads before deciding is derived from what the run
+/// will actually do, rather than composed in the webview from constants that are
 /// free to drift from it.
+///
+/// The request names every fact that changes what the future queue means -- the
+/// ordered rows, the selected admitted semantic, the conflict policy and the
+/// binding the panel is rendering. The last of those is *checked* rather than
+/// echoed: a plan asked under an installation this session has left is refused
+/// with the authority it is actually on.
 #[tauri::command]
 async fn describe_workspace_conversion_queue(
-    handles: Vec<String>,
+    request: ConversionPlanRequestDto,
     service: State<'_, SharedService>,
-) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
+) -> Result<ConversionPlanOutcomeDto, PreviewErrorDto> {
     let service = Arc::clone(&service);
-    off_the_async_runtime(move || service.conversion_queue_plan(&handles)).await?
+    off_the_async_runtime(move || service.conversion_queue_plan(&request)).await?
 }
 
 /// Runs every retryable failure of the terminal queue again.
@@ -872,18 +878,14 @@ async fn get_workspace_conversion_state(
 /// because the document that would receive the answer is gone.
 #[tauri::command]
 async fn begin_workspace_conversion_queue(
-    handles: Vec<String>,
-    conflict_policy: ConversionConflictPolicyDto,
+    request: ConversionBeginRequestDto,
     ipc_request: tauri::ipc::Request<'_>,
     webview: tauri::Webview<tauri::Wry>,
     service: State<'_, SharedService>,
-) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
+) -> Result<AuthorityObservedDto<ConversionBeginOutcomeDto>, PreviewErrorDto> {
     let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
     let service = Arc::clone(&service);
-    off_the_async_runtime(move || {
-        service.begin_conversion_queue(&handles, conflict_policy, document_epoch)
-    })
-    .await?
+    off_the_async_runtime(move || service.begin_conversion_queue(&request, document_epoch)).await
 }
 
 /// Shows the native destination picker for one exact reservation and converts.

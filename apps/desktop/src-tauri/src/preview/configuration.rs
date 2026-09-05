@@ -48,6 +48,27 @@ pub(crate) struct CatalogRow {
     pub(crate) availability: RowAvailability,
 }
 
+/// What the bound build's catalog says about one admitted combination.
+///
+/// Three answers rather than a boolean, because the three lead to three
+/// different sentences and only one of them is a refusal a reader can act on.
+/// A missing catalog is not an unavailable row: it says this binding's grammar
+/// has not been read, which is an obligation rather than a verdict.
+///
+/// There is no fourth arm for "the catalog has no such row". A catalog is
+/// always every row of `ConversionIntent::ADMITTED`, and the only way to obtain
+/// a [`ConversionIntent`] is to look one up in that same table -- so a resolved
+/// intent is a row of every catalog that exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RowAdmission {
+    /// This binding has no catalog: unread, refused, or a binding that names no
+    /// build at all.
+    NoCatalog,
+    /// The row exists and the installed build cannot run it.
+    Unavailable,
+    Available,
+}
+
 /// Every admitted combination, judged against one installation's grammar.
 ///
 /// Always all nine rows, in the order `ConversionIntent::ADMITTED` states them.
@@ -136,7 +157,11 @@ pub(crate) enum ReadAnswer {
 }
 
 /// One admitted combination, as the webview receives it.
-fn intent_dto(intent: &ConversionIntent) -> ConversionIntentDto {
+///
+/// One projection, shared by the catalog and by the plan, so a row a reader
+/// chose and the plan they act on cannot describe the same combination in two
+/// ways.
+pub(crate) fn intent_dto(intent: &ConversionIntent) -> ConversionIntentDto {
     ConversionIntentDto {
         id: intent.stable_id(),
         format: intent.format().stable_id().to_owned(),
@@ -272,6 +297,29 @@ impl ConversionConfigurations {
     /// `observe`, so in practice this returns what is there; it exists so that
     /// "a settled binding always has a configuration" is a property of the type
     /// rather than an ordering every call site has to preserve.
+    /// What this binding's catalog says about one admitted combination.
+    ///
+    /// Read from the held configuration and from nothing else: the answer is a
+    /// statement about the build the receipt names, so a lookup that fell back
+    /// to the admitted table would report the *product's* evidence as though it
+    /// were this installation's.
+    pub(crate) fn admits(&mut self, binding: Binding, intent: &ConversionIntent) -> RowAdmission {
+        let ConversionConfiguration::Ready { catalog } = self.for_binding(binding) else {
+            return RowAdmission::NoCatalog;
+        };
+        catalog
+            .rows
+            .iter()
+            .find(|row| row.intent == *intent)
+            .map_or(RowAdmission::NoCatalog, |row| {
+                if row.availability.is_available() {
+                    RowAdmission::Available
+                } else {
+                    RowAdmission::Unavailable
+                }
+            })
+    }
+
     pub(crate) fn for_binding(&mut self, binding: Binding) -> &ConversionConfiguration {
         self.observe(binding);
         &self
