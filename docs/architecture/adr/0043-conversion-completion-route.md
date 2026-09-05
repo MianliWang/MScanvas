@@ -909,13 +909,15 @@ natural-language summary widened from item count and ordered list to **format
 and processing**; and the binding of the chosen intent into the queue at `BEGIN`.
 
 **The slice reaches past the conversion panel, and is sized for it.** ADR 0044's
-delivery rule is over every operation that takes the backend gate, **the queue's state
-poll, the binding-only configuration read and a read Rust's admission refuses**, which
-includes the preview and spectrum reads — so their responses carry the authority
-projection too, and `BackendStatus` reads it beside the availability DTO it already
-renders. `ConversionQueue` is the poll's own payload, so removing its
-`installationGeneration` is what makes room for the projection the poll now carries —
-the identity moves into that projection rather than being re-added beside it.
+delivery rule is over every operation that takes the backend gate — which includes the
+preview and spectrum reads, so their responses carry the authority projection too, and
+`BackendStatus` reads it beside the availability DTO it already renders — and over three
+operations that take none: the queue's state poll, the binding-only configuration read,
+and a read Rust's admission refuses. `ConversionQueue` is the poll's own payload, and
+the response carries the current authority, so its `installationGeneration` is replaced
+by a
+**bound** receipt: the identity of the build the queue was bound to at `BEGIN`, which the
+M7 seam promises and which is a different fact from what the session is bound to now.
 `installationGeneration` leaves the five contracts that carry it in the same change.
 None of that is new *behaviour* for the viewer; it is the same facts on a typed carrier,
 and it is named here so the slice is not planned as a panel-only one.
@@ -2520,7 +2522,7 @@ The seams, each named with the slice that freezes it:
 | --- | --- | --- |
 | Command availability | One conversion-lane authority with a reason and a message, read identically by the operation and by every surface | M6.1 |
 | Conversion operation state | The slot's five states and three terminal reasons, on one sequence key that never rewinds | M6.1 (already true; stated) |
-| Bound plan facts | Membership, order, conflict policy, intent, destination policy and installation identity, fixed at `BEGIN` and readable — plus, per pass, any destructive authorization, if CNV-D4 admits one at all | M6.3, M6.4, M6.5, M6.6, M6.7 |
+| Bound plan facts | Membership, order, conflict policy, intent, destination policy and installation identity, fixed at `BEGIN` and readable — carried as the queue's own **bound receipt** after M6.4A, distinct from the session's current authority and allowed to differ from it while a drain runs — plus, per pass, any destructive authorization, if CNV-D4 admits one at all | M6.3, M6.4, M6.5, M6.6, M6.7 |
 | Destination identity | The bound policy, plus the resolved directory object for each item it applies to — one identity per item under a source-relative policy, possibly one shared identity under a custom folder. Never a path on the wire | M6.5 |
 | Conversion intent | A typed value, projected for display, never re-derived from controls | M6.3, M6.4 |
 | Per-item outcome | Eight item states plus all five judgements separated per item — process, staged output, finalized output, integrity, adoption — with artifact facts readable beside them | M6.9 |

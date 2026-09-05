@@ -45,7 +45,7 @@ coding.
 | Which of two answers is newer? | `BackendAuthorityRevision`, and nothing else. It orders; it never means. |
 | May the conversion configuration read run now? | One `ConversionConfigurationProbeAdmission`, over backend-process ownership facts, decided by Rust's gate **and its quarantine boundary** — for the automatic first read and the explicit retry, not every `--help` a gated operation runs, and not a read for a binding that launches no probe at all. |
 | Who owns catalog request lifecycle and retry? | Rust owns the lifecycle state; the frontend initiates a read or a retry and owns neither. |
-| What does React retain? | The Rust-authored authority projection it is rendering, whole; the selected intent id; request-in-flight for rendering; per-obligation bookkeeping (in flight, and whether an occasion has passed since — never a judgement that one is *owed*, which Rust's state makes); the never-reset plan request ordinal; the Rust-authored configuration snapshot it is rendering, catalog included; the `BackendAvailabilityDto` the banner is rendering; Rust's plan answer, with its identity's receipt for the life of the plan; and presentation. Nothing else. |
+| What does React retain? | The Rust-authored authority projection it is rendering, whole; the selected intent id; request-in-flight for rendering; per-obligation bookkeeping (in flight, and whether an occasion has passed since — never a judgement that one is *owed*, which Rust's state makes); the never-reset plan request ordinal; the Rust-authored configuration snapshot it is rendering, catalog included; the `BackendAvailabilityDto` the banner is rendering; Rust's plan answer, with its identity's receipt for the life of the plan; the receipt a request was issued under, for that request, consulted only for an answer carrying no binding; and presentation. Nothing else. |
 | May the obliged backend check be issued now? | Process ownership, never a verdict about a build — the read's predicate minus quarantine, which refuses a probe and answers a check. |
 | At what granularity does availability exist? | The admitted **row** — one composition. There is no per-value availability authority. |
 | What makes a pre-run plan current? | Ordered handles, intent id, conflict policy, binding receipt, document epoch — compared against Rust's own answer. |
@@ -508,8 +508,18 @@ anything; Recheck and Choose-installation are live throughout, and the banner is
 showing the very sentence the reader would press them about.
 
 `BackendAvailabilityDto` **carries the receipt** in place of the
-`installationGeneration` Decision 2 removes from it — the same substitution made on
-every other contract, and the thing that makes the question below answerable at all.
+`installationGeneration` Decision 2 removes from it — the thing that makes the question
+below answerable at all.
+
+**That substitution is not made on every contract, and the queue is the exception worth
+naming.** `ConversionQueue` is the state poll's own payload, and the response already
+carries the current authority, so the queue needs no copy of *that*. What it does need,
+and what ADR 0043's M7 seam promises as a bound plan fact, is the identity of the build
+it was **bound to at `BEGIN`** — which is a different question from what the session is
+bound to now, and is allowed to differ from it for the length of a drain. So the queue
+carries a **bound receipt**: one identity about the queue, beside one about the session,
+answering two questions. That is not the shape rows 36 and 45 forbid, which is two
+copies of the *same* identity with no equality rule between them.
 
 What the projection adds is one thing: **whether what it is showing is current**,
 which is receipt equality against the authority and nothing more.
@@ -2202,6 +2212,8 @@ the Rust-authored authority projection it is rendering, whole -- its state,
   its binding and its `previewAvailability`, not merely the revision and
   receipt it compares with
 the plan request identity, and its receipt, for the life of the plan
+the receipt a request was issued under, for the life of that request, consulted
+  only where an answer carries no binding of its own -- a failure
 the selected admitted intent id
 request-in-flight state needed to render an outstanding command
 per-obligation bookkeeping: whether a read or check is in flight, and whether
@@ -2503,7 +2515,7 @@ what the reader can change → never "please wait while this is reread".
 ## Semantic finding ledger
 
 Every live PR #95 finding and STOP record, collapsed by what made it possible,
-plus the findings raised against this document's own drafts (rows 18–165).
+plus the findings raised against this document's own drafts (rows 18–167).
 This is the handoff: the replacement implementation proves the right-hand column,
 and no finding may disappear because the old PR was superseded.
 
@@ -2674,6 +2686,8 @@ and no finding may disappear because the old PR was superseded.
 | 163 | A workspace left reading with nothing coming | A stale preview reply dropped rather than discarded | A discarded payload some surface was waiting for takes that surface out of waiting | Decision 4b | A preview from a replaced build clears the reading state instead of stalling it |
 | 164 | A failure with no binding and nothing to judge it by | A retain-list that removed the only fact such an answer can be judged against | React holds the receipt a request was issued under, for that request, and consults it only for an answer carrying no binding | Decision 13 | The replaced build's failure is not shown under the new banner |
 | 165 | The quarantine conjunct evaluated when a reading arrives | A conjunction baked into a ref written only on a reading | It is evaluated where `backendUsable` is read | Decision 4 | A quarantine arriving after the last reading still makes `backendUsable` false |
+| 166 | The queue left with no identity, or with two of the same | "The receipt substitution is made on every contract", beside an amendment removing the queue's and adding none | `ConversionQueue` carries a **bound** receipt — the build it was bound to at `BEGIN` — beside the response's current authority: two questions, not two copies | Decision 2 + ADR 0043's M7 seam | A running queue can still say which build it is running on, and that fact may differ from the session's while it runs |
+| 167 | The M7 seam promising a fact the amendment removed | A bound plan fact whose only live carrier was the counter | The seam names the bound receipt, and that it may differ from the current authority during a drain | ADR 0043 amendment | The seam's promise and the contract that keeps it describe the same thing |
 
 ## What this interlude does not do
 

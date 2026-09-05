@@ -7122,19 +7122,20 @@ binding; a Rust-owned configuration lifecycle keyed by receipt, so React needs n
 projection that is ordered before its receipt is compared, so a late reply cannot roll
 the session back; one settings snapshot on the wire; availability as a property of an
 admitted **row**; a preserved unrunnable selection stated once at settings level; an
-explicit plan state machine that never says `loading` without a request; plan identity
-carrying the receipt; a mandatory pre-BEGIN intent proof that no busy lane may skip; one
+explicit plan state machine that never says `loading` without a request, whose identity
+carries the receipt; a mandatory pre-BEGIN intent proof that no busy lane may skip; one
 `ConversionConfigurationProbeAdmission` rule — Rust's backend gate and quarantine
-boundary, not `ConversionLane` — for the conversion configuration read; and one
-panel-level owner per availability reason.
+boundary, not `ConversionLane` — for the conversion configuration read; one panel-level
+owner per availability reason; and a closed list of what React retains, which holds
+Rust's answers and reconstructs none of them.
 
-It ends with a hundred-and-sixty-five-obligation acceptance ledger: seventeen families
+It ends with a hundred-and-sixty-seven-obligation acceptance ledger: seventeen families
 from PR
-#95, and a hundred and forty-eight more from findings raised against this record's own drafts. Every
+#95, and a hundred and fifty more from findings raised against this record's own drafts. Every
 live release-blocking finding maps to at least one obligation, so nothing PR #95
 measured has to be rediscovered by the replacement.
 
-**Those hundred and forty-eight are worth recording, because they are the same shapes one layer
+**Those hundred and fifty are worth recording, because they are the same shapes one layer
 out.** The first draft said Rust must observe a replacement binding before
 propagating a refusal — and stopped there. Recording an observation without
 *delivering* it leaves the session correct in Rust and stale on screen: a refused
