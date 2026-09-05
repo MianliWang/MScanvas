@@ -1267,10 +1267,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       // than a different build.
       const arrived = acceptProjection(rendered, incoming);
       const changed = arrived.accepted && arrived.bindingReplaced;
-      renderedAuthority.current = {
-        revision: incoming.revision,
-        receipt: receiptOf(incoming),
-      };
+      renderedAuthority.current = incoming;
       showBackend({ status: "resolved", availability });
       // Not while an open is in flight. That open has already emptied the
       // screen and is about to fill it, and its reply is judged on its own
@@ -1575,10 +1572,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           // *previous* build left behind.
           const noticedAChange = arrived.accepted && arrived.bindingReplaced;
           if (arrived.accepted) {
-            renderedAuthority.current = {
-              revision: loaded.authority.revision,
-              receipt: receiptOf(loaded.authority),
-            };
+            renderedAuthority.current = loaded.authority;
           }
           setPreview({ status: "loaded", preview: loaded });
           dispatchRoster({ type: "rowStateChanged", handle, state: "loaded" });

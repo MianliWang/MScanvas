@@ -23,17 +23,56 @@ import type { BackendAuthorityProjection, BackendBindingReceipt } from "./contra
  * identity, each by its own field.
  */
 
-/** What is currently rendered, or nothing at all before the first answer. */
-export interface RenderedAuthority {
-  /** The revision of the accepted projection. */
-  readonly revision: number;
-  /** The binding it named, or `null` while nothing was settled. */
-  readonly receipt: BackendBindingReceipt | null;
-}
+/**
+ * The projection this document is rendering, whole.
+ *
+ * Not merely the revision and the receipt it compares with. Three separate
+ * rules read the rest of it: whether the backend is usable is a conjunction
+ * over the state, the binding *and* the verdict; the configuration read's
+ * admission exemption asks whether the rendered binding names no installation;
+ * and the reconciliation asks whether the session has resolved anything at all.
+ * Keeping only the two tokens would forbid all three.
+ */
+export type RenderedAuthority = BackendAuthorityProjection;
 
 /** Which binding a projection names, where it names one. */
 export function receiptOf(authority: BackendAuthorityProjection): BackendBindingReceipt | null {
   return authority.state.state === "settled" ? authority.state.receipt : null;
+}
+
+/**
+ * Whether this session may run backend work on the build it is bound to.
+ *
+ * A conjunction, stated once and read from the authority rather than off a
+ * verdict block. Quarantine is a conjunct of its own because it is a statement
+ * about the *session* — a session that lost track of a converter keeps a
+ * projection that is perfectly true about the build, and says nothing about the
+ * process MSCanvas can no longer account for.
+ *
+ * Reading it off the availability reading instead is how quarantine used to
+ * reach this: `quarantined_availability()` short-circuits that whole block to
+ * `unavailable`, and everything downstream inherited the answer by accident.
+ */
+export function backendIsUsable(
+  authority: RenderedAuthority | null,
+  quarantined: boolean,
+): boolean {
+  return (
+    !quarantined &&
+    authority !== null &&
+    authority.state.state === "settled" &&
+    authority.state.binding === "installed" &&
+    authority.state.previewAvailability === "usable"
+  );
+}
+
+/** Whether the rendered binding names no installation at all. */
+export function bindsNoInstallation(authority: RenderedAuthority | null): boolean {
+  return (
+    authority !== null &&
+    authority.state.state === "settled" &&
+    authority.state.binding === "noInstallation"
+  );
 }
 
 /** What an arriving projection is, relative to what is on screen. */
@@ -65,7 +104,7 @@ export function acceptProjection(
   if (incoming.revision <= rendered.revision) {
     return { accepted: false };
   }
-  return { accepted: true, bindingReplaced: receiptOf(incoming) !== rendered.receipt };
+  return { accepted: true, bindingReplaced: receiptOf(incoming) !== receiptOf(rendered) };
 }
 
 /**
@@ -84,7 +123,7 @@ export function describesRenderedBinding(
   rendered: RenderedAuthority | null,
   payload: BackendBindingReceipt | null,
 ): boolean {
-  return rendered !== null && payload !== null && payload === rendered.receipt;
+  return rendered !== null && payload !== null && payload === receiptOf(rendered);
 }
 
 /**

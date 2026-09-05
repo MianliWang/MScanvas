@@ -22,8 +22,14 @@ function settled(
 
 const UNRESOLVED: BackendAuthorityProjection = { revision: 0, state: { state: "unresolved" } };
 
+/**
+ * What is on screen: the projection itself, whole.
+ *
+ * Kept as it arrived rather than reduced to the two tokens it is compared by,
+ * because the binding and the verdict inside it are read by rules of their own.
+ */
 function rendered(projection: BackendAuthorityProjection): RenderedAuthority {
-  return { revision: projection.revision, receipt: receiptOf(projection) };
+  return projection;
 }
 
 describe("ordering, by revision alone", () => {
