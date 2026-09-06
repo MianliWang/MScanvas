@@ -7424,15 +7424,15 @@ guarantees. Frontend 1602 across 67 files and browser 225 across 11 specs are
 unchanged and are what protect M6.4 and the retained custom-folder workflow;
 browser mocks prove nothing about directory identity, and are not asked to.
 
-Eleven mechanism reversions were applied and restored one at a time: one global
+Twelve mechanism reversions were applied and restored one at a time: one global
 folder for the queue, name claims without the destination, path equality instead
 of identity, no per-item revalidation, a retry that re-resolves, a created
-subfolder trusted rather than admitted, a creation recorded after admission
-rather than where it is decided, a collision refusal that keeps what the
+subfolder trusted rather than admitted, a collision refusal that keeps what the
 resolution made, a reserved device name admitted as a folder, a queue refused
-before its first item keeping the folders made for it, and a reclaim that
-removes by name rather than by proven object. Each failed the tests that hold it,
-and no other.
+before its first item keeping the folders made for it, a reclaim that removes by
+name rather than by proven object, a row 1 that refuses the whole batch for one
+unreadable source, and the wire type deriving `Debug` again. Each failed the
+tests that hold it, and no other.
 
 ### What review found
 
@@ -7494,13 +7494,34 @@ happens to a folder MSCanvas created when the step *after* creating it says no.
    build on any non-Windows target. Rust CI is `windows-latest` only, so nothing
    was red — which is precisely why it needed finding by reading.
 
-Nine of the eleven reversions above are the discriminating tests for these. **Two
-fixes close windows that no single-threaded test can discriminate** — the hold
-across creation, and recording a creation before admitting it — so the mechanism
-each depends on is asserted directly instead: that the hold really does refuse a
-rename, and that the reclaim really does refuse an object it did not create. The
-record-before-admission ordering is stated as what it is: strictly safer, free,
-and justified structurally rather than by a test.
+The reversions above are the discriminating tests for these. **Two fixes close
+windows that no single-threaded test can discriminate** — the hold across
+creation, and recording a creation before admitting it — so the mechanism each
+depends on is asserted directly instead: that the hold really does refuse a
+rename, and that the reclaim really does refuse an object it did not create.
+Recording the creation before admitting it has no test at all, and is stated as
+what it is: strictly safer, free, and justified structurally.
+
+### And what review of the repairs found
+
+The repairs were themselves reviewed against the frozen delta, which found one
+real regression in them. **Row 1's first fix was scoped too widely.** Making an
+unreadable identity fail closed is right; making an unreadable *source shape*
+fail closed is not, because a source that has been moved or archived between
+`BEGIN` and the picker is one item's problem, and the batch has always survived
+it. As first written it refused the whole queue — and said `destination_unprovable`
+about the folder the user had just chosen, which is the wrong sentence as well as
+the wrong scope. The row is now asked only of a source that is provably a
+directory, which is the only shape it can ever be true of, and fails closed for
+exactly those. The regression has its own reversion.
+
+Four smaller findings came with it and are fixed: the superscript port names
+`COM¹`/`LPT¹`, which Win32 also reserves, slipped past a byte-length test; the
+hold's doc claimed to close a window it narrows, since Windows still allows an
+*ancestor* of a held directory to be renamed; the wire type's opaque `Debug` had
+no test, so re-adding the derive would have gone unnoticed; and the new test seam
+needed `#[cfg(all(test, windows))]` rather than `#[cfg(test)]` — the same latent
+off-Windows breakage as finding 8, introduced in the commit that fixed it.
 
 Two further observations were considered and **not** acted on, and are recorded
 rather than closed. The resolution anchor is read from the live registry rather

@@ -136,12 +136,6 @@ impl SubfolderName {
         }) {
             return Err(subfolder_name_unusable());
         }
-        // A trailing dot or space is what Win32 would drop from the name if
-        // it parsed it -- and under the verbatim parent this child is joined
-        // to, it would *not* be dropped, so the folder would be created with a
-        // name most tools then cannot address. Either way the user asked for
-        // one name and would get another or an unreachable one, which would produce a folder with a different name from the
-        // one requested -- the silent rewrite this refuses.
         // **Reserved device names, refused here because Windows will not
         // refuse them there.** The usual reason `CON` is harmless as a folder
         // name is that Win32 refuses to create it -- but the parent this child
@@ -150,23 +144,17 @@ impl SubfolderName {
         // performs device-name translation. `create_dir` would *succeed*, and
         // the user would be left with a directory Explorer, `cmd` and `rmdir`
         // cannot open, rename or delete. The Win32 rule is the name up to the
-        // first dot, case-insensitively, so `CON.mzML` is the console too.
-        let stem = trimmed
-            .split('.')
-            .next()
-            .unwrap_or(trimmed)
-            .to_ascii_uppercase();
-        let reserved = matches!(
-            stem.as_str(),
-            "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
-        ) || matches!(
-            stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT")),
-            Some(port)
-                if port.len() == 1 && port.as_bytes()[0].is_ascii_digit()
-        );
-        if reserved {
+        // first dot, case-insensitively, so `CON.mzML` is the console too --
+        // and the port suffix is one digit, which is why `COM10` is a folder.
+        if names_a_device(trimmed) {
             return Err(subfolder_name_unusable());
         }
+        // A trailing dot or space is what Win32 would drop from the name if it
+        // parsed it -- and under the verbatim parent this child is joined to it
+        // would *not* be dropped, so the folder would be created with a name
+        // most tools then cannot address. Either way the user asked for one
+        // name and would get another or an unreachable one, which is the silent
+        // rewrite this refuses.
         if trimmed.ends_with('.') || trimmed.ends_with(' ') {
             return Err(subfolder_name_unusable());
         }
@@ -419,7 +407,7 @@ impl ItemDestinationBindings {
     /// installer replaces MSCanvas's child between the resolution and its
     /// refusal. Nothing single-threaded can produce that interleaving through
     /// the resolver, so the record is made directly.
-    #[cfg(test)]
+    #[cfg(all(test, windows))]
     pub(super) fn with_created(mut self, path: &Path) -> Self {
         self.created.push(CreatedChild {
             identity: directory_identity_of(path),
@@ -678,6 +666,33 @@ fn reclaim_created(created: &[CreatedChild]) {
     }
 }
 
+/// Whether this name is one Windows reserves for a device.
+///
+/// The stem is the name up to the first dot, compared case-insensitively. Port
+/// numbers are a **single** character, so `COM10` is an ordinary folder -- and
+/// the superscripts `\u{b9}`, `\u{b2}` and `\u{b3}` count, because Win32 accepts
+/// `COM\u{b9}` as `COM1`.
+fn names_a_device(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    if matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return true;
+    }
+    let Some(port) = stem
+        .strip_prefix("COM")
+        .or_else(|| stem.strip_prefix("LPT"))
+    else {
+        return false;
+    };
+    let mut characters = port.chars();
+    let (Some(only), None) = (characters.next(), characters.next()) else {
+        return false;
+    };
+    only.is_ascii_digit() || matches!(only, '\u{b9}' | '\u{b2}' | '\u{b3}')
+}
+
 /// Whether the child is already there, or would be this attempt's to make.
 ///
 /// `symlink_metadata` rather than `metadata`: a link standing where the child
@@ -734,7 +749,11 @@ fn admit_and_check(
 /// a junction of the same name left in its place, and the child would be
 /// created under the substitute. The hold is opened without `FILE_SHARE_DELETE`
 /// (see `hold_chosen_directory`), so keeping it alive across the creation is
-/// what closes the window rather than narrowing it.
+/// what stops *this* container being renamed or deleted while the child is made
+/// under it. It is not a claim about the whole path: Windows still allows an
+/// ancestor of a held directory to be renamed, and `create_dir` re-resolves the
+/// name it is given, so the window is closed for the object admission proved
+/// and narrowed for the path above it.
 pub(super) fn admit_and_hold(
     candidate: &Path,
     subjects: &[ResolutionSubject],
@@ -747,23 +766,24 @@ pub(super) fn admit_and_hold(
         // cannot be one object. Asked anyway, first, and by the mechanism a
         // directory-shaped source would enter.
         //
-        // **Shape settles it where shape can, and identity must otherwise be
-        // readable.** A source that is provably a regular file cannot be this
-        // directory object, and saying so needs no handle -- which matters,
-        // because a vendor file an instrument is holding open would otherwise
-        // make an unreadable identity refuse a queue that has nothing wrong
-        // with it, and turn one item's problem into every item's. That is the
-        // per-item failure isolation this boundary keeps.
+        // **This row is about directory-shaped sources, and it fails closed
+        // for exactly those.** A source that is not a directory cannot be this
+        // directory object, so the row is answered without a handle. Where the
+        // source *is* a directory, an identity that cannot be read is **a
+        // refusal, not agreement**: the row cannot be answered, and an
+        // unanswered safety question is not the same as a safe one -- the rule
+        // `directory_identity_of` states for its callers, and the one row 2
+        // follows at every step of its walk.
         //
-        // Where shape does *not* settle it -- a directory-shaped source, or one
-        // whose shape cannot be read at all -- an identity that cannot be read
-        // is **a refusal, not agreement**: the row cannot be answered, and an
-        // unanswered safety question is not the same as a safe one. That is the
-        // rule `directory_identity_of` states for its callers and the rule row
-        // 2 follows at every step of its walk.
-        let source_is_a_file =
-            std::fs::symlink_metadata(&subject.source).is_ok_and(|metadata| metadata.is_file());
-        if !source_is_a_file {
+        // A source whose shape cannot be read at all is **not** this row's to
+        // refuse. It is missing, or it is not readable, and either way it is
+        // one item's problem: that item fails on its own, as it always has,
+        // while the rest of the batch converts. Refusing the whole queue here
+        // would trade the per-item failure isolation this boundary keeps for a
+        // safety answer about a directory that is not there -- and would say
+        // `destination_unprovable` about a folder the user just chose, which is
+        // the wrong sentence as well as the wrong scope.
+        if std::fs::symlink_metadata(&subject.source).is_ok_and(|shape| shape.is_dir()) {
             let (Some(source_identity), Some(admitted_identity)) =
                 (directory_identity_of(&subject.source), identity)
             else {

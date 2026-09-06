@@ -26571,25 +26571,23 @@ fn a_named_subfolder_is_created_beside_the_acquisition_and_adopted_when_it_is_th
     );
 }
 
-/// Row 1 answers by shape where shape settles it, and refuses where it cannot
-/// be answered at all.
+/// Row 1 is answered by shape, and one unreadable source never refuses the
+/// batch the other items are in.
 ///
-/// **Both halves matter, and they pull against each other.** An identity that
-/// cannot be read is not evidence that two objects differ, so an unanswerable
-/// row 1 must refuse -- that is the rule `directory_identity_of` states for
-/// every caller. But every admitted source is a regular file, and a regular
-/// file cannot be a directory object, so demanding a readable identity for
-/// *those* would let one vendor file an instrument is holding open refuse a
-/// whole queue that has nothing wrong with it. Shape settles the ordinary case
-/// without a handle; identity is required only where shape leaves the question
-/// open.
+/// **The scoping is the point.** Row 1 asks whether the destination *is* the
+/// source object, which can only be true of a directory-shaped source. A source
+/// that is not a directory answers it without a handle. A source that is not
+/// there at all does not answer it either -- and refusing the queue for that
+/// would take one item's problem, which per-item failure isolation has always
+/// let the batch survive, and make it every item's, under a sentence about a
+/// folder the user just chose and nothing is wrong with.
 #[test]
-fn row_one_answers_by_shape_and_refuses_what_it_cannot_answer() {
+fn row_one_is_answered_by_shape_and_never_refuses_the_batch() {
     let here = TestFile::new("m65-row-one");
     let chosen = destination_root(&here, "out");
-
-    // A regular-file source: answered by shape, no identity needed.
     let acquisition = here.thermo_raw("one.raw");
+
+    // A regular-file source: answered by shape, no handle needed.
     resolve_destinations(
         &DestinationPolicy::CustomFolder,
         &[subject("file-0", &acquisition, None)],
@@ -26597,19 +26595,23 @@ fn row_one_answers_by_shape_and_refuses_what_it_cannot_answer() {
     )
     .expect("a regular file is not a directory object, and needs no handle to say so");
 
-    // A source whose shape cannot be read at all: unanswerable, so refused.
+    // A source that is gone: still not this row's to refuse, so the rest of the
+    // batch still resolves and that item fails on its own later.
     let vanished = here.directory.join("gone.raw");
     assert!(!vanished.exists(), "the source is not there");
+    let bindings = resolve_destinations(
+        &DestinationPolicy::CustomFolder,
+        &[
+            subject("file-0", &acquisition, None),
+            subject("file-1", &vanished, None),
+        ],
+        Some(&chosen),
+    )
+    .expect("one missing source does not refuse the queue the others are in");
     assert_eq!(
-        resolve_destinations(
-            &DestinationPolicy::CustomFolder,
-            &[subject("file-0", &vanished, None)],
-            Some(&chosen),
-        )
-        .expect_err("an unanswerable row 1 refuses")
-        .kind,
-        "destination_unprovable",
-        "an identity that could not be read is not evidence that two objects differ"
+        bindings.len(),
+        2,
+        "both items are bound; the missing one fails when it runs, not before"
     );
 }
 
@@ -27629,6 +27631,14 @@ fn the_destination_authority_never_renders_a_path_or_a_name() {
     let name = SubfolderName::parse("Patient-042").expect("an ordinary child name");
     let policy = DestinationPolicy::NamedSubfolder(name);
     let rendered = format!("{policy:?}");
+    assert!(!rendered.contains("Patient-042"), "{rendered}");
+
+    // And the wire type the domain type is parsed from, through the request
+    // that embeds it -- which is the route the derive would have leaked by.
+    let requested = super::dto::DestinationPolicyDto::NamedSubfolder {
+        name: "Patient-042".to_owned(),
+    };
+    let rendered = format!("{requested:?}");
     assert!(!rendered.contains("Patient-042"), "{rendered}");
 
     // And every refusal this module can produce.
