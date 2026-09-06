@@ -73,7 +73,7 @@ describe("before there is a catalog", () => {
   it("says a read is under way while nothing is held", () => {
     // Holding nothing is an observation about this document, not a judgement
     // about the configuration. It says what it is doing, and decides nothing.
-    render(<ConversionSettings configuration={view(null)} onChoose={vi.fn()} />);
+    render(<ConversionSettings configuration={view(null)} onChoose={vi.fn()} refusalNoticeId={null} />);
     expect(panel().dataset.settingsState).toBe("loading");
   });
 
@@ -82,6 +82,7 @@ describe("before there is a catalog", () => {
       <ConversionSettings
         configuration={view({ configuration: "unattempted" })}
         onChoose={vi.fn()}
+        refusalNoticeId={null}
       />,
     );
     expect(panel().dataset.settingsState).toBe("loading");
@@ -95,6 +96,7 @@ describe("before there is a catalog", () => {
       <ConversionSettings
         configuration={view({ configuration: "unavailableForBinding" })}
         onChoose={vi.fn()}
+        refusalNoticeId={null}
       />,
     );
     expect(container.firstChild).toBeNull();
@@ -120,6 +122,7 @@ describe("a read that answered unusably", () => {
       <ConversionSettings
         configuration={view(failed, { retryOffered: true })}
         onChoose={vi.fn()}
+        refusalNoticeId={null}
       />,
     );
     expect(
@@ -133,6 +136,7 @@ describe("a read that answered unusably", () => {
       <ConversionSettings
         configuration={view(failed, { retryOffered: true })}
         onChoose={vi.fn()}
+        refusalNoticeId={null}
       />,
     );
     const control = screen.getByRole("button", { name: "Read the settings again" });
@@ -142,31 +146,49 @@ describe("a read that answered unusably", () => {
     );
   });
 
-  it("disables the control with its own reason where a read would be refused", () => {
-    // Its own reason, not the conversion panel's: this button reads a build's
-    // option grammar, and "converting is unavailable" would be a true sentence
-    // about the wrong thing.
+  it("disables the control where a read would be refused, and states nothing itself", () => {
+    // **The refusing fact has one owner, and it is not this component.** A
+    // conversion holding the backend lane refuses this read and a conversion
+    // alike; the panel states that fact once and both controls point at it.
+    // Minting a second sentence here is what put two elements under one fact's
+    // name and left every `aria-describedby` on the surface ambiguous.
     render(
       <ConversionSettings
         configuration={view(failed, { retryOffered: true, refusal: "laneClaimed" })}
         onChoose={vi.fn()}
+        refusalNoticeId="conversion-availability-conversion-running"
       />,
     );
-    expect(screen.getByRole("button", { name: "Read the settings again" })).toBeDisabled();
+    const control = screen.getByRole("button", { name: "Read the settings again" });
+    expect(control).toBeDisabled();
+    // Named, not restated. Nothing in this subtree carries the id, and nothing
+    // in it describes the lane.
+    expect(control.getAttribute("aria-describedby")).toBe(
+      "conversion-settings-failure conversion-availability-conversion-running",
+    );
     expect(
-      screen.getByText("These settings cannot be read while a conversion is running."),
-    ).toBeVisible();
+      document.querySelectorAll("#conversion-availability-conversion-running"),
+    ).toHaveLength(0);
+    expect(document.body.textContent).not.toContain("while a conversion is running");
   });
 
   it("offers no control where a read could not improve the answer", () => {
-    render(<ConversionSettings configuration={view(failed)} onChoose={vi.fn()} />);
+    render(<ConversionSettings
+        configuration={view(failed)}
+        onChoose={vi.fn()}
+        refusalNoticeId={null}
+      />);
     expect(screen.queryByRole("button", { name: "Read the settings again" })).toBeNull();
   });
 });
 
 describe("the four control groups", () => {
   it("edit one dimension each, over one selection", () => {
-    render(<ConversionSettings configuration={view(ready())} onChoose={vi.fn()} />);
+    render(<ConversionSettings
+        configuration={view(ready())}
+        onChoose={vi.fn()}
+        refusalNoticeId={null}
+      />);
     for (const axis of ["processing", "population", "precision", "compression"]) {
       const checked = within(groupFor(axis))
         .getAllByRole("radio")
@@ -177,7 +199,11 @@ describe("the four control groups", () => {
 
   it("select the exact combination one edit names", () => {
     const onChoose = vi.fn();
-    render(<ConversionSettings configuration={view(ready())} onChoose={onChoose} />);
+    render(<ConversionSettings
+        configuration={view(ready())}
+        onChoose={onChoose}
+        refusalNoticeId={null}
+      />);
     fireEvent.click(within(groupFor("precision")).getByLabelText(/32-bit · intensity 32-bit/));
     expect(onChoose).toHaveBeenCalledWith(FLAT_32);
   });
@@ -186,7 +212,11 @@ describe("the four control groups", () => {
     // Removing it would hide the shape of the evidence. That these dimensions
     // do not compose freely is a fact about what has been measured, and a
     // reader choosing conversion settings is entitled to see it.
-    render(<ConversionSettings configuration={view(ready())} onChoose={vi.fn()} />);
+    render(<ConversionSettings
+        configuration={view(ready())}
+        onChoose={vi.fn()}
+        refusalNoticeId={null}
+      />);
     const control = within(groupFor("population")).getByLabelText("MS1 spectra only");
     expect(control).toBeDisabled();
     const note = document.getElementById(control.getAttribute("aria-describedby") ?? "");
@@ -195,7 +225,11 @@ describe("the four control groups", () => {
 
   it("never call the chooser for a value that cannot be chosen", () => {
     const onChoose = vi.fn();
-    render(<ConversionSettings configuration={view(ready())} onChoose={onChoose} />);
+    render(<ConversionSettings
+        configuration={view(ready())}
+        onChoose={onChoose}
+        refusalNoticeId={null}
+      />);
     fireEvent.click(within(groupFor("population")).getByLabelText("MS2 spectra only"));
     expect(onChoose).not.toHaveBeenCalled();
   });
@@ -209,6 +243,7 @@ describe("a build that lacks only the peak-picking grammar", () => {
       <ConversionSettings
         configuration={view(ready(catalog), { selectedIntentId: CENTROIDED_64 })}
         onChoose={vi.fn()}
+        refusalNoticeId={null}
       />,
     );
   }
@@ -261,6 +296,7 @@ describe("a genuine dead end", () => {
           { selectedIntentId: CENTROIDED_32 },
         )}
         onChoose={vi.fn()}
+        refusalNoticeId={null}
       />,
     );
     const control = screen.getByRole("button", { name: "Use the settings MSCanvas ships" });
@@ -281,6 +317,7 @@ describe("a genuine dead end", () => {
           { selectedIntentId: CENTROIDED_32 },
         )}
         onChoose={onChoose}
+        refusalNoticeId={null}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Use the settings MSCanvas ships" }));
@@ -292,7 +329,11 @@ describe("the output format", () => {
   it("is stated rather than offered", () => {
     // A disabled mzXML control would advertise a route this product has
     // measured producing a file that silently drops spectra.
-    render(<ConversionSettings configuration={view(ready())} onChoose={vi.fn()} />);
+    render(<ConversionSettings
+        configuration={view(ready())}
+        onChoose={vi.fn()}
+        refusalNoticeId={null}
+      />);
     expect(screen.getByText("Format")).toBeVisible();
     expect(screen.queryByLabelText(/mzXML/)).toBeNull();
     expect(within(panel()).queryAllByRole("radio", { name: /mzML/ })).toHaveLength(0);

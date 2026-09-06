@@ -37,6 +37,20 @@ export const IPC_TABLE_KEY = TABLE;
 /** Where the browser-side console ledger lives. */
 const CONSOLE_LOG = "__mscanvasConsole__";
 
+/**
+ * Where the set of commands whose answers are being withheld lives.
+ *
+ * A rendered claim about what the interface says *during* a backend operation
+ * cannot be made against a boundary that answers in the same microtask: the
+ * window never exists on screen. Holding a command keeps its callers waiting
+ * until the test releases them, which is the only way to look at a settings read
+ * in progress, a backend check in flight, or a queue that has not settled.
+ */
+const HELD = "__mscanvasIpcHeld__";
+
+/** Where the callers waiting on a held command live. */
+const PENDING = "__mscanvasIpcPending__";
+
 export interface IpcCall {
   readonly command: string;
   readonly args: Record<string, unknown>;
@@ -53,21 +67,42 @@ export interface ConsoleEntry {
  * Registered once per session as a preload script, so a reload keeps it. The
  * answer table is seeded here and replaced per test through
  * {@link setInvokeResult}.
+ *
+ * `hold` withholds the named commands' answers from the very first document
+ * script, which is the only way to hold something this application asks for in
+ * a mount effect: a hold installed after navigation races the request it means
+ * to catch, and loses whenever the machine is quick.
  */
-export async function installIpcBoundary(table: Record<string, unknown>): Promise<void> {
+export async function installIpcBoundary(
+  table: Record<string, unknown>,
+  options: { readonly hold?: readonly string[] } = {},
+): Promise<void> {
   await browser.addInitScript(
     (
       authority: string,
       callLog: string,
       tableKey: string,
       consoleLog: string,
+      // The answer table and the two hold ledgers' keys, in one payload.
+      // `addInitScript` takes the callback plus at most five arguments, and
+      // these always travel together anyway.
       seeded: string,
     ) => {
+      const seed = JSON.parse(seeded) as {
+        table: Record<string, unknown>;
+        held: string;
+        pending: string;
+        hold: string[];
+      };
+      const heldKey = seed.held;
+      const pendingKey = seed.pending;
       const target = window as unknown as Record<string, unknown>;
       target["__MSCANVAS_DOCUMENT_AUTHORITY__"] = authority;
       target[callLog] = [];
-      target[tableKey] = JSON.parse(seeded) as Record<string, unknown>;
+      target[tableKey] = seed.table;
       target[consoleLog] = [];
+      target[heldKey] = Object.fromEntries(seed.hold.map((command) => [command, true]));
+      target[pendingKey] = {};
 
       // The console ledger. Captured by patching rather than by reading a
       // driver log, so an entry can be attributed to a level and read back
@@ -107,6 +142,23 @@ export async function installIpcBoundary(table: Record<string, unknown>): Promis
       const internals = {
         invoke: (command: string, args: Record<string, unknown>) => {
           (target[callLog] as { command: string; args: unknown }[]).push({ command, args });
+          // **Held before anything else, including the unmocked check.** A hold
+          // names a command explicitly, which is exactly the thing the unmocked
+          // rejection exists to detect the absence of -- and the two commands
+          // worth holding longest are the ones with no answer at all: an open
+          // native picker, and a read the test means never to complete.
+          //
+          // The caller is parked until the test releases it, and the answer it
+          // finally gets is whatever the table says *then*, so a test can hold a
+          // read, change what it would answer, and release it.
+          const held = target[heldKey] as Record<string, boolean>;
+          if (held[command] === true) {
+            const pending = target[pendingKey] as Record<string, ((value: unknown) => void)[]>;
+            pending[command] = pending[command] ?? [];
+            return new Promise((settle) => {
+              pending[command]!.push(settle);
+            });
+          }
           const answers = target[tableKey] as Record<string, unknown>;
           if (!(command in answers)) {
             return Promise.reject(new Error(`no mocked answer for ${command}`));
@@ -127,8 +179,66 @@ export async function installIpcBoundary(table: Record<string, unknown>): Promis
     CALL_LOG,
     TABLE,
     CONSOLE_LOG,
-    JSON.stringify(table),
+    JSON.stringify({ table, held: HELD, pending: PENDING, hold: [...(options.hold ?? [])] }),
   );
+}
+
+/**
+ * Withholds one command's answer until {@link releaseInvokeHold} is called.
+ *
+ * Every caller that arrives while the hold stands is parked; the window the
+ * interface renders during that operation is what the hold exists to make
+ * observable. Callers that arrive *before* the hold are already answered.
+ */
+export async function holdInvoke(command: string): Promise<void> {
+  await browser.execute(
+    (heldKey: string, name: string) => {
+      const target = window as unknown as Record<string, Record<string, boolean>>;
+      target[heldKey]![name] = true;
+    },
+    HELD,
+    command,
+  );
+}
+
+/**
+ * Answers everyone waiting on a held command, and stops holding it.
+ *
+ * The answer is read from the table at release time rather than at call time,
+ * so a test may change what the command would say while its callers are parked.
+ */
+export async function releaseInvokeHold(command: string): Promise<void> {
+  await browser.execute(
+    (heldKey: string, pendingKey: string, tableKey: string, name: string) => {
+      const target = window as unknown as Record<string, Record<string, unknown>>;
+      (target[heldKey] as Record<string, boolean>)[name] = false;
+      const pending = target[pendingKey] as unknown as Record<
+        string,
+        ((value: unknown) => void)[]
+      >;
+      const waiting = pending[name] ?? [];
+      pending[name] = [];
+      const answer = (target[tableKey] as Record<string, unknown>)[name];
+      for (const settle of waiting) {
+        settle(answer);
+      }
+    },
+    HELD,
+    PENDING,
+    TABLE,
+    command,
+  );
+}
+
+/** How many callers are currently parked on a held command. */
+export async function heldCallers(command: string): Promise<number> {
+  return browser.execute(
+    (pendingKey: string, name: string) =>
+      ((window as unknown as Record<string, Record<string, unknown[]>>)[pendingKey]?.[name] ?? [])
+        .length,
+    PENDING,
+    command,
+  ) as Promise<number>;
 }
 
 /** Replaces one command's answer for the remainder of the current document. */

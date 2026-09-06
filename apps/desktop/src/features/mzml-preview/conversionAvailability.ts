@@ -55,6 +55,20 @@ export interface ConversionLane {
    * than one of them waiting for a read.
    */
   readonly laneClaimed: boolean;
+  /**
+   * Whether a conversion-configuration read owns the lane.
+   *
+   * One `msconvert --help` read of this build's option grammar has been
+   * admitted and has not yet settled. It is backend process work like any
+   * other, so Rust's gate refuses a conversion while it runs and this is what
+   * stops the interface offering one first (ADR 0044 Decision 10).
+   *
+   * It says that and nothing more. Whether the configuration is loading,
+   * unavailable, or may be read at all are three other questions with three
+   * other owners -- and *may a probe start* is
+   * `ConversionConfigurationProbeAdmission`'s, never this field's.
+   */
+  readonly configurationProbing: boolean;
   /** Whether an adoption of a terminal queue's outputs is under way. */
   readonly adopting: boolean;
   /** Whether a diagnostics export is under way, whichever document asked. */
@@ -110,6 +124,7 @@ export type ConversionUnavailableReason =
   | "backend-unavailable"
   | "conversion-running"
   | "preview-running"
+  | "configuration-probing"
   | "adoption-running"
   | "diagnostics-exporting"
   | "workspace-settling"
@@ -163,6 +178,8 @@ const CONVERSION_MESSAGES: Record<ConversionUnavailableReason, string> = {
     "See the backend status above.",
   "conversion-running": "Converting is unavailable while a conversion is running.",
   "preview-running": "Converting is unavailable while a run is being read.",
+  "configuration-probing":
+    "Converting is unavailable while MSCanvas is reading the conversion options from ProteoWizard.",
   "adoption-running":
     "Converting is unavailable while converted outputs are being added to the workspace.",
   "diagnostics-exporting":
@@ -204,9 +221,17 @@ const CONVERSION_MESSAGES: Record<ConversionUnavailableReason, string> = {
  *    every time it is looked at;
  * 3. a settled verdict this session will not launch against, which needs the
  *    reader to change something;
- * 4. the four things that end by themselves, longest first: a conversion, a
- *    run being read, an adoption, a diagnostics export, a change to the file
- *    list;
+ * 4. the things that end by themselves. The three that own a backend process
+ *    first, longest-lived first -- a conversion, a run being read, a
+ *    configuration probe -- and then the three that own none: an adoption, a
+ *    diagnostics export, a change to the file list. The probe sits below the
+ *    other two process owners rather than above them because
+ *    `ConversionConfigurationProbeAdmission` consults these same facts in this
+ *    same order and puts probe-in-flight last (ADR 0044 Decision 11), and
+ *    Decision 12 requires the two authorities to name a contended moment
+ *    identically: admission's order must stay a subsequence of this one, or a
+ *    moment keyed `conversion-running` by the lane could be keyed
+ *    `preview-running` by admission and emit two notices for one fact;
  * 5. the target. Last, because "select something to convert" said while a
  *    conversion is running is a true sentence about the wrong problem.
  *
@@ -242,6 +267,9 @@ function unavailableReason(
   }
   if (lane.previewReading) {
     return "preview-running";
+  }
+  if (lane.configurationProbing) {
+    return "configuration-probing";
   }
   if (lane.adopting) {
     return "adoption-running";

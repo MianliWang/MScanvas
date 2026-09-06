@@ -797,8 +797,15 @@ export interface FakePreviewApiOptions {
    * Defaults to a build that runs every admitted row. A quarantined session
    * still refuses regardless of this, because that ordering is Rust's and a
    * test must not be able to opt out of it.
+   *
+   * A function is answered per call and may return a promise the test settles
+   * by hand, which is the only way to observe the window a probe actually
+   * occupies the backend process lane for: a read that resolves in the same
+   * microtask is a read nothing can be true *during*.
    */
-  readonly conversionConfiguration?: ConversionConfigurationSnapshot;
+  readonly conversionConfiguration?:
+    | ConversionConfigurationSnapshot
+    | (() => Promise<ConversionConfigurationSnapshot>);
   /** What the folder picker resolves to. `null` stands for a dismissed picker. */
   readonly chosenInstallation?:
     | BackendAvailability
@@ -1594,6 +1601,9 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           configuration: { configuration: "unattempted" },
           outcome: { outcome: "refused", reason: "backendQuarantined" },
         });
+      }
+      if (typeof options.conversionConfiguration === "function") {
+        return options.conversionConfiguration();
       }
       return Promise.resolve(
         options.conversionConfiguration ?? {

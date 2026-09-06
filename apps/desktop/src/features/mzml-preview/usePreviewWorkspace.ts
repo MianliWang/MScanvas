@@ -50,6 +50,7 @@ import {
   useConversionConfiguration,
   type ConversionConfigurationView,
 } from "./useConversionConfiguration";
+import { useConversionProbeLane } from "./useConversionProbeLane";
 import { toPreviewError } from "./contracts";
 import { describeDropResult } from "./dropNotice";
 import { useWorkspaceDropTransport } from "./dropTransport";
@@ -1361,8 +1362,18 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
    * build rather than a different build, and discarding the table and the
    * spectrum for it would throw away work the reader can still see is theirs.
    *
-   * The reading on screen is not replaced here -- this carries none -- so it
-   * becomes superseded, which is what obliges the check.
+   * **This is the only way a conversion-bound answer moves the authority.**
+   * Every one of them carries the projection as Rust authored it -- the state
+   * poll, the terminal report, the `BEGIN` refusal, the settings read -- so
+   * there is no second reconciliation system beside
+   * `BackendAuthorityProjection` and no per-command refresh callback. A path
+   * that answered a delivered projection by launching `inspect_backend` would
+   * spend a two-tool discovery rediscovering news it had been handed, and hold
+   * `backendBusy` -- which refuses every conversion -- for its length.
+   *
+   * The reading on screen is not replaced here, because this carries none: the
+   * banner's own `BackendAvailabilityDto` becomes superseded, and recovering it
+   * is a separate obligation this seam deliberately does not discharge.
    */
   const acceptDeliveredAuthority = useCallback(
     (incoming: BackendAuthorityProjection) => {
@@ -3510,26 +3521,6 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     visibleTraces,
   ]);
 
-  // A conversion's report carries the installation sequence it ran at. If it is
-  // newer than what this document has applied, the banner and everything read
-  // from the previous installation are stale -- so the backend is re-read
-  // through the one path that knows how to discard them.
-  const reconcileConversionGeneration = useCallback(
-    (authority: BackendAuthorityProjection) => {
-      // Ordering decides, not identity. A projection newer than what is
-      // rendered means the banner has stopped describing the session -- whether
-      // because the build was replaced or because what it can do has changed --
-      // and either way the reading on screen is superseded and a check is owed.
-      //
-      // Rust is not asked here for the *catalog*: this is the courtesy path,
-      // and the duty is the check. A read issued alongside would put the
-      // courtesy ahead of the duty in exactly the case where both are owed.
-      if (readingIsSuperseded(renderedAuthority.current, authority)) {
-        checkBackend();
-      }
-    },
-    [checkBackend],
-  );
   // Adopted rows are ordinary workspace rows, so the roster answers for them
   // like any other mutation: adopted whole, with the query, the sort and the
   // preview on screen left exactly as the user had them.
@@ -3569,10 +3560,24 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
    * Whether the backend is positively known to be usable.
    *
    * Read here rather than beside the viewer's lane below because the conversion
-   * lane needs it first: this is one of the four facts that decide whether a
-   * conversion may start, and the operation is created on the next line.
+   * lane needs it first: this is one of the facts that decide whether a
+   * conversion may start, and the operation is created a few lines below.
    */
   const backendUsable = backendIsUsable(projection, backendQuarantined);
+  /**
+   * Whether a conversion-configuration read owns the backend process lane.
+   *
+   * Held here rather than inside `useConversionConfiguration`, and the ordering
+   * is the reason: the configuration hook consumes the conversion lane's own
+   * `laneClaimed`, so it is created *after* the operation -- while the
+   * operation needs the probe occupancy to refuse a conversion for its
+   * duration. Hoisting the claim to this level is what lets one fact have one
+   * owner without either side asking the other for it.
+   *
+   * It answers *is a probe occupying the lane?* and never *may a probe
+   * start?*, which stays `ConversionConfigurationProbeAdmission`'s.
+   */
+  const configurationProbe = useConversionProbeLane();
   /**
    * The conversion lane's facts that this hook owns, as a render sees them.
    *
@@ -3586,12 +3591,19 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       backendUsable,
       backendChanging: backendBusy,
       previewReading: previewBackendBusy,
+      configurationProbing: configurationProbe.probing,
       workspaceSettling,
     }),
-    [backendBusy, backendUsable, previewBackendBusy, workspaceSettling],
+    [
+      backendBusy,
+      backendUsable,
+      configurationProbe.probing,
+      previewBackendBusy,
+      workspaceSettling,
+    ],
   );
   /**
-   * The same four facts, from the refs each of them is written beside.
+   * The same facts, from the refs each of them is written beside.
    *
    * The operation asks this at dispatch, where the rendered struct would be
    * whatever was true when the click handler's closure was made. Each is the
@@ -3607,6 +3619,11 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       // A count rather than a flag, so a stale read settling never clears the
       // marker a newer one is relying on.
       previewReading: viewerRequests.current > 0,
+      // The probe's own synchronous half, written beside its rendered twin in
+      // `useConversionProbeLane`. A conversion dispatched in the same commit
+      // that issued a configuration read has to see the claim the read raised,
+      // and the rendered fact is a commit too late to say so.
+      configurationProbing: configurationProbe.probingRef.current,
       workspaceSettling:
         pickerBusyRef.current ||
         workspaceBusyRef.current ||
@@ -3614,10 +3631,9 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
         dropBusyRef.current ||
         folderReservationPendingRef.current,
     }),
-    [],
+    [configurationProbe.probingRef],
   );
   const conversion = useConversionOperation(
-    reconcileConversionGeneration,
     acceptDeliveredAuthority,
     noticeQuarantine,
     adoptOutputs,
@@ -3629,8 +3645,10 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
    *
    * Deliberately not `ConversionLane`. That struct answers *may a conversion
    * action start?* and begins with a preview verdict; a settings probe asks
-   * *may another backend process begin right now?* -- and the four facts here
-   * are the ones that name an operation genuinely owning one.
+   * *may another backend process begin right now?* -- and the facts here are
+   * the ones that name an operation genuinely owning one. The fifth,
+   * probe-in-flight, is the configuration hook's own bookkeeping and is added
+   * there.
    */
   const configurationEnvironment = useMemo(
     () => ({
@@ -3645,6 +3663,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     api,
     projection,
     configurationEnvironment,
+    configurationProbe,
     acceptDeliveredAuthority,
   );
   // After both, because a plan question is posed out of what they answer: the

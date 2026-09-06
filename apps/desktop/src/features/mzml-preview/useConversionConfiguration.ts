@@ -18,6 +18,7 @@ import {
   type ProbeRefusal,
 } from "./conversionConfigurationAuthority";
 import { catalogRow, reselect } from "./conversionIntentSelection";
+import type { ConversionProbeLane } from "./useConversionProbeLane";
 
 /** The facts this hook does not own, as a render sees them. */
 export type ConversionConfigurationEnvironment = Omit<ProbeAdmissionFacts, "probeInFlight">;
@@ -68,6 +69,18 @@ export function useConversionConfiguration(
   /** The projection this document is rendering. */
   authority: RenderedAuthority | null,
   environment: ConversionConfigurationEnvironment,
+  /**
+   * The process-lane occupancy this document's probes claim, and claim it in.
+   *
+   * Owned above this hook rather than inside it, because a running probe is
+   * backend process work and refuses a conversion for its duration -- so the
+   * conversion lane and the conversion operation's dispatch guard both read it,
+   * and both are built before this hook is. What this hook does with it is
+   * raise the claim at an admitted dispatch and release its own claim when that
+   * exact probe settles; it never reads the claim to decide whether a probe may
+   * *start*, which is `probeAdmission`'s question and nothing else's.
+   */
+  probeLane: ConversionProbeLane,
   /** Where the projection this read observes is delivered. */
   onAuthority: (authority: BackendAuthorityProjection) => void,
 ): ConversionConfigurationView {
@@ -76,14 +89,19 @@ export function useConversionConfiguration(
     configuration: null,
     lastAttemptRefused: false,
   });
-  const [reading, setReading] = useState(false);
-  /**
-   * The same fact as `reading`, as it stands now.
-   *
-   * The effect below runs after a commit, so a second read could otherwise be
-   * issued from the same render pass that started the first.
-   */
-  const readingRef = useRef(false);
+  // The probe occupancy, rendered and as it stands now. Both halves come from
+  // the lane above: this hook holds no second copy of a fact two other
+  // authorities read, and the ref is what stops a second read being issued from
+  // the same render pass that started the first -- the effect below runs after
+  // a commit, so the rendered half is a commit too late for that.
+  const reading = probeLane.probing;
+  const readingRef = probeLane.probingRef;
+  // Destructured because they are stable for the life of the panel while the
+  // lane object is not: it carries the rendered fact, so it is a new value on
+  // every claim and release. Depending on the whole of it would re-create the
+  // issuing callback -- and re-run the effect that reads it -- twice per probe,
+  // for no change in what either does.
+  const { claim: claimProbeLane, release: releaseProbeLane } = probeLane;
   /**
    * The binding this document last attempted a read for, and the facts it
    * attempted under.
@@ -116,8 +134,10 @@ export function useConversionConfiguration(
   const refusal = probeAdmission(facts);
 
   const issue = useCallback(() => {
-    readingRef.current = true;
-    setReading(true);
+    // Raised synchronously, before the request leaves. A guard that waited for
+    // an effect or for a promise callback would leave a window in which the
+    // process lane is claimed and nothing on this side knows it.
+    const claim = claimProbeLane();
     void api
       .readConversionConfiguration()
       .then((snapshot) => {
@@ -147,12 +167,15 @@ export function useConversionConfiguration(
         }
       })
       .finally(() => {
-        readingRef.current = false;
-        if (mounted.current) {
-          setReading(false);
-        }
+        // Released by token, so this settlement lowers only its own claim. A
+        // probe that has lost request authority still settles, and a bare
+        // boolean lowered here would hand the lane back while a newer probe
+        // was still holding it. Not conditioned on `mounted` either: the lane
+        // outlives this hook, and a claim left standing by an unmounting
+        // document would refuse every conversion for the rest of the session.
+        releaseProbeLane(claim);
       });
-  }, [api, onAuthority]);
+  }, [api, claimProbeLane, onAuthority, releaseProbeLane]);
 
   // Step three: issue what is owed, into a lane this document's projection says
   // is free.

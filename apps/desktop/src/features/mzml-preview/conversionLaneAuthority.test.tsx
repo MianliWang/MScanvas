@@ -140,9 +140,17 @@ function reasonsOnScreen(): string[] {
   );
 }
 
+/**
+ * The sentence the shared notice carries, which is the *fact's* and not either
+ * control's.
+ *
+ * `Convert` and the rerun both reach this refusal, and a notice phrased about
+ * converting would describe the settings retry -- which also points at it --
+ * as something it is not. The action-phrased text stays on
+ * `ConversionAvailability.message`, where the control that asked for it lives.
+ */
 const BACKEND_REASON =
-  "Converting needs ProteoWizard, and this session has no usable backend. " +
-  "See the backend status above.";
+  "This session has no usable ProteoWizard backend. See the backend status above.";
 
 describe("the conversion lane's one authority, as it ships", () => {
   it("refuses a second activation inside the commit that dispatched the first", async () => {

@@ -295,7 +295,11 @@ function retryTargetOf(state: WorkspaceConversionState): {
 
 export type ConversionEnvironment = Pick<
   ConversionLane,
-  "backendUsable" | "backendChanging" | "previewReading" | "workspaceSettling"
+  | "backendUsable"
+  | "backendChanging"
+  | "previewReading"
+  | "configurationProbing"
+  | "workspaceSettling"
 >;
 
 /**
@@ -344,26 +348,18 @@ function reportsAQueueOtherThan(
 
 export function useConversionOperation(
   /**
-   * Where the authority a *finished queue's* report carried is delivered.
+   * Where every projection this operation is handed is delivered.
    *
-   * A queue's report is a statement about work already done, and the projection
-   * beside it obliges the reader's banner to be checked rather than replacing
-   * anything by itself. Kept apart from the delivery below, which is a
-   * different kind of answer to a different question.
+   * One sink, because there is one authority and one rule for accepting it:
+   * order by `BackendAuthorityRevision`, then judge identity by receipt. A
+   * `BEGIN`'s own discovery, a queue's terminal report and an ordinary state
+   * poll all carry the projection as Rust authored it, and none of them is a
+   * reason to go and *ask* the backend what it already said. Two sinks here is
+   * how one of them came to mean "wake a check": a delivery that only woke a
+   * check spent a two-tool discovery rediscovering news it had been handed, and
+   * held `backendBusy` -- which refuses every conversion -- for its length.
    */
-  onQueueAuthority: (authority: BackendAuthorityProjection) => void,
-  /**
-   * Where the authority a `BEGIN`'s *own discovery* left is delivered.
-   *
-   * A start resolves the installed build, so it may be the first thing in the
-   * session to see a replacement -- and a refused one creates no queue, so
-   * nothing else would arrive to correct a screen still showing the build the
-   * session has left. This is the projection ADR 0044 Decision 4 obliges that
-   * answer to carry, and it is installed by the ordinary rule -- ordering by
-   * revision, then identity by receipt -- rather than by asking the backend
-   * again for something the refusal already said.
-   */
-  onObservedAuthority: (authority: BackendAuthorityProjection) => void,
+  onAuthority: (authority: BackendAuthorityProjection) => void,
   /**
    * Told once, when this session stops trusting the backend.
    *
@@ -499,7 +495,29 @@ export function useConversionOperation(
   }, []);
 
   const applyUpdate = useCallback((update: WorkspaceConversionUpdate) => {
-    if (!mounted.current || update.sequence <= installedSequence.current) {
+    if (!mounted.current) {
+      return;
+    }
+    // **The authority first, and above the slot guard.**
+    //
+    // A queue update carries two independent orderings and neither answers for
+    // the other: `sequence` says whether this is a newer *slot* state, and
+    // `BackendAuthorityRevision` says whether this is a newer *backend
+    // authority* publication. One may be stale while the other is news -- Rust
+    // republishes the authority whenever what it projects changes, which is not
+    // tied to the slot moving at all -- so accepting the projection below the
+    // sequence guard would discard a newer binding carried by an otherwise
+    // duplicate slot read, and leave the panel describing a build the session
+    // has left.
+    //
+    // The converse is closed by the guard staying where it is: a projection
+    // accepted here installs no queue state of its own, so a fresh authority
+    // riding on a stale slot moves the authority and nothing else. Ordering and
+    // identity are `acceptProjection`'s, so a delivery that is merely the
+    // publication already on screen -- which is what every tick of a drain's
+    // own polling carries -- changes nothing and asks nothing.
+    onAuthority(update.authority);
+    if (update.sequence <= installedSequence.current) {
       return;
     }
     // A result belongs to one settling of one queue. Anything that produces a
@@ -562,26 +580,16 @@ export function useConversionOperation(
     if (update.state.status === "terminal" || update.state.status === "idle") {
       setStopRequested(false);
     }
-    // A conversion is a backend operation like any other, and it can be the
-    // first to notice that the installed ProteoWizard changed. Without this the
-    // banner and a preview read from the replaced installation would stay on
-    // screen beside a conversion done by its successor, until some later
-    // backend operation happened to reconcile them.
-    if (update.state.status === "terminal") {
-      // The response's own projection, and nothing derived from the queue or
-      // its items. Those carry the *build each ran on*, which is a historical
-      // fact and is expected to differ from the binding in use -- and picking
-      // the largest of several numbers to decide which installation is current
-      // was this document deciding something Rust owns. There is one authority
-      // here, Rust authored it, and it arrived with this very answer.
-      //
-      // Once for the queue, not once per item, for the same reason it always
-      // was: reporting each item separately would start a backend probe per
-      // item before any of them had answered, which for a full queue is sixteen
-      // serial help probes with preview and conversion disabled throughout.
-      onQueueAuthority(update.authority);
-    }
-  }, [claimLane, onBackendQuarantined, onQueueAuthority]);
+    // Nothing about the authority happens down here, and a terminal state is
+    // not a special case of it. A conversion is a backend operation like any
+    // other and can be the first to notice that the installed ProteoWizard
+    // changed -- but so is every poll that carries the projection, and waiting
+    // for the queue to settle before believing one is how a panel came to
+    // render a replaced build for the length of a drain. The response's own
+    // projection is accepted above; the queue and its items carry the *build
+    // each ran on*, which is a historical fact expected to differ from the
+    // binding in use, and nothing here reads them for currency.
+  }, [claimLane, onAuthority, onBackendQuarantined]);
 
   const readState = useCallback(() => {
     // One at a time. The token below lets only the newest read install, so two
@@ -806,11 +814,14 @@ export function useConversionOperation(
           // see a replacement -- and a refused one creates no queue, so nothing
           // else would arrive to correct the screen.
           //
-          // Installed by the ordinary rule rather than answered with a second
-          // discovery. The refusal already carries what a check would go and
-          // ask for, and asking anyway is the "special BEGIN refresh" the
-          // authority envelope exists to replace.
-          onObservedAuthority(started.authority);
+          // The same sink the poll uses, installed by the ordinary rule rather
+          // than answered with a second discovery. The refusal already carries
+          // what a check would go and ask for, and asking anyway is the
+          // "special BEGIN refresh" the authority envelope exists to replace.
+          // Delivered here as well as inside `applyUpdate` because a refusal
+          // carries no update at all; on the accepted path the same publication
+          // arrives twice, which the ordering rule makes a no-op.
+          onAuthority(started.authority);
           if (started.outcome.outcome === "refused") {
             // Rust refused before anything was created. The claim was never
             // Rust's to hold, and the refusal is the reader's answer.
@@ -837,7 +848,7 @@ export function useConversionOperation(
           readState();
         });
     },
-    [api, applyUpdate, claimLane, onObservedAuthority, readLane, readState],
+    [api, applyUpdate, claimLane, onAuthority, readLane, readState],
   );
 
   // Every row a live queue holds, not only the one running: a queued row

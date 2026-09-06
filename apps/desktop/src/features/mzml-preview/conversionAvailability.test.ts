@@ -32,6 +32,7 @@ const CLEAR: ConversionLane = {
   backendQuarantined: false,
   previewReading: false,
   laneClaimed: false,
+  configurationProbing: false,
   adopting: false,
   exportingDiagnostics: false,
   workspaceSettling: false,
@@ -283,6 +284,8 @@ function laneFor(reason: ConversionUnavailableReason): Partial<ConversionLane> {
       return { laneClaimed: true };
     case "preview-running":
       return { previewReading: true };
+    case "configuration-probing":
+      return { configurationProbing: true };
     case "adoption-running":
       return { adopting: true };
     case "diagnostics-exporting":

@@ -231,11 +231,17 @@ export function ipcTable(
       capacity: FAKE_WORKSPACE_CAPACITY,
     },
     subscribe_workspace_drop_updates: null,
+    // The conversion slot, and the authority it is answered under. Every
+    // response in this shape carries the projection -- the poll included, which
+    // is the session's only voice while a drain runs -- so a table that omitted
+    // it would be modelling a wire shape Rust does not produce, and would leave
+    // the acceptance path this milestone rests on untested in the browser.
     get_workspace_conversion_state: {
       sequence: 0,
       state: { status: "idle" },
       diagnostics: { available: false, itemCount: 0, exporting: false, lastExport: null },
       backendQuarantined: false,
+      authority: SETTLED_AUTHORITY,
     },
     open_mzml_preview: buildPreview(6),
     // Every operation that can observe or replace the installation authority

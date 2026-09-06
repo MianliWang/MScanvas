@@ -8,7 +8,6 @@ import type {
   ConversionProcessing,
   ConversionSpectrumPopulation,
 } from "./contracts";
-import type { ProbeRefusal } from "./conversionConfigurationAuthority";
 import type {
   ConversionAxis,
   ConversionAxisValues,
@@ -128,26 +127,6 @@ const REFUSAL_NOTE: Record<ConversionChoiceRefusal, string> = {
 };
 
 /**
- * Why a settings read cannot be made right now.
- *
- * One sentence per fact, each naming something on screen or something the
- * reader can change. Deliberately not the conversion panel's messages: those
- * are about starting a conversion, and this control reads a build's option
- * grammar — telling a reader "converting is unavailable" beside a button that
- * does not convert would be a true sentence about the wrong thing.
- */
-const PROBE_REFUSAL_NOTE: Record<ProbeRefusal, string> = {
-  backendQuarantined:
-    "MSCanvas could not confirm that a converter process stopped. Restart MSCanvas before " +
-    "reading these settings again.",
-  backendChanging:
-    "These settings cannot be read while the installed ProteoWizard backend is being checked.",
-  laneClaimed: "These settings cannot be read while a conversion is running.",
-  previewReading: "These settings cannot be read while a run is being read.",
-  probeInFlight: "MSCanvas is reading these settings now.",
-};
-
-/**
  * The one output format, stated rather than offered.
  *
  * mzXML is not a disabled control here. A disabled control advertises a route,
@@ -156,9 +135,14 @@ const PROBE_REFUSAL_NOTE: Record<ProbeRefusal, string> = {
  */
 const FORMAT_NOTE = "mzML is the format MSCanvas has qualified, and the only one it writes.";
 
-/** What the read failure's own sentence is called, so the retry points at it. */
+/**
+ * What the read failure's own sentence is called, so the retry points at it.
+ *
+ * A domain error about *this* read, owned by the surface that describes it. It
+ * is deliberately not in the panel's availability registry: no other action can
+ * be refused by it, and a fact nobody shares needs no shared owner.
+ */
 const SETTINGS_FAILURE_ID = "conversion-settings-failure";
-const SETTINGS_REFUSAL_ID = "conversion-settings-refusal";
 const SELECTION_UNAVAILABLE_ID = "conversion-settings-selection-unavailable";
 const RECOVERY_REASON_ID = "conversion-settings-recovery-reason";
 
@@ -256,9 +240,21 @@ function choiceNote<A extends ConversionAxis>(
 export function ConversionSettings({
   configuration,
   onChoose,
+  refusalNoticeId,
 }: {
   readonly configuration: ConversionConfigurationView;
   readonly onChoose: (intentId: string) => void;
+  /**
+   * The panel notice this read's refusal is explained by, where one is
+   * rendered.
+   *
+   * Handed down rather than minted here. A running conversion refuses this read
+   * and a conversion alike, and it is one fact: the panel owns the element that
+   * states it, and this control points at that element. A second copy emitted
+   * here -- which is what shipped before -- put two nodes under one fact's name
+   * and left both `aria-describedby` targets ambiguous.
+   */
+  readonly refusalNoticeId: string | null;
 }): ReactElement | null {
   const held = configuration.configuration;
   if (held === null || held.configuration === "unattempted") {
@@ -270,7 +266,9 @@ export function ConversionSettings({
         <p className="quiet-text">
           Reading which conversion settings this ProteoWizard offers…
         </p>
-        {configuration.retryOffered ? <RetryControl configuration={configuration} /> : null}
+        {configuration.retryOffered ? (
+          <RetryControl configuration={configuration} refusalNoticeId={refusalNoticeId} />
+        ) : null}
       </div>
     );
   }
@@ -292,7 +290,11 @@ export function ConversionSettings({
         <p className="quiet-text" id={SETTINGS_FAILURE_ID}>
           {held.error.summary}
         </p>
-        <RetryControl configuration={configuration} describedBy={SETTINGS_FAILURE_ID} />
+        <RetryControl
+          configuration={configuration}
+          describedBy={SETTINGS_FAILURE_ID}
+          refusalNoticeId={refusalNoticeId}
+        />
       </div>
     );
   }
@@ -363,40 +365,43 @@ export function ConversionSettings({
  * The control that asks for the settings again.
  *
  * Offered only where there is an answer a read could improve on, and disabled
- * with a reason where the same admission the automatic read consults would
- * refuse it. One question, one answer, whoever asks.
+ * where the same admission the automatic read consults would refuse it. One
+ * question, one answer, whoever asks.
+ *
+ * It renders no sentence of its own for that refusal. Two things describe this
+ * button and they belong to different owners: the read's own failure, which is
+ * this surface's, and the lane fact refusing it, which the panel states once for
+ * every action it refuses. Both are named here; neither is minted here.
  */
 function RetryControl({
   configuration,
   describedBy,
+  refusalNoticeId,
 }: {
   readonly configuration: ConversionConfigurationView;
   readonly describedBy?: string;
+  readonly refusalNoticeId: string | null;
 }): ReactElement | null {
   if (!configuration.retryOffered) {
     return null;
   }
-  const refusal = configuration.refusal;
-  const describes = [describedBy, refusal === null ? null : SETTINGS_REFUSAL_ID]
+  const describes = [describedBy, refusalNoticeId]
     .filter((id): id is string => id !== undefined && id !== null)
     .join(" ");
   return (
-    <>
-      <button
-        aria-describedby={describes === "" ? undefined : describes}
-        className="link-button"
-        disabled={refusal !== null}
-        onClick={configuration.retry}
-        type="button"
-      >
-        Read the settings again
-      </button>
-      {refusal === null ? null : (
-        <p className="quiet-text" id={SETTINGS_REFUSAL_ID}>
-          {PROBE_REFUSAL_NOTE[refusal]}
-        </p>
-      )}
-    </>
+    <button
+      aria-describedby={describes === "" ? undefined : describes}
+      className="link-button"
+      // The refusal itself, not the notice: a probe refused by another probe
+      // renders no sentence anywhere -- this control is withdrawn for a probe's
+      // duration rather than disabled -- and reading the id would let a refusal
+      // with nothing to say re-enable a control the admission refuses.
+      disabled={configuration.refusal !== null}
+      onClick={configuration.retry}
+      type="button"
+    >
+      Read the settings again
+    </button>
   );
 }
 

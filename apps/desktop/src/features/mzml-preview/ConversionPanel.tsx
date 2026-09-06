@@ -10,12 +10,11 @@ import type {
   DatasetSourceKind,
 } from "./contracts";
 import { conversionJudgedAnyOutput, SOURCE_KIND_LABEL } from "./contracts";
-import type {
-  ConversionAvailability,
-  ConversionUnavailableReason,
-} from "./conversionAvailability";
+import type { ConversionAvailability } from "./conversionAvailability";
 import { ConversionSettings, conversionIntentDisclosures, CONVERSION_VALUE_LABEL } from "./ConversionSettings";
-import { conversionAvailability, conversionNoticeId } from "./conversionAvailability";
+import { conversionAvailability } from "./conversionAvailability";
+import type { ConversionRefusal } from "./conversionNoticeRegistry";
+import { conversionNotices, conversionRefusalNoticeId } from "./conversionNoticeRegistry";
 import { formatByteLength, formatCount, formatDuration } from "./format";
 import type { ConversionConfigurationView } from "./useConversionConfiguration";
 import type { ConversionOperation } from "./useConversionOperation";
@@ -287,6 +286,31 @@ export function ConversionPanel({
     !conversion.retrying &&
     !conversion.converting;
 
+  /*
+   * What the settings read is refused by, where its control is on screen.
+   *
+   * The same withdrawal rule the control itself uses: a retry is *offered* only
+   * where there is an answer a read could improve on, so a refusal reported
+   * while no control exists would put a sentence in the document explaining
+   * something nobody can see. `ConversionConfigurationProbeAdmission` speaks
+   * its own vocabulary and the registry maps it onto the lane's facts, which is
+   * how one contended moment produces one sentence rather than two.
+   */
+  const settingsRefusal: ConversionRefusal | null =
+    configuration.retryOffered && configuration.refusal !== null
+      ? { source: "probe", refusal: configuration.refusal }
+      : null;
+  /** Every action currently on screen, and what refuses it. */
+  const refusals: readonly (ConversionRefusal | null)[] = [
+    startOffered ? { source: "action", availability: startAvailability } : null,
+    retryOffered ? { source: "action", availability: retryAvailability } : null,
+    settingsRefusal,
+  ];
+  // The id the settings retry points at, minted once here rather than by the
+  // child. Handed down so the control names the element this panel actually
+  // rendered.
+  const settingsRefusalNoticeId = conversionRefusalNoticeId(settingsRefusal);
+
   // Nothing to say. The panel is not a permanent fixture: with no convertible
   // row focused and no operation to report, it would be a heading over an empty
   // space in the one column the roster is trying to use.
@@ -325,12 +349,13 @@ export function ConversionPanel({
         </div>
       )}
 
-      <AvailabilityNotice
-        retry={retryOffered ? retryAvailability : null}
-        start={startOffered ? startAvailability : null}
-      />
+      <AvailabilityNotice refusals={refusals} />
 
-      <ConversionSettings configuration={configuration} onChoose={configuration.select} />
+      <ConversionSettings
+        configuration={configuration}
+        onChoose={configuration.select}
+        refusalNoticeId={settingsRefusalNoticeId}
+      />
 
 
       {conversion.busy || terminal ? (
@@ -368,37 +393,31 @@ export function ConversionPanel({
  * inside it, so a reader is watching when one appears rather than meeting a
  * region that arrived with its text.
  *
- * One element per *reason*, not per control. The two controls share a lane, so
- * when both are refused by the same fact they are described by one sentence and
- * a screen reader that has no way to know it is the same sentence does not read
- * it twice. Where the reasons genuinely differ -- a clear lane with nothing
- * selected, beside a finished queue with nothing worth rerunning -- each names
- * its own, which is the case that made a single shared notice untruthful.
+ * **This is the panel's only owner of a shared availability id.** Every action
+ * on this surface reports its refusal here -- `Convert`, the rerun of a failed
+ * queue, and the settings read's own retry, which speaks a different
+ * authority's vocabulary about the same facts -- and the registry collapses
+ * them by the refusing fact. Where two actions are refused by one fact they
+ * point at one element carrying that fact's sentence; where the reasons
+ * genuinely differ each names its own. A child that minted an id of its own
+ * would put a second element under one fact's name and leave every
+ * `aria-describedby` pointing at it ambiguous.
  */
 function AvailabilityNotice({
-  start,
-  retry,
+  refusals,
 }: {
-  /** The start decision, or `null` where no start control is on screen. */
-  readonly start: ConversionAvailability | null;
-  /** The rerun decision, or `null` where no rerun control is on screen. */
-  readonly retry: ConversionAvailability | null;
+  /** One entry per action, `null` for each action not on screen. */
+  readonly refusals: readonly (ConversionRefusal | null)[];
 }): ReactElement {
-  const said = new Map<ConversionUnavailableReason, string>();
-  for (const decision of [start, retry]) {
-    if (decision !== null && decision.status === "unavailable") {
-      said.set(decision.reason, decision.message);
-    }
-  }
   return (
     <div
       aria-live="polite"
       className="conversion-availability"
       data-live-region="conversion-availability"
     >
-      {[...said].map(([reason, message]) => (
-        <p className="notice notice-warning" id={conversionNoticeId(reason)} key={reason}>
-          {message}
+      {conversionNotices(refusals).map((notice) => (
+        <p className="notice notice-warning" id={notice.id} key={notice.reason}>
+          {notice.message}
         </p>
       ))}
     </div>
@@ -410,12 +429,12 @@ function AvailabilityNotice({
  *
  * A described-by target with no text is a promise of an explanation that is not
  * there, so an available control describes itself with its own copy and nothing
- * else.
+ * else. The id comes from the registry rather than from a second minting here,
+ * so a control and the element it names cannot come apart.
  */
 function describedBy(base: string, availability: ConversionAvailability): string {
-  return availability.status === "available"
-    ? base
-    : `${base} ${conversionNoticeId(availability.reason)}`;
+  const notice = conversionRefusalNoticeId({ source: "action", availability });
+  return notice === null ? base : `${base} ${notice}`;
 }
 
 /**
