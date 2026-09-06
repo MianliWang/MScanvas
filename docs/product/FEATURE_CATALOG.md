@@ -311,10 +311,9 @@ revalidated by a retry rather than re-resolved. Two items writing one file name
 into two different directories are no longer refused as a collision; the same two
 names in one directory still are.
 
-CNV-003's
-vendor-dataset-root rule is stated, ordered ahead of the sibling admission and
-implemented, and remains **unexercisable** because no admitted acquisition family
-is directory-shaped — Thermo RAW and Shimadzu LCD are single files, and a SCIEX
+CNV-003's vendor-dataset-root rule is stated, ordered ahead of the sibling
+admission and implemented, and remains **unexercisable** because no admitted
+acquisition family is directory-shaped — Thermo RAW and Shimadzu LCD are single files, and a SCIEX
 acquisition is a `.wiff` bound to its `.wiff.scan` sibling. See
 [ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md), and
 [ADR 0043](../architecture/adr/0043-conversion-completion-route.md) for the M6
