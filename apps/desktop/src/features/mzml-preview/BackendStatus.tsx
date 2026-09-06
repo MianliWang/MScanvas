@@ -38,6 +38,22 @@ export interface BackendStatusProps {
    * first is still running once the picker's own dialog has closed.
    */
   readonly busy: boolean;
+  /**
+   * Whether the reading below has stopped describing this session.
+   *
+   * A projection can arrive from an operation that produced no
+   * `BackendAvailabilityDto` -- a refused `BEGIN`, a queue poll, a settings
+   * read -- so the authority moves and the reading does not. Between that
+   * observation and the render that consumes it, this banner presents the
+   * reading as superseded rather than as fact: it names no build as current,
+   * and it loses none of the reason text it has (ledger row 110).
+   *
+   * **Entire, not just the verdict.** The release, the build date and the
+   * origin describe a build as much as "available" does, so marking only the
+   * verdict stale would leave the installation the session has left named as
+   * the current one, which is exactly the half-fix that row exists for.
+   */
+  readonly readingSuperseded: boolean;
   readonly onRecheck: () => void;
   readonly onChooseInstallation: () => void;
   readonly onUseAutomaticDiscovery: () => void;
@@ -58,6 +74,7 @@ export interface BackendStatusProps {
 export function BackendStatus({
   state,
   busy,
+  readingSuperseded,
   onRecheck,
   onChooseInstallation,
   onUseAutomaticDiscovery,
@@ -191,6 +208,39 @@ export function BackendStatus({
       Choose folder…
     </button>
   );
+
+  if (readingSuperseded) {
+    // **Nothing here is presented as current.** Not the verdict, not the
+    // release, not the build date, and not the origin -- the reading describes
+    // a publication this session has moved past, and a banner that kept any of
+    // them would be naming a build the session has left.
+    //
+    // The reason text survives, attributed to the reading it belongs to rather
+    // than dropped: a reader who was told why the previous backend was unusable
+    // does not stop being owed that sentence because a newer publication
+    // arrived.
+    //
+    // Every action stays live. This state is a wait for a read MSCanvas already
+    // owes, and where that read is deferred behind a conversion the reader is
+    // still entitled to ask for one themselves.
+    return (
+      <div className="notice notice-neutral" data-backend-reading="superseded" role="status">
+        <strong>The installed ProteoWizard changed</strong>
+        <span>
+          What MSCanvas knew about the backend was read before that change, so none of it
+          describes this session any more. MSCanvas reads it again as soon as the backend
+          is free.
+        </span>
+        {availability.failure === null ? null : (
+          <span>{`That earlier reading said: ${availability.failure.summary}`}</span>
+        )}
+        <button className="link-button" disabled={busy} onClick={onRecheck} type="button">
+          Check again
+        </button>
+        {switchAway}
+      </div>
+    );
+  }
 
   if (availability.state === "available") {
     return (

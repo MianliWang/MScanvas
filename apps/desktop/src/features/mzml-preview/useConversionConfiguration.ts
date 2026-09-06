@@ -70,6 +70,21 @@ export function useConversionConfiguration(
   authority: RenderedAuthority | null,
   environment: ConversionConfigurationEnvironment,
   /**
+   * The same facts, as they stand now.
+   *
+   * A read is issued from an effect, and by then another obligation may already
+   * have claimed the lane in this very commit -- the banner check owed by a
+   * superseded reading is issued first by design (Decision 4b's duty-first
+   * ordering), and the fact it raises reaches a render one commit later. A
+   * probe admitted from the rendered struct would go out beside that check,
+   * take the gate for a two-tool discovery, and leave the duty waiting behind
+   * the courtesy: the case this document calls its flagship.
+   *
+   * The rendered struct still decides what the *interface* offers, because that
+   * is what a reader is looking at. This decides what is dispatched.
+   */
+  readEnvironment: () => ConversionConfigurationEnvironment,
+  /**
    * The process-lane occupancy this document's probes claim, and claim it in.
    *
    * Owned above this hook rather than inside it, because a running probe is
@@ -192,18 +207,48 @@ export function useConversionConfiguration(
     const receipt = authority === null ? null : receiptOf(authority);
     const previous = lastAttempt.current;
     const firstForThisBinding = previous === null || previous.receipt !== receipt;
-    if (!firstForThisBinding && !admissionStoppedRefusing(previous.facts, facts)) {
+    // **The facts as they stand now, and not as this render saw them.** A
+    // dispatch happens after a commit, and by then another obligation may
+    // already have claimed the lane in this very commit -- the banner check a
+    // superseded reading owes is issued first by design. Admitting from the
+    // rendered struct would send a probe out beside that check, take the gate
+    // for a two-tool discovery, and leave the duty waiting behind the
+    // courtesy.
+    //
+    // It is also what the attempt has to be *recorded* under, and that is the
+    // subtler half. An attempt refused by a fact only the synchronous reading
+    // knows about, recorded as though nothing was refusing, leaves the occasion
+    // that clears that fact invisible: the transition would begin and end
+    // between two values this document had already written down as false, and
+    // the deferred read would never be issued.
+    const now: ProbeAdmissionFacts = {
+      ...readEnvironment(),
+      probeInFlight: readingRef.current,
+    };
+    if (!firstForThisBinding && !admissionStoppedRefusing(previous.facts, now)) {
       return;
     }
     // Recorded whether or not it runs. A refusal is an attempt for this
     // purpose: what it establishes is that asking again now would be refused
     // again, and the next occasion is what changes that.
-    lastAttempt.current = { receipt, facts };
-    if (!readBypassesAdmission(authority) && probeAdmission(facts) !== null) {
+    lastAttempt.current = { receipt, facts: now };
+    if (readBypassesAdmission(authority)) {
+      // A binding that names no installation launches no probe, so nothing can
+      // be ahead of it in the gate and nothing may defer it. Rows 82 and 120:
+      // deferring it behind somebody else's backend work would leave the panel
+      // with no configuration state for that whole window.
+      issue();
+      return;
+    }
+    if (probeAdmission(now) !== null) {
       return;
     }
     issue();
-  }, [authority, facts, held, issue]);
+    // The rendered facts are a dependency rather than a reading: every
+    // synchronous fact above is written beside a rendered twin, so a change in
+    // one is a change in the other, and this is what makes the effect run at
+    // the moment there is something new to decide.
+  }, [authority, facts, held, issue, readEnvironment, readingRef]);
 
   // What is held describes the binding it was read for. Where the session has
   // moved on, this document holds nothing for the binding on screen -- which is

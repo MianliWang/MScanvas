@@ -295,6 +295,49 @@ async function describedBy(selector: string): Promise<string[]> {
   ) as Promise<string[]>;
 }
 
+/** What the backend banner is currently saying. */
+async function bannerText(): Promise<string> {
+  return browser.execute(
+    () => document.querySelector(".shell-notices")?.textContent ?? "",
+  ) as Promise<string>;
+}
+
+/** The disclaimer a superseded reading shows, or `null` where none is shown. */
+async function superseded(): Promise<string | null> {
+  return browser.execute(
+    () => document.querySelector('[data-backend-reading="superseded"]')?.textContent ?? null,
+  ) as Promise<string | null>;
+}
+
+/** Whether the superseded banner still offers the reader a check of their own. */
+async function supersededRecheckEnabled(): Promise<boolean> {
+  return browser.execute(() => {
+    const banner = document.querySelector('[data-backend-reading="superseded"]');
+    const control = [...(banner?.querySelectorAll("button") ?? [])].find(
+      (candidate) => candidate.textContent?.trim() === "Check again",
+    );
+    return control !== undefined && !(control as HTMLButtonElement).disabled;
+  }) as Promise<boolean>;
+}
+
+/** A queue that has run to its own end, so the lane is free again. */
+function terminalQueue(sequence: number, authority: typeof AUTHORITY_A) {
+  return {
+    sequence,
+    state: {
+      status: "terminal",
+      operationId: "1",
+      reason: "completed",
+      queue: queueOf([
+        queueItem(VENDOR_ROW.handle, VENDOR_ROW.fileName, { state: "finalized", attempts: 1 }),
+      ]),
+    },
+    diagnostics: { eligibleItemCount: 0, available: false, exporting: false, lastExport: null },
+    backendQuarantined: false,
+    authority,
+  };
+}
+
 /** Presses the backend banner's own recheck, which is not a conversion action. */
 async function pressCheckAgain(): Promise<void> {
   await pressLinkButton("Check again");
@@ -706,6 +749,10 @@ describe("M6.4 — E8: BEGIN observes a replacement and refuses before anything 
       configuration(AUTHORITY_B, withoutRunning()),
     );
     await holdInvoke("read_conversion_configuration");
+    // And what a check would find, which after a replacement is the build the
+    // session is now on. A table that went on answering with A would be
+    // modelling a Rust that reports a binding it has already left.
+    await setInvokeResult("inspect_backend", reading(AUTHORITY_B));
 
     await browser.$(CONVERT).click();
     await browser.waitUntil(async () => (await callsTo("begin_workspace_conversion_queue")) === 1, {
@@ -719,14 +766,25 @@ describe("M6.4 — E8: BEGIN observes a replacement and refuses before anything 
       timeoutMsg: "the replaced binding's settings stayed on screen",
     });
     expect(await browser.$(CONVERT).isEnabled()).toBe(false);
-    // Nothing was created, and nothing went looking for what the refusal
-    // already said.
+    // Nothing was created.
     expect(await callsTo("choose_workspace_conversion_destination")).toBe(0);
-    expect(await callsTo("inspect_backend")).toBe(inspectionsBefore);
+    // **And nothing went looking for what the refusal already said.** That is
+    // an ordering claim rather than a zero-call one: the projection is accepted
+    // from the refusal itself -- which is why the settings for the old binding
+    // are already gone above -- and only then does the banner, whose reading was
+    // taken under the build the session has left, owe the one check that
+    // replaces it. A blanket "no check after a delivery" would forbid that
+    // recovery and leave the banner naming a build nothing is bound to.
+    await browser.waitUntil(
+      async () => (await callsTo("inspect_backend")) === inspectionsBefore + 1,
+      { timeout: 30_000, timeoutMsg: "the superseded reading was never replaced" },
+    );
 
     await releaseInvokeHold("read_conversion_configuration");
     await awaitSettings("ready");
-    expect(await callsTo("inspect_backend")).toBe(inspectionsBefore);
+    // One, and it stays one: a single delivery incurs a single obligation, and
+    // the obligation is not re-issued by its own answer.
+    expect(await callsTo("inspect_backend")).toBe(inspectionsBefore + 1);
     expect(await unexpectedConsole()).toEqual([]);
   });
 });
@@ -830,6 +888,101 @@ describe("M6.4 — E10: what BEGIN bound is not what the controls show next", ()
     );
     expect((await requestsTo("retry_workspace_conversion_queue"))[0]).toEqual({});
     expect(await callsTo("begin_workspace_conversion_queue")).toBe(1);
+  });
+});
+
+describe("M6.4 — E11: the banner stops naming a build it has left", () => {
+  it("disclaims the reading a refused BEGIN superseded, and recovers it", async () => {
+    await openTheWorkspace();
+    await awaitSettings("ready");
+    await awaitPlan();
+    // Everything the banner names, on screen as fact.
+    expect(await bannerText()).toContain("ProteoWizard is available");
+    expect(await owners("__none__")).toBe(0);
+    const inspectionsBefore = await callsTo("inspect_backend");
+
+    // Rust's own discovery is the first thing in the session to see binding B,
+    // and the refusal carries it. Nothing else would arrive to correct a screen
+    // still showing the build the session has left.
+    await setInvokeResult("begin_workspace_conversion_queue", {
+      authority: AUTHORITY_B,
+      outcome: {
+        outcome: "refused",
+        error: {
+          kind: "conversion_binding_replaced",
+          summary: "The installed ProteoWizard changed, so this conversion was not started.",
+          detail: null,
+          correctiveAction: null,
+          retryable: false,
+        },
+      },
+    });
+    // Held, so the window between accepting the projection and reading the
+    // build it names is one a reader could actually be looking at.
+    await holdInvoke("inspect_backend");
+    await browser.$(CONVERT).click();
+
+    // The claim is about what a reader can see: from the instant the refusal is
+    // accepted, nothing on screen names the build the session has left. The
+    // check the reading owes is issued at once into the free lane a refused
+    // start leaves, and it is held here so that window is one this test can
+    // look at rather than one that has already closed.
+    await browser.waitUntil(
+      async () => (await callsTo("inspect_backend")) === inspectionsBefore + 1,
+      { timeout: 30_000, timeoutMsg: "the superseded reading was never replaced" },
+    );
+    const page = await browser.execute(() => document.body.textContent ?? "");
+    expect(page).not.toContain("ProteoWizard is available");
+    expect(page).not.toContain(availableBackend.release ?? "3.0.25000");
+    expect(page).not.toContain("built 2026-05-04");
+    // And nothing was created by the start that was refused.
+    expect(await callsTo("choose_workspace_conversion_destination")).toBe(0);
+
+    await setInvokeResult("inspect_backend", reading(AUTHORITY_B));
+    await releaseInvokeHold("inspect_backend");
+    await browser.waitUntil(async () => (await superseded()) === null, {
+      timeout: 30_000,
+      timeoutMsg: "the banner never came back",
+    });
+    expect(await bannerText()).toContain("ProteoWizard is available");
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("waits for a running queue to release the lane, and keeps a way out meanwhile", async () => {
+    await openTheWorkspace({ get_workspace_conversion_state: runningQueue(1, AUTHORITY_A) });
+    await browser.$(`${PANEL} .conversion-queue-list`).waitForExist({ timeout: 30_000 });
+    const inspectionsBefore = await callsTo("inspect_backend");
+    const pollsBefore = await callsTo("get_workspace_conversion_state");
+
+    // A newer publication, delivered by the poll while the drain owns the lane.
+    await setInvokeResult("get_workspace_conversion_state", runningQueue(1, AUTHORITY_B));
+    await setInvokeResult("inspect_backend", reading(AUTHORITY_B));
+    await browser.waitUntil(async () => (await superseded()) !== null, {
+      timeout: 30_000,
+      timeoutMsg: "the banner never disclaimed the reading the poll superseded",
+    });
+
+    // Accepted, and nothing launched behind the drain this document has been
+    // told about.
+    expect(await callsTo("inspect_backend")).toBe(inspectionsBefore);
+    await browser.waitUntil(
+      async () => (await callsTo("get_workspace_conversion_state")) >= pollsBefore + 3,
+      { timeout: 30_000, timeoutMsg: "the slot was never polled again" },
+    );
+    expect(await callsTo("inspect_backend")).toBe(inspectionsBefore);
+    // The reader still has a way out while it waits.
+    expect(await supersededRecheckEnabled()).toBe(true);
+
+    // The queue ends. Its completion is the occasion, though the publication it
+    // carries is the one already on screen.
+    await setInvokeResult("get_workspace_conversion_state", terminalQueue(2, AUTHORITY_B));
+    await browser.waitUntil(async () => (await superseded()) === null, {
+      timeout: 30_000,
+      timeoutMsg: "the owed check never ran once the lane was free",
+    });
+    expect(await callsTo("inspect_backend")).toBe(inspectionsBefore + 1);
+    expect(await bannerText()).toContain("ProteoWizard is available");
+    expect(await unexpectedConsole()).toEqual([]);
   });
 });
 

@@ -649,12 +649,33 @@ describe("starting the conversion the plan describes", () => {
     // Nothing ran.
     expect(api.conversionRequests).toHaveLength(0);
 
-    // And nothing was asked a second time to learn what the refusal already
-    // said. The projection travels with the answer precisely so that a session
-    // does not spend a two-tool discovery on news it has been handed -- a
-    // refusal that only *triggered* a check would be the special refresh the
-    // authority envelope exists to replace.
-    expect(api.calls().filter((call) => call === "inspectBackend")).toHaveLength(checksBefore);
+    // **Nothing was asked in order to learn what the refusal already said**,
+    // and that is an ordering claim rather than a zero-call one. The projection
+    // travels with the answer precisely so that a session does not spend a
+    // two-tool discovery on news it has been handed: the replacement is
+    // *accepted* first, from the refusal itself, and only then does the banner
+    // -- whose own reading was taken under the build the session has left --
+    // owe the one check that replaces it.
+    //
+    // A blanket "no check after a delivery" would forbid that recovery too, and
+    // would leave the banner naming a build nothing is bound to for the rest of
+    // the session. What must not happen is a check *instead of* acceptance, or
+    // a check per delivery.
+    const accepted = api.planRequests().findIndex(
+      (request) => request.expectedReceipt !== firstBindingReceipt,
+    );
+    expect(accepted).toBeGreaterThanOrEqual(0);
+    await waitFor(() => {
+      expect(api.calls().filter((call) => call === "inspectBackend")).toHaveLength(
+        checksBefore + 1,
+      );
+    });
+    // One, and it stays one. The refusal is a single delivery, so the
+    // obligation it incurred is discharged once and is not re-issued by its own
+    // answer.
+    expect(api.calls().filter((call) => call === "inspectBackend")).toHaveLength(
+      checksBefore + 1,
+    );
 
     // And the plan that authorized nothing is not the plan any more. Asserted
     // through what a *second* press would send rather than through the frame

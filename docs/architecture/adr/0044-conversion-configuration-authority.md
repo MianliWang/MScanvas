@@ -1,6 +1,14 @@
 # ADR 0044 — Conversion configuration is a Rust-owned authority, bound to a receipt
 
-Status: accepted
+Status: accepted, amended 2026-09-06
+
+**One rationale in Decision 12 was the draft's, and Decision 10 had already
+overruled it.** M6.4's implementation found the two decisions disagreeing about
+whether a configuration probe holding the gate refuses `Convert`. Decision 10
+and ledger rows 79 and 187 are the ruling; Decision 12 kept the sentence they
+reversed. The correction is recorded at the end of this document and applied in
+place, and the original wording is quoted there rather than deleted.
+
 Date: 2026-09-04
 Related: [0009](0009-mzml-conversion-execution-boundary.md),
 [0011](0011-private-workspace-conversion-path.md),
@@ -2320,12 +2328,15 @@ authorities map their refusal onto one of them:
 
 ```text
 backendQuarantined | backendChanging | backendUsable | laneClaimed
-| previewReading | adopting | exportingDiagnostics | workspaceSettling
+| previewReading | configurationProbing | adopting | exportingDiagnostics
+| workspaceSettling
 ```
 
-All eight, `backendUsable` included — it is shared by every conversion action and
+All nine, `backendUsable` included — it is shared by every conversion action and
 by nothing else, and omitting it would have left the one refusal two actions reach
-most often with no key at all.
+most often with no key at all. `configurationProbing` is the ninth, added by the
+2026-09-06 amendment below: Decision 10 refuses `Convert` while a probe holds the
+gate, so the lane grew a field for it and the registry a key.
 
 `ConversionLane` maps by construction — its reason *is* the first field that
 refuses, in its own fixed order, and that order is the registry's precedence too.
@@ -2345,13 +2356,22 @@ is entitled to consider, in the one shared order, and where they consider the sa
 they name it identically. That is what row 13 asks for and all it asks for.
 `ConversionConfigurationProbeAdmission` maps its refusals onto the same names, which it
 can, because Decision 11's admitting subset was drawn from these fields in the first
-place. **A probe already in flight mints no key at all, and two drafts gave it one.** It
-is admission's fifth fact, so it can refuse a *probe* — but nothing it refuses is ever
-rendered: the settings retry is withdrawn while a probe is in flight (Decision 5),
-Convert is deliberately left enabled for its duration (Decision 10), and an automatic
-read's refusal is bookkeeping rather than an error on screen (row 121). A key with no
-notice behind it is dead specification carrying a test obligation, so it goes, and the
-registry's keys are the lane's eight fields and the action-derived reasons.
+place. **Admission's own probe-in-flight refusal mints no key, and the lane's probe
+occupancy does.** Those are two facts about one probe, and the 2026-09-06 amendment
+below separates them; this paragraph originally conflated them and drew the wrong
+conclusion from Decision 10.
+
+`probeInFlight` is admission's fifth fact, and it refuses *another probe*. Nothing it
+refuses is ever rendered: the settings retry is withdrawn while a probe is in flight
+(Decision 5), and an automatic read's refusal is bookkeeping rather than an error on
+screen (row 121). A key with no notice behind it is dead specification carrying a test
+obligation, so admission's fifth fact keys nothing.
+
+`configurationProbing` is the *occupancy* — the same probe, seen by a different action.
+Decision 10 refuses `Convert` for its duration, because ADR 0043 forbids offering an
+action the operation will refuse and Rust's gate does refuse it, so that fact is a lane
+field and a rendered key (rows 79 and 187). The registry's keys are the lane's nine
+fields and the action-derived reasons.
 
 The lane fields that refuse no probe — `adopting`, `exportingDiagnostics` and
 `workspaceSettling`, which Decision 11 excludes because they own no backend process, and
@@ -2904,3 +2924,82 @@ decide the retirement point.
 
 It does not start M6.5. Destination authority remains M6.5's, and the summary
 still says the folder is chosen next.
+
+## Amendment, 2026-09-06 — Decision 12 kept a rationale Decision 10 had overruled
+
+M6.4's implementation read both decisions and found them answering the same
+question two ways.
+
+**Decision 10** ruled, in this document as accepted:
+
+> So Convert is refused while a configuration probe holds the gate, with the
+> probe's own reason, and the notice registry keys it like any other — which is
+> why row 79's key comes back: it is rendered now.
+
+Rows 79 and 187 record the same reversal, and row 187 states the consequence
+exactly: the probe "is a lane fact and a rendered notice key".
+
+**Decision 12** kept the sentence that ruling replaced. Its probe paragraph read:
+
+> A probe already in flight mints no key at all, and two drafts gave it one. It
+> is admission's fifth fact, so it can refuse a *probe* — but nothing it refuses
+> is ever rendered: the settings retry is withdrawn while a probe is in flight
+> (Decision 5), Convert is deliberately left enabled for its duration
+> (Decision 10), and an automatic read's refusal is bookkeeping rather than an
+> error on screen (row 121). … the registry's keys are the lane's eight fields
+> and the action-derived reasons.
+
+The clause "Convert is deliberately left enabled for its duration (Decision 10)"
+attributes to Decision 10 the draft position Decision 10 explicitly rejects. It
+is the only false statement in the paragraph, and the "eight fields" count
+follows from it.
+
+**What the amendment changes, and what it does not.** The paragraph's *lead
+claim* is correct and is kept: admission's `probeInFlight` refusal renders
+nothing, because the only action it refuses is withdrawn while it holds. What is
+corrected is the conflation of that refusal with the *occupancy* of the same
+probe, which refuses a different action — `Convert` — and therefore does key a
+rendered notice. Two facts, two actions, one probe:
+
+```text
+ConversionConfigurationProbeAdmission.probeInFlight
+    "may another configuration probe start?"      -> no rendered notice
+
+ConversionLane.configurationProbing
+    "is a probe occupying the process lane?"      -> refuses Convert, keys a notice
+```
+
+Probe admission is **not** changed to make the obsolete rationale true, and no
+per-value capability model is introduced. The lane's field list grows by one and
+the registry's key set with it; Decision 11's admitting subset, its order and its
+Rust-owned authority are untouched.
+
+## Amendment, 2026-09-06 — the banner's reading owes a recovery, and now has one
+
+Decision 4 states that "a rendered reading whose revision is not the authority's,
+the absence of a rendered reading at all, or the session becoming quarantined,
+each owe a backend check", and ledger row 110 gives the acceptance case:
+"between an observation and the render that consumes it, the banner names no
+build as current, and keeps every reason it has today".
+
+M6.4 Stage B implemented the acceptance half — a delivered projection moves the
+authority at once, launches nothing, and invalidates what the previous binding
+described — and left the reading half unowned. Nothing changes in the decisions
+above; what this amendment records is that the obligation now has a named owner
+rather than being a residual:
+
+```text
+backendReadingObligation.ts     currency, admission, and what counts as an occasion
+useBackendReadingObligation.ts  bounded issuance, once per occasion, duty-first
+BackendStatus                   the superseded reading, named as no build's
+```
+
+Two things are worth stating because they were only implicit. **The remedial
+check's admission is the probe's minus quarantine**, which Decision 4 says in
+prose and no list stated: a quarantined session *answers* `inspect_backend` from
+what it already holds, so refusing the check for quarantine would refuse it for
+the condition it is able to report. And **`backendChanging` is excluded from the
+occasions that wake this obligation**, which is the general loop bound of
+Decision 4b applied to the one fact this obligation raises for itself; every
+other path that raises it either delivers a reading, discharging the obligation,
+or fails and leaves the reader the control Decision 4 requires as the floor.

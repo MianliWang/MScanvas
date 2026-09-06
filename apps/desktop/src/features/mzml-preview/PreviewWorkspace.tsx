@@ -347,6 +347,7 @@ export function PreviewWorkspace() {
           onChooseInstallation={workspace.chooseInstallation}
           onRecheck={workspace.checkBackend}
           onUseAutomaticDiscovery={workspace.useAutomaticDiscovery}
+          readingSuperseded={workspace.backendReadingStale}
           state={workspace.backend}
         />
 

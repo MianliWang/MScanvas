@@ -51,6 +51,9 @@ import {
   type ConversionConfigurationView,
 } from "./useConversionConfiguration";
 import { useConversionProbeLane } from "./useConversionProbeLane";
+import type { BackendCheckFacts } from "./backendReadingObligation";
+import { readingCheckIsOwed, readingIsStale } from "./backendReadingObligation";
+import { useBackendReadingObligation } from "./useBackendReadingObligation";
 import { toPreviewError } from "./contracts";
 import { describeDropResult } from "./dropNotice";
 import { useWorkspaceDropTransport } from "./dropTransport";
@@ -518,6 +521,16 @@ export interface PreviewWorkspace {
    */
   readonly conversionPlan: ConversionPlanView;
   readonly backend: BackendState;
+  /**
+   * Whether the reading above has stopped describing the session.
+   *
+   * The banner projects from it and the obligation that replaces it reads the
+   * same comparison, so what a reader is told and what MSCanvas owes cannot
+   * come apart. Currency is the authority *revision*, never receipt equality:
+   * a verdict can move on a build that has not changed, and the reading taken
+   * before it is stale about a build it still names correctly.
+   */
+  readonly backendReadingStale: boolean;
   readonly preview: PreviewState;
   readonly spectrum: SpectrumState;
   /**
@@ -3659,10 +3672,77 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     }),
     [backendBusy, backendQuarantined, conversion.lane.laneClaimed, previewBackendBusy],
   );
+  /**
+   * The same four facts, from the refs each of them is written beside.
+   *
+   * What a *dispatch* asks, as against what a control is greyed from. Every one
+   * of these is the synchronous half of the state above it, written in the same
+   * place -- `backendBusy` and `backendBusyRef` in `markBackendBusy`, the lane
+   * claim in `claimLane`, the probe claim in `useConversionProbeLane` -- so the
+   * two are one fact rather than two that resemble each other.
+   *
+   * It exists because the read is issued from an effect, and an obligation
+   * dispatched earlier in that same commit has already taken the lane while the
+   * rendered struct still says it is free.
+   */
+  const readConfigurationEnvironment = useCallback(
+    () => ({
+      backendQuarantined: backendQuarantinedRef.current,
+      backendChanging: backendBusyRef.current,
+      laneClaimed: conversion.laneClaimedRef.current,
+      previewReading: viewerRequests.current > 0,
+    }),
+    [conversion.laneClaimedRef],
+  );
+  /**
+   * The projection the banner's reading was taken at, where one is rendered.
+   *
+   * `null` for every state that is not a reading. A check in flight and a check
+   * that failed are both *the absence of a reading*, which is one of the two
+   * conditions that owes one.
+   */
+  const renderedReading = backend.status === "resolved" ? backend.availability.authority : null;
+  /**
+   * Whether the banner has stopped describing the session.
+   *
+   * Read by two consumers that must not disagree: the obligation below, which
+   * owes a replacement, and the banner itself, which may not go on naming a
+   * build as current in the meantime (ledger row 110).
+   */
+  const backendReadingStale = readingIsStale(projection, renderedReading);
+  /**
+   * The facts the remedial check consults, as a render sees them.
+   *
+   * The same process-ownership projection the probe uses, minus quarantine --
+   * which a quarantined session answers rather than refuses -- and without any
+   * verdict, since the verdict a stale reading carries is what this check
+   * exists to repair.
+   */
+  const readingCheckFacts = useMemo<BackendCheckFacts>(
+    () => ({
+      backendChanging: backendBusy,
+      laneClaimed: conversion.lane.laneClaimed,
+      previewReading: previewBackendBusy,
+      probeInFlight: configurationProbe.probing,
+    }),
+    [backendBusy, configurationProbe.probing, conversion.lane.laneClaimed, previewBackendBusy],
+  );
+  // **Before the configuration read, and that ordering is the decision.** A
+  // `BEGIN` that resolves a replacement and refuses leaves a check and a read
+  // owed at once, and whichever starts holds the gate against the other -- so
+  // the duty is issued and the courtesy is deferred, which is the arrangement
+  // that resolves itself: the check answers, its answer is an occasion, and the
+  // read it deferred is issued by it.
+  useBackendReadingObligation(
+    readingCheckIsOwed(projection, renderedReading),
+    readingCheckFacts,
+    checkBackend,
+  );
   const conversionConfiguration = useConversionConfiguration(
     api,
     projection,
     configurationEnvironment,
+    readConfigurationEnvironment,
     configurationProbe,
     acceptDeliveredAuthority,
   );
@@ -4031,6 +4111,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
 
   return {
     backend,
+    backendReadingStale,
     preview,
     spectrum,
     scanModel,

@@ -143,6 +143,14 @@ the exact provider build evidenced for its own family, and each reports what
 was measured of its own output. Conversion is judged on its output alone —
 MSCanvas cannot read a vendor container, so nothing claims source fidelity.
 
+What a queue is bound to is what was on screen when you pressed `Convert`.
+MSCanvas proves that exact combination on the installation it resolves at that
+moment, before any queue, folder picker or staging exists, and refuses if the
+installation is not the one your plan was described under. Moving a setting
+afterwards changes the next conversion and nothing about the one running, and
+`Retry` repeats the queue's own combination rather than whatever the controls
+show now.
+
 One file's failure does not stop the files after it, and nothing already
 converted is undone. `Retry` reruns only the failures MSCanvas can say another
 attempt might change — a destination folder that is there but will not open, or
@@ -158,6 +166,27 @@ over; converting those rows again is a new queue. If MSCanvas cannot confirm tha
 the converter process ended, it says so and refuses further backend work until
 you restart it, rather than starting a second converter beside one it has lost
 track of.
+
+**What a conversion is asked to do is now something you choose, from what the
+installed build can actually run.** Four control groups — peak processing,
+spectra included, numeric precision, array compression — edit one dimension each
+over one combination. Nine combinations have been measured and admitted; the
+other thirty-nine the axes span are unconstructible, and a control that would
+produce one is refused with a sentence naming the *combination* rather than the
+value. The two refusals are different claims: MSCanvas has never qualified this
+combination, which no installation changes, or the installed ProteoWizard does
+not offer it, which a different one would. A choice that reduces what is written
+says so where it is made — centroiding is marked lossy and says it cannot be
+limited to one MS level, a population filter says which spectra are left out, a
+narrower store says what it rounds — and a combination that reduces nothing says
+nothing reassuring, because there is nothing to disclose.
+
+Which combinations this installation can run is read from it once per
+installation and belongs to that installation: if the backend changes underneath
+you, what MSCanvas knew about it stops being current at once, the banner names no
+build until it has read the new one, and the plan and settings are re-established
+against what is actually there. A read that fails is yours to retry, and nothing
+retries it behind your back.
 
 It runs on one exact ProteoWizard build the repository has a recorded conversion
 for, one file at a time; there is no percentage, because nothing measures one. Validation is output-only: the converted
