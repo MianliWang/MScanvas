@@ -8,15 +8,16 @@ import {
   conversionAvailability,
 } from "./conversionAvailability";
 import type {
+  BackendAuthorityProjection,
   ConversionConflictPolicy,
   ConversionDiagnosticsExport,
   ConversionDiagnosticsState,
-  ConversionQueuePlan,
   PreviewError,
   WorkspaceConversionState,
   WorkspaceConversionUpdate,
   WorkspaceOutputAdoptionResult,
 } from "./contracts";
+import type { ConversionPlanIdentity } from "./conversionPlanAuthority";
 import { toPreviewError } from "./contracts";
 
 /**
@@ -66,13 +67,6 @@ function describes(
   );
 }
 
-/** The plan summary for one row, and how the reading of it went. */
-export type ConversionPlanState =
-  | { readonly status: "none" }
-  | { readonly status: "loading"; readonly handles: readonly string[] }
-  | { readonly status: "loaded"; readonly plan: ConversionQueuePlan }
-  | { readonly status: "failed"; readonly handles: readonly string[]; readonly error: PreviewError };
-
 export interface ConversionOperation {
   /** The authoritative slot, as Rust last reported it. */
   readonly state: WorkspaceConversionState;
@@ -110,14 +104,20 @@ export interface ConversionOperation {
    * {@link conversionAvailability}; they do not assemble one of their own.
    */
   readonly lane: ConversionLane;
-  readonly plan: ConversionPlanState;
   /** A request that never reached Rust's slot, kept apart from a conversion's own outcome. */
   readonly error: PreviewError | null;
   readonly conflictPolicy: ConversionConflictPolicy;
   readonly setConflictPolicy: (policy: ConversionConflictPolicy) => void;
-  /** Describes the queue these rows would get, or clears the description. */
-  readonly describe: (handles: readonly string[]) => void;
-  readonly convert: (handles: readonly string[]) => void;
+  /**
+   * Starts the conversion one plan describes.
+   *
+   * Takes the plan's own question rather than a list of rows, because that is
+   * what the reader pressed: the rows, the combination, the policy and the
+   * installation the summary on screen was computed under. Rust proves every
+   * one of them again before anything is created, and refuses with the
+   * authority it is actually on when the last of them has moved.
+   */
+  readonly convert: (identity: ConversionPlanIdentity) => void;
   /** Reruns every retryable failure of the terminal queue. */
   readonly retry: () => void;
   /**
@@ -295,7 +295,11 @@ function retryTargetOf(state: WorkspaceConversionState): {
 
 export type ConversionEnvironment = Pick<
   ConversionLane,
-  "backendUsable" | "backendChanging" | "previewReading" | "workspaceSettling"
+  | "backendUsable"
+  | "backendChanging"
+  | "previewReading"
+  | "configurationProbing"
+  | "workspaceSettling"
 >;
 
 /**
@@ -343,7 +347,30 @@ function reportsAQueueOtherThan(
 }
 
 export function useConversionOperation(
-  onInstallationGeneration: (generation: number) => void,
+  /**
+   * Where every projection this operation is handed is delivered.
+   *
+   * One sink, because there is one authority and one rule for accepting it:
+   * order by `BackendAuthorityRevision`, then judge identity by receipt. A
+   * `BEGIN`'s own discovery, a queue's terminal report and an ordinary state
+   * poll all carry the projection as Rust authored it, and none of them is a
+   * reason to go and *ask* the backend what it already said. Two sinks here is
+   * how one of them came to mean "wake a check": a delivery that only woke a
+   * check spent a two-tool discovery rediscovering news it had been handed, and
+   * held `backendBusy` -- which refuses every conversion -- for its length.
+   */
+  onAuthority: (authority: BackendAuthorityProjection) => void,
+  /**
+   * Told once, when this session stops trusting the backend.
+   *
+   * Reported rather than only held, because quarantine is a conjunct of
+   * `backendUsable` and that conjunction belongs to the caller: it guards
+   * preview reads as well as conversion actions, and this operation is not the
+   * authority for those. Never withdrawn -- Rust sets it once and cannot unset
+   * it, so a document that lowered it would be claiming something the session
+   * does not know.
+   */
+  onBackendQuarantined: () => void,
   onOutputsAdopted: AdoptedOutputsSink,
   /** The lane facts this operation does not own, as a render sees them. */
   environment: ConversionEnvironment,
@@ -359,7 +386,6 @@ export function useConversionOperation(
 ): ConversionOperation {
   const api = usePreviewApi();
   const [state, setState] = useState<WorkspaceConversionState>({ status: "idle" });
-  const [plan, setPlan] = useState<ConversionPlanState>({ status: "none" });
   const [error, setError] = useState<PreviewError | null>(null);
   const [conflictPolicy, setConflictPolicy] = useState<ConversionConflictPolicy>("fail");
   /**
@@ -375,7 +401,6 @@ export function useConversionOperation(
   // observable transition and never rewinds, so a read that arrives with a
   // lower one is describing a slot that has already moved.
   const installedSequence = useRef(-1);
-  const planToken = useRef(0);
   const stateToken = useRef(0);
   // Whether a slot read is outstanding. Paired with the token above rather than
   // replacing it: the token decides which reply may install, and this decides
@@ -470,7 +495,29 @@ export function useConversionOperation(
   }, []);
 
   const applyUpdate = useCallback((update: WorkspaceConversionUpdate) => {
-    if (!mounted.current || update.sequence <= installedSequence.current) {
+    if (!mounted.current) {
+      return;
+    }
+    // **The authority first, and above the slot guard.**
+    //
+    // A queue update carries two independent orderings and neither answers for
+    // the other: `sequence` says whether this is a newer *slot* state, and
+    // `BackendAuthorityRevision` says whether this is a newer *backend
+    // authority* publication. One may be stale while the other is news -- Rust
+    // republishes the authority whenever what it projects changes, which is not
+    // tied to the slot moving at all -- so accepting the projection below the
+    // sequence guard would discard a newer binding carried by an otherwise
+    // duplicate slot read, and leave the panel describing a build the session
+    // has left.
+    //
+    // The converse is closed by the guard staying where it is: a projection
+    // accepted here installs no queue state of its own, so a fresh authority
+    // riding on a stale slot moves the authority and nothing else. Ordering and
+    // identity are `acceptProjection`'s, so a delivery that is merely the
+    // publication already on screen -- which is what every tick of a drain's
+    // own polling carries -- changes nothing and asks nothing.
+    onAuthority(update.authority);
+    if (update.sequence <= installedSequence.current) {
       return;
     }
     // A result belongs to one settling of one queue. Anything that produces a
@@ -525,6 +572,7 @@ export function useConversionOperation(
     if (update.backendQuarantined) {
       backendQuarantinedRef.current = true;
       setBackendQuarantined(true);
+      onBackendQuarantined();
     }
     // The queue is over, so this document is no longer inside a stop it asked
     // for. Cleared from the authoritative state rather than from the reply to
@@ -532,33 +580,16 @@ export function useConversionOperation(
     if (update.state.status === "terminal" || update.state.status === "idle") {
       setStopRequested(false);
     }
-    // A conversion is a backend operation like any other, and it can be the
-    // first to notice that the installed ProteoWizard changed. Without this the
-    // banner and a preview read from the replaced installation would stay on
-    // screen beside a conversion done by its successor, until some later
-    // backend operation happened to reconcile them.
-    if (update.state.status === "terminal") {
-      // Once for the queue, not once per item. Every item of one queue ran on
-      // one installation, so their generations agree -- and reporting each of
-      // them separately would start a backend probe per item before any of them
-      // had answered, which for a full queue is sixteen serial help probes with
-      // preview and conversion disabled throughout.
-      const generations = [
-        // The queue's own reading first. A pass refused for running on a
-        // different installation produced no item, so the reports alone would
-        // leave the banner naming the installation the earlier results came
-        // from until the user rechecked by hand.
-        update.state.queue.installationGeneration,
-        // Whichever cardinality the item's latest attempt had. Both reports
-        // carry the sequence they ran under, and an item is never described by
-        // both at once.
-        ...update.state.queue.items
-          .map((item) => item.result?.report.installationGeneration)
-          .filter((generation): generation is number => generation !== undefined),
-      ];
-      onInstallationGeneration(Math.max(...generations));
-    }
-  }, [claimLane, onInstallationGeneration]);
+    // Nothing about the authority happens down here, and a terminal state is
+    // not a special case of it. A conversion is a backend operation like any
+    // other and can be the first to notice that the installed ProteoWizard
+    // changed -- but so is every poll that carries the projection, and waiting
+    // for the queue to settle before believing one is how a panel came to
+    // render a replaced build for the length of a drain. The response's own
+    // projection is accepted above; the queue and its items carry the *build
+    // each ran on*, which is a historical fact expected to differ from the
+    // binding in use, and nothing here reads them for currency.
+  }, [claimLane, onAuthority, onBackendQuarantined]);
 
   const readState = useCallback(() => {
     // One at a time. The token below lets only the newest read install, so two
@@ -727,33 +758,9 @@ export function useConversionOperation(
     };
   }, [awaitingRetryTransition, busy, readState]);
 
-  const describe = useCallback(
-    (handles: readonly string[]) => {
-      planToken.current += 1;
-      const token = planToken.current;
-      if (handles.length === 0) {
-        setPlan({ status: "none" });
-        return;
-      }
-      setPlan({ status: "loading", handles });
-      api
-        .describeConversion(handles)
-        .then((summary) => {
-          if (mounted.current && token === planToken.current) {
-            setPlan({ status: "loaded", plan: summary });
-          }
-        })
-        .catch((cause: unknown) => {
-          if (mounted.current && token === planToken.current) {
-            setPlan({ status: "failed", handles, error: toPreviewError(cause) });
-          }
-        });
-    },
-    [api],
-  );
-
   const convert = useCallback(
-    (handles: readonly string[]) => {
+    (identity: ConversionPlanIdentity) => {
+      const handles = identity.handles;
       // The one rule, re-read at dispatch from the facts as they stand.
       //
       // Not a second expression that resembles the control's: the same function
@@ -764,7 +771,12 @@ export function useConversionOperation(
       // answer. VS Code ships the opposite choice and says so in its own schema;
       // for something that claims a backend lane and spawns a process, an
       // explicit refusal is the only safe end of that window.
-      if (!canStartConversion(readLane(), handles.length)) {
+      // The plan half is `ready` by construction: this handler is reached only
+      // with an identity, and an identity exists only where a plan answers it.
+      // Naming it rather than omitting it keeps the guard and the control
+      // evaluating one rule over one struct -- the omission is how the two came
+      // to answer different questions before M6.1.
+      if (!canStartConversion(readLane(), handles.length, "ready")) {
         return;
       }
       // Claimed before the request leaves, so a second activation inside the
@@ -779,22 +791,51 @@ export function useConversionOperation(
       });
       setError(null);
       api
-        .convertDatasets(handles, conflictPolicy, () => {
-          // The reservation exists and the claim has been dispatched. From here
-          // the operation is Rust's, and a read will find it even if this
-          // document goes away.
-          readState();
-        })
-        .then((update) => {
+        .convertDatasets(
+          {
+            handles: identity.handles,
+            intentId: identity.intentId,
+            conflictPolicy: identity.conflictPolicy,
+            expectedReceipt: identity.receipt,
+          },
+          () => {
+            // The reservation exists and the claim has been dispatched. From
+            // here the operation is Rust's, and a read will find it even if
+            // this document goes away.
+            readState();
+          },
+        )
+        .then((started) => {
+          if (!mounted.current) {
+            return;
+          }
+          // The projection first, whichever way this went: a `BEGIN` resolves
+          // the installed build, so it may be the first thing in the session to
+          // see a replacement -- and a refused one creates no queue, so nothing
+          // else would arrive to correct the screen.
+          //
+          // The same sink the poll uses, installed by the ordinary rule rather
+          // than answered with a second discovery. The refusal already carries
+          // what a check would go and ask for, and asking anyway is the
+          // "special BEGIN refresh" the authority envelope exists to replace.
+          // Delivered here as well as inside `applyUpdate` because a refusal
+          // carries no update at all; on the accepted path the same publication
+          // arrives twice, which the ordering rule makes a no-op.
+          onAuthority(started.authority);
+          if (started.outcome.outcome === "refused") {
+            // Rust refused before anything was created. The claim was never
+            // Rust's to hold, and the refusal is the reader's answer.
+            claimLane(null);
+            setError(started.outcome.error);
+            return;
+          }
           // The state first, the claim second. This is the reply to the very
           // dispatch that raised the claim, so it is the one observation
           // entitled to lower it -- and lowering it only once the slot it
           // describes is installed is what stops the release reading a lane
           // from before its own queue existed. Both commit together.
-          applyUpdate(update);
-          if (mounted.current) {
-            claimLane(null);
-          }
+          applyUpdate(started.outcome.update);
+          claimLane(null);
         })
         .catch((cause: unknown) => {
           if (!mounted.current) {
@@ -807,7 +848,7 @@ export function useConversionOperation(
           readState();
         });
     },
-    [api, applyUpdate, claimLane, conflictPolicy, readLane, readState],
+    [api, applyUpdate, claimLane, onAuthority, readLane, readState],
   );
 
   // Every row a live queue holds, not only the one running: a queued row
@@ -1117,11 +1158,9 @@ export function useConversionOperation(
     retry,
     retrying,
     converting,
-    plan,
     error,
     conflictPolicy,
     setConflictPolicy,
-    describe,
     convert,
     dismissError,
     stop,

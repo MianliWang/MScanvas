@@ -8,6 +8,7 @@ import { PreviewApiProvider } from "./api";
 import type { WorkspaceDropTransport } from "./dropTransport";
 import { WorkspaceDropTransportProvider } from "./dropTransport";
 import type {
+  BackendAuthorityProjection,
   BackendAvailability,
   DropIngestionResult,
   FolderIngestionResult,
@@ -70,7 +71,20 @@ class ServiceModel {
     return {
       state: this.state(),
       origin: this.chosen ? "chosen" : "automatic",
-      installationGeneration: this.generation,
+      // One number standing for both, because in this model they move
+      // together: everything that advances the sequence here also changes
+      // which installation resolves. Where the two must come apart -- a
+      // verdict moving at one receipt -- the reconciler is exercised
+      // directly, in its own file.
+      authority: {
+        revision: this.generation,
+        state: {
+          state: "settled",
+          receipt: this.generation,
+          binding: "installed",
+          previewAvailability: "usable",
+        },
+      },
       release: this.chosen ? "3.0.26013" : "3.0.25000",
       buildDate: "2026-07-01",
       sameInstallation: true,
@@ -141,6 +155,19 @@ class ServiceModel {
     return this.generation;
   }
 
+  /** What every answer from this service delivers beside its own outcome. */
+  currentAuthority(): BackendAuthorityProjection {
+    return {
+      revision: this.generation,
+      state: {
+        state: "settled",
+        receipt: this.generation,
+        binding: "installed",
+        previewAvailability: "usable",
+      },
+    };
+  }
+
   /**
    * The installation stops working without MSCanvas changing anything.
    *
@@ -190,6 +217,8 @@ function harness(
     inspectBackend: () => service.inspectBackend(),
     chooseInstallation: () => service.chooseInstallation(options.dismissPicker ?? false),
     useAutomaticDiscovery: () => service.useAutomaticDiscovery(),
+    readConversionConfiguration: () =>
+      Promise.reject(new Error("this test never reads the conversion settings")),
     getRoster: () => Promise.resolve(empty),
     copySelectedSpectrumPlot: () =>
       Promise.reject(new Error("this test never copies a plot")),
@@ -224,8 +253,10 @@ function harness(
     openPreview:
       options.preview ?? (() => Promise.resolve(buildPreview(3, false, options.openGeneration ?? 0))),
     loadSpectrum: () =>
-      options.spectrum?.() ??
-      Promise.resolve<SelectedSpectrumOutcome>({ outcome: "unavailable", requestedIndex: 0 }),
+      (
+        options.spectrum?.() ??
+        Promise.resolve<SelectedSpectrumOutcome>({ outcome: "unavailable", requestedIndex: 0 })
+      ).then((outcome) => ({ authority: service.currentAuthority(), outcome })),
     // This file is about installation ordering, so the conversion slot answers
     // idle and nothing here starts one.
     describeConversion: () => Promise.reject(new Error("not used in this file")),
@@ -240,6 +271,15 @@ function harness(
           lastExport: null,
         },
         backendQuarantined: false,
+        authority: {
+          revision: 0,
+          state: {
+            state: "settled",
+            receipt: 0,
+            binding: "installed",
+            previewAvailability: "usable",
+          },
+        },
       }),
     convertDatasets: () => Promise.reject(new Error("not used in this file")),
     retryConversions: () => Promise.reject(new Error("not used in this file")),
@@ -293,7 +333,7 @@ function resolvedOrigin(backend: ReturnType<typeof usePreviewWorkspace>["backend
 }
 
 function resolvedGeneration(backend: ReturnType<typeof usePreviewWorkspace>["backend"]): number {
-  return backend.status === "resolved" ? backend.availability.installationGeneration : -1;
+  return backend.status === "resolved" ? backend.availability.authority.revision : -1;
 }
 
 

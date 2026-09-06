@@ -14,6 +14,7 @@ import {
   selectedFile,
   shimadzuDataset,
 } from "../../test/previewFixtures";
+import { pressConvert } from "../../test/conversionPanelInteractions";
 import type { FakePreviewApi } from "../../test/previewFixtures";
 import type { SelectedFile } from "./contracts";
 
@@ -107,7 +108,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     expect(within(panel).getByText("sample-7.mzML")).toBeVisible();
     expect(within(panel).getAllByText("Shimadzu LabSolutions LCD").length).toBeGreaterThan(0);
 
-    fireEvent.click(within(panel).getByRole("button", { name: "Convert focused…" }));
+    await pressConvert(panel, "Convert focused…");
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([{ handles: ["file-7"], conflictPolicy: "fail" }]);
     });
@@ -193,7 +194,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
                 },
                 backend: { exitCode: 0, elapsedMilliseconds: 592 },
                 stagingResidue: null,
-                installationGeneration: 0,
+                receipt: 1,
               },
             },
           }),
@@ -230,7 +231,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       ).toBeVisible();
     });
 
-    fireEvent.click(within(panel).getByRole("button", { name: "Convert focused…" }));
+    await pressConvert(panel, "Convert focused…");
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([{ handles: ["file-1"], conflictPolicy: "fail" }]);
     });
@@ -259,7 +260,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     });
     expect(within(panel).queryByRole("button", { name: "Convert focused…" })).toBeNull();
 
-    fireEvent.click(within(panel).getByRole("button", { name: "Convert 1 selected…" }));
+    await pressConvert(panel, "Convert 1 selected…");
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([{ handles: ["file-2"], conflictPolicy: "fail" }]);
     });
@@ -287,7 +288,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       within(panel).getByText(/1 selected row is already mzML and is not part of this conversion/),
     ).toBeVisible();
 
-    fireEvent.click(within(panel).getByRole("button", { name: "Convert 2 selected…" }));
+    await pressConvert(panel, "Convert 2 selected…");
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([
         { handles: ["file-1", "file-2"], conflictPolicy: "fail" },
@@ -312,7 +313,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       expect(within(panel).getByRole("button", { name: "Convert 2 selected…" })).toBeEnabled();
     });
 
-    fireEvent.click(within(panel).getByRole("button", { name: "Convert 2 selected…" }));
+    await pressConvert(panel, "Convert 2 selected…");
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([
         { handles: ["file-2", "file-1"], conflictPolicy: "fail" },
@@ -346,7 +347,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     await waitFor(() => {
       expect(within(panel).getByRole("button", { name: "Convert 2 selected…" })).toBeEnabled();
     });
-    fireEvent.click(within(panel).getByRole("button", { name: "Convert 2 selected…" }));
+    await pressConvert(panel, "Convert 2 selected…");
 
     await waitFor(() => {
       expect(within(panel).getByText("Converting item 2 of 2…")).toBeVisible();
@@ -399,7 +400,7 @@ describe("queueing selected Thermo RAW conversions", () => {
                 validation: null,
                 backend: { exitCode: 0, elapsedMilliseconds: 90 },
                 stagingResidue: null,
-                installationGeneration: 0,
+                receipt: 1,
               },
             },
           }),
@@ -522,7 +523,7 @@ describe("queueing selected Thermo RAW conversions", () => {
                 // Cleanup failed, and what it left behind is in the folder the
                 // user chose, so they are owed the warning.
                 stagingResidue: "not_removed",
-                installationGeneration: 0,
+                receipt: 1,
               },
             },
           }),
@@ -574,7 +575,7 @@ describe("queueing selected Thermo RAW conversions", () => {
                 validation: null,
                 backend: null,
                 stagingResidue: null,
-                installationGeneration: 0,
+                receipt: 1,
               },
             },
           }),
@@ -804,7 +805,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     await waitFor(() => {
       expect(within(panel).getByRole("button", { name: "Convert 2 selected…" })).toBeEnabled();
     });
-    fireEvent.click(within(panel).getByRole("button", { name: "Convert 2 selected…" }));
+    await pressConvert(panel, "Convert 2 selected…");
 
     await waitFor(() => {
       expect(
@@ -841,9 +842,17 @@ describe("queueing selected Thermo RAW conversions", () => {
     const rendered = panel.textContent ?? "";
     expect(rendered).toContain("run-1.raw");
     expect(rendered).toContain("run-1.mzML");
-    for (const separator of ["\\", "/", ":"]) {
-      expect(rendered).not.toContain(separator);
-    }
+    // No path anywhere. A bare "/" is no longer the test: `m/z` is scientific
+    // notation and appears in the settings labels, so what must be absent is a
+    // path *shape* -- a backslash, a drive letter, or a token that begins at a
+    // separator. Each of those is what an absolute path would look like here,
+    // and none of them is something a display name or a unit can produce.
+    const noPaths = (text: string): void => {
+      expect(text).not.toMatch(/\\/);
+      expect(text).not.toMatch(/(?:^|\s)\//);
+      expect(text).not.toMatch(/\b[A-Za-z]:[\\\/]/);
+    };
+    noPaths(rendered);
     // A skipped item is never described as validated.
     expect(within(panel).getAllByText(/a file of that name was already there/i).length).toBeGreaterThan(
       0,
@@ -859,7 +868,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     await screen.findByRole("option", { name: /run-1\.raw/ });
     const panel = await screen.findByRole("region", { name: "Convert" });
 
-    fireEvent.click(within(panel).getByRole("button", { name: "Convert focused…" }));
+    await pressConvert(panel, "Convert focused…");
     await waitFor(() => {
       expect(within(panel).getByText("1 converted, 0 skipped, 0 failed of 1.")).toBeVisible();
     });

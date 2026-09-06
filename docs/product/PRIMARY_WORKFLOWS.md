@@ -212,8 +212,33 @@ settings, its output-root choice and "Open file/folder" remain unreachable. See
    and choosing the `.wiff.scan` on its own says to choose the `.wiff` instead.
 2. Select the vendor rows to convert, or focus one. The three families may be
    mixed in one selection. Vendor rows cannot be previewed, and say so.
-3. Review the plan: the ordered list of what will run, which family each row
-   is, what each item will write, how many selected rows are excluded for
+3. Choose the conversion settings, or leave the ones MSCanvas ships. Four
+   groups — peak processing, spectra included, numeric precision, array
+   compression — edit one dimension each, over one combination. A choice either
+   selects the admitted combination that differs in exactly that dimension, or is
+   refused with a reason that names the **combination**: either that MSCanvas has
+   never qualified it, which no installation changes, or that the installed
+   ProteoWizard does not offer it, which a different one would. Unavailable
+   values stay on screen, disabled, with the reason beside them, because that
+   these dimensions do not compose freely is a measured fact worth seeing.
+
+   A choice that reduces what is written says so where it is made: centroiding
+   is marked lossy and says it applies to every MS level, a population filter
+   says which spectra are left out, and a narrower store says what it rounds.
+
+   If the installed build cannot run the combination you have chosen, that is
+   said once above the groups rather than four times beside values the build
+   offers. Where one change to one setting reaches something it can run, the
+   controls show it; where no single change does, MSCanvas offers the
+   combination it ships as one explicit, labelled action and never moves your
+   choice for you.
+
+   While MSCanvas is reading these options from ProteoWizard, or while it cannot
+   read them, it says which of those it is — and offers to read them again where
+   another attempt could change the answer.
+4. Review the plan: the ordered list of what will run, which family each row
+   is, what each item will write, the combination it will be converted under,
+   how many selected rows are excluded for
    being mzML already, and the
    output-only validation disclosure. Two rows that would write one name are
    refused here, before anything is chosen or created.
@@ -221,17 +246,26 @@ settings, its output-root choice and "Open file/folder" remain unreachable. See
    A row whose outputs the backend names itself says so — *1–24 mzML outputs,
    filenames determined during conversion* — rather than naming a file MSCanvas
    would be inventing.
-4. Choose Fail or Skip if a file of that name already exists. There is no
+5. Choose Fail or Skip if a file of that name already exists. There is no
    overwrite. The choice applies to the whole queue.
-5. `Convert N selected…` opens a Rust-owned picker for one local folder, which
+6. `Convert N selected…` opens a Rust-owned picker for one local folder, which
    every item of the queue writes into.
-6. Items convert one at a time, in the order shown, and the panel says which item
+
+   Before anything is created, MSCanvas proves the exact combination on the
+   installation it resolves at that moment, and refuses if that is not the
+   installation the plan was described under. A refusal creates no queue, opens
+   no picker and stages nothing; it says the installation changed, and the panel
+   is describing the new one by the time you read it. What the queue is bound to
+   is what was on screen when you pressed — moving a setting afterwards changes
+   the next conversion and nothing about this one, and `Retry` repeats the
+   queue's own combination rather than the controls'.
+7. Items convert one at a time, in the order shown, and the panel says which item
    of how many is running. `Stop queue` ends the whole queue: it asks the current
    conversion to stop and begins none of the items after it, and the panel says
    so before it is pressed. Adding, clearing and previewing are unavailable until
    it ends; searching, sorting and reading the list are not, and every queued row
    stays visible through a search.
-7. Each item reports its own outcome: the output's name, size and record counts;
+8. Each item reports its own outcome: the output's name, size and record counts;
    or that a name was already taken and left alone; or why nothing was written.
    The queue reports how many converted, were skipped, and failed — always as
    counts of acquisitions, never of output files.
@@ -247,18 +281,18 @@ settings, its output-root choice and "Open file/folder" remain unreachable. See
    MSCanvas will not present them as the acquisition's complete output set. It
    is not offered a retry, and it is never described as though nothing had been
    converted.
-8. `Retry N failed` reruns only the failures another attempt could change, in
+9. `Retry N failed` reruns only the failures another attempt could change, in
    their original places, into the same folder under the same policy. Converted
    and skipped files are left exactly as they are. A queue that was stopped is
    over instead: it reports how many converted, were skipped, failed, were
    cancelled and were never run, and converting those rows again is a new queue.
-9. A stop is not instantaneous and is not a promise about the item under way. A
+10. A stop is not instantaneous and is not a promise about the item under way. A
    conversion that finished before the request was accepted keeps its ordinary
    result rather than being called cancelled. If MSCanvas cannot confirm that the
    converter process ended, it says so and refuses further backend work until the
    application is restarted.
 
-10. `Add converted outputs to workspace` adds every finalized output of that
+11. `Add converted outputs to workspace` adds every finalized output of that
     queue — in queue order, and then in publication order within one item's own
     set — and only when it is pressed. The count offered is a count of output
     **files**: one finalized Thermo item offers one, and one finalized
@@ -276,7 +310,7 @@ settings, its output-root choice and "Open file/folder" remain unreachable. See
     backend, because adding a file launches no process. Replace the queue or
     restart, and the outputs are ordinary mzML files `Add files…` still reaches.
 
-11. `Export failure diagnostics…` appears for a terminal queue that has
+12. `Export failure diagnostics…` appears for a terminal queue that has
     something to diagnose: an item that failed, one whose stop could not be
     confirmed, one that converted and left staging behind, or a queue whose own
     stop failed. It saves one local JSON file where the user chooses, holding

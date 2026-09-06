@@ -7188,3 +7188,110 @@ behaviour, adds no dependency and no lockfile change, does not decide the mzXML
 disposition, which remains M6.10's, and it does not start M6.5.
 
 **M6.4 — the replacement implementation — is next. M6.5 has not started.**
+
+## M6.4 — Visible settings, and a truthful plan, 2026-09-06
+
+The replacement implementation. Baseline
+`b6240191592a6919832a0b2ceef2e433442d773f`, the merged M6.4A interlude, clean and
+level with `origin/main`.
+
+Nine admitted combinations are selectable, the plan is Rust's answer to a
+question that names the binding it was asked under, and `BEGIN` proves both
+before anything is created. What makes this the *replacement* rather than a fifth
+repair of PR #95 is that none of it is reconstructed in React: every authority
+ADR 0044 assigns to Rust is read from Rust, and the frontend's job is to look
+things up, order them and say what it found.
+
+### One authority, one acceptance path
+
+Rust mints the binding receipt and publishes a `BackendAuthorityProjection` —
+a revision that orders and a receipt that identifies — on every backend-observing
+answer. `installationGeneration` is gone from every live contract; nothing on
+this side subtracts two receipts, orders them or assumes the next is one greater,
+because equality is the only operation the type permits.
+
+The frontend applies Rust's order in one place. Ordering by revision, then
+identity by receipt, then whatever obligations are owed: three questions, three
+fields, no rule answering another's. Every conversion-bound reply that carries a
+projection — the state poll, the terminal report, the `BEGIN` refusal, the
+settings read, the plan refusal — delivers it through `acceptDeliveredAuthority`,
+and none of them provokes a second look at the backend to rediscover what it was
+just handed. The queue update carries two independent orderings, and the
+acceptance sits above the slot-sequence guard so that a newer publication riding
+on a duplicate slot read is not discarded, while the guard staying where it is
+keeps a fresh authority from installing a stale queue.
+
+### The configuration is a lifecycle, and the probe owns a lane
+
+A configuration read is `msconvert --help` and therefore backend process work.
+One admission rule governs both paths of it — the automatic first read for a
+binding and the reader's explicit retry — over Rust's gate and quarantine
+boundary, and a refused read stays owed rather than being lost or retried on a
+timer. What re-issues it is an *occasion*: a gate-taker's answer, or a lane fact
+that was refusing ceasing to refuse. A conversion-state poll is neither, which is
+why a read deferred by a running drain is not re-issued on every tick of that
+drain's own polling.
+
+While a probe holds the lane, `Convert` is refused for it and says so, because
+ADR 0043 forbids offering an action the operation will refuse. That occupancy is
+a lane fact with a rendered notice key, held as a synchronous claim beside its
+rendered twin and released by request token, so a probe that lost authority
+cannot hand back a lane a newer one is holding. It is emphatically *not* probe
+admission: one answers whether a probe occupies the lane, the other whether one
+may start, and neither answers for the other. ADR 0044's Decision 12 kept a draft
+rationale that contradicted Decision 10 on exactly this point; the amendment
+recorded there corrects it without changing admission.
+
+### Availability belongs to the row, and to one DOM element
+
+Four control groups edit one axis each. A choice either selects the admitted
+combination that differs in exactly that dimension or is refused, and the refusal
+names the *combination*: never qualified, which no build changes, or not offered
+here, which a different build would. A build lacking only the peak-picking
+grammar makes no claim about 64-bit intensity, all spectra or zlib. An unrunnable
+selection is stated once above the groups rather than four times beside values
+the build offers, and a genuine dead end — no one-axis route out — offers the
+shipped combination as one explicit, labelled, keyboard-reachable action rather
+than moving the reader's choice for them.
+
+Every action on the panel reports its refusal to one registry, which deduplicates
+by the refusing *fact* rather than by the word each authority used for it. Two
+vocabularies reach it — the lane refuses a conversion, probe admission refuses a
+probe — and a moment both refuse produces one element carrying that fact's own
+sentence, with each control pointing at it. Child components mint no global
+availability id.
+
+### The banner reads the authority; its reading recovers on its own occasion
+
+A delivered projection moves the authority and produces no
+`BackendAvailabilityDto`, so the reading beside it becomes superseded. Between
+that observation and the render that replaces it the banner names no build as
+current — not the verdict, not the release, not the build date, not the origin —
+and keeps every reason the reading carried. One gated check replaces it: deferred
+behind a conversion, a preview or a configuration probe, never woken by the fact
+its own attempt raises, and issued before the configuration read where both are
+owed, because whichever starts holds the gate against the other. A check whose
+request fails leaves the reader the controls the banner already offers rather
+than a retry storm.
+
+### Validation
+
+Rust 1433 passed / 22 ignored; frontend 1602 across 67 files; browser 222 across
+11 specs, executed at 1920×1080, 1366×768 and 960×640 with keyboard,
+unavailable, failure and recovery states covered. `cargo fmt`, Clippy with
+`-D warnings`, `check_repo.py`, lint, typecheck, build, `e2e:typecheck` and
+`git diff --check` all clean. The browser environment needed no workaround.
+
+Twelve mechanism reversions were run and restored one at a time, each proving a
+named regression is the thing holding its invariant rather than incidental
+coverage.
+
+### What this slice does not do
+
+It adds no destination choice, display or policy — those are M6.5's and M6.6's —
+no scope control, no capacity UI, no cancellation change and no overwrite. It
+widens nothing scientific: the nine admitted rows are M6.2's nine, mzXML stays
+unplannable by type, centroiding stays unscoped, and the mzXML disposition
+remains M6.10's. It does not start M6.5.
+
+**M6.5 — destination authority — is next. M6.5 has not started.**

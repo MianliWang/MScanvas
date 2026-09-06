@@ -10,13 +10,15 @@ import type {
   DatasetSourceKind,
 } from "./contracts";
 import { conversionJudgedAnyOutput, SOURCE_KIND_LABEL } from "./contracts";
-import type {
-  ConversionAvailability,
-  ConversionUnavailableReason,
-} from "./conversionAvailability";
-import { conversionAvailability, conversionNoticeId } from "./conversionAvailability";
+import type { ConversionAvailability } from "./conversionAvailability";
+import { ConversionSettings, conversionIntentDisclosures, CONVERSION_VALUE_LABEL } from "./ConversionSettings";
+import { conversionAvailability } from "./conversionAvailability";
+import type { ConversionRefusal } from "./conversionNoticeRegistry";
+import { conversionNotices, conversionRefusalNoticeId } from "./conversionNoticeRegistry";
 import { formatByteLength, formatCount, formatDuration } from "./format";
+import type { ConversionConfigurationView } from "./useConversionConfiguration";
 import type { ConversionOperation } from "./useConversionOperation";
+import type { ConversionPlanView } from "./useConversionPlan";
 
 /**
  * What each conflict policy means, in the user's terms rather than the
@@ -189,6 +191,22 @@ const ADOPTION_REFUSAL_LABEL: Record<string, string> = {
 export interface ConversionPanelProps {
   readonly conversion: ConversionOperation;
   /**
+   * What conversion semantics are known for the bound installation.
+   *
+   * Rendered inside this panel because it is what the next conversion will do,
+   * and a reader deciding whether to press `Convert` is entitled to see it
+   * before they do rather than after.
+   */
+  readonly configuration: ConversionConfigurationView;
+  /**
+   * The plan this panel would start, and what it has been told about it.
+   *
+   * Beside the configuration rather than inside it: the settings describe a
+   * build, the plan describes one conversion under them, and each is
+   * answerable while the other is not.
+   */
+  readonly plan: ConversionPlanView;
+  /**
    * Where the rows came from, which is what the action may call them.
    *
    * One selected row is still a selected row: labelling it `Convert focused…`
@@ -213,11 +231,13 @@ export interface ConversionPanelProps {
  */
 export function ConversionPanel({
   conversion,
+  configuration,
+  plan,
   scope,
   handles,
   excludedSelectedCount,
 }: ConversionPanelProps): ReactElement | null {
-  const { state, plan } = conversion;
+  const { state } = conversion;
   const terminal = state.status === "terminal";
 
   // The two decisions this panel offers, each projected from the one lane the
@@ -231,6 +251,11 @@ export function ConversionPanel({
   const startAvailability = conversionAvailability(conversion.lane, {
     kind: "start",
     targetCount: handles.length,
+    // The plan is a fact the one rule consults, not a second gate beside it.
+    // What a reader presses `Convert` for is the conversion the summary above
+    // describes, so a control that could be pressed while that summary is
+    // absent, stale or refused would start something nobody read.
+    plan: plan.startPlan,
   });
   const { retryAvailability } = conversion;
 
@@ -244,7 +269,12 @@ export function ConversionPanel({
    * cannot see. Deriving this a second time inside the branch that renders it
    * is how the sentence and the button would come to disagree.
    */
-  const startOffered = !conversion.busy && plan.status === "loaded";
+  // Whether the start control is on screen at all -- which is a question about
+  // the *block* it lives in, not a second answer to whether it may be used.
+  // With rows to convert it is always offered and `startAvailability` says
+  // whether it may be pressed and why not, which is what lets a failed plan and
+  // one being read refuse it differently.
+  const startOffered = !conversion.busy && plan.startPlan !== "absent";
   const retryOffered =
     state.status === "terminal" &&
     state.reason === "completed" &&
@@ -256,10 +286,35 @@ export function ConversionPanel({
     !conversion.retrying &&
     !conversion.converting;
 
+  /*
+   * What the settings read is refused by, where its control is on screen.
+   *
+   * The same withdrawal rule the control itself uses: a retry is *offered* only
+   * where there is an answer a read could improve on, so a refusal reported
+   * while no control exists would put a sentence in the document explaining
+   * something nobody can see. `ConversionConfigurationProbeAdmission` speaks
+   * its own vocabulary and the registry maps it onto the lane's facts, which is
+   * how one contended moment produces one sentence rather than two.
+   */
+  const settingsRefusal: ConversionRefusal | null =
+    configuration.retryOffered && configuration.refusal !== null
+      ? { source: "probe", refusal: configuration.refusal }
+      : null;
+  /** Every action currently on screen, and what refuses it. */
+  const refusals: readonly (ConversionRefusal | null)[] = [
+    startOffered ? { source: "action", availability: startAvailability } : null,
+    retryOffered ? { source: "action", availability: retryAvailability } : null,
+    settingsRefusal,
+  ];
+  // The id the settings retry points at, minted once here rather than by the
+  // child. Handed down so the control names the element this panel actually
+  // rendered.
+  const settingsRefusalNoticeId = conversionRefusalNoticeId(settingsRefusal);
+
   // Nothing to say. The panel is not a permanent fixture: with no convertible
   // row focused and no operation to report, it would be a heading over an empty
   // space in the one column the roster is trying to use.
-  if (!conversion.busy && !terminal && plan.status === "none") {
+  if (!conversion.busy && !terminal && plan.startPlan === "absent") {
     return null;
   }
 
@@ -294,10 +349,14 @@ export function ConversionPanel({
         </div>
       )}
 
-      <AvailabilityNotice
-        retry={retryOffered ? retryAvailability : null}
-        start={startOffered ? startAvailability : null}
+      <AvailabilityNotice refusals={refusals} />
+
+      <ConversionSettings
+        configuration={configuration}
+        onChoose={configuration.select}
+        refusalNoticeId={settingsRefusalNoticeId}
       />
+
 
       {conversion.busy || terminal ? (
         <QueueState
@@ -312,11 +371,12 @@ export function ConversionPanel({
           disabled — is the panel describing two different things in the same
           shape. A finished queue is different: there the plan is how the user
           converts something else, so it stays. */}
-      {conversion.busy || plan.status === "none" ? null : (
+      {conversion.busy || plan.startPlan === "absent" ? null : (
         <PlanState
           conversion={conversion}
           excludedSelectedCount={excludedSelectedCount}
           handles={handles}
+          plan={plan}
           repeating={terminal}
           scope={scope}
           startAvailability={startAvailability}
@@ -333,37 +393,31 @@ export function ConversionPanel({
  * inside it, so a reader is watching when one appears rather than meeting a
  * region that arrived with its text.
  *
- * One element per *reason*, not per control. The two controls share a lane, so
- * when both are refused by the same fact they are described by one sentence and
- * a screen reader that has no way to know it is the same sentence does not read
- * it twice. Where the reasons genuinely differ -- a clear lane with nothing
- * selected, beside a finished queue with nothing worth rerunning -- each names
- * its own, which is the case that made a single shared notice untruthful.
+ * **This is the panel's only owner of a shared availability id.** Every action
+ * on this surface reports its refusal here -- `Convert`, the rerun of a failed
+ * queue, and the settings read's own retry, which speaks a different
+ * authority's vocabulary about the same facts -- and the registry collapses
+ * them by the refusing fact. Where two actions are refused by one fact they
+ * point at one element carrying that fact's sentence; where the reasons
+ * genuinely differ each names its own. A child that minted an id of its own
+ * would put a second element under one fact's name and leave every
+ * `aria-describedby` pointing at it ambiguous.
  */
 function AvailabilityNotice({
-  start,
-  retry,
+  refusals,
 }: {
-  /** The start decision, or `null` where no start control is on screen. */
-  readonly start: ConversionAvailability | null;
-  /** The rerun decision, or `null` where no rerun control is on screen. */
-  readonly retry: ConversionAvailability | null;
+  /** One entry per action, `null` for each action not on screen. */
+  readonly refusals: readonly (ConversionRefusal | null)[];
 }): ReactElement {
-  const said = new Map<ConversionUnavailableReason, string>();
-  for (const decision of [start, retry]) {
-    if (decision !== null && decision.status === "unavailable") {
-      said.set(decision.reason, decision.message);
-    }
-  }
   return (
     <div
       aria-live="polite"
       className="conversion-availability"
       data-live-region="conversion-availability"
     >
-      {[...said].map(([reason, message]) => (
-        <p className="notice notice-warning" id={conversionNoticeId(reason)} key={reason}>
-          {message}
+      {conversionNotices(refusals).map((notice) => (
+        <p className="notice notice-warning" id={notice.id} key={notice.reason}>
+          {notice.message}
         </p>
       ))}
     </div>
@@ -375,12 +429,12 @@ function AvailabilityNotice({
  *
  * A described-by target with no text is a promise of an explanation that is not
  * there, so an available control describes itself with its own copy and nothing
- * else.
+ * else. The id comes from the registry rather than from a second minting here,
+ * so a control and the element it names cannot come apart.
  */
 function describedBy(base: string, availability: ConversionAvailability): string {
-  return availability.status === "available"
-    ? base
-    : `${base} ${conversionNoticeId(availability.reason)}`;
+  const notice = conversionRefusalNoticeId({ source: "action", availability });
+  return notice === null ? base : `${base} ${notice}`;
 }
 
 /**
@@ -585,9 +639,19 @@ function ExportDiagnostics({
   );
 }
 
-/** What a queue would do, and the one control that starts it. */
+/**
+ * What a queue would do, and the one control that starts it.
+ *
+ * **Every state of the plan is rendered, and the control is rendered in all of
+ * them.** A plan being worked out, a plan that failed and a plan the settings
+ * make impossible are three different situations with three different things
+ * for a reader to do, and a control that vanished for two of them would leave
+ * the third looking like the only one there is. The button says what it cannot
+ * do through the one availability rule; nothing here decides again.
+ */
 function PlanState({
   conversion,
+  plan,
   handles,
   excludedSelectedCount,
   startAvailability,
@@ -595,6 +659,8 @@ function PlanState({
   scope,
 }: {
   readonly conversion: ConversionOperation;
+  readonly plan: ConversionPlanView;
+  /** The rows this panel would queue, for the control that names them. */
   readonly handles: readonly string[];
   readonly excludedSelectedCount: number;
   /** Whether a conversion of these rows may start, and what to say when not. */
@@ -603,94 +669,122 @@ function PlanState({
   /** Whether a previous result is on screen above this plan. */
   readonly repeating: boolean;
 }): ReactElement | null {
-  const { plan } = conversion;
-  // With a result above it, silence is better than a second empty state.
-  if (repeating && plan.status !== "loaded") {
+  const current = plan.current;
+  const summary = current?.plan ?? null;
+  // The rows the control names, which is what the reader selected rather than
+  // what MSCanvas has finished describing. The plan is rendered in every state
+  // now, so reading this off the summary made the label say "Convert 0
+  // selected…" for the whole of the window a plan is being worked out -- a
+  // count that was never true of anything.
+  const count = summary === null ? handles.length : summary.items.length;
+  // With a result above it, silence is better than a second empty state --
+  // while one is momentarily being worked out. A plan that *failed* and one the
+  // settings make impossible are durable states with something for the reader
+  // to do, and hiding them would leave a finished queue on screen beside no
+  // explanation of why another cannot start.
+  if (repeating && summary === null && plan.startPlan === "reading") {
     return null;
   }
-  if (plan.status === "loading") {
-    return <div className="empty-state">Reading the conversion plan…</div>;
-  }
-  if (plan.status === "failed") {
-    return (
-      <div className="empty-state">
-        <span>{plan.error.summary}</span>
-      </div>
-    );
-  }
-  if (plan.status === "none") {
-    return (
-      <div className="empty-state">
-        Select or focus a supported vendor acquisition to convert it.
-      </div>
-    );
-  }
-
-  const summary = plan.plan;
-  const count = summary.items.length;
   return (
     <div className="conversion-plan">
-      <p id="conversion-plan-summary">
-        {describeQueueFamilies(summary.items)}
-        {excludedSelectedCount === 0
-          ? ""
-          : ` ${String(excludedSelectedCount)} selected ${
-              excludedSelectedCount === 1 ? "row is" : "rows are"
-            } already mzML and ${excludedSelectedCount === 1 ? "is" : "are"} not part of this conversion.`}
-      </p>
+      {summary === null ? (
+        <PlanPending plan={plan} />
+      ) : (
+        <>
+          <p id="conversion-plan-summary">
+            {describeQueueFamilies(summary.items)}
+            {excludedSelectedCount === 0
+              ? ""
+              : ` ${String(excludedSelectedCount)} selected ${
+                  excludedSelectedCount === 1 ? "row is" : "rows are"
+                } already mzML and ${excludedSelectedCount === 1 ? "is" : "are"} not part of this conversion.`}
+          </p>
 
-      <ol className="conversion-queue-list">
-        {summary.items.map((item, index) => (
-          <li key={item.datasetHandle}>
-            <span className="conversion-queue-order">{index + 1}</span>
-            <span className="conversion-queue-name" title={item.fileName}>
-              {item.fileName}
-            </span>
-            {/* Which family this row is, said on the row. In a mixed queue the
-                summary's counts cannot say which item is which, and colour is
-                not a channel this information may live in. */}
-            <span className="conversion-queue-kind">{SOURCE_KIND_LABEL[item.sourceKind]}</span>
-            <span aria-hidden="true">→</span>
-            <span className="visually-hidden">converts to </span>
-            {item.output.kind === "knownSingle" ? (
-              <span className="conversion-queue-output" title={item.output.fileName}>
-                {item.output.fileName}
-              </span>
-            ) : (
-              <span
-                className="conversion-queue-output conversion-queue-output-set"
-                data-output-topology="backendNamedSet"
-              >
-                {outputSetSummary(item.output.maxMembers)}
-                <span className="visually-hidden">. </span>
-                <span className="conversion-queue-output-naming">
-                  {OUTPUT_SET_NAMING}
+          <ol className="conversion-queue-list">
+            {summary.items.map((item, index) => (
+              <li key={item.datasetHandle}>
+                <span className="conversion-queue-order">{index + 1}</span>
+                <span className="conversion-queue-name" title={item.fileName}>
+                  {item.fileName}
                 </span>
-              </span>
-            )}
-          </li>
-        ))}
-      </ol>
+                {/* Which family this row is, said on the row. In a mixed queue
+                    the summary's counts cannot say which item is which, and
+                    colour is not a channel this information may live in. */}
+                <span className="conversion-queue-kind">{SOURCE_KIND_LABEL[item.sourceKind]}</span>
+                <span aria-hidden="true">→</span>
+                <span className="visually-hidden">converts to </span>
+                {item.output.kind === "knownSingle" ? (
+                  <span className="conversion-queue-output" title={item.output.fileName}>
+                    {item.output.fileName}
+                  </span>
+                ) : (
+                  <span
+                    className="conversion-queue-output conversion-queue-output-set"
+                    data-output-topology="backendNamedSet"
+                  >
+                    {outputSetSummary(item.output.maxMembers)}
+                    <span className="visually-hidden">. </span>
+                    <span className="conversion-queue-output-naming">
+                      {OUTPUT_SET_NAMING}
+                    </span>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ol>
 
-      <dl className="metadata-list">
-        <div>
-          <dt>Output</dt>
-          <dd>{summary.outputFormat}</dd>
-        </div>
-        <div>
-          <dt>Compression</dt>
-          <dd>{summary.compression}</dd>
-        </div>
-        <div>
-          <dt>Destination</dt>
-          <dd>One folder, chosen next</dd>
-        </div>
-      </dl>
+          {/* Every one of these is read off the plan, never off the controls
+              beside it. The plan is the answer to a question that named a
+              combination and a policy; the controls are what the reader might
+              be moving to *next*, and a summary that read from them would
+              describe a conversion this one is not. */}
+          <dl className="metadata-list">
+            <div>
+              <dt>Output</dt>
+              <dd>{summary.outputFormat}</dd>
+            </div>
+            <div>
+              <dt>Peaks</dt>
+              <dd>{CONVERSION_VALUE_LABEL.processing[summary.intent.processing]}</dd>
+            </div>
+            <div>
+              <dt>Spectra</dt>
+              <dd>{CONVERSION_VALUE_LABEL.population[summary.intent.population]}</dd>
+            </div>
+            <div>
+              <dt>Stored precision</dt>
+              <dd>{CONVERSION_VALUE_LABEL.precision[summary.intent.precision]}</dd>
+            </div>
+            <div>
+              <dt>Compression</dt>
+              <dd>{summary.compression}</dd>
+            </div>
+            <div>
+              <dt>If an output name is taken</dt>
+              <dd>{CONFLICT_POLICY_LABEL[summary.conflictPolicy]}</dd>
+            </div>
+            <div>
+              <dt>Destination</dt>
+              <dd>One folder, chosen next</dd>
+            </div>
+          </dl>
 
-      <p className="quiet-text" id="conversion-validation-disclosure" role="note">
-        {OUTPUT_ONLY_DISCLOSURE} They run one at a time, and Stop queue ends the whole queue rather
-        than one item.
-      </p>
+          <p className="quiet-text" id="conversion-validation-disclosure" role="note">
+            {OUTPUT_ONLY_DISCLOSURE} They run one at a time, and Stop queue ends the whole queue
+            rather than one item.
+          </p>
+
+          {/* What this combination reduces, and only that. A combination that
+              reduces nothing produces no list and therefore no reassuring
+              sentence: silence is the honest answer where there is nothing to
+              disclose. */}
+          {conversionIntentDisclosures(summary.intent).map((disclosure) => (
+            <p className="quiet-text" key={disclosure} role="note">
+              {disclosure}
+            </p>
+          ))}
+        </>
+      )}
 
       <fieldset className="conversion-conflict">
         <legend>If an output name is taken</legend>
@@ -713,23 +807,74 @@ function PlanState({
       <div className="conversion-actions">
         <button
           aria-describedby={describedBy(
-            "conversion-plan-summary conversion-validation-disclosure",
+            summary === null
+              ? PLAN_PENDING_ID
+              : "conversion-plan-summary conversion-validation-disclosure",
             startAvailability,
           )}
           className="primary-button"
-          // The one rule, and the whole of it. The empty-row case is inside it
-          // rather than beside it: a second clause here is exactly how this
-          // control came to answer a different question from the operation it
-          // starts.
+          // The one rule, and the whole of it. The empty-row case and the plan
+          // are inside it rather than beside it: a second clause here is
+          // exactly how this control came to answer a different question from
+          // the operation it starts.
           disabled={startAvailability.status !== "available"}
           onClick={() => {
-            conversion.convert(handles);
+            // The question the summary above answered, whole, and taken from
+            // the very value that summary was rendered from. Passing the rows
+            // alone would let a start mean something the reader never read;
+            // reaching for the question separately would be a second answer to
+            // which conversion this is.
+            if (current !== null) {
+              conversion.convert(current.identity);
+            }
           }}
           type="button"
         >
           {scope === "focused" ? "Convert focused…" : `Convert ${String(count)} selected…`}
         </button>
+        {/* An explicit re-ask of the same question, and nothing automatic. A
+            plan can fail for a reason the reader cannot act on, and a machine
+            whose only exit were a new question would pin `Convert` as refused
+            for the session over one lost reply. */}
+        {plan.retryOffered ? (
+          <button className="link-button" onClick={plan.retry} type="button">
+            Describe again
+          </button>
+        ) : null}
       </div>
+    </div>
+  );
+}
+
+/** Where the sentence a pending plan puts in place of a summary is named. */
+const PLAN_PENDING_ID = "conversion-plan-pending";
+
+/**
+ * What is on screen where a plan summary is not.
+ *
+ * One element, three sentences, and the difference between them is what the
+ * reader can do: wait, press something, or change a setting above. Collapsing
+ * them into "no plan" is the shape ADR 0044 records as a refused plan being
+ * explained to a reader as one being reread.
+ */
+function PlanPending({ plan }: { readonly plan: ConversionPlanView }): ReactElement {
+  return (
+    <div className="empty-state" id={PLAN_PENDING_ID}>
+      {plan.startPlan === "failed" && plan.error !== null ? (
+        <span>{plan.error.summary}</span>
+      ) : plan.startPlan === "selectionUnavailable" ? (
+        <span>
+          The installed ProteoWizard does not offer the conversion settings you chose, so there is
+          nothing to describe. Choose settings it offers above.
+        </span>
+      ) : plan.startPlan === "settingsUnknown" ? (
+        <span>
+          MSCanvas does not yet know what this ProteoWizard installation can convert, so there is
+          nothing to describe yet.
+        </span>
+      ) : (
+        <span>Working out what this conversion would do…</span>
+      )}
     </div>
   );
 }

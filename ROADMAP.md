@@ -382,9 +382,10 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 
 **Started. The route is locked, the conversion lane has one availability
 authority, the installed `msconvert` has been measured against M6's finite
-candidate set, what a conversion is asked to do is now a type, and the ownership
-boundary the visible settings sit on is decided; the M6.4 replacement
-implementation is the next slice.**
+candidate set, what a conversion is asked to do is now a type, the ownership
+boundary the visible settings sit on is decided, and those settings are now on
+screen with a plan bound to the installation that answered them; destination
+authority is the next slice.**
 
 The route, the live conversion gap audit it was decided from, the nine product
 decisions it surfaces, the twelve exit criteria and the M7/M8 seams are in
@@ -399,8 +400,9 @@ Twelve slices, plus one authority interlude:
 - M6.3 — typed `ConversionIntent`. **complete.**
 - M6.4A — conversion configuration authority boundary. **complete**
   (documentation only).
-- M6.4 — visible settings, and a truthful plan. **replacement implementation
-  next.** A first attempt is unmerged evidence on PR #95; see below.
+- M6.4 — visible settings, and a truthful plan. **complete**, as a
+  replacement implementation. The first attempt is superseded, unmerged evidence
+  on PR #95; see below.
 - M6.5 — destination authority. **not started.**
 - M6.6 — destination and conflict UX, including the destructive question.
 - M6.7 — convert selected, convert all.
@@ -409,22 +411,39 @@ Twelve slices, plus one authority interlude:
 - M6.10 — evidence-gated side routes.
 - M6.11 — closure.
 
-**M6.4 was attempted once and is not published.** The attempt is on
-`feat/m6.4-visible-conversion-settings` / PR #95, which stopped four times: each
-bounded correction round closed the findings it was given and was stopped by
-something that closing introduced. The nine admitted semantics really are
-selectable there, and the plan really is Rust's answer — but the slice reached
-that by reconstructing several Rust-owned authorities in React and writing each
-new repair by hand against the others.
+**M6.4 was attempted once, and what shipped is the replacement.** The first
+attempt is on `feat/m6.4-visible-conversion-settings` / PR #95, which stopped
+four times: each bounded correction round closed the findings it was given and
+was stopped by something that closing introduced. The nine admitted semantics
+really are selectable there, and the plan really is Rust's answer — but the slice
+reached that by reconstructing several Rust-owned authorities in React and
+writing each new repair by hand against the others. PR #95 is closed as
+superseded implementation evidence; nothing from it is on `main`, and its
+findings were addressed by the replacement rather than in it.
 
 So M6.4A was inserted rather than a fifth repair attempted. It decides, in [ADR
 0044](docs/architecture/adr/0044-conversion-configuration-authority.md), who owns
 installation truth, who owns conversion-capability truth, the receipt that binds them,
 what React retains, and at what granularity availability exists — and carries a
-hundred-and-eighty-seven-obligation finding ledger the replacement must prove, so that
-nothing PR #95 measured has to be rediscovered. PR #95 stays open as implementation
-evidence until the replacement has extracted its tests, copy and behaviour; nothing from
-it is on `main`.
+hundred-and-eighty-seven-obligation finding ledger the replacement had to prove, so that
+nothing PR #95 measured had to be rediscovered.
+
+**The replacement proves that ledger by construction.** Rust owns the binding
+receipt, the configuration lifecycle and the admitted table; the frontend looks
+combinations up rather than composing them, so thirty-nine of the forty-eight the
+axes span stay unreachable by any activation sequence. One typed projection
+carries the authority on every backend-observing answer, ordered by its own
+revision and identified by its own receipt, and every conversion-bound reply
+delivers it through one acceptance path rather than provoking a second look at
+the backend. A configuration probe occupies the process lane, so it refuses a
+conversion while it holds it and says so once, in one element, whichever action
+it refuses. `BEGIN` proves the exact intent and the plan's receipt before any
+queue, picker or staging exists. Where a delivered projection leaves the backend
+banner describing a build the session has left, the banner names no build as
+current and one gated check — deferred behind a conversion, a preview or a probe,
+and never woken by its own attempt — replaces the reading. The finding ledger is
+navigable from `conversionFindingRegressionMap.test.ts`, which ties each PR #95
+blocker family to the invariant that now prevents it.
 
 **M6.1 was first because the audit found the conversion lane had no single
 availability authority**, and it is now closed. `convert` claimed a ref as it

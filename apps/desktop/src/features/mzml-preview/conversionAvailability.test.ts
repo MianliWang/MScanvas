@@ -17,6 +17,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ConversionLane, ConversionUnavailableReason } from "./conversionAvailability";
+import type { ConversionStartPlan } from "./conversionPlanAuthority";
 import {
   canRetryConversion,
   canStartConversion,
@@ -31,6 +32,7 @@ const CLEAR: ConversionLane = {
   backendQuarantined: false,
   previewReading: false,
   laneClaimed: false,
+  configurationProbing: false,
   adopting: false,
   exportingDiagnostics: false,
   workspaceSettling: false,
@@ -40,9 +42,19 @@ function lane(overrides: Partial<ConversionLane> = {}): ConversionLane {
   return { ...CLEAR, ...overrides };
 }
 
-/** The reason a start is refused for, or `null` where it is not refused. */
-function startReason(overrides: Partial<ConversionLane>, targetCount = 1) {
-  const decision = conversionAvailability(lane(overrides), { kind: "start", targetCount });
+/**
+ * The reason a start is refused for, or `null` where it is not refused.
+ *
+ * A current plan by default, because these are the *lane*'s cases and a plan
+ * that refused would answer every one of them the same way. The plan's own
+ * cases pass their own.
+ */
+function startReason(
+  overrides: Partial<ConversionLane>,
+  targetCount = 1,
+  plan: ConversionStartPlan = "ready",
+) {
+  const decision = conversionAvailability(lane(overrides), { kind: "start", targetCount, plan });
   return decision.status === "available" ? null : decision.reason;
 }
 
@@ -62,15 +74,19 @@ function retryReason(
 
 describe("the conversion lane's availability decision", () => {
   it("starts an ordinary conversion on a clear lane", () => {
-    expect(conversionAvailability(CLEAR, { kind: "start", targetCount: 1 })).toEqual({
+    expect(
+      conversionAvailability(CLEAR, { kind: "start", targetCount: 1, plan: "ready" }),
+    ).toEqual({
       status: "available",
     });
     // No message on the way through. A control that can be used has nothing to
     // explain, and an explanation shown beside a working control is a reason to
     // doubt it.
-    expect(Object.keys(conversionAvailability(CLEAR, { kind: "start", targetCount: 3 }))).toEqual([
-      "status",
-    ]);
+    expect(
+      Object.keys(
+        conversionAvailability(CLEAR, { kind: "start", targetCount: 3, plan: "ready" }),
+      ),
+    ).toEqual(["status"]);
   });
 
   it("refuses a start for each lane fact, one reason each", () => {
@@ -150,13 +166,22 @@ describe("the conversion lane's availability decision", () => {
 
     // Nothing selected to convert; a finished queue with a failure worth
     // rerunning. The start is refused and the rerun is not.
-    expect(canStartConversion(clear, 0)).toBe(false);
+    expect(canStartConversion(clear, 0, "absent")).toBe(false);
     expect(canRetryConversion(clear, 1, true)).toBe(true);
 
-    // And the reverse: rows to convert, beside a queue that has nothing left
-    // another attempt could change.
-    expect(canStartConversion(clear, 2)).toBe(true);
+    // And the reverse: rows to convert with a plan that describes them, beside
+    // a queue that has nothing left another attempt could change.
+    expect(canStartConversion(clear, 2, "ready")).toBe(true);
     expect(canRetryConversion(clear, 0, true)).toBe(false);
+
+    // And a third direction the retry has no equivalent of: a clear lane, rows
+    // to convert, and no current description of what converting them would do.
+    // A rerun asks nothing of a plan -- the queue it reruns is its own
+    // description -- so it is unmoved by every one of these.
+    for (const plan of ["reading", "failed", "settingsUnknown", "selectionUnavailable"] as const) {
+      expect(canStartConversion(clear, 2, plan)).toBe(false);
+      expect(canRetryConversion(clear, 1, true)).toBe(true);
+    }
   });
 
   it("says something a reader can act on for every refusal", () => {
@@ -170,6 +195,10 @@ describe("the conversion lane's availability decision", () => {
       "diagnostics-exporting",
       "workspace-settling",
       "no-convertible-target",
+      "plan-reading",
+      "plan-failed",
+      "plan-settings-unknown",
+      "plan-selection-unavailable",
       "queue-not-retryable",
       "nothing-to-retry",
     ];
@@ -183,7 +212,11 @@ describe("the conversion lane's availability decision", () => {
               retryableFailureCount: reason === "nothing-to-retry" ? 0 : 1,
               queueCompleted: reason === "nothing-to-retry",
             }
-          : { kind: "start", targetCount: reason === "no-convertible-target" ? 0 : 1 },
+          : {
+              kind: "start",
+              targetCount: reason === "no-convertible-target" ? 0 : 1,
+              plan: planFor(reason),
+            },
       );
       expect(decision.status).toBe("unavailable");
       if (decision.status === "unavailable") {
@@ -217,6 +250,27 @@ describe("the conversion lane's availability decision", () => {
   });
 });
 
+/**
+ * The plan state that produces each plan reason, for the message sweep above.
+ *
+ * `ready` for every other reason, so a lane fact's sentence is the lane's
+ * rather than one the plan happened to reach first.
+ */
+function planFor(reason: ConversionUnavailableReason): ConversionStartPlan {
+  switch (reason) {
+    case "plan-reading":
+      return "reading";
+    case "plan-failed":
+      return "failed";
+    case "plan-settings-unknown":
+      return "settingsUnknown";
+    case "plan-selection-unavailable":
+      return "selectionUnavailable";
+    default:
+      return "ready";
+  }
+}
+
 /** The one lane fact that produces each reason, for the message sweep above. */
 function laneFor(reason: ConversionUnavailableReason): Partial<ConversionLane> {
   switch (reason) {
@@ -230,14 +284,20 @@ function laneFor(reason: ConversionUnavailableReason): Partial<ConversionLane> {
       return { laneClaimed: true };
     case "preview-running":
       return { previewReading: true };
+    case "configuration-probing":
+      return { configurationProbing: true };
     case "adoption-running":
       return { adopting: true };
     case "diagnostics-exporting":
       return { exportingDiagnostics: true };
     case "workspace-settling":
       return { workspaceSettling: true };
-    // The three target reasons are reached on a clear lane, by the action.
+    // The target and plan reasons are reached on a clear lane, by the action.
     case "no-convertible-target":
+    case "plan-reading":
+    case "plan-failed":
+    case "plan-settings-unknown":
+    case "plan-selection-unavailable":
     case "queue-not-retryable":
     case "nothing-to-retry":
       return {};

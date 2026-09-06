@@ -1,4 +1,184 @@
 /**
+ * One answer from an operation that looks at the backend, and the authority it
+ * left behind.
+ *
+ * Recording an observation is only half of it: an observation recorded and not
+ * delivered leaves the session correct in Rust and stale on screen. Every
+ * operation that can observe or replace the binding answers in this shape.
+ *
+ * The two are judged by different rules and neither by the other's — the
+ * projection by revision, which orders; the outcome by whatever question the
+ * request was asking.
+ */
+export interface AuthorityObserved<T> {
+  readonly authority: BackendAuthorityProjection;
+  readonly outcome: T;
+}
+
+/** Which installation a fact is about.
+ *
+ * Opaque. Equality is the only operation permitted on it: it answers *is this
+ * the binding you are rendering*, and nothing else. Nothing here may subtract
+ * two of these, order them, or assume the next one is one greater — that is the
+ * arithmetic the counter this replaced invited, and every reader supplied its
+ * own meaning for it.
+ */
+export type BackendBindingReceipt = number;
+
+/** Whether MSCanvas is bound to an installation it may launch. */
+export type BackendBinding = "installed" | "noInstallation";
+
+/** Whether preview may run on the bound build. */
+export type BackendPreviewAvailability = "usable" | "unusable";
+
+/**
+ * Whether a verdict about the bound installation exists at all.
+ *
+ * `unresolved` is a real state every session opens in, and it carries no
+ * receipt. Nothing may invent one for it.
+ */
+export type BackendAuthorityState =
+  | { readonly state: "unresolved" }
+  | {
+      readonly state: "settled";
+      readonly receipt: BackendBindingReceipt;
+      readonly binding: BackendBinding;
+      readonly previewAvailability: BackendPreviewAvailability;
+    };
+
+/**
+ * What every backend-observing response carries beside its own outcome.
+ *
+ * `revision` is ordering and nothing else: a projection with a lower revision
+ * is stale and may not replace a higher one. Identity is `receipt`, and the two
+ * are separate because a receipt can say that two things differ and cannot say
+ * which of them is newer.
+ */
+export interface BackendAuthorityProjection {
+  readonly revision: number;
+  readonly state: BackendAuthorityState;
+}
+
+/**
+ * The vocabulary of each conversion dimension, as Rust spells it.
+ *
+ * Closed unions rather than strings, so a value this side has no rendering for
+ * cannot be represented at all. They are the crate's own stable identifiers,
+ * and a Rust test holds this file to them: a dimension that grows a variant
+ * fails there rather than arriving as an unlabelled control.
+ *
+ * Listing the *members* of a dimension is not listing the *combinations* of
+ * them. A free cross-product of these is forty-eight; nine were measured, and
+ * which nine is a question only the catalog answers.
+ */
+/**
+ * The one format the admitted table names, as an intent spells it.
+ *
+ * Deliberately not `ConversionOutputFormat`, which is the same format as an
+ * *output* names it. The two are the same value seen from either end of the
+ * conversion and they are spelled differently at the boundary, so one type
+ * standing for both would have to pick a spelling and misdescribe the other.
+ */
+export type ConversionIntentFormat = "mzml";
+export type ConversionProcessing = "no_additional_centroiding" | "unscoped_default_centroiding";
+export type ConversionSpectrumPopulation = "all" | "ms1_only" | "ms2_only";
+export type ConversionNumericPrecision =
+  | "mz64_intensity32"
+  | "mz64_intensity64"
+  | "mz32_intensity32"
+  | "mz32_intensity64";
+export type ConversionCompression = "zlib" | "none";
+
+/**
+ * One admitted conversion combination, named by its five axes.
+ *
+ * `id` is what this side compares and echoes back; the five axis fields are
+ * what it renders. Both come from one value in Rust, so a control cannot
+ * describe one combination while selecting another.
+ */
+export interface ConversionIntentDescriptor {
+  readonly id: string;
+  readonly format: ConversionIntentFormat;
+  readonly processing: ConversionProcessing;
+  readonly population: ConversionSpectrumPopulation;
+  readonly precision: ConversionNumericPrecision;
+  readonly compression: ConversionCompression;
+}
+
+/**
+ * One row of the admitted table, and whether the bound installation can run it.
+ *
+ * Availability belongs to the row. There is deliberately no per-axis-value
+ * availability in this contract: a build lacking only the peak-picking grammar
+ * must not be able to tell a reader it does not offer 64-bit intensity, all
+ * spectra, or zlib.
+ *
+ * A combination with no row at all is a different statement — *not qualified*,
+ * about the product's evidence rather than about this build — and it is read as
+ * the absence of a row, never as `available: false`.
+ */
+export interface ConversionCatalogRow {
+  readonly intent: ConversionIntentDescriptor;
+  readonly available: boolean;
+}
+
+/**
+ * What is known about conversion settings for the binding the snapshot's
+ * authority names.
+ *
+ * Carries no copy of that binding's identity. There is one receipt per
+ * snapshot, in the authority, and this describes the binding it identifies —
+ * two copies with no stated equality would make one build's authority beside
+ * another build's catalog representable.
+ *
+ * This side never derives which of these is true. `unattempted` in particular
+ * is read from a snapshot; holding no snapshot is an observation about this
+ * side, not a judgement about the configuration.
+ */
+export type ConversionConfiguration =
+  | { readonly configuration: "unavailableForBinding" }
+  | { readonly configuration: "unattempted" }
+  | {
+      readonly configuration: "ready";
+      readonly catalog: readonly ConversionCatalogRow[];
+      /** The identity of the combination MSCanvas ships. */
+      readonly shipped: string;
+    }
+  | { readonly configuration: "failed"; readonly error: PreviewError };
+
+/**
+ * What became of one configuration request.
+ *
+ * Separate from the configuration itself, because a refused read carries both:
+ * the refusal is bookkeeping for this side's obligation, and the configuration
+ * beside it is the news for the panel.
+ *
+ * `backendQuarantined` never clears. `backendBusy` is transient: no attempt was
+ * spent, so the read is still owed and is re-issued on the next occasion.
+ */
+export type ConversionConfigurationOutcome =
+  | { readonly outcome: "answered" }
+  | {
+      readonly outcome: "refused";
+      readonly reason: "backendQuarantined" | "backendBusy";
+    };
+
+/**
+ * One conversion-settings snapshot, as one response.
+ *
+ * The whole answer to one question: what conversion semantics are known for the
+ * installation MSCanvas is currently bound to. Nothing here joins a receipt
+ * from one response with a catalog from another — that join is what made a
+ * stale catalog installable, and what made a plan and a catalog disagree about
+ * a number neither of them still described.
+ */
+export interface ConversionConfigurationSnapshot {
+  readonly authority: BackendAuthorityProjection;
+  readonly configuration: ConversionConfiguration;
+  readonly outcome: ConversionConfigurationOutcome;
+}
+
+/**
  * The shapes the Rust preview boundary sends.
  *
  * The frontend never parses ProteoWizard output. Everything here is already
@@ -20,15 +200,19 @@ export interface BackendAvailability {
    */
   readonly origin: "automatic" | "chosen";
   /**
-   * How many times the installation in use has changed, counted in Rust.
+   * The authority this reading was taken at.
    *
-   * Which verdict is current is decided there, not here. The two commands
-   * contend for one lock that does not grant in call order, so a recheck begun
-   * after a folder choice can be served before it and describe the installation
-   * the choice replaced. Apply a verdict only when this is at least the highest
-   * already applied.
+   * Not necessarily the session's now. A quarantined session echoes the reading
+   * it already had rather than probing again, and this describes the binding
+   * that reading was taken of — so the origin and the build beside it are read
+   * under the right binding rather than under whichever one is current.
+   *
+   * A rendered reading whose revision is no longer the authority's is
+   * superseded *entire*. The release, the build date and the origin describe a
+   * build as much as the verdict does, and marking only the verdict stale would
+   * leave the installation the session has left named as the current one.
    */
-  readonly installationGeneration: number;
+  readonly authority: BackendAuthorityProjection;
   readonly release: string | null;
   readonly buildDate: string | null;
   readonly sameInstallation: boolean;
@@ -333,14 +517,17 @@ export interface SpectrumTable {
 
 export interface Preview {
   /**
-   * Where the sequence of backend changes stood when this preview was read.
+   * The authority as this open left it.
    *
    * An open is a look at the backend and can be the first thing to notice a
-   * change, so it can advance the sequence itself. Adopting it is what stops a
-   * later verdict's higher number reading as a change that happened after this
-   * preview — which would discard the very reading that caused it.
+   * change, so it can settle a new binding itself. Adopting it is what stops a
+   * later projection's higher revision reading as a change that happened after
+   * this preview — which would discard the very reading that caused it.
+   *
+   * The receipt of the build that produced this preview is read from here, and
+   * is not carried beside it: one hold of the backend lane produced both.
    */
-  readonly installationGeneration: number;
+  readonly authority: BackendAuthorityProjection;
   readonly file: SelectedFile;
   readonly metadata: Metadata;
   readonly runSummary: RunSummary;
@@ -846,7 +1033,14 @@ export interface ConversionReport {
   readonly validation: ConversionValidation | null;
   readonly backend: ConversionBackendFacts | null;
   readonly stagingResidue: string | null;
-  readonly installationGeneration: number;
+  /**
+   * Which installation produced this result.
+   *
+   * A historical fact, and one that is *expected* to differ from the binding
+   * the session is on once the installation has changed — so it is read as
+   * provenance rather than judged for currency.
+   */
+  readonly receipt: BackendBindingReceipt | null;
 }
 
 /** Where one queue item is. */
@@ -971,7 +1165,11 @@ export interface ConversionOutputSetReport {
    * from the other would offer an action Rust will refuse.
    */
   readonly completeSetAdoptable: boolean;
-  readonly installationGeneration: number;
+  /**
+   * Which installation produced this set. Provenance, like the single-output
+   * report's, and exempt from the currency rule for the same reason.
+   */
+  readonly receipt: BackendBindingReceipt | null;
 }
 
 /**
@@ -1038,14 +1236,18 @@ export interface ConversionQueue {
   /** A refusal that stopped the whole queue rather than one item. */
   readonly error: PreviewError | null;
   /**
-   * Where the sequence of backend changes stood when this queue last resolved
-   * one.
+   * Which installation this queue is bound to.
    *
    * Carried by the queue and not only by its items, because the pass that
    * matters most may produce no item at all: a queue refused for running on a
    * different installation resolved that installation first.
+   *
+   * `null` through `awaitingDestination`, where there is nothing truthful to
+   * say — nothing is bound at `BEGIN`, and the first drain pass binds one. A
+   * different question from what the session is bound to now, and allowed to
+   * differ from it for the length of a drain.
    */
-  readonly installationGeneration: number;
+  readonly receipt: BackendBindingReceipt | null;
 }
 
 /**
@@ -1157,6 +1359,19 @@ export interface WorkspaceConversionUpdate {
    * ended.
    */
   readonly backendQuarantined: boolean;
+  /**
+   * The authority as it stood when this answer was made.
+   *
+   * Carried by every operation answering in this shape. Several of them take
+   * the backend lane and observe; the poll can neither observe nor replace
+   * anything, and carries it because it is the session's only voice while a
+   * drain runs.
+   *
+   * A poll is deliberately not an occasion to re-issue anything: a request
+   * deferred by a running drain must not be re-made on every tick of that
+   * drain's own polling.
+   */
+  readonly authority: BackendAuthorityProjection;
 }
 
 /** One row of a queue plan. */
@@ -1173,6 +1388,35 @@ export interface ConversionQueuePlanItem {
   readonly output: ConversionOutputPlan;
 }
 
+/**
+ * The exact question one plan answers.
+ *
+ * Every fact that changes what the future queue *means*, and nothing that does
+ * not. Two rows in this order, this combination, this policy, on this
+ * installation — change any of them and the answer describes a different
+ * conversion.
+ *
+ * **The receipt is part of the question.** This side knows which binding it is
+ * rendering, so it says so; Rust compares that with its own and refuses when
+ * they differ, rather than echoing it back. Without it a plan computed under
+ * one installation could be shown, and started, under another.
+ *
+ * **`BackendAuthorityRevision` is deliberately absent.** A revision orders
+ * publications; it does not say which installation a plan is about. The same
+ * receipt legitimately arrives under a later revision — a preview verdict can
+ * move on a build that has not changed — and a question carrying the revision
+ * would call its own answer stale for a fact about msaccess's grammar.
+ */
+export interface ConversionPlanRequest {
+  /** The rows, in the order they would run, which is the order on screen. */
+  readonly handles: readonly string[];
+  /** The admitted combination, by the identity Rust's catalog gave it. */
+  readonly intentId: string;
+  readonly conflictPolicy: ConversionConflictPolicy;
+  /** The binding this side is rendering. */
+  readonly expectedReceipt: BackendBindingReceipt;
+}
+
 /** What the interface shows before a queue is started. */
 export interface ConversionQueuePlan {
   readonly items: readonly ConversionQueuePlanItem[];
@@ -1181,7 +1425,89 @@ export interface ConversionQueuePlan {
   readonly validationMode: ValidationMode;
   /** The most items one queue may hold, as Rust enforces it. */
   readonly capacity: number;
+  /**
+   * The combination this plan describes, whole.
+   *
+   * Rust reconstructs it from the admitted table and answers with what it
+   * resolved, so the panel renders the semantic the queue would be bound with
+   * rather than the identity it happened to send.
+   */
+  readonly intent: ConversionIntentDescriptor;
+  /** The conflict policy this plan was asked under. */
+  readonly conflictPolicy: ConversionConflictPolicy;
+  /** The binding this plan is about, checked by Rust and given back. */
+  readonly receipt: BackendBindingReceipt;
 }
+
+/**
+ * What a plan request produced.
+ *
+ * A plan asked under a binding Rust has already left is not an error about the
+ * rows: it is news about the installation, and the only useful thing to answer
+ * with is the authority itself. Ordinary refusals — an unknown handle, two rows
+ * that would write one name — arrive as a rejected promise, because they carry
+ * no claim about a binding.
+ *
+ * A successful plan carries no authority projection, and that is not an
+ * omission. This operation takes no gate and runs no discovery, so it observes
+ * nothing and has nothing to project; its receipt is a component of the
+ * question, checked and echoed.
+ */
+export type ConversionPlanOutcome =
+  | { readonly outcome: "planned"; readonly plan: ConversionQueuePlan }
+  | {
+      readonly outcome: "bindingReplaced";
+      readonly authority: BackendAuthorityProjection;
+    };
+
+/**
+ * The exact question one `BEGIN` acts on.
+ *
+ * The plan question's membership, minus nothing. A start that took fewer facts
+ * could be right about the rows and wrong about the build, or right about the
+ * build and wrong about the semantic — and Rust proves all of them again rather
+ * than trusting that this side checked.
+ */
+export interface ConversionBeginRequest {
+  readonly handles: readonly string[];
+  readonly intentId: string;
+  readonly conflictPolicy: ConversionConflictPolicy;
+  /** The binding the plan on screen was authored under. */
+  readonly expectedReceipt: BackendBindingReceipt;
+}
+
+/**
+ * What one `BEGIN` produced, before any folder was chosen.
+ *
+ * In band, both arms. A refused `BEGIN` creates no queue, so there is no slot
+ * to poll and nothing else would arrive to correct a screen still showing the
+ * build the session has left — which is why the refusal travels inside an
+ * {@link AuthorityObserved} rather than as a bare rejection.
+ */
+export type ConversionBeginOutcome =
+  | { readonly outcome: "reserved"; readonly reservation: ConversionReservation }
+  | { readonly outcome: "refused"; readonly error: PreviewError };
+
+/**
+ * One Rust-issued claim on the right to choose a destination and convert.
+ *
+ * Opaque, path-free and single-use. It grants no filesystem authority: what it
+ * names is one bound decision Rust already made.
+ */
+export interface ConversionReservation {
+  readonly reservationId: string;
+}
+
+/**
+ * What one start did, from the click to the folder.
+ *
+ * Two commands and one answer, because the reader made one decision. A start
+ * that Rust refused never reaches a picker, so there is no queue to report and
+ * the refusal is the outcome.
+ */
+export type ConversionStartOutcome =
+  | { readonly outcome: "converted"; readonly update: WorkspaceConversionUpdate }
+  | { readonly outcome: "refused"; readonly error: PreviewError };
 
 /**
  * Whether one queue item's latest attempt actually judged an output.

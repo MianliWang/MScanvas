@@ -11,8 +11,12 @@
 //! is a request to show a picker, not a path the webview names.
 
 mod adoption;
+/// Which installation this session is bound to, as the typed state ADR 0044
+/// replaces `installationGeneration` with.
+mod authority;
 pub mod backend;
 mod chromatogram;
+mod configuration;
 mod conversion;
 mod destination;
 /// Redacted, bounded diagnostics for the attempts a terminal queue could not

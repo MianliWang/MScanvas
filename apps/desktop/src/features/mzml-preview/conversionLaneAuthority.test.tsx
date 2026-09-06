@@ -50,6 +50,7 @@ import {
   createFakePreviewApi,
   createFakeWorkspaceDropTransport,
   deferred,
+  planIdentity,
   queueItem,
   queueOf,
   selectedFile,
@@ -139,9 +140,17 @@ function reasonsOnScreen(): string[] {
   );
 }
 
+/**
+ * The sentence the shared notice carries, which is the *fact's* and not either
+ * control's.
+ *
+ * `Convert` and the rerun both reach this refusal, and a notice phrased about
+ * converting would describe the settings retry -- which also points at it --
+ * as something it is not. The action-phrased text stays on
+ * `ConversionAvailability.message`, where the control that asked for it lives.
+ */
 const BACKEND_REASON =
-  "Converting needs ProteoWizard, and this session has no usable backend. " +
-  "See the backend status above.";
+  "This session has no usable ProteoWizard backend. See the backend status above.";
 
 describe("the conversion lane's one authority, as it ships", () => {
   it("refuses a second activation inside the commit that dispatched the first", async () => {
@@ -259,7 +268,7 @@ describe("the conversion lane's one authority, as it ships", () => {
       api.publishConversion(retryableQueue(2));
     });
     act(() => {
-      workspace.result.current.conversion.convert([vendorRow.handle]);
+      workspace.result.current.conversion.convert(planIdentity([vendorRow.handle]));
     });
     expect(api.conversionRequests).toHaveLength(1);
 
@@ -274,7 +283,7 @@ describe("the conversion lane's one authority, as it ships", () => {
     // And the claim stands through it, so the operation still refuses.
     expect(workspace.result.current.conversion.lane.laneClaimed).toBe(true);
     await act(async () => {
-      workspace.result.current.conversion.convert([vendorRow.handle]);
+      workspace.result.current.conversion.convert(planIdentity([vendorRow.handle]));
       await Promise.resolve();
     });
     expect(api.conversionRequests).toHaveLength(1);
@@ -504,7 +513,7 @@ describe("the conversion lane's one authority, as it ships", () => {
       // The operation refuses, from the facts as they stand rather than from
       // the render the closure was made in.
       await act(async () => {
-        workspace.result.current.conversion.convert([vendorRow.handle]);
+        workspace.result.current.conversion.convert(planIdentity([vendorRow.handle]));
         await Promise.resolve();
       });
       expect(api.conversionRequests, scenario.name).toEqual([]);

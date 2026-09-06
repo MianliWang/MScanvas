@@ -12,9 +12,20 @@ import {
   availableBackend,
   buildPreview,
   buildSpectrum,
+  completeCatalog,
   selectedFile,
   shimadzuDataset,
+  shippedIntent,
 } from "../../apps/desktop/src/test/previewFixtures";
+
+/**
+ * The binding every answer in this table describes.
+ *
+ * One value, because a table that stamped two would be modelling a session that
+ * had changed installation halfway through its own mount -- and every currency
+ * rule in the application would then be right to discard something.
+ */
+export const SETTLED_AUTHORITY = availableBackend.authority;
 
 /** The vendor acquisition the export must never follow focus onto. */
 export const VENDOR_ROW = shimadzuDataset(9);
@@ -220,14 +231,39 @@ export function ipcTable(
       capacity: FAKE_WORKSPACE_CAPACITY,
     },
     subscribe_workspace_drop_updates: null,
+    // The conversion slot, and the authority it is answered under. Every
+    // response in this shape carries the projection -- the poll included, which
+    // is the session's only voice while a drain runs -- so a table that omitted
+    // it would be modelling a wire shape Rust does not produce, and would leave
+    // the acceptance path this milestone rests on untested in the browser.
     get_workspace_conversion_state: {
       sequence: 0,
       state: { status: "idle" },
       diagnostics: { available: false, itemCount: 0, exporting: false, lastExport: null },
       backendQuarantined: false,
+      authority: SETTLED_AUTHORITY,
     },
     open_mzml_preview: buildPreview(6),
-    load_selected_spectrum: { outcome: "spectrum", spectrum },
+    // Every operation that can observe or replace the installation authority
+    // answers in this shape -- the projection beside the outcome -- so a table
+    // that answered with the bare outcome would be answering a contract this
+    // application no longer speaks.
+    load_selected_spectrum: {
+      authority: SETTLED_AUTHORITY,
+      outcome: { outcome: "spectrum", spectrum },
+    },
+    // The conversion settings for the binding above. Asked on mount by every
+    // session that renders a binding, so a table without it leaves the panel
+    // with an unread catalog and no plan to describe.
+    read_conversion_configuration: {
+      authority: SETTLED_AUTHORITY,
+      configuration: {
+        configuration: "ready",
+        catalog: completeCatalog,
+        shipped: shippedIntent.id,
+      },
+      outcome: { outcome: "answered" },
+    },
     // The m/z viewport's read of the same retained spectrum. Answered here
     // because the boundary rejects an unmocked command, and every selection of
     // a spectrum with an admitted domain asks for the drawing of its full

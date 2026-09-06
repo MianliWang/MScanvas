@@ -16,6 +16,8 @@
  * both directions.
  */
 
+import type { ConversionStartPlan } from "./conversionPlanAuthority";
+
 /**
  * The lane facts every conversion action shares.
  *
@@ -53,6 +55,20 @@ export interface ConversionLane {
    * than one of them waiting for a read.
    */
   readonly laneClaimed: boolean;
+  /**
+   * Whether a conversion-configuration read owns the lane.
+   *
+   * One `msconvert --help` read of this build's option grammar has been
+   * admitted and has not yet settled. It is backend process work like any
+   * other, so Rust's gate refuses a conversion while it runs and this is what
+   * stops the interface offering one first (ADR 0044 Decision 10).
+   *
+   * It says that and nothing more. Whether the configuration is loading,
+   * unavailable, or may be read at all are three other questions with three
+   * other owners -- and *may a probe start* is
+   * `ConversionConfigurationProbeAdmission`'s, never this field's.
+   */
+  readonly configurationProbing: boolean;
   /** Whether an adoption of a terminal queue's outputs is under way. */
   readonly adopting: boolean;
   /** Whether a diagnostics export is under way, whichever document asked. */
@@ -75,6 +91,17 @@ export type ConversionAction =
       readonly kind: "start";
       /** How many convertible rows the queue would hold. */
       readonly targetCount: number;
+      /**
+       * What the plan contributes.
+       *
+       * A start is an action on a *described* conversion: the reader presses
+       * `Convert` beside a summary, and what runs must be what that summary
+       * described. So the plan is part of the target rather than a second
+       * condition beside this rule -- a control that consulted the lane here
+       * and the plan somewhere else is exactly how the button and the sentence
+       * beneath it come to answer different questions.
+       */
+      readonly plan: ConversionStartPlan;
     }
   | {
       readonly kind: "retry";
@@ -97,10 +124,15 @@ export type ConversionUnavailableReason =
   | "backend-unavailable"
   | "conversion-running"
   | "preview-running"
+  | "configuration-probing"
   | "adoption-running"
   | "diagnostics-exporting"
   | "workspace-settling"
   | "no-convertible-target"
+  | "plan-reading"
+  | "plan-failed"
+  | "plan-settings-unknown"
+  | "plan-selection-unavailable"
   | "queue-not-retryable"
   | "nothing-to-retry";
 
@@ -146,12 +178,27 @@ const CONVERSION_MESSAGES: Record<ConversionUnavailableReason, string> = {
     "See the backend status above.",
   "conversion-running": "Converting is unavailable while a conversion is running.",
   "preview-running": "Converting is unavailable while a run is being read.",
+  "configuration-probing":
+    "Converting is unavailable while MSCanvas is reading the conversion options from ProteoWizard.",
   "adoption-running":
     "Converting is unavailable while converted outputs are being added to the workspace.",
   "diagnostics-exporting":
     "Converting is unavailable while failure diagnostics are being saved.",
   "workspace-settling": "Converting is unavailable while the file list is being changed.",
   "no-convertible-target": "Select or focus a supported vendor acquisition to convert.",
+  // Three sentences for three situations a single "no plan" could not tell
+  // apart, and the difference is what the reader can do. One is a wait, one is
+  // a control to press, and one is a change to make above.
+  "plan-reading": "MSCanvas is working out what this conversion would do.",
+  "plan-failed":
+    "MSCanvas could not work out what this conversion would do. " +
+    "Try describing it again.",
+  "plan-settings-unknown":
+    "MSCanvas does not yet know what this ProteoWizard installation can convert, " +
+    "so it cannot describe this conversion. See the conversion settings above.",
+  "plan-selection-unavailable":
+    "The installed ProteoWizard does not offer the conversion settings you chose, " +
+    "so there is nothing to convert with. Choose settings it offers above.",
   "queue-not-retryable":
     "A stopped queue is not rerun in place. Convert those acquisitions again from the list.",
   "nothing-to-retry": "Nothing in this queue would change on another attempt.",
@@ -174,9 +221,17 @@ const CONVERSION_MESSAGES: Record<ConversionUnavailableReason, string> = {
  *    every time it is looked at;
  * 3. a settled verdict this session will not launch against, which needs the
  *    reader to change something;
- * 4. the four things that end by themselves, longest first: a conversion, a
- *    run being read, an adoption, a diagnostics export, a change to the file
- *    list;
+ * 4. the things that end by themselves. The three that own a backend process
+ *    first, longest-lived first -- a conversion, a run being read, a
+ *    configuration probe -- and then the three that own none: an adoption, a
+ *    diagnostics export, a change to the file list. The probe sits below the
+ *    other two process owners rather than above them because
+ *    `ConversionConfigurationProbeAdmission` consults these same facts in this
+ *    same order and puts probe-in-flight last (ADR 0044 Decision 11), and
+ *    Decision 12 requires the two authorities to name a contended moment
+ *    identically: admission's order must stay a subsequence of this one, or a
+ *    moment keyed `conversion-running` by the lane could be keyed
+ *    `preview-running` by admission and emit two notices for one fact;
  * 5. the target. Last, because "select something to convert" said while a
  *    conversion is running is a true sentence about the wrong problem.
  *
@@ -213,6 +268,9 @@ function unavailableReason(
   if (lane.previewReading) {
     return "preview-running";
   }
+  if (lane.configurationProbing) {
+    return "configuration-probing";
+  }
   if (lane.adopting) {
     return "adoption-running";
   }
@@ -235,12 +293,45 @@ function unavailableReason(
 function targetReason(action: ConversionAction): ConversionUnavailableReason | null {
   switch (action.kind) {
     case "start":
-      return action.targetCount === 0 ? "no-convertible-target" : null;
+      // The rows first: "MSCanvas is working out what this conversion would
+      // do" said over an empty selection is a true sentence about the wrong
+      // problem, and the plan is `absent` for exactly that case anyway.
+      if (action.targetCount === 0) {
+        return "no-convertible-target";
+      }
+      return planReason(action.plan);
     case "retry":
       if (!action.queueCompleted) {
         return "queue-not-retryable";
       }
       return action.retryableFailureCount === 0 ? "nothing-to-retry" : null;
+  }
+}
+
+/**
+ * Why the plan refuses a start, or `null` where it does not.
+ *
+ * Exhaustive over the plan's own vocabulary rather than over booleans, so a
+ * state added to the machine cannot reach the end of this function without a
+ * sentence of its own.
+ */
+function planReason(plan: ConversionStartPlan): ConversionUnavailableReason | null {
+  switch (plan) {
+    case "ready":
+      return null;
+    case "reading":
+      return "plan-reading";
+    case "failed":
+      return "plan-failed";
+    case "settingsUnknown":
+      return "plan-settings-unknown";
+    case "selectionUnavailable":
+      return "plan-selection-unavailable";
+    case "absent":
+      // Rows were asked about and the plan says none were. Unreachable past
+      // the count above, and answered here rather than left to fall through:
+      // a target reason is what an action with nothing to act on is short of.
+      return "no-convertible-target";
   }
 }
 
@@ -251,8 +342,12 @@ function targetReason(action: ConversionAction): ConversionUnavailableReason | n
  * that offers it evaluate the same code rather than two expressions that
  * merely looked alike.
  */
-export function canStartConversion(lane: ConversionLane, targetCount: number): boolean {
-  return conversionAvailability(lane, { kind: "start", targetCount }).status === "available";
+export function canStartConversion(
+  lane: ConversionLane,
+  targetCount: number,
+  plan: ConversionStartPlan,
+): boolean {
+  return conversionAvailability(lane, { kind: "start", targetCount, plan }).status === "available";
 }
 
 /**

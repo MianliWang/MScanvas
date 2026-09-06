@@ -8,13 +8,15 @@ use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use mscanvas_proteowizard::{
-    AvailabilityState, ConfiguredLocation, DiscoveryRequest, InstalledHelpCapabilities,
-    LaunchFailureKind, MAX_PREVIEW_TEXT_BYTES, OpenFormat, OutputEntryKind, PreviewInterpretError,
-    PreviewOperation, PreviewOutcome, PreviewOutputEntry, PreviewOutputManifest, ProcessError,
-    ProcessRunner, Redactor, SystemProcessRunner, build_msaccess_command_with_capabilities,
-    discover, execute, interpret_preview, snapshot_output_directory,
+    AvailabilityState, ConfiguredLocation, DiscoveryRequest, DiscoveryResult,
+    InstalledHelpCapabilities, LaunchFailureKind, MAX_PREVIEW_TEXT_BYTES, OpenFormat,
+    OutputEntryKind, PreviewInterpretError, PreviewOperation, PreviewOutcome, PreviewOutputEntry,
+    PreviewOutputManifest, ProcessError, ProcessRunner, Redactor, SystemProcessRunner,
+    build_msaccess_command_with_capabilities, discover, execute, interpret_preview,
+    snapshot_output_directory,
 };
 
+use super::authority::PreviewAvailability;
 use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, MAX_BACKEND_LABEL_CHARS, PreviewErrorDto,
     bounded_text, redact_absolute_paths,
@@ -34,6 +36,12 @@ use super::installation::{InstallationIdentity, classify_chosen_folder};
 /// to name one.
 pub struct OperationAttempt {
     pub installation: Option<InstallationIdentity>,
+    /// The preview verdict for that same installation, from the same discovery.
+    ///
+    /// Here for ADR 0044's Decision 1: an attempt names a binding, and a
+    /// binding must never reach the authority without a judgement about it.
+    /// The resolution that produced the identity already computed this.
+    pub preview_availability: PreviewAvailability,
     pub outcome: Result<PreviewOutcome, PreviewErrorDto>,
 }
 
@@ -45,12 +53,18 @@ pub trait PreviewProvider: Send + Sync {
     ///
     /// The identity is returned beside the transfer object rather than inside
     /// it, because it is made of absolute paths and filesystem identities that
-    /// must not reach the webview. It is `None` when nothing resolved, which a
-    /// comparison must read as different from any installation rather than as
-    /// a match.
+    /// must not reach the webview. It is `Some` exactly when the discovery was
+    /// `AvailabilityState::Available` -- **not** when the preview verdict is
+    /// usable, which is a narrower thing and belongs in the verdict. A `None`
+    /// identity therefore means "this session is bound to no installation", and
+    /// a comparison must read it as different from any installation rather than
+    /// as a match.
     ///
     /// Both come from one resolution on purpose: asking twice would let the
-    /// verdict describe one installation and the identity another.
+    /// verdict describe one installation and the identity another. Keeping them
+    /// separate at *this* boundary is ADR 0044's Decision 1 -- a build can be
+    /// bound and not previewable, and one fact must not be able to erase the
+    /// other.
     fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>);
 
     /// Runs one preview operation against one already-validated source file.
@@ -89,6 +103,40 @@ pub trait PreviewProvider: Send + Sync {
     /// make impossible.
     fn use_installation(&self, home: Option<PathBuf>);
 
+    /// Resolves the installation and reads its conversion grammar, in one
+    /// discovery.
+    ///
+    /// Total: every outcome is a reading rather than an error, because each of
+    /// them is news the configuration lifecycle has a state for. What is *not*
+    /// here is the decision about what that state should be -- this reports
+    /// what the build is, and `configuration.rs` decides what that means.
+    ///
+    /// The default is the counterpart of [`Self::conversion_backend`]'s: a
+    /// provider that cannot convert still binds an installation, and its
+    /// configuration is therefore a build whose grammar cannot be used rather
+    /// than an absent build. Deriving the binding from `availability` rather
+    /// than assuming one keeps the two answers from disagreeing about whether
+    /// there is an installation at all.
+    fn read_conversion_configuration(&self) -> ConfigurationReading {
+        let (verdict, installation) = self.availability();
+        let installed = verdict.state == "available";
+        ConfigurationReading {
+            preview_availability: if installed {
+                PreviewAvailability::Usable
+            } else {
+                PreviewAvailability::Unusable
+            },
+            conversion: installed.then(|| {
+                Err(PreviewErrorDto::new(
+                    "conversion_unsupported",
+                    "This backend cannot convert acquisitions.",
+                    false,
+                ))
+            }),
+            installation: installed.then_some(installation).flatten(),
+        }
+    }
+
     /// Binds what one conversion needs from the currently installed backend.
     ///
     /// Not a [`PreviewOperation`], deliberately. A conversion reads a different
@@ -104,16 +152,144 @@ pub trait PreviewProvider: Send + Sync {
     /// from another and a runner belonging to neither would let a conversion be
     /// gated on the evidence of a build it did not run on.
     ///
-    /// The default refuses. A provider that has not been taught to convert must
-    /// say so, because the alternative -- inheriting some other provider's
-    /// backend -- is how a test double ends up launching a real process.
-    fn conversion_backend(&self) -> Result<ConversionBackend<'_>, PreviewErrorDto> {
-        Err(PreviewErrorDto::new(
-            "conversion_unsupported",
-            "This backend cannot convert acquisitions.",
-            false,
-        ))
+    /// The default binds nothing and observes nothing. A provider that has not
+    /// been taught to convert must say so, because the alternative --
+    /// inheriting some other provider's backend -- is how a test double ends up
+    /// launching a real process. It resolves no installation either, so the
+    /// attempt it returns carries no observation to record.
+    fn conversion_backend(&self) -> ConversionBackendAttempt<'_> {
+        ConversionBackendAttempt {
+            // Nothing was looked for, so nothing was found. Reporting an
+            // absence here would tell the session it is bound to no
+            // installation on the evidence of a provider that never looked.
+            observed: None,
+            bound: Err(PreviewErrorDto::new(
+                "conversion_unsupported",
+                "This backend cannot convert acquisitions.",
+                false,
+            )),
+        }
     }
+}
+
+/// Whether a discovery's installation can preview.
+///
+/// One function, because two callers need the same answer from the same
+/// `DiscoveryResult` and ADR 0044's Decision 1 turns on their agreeing:
+/// `availability` reports it as the session's verdict, and `bind_help_of`
+/// carries it beside a binding a conversion resolved, so that binding never
+/// arrives without a judgement about it.
+///
+/// Availability answers "can this installation produce a preview", not "does an
+/// executable exist" and not "does its help parse". Reading the help is not
+/// enough: the exact query grammars MSCanvas plans against are what a file
+/// actually needs, so every operation it will ask for is required here rather
+/// than failing one file at a time later.
+fn preview_verdict(discovery: &DiscoveryResult) -> PreviewAvailability {
+    let usable = discovery.availability == AvailabilityState::Available
+        && InstalledHelpCapabilities::from_discovered_tool(&discovery.msaccess).is_ok_and(
+            |capabilities| {
+                required_operations()
+                    .iter()
+                    .all(|operation| capabilities.require_preview_operation(operation).is_ok())
+            },
+        );
+    if usable {
+        PreviewAvailability::Usable
+    } else {
+        PreviewAvailability::Unusable
+    }
+}
+
+/// What one configuration read's own discovery established.
+///
+/// Three facts from one `discover()`, kept apart because the configuration
+/// lifecycle lands on a different state for each. Collapsing them the way
+/// `bind_help_of` does -- one `Err` for "no installation" and for "the help
+/// will not parse" -- would route a replaced binding through `Failed`, offering
+/// the reader a retry for a build that is not there.
+pub struct ConfigurationReading {
+    /// `Some` only where the discovery was `Available`, so the binding this
+    /// mints and the grammar below it cannot disagree about whether there is an
+    /// installation.
+    pub installation: Option<InstallationIdentity>,
+    /// The preview verdict from that same discovery, so this read delivers a
+    /// binding with a judgement about it like every other observer.
+    pub preview_availability: PreviewAvailability,
+    /// The msconvert grammar, or why it cannot be used.
+    ///
+    /// `None` where there is no installation to have one -- which is an answer
+    /// about the binding rather than a failed read.
+    pub conversion: Option<Result<InstalledHelpCapabilities, PreviewErrorDto>>,
+}
+
+/// One resolution of one installed tool, kept total.
+///
+/// Private, because it is the shape the provider's own discoveries produce
+/// rather than anything the service is offered: the service sees a
+/// [`ConversionBackendAttempt`] or a narrowed `Result`, never this.
+struct ToolResolution {
+    installation: Option<InstallationIdentity>,
+    preview_availability: PreviewAvailability,
+    capabilities: Result<InstalledHelpCapabilities, PreviewErrorDto>,
+}
+
+/// One conversion resolution: what it observed, and what it bound.
+///
+/// Total, and that is the whole of why it exists. Resolution can fail for
+/// reasons that arrive *after* a build has been named -- help that will not
+/// parse, a grammar that cannot express an mzML conversion -- and a `?` over
+/// those propagates the failure while dropping the one fact that says which
+/// installation this session is now on. [ADR 0044] ledger rows 9 and 16 are
+/// both that shape, at `BEGIN` and at the drain, and both are closed by the
+/// observation living outside the `Result` rather than inside it.
+///
+/// The pairing is Decision 1's: an installation never arrives without the
+/// verdict about it, so the two travel together and neither can be recorded
+/// without the other.
+///
+/// [ADR 0044]: ../../../../../docs/architecture/adr/0044-conversion-configuration-authority.md
+pub struct ConversionBackendAttempt<'a> {
+    /// What this resolution's discovery established, or `None` where it never
+    /// reached one.
+    ///
+    /// The distinction is [ADR 0044]'s and it is load-bearing at `BEGIN`. A
+    /// discovery that *runs* always answers -- `Available`, `Partial` or
+    /// `Unavailable`, each of which mints a binding -- so an absence it found
+    /// is an observation like any other and replaces the receipt before it. A
+    /// resolution that answered without reaching a discovery observed nothing,
+    /// and the authority must stay exactly as it was rather than record an
+    /// absence nothing looked for.
+    pub observed: Option<ResolvedInstallation>,
+    /// The build's conversion binding, or why this build has none.
+    pub bound: Result<ConversionBackend<'a>, PreviewErrorDto>,
+}
+
+impl ConversionBackendAttempt<'_> {
+    /// Which installation this resolution bound the session to, where it bound
+    /// one.
+    ///
+    /// `None` for both an observed absence and a resolution that never looked,
+    /// which is the right answer for the caller that asks: a queue's identity
+    /// is a statement about the build its items ran on, and neither of those is
+    /// one.
+    pub fn installed(&self) -> Option<InstallationIdentity> {
+        self.observed
+            .as_ref()
+            .and_then(|observed| observed.installed.clone())
+    }
+}
+
+/// What one discovery established, as a pair that cannot be split.
+///
+/// Decision 1: a binding never arrives without the verdict about it, because
+/// both are read out of the one `DiscoveryResult` the resolution already holds.
+pub struct ResolvedInstallation {
+    /// `Some` exactly where the discovery was `AvailabilityState::Available`,
+    /// which is the rule every observer mints a binding by. `None` here is an
+    /// observed absence: a discovery ran and found no installation.
+    pub installed: Option<InstallationIdentity>,
+    pub preview_availability: PreviewAvailability,
 }
 
 /// One binding of the installed backend, for one conversion.
@@ -122,6 +298,11 @@ pub trait PreviewProvider: Send + Sync {
 /// the process a conversion launches is the one its provider owns: production
 /// runs the reviewed system runner, and a test double runs whatever it was
 /// built with, without either being able to reach the other's.
+///
+/// It carries no installation and no verdict. Those are the *attempt*'s, which
+/// holds them whether or not this binding was made -- and a copy here would be
+/// a second place to read them from, reachable only on the path where nothing
+/// went wrong.
 pub struct ConversionBackend<'a> {
     /// Capability evidence read from the installed `msconvert`'s own help.
     ///
@@ -130,8 +311,6 @@ pub struct ConversionBackend<'a> {
     /// and the build evidence a conversion is gated on is a statement about
     /// this one.
     pub capabilities: InstalledHelpCapabilities,
-    /// Which installation the capabilities above were read from.
-    pub installation: Option<InstallationIdentity>,
     /// The execution boundary the conversion's process goes through.
     pub runner: &'a dyn ProcessRunner,
 }
@@ -189,7 +368,14 @@ impl ProteoWizardProvider {
     /// a later look happens to resolve.
     fn bind_capabilities(
         &self,
-    ) -> Result<(InstalledHelpCapabilities, Option<InstallationIdentity>), PreviewErrorDto> {
+    ) -> Result<
+        (
+            InstalledHelpCapabilities,
+            Option<InstallationIdentity>,
+            PreviewAvailability,
+        ),
+        PreviewErrorDto,
+    > {
         self.bind_help_of(BoundTool::Msaccess)
     }
 
@@ -202,38 +388,83 @@ impl ProteoWizardProvider {
     fn bind_help_of(
         &self,
         tool: BoundTool,
-    ) -> Result<(InstalledHelpCapabilities, Option<InstallationIdentity>), PreviewErrorDto> {
+    ) -> Result<
+        (
+            InstalledHelpCapabilities,
+            Option<InstallationIdentity>,
+            PreviewAvailability,
+        ),
+        PreviewErrorDto,
+    > {
+        let resolution = self.resolve(tool);
+        let capabilities = resolution.capabilities?;
+        Ok((
+            capabilities,
+            resolution.installation,
+            resolution.preview_availability,
+        ))
+    }
+
+    /// The one discovery, kept whole.
+    ///
+    /// Total on purpose, and the shape every caller narrows from rather than
+    /// the other way round: a resolution that names a build and then fails to
+    /// read its grammar has still *observed* that build, and a signature that
+    /// can only return one or the other is what makes that observation
+    /// droppable. [`Self::bind_help_of`] narrows it for the preview callers
+    /// that have no authority to record; `conversion_backend` keeps it whole
+    /// because it does.
+    fn resolve(&self, tool: BoundTool) -> ToolResolution {
         let request = self.request();
         let configured = configured_home(&request);
         let discovery = discover(&request);
-        if discovery.availability != AvailabilityState::Available {
-            return Err(unavailable_error(configured.as_deref(), &discovery.failure));
+        // Minted from `Available` and from nothing else, exactly as
+        // `availability` mints it: `InstallationIdentity::of` answers for a
+        // `Partial` folder too, and admitting one here would bind the session
+        // to a build no other observer calls installed.
+        let installed = discovery.availability == AvailabilityState::Available;
+        // Computed from this same discovery whatever it found, so a binding
+        // never travels without the judgement about it. A discovery that
+        // resolved nothing is `Unusable`, which is what `preview_verdict`
+        // already answers.
+        let preview_availability = preview_verdict(&discovery);
+        if !installed {
+            return ToolResolution {
+                installation: None,
+                preview_availability,
+                capabilities: Err(unavailable_error(configured.as_deref(), &discovery.failure)),
+            };
         }
-        let identity = InstallationIdentity::of(&discovery);
         let discovered = match tool {
             BoundTool::Msaccess => &discovery.msaccess,
             BoundTool::Msconvert => &discovery.msconvert,
         };
-        let capabilities =
-            InstalledHelpCapabilities::from_discovered_tool(discovered).map_err(|_| {
-                PreviewErrorDto::new(
-                    "capability_evidence_unavailable",
-                    "The installed ProteoWizard did not describe the commands MSCanvas needs.",
-                    false,
-                )
-            })?;
-        Ok((capabilities, identity))
+        ToolResolution {
+            installation: InstallationIdentity::of(&discovery),
+            preview_availability,
+            capabilities: InstalledHelpCapabilities::from_discovered_tool(discovered).map_err(
+                |_| {
+                    PreviewErrorDto::new(
+                        "capability_evidence_unavailable",
+                        "The installed ProteoWizard did not describe the commands MSCanvas needs.",
+                        false,
+                    )
+                },
+            ),
+        }
     }
 
     /// The operation as an attempt, so a failure still names what ran it.
     fn run_bound(
         capabilities: &InstalledHelpCapabilities,
         installation: Option<&InstallationIdentity>,
+        preview_availability: PreviewAvailability,
         source: &Path,
         operation: &PreviewOperation,
     ) -> OperationAttempt {
         OperationAttempt {
             installation: installation.cloned(),
+            preview_availability,
             outcome: Self::execute_bound(capabilities, source, operation),
         }
     }
@@ -272,29 +503,78 @@ impl PreviewProvider for ProteoWizardProvider {
         }
     }
 
-    fn conversion_backend(&self) -> Result<ConversionBackend<'_>, PreviewErrorDto> {
-        let (capabilities, installation) = self.bind_help_of(BoundTool::Msconvert)?;
-        // The option grammar the plan will be built against, required here so a
-        // build that cannot express the conversion is refused while nothing has
-        // been created yet. Planning against absent options would otherwise fail
-        // after a staging directory existed, which is a worse place to find out
-        // and a harder one to describe.
-        capabilities
-            .require_conversion(OpenFormat::MzMl)
-            .map_err(|_| {
-                PreviewErrorDto::new(
-                    "conversion_capability_unavailable",
-                    "The installed ProteoWizard cannot convert to mzML.",
-                    false,
-                )
-            })?;
-        Ok(ConversionBackend {
-            capabilities,
+    fn read_conversion_configuration(&self) -> ConfigurationReading {
+        let discovery = discover(self.request());
+        let preview_availability = preview_verdict(&discovery);
+        // Both halves of "there is an installation" are decided here, together.
+        // `AvailabilityState::Available` is the authority's rule for minting an
+        // installed binding; `InstallationIdentity::of` answers a different
+        // question and is `Some` for a `Partial` build too. Requiring both, in
+        // one place, is what stops a reading that names no installation from
+        // arriving with a grammar for one.
+        let installation = (discovery.availability == AvailabilityState::Available)
+            .then(|| InstallationIdentity::of(&discovery))
+            .flatten();
+        if installation.is_none() {
+            return ConfigurationReading {
+                installation: None,
+                preview_availability,
+                conversion: None,
+            };
+        }
+        ConfigurationReading {
             installation,
-            // A unit value with no state to carry, so one shared reference is
-            // the whole of it.
-            runner: &SystemProcessRunner,
-        })
+            preview_availability,
+            conversion: Some(
+                InstalledHelpCapabilities::from_discovered_tool(&discovery.msconvert).map_err(
+                    |_| {
+                        PreviewErrorDto::new(
+                            "capability_evidence_unavailable",
+                            "The installed ProteoWizard did not describe the commands MSCanvas \
+                             needs.",
+                            false,
+                        )
+                    },
+                ),
+            ),
+        }
+    }
+
+    fn conversion_backend(&self) -> ConversionBackendAttempt<'_> {
+        let resolution = self.resolve(BoundTool::Msconvert);
+        // Whatever the binding below does, this resolution's own observation
+        // stands. A build named and then refused for its grammar is still the
+        // build this session is on, and the caller records it before it looks
+        // at the refusal.
+        ConversionBackendAttempt {
+            observed: Some(ResolvedInstallation {
+                installed: resolution.installation,
+                preview_availability: resolution.preview_availability,
+            }),
+            bound: resolution.capabilities.and_then(|capabilities| {
+                // The option grammar the plan will be built against, required
+                // here so a build that cannot express the conversion is refused
+                // while nothing has been created yet. Planning against absent
+                // options would otherwise fail after a staging directory
+                // existed, which is a worse place to find out and a harder one
+                // to describe.
+                capabilities
+                    .require_conversion(OpenFormat::MzMl)
+                    .map_err(|_| {
+                        PreviewErrorDto::new(
+                            "conversion_capability_unavailable",
+                            "The installed ProteoWizard cannot convert to mzML.",
+                            false,
+                        )
+                    })?;
+                Ok(ConversionBackend {
+                    capabilities,
+                    // A unit value with no state to carry, so one shared
+                    // reference is the whole of it.
+                    runner: &SystemProcessRunner,
+                })
+            }),
+        }
     }
 
     fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
@@ -308,18 +588,22 @@ impl PreviewProvider for ProteoWizardProvider {
         // help is not enough: the exact query grammars MSCanvas plans against
         // are what a file actually needs, so every operation it will ask for is
         // required here rather than failing one file at a time later.
-        let usable = discovered
-            && InstalledHelpCapabilities::from_discovered_tool(&discovery.msaccess).is_ok_and(
-                |capabilities| {
-                    required_operations()
-                        .iter()
-                        .all(|operation| capabilities.require_preview_operation(operation).is_ok())
-                },
-            );
-        // Only what actually resolved counts as an identity. An unusable
-        // installation is not one this preview could have come from, so it must
-        // not compare equal to anything.
-        let identity = usable
+        let usable = preview_verdict(&discovery).is_usable();
+        // Minted from `Available`, not from `usable`, which is ADR 0044's
+        // Decision 1. Folding the preview verdict into the identity gave the
+        // session two answers to "which build am I bound to": `bind_help_of`
+        // takes the identity whenever the discovery is `Available`, and this
+        // took it only when msaccess's grammar also admitted every preview
+        // operation -- so a build that is `Available` with one required preview
+        // operation missing was `Installed` to the catalog read and
+        // `NoInstallation` to the backend check, and the binding oscillated
+        // between them, revoking the catalog on every cycle.
+        //
+        // The comment this replaces was right about what it was defending --
+        // an unusable installation is not one a *preview* could have come from
+        // -- and that is a statement about the verdict, which still travels,
+        // beside the identity rather than inside it.
+        let identity = discovered
             .then(|| InstallationIdentity::of(&discovery))
             .flatten();
         let availability = BackendAvailabilityDto {
@@ -331,7 +615,6 @@ impl PreviewProvider for ProteoWizardProvider {
             origin: if chosen { "chosen" } else { "automatic" }.to_owned(),
             // Stamped by the service, which owns the gate this was served
             // under and so is the only place that knows the sequence.
-            installation_generation: 0,
             release: discovery.release.as_deref().map(backend_label),
             build_date: discovery.build_date.as_deref().map(backend_label),
             same_installation: discovery.same_installation,
@@ -364,10 +647,11 @@ impl PreviewProvider for ProteoWizardProvider {
         source: &Path,
         operation: &PreviewOperation,
     ) -> Result<OperationAttempt, PreviewErrorDto> {
-        let (capabilities, installation) = self.bind_capabilities()?;
+        let (capabilities, installation, preview_availability) = self.bind_capabilities()?;
         Ok(Self::run_bound(
             &capabilities,
             installation.as_ref(),
+            preview_availability,
             source,
             operation,
         ))
@@ -378,10 +662,16 @@ impl PreviewProvider for ProteoWizardProvider {
         source: &Path,
         operations: &[PreviewOperation],
     ) -> Result<Vec<OperationAttempt>, PreviewErrorDto> {
-        let (capabilities, installation) = self.bind_capabilities()?;
+        let (capabilities, installation, preview_availability) = self.bind_capabilities()?;
         let mut attempts = Vec::with_capacity(operations.len());
         for operation in operations {
-            let attempt = Self::run_bound(&capabilities, installation.as_ref(), source, operation);
+            let attempt = Self::run_bound(
+                &capabilities,
+                installation.as_ref(),
+                preview_availability,
+                source,
+                operation,
+            );
             let failed = attempt.outcome.is_err();
             // The failed attempt is kept, because it still names the backend
             // that ran -- but nothing after it is started. Every operation here

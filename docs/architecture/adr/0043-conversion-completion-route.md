@@ -1,6 +1,6 @@
 # ADR 0043 — Conversion Completion is the next milestone, and this is its route
 
-Status: accepted, amended 2026-09-04
+Status: accepted, amended 2026-09-04 and 2026-09-06
 Date: 2026-09-01
 Related: [0002](0002-external-proteowizard.md),
 [0009](0009-mzml-conversion-execution-boundary.md),
@@ -949,6 +949,27 @@ queue. A lossy processing choice is marked lossy where the user chooses it.
 cancellation change.
 
 *Downstream:* M6.5.
+
+*Delivered 2026-09-06, as a replacement implementation.* Every acceptance clause
+above holds: each control traces to an evidence row, availability is a property
+of the admitted row and an unrunnable combination is refused once naming the
+combination, a one-axis target that is unavailable says so for that target and
+one that is not qualified says that instead, none is shown inert, the summary
+names membership, order, conflict policy and intent, moving a control after
+`BEGIN` changes nothing about the running queue, and unscoped centroiding is
+marked lossy where it is chosen. The reach past the panel landed as described:
+`installationGeneration` is gone from the five contracts that carried it, the
+queue carries its own bound receipt, and every backend-observing answer carries
+one typed authority projection.
+
+Two obligations this route named for M6.4 are carried by [ADR
+0044](0044-conversion-configuration-authority.md)'s own amendments rather than by
+this section, because they are boundary decisions rather than route ones: the
+configuration probe's occupancy of the process lane, and the backend banner's
+recovery when a delivered projection leaves its reading describing a build the
+session has left. The first attempt, `feat/m6.4-visible-conversion-settings` /
+PR #95, is closed as superseded evidence; its findings were addressed by the
+replacement rather than in it.
 
 ### M6.5 — Destination authority
 

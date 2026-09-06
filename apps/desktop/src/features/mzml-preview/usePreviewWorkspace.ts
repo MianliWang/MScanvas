@@ -11,7 +11,10 @@ import {
 import { usePreviewApi } from "./api";
 import type { ConversionOperation } from "./useConversionOperation";
 import { useConversionOperation } from "./useConversionOperation";
+import type { ConversionPlanView } from "./useConversionPlan";
+import { useConversionPlan } from "./useConversionPlan";
 import type {
+  BackendAuthorityProjection,
   BackendAvailability,
   ChromatogramExportFormat,
   ChromatogramRange,
@@ -36,6 +39,21 @@ import type {
   WorkspaceDropUpdate,
   WorkspaceOutputAdoptionResult,
 } from "./contracts";
+import {
+  acceptProjection,
+  backendIsUsable,
+  readingIsSuperseded,
+  receiptOf,
+  type RenderedAuthority,
+} from "./backendAuthority";
+import {
+  useConversionConfiguration,
+  type ConversionConfigurationView,
+} from "./useConversionConfiguration";
+import { useConversionProbeLane } from "./useConversionProbeLane";
+import type { BackendCheckFacts } from "./backendReadingObligation";
+import { readingCheckIsOwed, readingIsStale } from "./backendReadingObligation";
+import { useBackendReadingObligation } from "./useBackendReadingObligation";
 import { toPreviewError } from "./contracts";
 import { describeDropResult } from "./dropNotice";
 import { useWorkspaceDropTransport } from "./dropTransport";
@@ -485,7 +503,34 @@ export interface PreviewWorkspace {
    * hold in their head.
    */
   readonly conversion: ConversionOperation;
+  /**
+   * What conversion semantics are known for the installation this session is
+   * bound to, and what the reader may change about them.
+   *
+   * Beside the operation rather than inside it: the settings describe a build,
+   * the operation runs a queue, and one of them is answerable while the other
+   * is refused.
+   */
+  readonly conversionConfiguration: ConversionConfigurationView;
+  /**
+   * The plan this document is asking about, and what Rust has told it.
+   *
+   * Beside the two above rather than inside either: the settings describe a
+   * build, the operation runs a queue, and the plan is the one question that
+   * spans them -- which rows, under which combination, on which installation.
+   */
+  readonly conversionPlan: ConversionPlanView;
   readonly backend: BackendState;
+  /**
+   * Whether the reading above has stopped describing the session.
+   *
+   * The banner projects from it and the obligation that replaces it reads the
+   * same comparison, so what a reader is told and what MSCanvas owes cannot
+   * come apart. Currency is the authority *revision*, never receipt equality:
+   * a verdict can move on a build that has not changed, and the reading taken
+   * before it is stale about a build it still names correctly.
+   */
+  readonly backendReadingStale: boolean;
   readonly preview: PreviewState;
   readonly spectrum: SpectrumState;
   /**
@@ -980,21 +1025,59 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    */
   const backendUsableRef = useRef(false);
   const showBackend = useCallback((next: BackendState) => {
-    backendUsableRef.current =
-      next.status === "resolved" && next.availability.state === "available";
     setBackend(next);
   }, []);
 
   const backendToken = useRef(0);
   /**
-   * The highest installation generation applied to the banner.
+   * The Rust-authored projection this document has accepted.
    *
-   * Rust decides which verdict is current, because it is where the two commands
-   * are actually ordered. This only refuses anything older than what is already
+   * Two fields, because two questions are asked of it and neither answers the
+   * other. `revision` orders: it refuses anything older than what is already
    * shown, which is what stops a recheck begun before a change from describing
-   * the installation that change replaced.
+   * the installation that change replaced. `receipt` identifies: it says which
+   * binding everything on screen was read from, and a payload naming a
+   * different one is not this session's.
+   *
+   * `null` until the first answer arrives. Nothing rendered means no revision
+   * to be older than, which is how the first projection is installed at all.
+   *
+   * Held twice, deliberately, like every other fact this hook both renders and
+   * guards on: the ref is what a dispatch reads, and the state is what a render
+   * sees. They are written together, so the two are one fact rather than two
+   * that resemble each other.
    */
-  const appliedGeneration = useRef(-1);
+  const renderedAuthority = useRef<RenderedAuthority | null>(null);
+  const [projection, setProjection] = useState<RenderedAuthority | null>(null);
+  /**
+   * Whether this session has stopped trusting the backend.
+   *
+   * Owned here because `backendUsable` is a conjunction that includes it, and
+   * because it used to arrive by accident: the availability reading
+   * short-circuits to `unavailable` when quarantined, and everything derived
+   * from that block inherited the answer without naming it. Sourced from the
+   * authority instead, the conjunct has to be written down -- which is the
+   * point, since a quarantined session's projection is perfectly true about the
+   * build and says nothing about the converter MSCanvas lost track of.
+   */
+  const backendQuarantinedRef = useRef(false);
+  const [backendQuarantined, setBackendQuarantined] = useState(false);
+  /**
+   * Records the projection this document is now rendering.
+   *
+   * The one place `renderedAuthority` and the usability guard are written, so a
+   * new binding can never be on screen with the previous one's permission.
+   */
+  const noteAuthority = useCallback((next: RenderedAuthority) => {
+    renderedAuthority.current = next;
+    backendUsableRef.current = backendIsUsable(next, backendQuarantinedRef.current);
+    setProjection(next);
+  }, []);
+  const noticeQuarantine = useCallback(() => {
+    backendQuarantinedRef.current = true;
+    backendUsableRef.current = false;
+    setBackendQuarantined(true);
+  }, []);
   /**
    * How many installation changes are outstanding.
    *
@@ -1200,6 +1283,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     dispatchRoster({ type: "previewDiscarded" });
   }, [clearVisiblePreview]);
 
+
+/** The failure kind that means the session has lost track of a converter. */
+const QUARANTINED_BACKEND_KIND = "backend_quarantined";
+
   /**
    * The one rule for whether a reply may be shown. Every verdict goes through
    * here; no caller compares anything itself.
@@ -1234,15 +1321,39 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    */
   const applyVerdict = useCallback(
     (availability: BackendAvailability, token: number): boolean => {
-      const generation = availability.installationGeneration;
-      if (generation < appliedGeneration.current) {
-        return false;
+      const rendered = renderedAuthority.current;
+      const incoming = availability.authority;
+      // Ordering first, and by revision alone. An equal revision is the
+      // publication already accepted, so nothing about the session changed --
+      // but the reading beside it may still be the newest one this document
+      // asked for, and the token is what decides that.
+      if (rendered !== null) {
+        if (incoming.revision < rendered.revision) {
+          return false;
+        }
+        if (incoming.revision === rendered.revision && token !== backendToken.current) {
+          return false;
+        }
       }
-      if (generation === appliedGeneration.current && token !== backendToken.current) {
-        return false;
+      // Then identity, which is a different question and asks a different
+      // field. What invalidates everything read from the previous build is the
+      // *binding* being replaced -- not the revision advancing, because a
+      // verdict can move at one receipt and that is news about a build rather
+      // than a different build.
+      const arrived = acceptProjection(rendered, incoming);
+      const changed = arrived.accepted && arrived.bindingReplaced;
+      noteAuthority(incoming);
+      // Quarantine reaches this document on two carriers and they are one Rust
+      // fact: the conversion state, where an unconfirmed stop sets it, and a
+      // reading, whose `backend_quarantined` failure no other reading carries.
+      // A reload that rechecks the backend before it polls the slot learns it
+      // here. Monotonic, so two carriers cannot disagree -- and it is the
+      // *session* fact rather than the reading's verdict, which stays
+      // perfectly true about the build and says nothing about a converter
+      // process MSCanvas has lost track of.
+      if (availability.failure?.kind === QUARANTINED_BACKEND_KIND) {
+        noticeQuarantine();
       }
-      const changed = generation > appliedGeneration.current && appliedGeneration.current >= 0;
-      appliedGeneration.current = generation;
       showBackend({ status: "resolved", availability });
       // Not while an open is in flight. That open has already emptied the
       // screen and is about to fill it, and its reply is judged on its own
@@ -1253,7 +1364,42 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       }
       return true;
     },
-    [discardBackendDerivedState],
+    [discardBackendDerivedState, noteAuthority, noticeQuarantine],
+  );
+
+  /**
+   * Installs a projection an operation delivered, without a reading of its own.
+   *
+   * Step one, then step two: ordering by revision, and invalidation only where
+   * the *binding* was replaced. A verdict moving at one receipt is news about a
+   * build rather than a different build, and discarding the table and the
+   * spectrum for it would throw away work the reader can still see is theirs.
+   *
+   * **This is the only way a conversion-bound answer moves the authority.**
+   * Every one of them carries the projection as Rust authored it -- the state
+   * poll, the terminal report, the `BEGIN` refusal, the settings read -- so
+   * there is no second reconciliation system beside
+   * `BackendAuthorityProjection` and no per-command refresh callback. A path
+   * that answered a delivered projection by launching `inspect_backend` would
+   * spend a two-tool discovery rediscovering news it had been handed, and hold
+   * `backendBusy` -- which refuses every conversion -- for its length.
+   *
+   * The reading on screen is not replaced here, because this carries none: the
+   * banner's own `BackendAvailabilityDto` becomes superseded, and recovering it
+   * is a separate obligation this seam deliberately does not discharge.
+   */
+  const acceptDeliveredAuthority = useCallback(
+    (incoming: BackendAuthorityProjection) => {
+      const arrived = acceptProjection(renderedAuthority.current, incoming);
+      if (!arrived.accepted) {
+        return;
+      }
+      noteAuthority(incoming);
+      if (arrived.bindingReplaced && activeOpen.current === null) {
+        discardBackendDerivedState();
+      }
+    },
+    [discardBackendDerivedState, noteAuthority],
   );
 
   const checkBackend = useCallback(() => {
@@ -1408,7 +1554,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       // What had been applied when this was asked for. A failed change means the
       // installation did not change, so it is still worth reporting -- but only
       // while nothing newer has been shown, which this failure cannot speak for.
-      const generationAtRequest = appliedGeneration.current;
+      const revisionAtRequest = renderedAuthority.current?.revision ?? -1;
       markBackendBusy(true);
       if (announceChecking) {
         showBackend({ status: "checking" });
@@ -1429,7 +1575,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           }
         })
         .catch((cause: unknown) => {
-          if (mounted.current && appliedGeneration.current <= generationAtRequest) {
+          if (
+            mounted.current &&
+            (renderedAuthority.current?.revision ?? -1) <= revisionAtRequest
+          ) {
             showBackend({ status: "failed", error: toPreviewError(cause) });
             refreshed = true;
           }
@@ -1503,7 +1652,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       // Where the sequence stood when this read began. A failure carries no
       // generation of its own, so this is the only way to tell an answer about
       // the backend in use from an answer about one that has been replaced.
-      const generationAtRequest = appliedGeneration.current;
+      const revisionAtRequest = renderedAuthority.current?.revision ?? -1;
       void api
         .openPreview(handle)
         .then((loaded) => {
@@ -1529,13 +1678,22 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           // showing it would put the old backend's rows under the new one's
           // banner. Discarded rather than merely dropped: returning here left
           // the workspace reading "Reading the file…" with nothing else coming.
-          if (loaded.installationGeneration < appliedGeneration.current) {
+          const arrived = acceptProjection(renderedAuthority.current, loaded.authority);
+          if (
+            renderedAuthority.current !== null &&
+            loaded.authority.revision < renderedAuthority.current.revision
+          ) {
             discardBackendDerivedState();
             return;
           }
-          const noticedAChange = loaded.installationGeneration > appliedGeneration.current;
-          if (noticedAChange) {
-            appliedGeneration.current = loaded.installationGeneration;
+          // An open that was the first to see a replacement is the one reply
+          // that both carries the news and *is* the news: its rows came from
+          // the build the projection names. So the projection is adopted and
+          // the preview kept, and the discard below is only for what the
+          // *previous* build left behind.
+          const noticedAChange = arrived.accepted && arrived.bindingReplaced;
+          if (arrived.accepted) {
+            noteAuthority(loaded.authority);
           }
           setPreview({ status: "loaded", preview: loaded });
           dispatchRoster({ type: "rowStateChanged", handle, state: "loaded" });
@@ -1575,7 +1733,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           // A failure from a backend that has since been replaced says
           // nothing about the one in use, and showing it under the new
           // banner strands the user.
-          if (appliedGeneration.current > generationAtRequest) {
+          if ((renderedAuthority.current?.revision ?? -1) > revisionAtRequest) {
             discardBackendDerivedState();
             return;
           }
@@ -2366,7 +2524,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       beginViewerRequest();
       void api
         .loadSpectrum(handle, index)
-        .then((outcome) => {
+        .then(({ authority, outcome }) => {
           // Keyed by token, so a stale reply cannot clear the guard belonging
           // to a newer request for the same index.
           if (inFlightSpectrum.current?.token === token) {
@@ -2374,6 +2532,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           }
           if (!mounted.current || token !== spectrumToken.current) {
             return;
+          }
+          // A spectrum read takes the backend lane, so it can be the operation
+          // that observes a replacement -- and this is the only answer that
+          // would carry the news. Judged like any other projection: newer than
+          // what is rendered means the banner has stopped describing the
+          // session, and a check is owed.
+          if (readingIsSuperseded(renderedAuthority.current, authority)) {
+            checkBackend();
           }
           setSpectrum(
             outcome.outcome === "spectrum"
@@ -3368,18 +3534,6 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     visibleTraces,
   ]);
 
-  // A conversion's report carries the installation sequence it ran at. If it is
-  // newer than what this document has applied, the banner and everything read
-  // from the previous installation are stale -- so the backend is re-read
-  // through the one path that knows how to discard them.
-  const reconcileConversionGeneration = useCallback(
-    (generation: number) => {
-      if (generation > appliedGeneration.current) {
-        checkBackend();
-      }
-    },
-    [checkBackend],
-  );
   // Adopted rows are ordinary workspace rows, so the roster answers for them
   // like any other mutation: adopted whole, with the query, the sort and the
   // preview on screen left exactly as the user had them.
@@ -3419,11 +3573,24 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * Whether the backend is positively known to be usable.
    *
    * Read here rather than beside the viewer's lane below because the conversion
-   * lane needs it first: this is one of the four facts that decide whether a
-   * conversion may start, and the operation is created on the next line.
+   * lane needs it first: this is one of the facts that decide whether a
+   * conversion may start, and the operation is created a few lines below.
    */
-  const backendUsable =
-    backend.status === "resolved" && backend.availability.state === "available";
+  const backendUsable = backendIsUsable(projection, backendQuarantined);
+  /**
+   * Whether a conversion-configuration read owns the backend process lane.
+   *
+   * Held here rather than inside `useConversionConfiguration`, and the ordering
+   * is the reason: the configuration hook consumes the conversion lane's own
+   * `laneClaimed`, so it is created *after* the operation -- while the
+   * operation needs the probe occupancy to refuse a conversion for its
+   * duration. Hoisting the claim to this level is what lets one fact have one
+   * owner without either side asking the other for it.
+   *
+   * It answers *is a probe occupying the lane?* and never *may a probe
+   * start?*, which stays `ConversionConfigurationProbeAdmission`'s.
+   */
+  const configurationProbe = useConversionProbeLane();
   /**
    * The conversion lane's facts that this hook owns, as a render sees them.
    *
@@ -3437,12 +3604,19 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       backendUsable,
       backendChanging: backendBusy,
       previewReading: previewBackendBusy,
+      configurationProbing: configurationProbe.probing,
       workspaceSettling,
     }),
-    [backendBusy, backendUsable, previewBackendBusy, workspaceSettling],
+    [
+      backendBusy,
+      backendUsable,
+      configurationProbe.probing,
+      previewBackendBusy,
+      workspaceSettling,
+    ],
   );
   /**
-   * The same four facts, from the refs each of them is written beside.
+   * The same facts, from the refs each of them is written beside.
    *
    * The operation asks this at dispatch, where the rendered struct would be
    * whatever was true when the click handler's closure was made. Each is the
@@ -3458,6 +3632,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       // A count rather than a flag, so a stale read settling never clears the
       // marker a newer one is relying on.
       previewReading: viewerRequests.current > 0,
+      // The probe's own synchronous half, written beside its rendered twin in
+      // `useConversionProbeLane`. A conversion dispatched in the same commit
+      // that issued a configuration read has to see the claim the read raised,
+      // and the rendered fact is a commit too late to say so.
+      configurationProbing: configurationProbe.probingRef.current,
       workspaceSettling:
         pickerBusyRef.current ||
         workspaceBusyRef.current ||
@@ -3465,13 +3644,117 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         dropBusyRef.current ||
         folderReservationPendingRef.current,
     }),
-    [],
+    [configurationProbe.probingRef],
   );
   const conversion = useConversionOperation(
-    reconcileConversionGeneration,
+    acceptDeliveredAuthority,
+    noticeQuarantine,
     adoptOutputs,
     conversionEnvironment,
     readConversionEnvironment,
+  );
+  /**
+   * The facts a configuration read consults, as a render sees them.
+   *
+   * Deliberately not `ConversionLane`. That struct answers *may a conversion
+   * action start?* and begins with a preview verdict; a settings probe asks
+   * *may another backend process begin right now?* -- and the facts here are
+   * the ones that name an operation genuinely owning one. The fifth,
+   * probe-in-flight, is the configuration hook's own bookkeeping and is added
+   * there.
+   */
+  const configurationEnvironment = useMemo(
+    () => ({
+      backendQuarantined,
+      backendChanging: backendBusy,
+      laneClaimed: conversion.lane.laneClaimed,
+      previewReading: previewBackendBusy,
+    }),
+    [backendBusy, backendQuarantined, conversion.lane.laneClaimed, previewBackendBusy],
+  );
+  /**
+   * The same four facts, from the refs each of them is written beside.
+   *
+   * What a *dispatch* asks, as against what a control is greyed from. Every one
+   * of these is the synchronous half of the state above it, written in the same
+   * place -- `backendBusy` and `backendBusyRef` in `markBackendBusy`, the lane
+   * claim in `claimLane`, the probe claim in `useConversionProbeLane` -- so the
+   * two are one fact rather than two that resemble each other.
+   *
+   * It exists because the read is issued from an effect, and an obligation
+   * dispatched earlier in that same commit has already taken the lane while the
+   * rendered struct still says it is free.
+   */
+  const readConfigurationEnvironment = useCallback(
+    () => ({
+      backendQuarantined: backendQuarantinedRef.current,
+      backendChanging: backendBusyRef.current,
+      laneClaimed: conversion.laneClaimedRef.current,
+      previewReading: viewerRequests.current > 0,
+    }),
+    [conversion.laneClaimedRef],
+  );
+  /**
+   * The projection the banner's reading was taken at, where one is rendered.
+   *
+   * `null` for every state that is not a reading. A check in flight and a check
+   * that failed are both *the absence of a reading*, which is one of the two
+   * conditions that owes one.
+   */
+  const renderedReading = backend.status === "resolved" ? backend.availability.authority : null;
+  /**
+   * Whether the banner has stopped describing the session.
+   *
+   * Read by two consumers that must not disagree: the obligation below, which
+   * owes a replacement, and the banner itself, which may not go on naming a
+   * build as current in the meantime (ledger row 110).
+   */
+  const backendReadingStale = readingIsStale(projection, renderedReading);
+  /**
+   * The facts the remedial check consults, as a render sees them.
+   *
+   * The same process-ownership projection the probe uses, minus quarantine --
+   * which a quarantined session answers rather than refuses -- and without any
+   * verdict, since the verdict a stale reading carries is what this check
+   * exists to repair.
+   */
+  const readingCheckFacts = useMemo<BackendCheckFacts>(
+    () => ({
+      backendChanging: backendBusy,
+      laneClaimed: conversion.lane.laneClaimed,
+      previewReading: previewBackendBusy,
+      probeInFlight: configurationProbe.probing,
+    }),
+    [backendBusy, configurationProbe.probing, conversion.lane.laneClaimed, previewBackendBusy],
+  );
+  // **Before the configuration read, and that ordering is the decision.** A
+  // `BEGIN` that resolves a replacement and refuses leaves a check and a read
+  // owed at once, and whichever starts holds the gate against the other -- so
+  // the duty is issued and the courtesy is deferred, which is the arrangement
+  // that resolves itself: the check answers, its answer is an occasion, and the
+  // read it deferred is issued by it.
+  useBackendReadingObligation(
+    readingCheckIsOwed(projection, renderedReading),
+    readingCheckFacts,
+    checkBackend,
+  );
+  const conversionConfiguration = useConversionConfiguration(
+    api,
+    projection,
+    configurationEnvironment,
+    readConfigurationEnvironment,
+    configurationProbe,
+    acceptDeliveredAuthority,
+  );
+  // After both, because a plan question is posed out of what they answer: the
+  // binding this document renders, the catalog held for it, the row chosen in
+  // that catalog, and the policy the operation holds.
+  const conversionPlan = useConversionPlan(
+    api,
+    projection,
+    conversionConfiguration,
+    conversion.conflictPolicy,
+    acceptDeliveredAuthority,
   );
   // A stop that could not be confirmed makes this session's backend unusable
   // without changing the installation, so nothing about it advances the
@@ -3828,6 +4111,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
 
   return {
     backend,
+    backendReadingStale,
     preview,
     spectrum,
     scanModel,
@@ -3921,6 +4205,8 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     completeRenderMeasurements,
     recordMeasurement,
     conversion,
+    conversionConfiguration,
+    conversionPlan,
   };
 }
 

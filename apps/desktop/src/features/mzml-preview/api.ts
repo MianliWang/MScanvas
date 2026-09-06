@@ -12,8 +12,13 @@ import type {
   ChromatogramExportOutcome,
   ChromatogramRange,
   ChromatogramTraceSet,
-  ConversionConflictPolicy,
-  ConversionQueuePlan,
+  AuthorityObserved,
+  ConversionBeginOutcome,
+  ConversionBeginRequest,
+  ConversionConfigurationSnapshot,
+  ConversionPlanOutcome,
+  ConversionPlanRequest,
+  ConversionStartOutcome,
   FolderIngestionResult,
   Preview,
   SelectedSpectrumOutcome,
@@ -30,10 +35,6 @@ import type {
 } from "./contracts";
 
 interface FolderImportReservation {
-  readonly reservationId: string;
-}
-
-interface ConversionReservation {
   readonly reservationId: string;
 }
 
@@ -89,6 +90,16 @@ export interface PreviewApi {
   /** Goes back to searching automatically, and reports what that finds. */
   useAutomaticDiscovery(): Promise<BackendAvailability>;
   /**
+   * What conversion semantics are known for the installation currently bound.
+   *
+   * One call, one answer: which binding it is about, what is known for that
+   * binding, and what became of this request. It may run a `msconvert --help`
+   * probe, so Rust can refuse it while the backend lane is busy — and a refusal
+   * still resolves, carrying the snapshot as it stands, because the refusal is
+   * bookkeeping and the snapshot beside it is the news.
+   */
+  readConversionConfiguration(): Promise<ConversionConfigurationSnapshot>;
+  /**
    * Everything the session holds, in the order Rust holds it. Reads stored
    * facts: no file is revalidated and no backend work is started.
    */
@@ -123,12 +134,31 @@ export interface PreviewApi {
   /** Empties the workspace. Source files are never touched. */
   clearWorkspace(): Promise<WorkspaceRoster>;
   openPreview(handle: string): Promise<Preview>;
-  loadSpectrum(handle: string, index: number): Promise<SelectedSpectrumOutcome>;
+  /**
+   * Reads one spectrum of the open file.
+   *
+   * A backend operation, so it can be the first thing to notice the
+   * installation changed — and it answers with the authority it left behind
+   * beside its own outcome. A read that *fails* carries none: a failure is
+   * judged by the binding its request went out under, not by one it reports.
+   */
+  loadSpectrum(
+    handle: string,
+    index: number,
+  ): Promise<AuthorityObserved<SelectedSpectrumOutcome>>;
   /**
    * Describes the conversion one row would get. Starts nothing: no picker, no
    * reservation, no process.
    */
-  describeConversion(handles: readonly string[]): Promise<ConversionQueuePlan>;
+  /**
+   * Answers one exact plan question, or says the binding it named is gone.
+   *
+   * Read-only and free: no gate, no discovery, no picker, no process. The
+   * request names the binding this side is rendering, and Rust checks it
+   * rather than echoing it — so a plan for an installation the session has
+   * left comes back as the authority it is actually on, not as a plan.
+   */
+  describeConversion(request: ConversionPlanRequest): Promise<ConversionPlanOutcome>;
   /**
    * Reads the session's one conversion slot.
    *
@@ -141,20 +171,26 @@ export interface PreviewApi {
   /**
    * Binds one conversion, shows the native destination picker and runs it.
    *
+   * The request carries every fact the plan on screen was computed from, so
+   * Rust can prove the action still means what the reader was looking at. It
+   * proves the current binding and the exact selected combination before
+   * anything is created; a request that fails either proof answers with a
+   * refusal and the authority it left, and no picker opens.
+   *
    * `onReserved` is called only after Rust has returned the reservation and the
    * exact claim request has been dispatched, which is the boundary a caller
-   * must wait for before it can treat the operation as owned.
+   * must wait for before it can treat the operation as owned. A refused start
+   * never reaches it.
    *
-   * Resolves to the conversion state, which is the same value `getConversionState`
-   * returns — so a reply lost with a replaced document costs the replacement one
-   * read and nothing else. A dismissed picker resolves to the idle state, which
-   * is an ordinary outcome: nothing was created and nothing ran.
+   * The conversion outcome is the same value `getConversionState` returns — so
+   * a reply lost with a replaced document costs the replacement one read and
+   * nothing else. A dismissed picker resolves to the idle state, which is an
+   * ordinary outcome: nothing was created and nothing ran.
    */
   convertDatasets(
-    handles: readonly string[],
-    conflictPolicy: ConversionConflictPolicy,
+    request: ConversionBeginRequest,
     onReserved: () => void,
-  ): Promise<WorkspaceConversionUpdate>;
+  ): Promise<AuthorityObserved<ConversionStartOutcome>>;
   /**
    * Runs every retryable failure of the terminal queue again.
    *
@@ -353,6 +389,8 @@ export const tauriPreviewApi: PreviewApi = {
   inspectBackend: () => invoke<BackendAvailability>("inspect_backend"),
   chooseInstallation: () => invoke<BackendAvailability | null>("choose_backend_installation"),
   useAutomaticDiscovery: () => invoke<BackendAvailability>("use_automatic_backend_discovery"),
+  readConversionConfiguration: () =>
+    invoke<ConversionConfigurationSnapshot>("read_conversion_configuration"),
   getRoster: () => invoke<WorkspaceRoster>("get_workspace_roster"),
   chooseFiles: () => invoke<WorkspaceAddResult | null>("choose_workspace_files"),
   chooseFolder: (onReserved) =>
@@ -368,27 +406,40 @@ export const tauriPreviewApi: PreviewApi = {
   clearWorkspace: () => invoke<WorkspaceRoster>("clear_workspace"),
   openPreview: (handle) => invoke<Preview>("open_mzml_preview", { handle }),
   loadSpectrum: (handle, index) =>
-    invoke<SelectedSpectrumOutcome>("load_selected_spectrum", { handle, index }),
-  describeConversion: (handles) =>
-    invoke<ConversionQueuePlan>("describe_workspace_conversion_queue", { handles }),
+    invoke<AuthorityObserved<SelectedSpectrumOutcome>>("load_selected_spectrum", { handle, index }),
+  describeConversion: (request) =>
+    invoke<ConversionPlanOutcome>("describe_workspace_conversion_queue", { request }),
   getConversionState: () =>
     invoke<WorkspaceConversionUpdate>("get_workspace_conversion_state"),
-  convertDatasets: (handles, conflictPolicy, onReserved) => {
+  convertDatasets: (request, onReserved) => {
     const invokeOptions = {
       headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() },
     };
-    return invoke<ConversionReservation>(
+    return invoke<AuthorityObserved<ConversionBeginOutcome>>(
       "begin_workspace_conversion_queue",
-      { handles, conflictPolicy },
+      { request },
       invokeOptions,
-    ).then((reservation) => {
+    ).then((begun) => {
+      // A refusal is an answer, not a failure of the request: it carries the
+      // authority Rust left, which is how this side learns that the build it
+      // was rendering is gone. Nothing was reserved, so nothing is claimed and
+      // `onReserved` is not called.
+      if (begun.outcome.outcome === "refused") {
+        return { authority: begun.authority, outcome: begun.outcome };
+      }
       const converted = invoke<WorkspaceConversionUpdate>(
         "choose_workspace_conversion_destination",
-        { reservationId: reservation.reservationId },
+        { reservationId: begun.outcome.reservation.reservationId },
         invokeOptions,
       );
       onReserved();
-      return converted;
+      return converted.then((update) => ({
+        // The `BEGIN`'s own, which describes the instant the queue was bound.
+        // The update below carries its own, later projection, delivered on its
+        // own path — two answers about two moments, and neither is the other's.
+        authority: begun.authority,
+        outcome: { outcome: "converted" as const, update },
+      }));
     });
   },
   retryConversions: () =>

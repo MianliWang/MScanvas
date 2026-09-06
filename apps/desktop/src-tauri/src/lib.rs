@@ -11,13 +11,13 @@ use tauri::webview::PageLoadEvent;
 use tauri::{Manager, State};
 
 use preview::dto::{
-    BackendAvailabilityDto, ConversionConflictPolicyDto, ConversionDiagnosticsReservationDto,
-    ConversionQueuePlanDto, FolderImportReservationDto, FolderIngestionResultDto, PreviewDto,
-    PreviewErrorDto, SelectedSpectrumOutcomeDto, WorkspaceAddResultDto,
-    WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto,
-    WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
-    WorkspaceOutputAdoptionResultDto, WorkspaceRemoveResultDto, WorkspaceRosterDto,
-    diagnostics_picker_unavailable, invalid_conversion_reservation,
+    AuthorityObservedDto, BackendReadingDto, ConversionBeginOutcomeDto, ConversionBeginRequestDto,
+    ConversionConfigurationSnapshotDto, ConversionDiagnosticsReservationDto,
+    ConversionPlanOutcomeDto, ConversionPlanRequestDto, FolderImportReservationDto,
+    FolderIngestionResultDto, PreviewDto, PreviewErrorDto, SelectedSpectrumOutcomeDto,
+    WorkspaceAddResultDto, WorkspaceConversionUpdateDto, WorkspaceDropSubscriptionReservationDto,
+    WorkspaceDropUpdateDto, WorkspaceOutputAdoptionResultDto, WorkspaceRemoveResultDto,
+    WorkspaceRosterDto, diagnostics_picker_unavailable, invalid_conversion_reservation,
     invalid_workspace_drop_subscription, spectrum_picker_unavailable,
 };
 use preview::{PreviewService, ProteoWizardProvider, normalize_window_drop_event};
@@ -36,9 +36,29 @@ fn get_bootstrap_status() -> BootstrapStatus {
 #[tauri::command]
 async fn inspect_backend(
     service: State<'_, SharedService>,
-) -> Result<BackendAvailabilityDto, PreviewErrorDto> {
+) -> Result<BackendReadingDto, PreviewErrorDto> {
     let service = Arc::clone(&service);
     off_the_async_runtime(move || service.inspect_backend()).await
+}
+
+/// Reports what conversion semantics are known for the installation MSCanvas is
+/// currently bound to.
+///
+/// One response answers the whole question: which binding it is about, what is
+/// known for that binding, and what happened to this request. The webview never
+/// joins a receipt from one response with a catalog from another -- that join is
+/// what made a stale catalog installable.
+///
+/// It may run a `msconvert --help` probe, so it is subject to the same backend
+/// lane every other process is; a refusal is reported in the response's own
+/// outcome rather than as an error, because the snapshot beside it is still the
+/// news for the panel.
+#[tauri::command]
+async fn read_conversion_configuration(
+    service: State<'_, SharedService>,
+) -> Result<ConversionConfigurationSnapshotDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.read_conversion_configuration()).await?
 }
 
 /// Reports every dataset the session holds, in the order they were added.
@@ -267,19 +287,25 @@ async fn subscribe_workspace_drop_updates(
     }
 }
 
-/// Describes the conversion one focused row would get, without starting one.
+/// Answers one exact plan question, without starting anything.
 ///
-/// Read-only and free: no picker, no reservation, no process. It exists so the
-/// summary the user reads before deciding is derived from what the run will
-/// actually do, rather than composed in the webview from constants that are
+/// Read-only and free: no gate, no picker, no reservation, no process. It exists
+/// so the summary the user reads before deciding is derived from what the run
+/// will actually do, rather than composed in the webview from constants that are
 /// free to drift from it.
+///
+/// The request names every fact that changes what the future queue means -- the
+/// ordered rows, the selected admitted semantic, the conflict policy and the
+/// binding the panel is rendering. The last of those is *checked* rather than
+/// echoed: a plan asked under an installation this session has left is refused
+/// with the authority it is actually on.
 #[tauri::command]
 async fn describe_workspace_conversion_queue(
-    handles: Vec<String>,
+    request: ConversionPlanRequestDto,
     service: State<'_, SharedService>,
-) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
+) -> Result<ConversionPlanOutcomeDto, PreviewErrorDto> {
     let service = Arc::clone(&service);
-    off_the_async_runtime(move || service.conversion_queue_plan(&handles)).await?
+    off_the_async_runtime(move || service.conversion_queue_plan(&request)).await?
 }
 
 /// Runs every retryable failure of the terminal queue again.
@@ -852,18 +878,14 @@ async fn get_workspace_conversion_state(
 /// because the document that would receive the answer is gone.
 #[tauri::command]
 async fn begin_workspace_conversion_queue(
-    handles: Vec<String>,
-    conflict_policy: ConversionConflictPolicyDto,
+    request: ConversionBeginRequestDto,
     ipc_request: tauri::ipc::Request<'_>,
     webview: tauri::Webview<tauri::Wry>,
     service: State<'_, SharedService>,
-) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
+) -> Result<AuthorityObservedDto<ConversionBeginOutcomeDto>, PreviewErrorDto> {
     let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
     let service = Arc::clone(&service);
-    off_the_async_runtime(move || {
-        service.begin_conversion_queue(&handles, conflict_policy, document_epoch)
-    })
-    .await?
+    off_the_async_runtime(move || service.begin_conversion_queue(&request, document_epoch)).await
 }
 
 /// Shows the native destination picker for one exact reservation and converts.
@@ -1006,7 +1028,7 @@ fn picker_unavailable() -> PreviewErrorDto {
 async fn choose_backend_installation(
     app: tauri::AppHandle,
     service: State<'_, SharedService>,
-) -> Result<Option<BackendAvailabilityDto>, PreviewErrorDto> {
+) -> Result<Option<BackendReadingDto>, PreviewErrorDto> {
     let owner = main_window_handle(&app);
     let service = Arc::clone(&service);
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -1033,7 +1055,7 @@ async fn choose_backend_installation(
 #[tauri::command]
 async fn use_automatic_backend_discovery(
     service: State<'_, SharedService>,
-) -> Result<BackendAvailabilityDto, PreviewErrorDto> {
+) -> Result<BackendReadingDto, PreviewErrorDto> {
     let service = Arc::clone(&service);
     off_the_async_runtime(move || service.use_installation(None)).await
 }
@@ -1062,7 +1084,7 @@ async fn load_selected_spectrum(
     handle: String,
     index: u64,
     service: State<'_, SharedService>,
-) -> Result<SelectedSpectrumOutcomeDto, PreviewErrorDto> {
+) -> Result<AuthorityObservedDto<SelectedSpectrumOutcomeDto>, PreviewErrorDto> {
     let service = Arc::clone(&service);
     off_the_async_runtime(move || service.load_spectrum(&handle, index)).await?
 }
@@ -1175,6 +1197,7 @@ pub fn run() {
             inspect_backend,
             choose_backend_installation,
             use_automatic_backend_discovery,
+            read_conversion_configuration,
             get_workspace_roster,
             choose_workspace_files,
             begin_mzml_folder_import,

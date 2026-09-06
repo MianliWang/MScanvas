@@ -78,7 +78,7 @@ function failed(handle: string, name: string, retryable = false): ConversionQueu
         validation: null,
         backend: { exitCode: 1, elapsedMilliseconds: 812 },
         stagingResidue: null,
-        installationGeneration: 0,
+        receipt: 1,
       },
     },
   });
@@ -112,7 +112,7 @@ function converted(handle: string, name: string): ConversionQueueItem {
         },
         backend: null,
         stagingResidue: null,
-        installationGeneration: 0,
+        receipt: 1,
       },
     },
   });

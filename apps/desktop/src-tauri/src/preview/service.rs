@@ -37,9 +37,15 @@ use mscanvas_proteowizard::{BackendRunFacts, ConversionAttempt, ConversionCancel
 use super::adoption::FinalizedOutputSetAdoptionTicket;
 use super::adoption::SciexAttemptSettlement;
 use super::adoption::{AdmittedOutput, AdoptionRefusal, FinalizedOutputAdoptionTicket};
+use super::authority::{
+    BackendAuthority, BackendAuthorityProjection, DiscoveryTarget, Observation, PreviewAvailability,
+};
 use super::backend::{
-    ConversionBackend, PreviewProvider, open_operations, reporting_redactor,
-    selected_spectrum_operation,
+    ConversionBackend, ConversionBackendAttempt, PreviewProvider, open_operations,
+    reporting_redactor, selected_spectrum_operation,
+};
+use super::configuration::{
+    ConversionConfigurations, ReadAnswer, RowAdmission, intent_dto, read_configuration,
 };
 use super::conversion::WorkspaceMultiOutputConversionReport;
 #[cfg(test)]
@@ -82,6 +88,15 @@ use super::dto::{
     invalid_conversion_reservation, queue_destination_changed, queue_is_empty,
     queue_output_name_collision, queue_too_large, redact_absolute_paths, require_finite,
     require_finite_option, workspace_full,
+};
+use super::dto::{
+    AuthorityObservedDto, BackendAuthorityProjectionDto, BackendAuthorityStateDto,
+    BackendBindingReceiptDto, BackendReadingDto, ConversionBeginOutcomeDto,
+    ConversionBeginRequestDto, ConversionConfigurationOutcomeDto,
+    ConversionConfigurationRefusalDto, ConversionConfigurationSnapshotDto,
+    ConversionPlanOutcomeDto, ConversionPlanRequestDto, conversion_backend_busy,
+    conversion_binding_replaced, conversion_configuration_unread, conversion_intent_not_admitted,
+    conversion_intent_unavailable, conversion_without_an_installation,
 };
 use super::dto::{
     ChromatogramCopyOutcomeDto, ChromatogramExportOutcomeDto, ChromatogramRangeDto,
@@ -145,9 +160,9 @@ use super::selection::{
 use mscanvas_plot_spec::spec::{Domain, FigureTheme};
 
 /// The name the native save dialog offers for a diagnostics export.
-///
-/// Re-exposed here because the command that shows the dialog lives outside this
-/// module and the diagnostics module is private to the preview boundary. It is
+//
+// Re-exposed here because the command that shows the dialog lives outside this
+// module and the diagnostics module is private to the preview boundary. It is
 /// one value, so there is one name to change.
 pub const DIAGNOSTICS_EXPORT_FILE_NAME: &str = DIAGNOSTICS_FILE_NAME;
 
@@ -174,10 +189,10 @@ const fn drop_claim_started(claim: u64) -> bool {
 }
 
 /// Everything the session knows about the datasets it holds.
-///
-/// One structure behind one lock, because removing a dataset has to reach its
-/// row and everything derived from it in the same breath. Split across two
-/// locks there would be a moment where a dataset is gone and its preview facts
+//
+// One structure behind one lock, because removing a dataset has to reach its
+// row and everything derived from it in the same breath. Split across two
+// locks there would be a moment where a dataset is gone and its preview facts
 /// are not, and a reply arriving in that moment would find state to attach to.
 #[derive(Debug, Default)]
 struct Workspace {
@@ -187,9 +202,9 @@ struct Workspace {
 
 impl Workspace {
     /// Removes one dataset and everything the session derived from it.
-    ///
-    /// The only way a dataset should ever leave a session. Reaching the row
-    /// without reaching the runtime state would leave a request epoch and a
+    //
+    // The only way a dataset should ever leave a session. Reaching the row
+    // without reaching the runtime state would leave a request epoch and a
     /// preview under an identifier nothing can name.
     fn revoke(&mut self, id: DatasetId, reason: RevocationReason) {
         // Dropped here rather than returned or kept. The removed row owns the
@@ -228,8 +243,8 @@ impl Workspace {
     }
 
     /// Starts a request for one dataset and hands back the epoch that names it.
-    ///
-    /// `None` when the dataset is not registered, which is a request for
+    //
+    // `None` when the dataset is not registered, which is a request for
     /// something the session no longer has.
     fn begin_request(&mut self, id: DatasetId) -> Option<u64> {
         if !self.registry.contains(id) {
@@ -241,16 +256,16 @@ impl Workspace {
     }
 
     /// Starts an open for one dataset: claims the epoch that names it, drops
-    /// what the previous open recorded, and hands back the file to read.
-    ///
-    /// The three happen under one lock because they are one decision. The
-    /// recorded preview is what a selected spectrum reconciles against, and it
-    /// describes the read that produced it; the moment a newer open begins,
-    /// that description is no longer the one the user is asking about. Left in
-    /// place it would outlive its own open -- a reopen that fails would leave
-    /// the previous open's rows silently usable, and a spectrum read afterwards
-    /// would be reconciled against a table nothing on screen came from.
-    ///
+    // what the previous open recorded, and hands back the file to read.
+    //
+    // The three happen under one lock because they are one decision. The
+    // recorded preview is what a selected spectrum reconciles against, and it
+    // describes the read that produced it; the moment a newer open begins,
+    // that description is no longer the one the user is asking about. Left in
+    // place it would outlive its own open -- a reopen that fails would leave
+    // the previous open's rows silently usable, and a spectrum read afterwards
+    // would be reconciled against a table nothing on screen came from.
+    //
     /// `None` when the dataset is not registered.
     fn begin_open_request(&mut self, id: DatasetId) -> Option<(u64, AcceptedFile)> {
         let file = self.registry.get(id)?.file().clone();
@@ -261,18 +276,18 @@ impl Workspace {
     }
 
     /// Starts a request that reads one dataset and changes nothing about it:
-    /// claims the epoch that names it and hands back the file.
-    ///
-    /// Distinct from `begin_open_request`, which also discards what the previous
-    /// open recorded. That discard is right for an open, which replaces the
-    /// preview on screen. It is wrong for a read whose product lands somewhere
-    /// else entirely: the preview the user is looking at is still a true
-    /// description of this dataset afterwards, and clearing it would make a
-    /// conversion behave like a reload that never finished.
-    ///
-    /// It still claims an epoch, because it still has to be superseded by
-    /// anything the user does next.
-    ///
+    // claims the epoch that names it and hands back the file.
+    //
+    // Distinct from `begin_open_request`, which also discards what the previous
+    // open recorded. That discard is right for an open, which replaces the
+    // preview on screen. It is wrong for a read whose product lands somewhere
+    // else entirely: the preview the user is looking at is still a true
+    // description of this dataset afterwards, and clearing it would make a
+    // conversion behave like a reload that never finished.
+    //
+    // It still claims an epoch, because it still has to be superseded by
+    // anything the user does next.
+    //
     /// `None` when the dataset is not registered.
     #[cfg(test)]
     fn begin_reading_request(&mut self, id: DatasetId) -> Option<(u64, AcceptedFile)> {
@@ -283,10 +298,10 @@ impl Workspace {
     }
 
     /// The dataset's current request epoch, without claiming one.
-    ///
-    /// Read rather than claimed because a conversion binds this at the moment
-    /// the user asks, and asking opens a picker they may cancel. Claiming here
-    /// would supersede whatever they were already doing with the row merely
+    //
+    // Read rather than claimed because a conversion binds this at the moment
+    // the user asks, and asking opens a picker they may cancel. Claiming here
+    // would supersede whatever they were already doing with the row merely
     /// because a dialog appeared.
     fn current_request_epoch(&self, id: DatasetId) -> Option<u64> {
         self.registry
@@ -295,14 +310,14 @@ impl Workspace {
     }
 
     /// Whether a request bound by [`Self::current_request_epoch`] is still the
-    /// one to honour.
-    ///
-    /// Deliberately the exact inverse of that reader, and deliberately not
-    /// `request_is_current`. That one answers about an epoch a caller *claimed*,
-    /// so a dataset with no runtime row yet is not current by it -- correctly,
-    /// because nobody claimed anything. A conversion binds by reading, and a
-    /// row nobody has read yet reads as zero, so the two have to agree about
-    /// what zero means or a first conversion of a fresh row is superseded by
+    // one to honour.
+    //
+    // Deliberately the exact inverse of that reader, and deliberately not
+    // `request_is_current`. That one answers about an epoch a caller *claimed*,
+    // so a dataset with no runtime row yet is not current by it -- correctly,
+    // because nobody claimed anything. A conversion binds by reading, and a
+    // row nobody has read yet reads as zero, so the two have to agree about
+    // what zero means or a first conversion of a fresh row is superseded by
     /// nothing at all.
     fn bound_request_is_current(&self, id: DatasetId, epoch: u64) -> bool {
         self.current_request_epoch(id) == Some(epoch)
@@ -320,15 +335,15 @@ impl Workspace {
 }
 
 /// What the webview is told the session holds.
-///
-/// Built from the registry's own order, which is the only order there is. The
-/// capacity travels with it so the interface states the limit Rust enforces
-/// rather than one of its own.
-///
-/// The disambiguating contexts are computed here, over the whole registry,
-/// every time. Whether a filename is ambiguous is a property of the roster
-/// rather than of a row: adding a second `sample.mzML` gives both of them
-/// context and removing one takes it away again, so an answer stored per row
+//
+// Built from the registry's own order, which is the only order there is. The
+// capacity travels with it so the interface states the limit Rust enforces
+// rather than one of its own.
+//
+// The disambiguating contexts are computed here, over the whole registry,
+// every time. Whether a filename is ambiguous is a property of the roster
+// rather than of a row: adding a second `sample.mzML` gives both of them
+// context and removing one takes it away again, so an answer stored per row
 /// would be an answer to a question that had since changed.
 fn roster_of(workspace: &Workspace) -> WorkspaceRosterDto {
     let contexts = relative_contexts(&workspace.registry);
@@ -348,8 +363,8 @@ fn roster_of(workspace: &Workspace) -> WorkspaceRosterDto {
 }
 
 /// One dataset, described as the roster it belongs to would describe it.
-///
-/// Used wherever an outcome names a row, so the dataset in an outcome and the
+//
+// Used wherever an outcome names a row, so the dataset in an outcome and the
 /// same dataset in the roster beside it can never disagree about its context.
 fn dataset_dto(workspace: &Workspace, id: DatasetId) -> Option<SelectedFileDto> {
     let contexts = relative_contexts(&workspace.registry);
@@ -360,10 +375,10 @@ fn dataset_dto(workspace: &Workspace, id: DatasetId) -> Option<SelectedFileDto> 
 }
 
 /// What happened to one candidate, before it is described.
-///
-/// Held back because describing a row is a question about the finished roster,
-/// and a batch is not finished until its last file has been accepted. The
-/// candidate name travels with both variants because a rejection has no dataset
+//
+// Held back because describing a row is a question about the finished roster,
+// and a batch is not finished until its last file has been accepted. The
+// candidate name travels with both variants because a rejection has no dataset
 /// to be named by, and the user still has to be told which file it was.
 enum PendingOutcome {
     Registered {
@@ -377,11 +392,11 @@ enum PendingOutcome {
 }
 
 /// Turns a batch's registry outcomes into what the webview is told.
-///
-/// Run once, after the whole batch, against the roster it produced. Every
-/// dataset named in an outcome is therefore described exactly as the roster
-/// beside it describes the same dataset -- including its disambiguating
-/// context, which cannot be known until every row that might collide with it
+//
+// Run once, after the whole batch, against the roster it produced. Every
+// dataset named in an outcome is therefore described exactly as the roster
+// beside it describes the same dataset -- including its disambiguating
+// context, which cannot be known until every row that might collide with it
 /// has arrived.
 fn describe_outcomes(
     workspace: &Workspace,
@@ -432,31 +447,31 @@ fn describe_outcomes(
 #[derive(Debug, Default)]
 struct DatasetRuntimeState {
     /// Counts the requests made for this dataset. A request that is still
-    /// waiting for the backend gate when a newer one arrives never starts: the
-    /// user has moved on, and launching a process for a row they left is
-    /// spending the machine on an answer nobody will see. Per dataset, so work
+    // waiting for the backend gate when a newer one arrives never starts: the
+    // user has moved on, and launching a process for a row they left is
+    // spending the machine on an answer nobody will see. Per dataset, so work
     /// on one never cancels work on another.
     request_epoch: u64,
     preview: Option<DatasetPreviewState>,
 }
 
 /// What one open action established about one dataset.
-///
-/// The generation, the backend that read it and the rows a later spectrum is
-/// reconciled against, committed together. Held apart they made two states
-/// representable that must never occur: a recorded generation with no rows to
+//
+// The generation, the backend that read it and the rows a later spectrum is
+// reconciled against, committed together. Held apart they made two states
+// representable that must never occur: a recorded generation with no rows to
 /// reconcile against, and rows with no record of which backend produced them.
 #[derive(Debug, Clone)]
 struct DatasetPreviewState {
     opened: OpenedPreview,
     /// The complete per-scan facts this preview reported.
-    ///
-    /// Shared rather than owned outright. A run of tens of thousands of scans
-    /// is one allocation, and both readers of it -- a selected spectrum
-    /// reconciling against its own row, and a chromatogram export -- take a
-    /// handle instead of a copy. Immutable in practice as well as by
-    /// convention: nothing mutates the table after the preview is committed,
-    /// and an export holding a handle across a preview replacement keeps the
+    //
+    // Shared rather than owned outright. A run of tens of thousands of scans
+    // is one allocation, and both readers of it -- a selected spectrum
+    // reconciling against its own row, and a chromatogram export -- take a
+    // handle instead of a copy. Immutable in practice as well as by
+    // convention: nothing mutates the table after the preview is committed,
+    // and an export holding a handle across a preview replacement keeps the
     /// facts it was started with.
     table_rows: Arc<Vec<TableRowFacts>>,
 }
@@ -466,139 +481,130 @@ pub struct PreviewService {
     provider: Box<dyn PreviewProvider>,
     workspace: Mutex<Workspace>,
     /// Held for the length of one backend operation, so this application runs
-    /// at most one process at a time. Moving the wait to a blocking thread
-    /// stopped it starving the async runtime; it did nothing to stop several
-    /// reads of the same large file competing for the machine.
-    ///
-    /// Never taken while the workspace lock is held: this one is waited on for
-    /// as long as a backend process takes, and the workspace has to stay
+    // at most one process at a time. Moving the wait to a blocking thread
+    // stopped it starving the async runtime; it did nothing to stop several
+    // reads of the same large file competing for the machine.
+    //
+    // Never taken while the workspace lock is held: this one is waited on for
+    // as long as a backend process takes, and the workspace has to stay
     /// answerable in the meantime.
     backend_gate: Mutex<()>,
     /// Held for the length of one workspace mutation, so two of them cannot
-    /// interleave the rows of one batch, and carrying the generation that says
-    /// which decision about the workspace is the current one.
-    ///
-    /// Distinct from the workspace lock and always taken before it. A batch
-    /// accepts each file in turn, which is filesystem work, and holding the
-    /// workspace across the whole batch would leave every other command waiting
-    /// on a picker's worth of inspections. This is what keeps a batch's order
-    /// contiguous without doing that.
-    ///
-    /// A folder scan cannot hold it: scanning is filesystem work that lasts as
-    /// long as the tree takes, and a workspace frozen for the length of it would
-    /// be a workspace nobody could remove a row from. So the generation exists.
-    /// A scan reserves one before it starts and commits only while it is still
-    /// current; anything the user does that says "the workspace state from here
+    // interleave the rows of one batch, and carrying the generation that says
+    // which decision about the workspace is the current one.
+    //
+    // Distinct from the workspace lock and always taken before it. A batch
+    // accepts each file in turn, which is filesystem work, and holding the
+    // workspace across the whole batch would leave every other command waiting
+    // on a picker's worth of inspections. This is what keeps a batch's order
+    // contiguous without doing that.
+    //
+    // A folder scan cannot hold it: scanning is filesystem work that lasts as
+    // long as the tree takes, and a workspace frozen for the length of it would
+    // be a workspace nobody could remove a row from. So the generation exists.
+    // A scan reserves one before it starts and commits only while it is still
+    // current; anything the user does that says "the workspace state from here
     /// on" advances it, and the abandoned scan then adds nothing.
     workspace_mutation: Mutex<WorkspaceMutationState>,
     /// Wakes workspace operations whose contract is to wait for the one active
     /// or callback-reserved native drop rather than supersede it.
     workspace_mutation_ready: Condvar,
     /// The accepted native drop, from the callback's linearization point until
-    /// terminal publication or an authoritative superseding mutation. Zero is
-    /// the empty sentinel; all real operation IDs begin at one.
-    ///
-    /// This atomic is intentionally separate from `workspace_mutation`: the
-    /// platform event callback must be able to reserve or reject a drop without
+    // terminal publication or an authoritative superseding mutation. Zero is
+    // the empty sentinel; all real operation IDs begin at one.
+    //
+    // This atomic is intentionally separate from `workspace_mutation`: the
+    // platform event callback must be able to reserve or reject a drop without
     /// waiting for either service mutex or an IPC channel consumer.
     native_drop_claim: AtomicU64,
     next_drop_operation: AtomicU64,
     /// Latest non-`Over` callback in native arrival order. Workers compare
-    /// their ticket before publishing hover/leave so inverse scheduling cannot
+    // their ticket before publishing hover/leave so inverse scheduling cannot
     /// resurrect an older visual state.
     native_drop_event_ticket: AtomicU64,
     /// One replayable, path-free state and at most one current-document IPC
-    /// subscriber. Its delivery gate is always acquired before the workspace
+    // subscriber. Its delivery gate is always acquired before the workspace
     /// mutation gate, and `Channel::send` runs after all workspace locks drop.
     drop_updates: DropUpdateHub,
-    /// How many times the installation in use has changed.
-    ///
-    /// Stamped onto every verdict under the same gate that serves it, so the
-    /// verdict says where in that sequence it belongs. Request order is not
-    /// service order -- two commands contend for this gate and it does not
-    /// grant in the order they were called -- so a caller that trusted its own
-    /// ordering could show the installation a choice replaced while every
-    /// later operation used the chosen one.
-    installation_generation: AtomicU64,
     /// The session's one conversion slot.
-    ///
-    /// A leaf: never held while any other lock is taken, and never held across
-    /// a picker, a filesystem inspection or a backend process. Every transition
-    /// is a short read-modify-write, which is what lets the workspace stay
+    //
+    // A leaf: never held while any other lock is taken, and never held across
+    // a picker, a filesystem inspection or a backend process. Every transition
+    // is a short read-modify-write, which is what lets the workspace stay
     /// answerable for the whole of a conversion.
     conversion: Mutex<ConversionSlot>,
     /// Whether the slot above is busy, readable without taking its lock.
-    ///
-    /// The native drop callback must be able to refuse a drop without waiting
-    /// on any service mutex, which is a rule this file already keeps for the
-    /// drop claim itself. Written only while the slot lock is held, so it
+    //
+    // The native drop callback must be able to refuse a drop without waiting
+    // on any service mutex, which is a rule this file already keeps for the
+    // drop claim itself. Written only while the slot lock is held, so it
     /// cannot come to disagree with what it mirrors.
     conversion_busy: AtomicBool,
     /// Whether this session has stopped trusting the backend.
-    ///
-    /// Set once, by a stop whose owned process tree could not be confirmed
-    /// gone, and never cleared. Nothing in this session can establish that the
-    /// process it lost track of has ended, so there is no observation a reset
-    /// could be conditioned on -- and a flag that cleared itself would be
-    /// telling the user something MSCanvas does not know.
-    ///
-    /// Read without a lock for the same reason the busy mirror is: every
-    /// backend entry point asks it, and one of them is asked from the native
+    //
+    // Set once, by a stop whose owned process tree could not be confirmed
+    // gone, and never cleared. Nothing in this session can establish that the
+    // process it lost track of has ended, so there is no observation a reset
+    // could be conditioned on -- and a flag that cleared itself would be
+    // telling the user something MSCanvas does not know.
+    //
+    // Read without a lock for the same reason the busy mirror is: every
+    // backend entry point asks it, and one of them is asked from the native
     /// drop callback.
     backend_quarantined: AtomicBool,
     /// Whether an adoption of converted outputs is between its two halves.
-    ///
-    /// Adoption hashes files, so it cannot hold the mutation gate across the
-    /// part that reads them. This is what every other workspace mutation asks
-    /// instead: lock-free, like the conversion mirror beside it, and for the
-    /// same reason -- the paths that consult it must not take a lock that the
+    //
+    // Adoption hashes files, so it cannot hold the mutation gate across the
+    // part that reads them. This is what every other workspace mutation asks
+    // instead: lock-free, like the conversion mirror beside it, and for the
+    // same reason -- the paths that consult it must not take a lock that the
     /// adoption itself will want back.
     adopting_outputs: AtomicBool,
     /// Which session this is.
-    ///
-    /// `DatasetId`s are allocated per service, from zero, so the same number
-    /// names different rows in two of them. A ticket carries the id of the row
-    /// it was converted from; adopting it in the session that did not mint it
-    /// would commit one session's outputs against another's row. The number is
+    //
+    // `DatasetId`s are allocated per service, from zero, so the same number
+    // names different rows in two of them. A ticket carries the id of the row
+    // it was converted from; adopting it in the session that did not mint it
+    // would commit one session's outputs against another's row. The number is
     /// what lets that be refused rather than merely be unlikely.
     session: u64,
     /// The publication seam the next backend-named set run will carry.
-    ///
-    /// Taken by the run that uses it, so it fires for exactly one attempt.
-    /// It exists for one outcome: `PartiallyFinalized` needs a destination name
-    /// taken between the whole-set preflight and one member's rename, which on
-    /// a real filesystem is a race against another process. Nothing in the run
-    /// is weakened — the hook is handed a position and can only act on the
+    //
+    // Taken by the run that uses it, so it fires for exactly one attempt.
+    // It exists for one outcome: `PartiallyFinalized` needs a destination name
+    // taken between the whole-set preflight and one member's rename, which on
+    // a real filesystem is a race against another process. Nothing in the run
+    // is weakened — the hook is handed a position and can only act on the
     /// world, exactly as another process could.
     publication_seam: Mutex<Option<PublicationHook>>,
     /// The session's one diagnostics export.
-    ///
-    /// A leaf beside the conversion slot rather than a field inside it. What it
-    /// holds is a reservation and a result, neither of which is queue state, and
-    /// keeping them apart is what lets a queue read answer while an export is
-    /// choosing a destination. Where both locks are taken, the conversion slot
+    //
+    // A leaf beside the conversion slot rather than a field inside it. What it
+    // holds is a reservation and a result, neither of which is queue state, and
+    // keeping them apart is what lets a queue read answer while an export is
+    // choosing a destination. Where both locks are taken, the conversion slot
     /// is taken first and this one second, always.
     diagnostics_export: Mutex<DiagnosticsExportSlot>,
     /// Whether the slot above is busy, readable without taking its lock.
-    ///
-    /// Written only while that lock is held, so it cannot come to disagree with
-    /// what it mirrors. It exists for the same callers the conversion mirror
+    //
+    // Written only while that lock is held, so it cannot come to disagree with
+    // what it mirrors. It exists for the same callers the conversion mirror
     /// exists for, the native drop callback among them.
     diagnostics_exporting: AtomicBool,
     /// The session's one selected-spectrum export.
-    ///
-    /// Holds the complete spectrum the current preview interpreted, which is
-    /// the only place that complete reading survives: the projection that
-    /// crosses to the webview is bounded at `MAX_SPECTRUM_POINTS` and exists to
-    /// carry a drawing. A leaf of its own, like the diagnostics slot beside it,
+    //
+    // Holds the complete spectrum the current preview interpreted, which is
+    // the only place that complete reading survives: the projection that
+    // crosses to the webview is bounded at `MAX_SPECTRUM_POINTS` and exists to
+    // carry a drawing. A leaf of its own, like the diagnostics slot beside it,
     /// and taken last where more than one lock is needed.
     spectrum_export: Mutex<ScientificExportSlots>,
     /// Which backend the last look actually resolved to.
-    ///
-    /// Not the folder that was requested. A request names a configuration; what
-    /// matters is the tool pair that configuration resolves to, and the two come
-    /// apart in both directions -- automatic discovery falling back to another
-    /// release after one is removed, and a folder whose binaries are upgraded in
+    //
+    // Not the folder that was requested. A request names a configuration; what
+    // matters is the tool pair that configuration resolves to, and the two come
+    // apart in both directions -- automatic discovery falling back to another
+    // release after one is removed, and a folder whose binaries are upgraded in
     /// place. Comparing requests would miss both.
     resolved: Mutex<ObservedBackend>,
 }
@@ -606,17 +612,41 @@ pub struct PreviewService {
 /// What the service has observed about which backend resolves.
 #[derive(Default)]
 struct ObservedBackend {
-    /// False until something has actually looked. The first look is not a
-    /// change: there is nothing before it to differ from, and counting it would
-    /// make every session open by telling its callers to discard readings that
-    /// do not exist yet.
-    looked: bool,
-    /// What the last look resolved. `None` means nothing usable resolved, which
-    /// is a state a later look can differ from like any other.
-    identity: Option<InstallationIdentity>,
-    /// The verdict that look produced, kept so a quarantined session can answer
-    /// a recheck without launching the very tools it has stopped trusting.
-    last: Option<BackendAvailabilityDto>,
+    /// The typed authority ADR 0044 replaces `installation_generation` with.
+    //
+    // It owns the receipt, the revision and the state, and it is the only
+    // thing that mints receipts. "Nothing has looked yet" is
+    // `BackendAuthorityState::Unresolved` rather than a `looked` flag beside
+    // an identity, because the first look being a non-change is a property of
+    /// the state rather than a rule a caller has to remember.
+    authority: BackendAuthority,
+    /// Where the session is currently pointed, so an absence can be told from
+    // another absence.
+    //
+    // Recorded here rather than asked of the provider: what a `NoInstallation`
+    // binding names is *where MSCanvas looked and found nothing*, and two
+    // unusable folders are two bindings. The provider reports a verdict about
+    /// a target it was already given.
+    target: DiscoveryTarget,
+    /// What is known about conversion settings for the binding above.
+    //
+    // Under the same lock, which ADR 0044 requires rather than merely permits:
+    // a read that answers from the binding alone must project its authority
+    // and its payload from one instant, or an owed check running concurrently
+    // can install B between the two reads and the response pairs B's
+    // projection with A's configuration -- a snapshot the frontend cannot
+    /// detect as wrong, since the configuration carries no receipt of its own.
+    configurations: ConversionConfigurations,
+    /// The reading that look produced, kept so a quarantined session can
+    // answer a recheck without launching the very tools it has stopped
+    // trusting.
+    //
+    // The whole reading, projection included: what a quarantined session
+    // echoes is the reading it had, and the binding that reading was taken of
+    // is part of what makes it truthful. Echoing the block under the live
+    // projection would say the origin and the build belong to a binding they
+    /// were never read at.
+    last: Option<BackendReadingDto>,
 }
 
 impl PreviewService {
@@ -641,7 +671,6 @@ impl PreviewService {
             diagnostics_export: Mutex::new(DiagnosticsExportSlot::default()),
             diagnostics_exporting: AtomicBool::new(false),
             spectrum_export: Mutex::new(ScientificExportSlots::default()),
-            installation_generation: AtomicU64::new(0),
             resolved: Mutex::new(ObservedBackend::default()),
         }
     }
@@ -654,11 +683,11 @@ impl PreviewService {
     }
 
     /// Reports whether a usable backend is installed.
-    ///
-    /// Behind the same gate as every other backend work: discovery runs the
-    /// installed tools' help, which is as much a process as a preview is, and
+    //
+    // Behind the same gate as every other backend work: discovery runs the
+    // installed tools' help, which is as much a process as a preview is, and
     /// "at most one at a time" has to mean all of them or it means nothing.
-    pub fn inspect_backend(&self) -> BackendAvailabilityDto {
+    pub fn inspect_backend(&self) -> BackendReadingDto {
         // A probe launches the tools it is probing, so it is a backend
         // operation like any other. A quarantined session answers without
         // starting two more processes beside one it may have lost track of.
@@ -680,14 +709,14 @@ impl PreviewService {
     }
 
     /// Points the backend at one folder, or back at automatic discovery, and
-    /// reports what that installation can actually do.
-    ///
-    /// The change and the reading are one call because they are useless apart.
-    /// Returning without probing would leave the caller holding a verdict about
-    /// the installation it just stopped using, and a caller that then had to ask
-    /// separately could render the old answer in between. There is no interval
+    // reports what that installation can actually do.
+    //
+    // The change and the reading are one call because they are useless apart.
+    // Returning without probing would leave the caller holding a verdict about
+    // the installation it just stopped using, and a caller that then had to ask
+    // separately could render the old answer in between. There is no interval
     /// here in which the two can disagree.
-    pub fn use_installation(&self, home: Option<PathBuf>) -> BackendAvailabilityDto {
+    pub fn use_installation(&self, home: Option<PathBuf>) -> BackendReadingDto {
         // Changing installation re-probes, which launches processes. Refused
         // without making the change either: pointing a quarantined session at
         // another folder would leave it describing an installation nothing has
@@ -705,39 +734,166 @@ impl PreviewService {
         // was asked for -- the same request can resolve to a different backend
         // and a different request to the same one -- so it is decided below, by
         // what the reading that follows actually resolves to.
-        self.provider.use_installation(home);
+        self.provider.use_installation(home.clone());
+        // And the session records where it is now pointed. An absence is only
+        // distinguishable from the absence before it by the folder it is an
+        // absence at, so a `NoInstallation` binding is minted against this and
+        // not against the reading -- the reading of two unusable folders is the
+        // same reading twice.
+        self.note_discovery_target(home);
         self.stamped_availability()
     }
 
-    /// Reads the backend, notes which one that turned out to be, and stamps the
-    /// verdict with where it belongs in the sequence of changes.
-    ///
-    /// All of it under the gate, so the number describes the installation the
-    /// verdict actually came from.
-    fn stamped_availability(&self) -> BackendAvailabilityDto {
-        let (mut availability, identity) = self.provider.availability();
-        self.note_resolved(identity);
-        availability.installation_generation = self.installation_generation.load(Ordering::Relaxed);
+    /// What conversion semantics are known for the installation this session is
+    // bound to.
+    //
+    // Always answers, and the answer is always three facts: the authority as
+    // it stands, the configuration as Rust holds it, and what happened to this
+    // request. A refusal is the third of those and never suppresses the other
+    // two -- the refusal is bookkeeping for the reader's obligation, and the
+    // configuration beside it is the news for the panel.
+    //
+    // Three paths, in this order, and the order is the contract:
+    //
+    // 1. A binding that names no installation answers from the binding alone.
+    //    There is no probe to admit, so admission does not apply and a held
+    //    gate does not defer it -- which is what keeps the panel from having
+    //    no configuration state for the length of someone else's drain.
+    // 2. A quarantined session refuses, which outranks every other reason and
+    //    never clears.
+    // 3. Otherwise the read takes the gate and performs its own discovery, so
+    //    it may be the operation that observes a replacement. If it is, it
+    //    answers for the *new* binding in the same transaction: ordering the
+    //    two halves apart would either discard a catalog describing exactly
+    //    the binding now current, or let `Ready` arrive for a binding the
+    ///    lifecycle had just reset to `Unattempted`.
+    pub fn read_conversion_configuration(
+        &self,
+    ) -> Result<ConversionConfigurationSnapshotDto, PreviewErrorDto> {
+        if self.bound_to_no_installation() {
+            return self.configuration_snapshot(ConversionConfigurationOutcomeDto::Answered);
+        }
+        if self.backend_is_quarantined() {
+            return self.configuration_snapshot(ConversionConfigurationOutcomeDto::Refused {
+                reason: ConversionConfigurationRefusalDto::BackendQuarantined,
+            });
+        }
+        // Taken rather than waited for. A read deferred behind a drain would
+        // hold a request open for the length of a conversion, and the
+        // obligation it leaves behind is re-issued on the next occasion --
+        // which is cheaper than the wait and does not put this courtesy on the
+        // queue's own lock.
+        let Some(_running) = self.try_enter_backend() else {
+            return self.configuration_snapshot(ConversionConfigurationOutcomeDto::Refused {
+                reason: ConversionConfigurationRefusalDto::BackendBusy,
+            });
+        };
+        let reading = self.provider.read_conversion_configuration();
+        let answer = match reading.conversion {
+            None => ReadAnswer::NoInstallation,
+            Some(Ok(capabilities)) => read_configuration(&capabilities),
+            Some(Err(error)) => ReadAnswer::Unusable(error),
+        };
+        let mut observed = self
+            .resolved
+            .lock()
+            .expect("the installation lock is never poisoned by user code");
+        let target = observed.target.clone();
+        let projection = observed.authority.observe(Observation {
+            installed: reading.installation,
+            preview_availability: reading.preview_availability,
+            target,
+        });
+        let Some(binding) = projection.state.binding() else {
+            return Err(configuration_without_a_binding());
+        };
+        observed.configurations.answer(binding, answer);
+        let configuration = observed.configurations.for_binding(binding).to_dto();
+        Ok(ConversionConfigurationSnapshotDto {
+            authority: projection.to_dto(),
+            configuration,
+            outcome: ConversionConfigurationOutcomeDto::Answered,
+        })
+    }
+
+    /// Whether the session is settled on a binding that names no installation.
+    fn bound_to_no_installation(&self) -> bool {
         self.resolved
             .lock()
             .expect("the installation lock is never poisoned by user code")
-            .last = Some(availability.clone());
-        availability
+            .authority
+            .projection()
+            .state
+            .binding()
+            .is_some_and(|binding| !binding.is_installed())
+    }
+
+    /// The snapshot as it stands, for a read that established nothing.
+    //
+    // The authority and the configuration are read in one critical section,
+    // which is the requirement rather than an optimisation: a check running
+    // concurrently must not be able to install a new binding between the two
+    // reads, leaving a response that pairs one binding's projection with
+    /// another's configuration.
+    fn configuration_snapshot(
+        &self,
+        outcome: ConversionConfigurationOutcomeDto,
+    ) -> Result<ConversionConfigurationSnapshotDto, PreviewErrorDto> {
+        let mut observed = self
+            .resolved
+            .lock()
+            .expect("the installation lock is never poisoned by user code");
+        let projection = observed.authority.projection();
+        let Some(binding) = projection.state.binding() else {
+            return Err(configuration_without_a_binding());
+        };
+        let configuration = observed.configurations.for_binding(binding).to_dto();
+        Ok(ConversionConfigurationSnapshotDto {
+            authority: projection.to_dto(),
+            configuration,
+            outcome,
+        })
+    }
+
+    /// Reads the backend, notes which one that turned out to be, and stamps the
+    // verdict with where it belongs in the sequence of changes.
+    //
+    // All of it under the gate, so the number describes the installation the
+    /// verdict actually came from.
+    fn stamped_availability(&self) -> BackendReadingDto {
+        let (availability, identity) = self.provider.availability();
+        // The verdict this reading reports *is* the preview verdict, so the
+        // observation carries what the reading already says rather than asking
+        // a second time and risking a different answer.
+        let verdict = if availability.state == "available" {
+            PreviewAvailability::Usable
+        } else {
+            PreviewAvailability::Unusable
+        };
+        let reading = BackendReadingDto {
+            authority: self.note_resolved(identity, verdict).to_dto(),
+            availability,
+        };
+        self.resolved
+            .lock()
+            .expect("the installation lock is never poisoned by user code")
+            .last = Some(reading.clone());
+        reading
     }
 
     /// The verdict a quarantined session answers every backend question with,
-    /// having launched nothing to produce it.
-    ///
-    /// Deliberately not the reading it had. A stale `available` would let the
-    /// banner say the backend is fine while every action that uses one is
-    /// refused, and the single thing the user needs to know -- that this
-    /// session cannot run a converter again until it is restarted -- would
-    /// appear nowhere. `unavailable` here is a statement about the session, and
-    /// the failure beside it says so in the words the banner already renders.
-    ///
-    /// `None` when the session is not quarantined, which is every ordinary
+    // having launched nothing to produce it.
+    //
+    // Deliberately not the reading it had. A stale `available` would let the
+    // banner say the backend is fine while every action that uses one is
+    // refused, and the single thing the user needs to know -- that this
+    // session cannot run a converter again until it is restarted -- would
+    // appear nowhere. `unavailable` here is a statement about the session, and
+    // the failure beside it says so in the words the banner already renders.
+    //
+    // `None` when the session is not quarantined, which is every ordinary
     /// session.
-    fn quarantined_availability(&self) -> Option<BackendAvailabilityDto> {
+    fn quarantined_availability(&self) -> Option<BackendReadingDto> {
         if !self.backend_is_quarantined() {
             return None;
         }
@@ -747,63 +903,138 @@ impl PreviewService {
             .expect("the installation lock is never poisoned by user code")
             .last
             .clone();
-        Some(BackendAvailabilityDto {
-            state: String::from("unavailable"),
-            installation_generation: self.installation_generation.load(Ordering::Relaxed),
-            // Kept from the last reading where there was one, so the banner
-            // still names the installation this session was using rather than
-            // claiming it went back to automatic discovery.
-            origin: last.map_or_else(|| String::from("automatic"), |reading| reading.origin),
-            // Nothing is claimed about a build. This verdict is not a reading of
-            // one, and carrying a release beside `unavailable` would invite it
-            // to be read as one.
-            release: None,
-            build_date: None,
-            same_installation: true,
-            failure: Some(BackendFailureDto {
-                kind: String::from("backend_quarantined"),
-                summary: String::from(
-                    "MSCanvas could not confirm that the converter process stopped.",
+        Some(BackendReadingDto {
+            // The projection of the reading being echoed, not the live one: the
+            // origin below is that reading's, and a receipt naming a different
+            // binding would misdescribe it. Where nothing has been read yet
+            // there is nothing to echo, and the projection carries no receipt
+            // rather than borrowing one.
+            authority: last.as_ref().map_or(
+                BackendAuthorityProjectionDto {
+                    revision: 0,
+                    state: BackendAuthorityStateDto::Unresolved,
+                },
+                |reading| reading.authority,
+            ),
+            availability: BackendAvailabilityDto {
+                state: String::from("unavailable"),
+                // Kept from the last reading where there was one, so the banner
+                // still names the installation this session was using rather
+                // than claiming it went back to automatic discovery.
+                origin: last.map_or_else(
+                    || String::from("automatic"),
+                    |reading| reading.availability.origin,
                 ),
-                corrective_action: String::from(
-                    "Restart MSCanvas before starting another preview or conversion.",
-                ),
-            }),
+                // Nothing is claimed about a build. This verdict is not a
+                // reading of one, and carrying a release beside `unavailable`
+                // would invite it to be read as one.
+                release: None,
+                build_date: None,
+                same_installation: true,
+                failure: Some(BackendFailureDto {
+                    kind: String::from("backend_quarantined"),
+                    summary: String::from(
+                        "MSCanvas could not confirm that the converter process stopped.",
+                    ),
+                    corrective_action: String::from(
+                        "Restart MSCanvas before starting another preview or conversion.",
+                    ),
+                }),
+            },
         })
     }
 
     /// Advances the sequence when the backend that resolves is a different one.
-    ///
-    /// The sequence counts changes of *backend*, not of configuration. A folder
-    /// re-picked while its binaries were upgraded in place is a change; asking
-    /// for automatic discovery while already on it is not; and a chosen folder
-    /// that resolves to the very tools automatic discovery was already using is
-    /// not either. Only comparing what resolved gets all three right.
-    ///
-    /// Returns where the sequence stands afterwards, so a caller that records
-    /// it records the value its own observation produced rather than the one it
-    /// found on the way in.
-    fn note_resolved(&self, identity: Option<InstallationIdentity>) -> u64 {
+    //
+    // The sequence counts changes of *backend*, not of configuration. A folder
+    // re-picked while its binaries were upgraded in place is a change; asking
+    // for automatic discovery while already on it is not; and a chosen folder
+    // that resolves to the very tools automatic discovery was already using is
+    // not either. Only comparing what resolved gets all three right.
+    //
+    // Returns the authority as it stands afterwards, so a caller that records
+    // it records the value its own observation produced rather than the one it
+    // found on the way in.
+    //
+    // The verdict travels with the identity because a binding never arrives
+    // without one: both come from the discovery this caller already ran, and
+    // separating them is what let one observer call a build `Installed` while
+    /// another called the same build absent.
+    fn note_resolved(
+        &self,
+        identity: Option<InstallationIdentity>,
+        preview_availability: PreviewAvailability,
+    ) -> BackendAuthorityProjection {
         let mut observed = self
             .resolved
             .lock()
             .expect("the installation lock is never poisoned by user code");
-        if observed.looked && observed.identity != identity {
-            self.installation_generation.fetch_add(1, Ordering::Relaxed);
+        let target = observed.target.clone();
+        let projection = observed.authority.observe(Observation {
+            installed: identity,
+            preview_availability,
+            target,
+        });
+        // The configuration follows the binding in the same critical section.
+        // An observation with no catalog to offer initializes a replaced
+        // binding from what it is and retains an unchanged one, which is what
+        // keeps a recheck of the same build from demoting a catalog it did not
+        // re-read.
+        if let Some(binding) = projection.state.binding() {
+            observed.configurations.observe(binding);
         }
-        observed.looked = true;
-        observed.identity = identity;
-        self.installation_generation.load(Ordering::Relaxed)
+        projection
+    }
+
+    /// Records what a conversion resolution established, if it established
+    // anything, and answers with the authority as it stands afterwards.
+    //
+    // The `None` arm is not an absence. A resolution that never reached a
+    // discovery has seen nothing to report, and writing one would move the
+    /// session off a binding on the evidence of a look nobody took.
+    fn note_conversion_resolution(
+        &self,
+        attempt: &ConversionBackendAttempt<'_>,
+    ) -> BackendAuthorityProjection {
+        match attempt.observed.as_ref() {
+            Some(observed) => {
+                self.note_resolved(observed.installed.clone(), observed.preview_availability)
+            }
+            None => self.authority_projection(),
+        }
+    }
+
+    /// The authority as it stands, for an operation that observed nothing.
+    //
+    // Every response carries this whether its own outcome succeeded or
+    // refused: an observation recorded and not delivered leaves the session
+    // correct in Rust and stale on screen, which is the half of the rule that
+    /// four separate findings were about.
+    fn authority_projection(&self) -> BackendAuthorityProjection {
+        self.resolved
+            .lock()
+            .expect("the installation lock is never poisoned by user code")
+            .authority
+            .projection()
+    }
+
+    /// Points the session at a discovery target, so a later absence can be
+    /// told from the absence before it.
+    fn note_discovery_target(&self, home: Option<PathBuf>) {
+        self.resolved
+            .lock()
+            .expect("the installation lock is never poisoned by user code")
+            .target = DiscoveryTarget::of(home);
     }
 
     /// Declares the start of a new webview document.
-    ///
-    /// Called by Tauri's native page-load-started hook, not by an IPC command.
-    /// That distinction is load-bearing: a request from the document being
-    /// replaced can reach Rust after the replacement document's requests, but
-    /// it cannot arrive before the native event that started the replacement.
-    /// Advancing here supersedes a picker or scan owned by the old document
-    /// without letting one of that document's delayed roster reads supersede a
+    //
+    // Called by Tauri's native page-load-started hook, not by an IPC command.
+    // That distinction is load-bearing: a request from the document being
+    // replaced can reach Rust after the replacement document's requests, but
+    // it cannot arrive before the native event that started the replacement.
+    // Advancing here supersedes a picker or scan owned by the old document
+    // without letting one of that document's delayed roster reads supersede a
     /// new document's later import.
     pub fn begin_webview_document(&self) {
         // Enter and Leave are dispatched on blocking workers. Advancing the
@@ -845,7 +1076,7 @@ impl PreviewService {
     }
 
     /// Claims one exact current-document reservation and installs its typed
-    /// Channel. Replacement and the initial snapshot are serialized with
+    // Channel. Replacement and the initial snapshot are serialized with
     /// native updates, so the new channel sees one exact lifecycle state.
     pub fn claim_workspace_drop_subscription(
         &self,
@@ -858,7 +1089,7 @@ impl PreviewService {
     }
 
     /// Reserves one normalized native event without taking a lock or sending
-    /// through IPC. This is the complete platform-callback side of the
+    // through IPC. This is the complete platform-callback side of the
     /// boundary; its owned dispatch is processed on a blocking worker.
     pub(crate) fn reserve_native_drop_signal(
         &self,
@@ -1011,7 +1242,7 @@ impl PreviewService {
     }
 
     /// Claims one registered busy notice only after `importing` owns the
-    /// delivery order. A worker that arrives earlier leaves the count for the
+    // delivery order. A worker that arrives earlier leaves the count for the
     /// start worker to drain immediately after that persistent snapshot.
     fn take_one_pending_drop_busy(&self, operation_id: DropOperationId) -> bool {
         let mut claim = self.native_drop_claim.load(Ordering::Acquire);
@@ -1035,7 +1266,7 @@ impl PreviewService {
     }
 
     /// Atomically removes the bounded, coalesced busy notice currently
-    /// registered for an operation. Later callbacks either set the bit again
+    // registered for an operation. Later callbacks either set the bit again
     /// or observe the terminal clear and become a new operation.
     fn take_pending_drop_busy(&self, operation_id: DropOperationId) -> Option<bool> {
         let mut claim = self.native_drop_claim.load(Ordering::Acquire);
@@ -1078,13 +1309,13 @@ impl PreviewService {
     }
 
     /// Everything the session holds, in the order it was added.
-    ///
-    /// Stored facts only. Nothing is revalidated here, no process is launched
-    /// and the workspace generation is not changed. Navigation itself, rather
-    /// than this independently scheduled IPC read, is what supersedes work from
-    /// the previous document. Rechecking a thousand paths on every mount or
-    /// mutation would turn drawing a list into a thousand filesystem
-    /// inspections. Whether a row's file is still the file it was is a question
+    //
+    // Stored facts only. Nothing is revalidated here, no process is launched
+    // and the workspace generation is not changed. Navigation itself, rather
+    // than this independently scheduled IPC read, is what supersedes work from
+    // the previous document. Rechecking a thousand paths on every mount or
+    // mutation would turn drawing a list into a thousand filesystem
+    // inspections. Whether a row's file is still the file it was is a question
     /// the next preview of it asks, and answers where the user can see it.
     pub fn roster(&self) -> WorkspaceRosterDto {
         // Pure does not mean unordered. A batch holds this gate across all of
@@ -1098,13 +1329,13 @@ impl PreviewService {
     }
 
     /// Adds every chosen path, in picker order, and answers with what each one
-    /// did and the roster that resulted.
-    ///
-    /// One item's failure is its own. A batch is a list of files the user
-    /// pointed at, not a transaction: rolling back the ones that arrived
-    /// because a later one could not be read would punish them for choosing it.
-    ///
-    /// No preview is launched for any of them. Adding a file makes it something
+    // did and the roster that resulted.
+    //
+    // One item's failure is its own. A batch is a list of files the user
+    // pointed at, not a transaction: rolling back the ones that arrived
+    // because a later one could not be read would punish them for choosing it.
+    //
+    // No preview is launched for any of them. Adding a file makes it something
     /// the user can see and remove; reading one is a thing they ask for.
     pub fn add_files(&self, paths: &[PathBuf]) -> Result<WorkspaceAddResultDto, PreviewErrorDto> {
         // Rust decides this, not a disabled button. A conversion is reading one
@@ -1164,15 +1395,15 @@ impl PreviewService {
     }
 
     /// The session's conversion slot, locked.
-    ///
-    /// Very nearly a leaf lock: a caller that needs a described row reads it
-    /// first and takes this afterwards.
-    ///
-    /// The one exception is the document-epoch read that a retry and a stop both
-    /// make, which has to happen under the same lock the state moves under or it
-    /// describes a document that may have been replaced by the time it does. It
-    /// is safe because the reverse order does not exist: every path that asks
-    /// whether a conversion is busy reads the lock-free mirror beside this slot
+    //
+    // Very nearly a leaf lock: a caller that needs a described row reads it
+    // first and takes this afterwards.
+    //
+    // The one exception is the document-epoch read that a retry and a stop both
+    // make, which has to happen under the same lock the state moves under or it
+    // describes a document that may have been replaced by the time it does. It
+    // is safe because the reverse order does not exist: every path that asks
+    // whether a conversion is busy reads the lock-free mirror beside this slot
     /// rather than taking it, which is the reason that mirror exists.
     fn conversion_slot(&self) -> std::sync::MutexGuard<'_, ConversionSlot> {
         self.conversion
@@ -1181,9 +1412,9 @@ impl PreviewService {
     }
 
     /// Republishes the lock-free busy mirror from the slot that owns it.
-    ///
-    /// Called with the slot lock still held, which is what makes the mirror a
-    /// mirror: a writer that released first could be overtaken by another
+    //
+    // Called with the slot lock still held, which is what makes the mirror a
+    // mirror: a writer that released first could be overtaken by another
     /// transition and leave the flag describing a state that no longer exists.
     fn publish_conversion_busy(&self, slot: &ConversionSlot) {
         self.conversion_busy
@@ -1191,10 +1422,10 @@ impl PreviewService {
     }
 
     /// What the one conversion slot currently holds.
-    ///
-    /// The authoritative answer, and the only one. A document reads this on
-    /// mount to recover a conversion it did not start, and again while one is
-    /// running; the reply to the command that started it is not a reliable
+    //
+    // The authoritative answer, and the only one. A document reads this on
+    // mount to recover a conversion it did not start, and again while one is
+    // running; the reply to the command that started it is not a reliable
     /// place to learn how it went, because that document may be gone.
     pub fn conversion_state(&self) -> WorkspaceConversionUpdateDto {
         // The slot first, and the flag under it. A worker sets the quarantine
@@ -1208,24 +1439,33 @@ impl PreviewService {
         let slot = self.conversion_slot();
         let quarantined = self.backend_is_quarantined();
         let diagnostics = self.diagnostics_read();
-        slot.read(quarantined, diagnostics)
+        // Delivered by the poll as by everything else answering in this shape.
+        // The poll observes nothing -- it launches no process and resolves no
+        // build -- and carries the authority because it is the session's only
+        // voice while a drain runs, which is exactly when a drain's own
+        // observation would otherwise reach nobody until the drain ended.
+        slot.read(
+            quarantined,
+            diagnostics,
+            self.authority_projection().to_dto(),
+        )
     }
 
     /// Whether this session has stopped trusting the backend.
-    ///
-    /// Set exactly once, by a stop whose process-tree termination could not be
-    /// confirmed, and never cleared: nothing in this session can establish that
-    /// the process it lost track of has ended, and a flag that could be cleared
+    //
+    // Set exactly once, by a stop whose process-tree termination could not be
+    // confirmed, and never cleared: nothing in this session can establish that
+    // the process it lost track of has ended, and a flag that could be cleared
     /// would need something that can.
     pub(super) fn backend_is_quarantined(&self) -> bool {
         self.backend_quarantined.load(Ordering::Acquire)
     }
 
     /// Refuses anything that would launch a backend process while quarantined.
-    ///
-    /// Asked by every backend entry point rather than by the gate itself. The
-    /// gate is a mutex and holding it forever would wedge the application on
-    /// exit; what quarantine changes is not who may take the gate but whether
+    //
+    // Asked by every backend entry point rather than by the gate itself. The
+    // gate is a mutex and holding it forever would wedge the application on
+    // exit; what quarantine changes is not who may take the gate but whether
     /// MSCanvas is willing to start another process at all.
     fn require_usable_backend(&self) -> Result<(), PreviewErrorDto> {
         if self.backend_is_quarantined() {
@@ -1235,12 +1475,12 @@ impl PreviewService {
     }
 
     /// Stops the running queue of the calling document.
-    ///
-    /// The request is recorded and the state moves under the slot lock; the
-    /// cancellation itself is asked afterwards, with no lock held. Job
-    /// termination is not instantaneous, and holding the lock every reader
-    /// needs across it would stop the interface answering for as long as it
-    /// took -- including the read that would tell the user their stop was
+    //
+    // The request is recorded and the state moves under the slot lock; the
+    // cancellation itself is asked afterwards, with no lock held. Job
+    // termination is not instantaneous, and holding the lock every reader
+    // needs across it would stop the interface answering for as long as it
+    // took -- including the read that would tell the user their stop was
     /// accepted.
     pub fn stop_conversion_queue(
         &self,
@@ -1260,7 +1500,11 @@ impl PreviewService {
         }
         let accepted = slot.request_stop(operation)?;
         self.publish_conversion_busy(&slot);
-        let update = slot.read(self.backend_is_quarantined(), self.diagnostics_read());
+        let update = slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.authority_projection().to_dto(),
+        );
         drop(slot);
 
         if let StopAccepted::Requested(Some(request)) = accepted {
@@ -1270,69 +1514,149 @@ impl PreviewService {
     }
 
     /// Whether a conversion currently occupies the workspace.
-    ///
-    /// Asked by every mutation before it proceeds. Rust enforces this; a
+    //
+    // Asked by every mutation before it proceeds. Rust enforces this; a
     /// disabled button is a courtesy, not the rule.
     fn conversion_is_busy(&self) -> bool {
         self.conversion_busy.load(Ordering::Acquire)
     }
 
-    /// Describes the queue a set of selected rows would get.
-    ///
-    /// Read-only and free: no picker, no reservation, no process. Everything in
-    /// it is derived from what the runs will actually do -- above all each
-    /// item's planned output name, which is what makes a collision something
-    /// the user is told about before choosing a folder rather than after.
-    ///
-    /// The order is the caller's, and the caller's order is the order the user
-    /// is looking at. Rust does not re-sort it: a queue that ran in registry
-    /// insertion order would run in an order nothing on screen shows.
+    /// Answers one exact plan question.
+    //
+    // Read-only and free: no gate, no discovery, no picker, no reservation, no
+    // process. Everything in it is derived from what the runs will actually do
+    // -- above all each item's planned output name, which is what makes a
+    // collision something the user is told about before choosing a folder
+    // rather than after.
+    //
+    // The order is the caller's, and the caller's order is the order the user
+    // is looking at. Rust does not re-sort it: a queue that ran in registry
+    // insertion order would run in an order nothing on screen shows.
+    //
+    // **The binding is checked, never echoed unexamined.** [ADR 0044]
+    // Decision 9 makes the receipt part of the question, and ledger row 182 is
+    // what happens when the answer merely repeats it: Rust switches A to B,
+    // the operation carrying B's projection has not reached React yet, so
+    // React asks under A and the reply matches its loading identity perfectly
+    // -- a plan for a build the session has already left, with `Convert`
+    // offered beside it. So a request naming a binding this session is not on
+    // is refused *with the current authority*, and the panel learns of B from
+    // the refusal rather than from an unrelated delivery some way off.
+    //
+    // **It observes nothing, and stamps nothing.** This operation runs no
+    // discovery, so it has no observation of its own to report and may not
+    // take a receipt from ambient authority (row 122). A successful plan
+    // therefore carries no projection: its receipt is the one the question
+    // carried, checked and given back.
+    //
+    // **Admission is Rust's, whatever the frontend projected.** A plan is
+    // answered only for a binding whose catalog has been read and whose
+    // selected row that build can run. The frontend avoids the pointless call;
+    // this is what makes the rule true.
+    //
+    /// [ADR 0044]: ../../../../../docs/architecture/adr/0044-conversion-configuration-authority.md
     pub fn conversion_queue_plan(
         &self,
-        handles: &[String],
-    ) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
-        let items = self.plan_queue_items(handles)?;
-        Ok(ConversionQueuePlanDto {
-            items: items
-                .iter()
-                .map(|item| ConversionQueuePlanItemDto {
-                    dataset_handle: item.handle().to_owned(),
-                    file_name: item.file_name().to_owned(),
-                    source_kind: source_kind_dto(item.kind()),
-                    output: item.output().to_dto(),
-                })
-                .collect(),
-            // Both read off the intent this queue will be bound to, so what
-            // the panel is told before the picker opens is the same fact the
-            // conversion is judged against afterwards.
-            output_format: fixed_output_format(ConversionIntent::SHIPPED),
-            compression: fixed_compression(ConversionIntent::SHIPPED).to_owned(),
-            // Stated before the run rather than after it. A vendor acquisition
-            // has no mzML reading, so nothing about any output can be compared
-            // to a source model -- and a user deciding whether to convert a
-            // batch is entitled to know that before they choose a folder.
-            validation_mode: ValidationModeDto::OutputOnly,
-            capacity: MAX_CONVERSION_QUEUE_ITEMS,
+        request: &ConversionPlanRequestDto,
+    ) -> Result<ConversionPlanOutcomeDto, PreviewErrorDto> {
+        // The identity first, and from the admitted table rather than from
+        // anything the caller sent beside it. A combination this product has
+        // never measured is not a plan with a problem; it is not a plan.
+        let Some(intent) = ConversionIntent::from_stable_id(&request.intent_id) else {
+            return Err(conversion_intent_not_admitted());
+        };
+        // The binding and its catalog in one critical section, so a check
+        // installing a new binding between the two reads cannot produce an
+        // answer that pairs one binding's receipt with another's availability.
+        let admission = {
+            let mut observed = self
+                .resolved
+                .lock()
+                .expect("the installation lock is never poisoned by user code");
+            let projection = observed.authority.projection();
+            let binding = projection.state.binding();
+            let asked_for_the_current_binding =
+                binding.map(|binding| binding.receipt().wire()) == Some(request.expected_receipt);
+            let Some(binding) = binding.filter(|_| asked_for_the_current_binding) else {
+                // Not an error about the rows. The one useful thing to answer a
+                // question about a binding the session has left is the binding
+                // it is on.
+                return Ok(ConversionPlanOutcomeDto::BindingReplaced {
+                    authority: projection.to_dto(),
+                });
+            };
+            observed.configurations.admits(binding, &intent)
+        };
+        match admission {
+            RowAdmission::Available => {}
+            RowAdmission::Unavailable => return Err(conversion_intent_unavailable()),
+            RowAdmission::NoCatalog => return Err(conversion_configuration_unread()),
+        }
+        let items = self.plan_queue_items(&request.handles, intent)?;
+        Ok(ConversionPlanOutcomeDto::Planned {
+            plan: ConversionQueuePlanDto {
+                items: items
+                    .iter()
+                    .map(|item| ConversionQueuePlanItemDto {
+                        dataset_handle: item.handle().to_owned(),
+                        file_name: item.file_name().to_owned(),
+                        source_kind: source_kind_dto(item.kind()),
+                        output: item.output().to_dto(),
+                    })
+                    .collect(),
+                // All three read off the intent this queue would be bound to,
+                // so what the panel is told before the picker opens is the same
+                // fact the conversion is judged against afterwards.
+                output_format: fixed_output_format(intent),
+                compression: fixed_compression(intent).to_owned(),
+                intent: intent_dto(&intent),
+                // Stated before the run rather than after it. A vendor
+                // acquisition has no mzML reading, so nothing about any output
+                // can be compared to a source model -- and a user deciding
+                // whether to convert a batch is entitled to know that before
+                // they choose a folder.
+                validation_mode: ValidationModeDto::OutputOnly,
+                capacity: MAX_CONVERSION_QUEUE_ITEMS,
+                conflict_policy: request.conflict_policy,
+                receipt: request.expected_receipt,
+            },
         })
     }
 
     /// Turns an ordered list of handles into queue items, or says why it is not
-    /// a queue.
-    ///
-    /// Every refusal here happens before a picker opens and before anything is
-    /// created. The bound, the duplicate rule and the empty rule live in the
-    /// queue's own constructor; what this adds is that every handle names a
+    // a queue.
+    //
+    // Every refusal here happens before a picker opens and before anything is
+    // created. The bound, the duplicate rule and the empty rule live in the
+    // queue's own constructor; what this adds is that every handle names a
     /// live, convertible row, and that no two of them would write one name.
-    fn plan_queue_items(&self, handles: &[String]) -> Result<Vec<QueueItem>, PreviewErrorDto> {
-        self.plan_items(handles)
+    fn plan_queue_items(
+        &self,
+        handles: &[String],
+        intent: ConversionIntent,
+    ) -> Result<Vec<QueueItem>, PreviewErrorDto> {
+        self.plan_items(handles, intent)
     }
 
     /// Turns handles into queue items.
-    ///
-    /// One implementation and one answer. There is no longer a private planner
-    /// beside this one: which cardinality a row gets is decided by the family it
+    //
+    // One implementation and one answer. There is no longer a private planner
+    // beside this one: which cardinality a row gets is decided by the family it
     /// was admitted as, so the planner has nothing left to be told.
-    fn plan_items(&self, handles: &[String]) -> Result<Vec<QueueItem>, PreviewErrorDto> {
+    ///
+    /// The intent is taken rather than assumed. Each row's stated output name
+    /// is derived from the combination's output format, so a planner that read
+    /// the shipped posture would state a name the run under *another* admitted
+    /// combination would not write -- and the collision rule below would then
+    /// compare names conversion never claims. Nothing in the type system would
+    /// catch that today, because every admitted row writes mzML; threading it
+    /// is what keeps that a fact about the table rather than a coincidence the
+    /// planner depends on.
+    fn plan_items(
+        &self,
+        handles: &[String],
+        intent: ConversionIntent,
+    ) -> Result<Vec<QueueItem>, PreviewErrorDto> {
         // Refused before the workspace is even read. A list longer than a
         // session may run is not a queue whose rows are worth resolving.
         if handles.is_empty() {
@@ -1358,7 +1682,7 @@ impl PreviewService {
             // dropped: the interface states how many selected rows are
             // excluded, and a boundary that quietly shortened the list would
             // make that count a fiction.
-            let output = item_output_topology(kind, &dto.file_name)?;
+            let output = item_output_topology(kind, &dto.file_name, intent)?;
             items.push(QueueItem::new(id, epoch, kind, dto, output));
         }
         drop(workspace);
@@ -1401,30 +1725,56 @@ impl PreviewService {
     }
 
     /// Binds one queue and reserves the right to choose a folder for it.
-    ///
-    /// The synchronous half of the two-command boundary, and the same shape a
-    /// folder import uses for the same reason: a webview can reload between any
-    /// two IPC fetches, so the reservation is retained in Rust and a document
-    /// that never receives the identifier can never open a picker.
-    ///
-    /// What is bound here cannot change afterwards -- the document, the ordered
-    /// rows, their request epochs, their family and the conflict policy -- so
-    /// the picker that follows is a picker *for this queue*, and re-sorting or
-    /// re-selecting while it is open changes what is on screen and not what
-    /// will run.
+    //
+    // The synchronous half of the two-command boundary, and the same shape a
+    // folder import uses for the same reason: a webview can reload between any
+    // two IPC fetches, so the reservation is retained in Rust and a document
+    // that never receives the identifier can never open a picker.
+    //
+    // What is bound here cannot change afterwards -- the document, the ordered
+    // rows, their request epochs, their family, the conflict policy and the
+    // admitted conversion semantic -- so the picker that follows is a picker
+    // *for this queue*, and re-sorting, re-selecting or changing a setting
+    // while it is open changes what is on screen and not what will run.
+    //
+    // **Both halves of [ADR 0044] Decision 10 happen here, and neither is a
+    // courtesy.** The request names the binding and the exact combination the
+    // reader was looking at, and nothing -- no queue, no reservation, no
+    // picker, no staging, no process -- becomes reachable until the current
+    // installation has been resolved, found to be the one the plan described,
+    // and proved able to run that exact combination.
+    //
+    // **The answer is in band, both ways.** A refused `BEGIN` creates no
+    // queue, so there is no slot to poll and nothing else would arrive to
+    // correct a screen still showing the build the session has left. Decision
+    // 4 obliges every operation that can observe or replace the authority to
+    // return it whether it succeeds or refuses, and ledger row 18 is the hole
+    // an out-of-band refusal leaves.
+    //
+    /// [ADR 0044]: ../../../../../docs/architecture/adr/0044-conversion-configuration-authority.md
     pub fn begin_conversion_queue(
         &self,
-        handles: &[String],
-        conflict: ConversionConflictPolicyDto,
+        request: &ConversionBeginRequestDto,
         document_epoch: u64,
-    ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
-        self.begin_queue(handles, conflict, document_epoch)
+    ) -> AuthorityObservedDto<ConversionBeginOutcomeDto> {
+        let outcome = self.begin_queue(request, document_epoch);
+        AuthorityObservedDto {
+            // Read after the outcome, never beside it: by this point the
+            // preflight's own observation has been recorded, so this is the
+            // authority the operation *left*, not the one it found on the way
+            // in. A refusal that resolved a replacement carries the
+            // replacement.
+            authority: self.authority_projection().to_dto(),
+            outcome: match outcome {
+                Ok(reservation) => ConversionBeginOutcomeDto::Reserved { reservation },
+                Err(error) => ConversionBeginOutcomeDto::Refused { error },
+            },
+        }
     }
 
     fn begin_queue(
         &self,
-        handles: &[String],
-        conflict: ConversionConflictPolicyDto,
+        request: &ConversionBeginRequestDto,
         document_epoch: u64,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
         // Before the plan, so a quarantined session refuses a queue without
@@ -1438,12 +1788,18 @@ impl PreviewService {
         if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
+        // The identity, from the admitted table and from nothing else. A
+        // caller-supplied string that names no row never becomes an intent, so
+        // there is no partially-valid semantic for anything downstream to run.
+        let Some(intent) = ConversionIntent::from_stable_id(&request.intent_id) else {
+            return Err(conversion_intent_not_admitted());
+        };
         // Planned once here so the preflight below has a validated family set
         // to ask about -- and planned *again* under the mutation gate, which
         // is the plan the queue is actually bound from. This first pass also
         // keeps a batch of dead handles from costing a help probe.
         let preflight_families: Vec<ConversionSourceKind> = {
-            let items = self.plan_items(handles)?;
+            let items = self.plan_items(&request.handles, intent)?;
             let mut families = Vec::new();
             for item in &items {
                 let kind = conversion_source_kind(item.kind());
@@ -1453,28 +1809,7 @@ impl PreviewService {
             }
             families
         };
-        // Provider evidence for every distinct family in the plan, before the
-        // destination picker opens. Execution re-asks fail-closed per item and
-        // per family regardless; what this adds is that a user is normally
-        // refused before choosing a folder rather than after -- and refused
-        // for *any* unevidenced family in the batch, because a mixed queue is
-        // not authorized by its first item.
-        //
-        // Only when the backend lane is free right now. Resolving the backend
-        // runs the installed tools' help, which is a process, and processes
-        // take the one lane -- but a queue has always been admittable while a
-        // preview holds that lane, with the queue's own worker doing the
-        // waiting rather than this click. Blocking here would change that, so
-        // when the lane is held the pre-picker courtesy is skipped and the
-        // authoritative per-family gate at execution refuses before anything
-        // is staged.
-        if let Some(running) = self.try_enter_backend() {
-            let backend = self.provider.conversion_backend()?;
-            for kind in preflight_families {
-                refuse_unevidenced_build(&backend.capabilities, kind)?;
-            }
-            drop(running);
-        }
+        self.prove_begin(request.expected_receipt, intent, &preflight_families)?;
         // The same gate every workspace mutation takes, so a queue and a batch
         // cannot both be admitted by each reading the other's state before
         // either committed. `_after_drop` because a drop is accepted by a
@@ -1497,7 +1832,7 @@ impl PreviewService {
         // picker would open for a run guaranteed to end superseded. Planning
         // is lock-cheap and launches nothing, so it is simply done again where
         // it counts.
-        let items = self.plan_items(handles)?;
+        let items = self.plan_items(&request.handles, intent)?;
         let mut slot = self.conversion_slot();
         // Under the slot lock, and immediately before the slot is taken. The
         // authority proof is awaited, so a reload can start any time after it
@@ -1507,11 +1842,13 @@ impl PreviewService {
         if document_epoch != self.workspace_drop_document_epoch() {
             return Err(invalid_conversion_reservation());
         }
-        // The one place a production conversion's intent is chosen. Everything
-        // downstream -- each item, each retry, the argv, the integrity
-        // comparison -- reads it back off the queue rather than deciding again.
-        let queue =
-            ConversionQueue::new(document_epoch, conflict, ConversionIntent::SHIPPED, items)?;
+        // The one place a production conversion's intent is chosen, and it is
+        // chosen by having been proved above rather than by being decided here.
+        // Everything downstream -- each item, each retry, the argv, the
+        // integrity comparison -- reads it back off the queue rather than
+        // deciding again, which is what makes a settings change after this
+        // point a change to the *next* conversion and to nothing in this one.
+        let queue = ConversionQueue::new(document_epoch, request.conflict_policy, intent, items)?;
         let reservation = slot.begin(queue);
         self.publish_conversion_busy(&slot);
         // The previous queue's diagnostics go with the previous queue. Under
@@ -1528,11 +1865,132 @@ impl PreviewService {
         reservation
     }
 
+    /// The whole of what must be true before a `BEGIN` may reach anything.
+    //
+    // [ADR 0044] Decision 10, in the order its two gates are stated:
+    //
+    // 1. the current installation is resolved, once, and what that resolution
+    //    observed is recorded before anything is judged;
+    // 2. the binding it resolved is the one the plan on screen described --
+    //    otherwise the queue would run under a build the plan never described,
+    //    which is ledger row 181;
+    // 3. that build can run the exact selected combination;
+    // 4. and, as a courtesy sharing the same acquisition, that MSCanvas has
+    //    conversion evidence for every family in the batch.
+    //
+    // **One acquisition answers all of them.** Taking the gate twice would run
+    // two full discoveries -- up to a minute of probes -- for a single click
+    // (row 115).
+    //
+    // **It refuses on a held gate; it never waits.** A `BEGIN` is a click, and
+    // blocking one for the length of a preview scan would hang it with nothing
+    // on screen to explain why. The gate is a bare mutex with no holder to
+    // consult (row 106), so the refusal says only what Rust knows; naming
+    // which lane fact it was is the frontend's job, done before the request
+    // was ever sent. What may not happen is the third option: proceeding
+    // without the proof.
+    //
+    // **The family check stays skippable in kind and is not skipped here.** It
+    // owns no guarantee -- the authoritative per-family gate at execution
+    // refuses before anything is staged -- so it must never be promoted into
+    // the proof's guarantee (row 87). With both behind one acquisition a held
+    // gate refuses the whole `BEGIN`, so what a reader meets is simply the
+    // refusal.
+    //
+    /// [ADR 0044]: ../../../../../docs/architecture/adr/0044-conversion-configuration-authority.md
+    fn prove_begin(
+        &self,
+        expected_receipt: BackendBindingReceiptDto,
+        intent: ConversionIntent,
+        families: &[ConversionSourceKind],
+    ) -> Result<(), PreviewErrorDto> {
+        let Some(running) = self.try_enter_backend() else {
+            return Err(conversion_backend_busy());
+        };
+        // Asked again on the far side of the gate, because the resolution below
+        // is two help probes and a quarantine can land while this request is
+        // planning its rows or waiting for the lane -- a drain finishing with
+        // an unconfirmed stop sets it from another thread. Quarantine is not a
+        // thing to wait out: it is this session having lost track of a
+        // converter process of its own, so what the check before the plan
+        // established is not what matters here. What matters is whether
+        // MSCanvas is willing to start another process *now*.
+        //
+        // Deliberately without a test of its own. Nothing in the window between
+        // the two checks blocks, so a deterministic one would need a seam whose
+        // only purpose was to hold this request still -- and the redundancy is
+        // the point: every backend entry point asks this for itself rather than
+        // trusting that somebody upstream did.
+        self.require_usable_backend()?;
+        let attempt = self.provider.conversion_backend();
+        // Recorded before anything is judged, and that is the finding rather
+        // than a preference. A resolution that named a build and then refused
+        // it has still observed the build this session is on -- so a refusal
+        // propagated first would leave Rust correct about a binding it never
+        // told anyone about, which is ledger rows 5 and 9. An absence a
+        // discovery *found* is an observation like any other and replaces the
+        // receipt before it; a resolution that reached no discovery at all
+        // observed nothing, and the authority stays exactly as it was rather
+        // than recording an absence nothing looked for.
+        let projection = self.note_conversion_resolution(&attempt);
+        // Released the moment the discovery it guarded is over. Everything
+        // below reads what that one discovery produced -- an owned capability
+        // table and an already-recorded observation -- and launches nothing, so
+        // holding the lane across it would keep every other backend operation
+        // waiting on arithmetic.
+        drop(running);
+        // A binding that names no build is answered before the receipt is
+        // compared, and that order is the sentence rather than the safety. Both
+        // arms refuse and both carry the new authority, so a plan bound to the
+        // previous build is invalidated either way; what differs is what the
+        // reader is told, and "the installation changed, convert again" is the
+        // wrong thing to say to someone who now has none.
+        let Some(binding) = projection
+            .state
+            .binding()
+            .filter(|binding| binding.is_installed())
+        else {
+            return Err(conversion_without_an_installation());
+        };
+        // Gate one, and against what this resolution just established rather
+        // than against what the authority happened to hold on the way in: the
+        // discovery above may be the first thing in the session to see the
+        // replacement. A plan authorized under A cannot start a queue under B,
+        // whatever B admits.
+        if binding.receipt().wire() != expected_receipt {
+            return Err(conversion_binding_replaced());
+        }
+        // An installed binding whose grammar this resolution could not bind --
+        // help that will not parse, a build that cannot express an mzML
+        // conversion. Its own sentence, and it reaches the reader unchanged.
+        let backend = attempt.bound?;
+        // Gate two, and the reason this function exists. The proof is of the
+        // exact combination the reader selected -- not of the shipped posture,
+        // and not of "conversion in general" -- because a build can admit an
+        // mzML conversion and lack the grammar one admitted row emits.
+        if backend
+            .capabilities
+            .require_conversion_intent(&intent)
+            .is_err()
+        {
+            return Err(conversion_intent_unavailable());
+        }
+        // The courtesy, out of the same one discovery. Execution re-asks
+        // fail-closed per item and per family regardless; what this adds is
+        // that a user is normally refused before choosing a folder rather than
+        // after -- and refused for *any* unevidenced family in the batch,
+        // because a mixed queue is not authorized by its first item.
+        for kind in families {
+            refuse_unevidenced_build(&backend.capabilities, *kind)?;
+        }
+        Ok(())
+    }
+
     /// Consumes one exact reservation before its picker is dispatched.
-    ///
-    /// Answers with the operation the claim belongs to. The caller carries it
-    /// through the picker and back: without it, a dialog abandoned by a
-    /// reloaded document would return a folder that the command applied to
+    //
+    // Answers with the operation the claim belongs to. The caller carries it
+    // through the picker and back: without it, a dialog abandoned by a
+    // reloaded document would return a folder that the command applied to
     /// whatever the slot currently holds.
     pub fn claim_conversion(
         &self,
@@ -1543,20 +2001,24 @@ impl PreviewService {
     }
 
     /// Returns the slot to idle after a cancelled picker.
-    ///
-    /// An ordinary outcome. Nothing was created, nothing ran, and the operation
+    //
+    // An ordinary outcome. Nothing was created, nothing ran, and the operation
     /// identifier is not reused.
     pub fn cancel_conversion(&self, operation: u64) -> WorkspaceConversionUpdateDto {
         let mut slot = self.conversion_slot();
         slot.cancel(operation);
         self.publish_conversion_busy(&slot);
-        slot.read(self.backend_is_quarantined(), self.diagnostics_read())
+        slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.authority_projection().to_dto(),
+        )
     }
 
     /// Runs one claimed queue into one chosen folder.
-    ///
-    /// The destination is admitted **before** the slot says running, so a folder
-    /// this boundary will not write to costs no state transition and no staging
+    //
+    // The destination is admitted **before** the slot says running, so a folder
+    // this boundary will not write to costs no state transition and no staging
     /// area.
     pub fn run_claimed_conversion(
         &self,
@@ -1592,10 +2054,10 @@ impl PreviewService {
     }
 
     /// Runs every retryable failure of the terminal queue again.
-    ///
-    /// The same queue, not a new one made of what is left: successes, skips and
-    /// non-retryable failures keep their results and their places, and the
-    /// destination and policy are the ones the queue was created with. Nothing
+    //
+    // The same queue, not a new one made of what is left: successes, skips and
+    // non-retryable failures keep their results and their places, and the
+    // destination and policy are the ones the queue was created with. Nothing
     /// asks the user for a folder again.
     pub fn retry_conversion_queue(
         &self,
@@ -1669,31 +2131,31 @@ impl PreviewService {
     }
 
     /// Adds a terminal queue's finalized outputs to the workspace.
-    ///
-    /// Explicit, and all of them at once. The queue on screen is what the user
-    /// is looking at when they press this, so the set is the queue's own
-    /// finalized items in the queue's own order -- not a roster selection, and
-    /// not a subset the interface chose.
-    ///
-    /// Split across the mutation gate in three parts, because the middle one
-    /// hashes files and holding the gate across it would stall every other
-    /// workspace action for as long as that took. Under the gate: prove the
-    /// document, prove the queue, reserve a generation, take the tickets.
-    /// Outside it: check and accept each output. Under the gate again: require
-    /// the generation to still be current, and only then commit. A mutation
-    /// that won in between means nothing is added at all -- not a partial
-    /// commit against a workspace this run never saw.
-    ///
-    /// Launches no process and touches no backend, which is why a session that
-    /// has stopped trusting the backend may still do this. What it produces are
-    /// mzML rows; whether they can be *previewed* is the quarantine's business
-    /// and is unchanged by adopting them.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a stale document, an operation that is not the current terminal
-    /// queue, an adoption already under way, and a workspace that moved while
-    /// this one was reading. Individual outputs that cannot be admitted are not
+    //
+    // Explicit, and all of them at once. The queue on screen is what the user
+    // is looking at when they press this, so the set is the queue's own
+    // finalized items in the queue's own order -- not a roster selection, and
+    // not a subset the interface chose.
+    //
+    // Split across the mutation gate in three parts, because the middle one
+    // hashes files and holding the gate across it would stall every other
+    // workspace action for as long as that took. Under the gate: prove the
+    // document, prove the queue, reserve a generation, take the tickets.
+    // Outside it: check and accept each output. Under the gate again: require
+    // the generation to still be current, and only then commit. A mutation
+    // that won in between means nothing is added at all -- not a partial
+    // commit against a workspace this run never saw.
+    //
+    // Launches no process and touches no backend, which is why a session that
+    // has stopped trusting the backend may still do this. What it produces are
+    // mzML rows; whether they can be *previewed* is the quarantine's business
+    // and is unchanged by adopting them.
+    //
+    // # Errors
+    //
+    // Refuses a stale document, an operation that is not the current terminal
+    // queue, an adoption already under way, and a workspace that moved while
+    // this one was reading. Individual outputs that cannot be admitted are not
     /// errors: they are outcomes, and they do not stop the others.
     pub fn adopt_conversion_outputs(
         &self,
@@ -1781,16 +2243,16 @@ impl PreviewService {
     }
 
     /// Mints an adoption ticket for a conversion that just finished, or says
-    /// why the set is not adoptable.
-    ///
-    /// Takes the retained objects by value and the report by reference,
-    /// because that is the only moment both exist together: after this the
-    /// objects live in the ticket and there is no way back to them from a name.
-    ///
-    /// Takes the conversion whole and takes nothing else. Everything the ticket
-    /// needs about the run comes from the run: the source row and family from
-    /// the report, the objects, the folder it wrote into, and the identity that
-    /// was allocated when it finished. The only thing this looks up is the
+    // why the set is not adoptable.
+    //
+    // Takes the retained objects by value and the report by reference,
+    // because that is the only moment both exist together: after this the
+    // objects live in the ticket and there is no way back to them from a name.
+    //
+    // Takes the conversion whole and takes nothing else. Everything the ticket
+    // needs about the run comes from the run: the source row and family from
+    // the report, the objects, the folder it wrote into, and the identity that
+    // was allocated when it finished. The only thing this looks up is the
     /// source row's display name, by the id the conversion itself carries.
     #[cfg(test)]
     pub(super) fn output_set_adoption_ticket(
@@ -1872,41 +2334,41 @@ impl PreviewService {
     }
 
     /// Adopts the output set one terminal queue item holds.
-    ///
-    /// The private counterpart of [`Self::adopt_conversion_outputs`], and
-    /// deliberately a second entry point rather than a widened one: the visible
-    /// action adopts one output per finalized item and says so in its transfer
-    /// object, and a set would have to be flattened into members to fit that
-    /// shape — which is the reconstruction the whole output-set boundary
-    /// refuses.
-    ///
-    /// It reaches the ticket the way a caller must: by naming the exact
-    /// operation and the exact item. The slot answers only for a terminal queue
-    /// of that operation whose item at that index finalized and holds a set
-    /// authority, so a stale operation, a running queue, another item or an
-    /// item whose retry replaced its ticket all answer with nothing.
-    ///
-    /// Adopts one fully finalized, sample-complete output set into this
-    /// workspace.
-    ///
-    /// Private, and compiled out of the shipped binary: no command reaches it,
-    /// no transfer object is built from what it returns, and the ticket it
-    /// takes can only be minted by the private SCIEX conversion path.
-    ///
-    /// ## It is the same adoption
-    ///
-    /// Every check, every refusal reason, the duplicate-before-capacity rule,
-    /// the generation protocol and the mutual exclusion are the ordinary ones —
-    /// literally, through [`Self::inspect_adoption_candidates`] and
-    /// [`commit_adoption_candidates`]. What differs is only where the
-    /// candidates came from: one acquisition rather than one queue. An adopted
-    /// output does not know or care, and becomes an ordinary mzML row.
-    ///
-    /// ## What it does not take
-    ///
-    /// No backend gate, and no document epoch. A conversion result is not a
-    /// document the workspace can be reloaded out from under in the way a
-    /// dropped file list is; what it must not survive is a *workspace* that
+    //
+    // The private counterpart of [`Self::adopt_conversion_outputs`], and
+    // deliberately a second entry point rather than a widened one: the visible
+    // action adopts one output per finalized item and says so in its transfer
+    // object, and a set would have to be flattened into members to fit that
+    // shape — which is the reconstruction the whole output-set boundary
+    // refuses.
+    //
+    // It reaches the ticket the way a caller must: by naming the exact
+    // operation and the exact item. The slot answers only for a terminal queue
+    // of that operation whose item at that index finalized and holds a set
+    // authority, so a stale operation, a running queue, another item or an
+    // item whose retry replaced its ticket all answer with nothing.
+    //
+    // Adopts one fully finalized, sample-complete output set into this
+    // workspace.
+    //
+    // Private, and compiled out of the shipped binary: no command reaches it,
+    // no transfer object is built from what it returns, and the ticket it
+    // takes can only be minted by the private SCIEX conversion path.
+    //
+    // ## It is the same adoption
+    //
+    // Every check, every refusal reason, the duplicate-before-capacity rule,
+    // the generation protocol and the mutual exclusion are the ordinary ones —
+    // literally, through [`Self::inspect_adoption_candidates`] and
+    // [`commit_adoption_candidates`]. What differs is only where the
+    // candidates came from: one acquisition rather than one queue. An adopted
+    // output does not know or care, and becomes an ordinary mzML row.
+    //
+    // ## What it does not take
+    //
+    // No backend gate, and no document epoch. A conversion result is not a
+    // document the workspace can be reloaded out from under in the way a
+    // dropped file list is; what it must not survive is a *workspace* that
     /// moved on, and the reserved generation is what says that.
     #[cfg(test)]
     pub(super) fn adopt_output_set(
@@ -1917,11 +2379,11 @@ impl PreviewService {
     }
 
     /// The adoption a caller-held set ticket runs.
-    ///
-    /// One caller now, and deliberately: a *queue-held* set is adopted by the
-    /// visible action, which expands its authority into member candidates and
-    /// runs this same engine. What is left here is the direct conversion's own
-    /// path, whose ticket the caller owns outright -- so there is no settling to
+    //
+    // One caller now, and deliberately: a *queue-held* set is adopted by the
+    // visible action, which expands its authority into member candidates and
+    // runs this same engine. What is left here is the direct conversion's own
+    // path, whose ticket the caller owns outright -- so there is no settling to
     /// re-prove, only a workspace that may have moved on.
     #[cfg(test)]
     fn adopt_set(
@@ -2001,16 +2463,16 @@ impl PreviewService {
     }
 
     /// Opens, recognises and accepts every candidate, committing nothing.
-    ///
-    /// The reading half of an adoption, and the reason it is a function: two
-    /// callers now have ordered candidates to check -- the visible queue, and
-    /// the private output set of one multi-output conversion -- and a second
-    /// implementation of this would be a second answer to "is that still this?"
-    /// the moment either changed. Nothing here knows where the candidates came
-    /// from; a candidate is a ticket and an ordinal.
-    ///
-    /// No workspace lock, no slot lock and no gate is held across the work.
-    /// Hashing up to twenty-four outputs is slow enough that holding one would
+    //
+    // The reading half of an adoption, and the reason it is a function: two
+    // callers now have ordered candidates to check -- the visible queue, and
+    // the private output set of one multi-output conversion -- and a second
+    // implementation of this would be a second answer to "is that still this?"
+    // the moment either changed. Nothing here knows where the candidates came
+    // from; a candidate is a ticket and an ordinal.
+    //
+    // No workspace lock, no slot lock and no gate is held across the work.
+    // Hashing up to twenty-four outputs is slow enough that holding one would
     /// stop the roster answering for as long as it took.
     fn inspect_adoption_candidates(
         &self,
@@ -2037,8 +2499,8 @@ impl PreviewService {
     }
 
     /// The session's one diagnostics export slot, locked.
-    ///
-    /// Always taken after the conversion slot where both are needed, and never
+    //
+    // Always taken after the conversion slot where both are needed, and never
     /// held across the native dialog or the write.
     fn diagnostics_export_slot(&self) -> std::sync::MutexGuard<'_, DiagnosticsExportSlot> {
         self.diagnostics_export
@@ -2047,10 +2509,10 @@ impl PreviewService {
     }
 
     /// The session's one selected-spectrum export slot, locked.
-    ///
-    /// Never held across the native dialog or the write. Both of those take a
-    /// snapshot out of the slot first and work from that, so a selection that
-    /// lands while a dialog is open changes what a *new* export would name
+    //
+    // Never held across the native dialog or the write. Both of those take a
+    // snapshot out of the slot first and work from that, so a selection that
+    // lands while a dialog is open changes what a *new* export would name
     /// without disturbing one already under way.
     fn spectrum_export_slot(&self) -> std::sync::MutexGuard<'_, ScientificExportSlots> {
         self.spectrum_export
@@ -2059,10 +2521,10 @@ impl PreviewService {
     }
 
     /// A handle on the retained spectrum that does not keep it alive.
-    ///
-    /// Test-only. Revocation is about releasing two `f64` arrays, and every
-    /// other observation a test can make -- a stale token, a refused export --
-    /// proves only that the slot stopped *naming* them. This is what proves
+    //
+    // Test-only. Revocation is about releasing two `f64` arrays, and every
+    // other observation a test can make -- a stale token, a refused export --
+    // proves only that the slot stopped *naming* them. This is what proves
     /// they are gone.
     #[cfg(test)]
     pub(super) fn retained_spectrum_weak(
@@ -2072,10 +2534,10 @@ impl PreviewService {
     }
 
     /// Retains one synthetic spectrum as if a read had produced it.
-    ///
-    /// Compiled in only under the `e2e` feature. It installs through the
-    /// ordinary slot and does nothing else: every operation afterwards is the
-    /// production path, against a snapshot that reached the slot the same way a
+    //
+    // Compiled in only under the `e2e` feature. It installs through the
+    // ordinary slot and does nothing else: every operation afterwards is the
+    // production path, against a snapshot that reached the slot the same way a
     /// real one does.
     #[cfg(feature = "e2e")]
     pub(super) fn install_seeded_spectrum(
@@ -2087,9 +2549,9 @@ impl PreviewService {
     }
 
     /// Builds the retained per-scan facts one table read produces.
-    ///
-    /// The same mapping the preview commit uses, exposed so the rendered-test
-    /// seed reaches a snapshot through the production shape rather than through
+    //
+    // The same mapping the preview commit uses, exposed so the rendered-test
+    // seed reaches a snapshot through the production shape rather than through
     /// a second one written for it.
     #[cfg(feature = "e2e")]
     pub(super) fn retained_rows_for_seed(
@@ -2114,11 +2576,11 @@ impl PreviewService {
     }
 
     /// Retains one synthetic chromatogram as if a preview open had produced it.
-    ///
-    /// Through the ordinary ordering rule rather than around it: the seed takes
-    /// a preview-open ticket and reconciles against it, exactly as a real open
-    /// does. There is no installation path that skips the ticket -- the
-    /// installation itself is private to the export module -- so a fixture
+    //
+    // Through the ordinary ordering rule rather than around it: the seed takes
+    // a preview-open ticket and reconciles against it, exactly as a real open
+    // does. There is no installation path that skips the ticket -- the
+    // installation itself is private to the export module -- so a fixture
     /// cannot leave production with a weaker order than the one it is testing.
     #[cfg(feature = "e2e")]
     pub(super) fn install_seeded_chromatogram(
@@ -2132,10 +2594,10 @@ impl PreviewService {
     }
 
     /// Starts one export of one named spectrum, answering with its reservation.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a second concurrent export, and refuses a token this session no
+    //
+    // # Errors
+    //
+    // Refuses a second concurrent export, and refuses a token this session no
     /// longer holds rather than exporting whichever spectrum is current now.
     pub fn begin_spectrum_export(
         &self,
@@ -2187,15 +2649,15 @@ impl PreviewService {
     }
 
     /// Draws one committed m/z window of the retained spectrum a token names.
-    ///
-    /// The viewport's read of the same retained snapshot the export lane reads.
-    /// It launches no process, re-reads no acquisition and takes no export
-    /// lane: moving a viewport is not re-acquiring a spectrum, and a reader may
-    /// pan while a file is being written.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a token this session no longer holds, a spectrum with no
+    //
+    // The viewport's read of the same retained snapshot the export lane reads.
+    // It launches no process, re-reads no acquisition and takes no export
+    // lane: moving a viewport is not re-acquiring a spectrum, and a reader may
+    // pan while a file is being written.
+    //
+    // # Errors
+    //
+    // Refuses a token this session no longer holds, a spectrum with no
     /// viewport domain, and a window the retained source does not have.
     pub fn project_selected_spectrum(
         &self,
@@ -2229,9 +2691,9 @@ impl PreviewService {
     }
 
     /// How a projection refusal reads for the viewport surface.
-    ///
-    /// Exhaustive with no wildcard arm, so a refusal added to either layer has
-    /// to be answered here rather than falling into a default that happens to
+    //
+    // Exhaustive with no wildcard arm, so a refusal added to either layer has
+    // to be answered here rather than falling into a default that happens to
     /// compile.
     fn projection_refusal(refusal: SpectrumProjectionRefusal) -> PreviewErrorDto {
         match refusal {
@@ -2246,17 +2708,17 @@ impl PreviewService {
     }
 
     /// How a lane refusal reads for the selected-spectrum surface.
-    ///
-    /// Exhaustive rather than wildcarded, and each range answer keeps its own
-    /// sentence. A window outside the spectrum, a current range asked of a
-    /// spectrum that has no viewport, and a figure this build cannot draw are
-    /// three different things for a reader to do something about; collapsing
-    /// them into one `export_failed` would be the interface knowing which and
-    /// declining to say.
-    ///
-    /// The m/z wording is this surface's own. `RangeOutsideSource` is raised on
-    /// both axes -- the shape of the mistake is shared -- but the chromatogram's
-    /// sentence names a retention-time range, and reporting that to someone who
+    //
+    // Exhaustive rather than wildcarded, and each range answer keeps its own
+    // sentence. A window outside the spectrum, a current range asked of a
+    // spectrum that has no viewport, and a figure this build cannot draw are
+    // three different things for a reader to do something about; collapsing
+    // them into one `export_failed` would be the interface knowing which and
+    // declining to say.
+    //
+    // The m/z wording is this surface's own. `RangeOutsideSource` is raised on
+    // both axes -- the shape of the mistake is shared -- but the chromatogram's
+    // sentence names a retention-time range, and reporting that to someone who
     /// chose an m/z window would send them to the wrong control.
     fn spectrum_refusal(refusal: BeginExportRefusal) -> PreviewErrorDto {
         match refusal {
@@ -2320,11 +2782,11 @@ impl PreviewService {
     }
 
     /// Reads what every figure output is drawn with: a size and a theme.
-    ///
-    /// Every figure operation goes through here, so a number that could not
-    /// produce a figure is refused once, in one place, before anything is
-    /// retained or allocated. It deliberately does *not* read the DPI. An SVG
-    /// stopped over a resolution it does not record would be stopped over a
+    //
+    // Every figure operation goes through here, so a number that could not
+    // produce a figure is refused once, in one place, before anything is
+    // retained or allocated. It deliberately does *not* read the DPI. An SVG
+    // stopped over a resolution it does not record would be stopped over a
     /// number that could not have changed it.
     fn render_settings(
         settings: &FigureSettingsDto,
@@ -2339,24 +2801,24 @@ impl PreviewService {
     }
 
     /// Refuses a figure too large to hold as pixels.
-    ///
-    /// Asked by every operation that allocates a pixmap -- the PNG export and
-    /// the clipboard copy -- through one check, so the two cannot drift apart
+    //
+    // Asked by every operation that allocates a pixmap -- the PNG export and
+    // the clipboard copy -- through one check, so the two cannot drift apart
     /// again.
     fn raster_budget(settings: FigureRenderSettings) -> Result<(), PreviewErrorDto> {
         validate_raster_budget(settings).map_err(Self::settings_refusal)
     }
 
     /// Refuses a destination that is not named as the document it will hold.
-    ///
-    /// One rule for every save-dialog export, read from the same
-    /// [`SaveDialogFacts`] the dialog itself was built from, so the filter a
-    /// user saw and the name this boundary accepts cannot drift apart.
-    ///
-    /// Refused rather than corrected. Rewriting `trace.svg` to `trace.csv`
-    /// would publish under a name the user did not choose, and could collide
-    /// with an existing `trace.csv` they never asked to be near -- a
-    /// no-overwrite refusal about a file they did not name. So the answer is to
+    //
+    // One rule for every save-dialog export, read from the same
+    // [`SaveDialogFacts`] the dialog itself was built from, so the filter a
+    // user saw and the name this boundary accepts cannot drift apart.
+    //
+    // Refused rather than corrected. Rewriting `trace.svg` to `trace.csv`
+    // would publish under a name the user did not choose, and could collide
+    // with an existing `trace.csv` they never asked to be near -- a
+    // no-overwrite refusal about a file they did not name. So the answer is to
     /// say what would be right and write nothing.
     fn require_named_document(
         destination: &Path,
@@ -2369,8 +2831,8 @@ impl PreviewService {
     }
 
     /// The sentence for each way a figure could not be drawn as asked.
-    ///
-    /// Each names the number to change, because a reader told only that
+    //
+    // Each names the number to change, because a reader told only that
     /// something is wrong is left to guess which one it was.
     fn settings_refusal(refusal: SettingsRefusal) -> PreviewErrorDto {
         figure_settings_refused(match refusal {
@@ -2410,12 +2872,12 @@ impl PreviewService {
     }
 
     /// What the interface is told a *copied* figure was.
-    ///
-    /// Size and theme, and deliberately no resolution. The clipboard receives
-    /// RGBA, a width and a height; there is no `pHYs` chunk and nowhere for one,
-    /// so a confirmation naming a DPI would report a property the artifact does
-    /// not have. Its own constructor rather than the export one with a `None`
-    /// threaded through, because that is what stopped a PNG's semantics being
+    //
+    // Size and theme, and deliberately no resolution. The clipboard receives
+    // RGBA, a width and a height; there is no `pHYs` chunk and nowhere for one,
+    // so a confirmation naming a DPI would report a property the artifact does
+    // not have. Its own constructor rather than the export one with a `None`
+    // threaded through, because that is what stopped a PNG's semantics being
     /// borrowed for an artifact that is not one.
     fn copied_figure(settings: FigureRenderSettings) -> CopiedFigureDto {
         CopiedFigureDto {
@@ -2442,20 +2904,20 @@ impl PreviewService {
     }
 
     /// Draws the named spectrum's figure and puts it on the system clipboard.
-    ///
-    /// The same figure a PNG export writes, from the same snapshot, at the same
-    /// size and theme. The pixels never cross to the webview: the interface asks
-    /// for a copy and is told whether one happened, which is all it needs and
-    /// all it is given.
-    ///
-    /// Shares the one figure-operation lane with the save exports, because a
-    /// rasterization is the expensive part of both and two at once would be two
-    /// of them competing for memory.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a token this session no longer holds, a second concurrent figure
-    /// operation, settings no figure can be drawn at, a machine with no usable
+    //
+    // The same figure a PNG export writes, from the same snapshot, at the same
+    // size and theme. The pixels never cross to the webview: the interface asks
+    // for a copy and is told whether one happened, which is all it needs and
+    // all it is given.
+    //
+    // Shares the one figure-operation lane with the save exports, because a
+    // rasterization is the expensive part of both and two at once would be two
+    // of them competing for memory.
+    //
+    // # Errors
+    //
+    // Refuses a token this session no longer holds, a second concurrent figure
+    // operation, settings no figure can be drawn at, a machine with no usable
     /// font, and a clipboard that would not take the image.
     pub fn copy_spectrum_plot(
         &self,
@@ -2514,10 +2976,10 @@ impl PreviewService {
     }
 
     /// Claims one issued reservation so its save dialog may be shown.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a reservation that was never issued, has already been claimed,
+    //
+    // # Errors
+    //
+    // Refuses a reservation that was never issued, has already been claimed,
     /// or has since been cancelled.
     pub fn claim_spectrum_export(
         &self,
@@ -2533,24 +2995,24 @@ impl PreviewService {
     }
 
     /// Returns one reservation to idle without writing anything.
-    ///
-    /// The ordinary end of a cancelled dialog, and the recovery when a dialog
+    //
+    // The ordinary end of a cancelled dialog, and the recovery when a dialog
     /// could not be dispatched at all.
     pub fn cancel_spectrum_export(&self, reservation: &str) {
         self.spectrum_export_slot().cancel(reservation);
     }
 
     /// Writes one claimed export to one chosen destination.
-    ///
-    /// The document is built from the snapshot the claim took, not from
-    /// anything read again here: by the time this runs the user has been in a
-    /// modal dialog, and the spectrum on screen may have been replaced twice
-    /// over. What is written is the spectrum the export was invoked for.
-    ///
-    /// # Errors
-    ///
-    /// Answers with the refusal that stopped it, and with whether a private
-    /// temporary object was left behind. On every failing path the chosen name
+    //
+    // The document is built from the snapshot the claim took, not from
+    // anything read again here: by the time this runs the user has been in a
+    // modal dialog, and the spectrum on screen may have been replaced twice
+    // over. What is written is the spectrum the export was invoked for.
+    //
+    // # Errors
+    //
+    // Answers with the refusal that stopped it, and with whether a private
+    // temporary object was left behind. On every failing path the chosen name
     /// is untouched.
     pub fn write_spectrum_export(
         &self,
@@ -2622,25 +3084,25 @@ impl PreviewService {
     // ------------------------------------------------- chromatogram export
 
     /// Retains, or revokes, the chromatogram one committed preview can export.
-    ///
-    /// The eligibility is the visible viewer's, deliberately and not
-    /// approximately: Rust holds every row the backend reported while the
-    /// webview receives a bounded prefix, so a run whose table could not be
-    /// transferred whole has no chromatogram on screen -- and issuing a token
-    /// for it would let an export reach science the product does not otherwise
-    /// show. A truncated viewer has no chromatogram and no chromatogram export.
-    ///
-    /// Answers the opaque name the webview receives, or `None` where there is
-    /// nothing to name. The previous chromatogram is already gone by this point:
-    /// the ticket this open took at its beginning revoked it there, because a
-    /// token naming a run the user is no longer looking at must fail as stale
-    /// rather than quietly export whatever happens to be loaded now.
-    ///
-    /// `ticket` is what decides whether this completion may speak at all. The
-    /// per-dataset request epoch checked before this cannot: two opens of two
-    /// *different* datasets are each the newest request for their own dataset,
-    /// so by that test both are current and whichever finishes last would own
-    /// the one chromatogram the session has -- which is the older one whenever
+    //
+    // The eligibility is the visible viewer's, deliberately and not
+    // approximately: Rust holds every row the backend reported while the
+    // webview receives a bounded prefix, so a run whose table could not be
+    // transferred whole has no chromatogram on screen -- and issuing a token
+    // for it would let an export reach science the product does not otherwise
+    // show. A truncated viewer has no chromatogram and no chromatogram export.
+    //
+    // Answers the opaque name the webview receives, or `None` where there is
+    // nothing to name. The previous chromatogram is already gone by this point:
+    // the ticket this open took at its beginning revoked it there, because a
+    // token naming a run the user is no longer looking at must fail as stale
+    // rather than quietly export whatever happens to be loaded now.
+    //
+    // `ticket` is what decides whether this completion may speak at all. The
+    // per-dataset request epoch checked before this cannot: two opens of two
+    // *different* datasets are each the newest request for their own dataset,
+    // so by that test both are current and whichever finishes last would own
+    // the one chromatogram the session has -- which is the older one whenever
     /// the newer open is the faster read.
     fn reconcile_chromatogram_export(
         &self,
@@ -2660,16 +3122,16 @@ impl PreviewService {
     }
 
     /// Binds one chromatogram export and reserves the one scientific lane.
-    ///
-    /// The range is resolved here, against the run the token names, and what
-    /// this export writes is fixed from this moment: a viewport that moves, a
-    /// trace that is toggled or a settings change that lands while the picker
-    /// is open changes nothing about a file already being written.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a stale token, a lane another export has committed, a range
-    /// outside the run, a figure with no visible trace, and settings no figure
+    //
+    // The range is resolved here, against the run the token names, and what
+    // this export writes is fixed from this moment: a viewport that moves, a
+    // trace that is toggled or a settings change that lands while the picker
+    // is open changes nothing about a file already being written.
+    //
+    // # Errors
+    //
+    // Refuses a stale token, a lane another export has committed, a range
+    // outside the run, a figure with no visible trace, and settings no figure
     /// can be drawn at.
     pub fn begin_chromatogram_export(
         &self,
@@ -2724,11 +3186,11 @@ impl PreviewService {
     }
 
     /// Claims one issued chromatogram reservation, so its dialog may be shown.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a reservation this session did not issue, one already claimed,
-    /// one that has since been cancelled, and one belonging to the other
+    //
+    // # Errors
+    //
+    // Refuses a reservation this session did not issue, one already claimed,
+    // one that has since been cancelled, and one belonging to the other
     /// surface.
     pub fn claim_chromatogram_export(
         &self,
@@ -2745,16 +3207,16 @@ impl PreviewService {
     }
 
     /// Writes one claimed chromatogram export to the destination the user chose.
-    ///
-    /// The figure and the data document are siblings over the same snapshot and
-    /// the same resolved range. Neither is read from the other: the data file is
-    /// built from the scans inside the range, and the figure carries the
-    /// complete source series and declares the window, so the renderer can draw
-    /// a segment crossing a range that holds no scans at all.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a destination this boundary cannot admit, a write that failed,
+    //
+    // The figure and the data document are siblings over the same snapshot and
+    // the same resolved range. Neither is read from the other: the data file is
+    // built from the scans inside the range, and the figure carries the
+    // complete source series and declares the window, so the renderer can draw
+    // a segment crossing a range that holds no scans at all.
+    //
+    // # Errors
+    //
+    // Refuses a destination this boundary cannot admit, a write that failed,
     /// and a figure the contract will not accept.
     pub fn write_chromatogram_export(
         &self,
@@ -2820,15 +3282,15 @@ impl PreviewService {
     }
 
     /// Draws one chromatogram and puts it on the clipboard.
-    ///
-    /// The same figure a PNG export would write, through the same renderer and
-    /// the same rasterizer. No screenshot, no DOM, and no pixels cross back: the
-    /// webview learns what was copied, not what it looks like.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a stale token, a committed lane, a range outside the run, a
-    /// figure with no visible trace, settings no figure can be drawn at, and a
+    //
+    // The same figure a PNG export would write, through the same renderer and
+    // the same rasterizer. No screenshot, no DOM, and no pixels cross back: the
+    // webview learns what was copied, not what it looks like.
+    //
+    // # Errors
+    //
+    // Refuses a stale token, a committed lane, a range outside the run, a
+    // figure with no visible trace, settings no figure can be drawn at, and a
     /// clipboard this platform would not accept the image on.
     pub fn copy_chromatogram_plot(
         &self,
@@ -2875,17 +3337,17 @@ impl PreviewService {
     // ------------------------------------------------- linked two-panel figure
 
     /// Binds one linked figure and reserves the one scientific lane.
-    ///
-    /// Both tokens, in one operation, because the pair is what the figure is
-    /// about. Everything that could refuse it is asked before a dialog opens:
-    /// whether either source has moved on, whether they are one scan, whether
-    /// the scan is inside the range that would be drawn, whether anything is
-    /// visible to draw, and whether the figure is tall enough for two panels.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a stale pair, sources that are not one scan, a selected scan
-    /// outside the range, no visible trace, a figure too short, settings no
+    //
+    // Both tokens, in one operation, because the pair is what the figure is
+    // about. Everything that could refuse it is asked before a dialog opens:
+    // whether either source has moved on, whether they are one scan, whether
+    // the scan is inside the range that would be drawn, whether anything is
+    // visible to draw, and whether the figure is tall enough for two panels.
+    //
+    // # Errors
+    //
+    // Refuses a stale pair, sources that are not one scan, a selected scan
+    // outside the range, no visible trace, a figure too short, settings no
     /// figure can be drawn at, and a lane already in use.
     pub fn begin_linked_figure_export(
         &self,
@@ -2927,10 +3389,10 @@ impl PreviewService {
     }
 
     /// Claims one issued linked reservation, so its dialog may be shown.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a reservation this session no longer holds, one already claimed,
+    //
+    // # Errors
+    //
+    // Refuses a reservation this session no longer holds, one already claimed,
     /// and one belonging to another surface.
     pub fn claim_linked_figure_export(
         &self,
@@ -2947,15 +3409,15 @@ impl PreviewService {
     }
 
     /// Writes one claimed linked figure to the destination the user chose.
-    ///
-    /// The pair was decided when the export began and is not read again here.
-    /// The user may have selected another scan or opened another run while the
-    /// dialog was open; what is written is the figure they asked for.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a destination this boundary cannot admit or that is not named as
-    /// the document it holds, a write that failed, and a figure the contract
+    //
+    // The pair was decided when the export began and is not read again here.
+    // The user may have selected another scan or opened another run while the
+    // dialog was open; what is written is the figure they asked for.
+    //
+    // # Errors
+    //
+    // Refuses a destination this boundary cannot admit or that is not named as
+    // the document it holds, a write that failed, and a figure the contract
     /// will not accept.
     pub fn write_linked_figure_export(
         &self,
@@ -3009,13 +3471,13 @@ impl PreviewService {
     }
 
     /// Draws one linked figure and puts it on the clipboard.
-    ///
-    /// The same figure a PNG export would write, through the same renderer and
-    /// the same rasterizer. No screenshot, no DOM, and no pixels cross back.
-    ///
-    /// # Errors
-    ///
-    /// The refusals a linked export answers with, and a clipboard this platform
+    //
+    // The same figure a PNG export would write, through the same renderer and
+    // the same rasterizer. No screenshot, no DOM, and no pixels cross back.
+    //
+    // # Errors
+    //
+    // The refusals a linked export answers with, and a clipboard this platform
     /// would not accept the image on.
     pub fn copy_linked_plot(
         &self,
@@ -3083,9 +3545,9 @@ impl PreviewService {
     }
 
     /// The two-panel figure one claimed linked export draws.
-    ///
-    /// The row is looked up again from the snapshot the export bound, not from
-    /// whatever is on screen: that snapshot is immutable and still holds the
+    //
+    // The row is looked up again from the snapshot the export bound, not from
+    // whatever is on screen: that snapshot is immutable and still holds the
     /// scan this figure is about.
     fn linked_figure_of(
         claimed: &ClaimedLinkedFigureExport,
@@ -3124,10 +3586,10 @@ impl PreviewService {
     }
 
     /// What a document may know about diagnostics, apart from the queue's own
-    /// counts.
-    ///
-    /// The counts are filled in by the slot that knows them. This carries the
-    /// two facts that belong to the export rather than to the queue: whether one
+    // counts.
+    //
+    // The counts are filled in by the slot that knows them. This carries the
+    // two facts that belong to the export rather than to the queue: whether one
     /// is running, and what the last one wrote.
     fn diagnostics_read(&self) -> ConversionDiagnosticsStateDto {
         let slot = self.diagnostics_export_slot();
@@ -3140,25 +3602,25 @@ impl PreviewService {
     }
 
     /// Binds one diagnostics export and reserves the right to choose a file.
-    ///
-    /// The synchronous half of the two-command boundary, the same shape a
-    /// conversion destination uses and for the same reason: a webview can reload
-    /// between any two IPC fetches, so the reservation is retained in Rust and a
-    /// document that never receives the identifier can never open a dialog.
-    ///
-    /// What is bound here cannot change afterwards -- the document, the terminal
-    /// queue and which settling of it -- so the dialog that follows is a dialog
-    /// *for this result*, and a retry started while it is open cannot make the
-    /// export describe a queue the user was not looking at.
-    ///
-    /// Launches no process and takes no backend gate. A session that has stopped
-    /// trusting the backend may still do this, and that is the case the export
-    /// exists for.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a stale document, an operation that is not the current terminal
-    /// queue, a queue with nothing worth describing, and an export already under
+    //
+    // The synchronous half of the two-command boundary, the same shape a
+    // conversion destination uses and for the same reason: a webview can reload
+    // between any two IPC fetches, so the reservation is retained in Rust and a
+    // document that never receives the identifier can never open a dialog.
+    //
+    // What is bound here cannot change afterwards -- the document, the terminal
+    // queue and which settling of it -- so the dialog that follows is a dialog
+    // *for this result*, and a retry started while it is open cannot make the
+    // export describe a queue the user was not looking at.
+    //
+    // Launches no process and takes no backend gate. A session that has stopped
+    // trusting the backend may still do this, and that is the case the export
+    // exists for.
+    //
+    // # Errors
+    //
+    // Refuses a stale document, an operation that is not the current terminal
+    // queue, a queue with nothing worth describing, and an export already under
     /// way.
     pub fn begin_conversion_diagnostics_export(
         &self,
@@ -3207,14 +3669,14 @@ impl PreviewService {
     }
 
     /// Consumes one exact reservation before its dialog is dispatched.
-    ///
-    /// Answers with nothing. What the claim bound is read back out of the slot
-    /// when the write begins, named by the same reservation, so there is one
-    /// place the queue and the settling come from and no caller can pair a
-    /// reservation with a round it does not belong to.
-    ///
-    /// # Errors
-    ///
+    //
+    // Answers with nothing. What the claim bound is read back out of the slot
+    // when the write begins, named by the same reservation, so there is one
+    // place the queue and the settling come from and no caller can pair a
+    // reservation with a round it does not belong to.
+    //
+    // # Errors
+    //
     /// Refuses an unknown, already-claimed or replaced reservation.
     pub fn claim_conversion_diagnostics_export(
         &self,
@@ -3226,8 +3688,8 @@ impl PreviewService {
     }
 
     /// Returns the slot to idle after a cancelled dialog or an undispatched one.
-    ///
-    /// An ordinary outcome. Nothing was created, nothing was written, and the
+    //
+    // An ordinary outcome. Nothing was created, nothing was written, and the
     /// last recorded export -- if there was one -- is left exactly as it was.
     pub fn cancel_conversion_diagnostics_export(
         &self,
@@ -3246,18 +3708,18 @@ impl PreviewService {
     }
 
     /// Changes the export slot and records that a reader can see it.
-    ///
-    /// One function rather than the same four lines at every transition,
-    /// because the part that is easy to forget is the last one: the diagnostics
-    /// state rides on the conversion read, so it shares that read's ordering
-    /// key, and a document installs by that key. A transition that did not
-    /// advance it would be a transition no document ever applies.
-    ///
-    /// Takes the conversion lock first, which is the order every path that
-    /// holds both uses.
-    /// The change answers whether a reader can see it, and the key moves only
-    /// then. A page load releases a reservation that usually is not there, and
-    /// advancing for that would make every reload look like a transition to
+    //
+    // One function rather than the same four lines at every transition,
+    // because the part that is easy to forget is the last one: the diagnostics
+    // state rides on the conversion read, so it shares that read's ordering
+    // key, and a document installs by that key. A transition that did not
+    // advance it would be a transition no document ever applies.
+    //
+    // Takes the conversion lock first, which is the order every path that
+    // holds both uses.
+    // The change answers whether a reader can see it, and the key moves only
+    // then. A page load releases a reservation that usually is not there, and
+    // advancing for that would make every reload look like a transition to
     /// every document reading the slot.
     fn change_diagnostics(&self, change: impl FnOnce(&mut DiagnosticsExportSlot) -> bool) {
         let mut conversion = self.conversion_slot();
@@ -3271,20 +3733,20 @@ impl PreviewService {
     }
 
     /// Writes one terminal queue's diagnostics to the file the user chose.
-    ///
-    /// Everything that can refuse does so before anything is created: the queue
-    /// must still be the one this dialog was opened for, the document must
-    /// serialize, the folder must be one this boundary writes into, and the
-    /// whole document must fit the export bound. The write itself creates a
-    /// private sibling, fills it, forces it to disk and renames it -- so a name
-    /// that is already taken is a refusal that replaced nothing, and a failure
-    /// anywhere leaves no file under the chosen name.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a superseded queue, a folder this boundary will not write into, a
-    /// name that is taken, a document over the size bound, and every way the
-    /// write itself can fail. A failure that also left a temporary object behind
+    //
+    // Everything that can refuse does so before anything is created: the queue
+    // must still be the one this dialog was opened for, the document must
+    // serialize, the folder must be one this boundary writes into, and the
+    // whole document must fit the export bound. The write itself creates a
+    // private sibling, fills it, forces it to disk and renames it -- so a name
+    // that is already taken is a refusal that replaced nothing, and a failure
+    // anywhere leaves no file under the chosen name.
+    //
+    // # Errors
+    //
+    // Refuses a superseded queue, a folder this boundary will not write into, a
+    // name that is taken, a document over the size bound, and every way the
+    // write itself can fail. A failure that also left a temporary object behind
     /// says so in its detail rather than hiding it behind the primary reason.
     pub fn write_conversion_diagnostics(
         &self,
@@ -3295,11 +3757,11 @@ impl PreviewService {
     }
 
     /// The body, with a seam at the one interval this write's guard is about:
-    /// after the slot has been returned to idle and before the guard falls.
-    ///
-    /// Production passes an empty hook. A test uses it to reserve a second
-    /// export inside that window, which is the only way to reach the state the
-    /// guard's condition exists for -- it is a window inside one function, so
+    // after the slot has been returned to idle and before the guard falls.
+    //
+    // Production passes an empty hook. A test uses it to reserve a second
+    // export inside that window, which is the only way to reach the state the
+    // guard's condition exists for -- it is a window inside one function, so
     /// nothing a caller can do from outside lands in it.
     pub(super) fn write_conversion_diagnostics_seamed(
         &self,
@@ -3385,21 +3847,21 @@ impl PreviewService {
     }
 
     /// Releases a reservation whose document is gone, claimed or not.
-    ///
-    /// Claimed included, exactly as a conversion destination reservation is
-    /// released. A save dialog belonging to a replaced document may still be on
-    /// screen, and what this decides is that whatever it answers with is
-    /// dropped: nothing is written, no partial file exists, and the replacement
-    /// document is offered the export again. Leaving a claimed reservation
-    /// alive instead would keep the slot busy on the strength of a dialog no
+    //
+    // Claimed included, exactly as a conversion destination reservation is
+    // released. A save dialog belonging to a replaced document may still be on
+    // screen, and what this decides is that whatever it answers with is
+    // dropped: nothing is written, no partial file exists, and the replacement
+    // document is offered the export again. Leaving a claimed reservation
+    // alive instead would keep the slot busy on the strength of a dialog no
     /// document is waiting for.
     fn release_diagnostics_reservation(&self) {
         self.change_diagnostics(DiagnosticsExportSlot::release_awaiting_destination);
     }
 
     /// Advances the workspace generation for one adoption and returns it.
-    ///
-    /// Separated so the gate guard is dropped at a statement boundary rather
+    //
+    // Separated so the gate guard is dropped at a statement boundary rather
     /// than living to the end of the block that produced it.
     fn reserve_adoption(&self, mut gate: std::sync::MutexGuard<'_, WorkspaceMutationState>) -> u64 {
         gate.advance()
@@ -3411,31 +3873,31 @@ impl PreviewService {
     }
 
     /// Whether a diagnostics export is between being asked for and finishing.
-    ///
-    /// Lock-free like the two mirrors beside it, and for the same reason: the
-    /// paths that consult it include the native drop callback, which must be
+    //
+    // Lock-free like the two mirrors beside it, and for the same reason: the
+    // paths that consult it include the native drop callback, which must be
     /// able to refuse without waiting on any service mutex.
     pub(super) fn diagnostics_export_is_in_flight(&self) -> bool {
         self.diagnostics_exporting.load(Ordering::Acquire)
     }
 
     /// Whether some action that owns the terminal queue is between its halves.
-    ///
-    /// Adoption and a diagnostics export are different things -- one mutates
-    /// the workspace and the other only reads -- and they are refused by the
-    /// same set of callers for one reason: both are about the results a
-    /// terminal queue is holding, and a retry, a new queue or a mutation that
+    //
+    // Adoption and a diagnostics export are different things -- one mutates
+    // the workspace and the other only reads -- and they are refused by the
+    // same set of callers for one reason: both are about the results a
+    // terminal queue is holding, and a retry, a new queue or a mutation that
     /// landed in the middle would replace the very thing being read.
     fn terminal_queue_action_in_flight(&self) -> bool {
         self.adoption_is_in_flight() || self.diagnostics_export_is_in_flight()
     }
 
     /// Marks a claimed queue as running without draining it.
-    ///
-    /// The two halves of `run_claimed_conversion`, separated, so a test can
-    /// occupy the interval between them: a queue that is running and whose
-    /// worker has not begun is exactly the state a queue is in while it waits
-    /// behind another backend operation for the gate, and a stop made then must
+    //
+    // The two halves of `run_claimed_conversion`, separated, so a test can
+    // occupy the interval between them: a queue that is running and whose
+    // worker has not begun is exactly the state a queue is in while it waits
+    // behind another backend operation for the gate, and a stop made then must
     /// launch nothing.
     #[cfg(test)]
     pub(super) fn start_running_for_test(&self, operation: u64, destination: &Path) -> bool {
@@ -3461,14 +3923,14 @@ impl PreviewService {
     }
 
     /// Converts every pending item, in order, on one backend binding.
-    ///
-    /// The gate is taken once for the whole queue and released only when it
-    /// reaches terminal. That is what makes the batch one provider build, one
-    /// process lane and one deterministic order -- and what stops a preview
-    /// interleaving between two items of a batch the user is watching.
-    ///
-    /// No workspace lock, no mutation gate and no slot lock is held while a
-    /// process runs. Each is taken briefly to read a row or commit a
+    //
+    // The gate is taken once for the whole queue and released only when it
+    // reaches terminal. That is what makes the batch one provider build, one
+    // process lane and one deterministic order -- and what stops a preview
+    // interleaving between two items of a batch the user is watching.
+    //
+    // No workspace lock, no mutation gate and no slot lock is held while a
+    // process runs. Each is taken briefly to read a row or commit a
     /// transition, and released before the next item starts.
     fn drain_queue(&self, operation: u64) -> WorkspaceConversionUpdateDto {
         let running = self.enter_backend();
@@ -3493,7 +3955,24 @@ impl PreviewService {
         // Bound once, for the whole queue. Binding per item would let a batch
         // span two installations, and the evidence a conversion is gated on is
         // a statement about one exact build.
-        let backend = match self.provider.conversion_backend() {
+        let attempt = self.provider.conversion_backend();
+        // Recorded before the binding is examined, and that order is the
+        // finding rather than a preference: a resolution that names a build and
+        // then refuses it for its grammar has still observed the build this
+        // session is on, and a refusal propagated first would drop the
+        // observation on the floor. One installation for one queue, retries
+        // included, and compared against what the queue's earlier pass ran on:
+        // a user who switches ProteoWizard between a run and its retry would
+        // otherwise get some of one queue's files from one build and the rest
+        // from another, which is not a batch anybody can compare.
+        //
+        // The queue holds the identity rather than the receipt this returns.
+        // Switching away and back is a real thing to do, and it restores the
+        // same build -- while a receipt, which names a binding rather than a
+        // build, would have been replaced and would refuse the retry for ever.
+        let generation = self.note_conversion_resolution(&attempt).to_dto();
+        let installation = attempt.installed();
+        let backend = match attempt.bound {
             Ok(backend) => backend,
             Err(error) => {
                 drop(running);
@@ -3518,25 +3997,12 @@ impl PreviewService {
                 return self.refuse_queue(operation, error);
             }
         }
-        // One installation for one queue, retries included. Noted once here
-        // rather than per item, and compared against what the queue's earlier
-        // pass ran on: a user who switches ProteoWizard between a run and its
-        // retry would otherwise get some of one queue's files from one build
-        // and the rest from another, which is not a batch anybody can compare.
-        //
-        // The queue holds the identity rather than the generation the call
-        // below returns. Switching away and back is a real thing to do, and it
-        // restores the same build -- while the generation, which only counts
-        // changes, would have moved on and refused the retry for ever.
-        let generation = self.note_resolved(backend.installation.clone());
         // Bound to a local first, and every lock below it likewise. A guard
         // produced inside an `if` condition lives until the end of that `if`,
         // body included -- and each of these bodies takes the same lock again.
-        let bound = self.conversion_slot().bind_installation(
-            operation,
-            backend.installation.clone(),
-            generation,
-        );
+        let bound = self
+            .conversion_slot()
+            .bind_installation(operation, installation, generation);
         if let Err(error) = bound {
             drop(running);
             return self.refuse_queue(operation, error);
@@ -3699,7 +4165,11 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.finish(operation, None, reason);
         self.publish_conversion_busy(&slot);
-        let update = slot.read(self.backend_is_quarantined(), self.diagnostics_read());
+        let update = slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.authority_projection().to_dto(),
+        );
         drop(slot);
         update
     }
@@ -3710,11 +4180,11 @@ impl PreviewService {
     }
 
     /// Turns one attempt's result into what the queue records.
-    ///
-    /// The two stopped states are not one. `Cancelled` is a claim that the
-    /// owned process tree is gone, which only the conversion boundary's own
-    /// confirmation establishes; `CancellationFailed` is the admission that it
-    /// could not be established, and it is what puts the session into
+    //
+    // The two stopped states are not one. `Cancelled` is a claim that the
+    // owned process tree is gone, which only the conversion boundary's own
+    // confirmation establishes; `CancellationFailed` is the admission that it
+    // could not be established, and it is what puts the session into
     /// quarantine.
     fn classify_attempt(&self, attempt: QueueItemAttempt, elapsed: Duration) -> ItemOutcome {
         match attempt {
@@ -3801,16 +4271,16 @@ impl PreviewService {
     }
 
     /// One item, on a binding and a gate the queue already owns.
-    ///
-    /// Everything that decides what is converted is re-established here rather
-    /// than remembered: the row is revalidated under the family it was queued
-    /// as, held against replacement, and re-admitted as a conversion source
+    //
+    // Everything that decides what is converted is re-established here rather
+    // than remembered: the row is revalidated under the family it was queued
+    // as, held against replacement, and re-admitted as a conversion source
     /// whose object identity must match the one the session holds.
     fn convert_queue_item(
         &self,
         run: QueuedItemRun<'_>,
         backend: &ConversionBackend<'_>,
-        generation: u64,
+        generation: BackendAuthorityProjectionDto,
         cancellation: ConversionCancellation,
     ) -> QueueItemAttempt {
         let item = run.item;
@@ -3938,21 +4408,21 @@ impl PreviewService {
     }
 
     /// One backend-named set item, on the queue's binding and its gate.
-    ///
-    /// The multi-output half of the one execution path. Everything structural
-    /// is shared with the single-output half above -- the same queue, the same
-    /// slot, the same backend lane, the same revalidation posture, the same
-    /// cancellation object -- and what differs is only the lifecycle it hands
-    /// the bound source to, because that lifecycle is the one that expects the
-    /// backend to name its own outputs.
-    ///
-    /// One item, one process. The set is the item's *result*, never a set of
+    //
+    // The multi-output half of the one execution path. Everything structural
+    // is shared with the single-output half above -- the same queue, the same
+    // slot, the same backend lane, the same revalidation posture, the same
+    // cancellation object -- and what differs is only the lifecycle it hands
+    // the bound source to, because that lifecycle is the one that expects the
+    // backend to name its own outputs.
+    //
+    // One item, one process. The set is the item's *result*, never a set of
     /// items.
     fn convert_queue_output_set(
         &self,
         run: QueuedItemRun<'_>,
         backend: &ConversionBackend<'_>,
-        generation: u64,
+        generation: BackendAuthorityProjectionDto,
         cancellation: &ConversionCancellation,
         remembered: AcceptedFile,
     ) -> QueueItemAttempt {
@@ -4028,7 +4498,7 @@ impl PreviewService {
                     dataset: item.dataset(),
                     source_kind: file.source_kind(),
                     bound_source_objects,
-                    installation_generation: generation,
+                    authority: generation,
                     destination: destination.clone(),
                 },
             ))
@@ -4069,22 +4539,26 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.refuse(operation, error);
         self.publish_conversion_busy(&slot);
-        slot.read(self.backend_is_quarantined(), self.diagnostics_read())
+        slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.authority_projection().to_dto(),
+        )
     }
 
     /// Reserves the right to claim the workspace's next state without opening
-    /// a picker.
-    ///
-    /// This is the synchronous half of the two-command boundary. A webview can
-    /// reload between any two IPC fetches, so the reservation is retained in
-    /// Rust under a session-scoped, single-use identifier. If the reply
-    /// disappears with the old document, no picker can start because that
-    /// document never receives the identifier.
-    ///
-    /// Begin itself is deliberately idempotent at one workspace generation. A
-    /// delayed begin from a document that has reloaded therefore cannot replace
-    /// a newer document's reservation or supersede a scan it already claimed.
-    /// The next begin after any other workspace decision replaces the one stale
+    // a picker.
+    //
+    // This is the synchronous half of the two-command boundary. A webview can
+    // reload between any two IPC fetches, so the reservation is retained in
+    // Rust under a session-scoped, single-use identifier. If the reply
+    // disappears with the old document, no picker can start because that
+    // document never receives the identifier.
+    //
+    // Begin itself is deliberately idempotent at one workspace generation. A
+    // delayed begin from a document that has reloaded therefore cannot replace
+    // a newer document's reservation or supersede a scan it already claimed.
+    // The next begin after any other workspace decision replaces the one stale
     /// slot, so abandoned replies cannot grow an unbounded registry.
     pub fn begin_folder_import(&self) -> Result<FolderImportReservationDto, PreviewErrorDto> {
         if self.conversion_is_busy() || self.terminal_queue_action_in_flight() {
@@ -4114,12 +4588,12 @@ impl PreviewService {
     }
 
     /// Consumes one exact reservation before its picker is dispatched.
-    ///
-    /// An unknown, replaced or replayed identifier never consumes the active
-    /// slot. An exact identifier whose baseline was superseded by Clear, Remove
-    /// or a reloaded window is consumed but refused, so it cannot be retried
-    /// after the workspace moves again. A live exact claim advances the
-    /// generation and creates the internal token atomically. The token itself
+    //
+    // An unknown, replaced or replayed identifier never consumes the active
+    // slot. An exact identifier whose baseline was superseded by Clear, Remove
+    // or a reloaded window is consumed but refused, so it cannot be retried
+    // after the workspace moves again. A live exact claim advances the
+    // generation and creates the internal token atomically. The token itself
     /// never crosses IPC and remains unclonable.
     pub fn claim_folder_import(
         &self,
@@ -4158,12 +4632,12 @@ impl PreviewService {
     }
 
     /// The three guarded workspace mutations, for the tests that are not about
-    /// the guard.
-    ///
-    /// Each one panics rather than returning the refusal, which is the point: a
-    /// test that unexpectedly hits the conversion guard fails loudly at the
-    /// line that hit it instead of quietly asserting on an error value it never
-    /// meant to produce. The tests that *are* about the guard call the real
+    // the guard.
+    //
+    // Each one panics rather than returning the refusal, which is the point: a
+    // test that unexpectedly hits the conversion guard fails loudly at the
+    // line that hit it instead of quietly asserting on an error value it never
+    // meant to produce. The tests that *are* about the guard call the real
     /// methods and read the refusal.
     #[cfg(test)]
     pub(super) fn add_files_now(&self, paths: &[PathBuf]) -> WorkspaceAddResultDto {
@@ -4172,10 +4646,10 @@ impl PreviewService {
     }
 
     /// Stops trusting the backend, as an unconfirmed stop does.
-    ///
-    /// Test-only, and it exists so a test can reach the *state* without driving
-    /// a whole queue to the one ending that produces it. What it stands in for
-    /// is real: once this is set every entry point that would launch a process
+    //
+    // Test-only, and it exists so a test can reach the *state* without driving
+    // a whole queue to the one ending that produces it. What it stands in for
+    // is real: once this is set every entry point that would launch a process
     /// refuses, and a preview is one of those.
     #[cfg(test)]
     pub(super) fn quarantine_backend_now(&self) {
@@ -4201,15 +4675,97 @@ impl PreviewService {
     }
 
     /// One dataset's queue plan, for the tests that are about one dataset.
-    ///
-    /// A queue of one is the single-conversion workflow, so these read the way
-    /// they always did while going through the queue the product uses.
+    //
+    // A queue of one is the single-conversion workflow, so these read the way
+    // they always did while going through the queue the product uses. The
+    // question is the shipped posture under this session's own binding, which
+    /// is the one a panel asks before a reader has chosen anything else.
     #[cfg(test)]
     pub(super) fn conversion_plan_summary(
         &self,
         handle: &str,
     ) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
-        self.conversion_queue_plan(std::slice::from_ref(&handle.to_owned()))
+        match self.conversion_queue_plan(&self.shipped_plan_request(&[handle.to_owned()]))? {
+            ConversionPlanOutcomeDto::Planned { plan } => Ok(plan),
+            ConversionPlanOutcomeDto::BindingReplaced { .. } => {
+                panic!("this session is asked about the binding it is on")
+            }
+        }
+    }
+
+    /// The plan a panel gets for these rows before a reader has chosen
+    // anything, or the refusal it gets instead.
+    //
+    // The tests that are about the *rows* -- an empty list, one too long, a
+    // name collision -- ask through this, so the question they ask is the
+    /// ordinary one and the only thing varying is what they are about.
+    #[cfg(test)]
+    pub(super) fn conversion_queue_plan_now(
+        &self,
+        handles: &[String],
+    ) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
+        match self.conversion_queue_plan(&self.shipped_plan_request(handles))? {
+            ConversionPlanOutcomeDto::Planned { plan } => Ok(plan),
+            ConversionPlanOutcomeDto::BindingReplaced { .. } => {
+                panic!("this session is asked about the binding it is on")
+            }
+        }
+    }
+
+    /// The plan question a panel asks before a reader has chosen anything.
+    //
+    // Asked of a binding whose settings have been read, because that is the
+    // only session in which a plan question exists at all: a panel with no
+    // catalog has no selected row to ask about, and Rust refuses the question
+    // rather than answering it from the admitted table. Tests that are about
+    // the rows get that setup here rather than opening with two calls whose
+    /// only purpose is to make the third one legal.
+    #[cfg(test)]
+    pub(super) fn shipped_plan_request(&self, handles: &[String]) -> ConversionPlanRequestDto {
+        ConversionPlanRequestDto {
+            handles: handles.to_vec(),
+            intent_id: ConversionIntent::SHIPPED.stable_id(),
+            conflict_policy: ConversionConflictPolicyDto::Fail,
+            expected_receipt: self.readied_receipt(),
+        }
+    }
+
+    /// The binding this session is on, with this binding's settings read.
+    //
+    // The state every session is in by the time a reader can press anything:
+    // a plan question exists only where a catalog does, and `Convert` is
+    // offered only beside a plan. So the owed configuration read is issued
+    // here, through the ordinary lifecycle, rather than by every test opening
+    // with a call whose only purpose is to make the next one legal.
+    //
+    // It is that read and not a backend check, deliberately. A check writes
+    // the reading the banner echoes, and a helper that took one would hand
+    // tests about an *unread* banner a reading they never asked for.
+    //
+    // Issued only where the catalog really is unread, so a test that has
+    // already read one spends no second probe -- and a session that cannot
+    // read one at all, quarantined or behind a held gate, is left exactly as
+    /// it was for the assertion to find.
+    #[cfg(test)]
+    fn readied_receipt(&self) -> BackendBindingReceiptDto {
+        let unread = match self.authority_projection().state.binding() {
+            None => true,
+            Some(binding) => {
+                self.resolved
+                    .lock()
+                    .expect("the installation lock is never poisoned by user code")
+                    .configurations
+                    .admits(binding, &ConversionIntent::SHIPPED)
+                    == RowAdmission::NoCatalog
+            }
+        };
+        if unread {
+            drop(self.read_conversion_configuration());
+        }
+        self.authority_projection()
+            .state
+            .binding()
+            .map_or(0, |binding| binding.receipt().wire())
     }
 
     #[cfg(test)]
@@ -4219,17 +4775,45 @@ impl PreviewService {
         conflict: ConversionConflictPolicyDto,
         document_epoch: u64,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
-        self.begin_conversion_queue(
+        self.begin_conversion_now(
             std::slice::from_ref(&handle.to_owned()),
             conflict,
             document_epoch,
         )
     }
 
+    /// A `BEGIN` for the shipped posture under this session's own binding.
+    //
+    // The request every test that is not *about* the new gates makes, written
+    // once: the rows it names, the combination the product ships, and the
+    // binding the session is actually on. A test about a stale receipt or an
+    /// unadmitted identity calls `begin_conversion_queue` directly and says so.
+    #[cfg(test)]
+    pub(super) fn begin_conversion_now(
+        &self,
+        handles: &[String],
+        conflict: ConversionConflictPolicyDto,
+        document_epoch: u64,
+    ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
+        let request = ConversionBeginRequestDto {
+            handles: handles.to_vec(),
+            intent_id: ConversionIntent::SHIPPED.stable_id(),
+            conflict_policy: conflict,
+            expected_receipt: self.readied_receipt(),
+        };
+        match self
+            .begin_conversion_queue(&request, document_epoch)
+            .outcome
+        {
+            ConversionBeginOutcomeDto::Reserved { reservation } => Ok(reservation),
+            ConversionBeginOutcomeDto::Refused { error } => Err(error),
+        }
+    }
+
     /// Direct token allocation for deterministic service tests.
-    ///
-    /// Product code uses the begin/claim pair above; tests that exercise the
-    /// unlocked scan and gated commit need the internal token without an IPC
+    //
+    // Product code uses the begin/claim pair above; tests that exercise the
+    // unlocked scan and gated commit need the internal token without an IPC
     /// protocol obscuring the ordering they control.
     #[cfg(test)]
     pub(super) fn reserve_folder_import(&self) -> FolderImportToken {
@@ -4239,27 +4823,27 @@ impl PreviewService {
     }
 
     /// Scans one chosen folder and adds every mzML file it proposes.
-    ///
-    /// The shape of this is the whole of what M1.4.1 adds, and every step is
-    /// load-bearing:
-    ///
-    /// 1. the exact claim advanced the generation before the picker opened, so
-    ///    there is a name for "the workspace when this picker was accepted";
-    /// 2. reject an already-superseded token before touching the filesystem;
-    /// 3. scan holding **no** lock -- not the workspace, not the mutation gate.
-    ///    A tree can take as long as it takes, and a session frozen for the
-    ///    length of it would be one the user could not remove a row from;
-    /// 4. take the gate again and refuse outright if anything has happened
-    ///    since. A user who cleared the list, added files, or reloaded the
-    ///    window has said what the workspace is, and rows from an import they
-    ///    started before that would arrive from nowhere;
-    /// 5. accept the candidates in discovery order, under the gate, so the
-    ///    batch is one contiguous run;
-    /// 6. recheck each candidate's identity against what discovery found,
-    ///    because a path is a proposal and the object behind it can be
-    ///    replaced between the walk and the open.
-    ///
-    /// No backend is launched, for any candidate, ever. A folder of a thousand
+    //
+    // The shape of this is the whole of what M1.4.1 adds, and every step is
+    // load-bearing:
+    //
+    // 1. the exact claim advanced the generation before the picker opened, so
+    //    there is a name for "the workspace when this picker was accepted";
+    // 2. reject an already-superseded token before touching the filesystem;
+    // 3. scan holding **no** lock -- not the workspace, not the mutation gate.
+    //    A tree can take as long as it takes, and a session frozen for the
+    //    length of it would be one the user could not remove a row from;
+    // 4. take the gate again and refuse outright if anything has happened
+    //    since. A user who cleared the list, added files, or reloaded the
+    //    window has said what the workspace is, and rows from an import they
+    //    started before that would arrive from nowhere;
+    // 5. accept the candidates in discovery order, under the gate, so the
+    //    batch is one contiguous run;
+    // 6. recheck each candidate's identity against what discovery found,
+    //    because a path is a proposal and the object behind it can be
+    //    replaced between the walk and the open.
+    //
+    // No backend is launched, for any candidate, ever. A folder of a thousand
     /// files costs a thousand filesystem inspections and no processes.
     pub fn add_mzml_folder(
         &self,
@@ -4272,16 +4856,16 @@ impl PreviewService {
     }
 
     /// The scan and commit an import is made of, with the walk itself left to
-    /// the caller.
-    ///
-    /// Named as its own step because the walk is the one part that runs outside
-    /// the gate, and that is both what makes a long scan safe and what makes it
-    /// raceable. A test stands a controlled walk in its place and decides
-    /// exactly what happens to the workspace while it runs — no sleep, no
-    /// guess, and no tree the size of the case being described.
-    ///
-    /// It reserves nothing. The token is the reservation, and reserving a
-    /// second one here would move the import forward past every decision the
+    // the caller.
+    //
+    // Named as its own step because the walk is the one part that runs outside
+    // the gate, and that is both what makes a long scan safe and what makes it
+    // raceable. A test stands a controlled walk in its place and decides
+    // exactly what happens to the workspace while it runs — no sleep, no
+    // guess, and no tree the size of the case being described.
+    //
+    // It reserves nothing. The token is the reservation, and reserving a
+    // second one here would move the import forward past every decision the
     /// user made while the picker was open.
     pub(super) fn import_folder<S>(
         &self,
@@ -4470,7 +5054,7 @@ impl PreviewService {
     }
 
     /// Claims the workspace generation and publishes `importing` before any
-    /// filesystem classification begins. A page load, Clear, or Remove that
+    // filesystem classification begins. A page load, Clear, or Remove that
     /// won the atomic claim first makes this worker a no-op.
     fn begin_native_drop(
         &self,
@@ -4662,7 +5246,7 @@ impl PreviewService {
     }
 
     /// Recovers the logical operation if the blocking worker panics or is
-    /// cancelled. A replacement operation/document cannot be cleared because
+    // cancelled. A replacement operation/document cannot be cleared because
     /// the opaque operation ID must still match.
     pub(crate) fn fail_native_drop_worker(&self, operation_id: DropOperationId) {
         let delivery = self.drop_updates.begin_delivery();
@@ -4695,8 +5279,8 @@ impl PreviewService {
     }
 
     /// Removes the rows these handles name, and says which named nothing.
-    ///
-    /// The source acquisitions are never touched. Removing a row removes a row
+    //
+    // The source acquisitions are never touched. Removing a row removes a row
     /// and releases the handle that row was holding.
     pub fn remove_datasets(
         &self,
@@ -4781,12 +5365,12 @@ impl PreviewService {
     }
 
     /// Empties the workspace, and answers with the empty roster that is now
-    /// authoritative.
-    ///
-    /// Every row through the same revocation a single removal uses, so emptying
-    /// the workspace cannot come to mean something different from removing
-    /// every row in it. The identifier allocator does not rewind: a reply still
-    /// in flight for one of the emptied datasets must not land on whatever is
+    // authoritative.
+    //
+    // Every row through the same revocation a single removal uses, so emptying
+    // the workspace cannot come to mean something different from removing
+    // every row in it. The identifier allocator does not rewind: a reply still
+    // in flight for one of the emptied datasets must not land on whatever is
     /// added next.
     pub fn clear_workspace(&self) -> Result<WorkspaceRosterDto, PreviewErrorDto> {
         let delivery = self.drop_updates.begin_delivery();
@@ -4825,10 +5409,10 @@ impl PreviewService {
     }
 
     /// Serialises one workspace mutation against another.
-    ///
-    /// Short-lived and never taken while a backend process runs. Without it two
-    /// batches could interleave their rows, and the order the user picked files
-    /// in -- which is the order the roster is -- would depend on which thread
+    //
+    // Short-lived and never taken while a backend process runs. Without it two
+    // batches could interleave their rows, and the order the user picked files
+    // in -- which is the order the roster is -- would depend on which thread
     /// won each turn.
     fn enter_workspace_mutation(&self) -> std::sync::MutexGuard<'_, WorkspaceMutationState> {
         self.workspace_mutation
@@ -4852,18 +5436,18 @@ impl PreviewService {
     }
 
     /// Takes the gate and declares a new state of the workspace.
-    ///
-    /// Every immediate mutation goes through here, as does the native start of
-    /// a replacement webview document. Each one is a statement about the
-    /// workspace from that moment on, which is exactly what makes an older
-    /// folder scan's answer no longer the one the user is waiting for.
-    ///
-    /// It advances even when the operation ends up changing nothing. Removing
-    /// zero rows is still the user saying "this is the workspace now", and a
-    /// scan that committed across it would add rows to a list that had already
-    /// been answered for.
-    /// The unguarded form, kept for the test shorthand that reserves a folder
-    /// import without a picker. Production takes the guarded one below, because
+    //
+    // Every immediate mutation goes through here, as does the native start of
+    // a replacement webview document. Each one is a statement about the
+    // workspace from that moment on, which is exactly what makes an older
+    // folder scan's answer no longer the one the user is waiting for.
+    //
+    // It advances even when the operation ends up changing nothing. Removing
+    // zero rows is still the user saying "this is the workspace now", and a
+    // scan that committed across it would add rows to a list that had already
+    // been answered for.
+    // The unguarded form, kept for the test shorthand that reserves a folder
+    // import without a picker. Production takes the guarded one below, because
     /// production is where an adoption can be running.
     #[cfg(test)]
     fn begin_waiting_mutation(&self) -> (std::sync::MutexGuard<'_, WorkspaceMutationState>, u64) {
@@ -4873,15 +5457,15 @@ impl PreviewService {
     }
 
     /// The same, refusing while an adoption is between its halves.
-    ///
-    /// Asked under the gate and *before* the generation moves, which is the
-    /// only order that works. Advancing it is what supersedes an adoption, so a
-    /// refusal decided afterwards would fail the mutation and take the adoption
-    /// down with it -- two user actions lost where one of them was only ever
-    /// asked to wait.
-    ///
-    /// # Errors
-    ///
+    //
+    // Asked under the gate and *before* the generation moves, which is the
+    // only order that works. Advancing it is what supersedes an adoption, so a
+    // refusal decided afterwards would fail the mutation and take the adoption
+    // down with it -- two user actions lost where one of them was only ever
+    // asked to wait.
+    //
+    // # Errors
+    //
     /// `conversion_busy` while an adoption is in flight. Nothing has moved.
     fn begin_waiting_mutation_unless_adopting(
         &self,
@@ -4895,12 +5479,12 @@ impl PreviewService {
     }
 
     /// A superseding mutation, refusing while an adoption is between its
-    /// halves. See [`Self::begin_waiting_mutation_unless_adopting`] for why the
-    /// order matters.
-    ///
-    /// # Errors
-    ///
-    /// `conversion_busy` while an adoption is in flight. Nothing has moved, and
+    // halves. See [`Self::begin_waiting_mutation_unless_adopting`] for why the
+    // order matters.
+    //
+    // # Errors
+    //
+    // `conversion_busy` while an adoption is in flight. Nothing has moved, and
     /// in particular no native drop has been superseded.
     fn begin_superseding_mutation_unless_adopting(
         &self,
@@ -4922,7 +5506,7 @@ impl PreviewService {
     }
 
     /// Starts one of the explicit operations allowed to supersede a native
-    /// drop. The caller already holds the drop delivery gate, so clearing the
+    // drop. The caller already holds the drop delivery gate, so clearing the
     /// operation and publishing idle cannot be overtaken by its worker.
     fn begin_superseding_mutation(
         &self,
@@ -4940,7 +5524,7 @@ impl PreviewService {
     }
 
     /// Holds both gates that the old callback-facing implementation used.
-    /// Tests use this to prove native event reservation remains wait-free with
+    // Tests use this to prove native event reservation remains wait-free with
     /// respect to every service mutex and channel delivery.
     #[cfg(test)]
     pub(super) fn hold_drop_gates_for_test(
@@ -4971,20 +5555,20 @@ impl PreviewService {
 }
 
 /// Everything one queued item's attempt is about.
-///
-/// Gathered because the list had grown past what a reader can tell apart at a
-/// call site, and because the last three of them -- the item's place in its
-/// queue, the queue itself and the folder it was admitted to -- only mean
-/// anything together. An item index with another queue behind it names a
+//
+// Gathered because the list had grown past what a reader can tell apart at a
+// call site, and because the last three of them -- the item's place in its
+// queue, the queue itself and the folder it was admitted to -- only mean
+// anything together. An item index with another queue behind it names a
 /// different item.
 #[derive(Clone, Copy)]
 struct QueuedItemRun<'a> {
     item: &'a QueueItem,
     /// Where the item sits, and the queue it sits in.
-    ///
-    /// Read by the runtime name authority, which both cardinalities now ask: a
-    /// known single output checks whether an earlier set already published its
-    /// planned name, and a set checks its discovered names against every claim
+    //
+    // Read by the runtime name authority, which both cardinalities now ask: a
+    // known single output checks whether an earlier set already published its
+    // planned name, and a set checks its discovered names against every claim
     /// the queue holds.
     index: usize,
     queue: &'a ConversionQueue,
@@ -4993,10 +5577,10 @@ struct QueuedItemRun<'a> {
 }
 
 /// What a stop established about one set attempt, if a stop is what ended it.
-///
-/// Reads the lifecycle's own two cancellation refusals and nothing else. A run
-/// that failed for any other reason is not a cancellation however close to one
-/// it looks, and a run that reached an outcome was never stopped inside the
+//
+// Reads the lifecycle's own two cancellation refusals and nothing else. A run
+// that failed for any other reason is not a cancellation however close to one
+// it looks, and a run that reached an outcome was never stopped inside the
 /// backend at all.
 fn set_stop_facts(conversion: &mut SciexConversion) -> Option<SetStopFacts> {
     let report = conversion.report();
@@ -5059,13 +5643,13 @@ struct PendingFolderImport {
 }
 
 /// One folder import's claim on the workspace's next state.
-///
-/// Opaque, unclonable and not serialisable. The webview neither supplies nor
-/// receives it: begin stores only a baseline behind a session claim identifier,
-/// the chooser consumes that identifier and creates this token, and the import
-/// spends it. What the token represents — "the workspace as it was when the
-/// picker claim was accepted" — cannot be forged, reused or moved across the
-/// boundary. Holding a number rather than a lock is what lets the native dialog
+//
+// Opaque, unclonable and not serialisable. The webview neither supplies nor
+// receives it: begin stores only a baseline behind a session claim identifier,
+// the chooser consumes that identifier and creates this token, and the import
+// spends it. What the token represents — "the workspace as it was when the
+// picker claim was accepted" — cannot be forged, reused or moved across the
+// boundary. Holding a number rather than a lock is what lets the native dialog
 /// stand open for as long as the user needs without freezing the session.
 pub struct FolderImportToken {
     generation: u64,
@@ -5082,8 +5666,8 @@ impl FolderImportToken {
 
 impl fmt::Debug for FolderImportToken {
     /// Opaque, like every other value in this boundary that names a moment in
-    /// the session's history. The number is meaningless outside the service and
-    /// printing it invites a reader of a log to treat it as something to
+    // the session's history. The number is meaningless outside the service and
+    // printing it invites a reader of a log to treat it as something to
     /// correlate.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("<folder-import-token>")
@@ -5091,9 +5675,9 @@ impl fmt::Debug for FolderImportToken {
 }
 
 /// Which decision about the workspace is the current one.
-///
-/// A single counter behind the mutation gate. It is not a lock and it is not a
-/// version of the contents: it is the answer to "has anything happened that
+//
+// A single counter behind the mutation gate. It is not a lock and it is not a
+// version of the contents: it is the answer to "has anything happened that
 /// makes a scan started earlier no longer the thing the user is waiting for".
 #[derive(Default)]
 struct WorkspaceMutationState {
@@ -5105,11 +5689,11 @@ struct WorkspaceMutationState {
 
 impl WorkspaceMutationState {
     /// Moves to the next generation and reports it.
-    ///
-    /// Checked, so the invariant is absolute rather than nearly so: a wrapped
-    /// counter would hand a stale scan the token it needed to commit, and a
-    /// release build wraps silently. A session cannot reach this in practice --
-    /// it counts user actions -- which is exactly why the failure would be
+    //
+    // Checked, so the invariant is absolute rather than nearly so: a wrapped
+    // counter would hand a stale scan the token it needed to commit, and a
+    // release build wraps silently. A session cannot reach this in practice --
+    // it counts user actions -- which is exactly why the failure would be
     /// invisible if it ever did.
     fn advance(&mut self) -> u64 {
         self.generation = self
@@ -5130,11 +5714,11 @@ impl WorkspaceMutationState {
 }
 
 /// The behaviour the picker had before the roster replaced it.
-///
-/// Compiled out of the shipped binary. It is kept because the replacement
-/// semantics it implements -- accept and lease the new file before letting the
-/// previous one go -- have focused coverage worth keeping, and because most of
-/// this module's single-dataset tests are written against it. No command
+//
+// Compiled out of the shipped binary. It is kept because the replacement
+// semantics it implements -- accept and lease the new file before letting the
+// previous one go -- have focused coverage worth keeping, and because most of
+// this module's single-dataset tests are written against it. No command
 /// reaches it.
 #[cfg(test)]
 impl PreviewService {
@@ -5172,10 +5756,10 @@ impl PreviewService {
     }
 
     /// Adds one accepted file without disturbing the datasets already held.
-    ///
-    /// Answers with the dataset the file is now known as. A file already in the
-    /// workspace answers with the row it is already on, described as it was
-    /// registered rather than as it was just named: two names for one file are
+    //
+    // Answers with the dataset the file is now known as. A file already in the
+    // workspace answers with the row it is already on, described as it was
+    // registered rather than as it was just named: two names for one file are
     /// one dataset, and the one the user has is the one they added.
     pub(super) fn add_dataset(&self, path: &Path) -> Result<SelectedFileDto, PreviewErrorDto> {
         let accepted = accept_mzml_file(path)?;
@@ -5185,12 +5769,12 @@ impl PreviewService {
     }
 
     /// The same, for a dataset admitted as a vendor acquisition.
-    ///
-    /// The only way a Thermo dataset enters a workspace, and deliberately a
-    /// test-only one. Nothing a user can do reaches [`accept_thermo_raw_file`]:
-    /// the picker, folder discovery and the Explorer drop all go through mzML
-    /// acceptance, and this slice adds no surface that would change that. What
-    /// it stands in for is the ingestion decision a later slice has to make on
+    //
+    // The only way a Thermo dataset enters a workspace, and deliberately a
+    // test-only one. Nothing a user can do reaches [`accept_thermo_raw_file`]:
+    // the picker, folder discovery and the Explorer drop all go through mzML
+    // acceptance, and this slice adds no surface that would change that. What
+    // it stands in for is the ingestion decision a later slice has to make on
     /// purpose, not one this one makes quietly.
     pub(super) fn add_thermo_dataset(
         &self,
@@ -5205,17 +5789,17 @@ impl PreviewService {
     }
 
     /// The same, for a dataset admitted as a Shimadzu LabSolutions acquisition.
-    ///
-    /// The only way an LCD dataset enters a workspace, and unlike the Thermo one
-    /// above there is no visible route beside it: the picker does not consult
-    /// the LCD extension at all, so a `.lcd` a user chooses is still refused by
-    /// mzML admission. This takes a Rust-owned path because nothing that could
-    /// hand it one from a webview exists -- it is compiled out of the shipped
-    /// binary, and the command surface is asserted to be unchanged.
-    ///
-    /// Everything after this point is ordinary. The row gets a normal
-    /// [`DatasetId`], the normal identity lease, a normal place in the registry
-    /// and normal duplicate handling; the family it carries is the only thing
+    //
+    // The only way an LCD dataset enters a workspace, and unlike the Thermo one
+    // above there is no visible route beside it: the picker does not consult
+    // the LCD extension at all, so a `.lcd` a user chooses is still refused by
+    // mzML admission. This takes a Rust-owned path because nothing that could
+    // hand it one from a webview exists -- it is compiled out of the shipped
+    // binary, and the command surface is asserted to be unchanged.
+    //
+    // Everything after this point is ordinary. The row gets a normal
+    // [`DatasetId`], the normal identity lease, a normal place in the registry
+    // and normal duplicate handling; the family it carries is the only thing
     /// about it that is new, and every later use re-applies that family's rule.
     pub(super) fn add_shimadzu_dataset(
         &self,
@@ -5230,21 +5814,21 @@ impl PreviewService {
     }
 
     /// The same, for a whole SCIEX WIFF acquisition.
-    ///
-    /// The only way a SCIEX dataset enters a workspace, and there is no visible
-    /// route beside it: the picker does not consult the `.wiff` extension at
-    /// all, folder discovery and the Explorer drop stay regular-mzML-only, and
-    /// this takes a Rust-owned path because nothing that could hand it one from
-    /// a webview exists. It is compiled out of the shipped binary and the
-    /// command surface is asserted to be unchanged.
-    ///
-    /// **One row for two files.** The admission below leases the `.wiff` *and*
-    /// the `.wiff.scan`, and the registry stores both under one
-    /// [`DatasetId`][super::selection::DatasetId]. The companion is not a
-    /// second dataset, is not in a side map, and is not found again later by
-    /// guessing its name: it is part of the acquisition this row *is*. Duplicate
-    /// handling follows from that -- two additions are the same dataset when
-    /// they are the same bundle, and a `.wiff` whose companion has been replaced
+    //
+    // The only way a SCIEX dataset enters a workspace, and there is no visible
+    // route beside it: the picker does not consult the `.wiff` extension at
+    // all, folder discovery and the Explorer drop stay regular-mzML-only, and
+    // this takes a Rust-owned path because nothing that could hand it one from
+    // a webview exists. It is compiled out of the shipped binary and the
+    // command surface is asserted to be unchanged.
+    //
+    // **One row for two files.** The admission below leases the `.wiff` *and*
+    // the `.wiff.scan`, and the registry stores both under one
+    // [`DatasetId`][super::selection::DatasetId]. The companion is not a
+    // second dataset, is not in a side map, and is not found again later by
+    // guessing its name: it is part of the acquisition this row *is*. Duplicate
+    // handling follows from that -- two additions are the same dataset when
+    // they are the same bundle, and a `.wiff` whose companion has been replaced
     /// is a different acquisition rather than a duplicate of the first.
     #[cfg(test)]
     pub(super) fn add_sciex_wiff_dataset(
@@ -5260,49 +5844,49 @@ impl PreviewService {
     }
 
     /// Converts one accepted SCIEX dataset through the private multi-output
-    /// lifecycle.
-    ///
-    /// Private, and further from a product surface than the single-output path
-    /// beside it: no command reaches this, no transfer object is built from
-    /// what it returns, the visible queue refuses this family, and it is
-    /// compiled out of the shipped binary. What it exists to establish is that
-    /// a *bundle* the session already holds can be carried whole -- both
-    /// objects, both identities, both leases -- into the output-set boundary and
-    /// back.
-    ///
-    /// ## The order, and why it is the same one
-    ///
-    /// Step for step the order the single-output path keeps, because every
-    /// reason for it is a property of this service rather than of the output
-    /// cardinality:
-    ///
-    /// 1. the handle is resolved and the epoch claimed **before** the wait;
-    /// 2. the backend gate is taken with **no workspace lock held**;
-    /// 3. the epoch is rechecked **after** the wait;
-    /// 4. the dataset is revalidated under the family it was accepted as --
-    ///    which for this family re-admits the *whole bundle* and compares every
-    ///    member's identity, not just the one the row is named by;
-    /// 5. the installation is bound and its build checked against the recorded
-    ///    SCIEX evidence **before** anything is pinned or created;
-    /// 6. every member is pinned against replacement, and only then is the
-    ///    bundle re-admitted as a conversion source -- the identity comparison
-    ///    inside that admission is what closes the window between revalidation
-    ///    and the pins, and it closes it before an output could exist;
-    /// 7. the run is stamped with the generation carried by the gate guard.
-    ///
-    /// Step 6 is where this differs, and it is the difference that matters. A
-    /// single-file family pins one object; this pins the primary *and* the
-    /// companion. The companion never appears in any argv, so nothing
-    /// downstream would notice it had been swapped -- the run would succeed and
-    /// the documents it published would be of an acquisition nobody chose.
-    ///
-    /// ## What a successful result does not say
-    ///
-    /// [`WorkspaceMultiOutputConversionReport`] documents this at length and it
-    /// is repeated here because this is where a caller meets it: a
-    /// `fully_finalized` group outcome says every member of the *admitted
-    /// output set* was validated and published. It does not say every sample in
-    /// the acquisition converted. `Reader_ABI` can fail a sample, log it,
+    // lifecycle.
+    //
+    // Private, and further from a product surface than the single-output path
+    // beside it: no command reaches this, no transfer object is built from
+    // what it returns, the visible queue refuses this family, and it is
+    // compiled out of the shipped binary. What it exists to establish is that
+    // a *bundle* the session already holds can be carried whole -- both
+    // objects, both identities, both leases -- into the output-set boundary and
+    // back.
+    //
+    // ## The order, and why it is the same one
+    //
+    // Step for step the order the single-output path keeps, because every
+    // reason for it is a property of this service rather than of the output
+    // cardinality:
+    //
+    // 1. the handle is resolved and the epoch claimed **before** the wait;
+    // 2. the backend gate is taken with **no workspace lock held**;
+    // 3. the epoch is rechecked **after** the wait;
+    // 4. the dataset is revalidated under the family it was accepted as --
+    //    which for this family re-admits the *whole bundle* and compares every
+    //    member's identity, not just the one the row is named by;
+    // 5. the installation is bound and its build checked against the recorded
+    //    SCIEX evidence **before** anything is pinned or created;
+    // 6. every member is pinned against replacement, and only then is the
+    //    bundle re-admitted as a conversion source -- the identity comparison
+    //    inside that admission is what closes the window between revalidation
+    //    and the pins, and it closes it before an output could exist;
+    // 7. the run is stamped with the generation carried by the gate guard.
+    //
+    // Step 6 is where this differs, and it is the difference that matters. A
+    // single-file family pins one object; this pins the primary *and* the
+    // companion. The companion never appears in any argv, so nothing
+    // downstream would notice it had been swapped -- the run would succeed and
+    // the documents it published would be of an acquisition nobody chose.
+    //
+    // ## What a successful result does not say
+    //
+    // [`WorkspaceMultiOutputConversionReport`] documents this at length and it
+    // is repeated here because this is where a caller meets it: a
+    // `fully_finalized` group outcome says every member of the *admitted
+    // output set* was validated and published. It does not say every sample in
+    // the acquisition converted. `Reader_ABI` can fail a sample, log it,
     /// continue, declare only what it wrote and exit zero.
     #[cfg(test)]
     pub(super) fn convert_workspace_sciex_bundle(
@@ -5315,16 +5899,16 @@ impl PreviewService {
     }
 
     /// The same conversion, carrying the lifecycle's publication seam.
-    ///
-    /// The hook fires after the whole-set destination preflight and before each
-    /// member's rename, and it is here for one outcome that cannot otherwise be
-    /// produced from this layer: `PartiallyFinalized` requires a destination
-    /// name to be taken *between* the preflight that found it free and the
-    /// rename that wanted it, which is a race against another process. The
-    /// suite occupies the name instead of trying to win it.
-    ///
-    /// It changes nothing about the run. The hook sees a position, never an
-    /// object, a handle or a name, and cannot make a rename fail except by
+    //
+    // The hook fires after the whole-set destination preflight and before each
+    // member's rename, and it is here for one outcome that cannot otherwise be
+    // produced from this layer: `PartiallyFinalized` requires a destination
+    // name to be taken *between* the preflight that found it free and the
+    // rename that wanted it, which is a race against another process. The
+    // suite occupies the name instead of trying to win it.
+    //
+    // It changes nothing about the run. The hook sees a position, never an
+    // object, a handle or a name, and cannot make a rename fail except by
     /// doing to the filesystem what anything else with write access could do.
     #[cfg(test)]
     pub(super) fn convert_workspace_sciex_bundle_seamed(
@@ -5361,7 +5945,13 @@ impl PreviewService {
                 false,
             ));
         }
-        let backend = self.provider.conversion_backend()?;
+        // Recorded before the binding is read, so a resolution that named a
+        // build and then refused it still leaves the session on the build it
+        // named. The projection this returns is the one the run is stamped
+        // with below.
+        let attempt = self.provider.conversion_backend();
+        let generation = self.note_conversion_resolution(&attempt).to_dto();
+        let backend = attempt.bound?;
         refuse_unevidenced_build(&backend.capabilities, kind)?;
 
         // Every member, and the guards are held together for the whole run. A
@@ -5395,7 +5985,6 @@ impl PreviewService {
                 before_member_publication,
             },
         );
-        let generation = self.note_resolved(backend.installation.clone());
         drop(guards);
         drop(running);
         Ok(SciexConversion::of(
@@ -5405,7 +5994,7 @@ impl PreviewService {
                 dataset: id,
                 source_kind: file.source_kind(),
                 bound_source_objects,
-                installation_generation: generation,
+                authority: generation,
                 destination: AdmittedDestination::new(destination_root, destination_identity),
             },
         ))
@@ -5424,9 +6013,9 @@ impl PreviewService {
     }
 
     /// A view of whether this dataset's identity lease is still open.
-    ///
-    /// Weak, so asking does not keep the answer alive, and taken while the
-    /// dataset is still registered because afterwards there is nothing to ask.
+    //
+    // Weak, so asking does not keep the answer alive, and taken while the
+    // dataset is still registered because afterwards there is nothing to ask.
     /// `None` for a handle the session does not hold.
     pub(super) fn lease_witness(&self, handle: &str) -> Option<super::selection::LeaseWitness> {
         let id = DatasetId::parse(handle)?;
@@ -5437,9 +6026,9 @@ impl PreviewService {
     }
 
     /// The same, over every object the acquisition is made of.
-    ///
-    /// A bundle's row takes one hold per member, and a release test that
-    /// watched only the primary would pass while a companion handle stayed
+    //
+    // A bundle's row takes one hold per member, and a release test that
+    // watched only the primary would pass while a companion handle stayed
     /// open -- pinning an object with nothing left in the session naming it.
     #[cfg(test)]
     pub(super) fn lease_witnesses(
@@ -5475,10 +6064,10 @@ impl PreviewService {
     }
 
     /// Everything the session holds, printed.
-    ///
-    /// A roster is many paths in one structure, and this is that structure --
-    /// the one a `{:?}` in a log or a panic message would reach. Exposed so a
-    /// test can assert on the whole of it rather than on the types it happens
+    //
+    // A roster is many paths in one structure, and this is that structure --
+    // the one a `{:?}` in a log or a panic message would reach. Exposed so a
+    // test can assert on the whole of it rather than on the types it happens
     /// to know about.
     pub(super) fn debug_workspace(&self) -> String {
         format!("{:?}", self.workspace())
@@ -5487,53 +6076,53 @@ impl PreviewService {
 
 impl PreviewService {
     /// Loads metadata, run summary and the spectrum table for one open action.
-    ///
-    /// All three share a single discovery and capability probe, so opening a
-    /// file resolves the backend once rather than once per panel.
-    /// Converts one accepted dataset to mzML in a folder the caller names.
-    ///
-    /// Private, and not on the way to being anything else. No command reaches
-    /// this, no transfer object is built from what it returns and nothing the
-    /// user can click leads here. The product's ingestion surfaces are unchanged
-    /// and still accept mzML only; what this exists to establish is that a
-    /// dataset the session already holds can be carried, whole and identified,
-    /// into the conversion boundary and back.
-    ///
-    /// ## The order, and why it is this one
-    ///
-    /// Every step below is placed against an invariant the rest of this service
-    /// already keeps, and several of them are only correct where they are.
-    ///
-    /// 1. The handle is resolved and the epoch claimed **before** the wait, so a
-    ///    request the user makes afterwards supersedes this one.
-    /// 2. The backend gate is taken with **no workspace lock held**. It is
-    ///    waited on for as long as a whole conversion takes, and the roster has
-    ///    to keep answering throughout. The workspace above is a statement
-    ///    temporary for exactly this reason.
-    /// 3. The epoch is rechecked **after** the wait: a conversion still queued
-    ///    when the user moves on never launches a process.
-    /// 4. The file is revalidated under the family it was accepted as, so a
-    ///    vendor acquisition is re-admitted by its signature rather than by its
-    ///    extension.
-    /// 5. The installation is bound and its build checked against the recorded
-    ///    evidence **before** the file is pinned or anything is created, so an
-    ///    unevidenced build costs the user nothing.
-    /// 6. The file is pinned against replacement, and only then re-admitted as a
-    ///    conversion source. The identity comparison inside that admission is
-    ///    what closes the window between revalidation and the pin -- and it does
-    ///    so before an output could exist, which a comparison made after the run
-    ///    could not.
-    /// 7. The run is stamped with the generation carried by the gate guard, not
-    ///    one read afterwards.
-    ///
-    /// Nothing is recorded against the dataset. A conversion reads it and writes
-    /// elsewhere, so there is no per-dataset state to commit and no reason to
-    /// recheck the epoch a third time.
-    /// Converts one dataset, taking its own gate and binding its own backend.
-    ///
-    /// The one-item path the private orchestration tests drive, kept because a
-    /// queue of one goes through the queue machinery instead and this is where
-    /// the per-item contract is stated on its own. It is the same body the
+    //
+    // All three share a single discovery and capability probe, so opening a
+    // file resolves the backend once rather than once per panel.
+    // Converts one accepted dataset to mzML in a folder the caller names.
+    //
+    // Private, and not on the way to being anything else. No command reaches
+    // this, no transfer object is built from what it returns and nothing the
+    // user can click leads here. The product's ingestion surfaces are unchanged
+    // and still accept mzML only; what this exists to establish is that a
+    // dataset the session already holds can be carried, whole and identified,
+    // into the conversion boundary and back.
+    //
+    // ## The order, and why it is this one
+    //
+    // Every step below is placed against an invariant the rest of this service
+    // already keeps, and several of them are only correct where they are.
+    //
+    // 1. The handle is resolved and the epoch claimed **before** the wait, so a
+    //    request the user makes afterwards supersedes this one.
+    // 2. The backend gate is taken with **no workspace lock held**. It is
+    //    waited on for as long as a whole conversion takes, and the roster has
+    //    to keep answering throughout. The workspace above is a statement
+    //    temporary for exactly this reason.
+    // 3. The epoch is rechecked **after** the wait: a conversion still queued
+    //    when the user moves on never launches a process.
+    // 4. The file is revalidated under the family it was accepted as, so a
+    //    vendor acquisition is re-admitted by its signature rather than by its
+    //    extension.
+    // 5. The installation is bound and its build checked against the recorded
+    //    evidence **before** the file is pinned or anything is created, so an
+    //    unevidenced build costs the user nothing.
+    // 6. The file is pinned against replacement, and only then re-admitted as a
+    //    conversion source. The identity comparison inside that admission is
+    //    what closes the window between revalidation and the pin -- and it does
+    //    so before an output could exist, which a comparison made after the run
+    //    could not.
+    // 7. The run is stamped with the generation carried by the gate guard, not
+    //    one read afterwards.
+    //
+    // Nothing is recorded against the dataset. A conversion reads it and writes
+    // elsewhere, so there is no per-dataset state to commit and no reason to
+    // recheck the epoch a third time.
+    // Converts one dataset, taking its own gate and binding its own backend.
+    //
+    // The one-item path the private orchestration tests drive, kept because a
+    // queue of one goes through the queue machinery instead and this is where
+    // the per-item contract is stated on its own. It is the same body the
     /// queue runs, with the gate and the binding around it rather than shared.
     #[cfg(test)]
     pub(super) fn convert_workspace_dataset(
@@ -5552,7 +6141,9 @@ impl PreviewService {
             return Err(superseded());
         }
         let file = revalidate(&remembered)?;
-        let backend = self.provider.conversion_backend()?;
+        let attempt = self.provider.conversion_backend();
+        let generation = self.note_conversion_resolution(&attempt).to_dto();
+        let backend = attempt.bound?;
         let kind = conversion_source_kind(file.source_kind());
         refuse_unevidenced_build(&backend.capabilities, kind)?;
         let guard = lock_against_replacement(file.path())?;
@@ -5564,7 +6155,6 @@ impl PreviewService {
             ConversionIntent::SHIPPED,
         )?;
         let report = run_planned_conversion(&plan, &backend);
-        let generation = self.note_resolved(backend.installation.clone());
         drop(guard);
         drop(running);
         Ok(WorkspaceConversionReport::of(
@@ -5700,9 +6290,16 @@ impl PreviewService {
         // report the same one; taking the first is taking that resolution. Read
         // before any of the outcomes, so a failed operation does not take the
         // answer with it.
-        let installation = attempts
+        // Both halves of one observation, from one attempt: the batch shares a
+        // resolution, so every attempt reports the same binding and the same
+        // verdict about it, and taking them from the same attempt is what keeps
+        // them from being two different discoveries' answers.
+        let observed = attempts
             .first()
-            .and_then(|attempt| attempt.installation.clone());
+            .map(|attempt| (attempt.installation.clone(), attempt.preview_availability));
+        let installation = observed
+            .as_ref()
+            .and_then(|(installation, _)| installation.clone());
         // An open is a look at the backend like any other, and it is recorded
         // as one -- still under the gate. An open that resolved a backend
         // nothing had seen yet and kept it to itself left the sequence naming
@@ -5713,7 +6310,18 @@ impl PreviewService {
         //
         // The value recorded is the one this observation leaves behind, not the
         // one this run found on the way in.
-        let generation = self.note_resolved(installation.clone());
+        //
+        // A batch that produced no attempt at all observed nothing, and reports
+        // the authority as it already stood. Recording an absence there would
+        // say MSCanvas looked and found no installation, which is not what
+        // happened.
+        let projection = observed.map_or_else(
+            || self.authority_projection(),
+            |(installation, preview_availability)| {
+                self.note_resolved(installation, preview_availability)
+            },
+        );
+        let generation = projection.revision.wire();
         drop(guard);
         drop(running);
         if SourceGeneration::capture(file.path()) != before {
@@ -5849,7 +6457,7 @@ impl PreviewService {
         );
 
         Ok(PreviewDto {
-            installation_generation: generation,
+            authority: projection.to_dto(),
             chromatogram_export_token,
             file: described,
             metadata,
@@ -5859,20 +6467,20 @@ impl PreviewService {
     }
 
     /// Loads exactly one spectrum by zero-based index.
-    ///
-    /// Wraps the read so the export slot's invariant is decided in one place.
-    /// Every way this can end other than a spectrum -- unavailable, or any
-    /// refusal at all -- leaves the panel with nothing loaded, and the retained
-    /// spectrum has to go with it. Deciding that here rather than in each branch
-    /// below is what stops the next branch somebody adds from quietly keeping a
-    /// spectrum alive that nothing on screen names.
-    ///
+    //
+    // Wraps the read so the export slot's invariant is decided in one place.
+    // Every way this can end other than a spectrum -- unavailable, or any
+    // refusal at all -- leaves the panel with nothing loaded, and the retained
+    // spectrum has to go with it. Deciding that here rather than in each branch
+    // below is what stops the next branch somebody adds from quietly keeping a
+    // spectrum alive that nothing on screen names.
+    //
     /// A claimed export is untouched: it holds its own handle and finishes.
     pub fn load_spectrum(
         &self,
         handle: &str,
         index: u64,
-    ) -> Result<SelectedSpectrumOutcomeDto, PreviewErrorDto> {
+    ) -> Result<AuthorityObservedDto<SelectedSpectrumOutcomeDto>, PreviewErrorDto> {
         // Which spectrum the slot held when this read began. Two reads can be in
         // flight, and the later one can reach the backend gate first and be the
         // spectrum on screen by the time this one comes back to say it failed --
@@ -5883,7 +6491,22 @@ impl PreviewService {
         if !matches!(outcome, Ok(SelectedSpectrumOutcomeDto::Spectrum { .. })) {
             self.spectrum_export_slot().forget_if_current(owned);
         }
-        outcome
+        // A spectrum read launches the backend, so it observes like every other
+        // gate-taker and must deliver what it observed. Read after the outcome
+        // rather than beside it: the read's own `note_resolved` has already run
+        // by then, so this is the authority its own observation left, not the
+        // one it found on the way in.
+        //
+        // A read that *fails* carries no projection, and that is the rule
+        // rather than an omission: a failure is judged by the receipt its
+        // request went out under, not by one it reports. What must not happen
+        // is a domain refusal answering in band and leaving the projection out
+        // -- the `BEGIN` case -- and this is not that: a failed spectrum read
+        // has no in-band answer to attach one to.
+        outcome.map(|outcome| AuthorityObservedDto {
+            authority: self.authority_projection().to_dto(),
+            outcome,
+        })
     }
 
     /// The read itself. Requests stay direct and uncached in this slice.
@@ -6006,7 +6629,7 @@ impl PreviewService {
         // fact that says whether it even came from the installation this
         // preview belongs to. The banner would then keep describing the old
         // installation while every retry ran the new one.
-        self.note_resolved(attempt.installation.clone());
+        self.note_resolved(attempt.installation.clone(), attempt.preview_availability);
         // And once more on what actually ran. The pre-flight above looked at
         // the recorded tools a moment before this launched, which leaves a
         // window the size of that moment; this closes it with the identity the
@@ -6103,10 +6726,10 @@ impl PreviewService {
 }
 
 /// A cheap stamp of which generation of a file was read.
-///
-/// Filesystem identity, length and modification time, not a digest: the
-/// representative acquisition is 208 MB and hashing it around every preview
-/// would cost more than the preview. The identity is what catches a file
+//
+// Filesystem identity, length and modification time, not a digest: the
+// representative acquisition is 208 MB and hashing it around every preview
+// would cost more than the preview. The identity is what catches a file
 /// replaced by another one of the same size at the same recorded time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SourceGeneration {
@@ -6164,7 +6787,7 @@ mod source_generation_tests {
 }
 
 /// A spectrum identifier is backend text like every other line the boundary
-/// forwards, so it is redacted and bounded the same way. A file is free to put
+// forwards, so it is redacted and bounded the same way. A file is free to put
 /// an unrelated path, or an arbitrarily long value, in a native identifier.
 pub(super) fn displayable_identifier(raw: &str, redactor: &Redactor) -> String {
     let redacted = redact_absolute_paths(&redactor.redact(raw));
@@ -6172,9 +6795,9 @@ pub(super) fn displayable_identifier(raw: &str, redactor: &Redactor) -> String {
 }
 
 /// What the spectrum table said about one row.
-///
-/// Kept so a selected spectrum can be checked against the row that produced
-/// it: the two come from different formatters, and a highlighted row paired
+//
+// Kept so a selected spectrum can be checked against the row that produced
+// it: the two come from different formatters, and a highlighted row paired
 /// with a panel describing different measurements is worse than no panel.
 #[derive(Debug, Clone)]
 pub(super) struct TableRowFacts {
@@ -6182,9 +6805,9 @@ pub(super) struct TableRowFacts {
     ms_level: u32,
     retention_time: f64,
     /// Whether this boundary reports a unit for that retention time.
-    ///
-    /// Carried rather than assumed, so the viewer's refusal to draw a run whose
-    /// unit it cannot name and the export's refusal to write one are the same
+    //
+    // Carried rather than assumed, so the viewer's refusal to draw a run whose
+    // unit it cannot name and the export's refusal to write one are the same
     /// fact read twice rather than two rules free to drift.
     retention_time_unit_known: bool,
     base_peak_mz: f64,
@@ -6218,8 +6841,8 @@ impl TableRowFacts {
     }
 
     /// One retained row, for tests in this crate.
-    ///
-    /// The base peak m/z is not a parameter: no export reads it, and a test that
+    //
+    // The base peak m/z is not a parameter: no export reads it, and a test that
     /// could set it would imply it decides something here.
     #[cfg(test)]
     pub(super) fn for_test(
@@ -6252,12 +6875,12 @@ impl TableRowFacts {
 }
 
 /// Whether two readings of the same quantity contradict each other.
-///
-/// The table prints rounded values and the binary formatter prints full
-/// precision, so exact equality would report a conflict on nearly every real
-/// file. The tolerance is deliberately generous — a percent, with an absolute
-/// floor for values near zero — because its job is to catch a different
-/// spectrum, not to police rounding. MS level is compared exactly instead,
+//
+// The table prints rounded values and the binary formatter prints full
+// precision, so exact equality would report a conflict on nearly every real
+// file. The tolerance is deliberately generous — a percent, with an absolute
+// floor for values near zero — because its job is to catch a different
+// spectrum, not to police rounding. MS level is compared exactly instead,
 /// since an integer cannot be a rounding artefact.
 fn differs(left: f64, right: f64) -> bool {
     const RELATIVE: f64 = 0.01;
@@ -6269,27 +6892,55 @@ fn differs(left: f64, right: f64) -> bool {
 
 impl PreviewService {
     /// Takes the right to run a backend operation only if it is free now.
-    ///
-    /// For work that is a courtesy rather than a duty: the queue's pre-picker
-    /// evidence check improves where a refusal lands, and the authoritative
-    /// check at execution does not depend on it having run. Nothing that
-    /// *must* happen may use this.
+    //
+    // Two kinds of caller, and the difference is what a `None` means rather
+    // than how badly the work is wanted.
+    //
+    // A **courtesy** takes it because the answer improves where a refusal
+    // lands and nothing depends on its having run: the settings read stays
+    // owed and is re-issued on the next occasion.
+    //
+    // A **duty** takes it because it must not wait. The pre-`BEGIN` proof of
+    // [ADR 0044] Decision 10 is one: a `BEGIN` is a click, and blocking it for
+    // the length of a preview scan would hang it with nothing on screen to
+    // explain why -- so a held gate refuses the whole request, with Rust's own
+    // reason, and nothing downstream becomes reachable. What may never happen
+    // is the third option, proceeding without the proof.
+    //
+    // So the rule is not "nothing that must happen may use this". It is that
+    // nothing may treat a `None` as permission to carry on.
+    //
+    /// [ADR 0044]: ../../../../../docs/architecture/adr/0044-conversion-configuration-authority.md
     fn try_enter_backend(&self) -> Option<BackendRun<'_>> {
         match self.backend_gate.try_lock() {
             Ok(guard) => Some(BackendRun {
-                installation: self.installation_generation.load(Ordering::Relaxed),
+                installation: self.authority_projection().revision.wire(),
                 _guard: guard,
             }),
             Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(BackendRun {
-                installation: self.installation_generation.load(Ordering::Relaxed),
+                installation: self.authority_projection().revision.wire(),
                 _guard: poisoned.into_inner(),
             }),
             Err(std::sync::TryLockError::WouldBlock) => None,
         }
     }
 
+    /// Holds the one backend lane from a test, for as long as the guard lives.
+    //
+    // The deterministic stand-in for whatever else owns the lane in the moment
+    // under test. A test that needs a *particular* holder drives that holder;
+    // this is for the ones whose subject is the waiting rather than the work,
+    // where parking a real operation inside the provider would be machinery in
+    // aid of a fact the gate already states.
+    // Opaque by return type: what a caller may do with it is hold it and drop
+    /// it, which is the whole of what holding the lane means.
+    #[cfg(test)]
+    pub(super) fn hold_backend_gate(&self) -> impl Sized + '_ {
+        self.enter_backend()
+    }
+
     /// Waits for the right to run a backend operation.
-    ///
+    //
     /// The guard is the permission; dropping it releases the next caller.
     fn enter_backend(&self) -> BackendRun<'_> {
         let guard = self
@@ -6297,24 +6948,24 @@ impl PreviewService {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         BackendRun {
-            installation: self.installation_generation.load(Ordering::Relaxed),
+            installation: self.authority_projection().revision.wire(),
             _guard: guard,
         }
     }
 }
 
 /// The backend gate, held, and what was true when it was taken.
-///
-/// The installation generation travels with the guard so that reading it after
-/// the gate is released stops compiling. An installation change queued behind
-/// this run acquires the gate the instant it is dropped, so a value read after
-/// that can name the installation which *replaced* the one whose work is being
-/// recorded -- and a preview stamped that way passes the check that exists to
-/// refuse it, putting one installation's spectrum beside another's rows.
-///
-/// `use_installation` deliberately does not use this field: it advances the
-/// generation after taking the gate, so the value it must report is the one
-/// after its own change, not the one it found.
+//
+// The installation generation travels with the guard so that reading it after
+// the gate is released stops compiling. An installation change queued behind
+// this run acquires the gate the instant it is dropped, so a value read after
+// that can name the installation which *replaced* the one whose work is being
+// recorded -- and a preview stamped that way passes the check that exists to
+// refuse it, putting one installation's spectrum beside another's rows.
+//
+// `use_installation` deliberately does not use this field: it observes after
+// taking the gate, so the value it must report is the revision after its own
+/// observation, not the one it found.
 struct BackendRun<'a> {
     _guard: std::sync::MutexGuard<'a, ()>,
     installation: u64,
@@ -6328,17 +6979,17 @@ struct OpenedPreview {
     /// so a deliberate change is refused without spending a process.
     generation: u64,
     /// Which backend actually produced the rows. `None` when the batch reported
-    /// none, which compares equal to nothing and so refuses rather than
+    // none, which compares equal to nothing and so refuses rather than
     /// assumes.
     installation: Option<InstallationIdentity>,
 }
 
 /// The parents of a discovered candidate, which is its location without its
-/// name.
-///
-/// Discovery's components end in the filename, because that is what makes them
-/// a location *of a file*. What a display context needs is where the file is,
-/// and repeating the name inside the thing that disambiguates the name would
+// name.
+//
+// Discovery's components end in the filename, because that is what makes them
+// a location *of a file*. What a display context needs is where the file is,
+// and repeating the name inside the thing that disambiguates the name would
 /// say it twice.
 fn parent_components(relative: &[std::ffi::OsString]) -> Vec<std::ffi::OsString> {
     relative
@@ -6357,9 +7008,9 @@ fn limit_dto(limit: DiscoveryLimit) -> FolderScanLimitDto {
 }
 
 /// What a candidate is refused with when the file behind its name changed.
-///
-/// Its own kind rather than the acceptance failures beside it, because it is
-/// the one refusal that is not about the file being unreadable: the path
+//
+// Its own kind rather than the acceptance failures beside it, because it is
+// the one refusal that is not about the file being unreadable: the path
 /// resolved, the file opened, and it simply is not the file that was found.
 fn folder_candidate_changed() -> PreviewErrorDto {
     PreviewErrorDto::new(
@@ -6380,10 +7031,10 @@ fn drop_candidate_changed() -> PreviewErrorDto {
 }
 
 /// Turns a private discovery refusal into something the webview may see.
-///
-/// One arm per kind, spelled out rather than defaulted, so adding a kind to the
-/// traversal makes this fail to compile instead of silently reporting the new
-/// refusal as one of the old ones. Nothing here carries a path, a root name or
+//
+// One arm per kind, spelled out rather than defaulted, so adding a kind to the
+// traversal makes this fail to compile instead of silently reporting the new
+// refusal as one of the old ones. Nothing here carries a path, a root name or
 /// an operating-system message.
 fn folder_error(kind: DiscoveryErrorKind) -> PreviewErrorDto {
     match kind {
@@ -6454,6 +7105,23 @@ fn source_changed_since_preview() -> PreviewErrorDto {
     )
 }
 
+/// What a configuration read answers when the session is bound to nothing.
+//
+// A read is issued only for a rendered binding, and an unresolved session has
+// none -- what it owes is a backend check, not a settings read. So this is a
+// caller that asked a question with no representable answer, and it is refused
+// rather than answered with an invented one: the two exits ADR 0044 forbids are
+// inventing a receipt and saying `UnavailableForBinding`, which is a statement
+/// about a binding that does not exist.
+fn configuration_without_a_binding() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "configuration_without_a_binding",
+        "MSCanvas has not established which ProteoWizard installation it is using, so there are \
+         no conversion settings to describe yet.",
+        true,
+    )
+}
+
 fn missing(what: &str) -> PreviewErrorDto {
     PreviewErrorDto::new(
         "preview_result_missing",
@@ -6463,12 +7131,12 @@ fn missing(what: &str) -> PreviewErrorDto {
 }
 
 /// What a request answers with once the user has moved on from it.
-///
-/// One kind for every way that happens -- a newer spectrum chosen in the same
-/// dataset, a newer open of it, and the dataset itself removed -- because they
-/// are the same fact to the caller: the answer it asked for is no longer the
-/// one it wants. The kind is the one the boundary already spoke; what widened
-/// is which requests can reach it, now that a roster lets the user activate one
+//
+// One kind for every way that happens -- a newer spectrum chosen in the same
+// dataset, a newer open of it, and the dataset itself removed -- because they
+// are the same fact to the caller: the answer it asked for is no longer the
+// one it wants. The kind is the one the boundary already spoke; what widened
+// is which requests can reach it, now that a roster lets the user activate one
 /// dataset twice.
 fn superseded() -> PreviewErrorDto {
     PreviewErrorDto::new(
@@ -6523,9 +7191,9 @@ fn metadata_dto(result: &MetadataResult, redactor: &Redactor) -> MetadataDto {
 }
 
 /// Redacts and bounds one section's lines.
-///
-/// Session redaction first, then any remaining path-shaped token the document
-/// itself recorded, then a length bound; and the section reports how many lines
+//
+// Session redaction first, then any remaining path-shaped token the document
+// itself recorded, then a length bound; and the section reports how many lines
 /// it really had, so a prefix never reads as the whole.
 fn metadata_section_dto<'entries>(
     id: &str,
@@ -6559,14 +7227,14 @@ fn retention_time_dto(
 }
 
 /// Whether this boundary reports a unit for one retention time.
-///
-/// Exhaustive, with no wildcard arm: a backend that starts emitting a real unit
-/// must arrive here as a compile error and be mapped from that evidence rather
-/// than falling into a default that happens to keep building.
-///
-/// One answer, read by the row the webview receives and by the export
-/// eligibility beside it. The viewer refuses to draw a run whose retention-time
-/// unit it cannot name, and the export refuses to write one; two hard-coded
+//
+// Exhaustive, with no wildcard arm: a backend that starts emitting a real unit
+// must arrive here as a compile error and be mapped from that evidence rather
+// than falling into a default that happens to keep building.
+//
+// One answer, read by the row the webview receives and by the export
+// eligibility beside it. The viewer refuses to draw a run whose retention-time
+// unit it cannot name, and the export refuses to write one; two hard-coded
 /// `false`s would have been two rules free to drift apart.
 const fn reported_unit_known(value: mscanvas_proteowizard::RetentionTime) -> bool {
     match value.unit() {
@@ -6731,9 +7399,9 @@ fn viewport_domain_dto(domain: projection::ViewportDomain) -> SpectrumViewportDo
 }
 
 /// Every way the safe writer can fail, said in the export's vocabulary.
-///
-/// Total over the writer's own enumeration with no wildcard arm, for the reason
-/// the diagnostics reading beside it has none: a failure added there has to be
+//
+// Total over the writer's own enumeration with no wildcard arm, for the reason
+// the diagnostics reading beside it has none: a failure added there has to be
 /// answered here rather than falling into a default that happens to compile.
 fn spectrum_write_failure(failure: LocalFileWriteFailure) -> PreviewErrorDto {
     let residue = failure.temporary_left_behind();
@@ -6750,8 +7418,8 @@ fn spectrum_write_failure(failure: LocalFileWriteFailure) -> PreviewErrorDto {
 }
 
 /// Returns the slot to idle however the export ends.
-///
-/// A slot left writing would refuse every later export for the rest of the
+//
+// A slot left writing would refuse every later export for the rest of the
 /// session, which is a worse failure than the one it would be recording.
 struct SpectrumExportInFlight<'service>(&'service PreviewService);
 
@@ -6762,12 +7430,12 @@ impl Drop for SpectrumExportInFlight<'_> {
 }
 
 /// Every way the safe writer can fail, said in this boundary's vocabulary.
-///
-/// Total over the writer's own enumeration, with no wildcard arm: a failure
-/// added there has to be answered here rather than falling into a default that
-/// happens to compile. The residue travels with each of them rather than being
-/// folded away — "this could not be saved" and "this could not be saved and
-/// there is now a file in your folder MSCanvas cannot remove" are different
+//
+// Total over the writer's own enumeration, with no wildcard arm: a failure
+// added there has to be answered here rather than falling into a default that
+// happens to compile. The residue travels with each of them rather than being
+// folded away — "this could not be saved" and "this could not be saved and
+// there is now a file in your folder MSCanvas cannot remove" are different
 /// things to be told, and the second is the one the user has to act on.
 fn diagnostics_write_failure(failure: LocalFileWriteFailure) -> PreviewErrorDto {
     let residue = failure.temporary_left_behind();
@@ -6786,9 +7454,9 @@ fn diagnostics_write_failure(failure: LocalFileWriteFailure) -> PreviewErrorDto 
 }
 
 /// Clears the export mirror however the export ends, and returns the slot to
-/// idle.
-///
-/// A flag left set would refuse every action on the terminal queue for the rest
+// idle.
+//
+// A flag left set would refuse every action on the terminal queue for the rest
 /// of the session, which is a worse failure than the one it would be recording.
 struct DiagnosticsExportInFlight<'service>(&'service PreviewService);
 
@@ -6809,8 +7477,8 @@ impl Drop for DiagnosticsExportInFlight<'_> {
 }
 
 /// Clears the adoption mirror however the adoption ends.
-///
-/// A flag left set would refuse every later adoption for the rest of the
+//
+// A flag left set would refuse every later adoption for the rest of the
 /// session, which is a worse failure than the one it would be recording.
 struct AdoptionInFlight<'service>(&'service PreviewService);
 
@@ -6821,69 +7489,72 @@ impl Drop for AdoptionInFlight<'_> {
 }
 
 /// One private SCIEX conversion: what it reported, what it retained, which
-/// folder it wrote into, and which run it was.
-///
-/// The three travel together because two of them are only meaningful about the
-/// same run. A report describes a set of members; the retained objects *are*
-/// that set. Handing a ticket constructor one of each separately would let a
-/// report from one conversion meet the objects of another — same member count,
-/// same states, nothing to notice — and mint a ticket whose provenance and
-/// completeness described a run whose files it was not adopting.
-///
-/// So the conversion hands back one value carrying everything a ticket needs
-/// about the run -- the source, the objects, the folder and the identity -- the
-/// constructor takes it by value, and nothing about the run is supplied beside
-/// it. Every one of those was a way to pair two conversions wrongly, and each
-/// is closed by removal rather than by a check, because a check leaves the
+// folder it wrote into, and which run it was.
+//
+// The three travel together because two of them are only meaningful about the
+// same run. A report describes a set of members; the retained objects *are*
+// that set. Handing a ticket constructor one of each separately would let a
+// report from one conversion meet the objects of another — same member count,
+// same states, nothing to notice — and mint a ticket whose provenance and
+// completeness described a run whose files it was not adopting.
+//
+// So the conversion hands back one value carrying everything a ticket needs
+// about the run -- the source, the objects, the folder and the identity -- the
+// constructor takes it by value, and nothing about the run is supplied beside
+// it. Every one of those was a way to pair two conversions wrongly, and each
+// is closed by removal rather than by a check, because a check leaves the
 /// wrong call expressible.
 #[derive(Debug)]
 pub(super) struct SciexConversion {
     /// The session that ran it.
-    ///
-    /// Without this the ticket's own issuer check proves nothing: minting reads
-    /// the source row out of the report by id, and ids are allocated per
-    /// session from zero, so another session holding that number would resolve
-    /// its own unrelated row and then stamp the ticket with *itself*. The
+    //
+    // Without this the ticket's own issuer check proves nothing: minting reads
+    // the source row out of the report by id, and ids are allocated per
+    // session from zero, so another session holding that number would resolve
+    // its own unrelated row and then stamp the ticket with *itself*. The
     /// crossing would be over before the ticket existed.
     session: u64,
     report: WorkspaceMultiOutputConversionReport,
     retained: mscanvas_proteowizard::FinalizedOutputSet,
     run: u64,
     /// The redacted backend text of the run, where it kept any.
-    ///
-    /// Taken out of the crate's report at construction, for the reason the
-    /// single-output path takes its own: this is the largest thing an attempt
+    //
+    // Taken out of the crate's report at construction, for the reason the
+    // single-output path takes its own: this is the largest thing an attempt
     /// carries, and the report the session shows should not hold it.
     diagnostics: Option<Box<mscanvas_proteowizard::BackendDiagnosticText>>,
     /// The folder this conversion wrote into, as the object it was admitted as.
-    ///
-    /// Carried rather than supplied again later, and that closes the last way
-    /// two runs could be crossed. Adoption proves each member is the exact
-    /// object that was finalized, and a hard link in another folder is the same
-    /// object -- so a destination handed in separately could point adoption at
-    /// aliases and register rows under a directory the conversion never wrote
+    //
+    // Carried rather than supplied again later, and that closes the last way
+    // two runs could be crossed. Adoption proves each member is the exact
+    // object that was finalized, and a hard link in another folder is the same
+    // object -- so a destination handed in separately could point adoption at
+    // aliases and register rows under a directory the conversion never wrote
     /// to, with every per-member proof still passing.
     destination: AdmittedDestination,
 }
 
 /// What one private SCIEX run is attributed to.
-///
-/// Read once, from the row and the gate the run was started under, and carried
-/// into the conversion in one piece. Separately supplying any of them later is
+//
+// Read once, from the row and the gate the run was started under, and carried
+// into the conversion in one piece. Separately supplying any of them later is
 /// exactly the crossing this whole boundary keeps closing.
 pub(super) struct SciexRunFacts {
     pub(super) dataset: DatasetId,
     pub(super) source_kind: DatasetSourceKind,
     pub(super) bound_source_objects: usize,
-    pub(super) installation_generation: u64,
+    /// The authority this run was stamped with. Its revision is the durable
+    // record the diagnostics export keeps; its receipt is what the webview
+    /// compares.
+    pub(super) authority: BackendAuthorityProjectionDto,
     pub(super) destination: AdmittedDestination,
 }
 
 impl SciexConversion {
     /// Builds one conversion from one finished run.
-    ///
-    /// The only constructor, so both callers -- the direct private conversion
-    /// and the private queue -- assemble the same value the same way, and the
+    //
+    // The only constructor, so both callers -- the direct private conversion
+    // and the private queue -- assemble the same value the same way, and the
     /// run identity is allocated in exactly one place.
     pub(super) fn of(
         session: u64,
@@ -6899,7 +7570,7 @@ impl SciexConversion {
                 about.dataset.handle(),
                 about.source_kind,
                 about.bound_source_objects,
-                about.installation_generation,
+                about.authority,
                 &run.report,
                 run.completeness,
             ),
@@ -6936,11 +7607,11 @@ impl SciexConversion {
     }
 
     /// Everything at once, consuming the value.
-    ///
-    /// The only way out for the components, and it takes the whole conversion
-    /// with it. Two of these can be unpacked but not recombined: there is no
-    /// constructor outside this module and the ticket accepts nothing smaller
-    /// than a whole `SciexConversion`, so a report can never meet another run's
+    //
+    // The only way out for the components, and it takes the whole conversion
+    // with it. Two of these can be unpacked but not recombined: there is no
+    // constructor outside this module and the ticket accepts nothing smaller
+    // than a whole `SciexConversion`, so a report can never meet another run's
     /// objects.
     pub(super) fn into_parts(
         self,
@@ -6954,10 +7625,10 @@ impl SciexConversion {
     }
 
     /// The same conversion, remembering no completeness.
-    ///
-    /// The gate it reaches is unreachable through the SCIEX path, which
-    /// establishes completeness before publication -- so a fully finalized run
-    /// of that family always has it. The gate is for the runs that would not,
+    //
+    // The gate it reaches is unreachable through the SCIEX path, which
+    // establishes completeness before publication -- so a fully finalized run
+    // of that family always has it. The gate is for the runs that would not,
     /// and this forges that state rather than waiting for one to exist.
     #[cfg(test)]
     pub(super) fn without_completeness(mut self) -> Self {
@@ -6966,8 +7637,8 @@ impl SciexConversion {
     }
 
     /// The same conversion, its report one member short.
-    ///
-    /// Likewise the only way to reach the pairing gate: a report and its
+    //
+    // Likewise the only way to reach the pairing gate: a report and its
     /// retained objects come from one publication and agree by construction.
     #[cfg(test)]
     pub(super) fn without_last_member(mut self) -> Self {
@@ -6977,12 +7648,12 @@ impl SciexConversion {
 }
 
 /// Hands out one identity per private conversion.
-///
-/// Process-wide and monotonic, which is stronger than it needs to be and
-/// simpler than a per-session counter. It must not be the workspace mutation
-/// generation: converting does not advance that, so two conversions of one
-/// dataset into two folders would read the same value and claim to be the same
-/// run — which is the one thing this identity exists to prevent.
+//
+// Process-wide and monotonic, which is stronger than it needs to be and
+// simpler than a per-session counter. It must not be the workspace mutation
+// generation: converting does not advance that, so two conversions of one
+// dataset into two folders would read the same value and claim to be the same
+// run — which is the one thing this identity exists to prevent.
 /// A hook armed for one backend-named set run's publication seam.
 type PublicationHook = Box<dyn FnMut(usize) + Send>;
 
@@ -6992,14 +7663,14 @@ static NEXT_CONVERSION_RUN: AtomicU64 = AtomicU64::new(1);
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 
 /// What one private output-set adoption did.
-///
-/// Path-free by construction. It names the source by its opaque handle, the
-/// members by the basenames the backend chose, and the rows by what the roster
-/// already publishes — and nothing else. There is no destination, no filesystem
-/// identity, no retained object and no raw error.
-///
-/// It makes no claim about source fidelity, and it does not repeat the
-/// completeness proof: the conversion result owns that, and these are ordinary
+//
+// Path-free by construction. It names the source by its opaque handle, the
+// members by the basenames the backend chose, and the rows by what the roster
+// already publishes — and nothing else. There is no destination, no filesystem
+// identity, no retained object and no raw error.
+//
+// It makes no claim about source fidelity, and it does not repeat the
+// completeness proof: the conversion result owns that, and these are ordinary
 /// mzML files now.
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq)]
@@ -7021,12 +7692,12 @@ pub(super) struct WorkspaceOutputSetAdoptionResult {
 }
 
 /// Candidates that have been checked and not yet committed.
-///
-/// Each is the identity it was supplied under, the ticket it came from, and
-/// either the admitted output -- holds and all -- or the reason it was refused.
-///
-/// The identity is a pair rather than an ordinal, because one queue item can now
-/// contribute several outputs and an item index alone stopped telling them
+//
+// Each is the identity it was supplied under, the ticket it came from, and
+// either the admitted output -- holds and all -- or the reason it was refused.
+//
+// The identity is a pair rather than an ordinal, because one queue item can now
+// contribute several outputs and an item index alone stopped telling them
 /// apart.
 type InspectedAdoptions = Vec<(
     AdoptionCandidateIdentityDto,
@@ -7035,15 +7706,15 @@ type InspectedAdoptions = Vec<(
 )>;
 
 /// Registers every accepted candidate, in the order it was inspected.
-///
-/// The committing half, lifted for the same reason as the reading half. It runs
-/// under the caller's gate and workspace lock, does no filesystem work beyond
-/// registering rows, and treats the candidates as an ordered list of admitted
-/// mzML files -- which is all they are by this point, whatever produced them.
-///
-/// One refused candidate does not stop the rest. That is the existing rule and
-/// it carries over unchanged: the outputs are independent files, and refusing
-/// the ones that are still fine because one is not would cost the user work
+//
+// The committing half, lifted for the same reason as the reading half. It runs
+// under the caller's gate and workspace lock, does no filesystem work beyond
+// registering rows, and treats the candidates as an ordered list of admitted
+// mzML files -- which is all they are by this point, whatever produced them.
+//
+// One refused candidate does not stop the rest. That is the existing rule and
+// it carries over unchanged: the outputs are independent files, and refusing
+// the ones that are still fine because one is not would cost the user work
 /// nothing was wrong with.
 fn commit_adoption_candidates(
     workspace: &mut Workspace,
@@ -7105,9 +7776,9 @@ enum PendingAdoption {
 }
 
 /// Describes what each adoption did, against the roster it produced.
-///
-/// The contexts are recomputed over the whole live registry, exactly as every
-/// other workspace answer does: whether a name needs disambiguating is a fact
+//
+// The contexts are recomputed over the whole live registry, exactly as every
+// other workspace answer does: whether a name needs disambiguating is a fact
 /// about the roster now, not about the moment a row arrived.
 fn describe_adoptions(
     workspace: &Workspace,

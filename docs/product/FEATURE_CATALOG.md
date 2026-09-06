@@ -228,8 +228,9 @@ and `Retry N failed` reruns only the failures Rust marks retryable.
 Reachable that far and no further. CNV-001 and CNV-008's fail/skip half are
 reachable; CNV-009's batch summary is reachable as an item count, an ordered list
 and the planned output names, but not as processing options it does not have.
-CNV-003 exposes no location choice beyond the folder itself. CNV-007's zlib is
-shown but not selectable. CNV-002 and CNV-004 to CNV-006 remain unreachable.
+CNV-003 exposes no location choice beyond the folder itself. CNV-002 remains
+unplannable by type. CNV-004 to CNV-007 became reachable in **M6.4**, as four
+controls over one admitted combination rather than four independent settings.
 
 A terminal queue that has something to diagnose also offers **Export failure
 diagnostics…**: one local JSON file, saved where the user chooses, holding
@@ -267,12 +268,33 @@ That intent is how the boundary now expresses every processing decision it makes
 It is not five independent settings: nine combinations of output format,
 centroiding, MS-level population, numeric precision and compression are
 constructible, each admitted by a named M6.2 measurement, and the other
-thirty-nine of the forty-eight the axes span are unconstructible. CNV-004's
-no-peak-picking rule and zlib compression are what the shipped intent selects,
-and CNV-005's unscoped centroiding and CNV-006's MS-level filter are expressible
-there — **which is not the same as reachable**. No visible control names any of
-them, so what the product converts under is still one fixed intent; CNV-005's
-lossy marking, CNV-006's control and CNV-007's choice are M6.4's. CNV-003's
+thirty-nine of the forty-eight the axes span are unconstructible.
+
+**M6.4 put those nine on screen, and nothing else.** Four control groups edit one
+axis each, and a choice either selects the admitted combination that differs from
+the current one in exactly that dimension or is refused with a reason — so a
+reader cannot assemble one of the thirty-nine, because there is no path that
+assembles a combination at all. The two refusals are different sentences with
+different owners: *not qualified*, which is a fact about this product's evidence
+and no build changes, and *not available on this installation*, which a different
+build would change. Both name the **combination**, never the value: a build that
+lacks only the peak-picking grammar makes no claim about 64-bit intensity, all
+spectra or zlib, each of which appears in rows it runs. Availability belongs to
+the row, so an unrunnable choice is said once above the groups rather than four
+times beside controls that are fine.
+
+CNV-005's unscoped centroiding is marked lossy where it is chosen, and says that
+it applies to every MS level and cannot be limited to one. CNV-006's MS-level
+filter says which spectra are left out. Reduced numeric precision says what it
+rounds. CNV-007's zlib is a choice now rather than a fixed default, and is
+described as a packing decision because that is what M6.2 measured when precision
+is held constant. A combination that reduces nothing produces no reassuring
+sentence: silence is the honest answer where there is nothing to disclose.
+
+Which combinations a build can run is read from the installed ProteoWizard by one
+Rust-owned configuration read, bound to the same receipt the plan and the queue
+are bound to. A failed read is the reader's to retry and nothing else's; a
+replaced installation makes the previous catalog non-current at once. CNV-003's
 vendor-dataset-root rule is unexercisable because no admitted acquisition family
 is directory-shaped — Thermo RAW and Shimadzu LCD are single files, and a SCIEX
 acquisition is a `.wiff` bound to its `.wiff.scan` sibling. See

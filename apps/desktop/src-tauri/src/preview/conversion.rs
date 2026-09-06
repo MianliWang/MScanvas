@@ -37,6 +37,7 @@ use mscanvas_proteowizard::{
 };
 
 use super::backend::ConversionBackend;
+use super::dto::BackendAuthorityProjectionDto;
 use super::dto::{
     ConversionBackendFactsDto, ConversionConflictPolicyDto, ConversionOutputDto,
     ConversionOutputFormatDto, ConversionOutputSetReportDto, ConversionPartialFinalizationDto,
@@ -90,9 +91,15 @@ pub(super) struct WorkspaceConversionReport {
     /// behind is a conversion the caller has to know about, whether or not it
     /// also produced an output.
     residue: Option<StagingResidue>,
-    /// The installation sequence this run was stamped with, read at the moment
-    /// the backend gate was taken.
-    installation_generation: u64,
+    /// The authority this run was stamped with, read at the moment the backend
+    /// gate was taken.
+    ///
+    /// A historical fact about work already done. It is *expected* to differ
+    /// from the binding the session is on after a replacement, which is why the
+    /// receipt read out of it is exempt from the currency rule that governs a
+    /// reading or a catalog: those are statements about the binding in use, and
+    /// this is a statement about the build that ran.
+    authority: BackendAuthorityProjectionDto,
 }
 
 /// What was measured of a finalized output.
@@ -133,7 +140,7 @@ impl WorkspaceConversionReport {
     pub(super) fn of(
         dataset: String,
         source_kind: DatasetSourceKind,
-        installation_generation: u64,
+        authority: BackendAuthorityProjectionDto,
         plan: &ConversionPlan,
         run: &ConversionRunReport,
     ) -> Self {
@@ -174,7 +181,7 @@ impl WorkspaceConversionReport {
             retryable: run_is_retryable(run.residue(), run.outcome()),
             backend: run.backend(),
             residue: run.residue(),
-            installation_generation,
+            authority,
         }
     }
 
@@ -275,9 +282,15 @@ pub(super) struct WorkspaceMultiOutputConversionReport {
     backend: Option<BackendRunFacts>,
     /// What the run could not reclaim of its own staging area.
     residue: Option<StagingResidue>,
-    /// The installation sequence this run was stamped with, read at the moment
-    /// the backend gate was taken.
-    installation_generation: u64,
+    /// The authority this run was stamped with, read at the moment the backend
+    /// gate was taken.
+    ///
+    /// A historical fact about work already done. It is *expected* to differ
+    /// from the binding the session is on after a replacement, which is why the
+    /// receipt read out of it is exempt from the currency rule that governs a
+    /// reading or a catalog: those are statements about the binding in use, and
+    /// this is a statement about the build that ran.
+    authority: BackendAuthorityProjectionDto,
     /// What was in the staging area when a stop reached the run.
     ///
     /// Present only for a run a stop ended, because it is the only
@@ -426,7 +439,7 @@ impl WorkspaceMultiOutputConversionReport {
         dataset: String,
         source_kind: DatasetSourceKind,
         bound_source_objects: usize,
-        installation_generation: u64,
+        authority: BackendAuthorityProjectionDto,
         run: &MultiOutputConversionReport,
         completeness: Option<SciexSampleCompleteness>,
     ) -> Self {
@@ -465,7 +478,7 @@ impl WorkspaceMultiOutputConversionReport {
             refusal,
             backend: run.backend(),
             residue: run.residue(),
-            installation_generation,
+            authority,
             staged: run.staged_content(),
             completeness,
         }
@@ -562,8 +575,8 @@ impl WorkspaceMultiOutputConversionReport {
     }
 
     #[cfg(test)]
-    pub(super) const fn installation_generation(&self) -> u64 {
-        self.installation_generation
+    pub(super) const fn authority(&self) -> BackendAuthorityProjectionDto {
+        self.authority
     }
 
     /// What was staged when a stop reached this run, where one did.
@@ -642,7 +655,7 @@ impl WorkspaceMultiOutputConversionReport {
                     failure_kind: io_error_kind_id(partial.kind()).to_owned(),
                 }),
             complete_set_adoptable,
-            installation_generation: self.installation_generation,
+            receipt: self.authority.receipt(),
         }
     }
 }
@@ -951,7 +964,7 @@ impl WorkspaceConversionReport {
                     .unwrap_or(u64::MAX),
             }),
             staging_residue: self.residue.map(|residue| residue.stable_id().to_owned()),
-            installation_generation: self.installation_generation,
+            receipt: self.authority.receipt(),
         }
     }
 }

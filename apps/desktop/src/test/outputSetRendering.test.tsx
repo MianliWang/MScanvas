@@ -30,6 +30,7 @@ import {
   queueOf,
   sciexQueueItem,
 } from "./previewFixtures";
+import { awaitPlan } from "./conversionPanelInteractions";
 import type { FakePreviewApi } from "./previewFixtures";
 import type { SelectedFile, WorkspaceConversionState } from "../features/mzml-preview/contracts";
 
@@ -191,6 +192,7 @@ describe("rendered QA for the one-to-many output topology", () => {
     fireEvent.click(rows[1], { ctrlKey: true });
 
     const panel = await screen.findByRole("region", { name: "Convert" });
+    await awaitPlan(panel);
     const outputs = [...panel.querySelectorAll(".conversion-queue-output")];
     expect(outputs).toHaveLength(2);
 

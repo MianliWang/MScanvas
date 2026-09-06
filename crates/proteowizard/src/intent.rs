@@ -623,11 +623,9 @@ impl ConversionIntent {
 
     /// A stable, path-free identity for this intent.
     ///
-    /// No production caller reads it yet: nothing visible names an intent, so
-    /// nothing has one to render. It is kept rather than deferred because it is
-    /// the one shape a record of *what was asked for* can take without a path
-    /// in it, and because it cannot drift -- every part is the five values'
-    /// own identity, composed here in one order and nowhere else.
+    /// It is the one shape a record of *what was asked for* can take without a
+    /// path in it, and it cannot drift -- every part is the five values' own
+    /// identity, composed here in one order and nowhere else.
     #[must_use]
     pub fn stable_id(&self) -> String {
         format!(
@@ -638,6 +636,28 @@ impl ConversionIntent {
             self.precision.stable_id(),
             self.compression.stable_id(),
         )
+    }
+
+    /// The admitted intent one identity names, or `None` where no row has it.
+    ///
+    /// **The reverse of [`Self::stable_id`], answered from the same table
+    /// [`Self::admitted`] answers from, and deliberately not by parsing.** A
+    /// parser would have to split the identity into five values and look each
+    /// one up in its own dimension, which is a second way to arrive at a
+    /// combination -- and a caller could then name one of the thirty-nine the
+    /// evidence never measured by supplying five individually valid parts. A
+    /// scan over the admitted rows can only ever answer with a row.
+    ///
+    /// This is the boundary an untrusted identity crosses. What arrives from
+    /// the webview is a string; what leaves here is either a measured
+    /// combination or nothing at all, so there is no partially-valid value for
+    /// a caller to inspect or accidentally use.
+    #[must_use]
+    pub fn from_stable_id(id: &str) -> Option<Self> {
+        Self::ADMITTED
+            .iter()
+            .map(AdmittedIntent::intent)
+            .find(|admitted| admitted.stable_id() == id)
     }
 }
 
@@ -750,6 +770,54 @@ mod tests {
                 "{:?} appears more than once",
                 admitted.intent
             );
+        }
+    }
+
+    #[test]
+    fn an_identity_round_trips_through_the_admitted_table() {
+        for admitted in &ConversionIntent::ADMITTED {
+            let intent = admitted.intent();
+            assert_eq!(
+                ConversionIntent::from_stable_id(&intent.stable_id()),
+                Some(intent),
+                "{} does not name its own row",
+                intent.stable_id()
+            );
+        }
+    }
+
+    #[test]
+    fn an_identity_no_row_carries_names_no_intent() {
+        // The whole reason this scans rather than parses: five individually
+        // valid parts do not compose an admitted combination, and a caller that
+        // sends this one gets nothing rather than something to inspect.
+        assert!(
+            ConversionIntent::admitted(
+                OutputFormat::MzMl,
+                ProcessingIntent::NoAdditionalCentroiding,
+                SpectrumPopulation::Ms1Only,
+                NumericPrecision::Mz32Intensity32,
+                CompressionIntent::Zlib,
+            )
+            .is_none(),
+            "the fixture must name one of the thirty-nine"
+        );
+        let unmeasured = format!(
+            "{}+{}+{}+{}+{}",
+            OutputFormat::MzMl.stable_id(),
+            ProcessingIntent::NoAdditionalCentroiding.stable_id(),
+            SpectrumPopulation::Ms1Only.stable_id(),
+            NumericPrecision::Mz32Intensity32.stable_id(),
+            CompressionIntent::Zlib.stable_id(),
+        );
+        assert_eq!(ConversionIntent::from_stable_id(&unmeasured), None);
+    }
+
+    #[test]
+    fn a_string_that_is_not_an_identity_names_no_intent() {
+        let shipped = ConversionIntent::SHIPPED.stable_id();
+        for nonsense in ["", "mzML", "mzML+++", &shipped[1..], &format!("{shipped} ")] {
+            assert_eq!(ConversionIntent::from_stable_id(nonsense), None);
         }
     }
 
