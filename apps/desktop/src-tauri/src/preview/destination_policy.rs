@@ -673,7 +673,16 @@ fn reclaim_created(created: &[CreatedChild]) {
 /// the superscripts `\u{b9}`, `\u{b2}` and `\u{b3}` count, because Win32 accepts
 /// `COM\u{b9}` as `COM1`.
 fn names_a_device(name: &str) -> bool {
-    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    // Trailing spaces are trimmed off the stem before Win32 compares it, so
+    // `CON .mzML` names the console as surely as `CON.mzML` does -- and an
+    // interior space is not the surrounding whitespace the name check above
+    // already refuses.
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
     if matches!(
         stem.as_str(),
         "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
@@ -766,10 +775,13 @@ pub(super) fn admit_and_hold(
         // cannot be one object. Asked anyway, first, and by the mechanism a
         // directory-shaped source would enter.
         //
-        // **This row is about directory-shaped sources, and it fails closed
-        // for exactly those.** A source that is not a directory cannot be this
-        // directory object, so the row is answered without a handle. Where the
-        // source *is* a directory, an identity that cannot be read is **a
+        // **This row is about sources that are not plain files, and it fails
+        // closed for exactly those.** A regular file cannot be this directory
+        // object, so the row is answered without a handle. `!is_file()` rather
+        // than `is_dir()`: `symlink_metadata` does not follow links, so a
+        // junction standing where a directory is expected reports neither --
+        // and it is precisely the shape that could alias one. Where the source
+        // is anything but a plain file, an identity that cannot be read is **a
         // refusal, not agreement**: the row cannot be answered, and an
         // unanswered safety question is not the same as a safe one -- the rule
         // `directory_identity_of` states for its callers, and the one row 2
@@ -783,7 +795,7 @@ pub(super) fn admit_and_hold(
         // safety answer about a directory that is not there -- and would say
         // `destination_unprovable` about a folder the user just chose, which is
         // the wrong sentence as well as the wrong scope.
-        if std::fs::symlink_metadata(&subject.source).is_ok_and(|shape| shape.is_dir()) {
+        if std::fs::symlink_metadata(&subject.source).is_ok_and(|shape| !shape.is_file()) {
             let (Some(source_identity), Some(admitted_identity)) =
                 (directory_identity_of(&subject.source), identity)
             else {

@@ -7333,10 +7333,13 @@ destination" is a property of the type rather than a check to remember.
 that removes something of the user's re-proves the object it created and leaves
 anything else alone; emptiness is the second guard, never the first. Admission's
 hold is kept alive across the creation it authorizes, because a proof released
-before it is relied on is a window rather than a proof. Row 1 is answered by
-shape where shape settles it and by readable identities where it does not — a
-regular file cannot be a directory object, and demanding a handle for every
-source would let one locked vendor file refuse a whole queue.
+before it is relied on is a window rather than a proof — for the object it
+proved, at least; Windows still lets an *ancestor* of a held directory be
+renamed, so the window is closed there and narrowed above it. Row 1 is answered
+by shape: a regular file cannot be this directory object, so it is skipped
+without a handle, and a source whose shape cannot be read at all is one item's
+problem rather than the batch's. Only a source that is *not* a plain file is
+asked, and for those an unreadable identity is a refusal.
 
 **Ownership belongs to the attempt, not to the object.** Who created a directory
 is true of the resolution that created it, not of the folder — the same child is
@@ -7467,15 +7470,19 @@ happens to a folder MSCanvas created when the step *after* creating it says no.
    could be renamed away and a junction left in its place between the two.
    Admission now hands the hold back, and it is kept alive across the creation —
    `hold_chosen_directory` opens without `FILE_SHARE_DELETE`, which is what
-   makes holding it close the window rather than narrow it.
+   stops *this* container being renamed or deleted while the child is made under
+   it. Not a claim about the whole path: Windows still allows an ancestor of a
+   held directory to be renamed, so the window is closed for the object
+   admission proved and narrowed for the path above it.
 4. **Row 1 read an unprovable identity as agreement**, contradicting the rule
    `directory_identity_of` states for all its callers and that row 2 follows at
-   every step. It is now answered by *shape* where shape settles it — a regular
-   file cannot be a directory object, and saying so needs no handle — and
-   requires readable identities only where it does not. That scoping is the
-   finding's other half: demanding an identity for every source would let one
-   vendor file an instrument holds open refuse an entire queue, which is exactly
-   the per-item failure isolation this boundary keeps.
+   every step. It is now asked only of a source that is not a plain file —
+   `!is_file()` rather than `is_dir()`, because `symlink_metadata` does not
+   follow links and a junction is exactly the shape that could alias a directory
+   — and for those an unreadable identity refuses. A regular file is skipped
+   without a handle, and a source whose shape cannot be read at all is skipped
+   too. **Scoping it took two attempts**, and the first was too wide; see the
+   repair review below.
 5. **The ancestry walk could not find a junction-rooted acquisition.** It climbs
    canonical ancestors, which name only resolved objects, while the acquisition
    root was read without resolving — so a junction's own identity was compared
@@ -7494,13 +7501,26 @@ happens to a folder MSCanvas created when the step *after* creating it says no.
    build on any non-Windows target. Rust CI is `windows-latest` only, so nothing
    was red — which is precisely why it needed finding by reading.
 
-The reversions above are the discriminating tests for these. **Two fixes close
-windows that no single-threaded test can discriminate** — the hold across
-creation, and recording a creation before admitting it — so the mechanism each
-depends on is asserted directly instead: that the hold really does refuse a
-rename, and that the reclaim really does refuse an object it did not create.
-Recording the creation before admitting it has no test at all, and is stated as
-what it is: strictly safer, free, and justified structurally.
+Ten of the twelve reversions above are the discriminating tests for findings 1,
+2, 4, 5, 6 and 7. **Three things are deliberately not held by a reversion**, and
+each is named rather than counted in:
+
+- *The hold across creation* closes a window no single-threaded test can reach,
+  so the mechanism it depends on is asserted directly instead — that the hold
+  really does refuse a rename.
+- *Recording a creation before admitting it* has no test at all. It is strictly
+  safer and free, and is justified structurally rather than by evidence.
+- *Row 1's refusal when an identity cannot be read* is asserted by inspection
+  only. Making `directory_identity_of` answer `None` for something that is not a
+  plain file needs an object that can be stat'd and not opened, which no test
+  here can produce deterministically — the same reason rows 1 and 2 are
+  unexercisable through an admitted family at all. What *is* tested is the
+  scoping around it: that a regular file is skipped, and that one unreadable
+  source never refuses the batch.
+
+Finding 8 — the re-targeted `#[cfg(windows)]` — has no test either, and cannot:
+Rust CI is `windows-latest` only, which is exactly why it had to be found by
+reading rather than by running.
 
 ### And what review of the repairs found
 
@@ -7515,13 +7535,21 @@ the wrong scope. The row is now asked only of a source that is provably a
 directory, which is the only shape it can ever be true of, and fails closed for
 exactly those. The regression has its own reversion.
 
-Four smaller findings came with it and are fixed: the superscript port names
-`COM¹`/`LPT¹`, which Win32 also reserves, slipped past a byte-length test; the
-hold's doc claimed to close a window it narrows, since Windows still allows an
-*ancestor* of a held directory to be renamed; the wire type's opaque `Debug` had
-no test, so re-adding the derive would have gone unnoticed; and the new test seam
-needed `#[cfg(all(test, windows))]` rather than `#[cfg(test)]` — the same latent
-off-Windows breakage as finding 8, introduced in the commit that fixed it.
+Four smaller findings came with it and are fixed. Two are held by tests: the
+superscript port names `COM¹`/`LPT¹` and the trailing-space stem `CON .mzML`,
+which Win32 reads as devices and a byte-length test let through, and the wire
+type's opaque `Debug`, which had no guard, so re-adding the derive would have
+gone unnoticed. Two are not, and cannot be: the hold's doc claimed to close a
+window it narrows, and the new test seam needed `#[cfg(all(test, windows))]`
+rather than `#[cfg(test)]` — the same latent off-Windows breakage as finding 8,
+introduced in the very commit that fixed it.
+
+A third review round over the repairs of the repairs found the row 1 scoping
+still imprecise in a way that mattered less than it read: `is_dir()` skipped a
+junction, which `symlink_metadata` reports as neither file nor directory and
+which is the one shape that could alias a directory source. `!is_file()` is what
+the sentence always meant. Unreachable today — source admission refuses reparse
+points — and corrected so the comment is true of the code.
 
 Two further observations were considered and **not** acted on, and are recorded
 rather than closed. The resolution anchor is read from the live registry rather

@@ -27143,8 +27143,23 @@ fn the_admission_hold_keeps_the_container_from_being_renamed_away() {
 #[test]
 fn a_reserved_device_name_is_refused_rather_than_created() {
     for name in [
-        "CON", "con", "PRN", "aux", "NUL", "COM1", "lpt9", "CON.mzML", "nul.txt", "CONIN$",
+        "CON",
+        "con",
+        "PRN",
+        "aux",
+        "NUL",
+        "COM1",
+        "lpt9",
+        "CON.mzML",
+        "nul.txt",
+        "CONIN$",
         "conout$",
+        // Win32 reads the superscript ports as the same devices, and trims
+        // trailing spaces off the stem before it compares -- so both of these
+        // are the console under a verbatim parent that would happily make them.
+        "COM\u{b9}",
+        "LPT\u{b3}",
+        "CON .mzML",
     ] {
         assert_eq!(
             SubfolderName::parse(name)
