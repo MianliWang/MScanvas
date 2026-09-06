@@ -237,7 +237,23 @@ export function BackendStatus({
         <button className="link-button" disabled={busy} onClick={onRecheck} type="button">
           Check again
         </button>
-        {switchAway}
+        {/* Both ways out, rather than the one the reading's origin implies.
+            `switchAway` picks between them from `availability.origin`, and that
+            origin is part of what has stopped describing the session -- offering
+            `Search automatically` alone would tell a reader they are on a folder
+            they chose, which is exactly the claim this state exists to withdraw.
+            The failed branch above offers both for the same reason. */}
+        <button className="link-button" disabled={busy} onClick={startChoosing} type="button">
+          Choose folder…
+        </button>
+        <button
+          className="link-button"
+          disabled={busy}
+          onClick={onUseAutomaticDiscovery}
+          type="button"
+        >
+          Search automatically
+        </button>
       </div>
     );
   }

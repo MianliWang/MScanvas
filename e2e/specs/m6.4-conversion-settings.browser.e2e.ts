@@ -23,8 +23,10 @@
 
 import {
   ALLOWED_CONSOLE_SUBSTRINGS,
+  boxOf,
   consoleEntries,
   holdInvoke,
+  horizontalOverflow,
   installIpcBoundary,
   ipcCalls,
   releaseInvokeHold,
@@ -984,6 +986,64 @@ describe("M6.4 — E11: the banner stops naming a build it has left", () => {
     expect(await bannerText()).toContain("ProteoWizard is available");
     expect(await unexpectedConsole()).toEqual([]);
   });
+
+  for (const viewport of [
+    { name: "1920x1080", width: 1_920, height: 1_080 },
+    { name: "1366x768", width: 1_366, height: 768 },
+    { name: "960x640", width: 960, height: 640 },
+  ] as const) {
+    it(`fits the disclaimer at ${viewport.name} without hiding a way out`, async () => {
+      // A new notice variant is rendered UI work, so it is measured where the
+      // rest of this shell is: the widest desktop, the reference window, and a
+      // narrow one. It is a flex row that wraps, and what must not happen is the
+      // page scrolling sideways or a control leaving the column it belongs to.
+      await openTheWorkspace({ get_workspace_conversion_state: runningQueue(1, AUTHORITY_A) });
+      await browser.setWindowSize(viewport.width, viewport.height);
+      await browser.$(`${PANEL} .conversion-queue-list`).waitForExist({ timeout: 30_000 });
+      await setInvokeResult("get_workspace_conversion_state", runningQueue(1, AUTHORITY_B));
+      await browser.waitUntil(async () => (await superseded()) !== null, {
+        timeout: 30_000,
+        timeoutMsg: "the banner never disclaimed the reading the poll superseded",
+      });
+
+      const notice = await boxOf('[data-backend-reading="superseded"]');
+      expect(notice.height).toBeGreaterThan(0);
+      const overflow = await horizontalOverflow();
+      expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth + 1);
+      // Every control it offers is inside it, and reachable.
+      const controls = await browser.execute(() => {
+        const banner = document.querySelector('[data-backend-reading="superseded"]');
+        const box = banner?.getBoundingClientRect();
+        return [...(banner?.querySelectorAll("button") ?? [])].map((control) => {
+          const own = control.getBoundingClientRect();
+          return {
+            label: control.textContent?.trim() ?? "",
+            inside:
+              box !== undefined &&
+              own.right <= box.right + 0.5 &&
+              own.bottom <= box.bottom + 0.5,
+            enabled: !(control as HTMLButtonElement).disabled,
+          };
+        });
+      });
+      expect(controls.length).toBeGreaterThanOrEqual(3);
+      // Reported as one object per control, so a failure names which one.
+      expect(controls.filter((control) => !control.inside)).toEqual([]);
+      expect(controls.filter((control) => !control.enabled)).toEqual([]);
+      // And the keyboard reaches the one the reader would press first.
+      await browser.execute(() => {
+        const banner = document.querySelector('[data-backend-reading="superseded"]');
+        const control = [...(banner?.querySelectorAll("button") ?? [])].find(
+          (candidate) => candidate.textContent?.trim() === "Check again",
+        );
+        (control as HTMLElement | undefined)?.focus();
+      });
+      expect(
+        await browser.execute(() => (document.activeElement?.textContent ?? "").trim()),
+      ).toBe("Check again");
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+  }
 });
 
 describe("M6.4 — one lane fact, many refused actions, one notice", () => {

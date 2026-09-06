@@ -147,22 +147,29 @@ describe("a reading that has stopped describing the session", () => {
     );
   });
 
-  it("keeps every way out live", async () => {
+  it("offers both ways out, rather than the one a stale origin implies", async () => {
     // This state is a wait for a read MSCanvas already owes. Where that read is
     // deferred behind a conversion, the reader is still entitled to ask for one
     // themselves -- which is the floor Decision 4 requires.
+    //
+    // **And it offers both installation routes.** Elsewhere the banner picks
+    // between `Choose folder…` and `Search automatically` from the reading's
+    // `origin` -- but the origin is part of what has stopped describing the
+    // session, so choosing from it would tell a reader they are on a folder they
+    // chose, which is exactly the claim this state exists to withdraw. The
+    // failed branch offers both for the same reason.
     await supersedeTheReading();
     const banner = document.querySelector(SUPERSEDED) as HTMLElement;
-    const recheck = [...banner.querySelectorAll("button")].find(
-      (control) => control.textContent?.trim() === "Check again",
-    );
-    expect(recheck).toBeDefined();
-    expect(recheck).toBeEnabled();
-    expect(
-      [...banner.querySelectorAll("button")].some((control) =>
-        (control.textContent ?? "").includes("folder"),
-      ),
-    ).toBe(true);
+    const offered = [...banner.querySelectorAll("button")].map((control) => ({
+      label: control.textContent?.trim() ?? "",
+      enabled: !(control as HTMLButtonElement).disabled,
+    }));
+    expect(offered.map((control) => control.label)).toEqual([
+      "Check again",
+      "Choose folder…",
+      "Search automatically",
+    ]);
+    expect(offered.filter((control) => !control.enabled)).toEqual([]);
   });
 
   it("loses none of the reason the previous reading carried", () => {
