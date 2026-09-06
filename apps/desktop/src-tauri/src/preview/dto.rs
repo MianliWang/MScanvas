@@ -1459,10 +1459,18 @@ pub struct ConversionBeginRequestDto {
     /// Where this queue's outputs go, as one bound decision.
     ///
     /// **A closed vocabulary and a validated child name, never a path.** The
-    /// webview names a policy; it does not name a folder, and nothing here
-    /// widens what it may reach on the filesystem -- a custom folder is still
-    /// chosen by a Rust-owned native picker and a source-relative one is
-    /// resolved from the acquisition the session already holds.
+    /// webview names a policy; it does not name a folder. A custom folder is
+    /// still chosen by a Rust-owned native picker, and a source-relative one is
+    /// resolved from acquisitions the session already holds -- so what this can
+    /// reach stays bounded by what the user already opened.
+    ///
+    /// It does change what a request can *cause*, and saying otherwise would be
+    /// false: a source-relative policy resolves without opening a dialog, so a
+    /// `BEGIN` naming one creates a directory beside each acquisition and
+    /// publishes there with no picker in the flow. That is the policy doing
+    /// what it means rather than a widened capability, and **M6.6 is what puts
+    /// the choice in front of the user**; until then no shipped request names
+    /// this field at all.
     ///
     /// Absent means `custom folder`, which is what every request means today.
     /// M6.5 puts the vocabulary on the wire; M6.6 gives it a visible control.
@@ -1476,7 +1484,7 @@ pub struct ConversionBeginRequestDto {
 /// which Rust validates as a single child component before anything is created
 /// -- a rooted name, a traversal or a separator is refused rather than
 /// rewritten into a different folder.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum DestinationPolicyDto {
     /// Beside each acquisition, in its own sibling container.
@@ -1486,6 +1494,20 @@ pub enum DestinationPolicyDto {
     NamedSubfolder { name: String },
     /// One folder, chosen through the native picker this reservation opens.
     CustomFolder,
+}
+
+impl std::fmt::Debug for DestinationPolicyDto {
+    /// Opaque for the same reason the domain type is: the name is the user's
+    /// own text. The request this sits inside derives `Debug`, so leaving the
+    /// derive here would have rendered through it the name the domain type was
+    /// made opaque to keep out.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::SourceSibling => "source_sibling",
+            Self::NamedSubfolder { .. } => "named_subfolder(<name>)",
+            Self::CustomFolder => "custom_folder",
+        })
+    }
 }
 
 /// What one `BEGIN` produced.

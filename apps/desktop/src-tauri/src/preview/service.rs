@@ -1966,12 +1966,9 @@ impl PreviewService {
             let Some(name) = item.output().planned_name() else {
                 continue;
             };
-            let Some(bound) = bindings.destination_for(item.dataset()) else {
+            let Some(at) = bindings.position_for(item.dataset()) else {
                 return Err(queue_destination_changed());
             };
-            let at = bindings
-                .position_of(bound)
-                .ok_or_else(queue_destination_changed)?;
             let folded = folded_output_name(name);
             if seen
                 .iter()

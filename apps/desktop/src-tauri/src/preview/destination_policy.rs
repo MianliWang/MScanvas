@@ -59,7 +59,9 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use super::destination::{DestinationHold, admit_destination_root, directory_identity_of};
+use super::destination::{
+    DestinationHold, DestinationIdentity, admit_destination_root, directory_identity_of,
+};
 use super::dto::PreviewErrorDto;
 use super::operation::AdmittedDestination;
 use super::selection::DatasetId;
@@ -134,9 +136,37 @@ impl SubfolderName {
         }) {
             return Err(subfolder_name_unusable());
         }
-        // A trailing dot or space is dropped by Windows when the name is
-        // created, which would produce a folder with a different name from the
+        // A trailing dot or space is what Win32 would drop from the name if
+        // it parsed it -- and under the verbatim parent this child is joined
+        // to, it would *not* be dropped, so the folder would be created with a
+        // name most tools then cannot address. Either way the user asked for
+        // one name and would get another or an unreachable one, which would produce a folder with a different name from the
         // one requested -- the silent rewrite this refuses.
+        // **Reserved device names, refused here because Windows will not
+        // refuse them there.** The usual reason `CON` is harmless as a folder
+        // name is that Win32 refuses to create it -- but the parent this child
+        // is joined to is the output of `canonicalize`, which is a verbatim
+        // `\\?\` path, and a verbatim path bypasses exactly the layer that
+        // performs device-name translation. `create_dir` would *succeed*, and
+        // the user would be left with a directory Explorer, `cmd` and `rmdir`
+        // cannot open, rename or delete. The Win32 rule is the name up to the
+        // first dot, case-insensitively, so `CON.mzML` is the console too.
+        let stem = trimmed
+            .split('.')
+            .next()
+            .unwrap_or(trimmed)
+            .to_ascii_uppercase();
+        let reserved = matches!(
+            stem.as_str(),
+            "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+        ) || matches!(
+            stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT")),
+            Some(port)
+                if port.len() == 1 && port.as_bytes()[0].is_ascii_digit()
+        );
+        if reserved {
+            return Err(subfolder_name_unusable());
+        }
         if trimmed.ends_with('.') || trimmed.ends_with(' ') {
             return Err(subfolder_name_unusable());
         }
@@ -275,14 +305,37 @@ pub(super) struct ItemDestinationBindings {
     destinations: Vec<ResolvedDestinationBinding>,
     /// Which of them each dataset is bound to.
     bound: Vec<(DatasetId, usize)>,
-    /// The children this resolution created, newest last.
+    /// The children this resolution created, newest last, each with the
+    /// identity it had when it was created.
     ///
     /// Carried on the result rather than dropped at the end of the resolution,
     /// because **a caller may refuse bindings that resolved perfectly well** --
     /// a name collision the identities have only now made decidable, a slot
     /// that stopped while the objects were being proved -- and whoever refuses
     /// after a successful resolution owns taking back what it made.
-    created: Vec<PathBuf>,
+    created: Vec<CreatedChild>,
+}
+
+/// A directory this resolution created, and the object it was.
+///
+/// **The identity is what makes removing it safe.** Everything else in this
+/// module insists a folder is an object rather than a name; the one operation
+/// that *deletes* something in the user's filesystem must hold to that hardest.
+/// Between creating a child and taking it back there is a real interval -- more
+/// admissions, more creations -- and a sync client or an installer can remove
+/// the child and leave its own directory at the same path. Removing by name
+/// would then remove theirs.
+#[derive(Clone, PartialEq, Eq)]
+struct CreatedChild {
+    path: PathBuf,
+    identity: Option<DestinationIdentity>,
+}
+
+impl std::fmt::Debug for CreatedChild {
+    /// Opaque, for the reason every path in this module is.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("<created-child>")
+    }
 }
 
 impl std::fmt::Debug for ItemDestinationBindings {
@@ -309,10 +362,22 @@ impl ItemDestinationBindings {
         &self,
         dataset: DatasetId,
     ) -> Option<&ResolvedDestinationBinding> {
+        self.position_for(dataset)
+            .and_then(|at| self.destinations.get(at))
+    }
+
+    /// Which distinct destination this dataset is bound to, as a position.
+    ///
+    /// The key half of the collision pair, read from the binding table rather
+    /// than recovered by comparing objects. Recovering it would ask an identity
+    /// question that is already answered, and answer "the destination changed"
+    /// whenever the answer could not be read -- which is a different sentence
+    /// from the truth, and one this queue has no reason to say.
+    pub(super) fn position_for(&self, dataset: DatasetId) -> Option<usize> {
         self.bound
             .iter()
             .find(|(bound, _)| *bound == dataset)
-            .and_then(|(_, at)| self.destinations.get(*at))
+            .map(|(_, at)| *at)
     }
 
     /// Every distinct admitted object this queue will write into.
@@ -333,8 +398,34 @@ impl ItemDestinationBindings {
     /// For a caller that resolved successfully and then refused the result
     /// anyway. Consuming, because bindings that have been reclaimed name
     /// directories that are gone and must not be run against.
-    pub(super) fn reclaim_created(self) {
-        reclaim_created(&self.created);
+    pub(super) fn reclaim_created(mut self) {
+        self.reclaim_created_now();
+    }
+
+    /// The same, leaving the bindings usable and the list empty.
+    ///
+    /// Draining is what makes a second call a no-op: a queue that reclaimed at
+    /// one terminal transition must not try again at another, and an empty list
+    /// says "there is nothing of mine out there" rather than "ask again".
+    pub(super) fn reclaim_created_now(&mut self) {
+        let created = std::mem::take(&mut self.created);
+        reclaim_created(&created);
+    }
+
+    /// Records a directory as one this resolution created.
+    ///
+    /// For the reclaim's own test, which has to put a *different* object at a
+    /// recorded path -- the thing that happens when a sync client or an
+    /// installer replaces MSCanvas's child between the resolution and its
+    /// refusal. Nothing single-threaded can produce that interleaving through
+    /// the resolver, so the record is made directly.
+    #[cfg(test)]
+    pub(super) fn with_created(mut self, path: &Path) -> Self {
+        self.created.push(CreatedChild {
+            identity: directory_identity_of(path),
+            path: path.to_path_buf(),
+        });
+        self
     }
 
     /// Every listed dataset bound to one object.
@@ -374,17 +465,6 @@ impl ItemDestinationBindings {
             bound,
             created: Vec::new(),
         }
-    }
-
-    /// Which distinct destination this binding is, as a comparable position.
-    ///
-    /// The key half of the collision pair. A position rather than a path,
-    /// because two spellings of one directory are one destination and the
-    /// comparison must not be able to tell them apart.
-    pub(super) fn position_of(&self, bound: &ResolvedDestinationBinding) -> Option<usize> {
-        self.destinations
-            .iter()
-            .position(|existing| existing.admitted().is_still(bound.admitted()))
     }
 }
 
@@ -447,7 +527,7 @@ pub(super) fn resolve_destinations(
     // is not a queue -- nothing runs, and the children this attempt created
     // beside three acquisitions would otherwise be empty folders the user did
     // not ask for and MSCanvas never mentions again.
-    let mut created: Vec<PathBuf> = Vec::new();
+    let mut created: Vec<CreatedChild> = Vec::new();
     match resolve_or_partial(policy, subjects, chosen, &mut created) {
         Ok(mut bindings) => {
             // Handed on with the result: the caller may still refuse it, and
@@ -467,7 +547,7 @@ fn resolve_or_partial(
     policy: &DestinationPolicy,
     subjects: &[ResolutionSubject],
     chosen: Option<&Path>,
-    created: &mut Vec<PathBuf>,
+    created: &mut Vec<CreatedChild>,
 ) -> Result<ItemDestinationBindings, PreviewErrorDto> {
     if subjects.is_empty() {
         return Err(destination_not_resolvable());
@@ -522,7 +602,12 @@ fn resolve_or_partial(
                 // The container is admitted first: a subfolder is created only
                 // under a parent this boundary has already proved is a local,
                 // real, unlinked directory that is not inside an acquisition.
-                let parent = admit_and_check(&container, std::slice::from_ref(subject))?;
+                // **Held across the creation.** `_parent_held` is what makes
+                // the sentence above true at the moment it is relied on: the
+                // container cannot be renamed or deleted out from under the
+                // child while this handle is open.
+                let (parent, _parent_held) =
+                    admit_and_hold(&container, std::slice::from_ref(subject))?;
                 let child = parent.admitted().root().join(name.as_str());
                 // Existence decides ownership, and ownership decides what may
                 // ever be cleaned up. Creating is authorized here because the
@@ -535,7 +620,10 @@ fn resolve_or_partial(
                 // must not leave behind without ever mentioning again.
                 if matches!(ownership_of(&child), DestinationOwnership::CreatedHere) {
                     std::fs::create_dir(&child).map_err(|_| subfolder_not_created())?;
-                    created.push(child.clone());
+                    created.push(CreatedChild {
+                        identity: directory_identity_of(&child),
+                        path: child.clone(),
+                    });
                 }
                 // The created or existing child passes the same admission as
                 // any other destination. Creating it is not admitting it.
@@ -569,12 +657,24 @@ fn resolve_or_partial(
 /// has already failed and the caller is being told why. What is left behind in
 /// that case is an empty folder, which is visible and harmless, and it is not
 /// described as nothing having changed.
-fn reclaim_created(created: &[PathBuf]) {
+fn reclaim_created(created: &[CreatedChild]) {
     // Newest first, so a child is taken back before any parent this attempt
     // also made -- `remove_dir` refuses a non-empty directory, and the reverse
     // order is what keeps that refusal from being about our own work.
     for child in created.iter().rev() {
-        let _ = std::fs::remove_dir(child);
+        // **Still the object this attempt created, or it is not ours.** An
+        // identity that cannot be read now, or that names a different object,
+        // means whatever is at this path belongs to somebody else -- and
+        // leaving a folder behind is the safe half of that answer. Emptiness is
+        // still required underneath: `remove_dir` refuses a directory with
+        // anything in it, so a child something has already written into stays.
+        let Some(created_as) = child.identity else {
+            continue;
+        };
+        if directory_identity_of(&child.path) != Some(created_as) {
+            continue;
+        }
+        let _ = std::fs::remove_dir(&child.path);
     }
 }
 
@@ -592,8 +692,13 @@ fn ownership_of(child: &Path) -> DestinationOwnership {
 
 /// Files one resolved binding, sharing an object that is already there.
 ///
-/// Identity, not path: two spellings of one directory are one destination, and
-/// storing them twice would let the collision check believe they were two.
+/// **Both halves of `is_still`: the canonical root and the object identity.**
+/// Not identity alone -- the comparison requires the paths to match too, and
+/// requires an identity to have been readable at all. That conjunction can only
+/// ever split one object into two entries, never merge two into one, so the
+/// collision check is conservative in the safe direction; and because every
+/// root here comes from `canonicalize`, two spellings of one directory converge
+/// before they are ever compared.
 fn bind(
     destinations: &mut Vec<ResolvedDestinationBinding>,
     resolved: ResolvedDestinationBinding,
@@ -617,6 +722,23 @@ fn admit_and_check(
     candidate: &Path,
     subjects: &[ResolutionSubject],
 ) -> Result<ResolvedDestinationBinding, PreviewErrorDto> {
+    admit_and_hold(candidate, subjects).map(|(binding, _held)| binding)
+}
+
+/// The same admission, handing back the hold instead of dropping it.
+///
+/// **For the one caller that then mutates the filesystem under what it just
+/// admitted.** Admission proves a container is local, real, unlinked and not
+/// inside an acquisition -- and a proof released before it is relied on is a
+/// window, not a proof: between the two, the container can be renamed away and
+/// a junction of the same name left in its place, and the child would be
+/// created under the substitute. The hold is opened without `FILE_SHARE_DELETE`
+/// (see `hold_chosen_directory`), so keeping it alive across the creation is
+/// what closes the window rather than narrowing it.
+pub(super) fn admit_and_hold(
+    candidate: &Path,
+    subjects: &[ResolutionSubject],
+) -> Result<(ResolvedDestinationBinding, DestinationHold), PreviewErrorDto> {
     let (root, identity, held) = admit_destination_root(candidate)?;
     for subject in subjects {
         // Row 1 -- object aliasing, by identity rather than by a path prefix.
@@ -624,10 +746,32 @@ fn admit_and_check(
         // source is a regular file and this is a directory object, so the two
         // cannot be one object. Asked anyway, first, and by the mechanism a
         // directory-shaped source would enter.
-        if let Some(source_identity) = directory_identity_of(&subject.source)
-            && identity.is_some_and(|admitted| admitted == source_identity)
-        {
-            return Err(destination_is_the_source());
+        //
+        // **Shape settles it where shape can, and identity must otherwise be
+        // readable.** A source that is provably a regular file cannot be this
+        // directory object, and saying so needs no handle -- which matters,
+        // because a vendor file an instrument is holding open would otherwise
+        // make an unreadable identity refuse a queue that has nothing wrong
+        // with it, and turn one item's problem into every item's. That is the
+        // per-item failure isolation this boundary keeps.
+        //
+        // Where shape does *not* settle it -- a directory-shaped source, or one
+        // whose shape cannot be read at all -- an identity that cannot be read
+        // is **a refusal, not agreement**: the row cannot be answered, and an
+        // unanswered safety question is not the same as a safe one. That is the
+        // rule `directory_identity_of` states for its callers and the rule row
+        // 2 follows at every step of its walk.
+        let source_is_a_file =
+            std::fs::symlink_metadata(&subject.source).is_ok_and(|metadata| metadata.is_file());
+        if !source_is_a_file {
+            let (Some(source_identity), Some(admitted_identity)) =
+                (directory_identity_of(&subject.source), identity)
+            else {
+                return Err(destination_unprovable());
+            };
+            if source_identity == admitted_identity {
+                return Err(destination_is_the_source());
+            }
         }
         // Row 2 -- at or under a recognised acquisition root. Fails closed,
         // and before row 3 can admit anything.
@@ -638,11 +782,12 @@ fn admit_and_check(
         }
     }
     // Row 3 needs no comparison: this is what the policy produced, admitted
-    // because the two rows above declined.
-    drop(held);
-    Ok(ResolvedDestinationBinding::new(AdmittedDestination::new(
-        root, identity,
-    )))
+    // because the two rows above declined. The hold goes to the caller, which
+    // decides whether the proof still has work to do.
+    Ok((
+        ResolvedDestinationBinding::new(AdmittedDestination::new(root, identity)),
+        held,
+    ))
 }
 
 /// Whether an admitted destination is the acquisition root, or lies under it.
@@ -664,7 +809,19 @@ fn destination_is_within(
     /// rather than a promise that `parent()` always terminates.
     const MAX_ANCESTRY_STEPS: usize = 4_096;
 
-    let Some(root_identity) = directory_identity_of(acquisition_root) else {
+    // **Resolved, because the walk climbs resolved objects.** The destination
+    // side starts from a canonical root -- admission canonicalizes, and refuses
+    // a destination that is itself a link -- so every step above it names a
+    // real directory. Reading the acquisition root without resolving it would
+    // compare a junction's *own* identity against a chain that contains only
+    // its target's, and the two could never meet: a destination genuinely
+    // inside a junction-rooted acquisition would walk past it to the volume
+    // root and be reported safe. Canonicalizing first asks about the same
+    // object the walk can actually encounter.
+    let Ok(resolved_root) = std::fs::canonicalize(acquisition_root) else {
+        return Err(destination_unprovable());
+    };
+    let Some(root_identity) = directory_identity_of(&resolved_root) else {
         // The acquisition root cannot be named as an object, so nothing can be
         // shown to be outside it.
         return Err(destination_unprovable());

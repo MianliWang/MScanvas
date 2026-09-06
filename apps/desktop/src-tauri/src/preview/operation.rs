@@ -782,6 +782,33 @@ impl ConversionQueue {
         &self.policy
     }
 
+    /// Takes back the destinations this queue's resolution created, if this
+    /// queue never attempted anything.
+    ///
+    /// **The invariant has to reach past `start_running`.** A resolution that
+    /// fails takes back what it made, and so does a caller that refuses
+    /// bindings which resolved perfectly well. But between starting and
+    /// converting there is a stretch that can refuse or stop the whole queue
+    /// without running a single item -- the backend is quarantined, a stop
+    /// lands while this queue waits behind another, the installation will not
+    /// bind, a family has no evidence -- and a queue that ends there had
+    /// folders made for it and used none of them.
+    ///
+    /// **"Attempted nothing" is the condition, not "published nothing".** An
+    /// item that ran and failed leaves the queue retryable, and a retry
+    /// revalidates the objects it is bound to rather than resolving again, so
+    /// taking a folder back from under a retry would turn a fixable failure
+    /// into `queue_destination_changed`. A queue that attempted nothing has no
+    /// retryable failure and nothing to strand.
+    fn reclaim_untouched_destinations(&mut self) {
+        if self.items.iter().any(|item| item.attempts > 0) {
+            return;
+        }
+        if let Some(bindings) = self.bindings.as_mut() {
+            bindings.reclaim_created_now();
+        }
+    }
+
     /// The object this dataset's outputs go into.
     ///
     /// `None` where the policy has not resolved, or where this dataset is not
@@ -1801,6 +1828,7 @@ impl ConversionSlot {
         if error.is_some() {
             queue.error = error;
         }
+        queue.reclaim_untouched_destinations();
         // Everything the stop prevented, said as what it is. A completed queue
         // has nothing pending to strand, so this is a no-op for it.
         if reason != TerminalReason::Completed {
@@ -1837,6 +1865,7 @@ impl ConversionSlot {
             SlotState::Idle | SlotState::Terminal { .. } => return,
         };
         let mut queue = queue;
+        queue.reclaim_untouched_destinations();
         // A refusal that lands on a stopped queue is still a stop. What refused
         // it is recorded, and everything the stop prevented is marked as never
         // run rather than left pending -- a pending item in a terminal queue is

@@ -28,10 +28,12 @@ use super::backend::{
 };
 use super::conversion::{conversion_source_kind, is_convertible};
 #[cfg(windows)]
+use super::destination_policy::admit_and_hold;
 use super::destination_policy::{
     DestinationPolicy, ItemDestinationBindings, ResolutionSubject, ResolvedDestinationBinding,
     SubfolderName, resolve_destinations,
 };
+#[cfg(windows)]
 use super::discovery::inspect_drop_root;
 use super::discovery::{
     DiscoveryBudget, DiscoveryError, DiscoveryErrorKind, DiscoveryUsage, DropRootInspection,
@@ -26569,42 +26571,45 @@ fn a_named_subfolder_is_created_beside_the_acquisition_and_adopted_when_it_is_th
     );
 }
 
-/// A child created and then *refused by admission* is still taken back.
+/// Row 1 answers by shape where shape settles it, and refuses where it cannot
+/// be answered at all.
 ///
-/// **This is why the record is taken where the creation is decided.** Creating
-/// the child and admitting it are two steps, and the second can refuse the
-/// first: here the child, once it exists, *is* the subject's own source object,
-/// which row 1 refuses on identity. A record taken after admission would never
-/// have heard of this folder, and MSCanvas would have made a directory beside
-/// the user's data, refused the conversion, and never mentioned it again.
-///
-/// Windows-only for the reason every identity test is: elsewhere there is no
-/// object identity to compare, so row 1 cannot fire.
+/// **Both halves matter, and they pull against each other.** An identity that
+/// cannot be read is not evidence that two objects differ, so an unanswerable
+/// row 1 must refuse -- that is the rule `directory_identity_of` states for
+/// every caller. But every admitted source is a regular file, and a regular
+/// file cannot be a directory object, so demanding a readable identity for
+/// *those* would let one vendor file an instrument is holding open refuse a
+/// whole queue that has nothing wrong with it. Shape settles the ordinary case
+/// without a handle; identity is required only where shape leaves the question
+/// open.
 #[test]
-#[cfg(windows)]
-fn a_child_refused_after_it_was_created_is_still_reclaimed() {
-    let here = TestFile::new("m65-created-then-refused");
-    // A directory-shaped subject whose container is the test root, so the
-    // child the policy names is the subject's own source.
-    let source = here.directory.join("converted");
-    assert!(!source.exists(), "the child does not exist yet");
-    let name = SubfolderName::parse("converted").expect("an ordinary child name");
+fn row_one_answers_by_shape_and_refuses_what_it_cannot_answer() {
+    let here = TestFile::new("m65-row-one");
+    let chosen = destination_root(&here, "out");
 
-    let refusal = resolve_destinations(
-        &DestinationPolicy::NamedSubfolder(name),
-        &[subject("file-0", &source, None)],
-        None,
+    // A regular-file source: answered by shape, no identity needed.
+    let acquisition = here.thermo_raw("one.raw");
+    resolve_destinations(
+        &DestinationPolicy::CustomFolder,
+        &[subject("file-0", &acquisition, None)],
+        Some(&chosen),
     )
-    .expect_err("a destination that is the source object is refused");
+    .expect("a regular file is not a directory object, and needs no handle to say so");
 
+    // A source whose shape cannot be read at all: unanswerable, so refused.
+    let vanished = here.directory.join("gone.raw");
+    assert!(!vanished.exists(), "the source is not there");
     assert_eq!(
-        refusal.kind, "destination_is_the_source",
-        "and refused for that reason, on identity"
-    );
-    assert!(
-        !source.exists(),
-        "the child this attempt created before the refusal is taken back, \
-         not left beside the user's data unmentioned"
+        resolve_destinations(
+            &DestinationPolicy::CustomFolder,
+            &[subject("file-0", &vanished, None)],
+            Some(&chosen),
+        )
+        .expect_err("an unanswerable row 1 refuses")
+        .kind,
+        "destination_unprovable",
+        "an identity that could not be read is not evidence that two objects differ"
     );
 }
 
@@ -27054,6 +27059,165 @@ fn a_collision_refused_after_resolution_takes_back_the_folder_it_created() {
     assert!(
         !child.exists(),
         "and the child created while resolving is taken back, not left behind"
+    );
+}
+
+/// The reclaim removes the object it created, not whatever now answers to the
+/// path.
+///
+/// **The one operation in this milestone that deletes something of the user's
+/// must hold to the module's own doctrine hardest.** Between creating a child
+/// and taking it back there is a real interval, and a sync client or an
+/// installer can remove MSCanvas's folder and leave its own at the same path.
+/// Removing by name would then remove theirs. Emptiness alone is not the
+/// answer: an empty folder somebody else made is still theirs.
+#[test]
+#[cfg(windows)]
+fn the_reclaim_refuses_a_path_that_is_no_longer_the_object_it_created() {
+    let here = TestFile::new("m65-reclaim-identity");
+    let child = here.directory.join("converted");
+    fs::create_dir(&child).expect("the child this resolution would have created");
+
+    let bindings = ItemDestinationBindings::bound_to_one(
+        &[DatasetId::parse("file-0").expect("a handle")],
+        ResolvedDestinationBinding::new(AdmittedDestination::new(here.directory.clone(), None)),
+    )
+    .with_created(&child);
+
+    // Somebody else replaces it: same name, different object.
+    fs::remove_dir(&child).expect("theirs removes ours");
+    fs::create_dir(&child).expect("and puts its own there");
+
+    bindings.reclaim_created();
+
+    assert!(
+        child.is_dir(),
+        "a folder that is no longer the object this attempt created is not this attempt's to remove"
+    );
+}
+
+/// The hold admission returns really does keep the container in place.
+///
+/// **This is the whole reason `admit_and_hold` exists.** A named subfolder is
+/// created under a container this boundary has just proved is local, real,
+/// unlinked and not inside an acquisition -- and a proof released before it is
+/// relied on is a window, not a proof: the container could be renamed away and
+/// a junction of the same name left behind, and the child would be created
+/// under the substitute. `hold_chosen_directory` opens without
+/// `FILE_SHARE_DELETE`, so holding it is what closes the window rather than
+/// narrowing it. Asserted directly, because the race itself has no
+/// single-threaded test.
+#[test]
+#[cfg(windows)]
+fn the_admission_hold_keeps_the_container_from_being_renamed_away() {
+    let here = TestFile::new("m65-hold-blocks-rename");
+    let container = here.directory.join("container");
+    fs::create_dir(&container).expect("a container to admit");
+    let moved = here.directory.join("moved");
+
+    let (_binding, held) = admit_and_hold(&container, &[]).expect("an ordinary local directory");
+    assert!(
+        fs::rename(&container, &moved).is_err(),
+        "while the proof is held, the container cannot be swapped out from under it"
+    );
+
+    drop(held);
+    assert!(
+        fs::rename(&container, &moved).is_ok(),
+        "and the hold is what was doing that, not something about the directory"
+    );
+}
+
+/// Reserved DOS device names are refused, because the parent this child is
+/// joined to would let Windows create them.
+///
+/// **The usual reason `CON` is a harmless folder name does not hold here.**
+/// Win32 refuses to create a directory called `CON` -- but the parent comes
+/// from `canonicalize`, which is a verbatim `\\?\` path, and a verbatim path
+/// bypasses exactly the layer that performs device-name translation. NTFS has
+/// no reserved names, so `create_dir` would succeed and leave the user with a
+/// directory Explorer, `cmd` and `rmdir` cannot open, rename or delete. The
+/// Win32 rule is the name up to the first dot, case-insensitively.
+#[test]
+fn a_reserved_device_name_is_refused_rather_than_created() {
+    for name in [
+        "CON", "con", "PRN", "aux", "NUL", "COM1", "lpt9", "CON.mzML", "nul.txt", "CONIN$",
+        "conout$",
+    ] {
+        assert_eq!(
+            SubfolderName::parse(name)
+                .expect_err("a device name is refused")
+                .kind,
+            "subfolder_name_unusable",
+            "{name} names a device, not a folder"
+        );
+    }
+
+    // The neighbouring ordinary names are still ordinary. `COM10` is not a
+    // device -- the Win32 rule is a single digit -- and nothing here refuses a
+    // name merely for beginning with those letters.
+    for name in [
+        "CONVERTED",
+        "console",
+        "COM10",
+        "LPT",
+        "auxiliary",
+        "nullable",
+    ] {
+        SubfolderName::parse(name).unwrap_or_else(|_| panic!("{name} is an ordinary folder name"));
+    }
+}
+
+/// A queue that is refused before it converts anything takes back the folders
+/// its resolution created.
+///
+/// **The invariant has to reach past `start_running`.** Resolution succeeded,
+/// the bindings were installed, the queue started -- and then the drain refused
+/// the whole thing before a single item ran, because the backend is
+/// quarantined. Nothing was published, nothing is retryable, and the empty
+/// `converted` folders beside the user's acquisitions are MSCanvas's to take
+/// back rather than leave unmentioned.
+#[test]
+fn a_queue_refused_before_its_first_item_takes_back_what_it_created() {
+    let here = TestFile::new("m65-refused-before-running");
+    let acquisition = here.thermo_raw("one.raw");
+
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let one = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion_under_now(
+            &[one],
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::NamedSubfolder(
+                SubfolderName::parse("converted").expect("an ordinary child name"),
+            ),
+        )
+        .expect("one row under a named subfolder is a queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+
+    // Quarantined between claiming and draining, so the queue starts and is
+    // then refused with nothing run.
+    service.quarantine_backend_now();
+
+    let child = here.directory.join("converted");
+    let update = service.resolve_claimed_conversion(operation);
+
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
+        panic!("the queue is refused; got {:?}", update.state);
+    };
+    assert_eq!(
+        queue.error.as_ref().map(|error| error.kind.as_str()),
+        Some("backend_quarantined")
+    );
+    assert_eq!(queue.finalized_count, 0, "nothing was published");
+    assert!(
+        !child.exists(),
+        "and the folder made for a queue that never ran is taken back"
     );
 }
 
