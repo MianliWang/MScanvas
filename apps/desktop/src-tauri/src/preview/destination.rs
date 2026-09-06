@@ -137,6 +137,58 @@ const fn directory_identity(_held: &()) -> Option<DestinationIdentity> {
     None
 }
 
+/// The identity of the object a hold is already keeping open.
+///
+/// The one reading that describes the object admission judged, rather than
+/// whatever the name means by the time somebody asks again. An ancestry walk
+/// starts here for exactly that reason: its first step must be the admitted
+/// object, not a re-opening of its path.
+pub(super) fn identity_of_hold(held: &DestinationHold) -> Option<DestinationIdentity> {
+    directory_identity(held)
+}
+
+/// The identity of the object one name refers to right now, without following
+/// a link.
+///
+/// For the ancestry walk and the aliasing comparison, which need to ask about
+/// objects this boundary has *not* admitted -- an acquisition root, a directory
+/// half way up a path. It deliberately does not admit anything: the answer is
+/// "which object is this", and every safety question above it stays where it
+/// is.
+///
+/// `None` where the object cannot be opened or the platform will not name it
+/// that way. **Every caller reads `None` as a refusal rather than as
+/// agreement**: there is no weaker comparison to fall back to, and an identity
+/// that could not be read is not evidence that two objects differ.
+#[cfg(windows)]
+pub(super) fn directory_identity_of(path: &Path) -> Option<DestinationIdentity> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    /// Needed to open a directory at all.
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    /// Opens a link itself rather than its target, so a junction answers with
+    /// its own identity rather than its target's.
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    /// Everything is welcome. This opening judges nothing and holds nothing
+    /// beyond the read; refusing a busy object here would make an ancestry walk
+    /// fail on ordinary folders.
+    const FILE_SHARE_ALL: u32 = 0x0000_0007;
+
+    let opened = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_ALL)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .ok()?;
+    directory_identity(&opened)
+}
+
+/// Every other platform names no objects this way, so nothing can be compared.
+#[cfg(not(windows))]
+pub(super) fn directory_identity_of(_path: &Path) -> Option<DestinationIdentity> {
+    None
+}
+
 /// Holds the chosen directory open, without following it, for the length of
 /// admission.
 ///

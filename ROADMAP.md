@@ -383,9 +383,10 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 **Started. The route is locked, the conversion lane has one availability
 authority, the installed `msconvert` has been measured against M6's finite
 candidate set, what a conversion is asked to do is now a type, the ownership
-boundary the visible settings sit on is decided, and those settings are now on
-screen with a plan bound to the installation that answered them; destination
-authority is the next slice.**
+boundary the visible settings sit on is decided, those settings are on screen
+with a plan bound to the installation that answered them, and where output goes
+is now a bound policy resolved to admitted directory objects; the destination and
+conflict UX is the next slice.**
 
 The route, the live conversion gap audit it was decided from, the nine product
 decisions it surfaces, the twelve exit criteria and the M7/M8 seams are in
@@ -403,7 +404,8 @@ Twelve slices, plus one authority interlude:
 - M6.4 — visible settings, and a truthful plan. **complete**, as a
   replacement implementation. The first attempt is superseded, unmerged evidence
   on PR #95; see below.
-- M6.5 — destination authority. **not started.**
+- M6.5 — destination authority. **complete** (Rust authority; the visible
+  policy controls are M6.6's).
 - M6.6 — destination and conflict UX, including the destructive question.
 - M6.7 — convert selected, convert all.
 - M6.8 — cancellation, capacity, and truthful progress.

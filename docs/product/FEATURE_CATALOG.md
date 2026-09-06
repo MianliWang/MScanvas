@@ -228,7 +228,10 @@ and `Retry N failed` reruns only the failures Rust marks retryable.
 Reachable that far and no further. CNV-001 and CNV-008's fail/skip half are
 reachable; CNV-009's batch summary is reachable as an item count, an ordered list
 and the planned output names, but not as processing options it does not have.
-CNV-003 exposes no location choice beyond the folder itself. CNV-002 remains
+CNV-003 exposes no location choice beyond the folder itself: **M6.5** gave its
+three policies a Rust authority — source sibling, named subfolder and custom
+folder, each resolved to admitted directory objects and bound per item — and the
+control that would let a reader choose between them is M6.6's. CNV-002 remains
 unplannable by type. CNV-004 to CNV-007 became reachable in **M6.4**, as four
 controls over one admitted combination rather than four independent settings.
 
@@ -294,9 +297,23 @@ sentence: silence is the honest answer where there is nothing to disclose.
 Which combinations a build can run is read from the installed ProteoWizard by one
 Rust-owned configuration read, bound to the same receipt the plan and the queue
 are bound to. A failed read is the reader's to retry and nothing else's; a
-replaced installation makes the previous catalog non-current at once. CNV-003's
-vendor-dataset-root rule is unexercisable because no admitted acquisition family
-is directory-shaped — Thermo RAW and Shimadzu LCD are single files, and a SCIEX
+replaced installation makes the previous catalog non-current at once.
+
+**Where a conversion writes is a policy resolved to objects, since M6.5.** One
+decision binds the queue and resolves to as many admitted directories as the
+decision implies: a custom folder is one object for every item, and a
+source-relative choice is one object per acquisition container — which is what
+lets a batch whose rows come from different folders convert beside each of them.
+Every one of those objects passes the admission this boundary already made —
+local, a real directory, not a link, not remote, identified by volume serial and
+128-bit file ID rather than by name — is re-proved before its own item, and is
+revalidated by a retry rather than re-resolved. Two items writing one file name
+into two different directories are no longer refused as a collision; the same two
+names in one directory still are.
+
+CNV-003's vendor-dataset-root rule is stated, ordered ahead of the sibling
+admission and implemented, and remains **unexercisable** because no admitted
+acquisition family is directory-shaped — Thermo RAW and Shimadzu LCD are single files, and a SCIEX
 acquisition is a `.wiff` bound to its `.wiff.scan` sibling. See
 [ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md), and
 [ADR 0043](../architecture/adr/0043-conversion-completion-route.md) for the M6

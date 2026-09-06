@@ -7295,3 +7295,286 @@ unplannable by type, centroiding stays unscoped, and the mzXML disposition
 remains M6.10's. It does not start M6.5.
 
 **M6.5 — destination authority — is next. M6.5 has not started.**
+
+## M6.5 — Destination authority, 2026-09-06
+
+Baseline `0a6a8a1f4c0c55a4397c3d26b822bbeea9180f65`, the merged M6.4 replacement,
+clean and level with `origin/main`.
+
+Where a conversion writes was one folder, chosen once, admitted once and held for
+the queue's life. It still is, for the policy the product offers. What M6.5 adds
+is the thing CNV-003 decided before the queue existed: **three policies, and the
+fact that one of them is one decision and several objects.**
+
+### The lifecycle, for all three
+
+| | source sibling | named subfolder | custom folder |
+|---|---|---|---|
+| Authorized input | none — the acquisitions | a validated child *name* | one folder, from the native picker |
+| Anchor | the logical acquisition's container | the same container | the chosen folder |
+| Policy immutable from | `ConversionQueue::new` (`BEGIN`) | `BEGIN`, name and all | `BEGIN` |
+| Parameters complete at | `BEGIN` | `BEGIN` | when the picker answers |
+| Filesystem resolution | the resolution step | the resolution step, which may create the child | the resolution step |
+| Per-item identities committed at | `start_running`, all or none | `start_running`, all or none | `start_running`, all or none |
+| Destination collisions decidable at | after binding | after binding | at `BEGIN` — one folder proves it |
+| Failure | nothing runs; created children reclaimed | same; only children this attempt made | same |
+| Cancellation | unchanged | unchanged | unchanged |
+| Retry | revalidates every bound object | revalidates every bound object | revalidates every bound object |
+
+Four states are kept apart, and the type system keeps them apart: a **requested**
+policy is a closed-vocabulary wire value; an **incomplete** destination request
+is a custom-folder queue whose picker has not answered; a **resolved** binding is
+an admitted object; and a **runnable** item is one the bindings name.
+`ItemDestinationBindings` is complete by construction — there is no way to build
+one that leaves an item unbound — so "no item runs against an unbound
+destination" is a property of the type rather than a check to remember.
+
+**Safety is object-based to the edge, including the delete.** The one operation
+that removes something of the user's re-proves the object it created and leaves
+anything else alone; emptiness is the second guard, never the first. Admission's
+hold is kept alive across the creation it authorizes, because a proof released
+before it is relied on is a window rather than a proof — for the object it
+proved, at least; Windows still lets an *ancestor* of a held directory be
+renamed, so the window is closed there and narrowed above it. Row 1 is answered
+by shape: a regular file cannot be this directory object, so it is skipped
+without a handle, and a source whose shape cannot be read at all is one item's
+problem rather than the batch's. Only a source that is *not* a plain file is
+asked, and for those an unreadable identity is a refusal.
+
+**Ownership belongs to the attempt, not to the object.** Who created a directory
+is true of the resolution that created it, not of the folder — the same child is
+`CreatedHere` for the attempt that made it and `PreExisting` for every attempt
+afterwards. So the resolution keeps its own list, written **where the creation is
+decided rather than after the child is admitted**: admitting a freshly created
+child can refuse it, and a record taken afterwards would never have heard of the
+folder it left behind. The list travels with the bindings, because a caller can
+refuse a resolution that succeeded — a name collision the identities have only
+now made decidable, or a slot that moved on while the objects were being proved —
+and **whoever refuses after a successful resolution owns taking back what it
+made.** `start_running` returns the bindings it declines rather than dropping
+them, which is what makes forgetting that impossible to write. Removal is
+`remove_dir`, never recursive, newest first, and never touches a folder that was
+already there.
+
+**The reservation's temporal truth is preserved.** `ConversionQueue::new` runs
+before the picker opens, so a custom-folder queue knows which policy it is under
+and does not know, and does not invent, where it will write. Nothing on the wire
+names a root while none exists.
+
+### One policy, item-specific identities
+
+`DestinationPolicy` is bound to the plan beside the intent and the conflict
+policy, with no setter, which is what makes "a retry never re-resolves the policy
+into a different destination" a property of the type. `ItemDestinationBindings`
+keys by `DatasetId` — the queue item's own stable identity, not a source
+basename two folders share, and not a parallel vector that can lose alignment —
+and stores the distinct objects once, so several items sharing one destination is
+one object rather than several equal copies.
+
+`resolve_destinations` is the only resolver. The shipped custom-folder command
+reaches it with the folder the picker returned; a source-relative policy reaches
+it with none, through the same claimed reservation and the same coordinator.
+There is no second implementation for the policies that have no control yet.
+
+### Safety is object-based and ordered
+
+```text
+1  the destination object IS the source object      -> refused, on identity
+2  the destination is a directory-shaped
+   acquisition root, or lies under one              -> fails closed
+3  the sibling container of the logical acquisition  -> admitted
+```
+
+Row 1 compares object identities. Row 2 walks from the admitted destination up by
+parent, comparing identity at each step, with an explicit bound and an explicit
+termination — and **inability to establish ancestry is a refusal**, not evidence
+of safety. Row 3 needs no comparison: it is what the policy produced, admitted
+because the two above it declined. None of the three asks whether one canonical
+path begins with another, which is the mechanism that fails over links,
+substituted drives and mount points.
+
+Rows 1 and 2 are unexercisable through an admitted family — every admitted source
+is a regular file, every destination is a directory, and no admitted family is
+directory-shaped. They are implemented, ordered first, and tested through the
+mechanism a directory-shaped source would enter. That is the named exception ADR
+0043's exit criterion 4 carries, and it is not the admission of a new reader.
+
+### Names are compared against the object they are written in
+
+The queue-wide key became *(destination identity, folded name)*, in the planner
+and in the per-item claim alike. The pre-`BEGIN` refusal is retained exactly
+where the policy already proves one object — a custom-folder queue is going to
+put every item in whatever single folder the picker returns, which proves the
+collision without knowing which folder it is — and is **pending** rather than
+absent where it does not. `refuse_bound_name_collisions` asks it the moment the
+identities exist and before any item can create staging or launch a provider.
+
+### What did not change
+
+Admission strength: local, a real directory, not a link, not remote, identified by
+volume serial and 128-bit file ID, the handle held for the length of the work, and
+the proof repeated before every item. Fail/Skip, serial execution, private
+staging, validation before publication, no-clobber finalization and per-item
+failure isolation. The nine admitted combinations, provider admission, vendor
+family support, cancellation and quarantine semantics, capacity, scope, the
+diagnostics schema, and M6.4's authority and delivery behaviour.
+
+### Validation
+
+Rust 1464 passed / 22 ignored, on `windows-latest` in CI and on Windows locally —
+which is where these object, hold, creation and identity guarantees are the
+guarantees. Frontend 1602 across 67 files and browser 225 across 11 specs are
+unchanged and are what protect M6.4 and the retained custom-folder workflow;
+browser mocks prove nothing about directory identity, and are not asked to.
+
+Fifteen mechanism reversions were applied and restored one at a time, and each
+failed the tests that hold it and no others.
+
+**Six state the slice's own mechanisms:** one global folder for the queue, name
+claims without the destination, path equality instead of identity, no per-item
+revalidation, a retry that re-resolves, and a created subfolder trusted rather
+than admitted.
+
+**Nine hold what review found:** a collision refusal that keeps what the
+resolution made; a queue refused before its first item keeping the folders made
+for it; a reserved device name admitted as a folder, plus the superscript ports
+and the trailing-space stem that a byte-length test let through; an acquisition
+root read unresolved, so a junction hides the acquisition it points at; a reclaim
+that removes by name rather than by proven object; a row 1 that refuses the whole
+batch for one unreadable source; and the wire type deriving `Debug` again.
+
+### What review found
+
+The designated reviewer for this repository is a bot the user triggers, and it
+could not be invoked from here — recorded as `REVIEW_NOT_RUN` rather than as a
+clean review. In its place, three independent read-only reviews were run over the
+frozen exact-head diff, split by dimension: policy-versus-object with ancestry
+and authorization timing; bindings, collision scope and cleanup ownership; and
+scope, privacy and documentation truthfulness.
+
+**Eight findings were accepted, and they concentrate in one seam** — what
+happens to a folder MSCanvas created when the step *after* creating it says no.
+
+1. **A queue refused before its first item kept what was made for it.** The
+   invariant stopped at `start_running`, and the stretch immediately after it can
+   refuse or stop a whole queue without converting anything — a quarantined
+   backend, a stop landing while this queue waits behind another, an
+   installation that will not bind. A terminal queue that attempted nothing now
+   takes its folders back. *Attempted*, not *published*: an item that ran and
+   failed leaves the queue retryable, and a retry revalidates rather than
+   re-resolves, so reclaiming under one would turn a fixable failure into
+   `queue_destination_changed`.
+2. **A reserved DOS device name was admitted.** `CON`, `NUL`, `COM1`, `CON.mzML`
+   and the rest are ordinarily harmless as folder names because Win32 refuses to
+   create them — but the parent here comes from `canonicalize`, which is a
+   verbatim `\\?\` path, and a verbatim path bypasses the very layer that does
+   device-name translation. `create_dir` would have *succeeded*, leaving a
+   directory Explorer, `cmd` and `rmdir` cannot open, rename or delete. Refused
+   at the name, where every other unusable name is refused.
+3. **The parent's proof was released before the child was created under it.** A
+   proof relied on after it is dropped is a window, not a proof: the container
+   could be renamed away and a junction left in its place between the two.
+   Admission now hands the hold back, and it is kept alive across the creation —
+   `hold_chosen_directory` opens without `FILE_SHARE_DELETE`, which is what
+   stops *this* container being renamed or deleted while the child is made under
+   it. Not a claim about the whole path: Windows still allows an ancestor of a
+   held directory to be renamed, so the window is closed for the object
+   admission proved and narrowed for the path above it.
+4. **Row 1 read an unprovable identity as agreement**, contradicting the rule
+   `directory_identity_of` states for all its callers and that row 2 follows at
+   every step. It is now asked only of a source that is not a plain file —
+   `!is_file()` rather than `is_dir()`, because `symlink_metadata` does not
+   follow links and a junction is exactly the shape that could alias a directory
+   — and for those an unreadable identity refuses. A regular file is skipped
+   without a handle, and a source whose shape cannot be read at all is skipped
+   too. **Scoping it took two attempts**, and the first was too wide; see the
+   repair review below.
+5. **The ancestry walk could not find a junction-rooted acquisition.** It climbs
+   canonical ancestors, which name only resolved objects, while the acquisition
+   root was read without resolving — so a junction's own identity was compared
+   against a chain that could never contain it, and a destination genuinely
+   inside such an acquisition would have walked past it to the volume root and
+   been reported safe. The root is canonicalized before its identity is read.
+6. **The reclaim removed by name.** In a module whose whole doctrine is that a
+   folder is an object rather than a name, the one operation that *deletes*
+   something of the user's was the one comparing paths. It now re-proves the
+   object it created and leaves anything else alone; emptiness stays as the
+   second guard underneath, never the first.
+7. **The wire type rendered the folder name** the domain type had been made
+   opaque to hide, through the request that embeds it. Both are opaque now.
+8. **A `#[cfg(windows)]` was silently re-targeted.** An inserted `use` captured
+   the attribute that gated `inspect_drop_root`, which would have broken the test
+   build on any non-Windows target. Rust CI is `windows-latest` only, so nothing
+   was red — which is precisely why it needed finding by reading.
+
+Findings 1, 2, 5, 6 and 7 are each held by a reversion above, as is the
+collision refusal and the scoping half of finding 4. **Three things are not**,
+and are named rather than counted in:
+
+- *The hold across creation* closes a window no single-threaded test can reach,
+  so the mechanism it depends on is asserted directly instead — that the hold
+  really does refuse a rename.
+- *Recording a creation before admitting it* has no test at all. It is strictly
+  safer and free, and is justified structurally rather than by evidence.
+- *Row 1's refusal when an identity cannot be read* is asserted by inspection
+  only. Making `directory_identity_of` answer `None` for something that is not a
+  plain file needs an object that can be stat'd and not opened, which no test
+  here can produce deterministically — the same reason rows 1 and 2 are
+  unexercisable through an admitted family at all. What *is* tested is the
+  scoping around it: that a regular file is skipped, and that one unreadable
+  source never refuses the batch.
+
+Finding 8 — the re-targeted `#[cfg(windows)]` — has no test either, and cannot:
+Rust CI is `windows-latest` only, which is exactly why it had to be found by
+reading rather than by running.
+
+### And what review of the repairs found
+
+The repairs were themselves reviewed against the frozen delta, which found one
+real regression in them. **Row 1's first fix was scoped too widely.** Making an
+unreadable identity fail closed is right; making an unreadable *source shape*
+fail closed is not, because a source that has been moved or archived between
+`BEGIN` and the picker is one item's problem, and the batch has always survived
+it. As first written it refused the whole queue — and said `destination_unprovable`
+about the folder the user had just chosen, which is the wrong sentence as well as
+the wrong scope. The row is now asked only of a source that is provably a
+directory, which is the only shape it can ever be true of, and fails closed for
+exactly those. The regression has its own reversion.
+
+Four smaller findings came with it and are fixed. Two are held by tests: the
+superscript port names `COM¹`/`LPT¹` and the trailing-space stem `CON .mzML`,
+which Win32 reads as devices and a byte-length test let through, and the wire
+type's opaque `Debug`, which had no guard, so re-adding the derive would have
+gone unnoticed. Two are not, and cannot be: the hold's doc claimed to close a
+window it narrows, and the new test seam needed `#[cfg(all(test, windows))]`
+rather than `#[cfg(test)]` — the same latent off-Windows breakage as finding 8,
+introduced in the very commit that fixed it.
+
+A third review round over the repairs of the repairs found the row 1 scoping
+still imprecise in a way that mattered less than it read: `is_dir()` skipped a
+junction, which `symlink_metadata` reports as neither file nor directory and
+which is the one shape that could alias a directory source. `!is_file()` is what
+the sentence always meant. Unreachable today — source admission refuses reparse
+points — and corrected so the comment is true of the code.
+
+Two further observations were considered and **not** acted on, and are recorded
+rather than closed. The resolution anchor is read from the live registry rather
+than pinned into the queue at `BEGIN`, so a source-relative policy resolves
+against whatever the registry says at that instant; the claim and the resolve are
+one command today, and M6.6 — which puts a real user-facing pause between them —
+is where pinning belongs. And `AdmittedDestination::is_still` requires canonical
+path equality *as well as* identity, which can only ever split one object into
+two entries and never merge two into one; it is conservative in the safe
+direction, and the comments that described it as identity alone were corrected
+rather than the code.
+
+### What this slice does not do
+
+It adds no visible policy control, no destination presentation and no conflict
+UX — those are M6.6's, and the source-relative policies run through the
+production coordinator with no control on screen. It admits no directory-shaped
+vendor family, adds no overwrite or automatic rename, changes no queue
+membership, order, scope or capacity, no cancellation or quarantine semantics, no
+scientific integrity policy, no persistence and no diagnostics schema.
+
+**M6.6 — destination and conflict UX — is next. M6.6 has not started.**
