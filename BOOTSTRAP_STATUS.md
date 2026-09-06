@@ -7421,21 +7421,27 @@ diagnostics schema, and M6.4's authority and delivery behaviour.
 
 ### Validation
 
-Rust 1463 passed / 22 ignored, on `windows-latest` in CI and on Windows locally —
+Rust 1464 passed / 22 ignored, on `windows-latest` in CI and on Windows locally —
 which is where these object, hold, creation and identity guarantees are the
 guarantees. Frontend 1602 across 67 files and browser 225 across 11 specs are
 unchanged and are what protect M6.4 and the retained custom-folder workflow;
 browser mocks prove nothing about directory identity, and are not asked to.
 
-Twelve mechanism reversions were applied and restored one at a time: one global
-folder for the queue, name claims without the destination, path equality instead
-of identity, no per-item revalidation, a retry that re-resolves, a created
-subfolder trusted rather than admitted, a collision refusal that keeps what the
-resolution made, a reserved device name admitted as a folder, a queue refused
-before its first item keeping the folders made for it, a reclaim that removes by
-name rather than by proven object, a row 1 that refuses the whole batch for one
-unreadable source, and the wire type deriving `Debug` again. Each failed the
-tests that hold it, and no other.
+Fifteen mechanism reversions were applied and restored one at a time, and each
+failed the tests that hold it and no others.
+
+**Six state the slice's own mechanisms:** one global folder for the queue, name
+claims without the destination, path equality instead of identity, no per-item
+revalidation, a retry that re-resolves, and a created subfolder trusted rather
+than admitted.
+
+**Nine hold what review found:** a collision refusal that keeps what the
+resolution made; a queue refused before its first item keeping the folders made
+for it; a reserved device name admitted as a folder, plus the superscript ports
+and the trailing-space stem that a byte-length test let through; an acquisition
+root read unresolved, so a junction hides the acquisition it points at; a reclaim
+that removes by name rather than by proven object; a row 1 that refuses the whole
+batch for one unreadable source; and the wire type deriving `Debug` again.
 
 ### What review found
 
@@ -7501,9 +7507,9 @@ happens to a folder MSCanvas created when the step *after* creating it says no.
    build on any non-Windows target. Rust CI is `windows-latest` only, so nothing
    was red — which is precisely why it needed finding by reading.
 
-Ten of the twelve reversions above are the discriminating tests for findings 1,
-2, 4, 5, 6 and 7. **Three things are deliberately not held by a reversion**, and
-each is named rather than counted in:
+Findings 1, 2, 5, 6 and 7 are each held by a reversion above, as is the
+collision refusal and the scoping half of finding 4. **Three things are not**,
+and are named rather than counted in:
 
 - *The hold across creation* closes a window no single-threaded test can reach,
   so the mechanism it depends on is asserted directly instead — that the hold

@@ -26720,6 +26720,49 @@ fn ancestry_is_decided_by_object_identity_rather_than_by_a_path_prefix() {
     assert_eq!(admitted.len(), 1);
 }
 
+/// Row 2 finds a junction-rooted acquisition, because it looks for the object
+/// the walk can actually meet.
+///
+/// **The two sides of the comparison have to name the same kind of thing.** The
+/// destination side starts from a canonical root — admission canonicalizes, and
+/// refuses a destination that is itself a link — so every step the walk climbs
+/// names a real directory. Reading the acquisition root *unresolved* answers
+/// with the junction's own object, which can never appear in that chain: the
+/// walk would climb past the acquisition to the volume root and report the
+/// destination safe, which is the one outcome row 2 exists to prevent.
+///
+/// Windows-only for the reason every identity test is, and asked through the
+/// mechanism a directory-shaped source would enter.
+#[cfg(windows)]
+#[test]
+fn row_two_sees_through_a_junction_to_the_acquisition_it_points_at() {
+    let real = FolderTree::new("m65-junction-real");
+    let acquisition_root = real.path().join("run.vendor");
+    fs::create_dir(&acquisition_root).expect("the acquisition itself");
+    let primary = acquisition_root.join("run.dat");
+    fs::write(&primary, b"payload").expect("write the acquisition's payload");
+    // A destination genuinely inside the acquisition.
+    let inside = acquisition_root.join("out");
+    fs::create_dir(&inside).expect("a folder inside the acquisition");
+
+    // The workspace knows the acquisition by a junction rather than by the
+    // directory the junction points at.
+    let lab = FolderTree::new("m65-junction-lab");
+    lab.junction("run.vendor", &acquisition_root);
+    let through_the_junction = lab.path().join("run.vendor");
+
+    let error = resolve_destinations(
+        &DestinationPolicy::CustomFolder,
+        &[subject("file-0", &primary, Some(through_the_junction))],
+        Some(&inside),
+    )
+    .expect_err("a folder inside the acquisition is not a place to write into");
+    assert_eq!(
+        error.kind, "destination_inside_acquisition",
+        "the junction and the directory it points at are one acquisition"
+    );
+}
+
 /// Row 1: a destination that *is* the source object is refused on identity.
 ///
 /// Unexercisable through an admitted family -- every admitted source is a
