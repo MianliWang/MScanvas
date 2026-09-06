@@ -1,6 +1,6 @@
 # ADR 0043 — Conversion Completion is the next milestone, and this is its route
 
-Status: accepted, amended 2026-09-04 and 2026-09-06
+Status: accepted, amended 2026-09-04 and twice on 2026-09-06
 Date: 2026-09-01
 Related: [0002](0002-external-proteowizard.md),
 [0009](0009-mzml-conversion-execution-boundary.md),
@@ -1150,6 +1150,32 @@ asking whether one canonical path happens to begin with another.
 what happens when something is already there.
 
 *Downstream:* M6.6.
+
+*Delivered 2026-09-06.* Every acceptance clause above holds. A destination is a
+folder object and never a path string; the policy is a bound plan fact and the
+identities it resolves to are bound to the items they apply to, complete by
+construction; every one of them is revalidated by identity on every later pass;
+and two runs of one policy over one bound membership resolve to the same
+identities. The three containment rows are implemented in that order, decided by
+object identity and by an ancestry walk compared by identity at each step, with
+inability to establish ancestry read as a refusal rather than as safety. The
+queue-wide name comparison became *(destination identity, folded name)* in the
+planner and in the per-item claim alike, and the pre-picker refusal is retained
+exactly where the policy already proves one object.
+
+**Rows 1 and 2 remain unexercisable through an admitted family**, and the named
+exception exit criterion 4 carries from CNV-D3 is what they are met by: each rule
+is stated, ordered ahead of the sibling admission, implemented in the path a
+directory-shaped source would enter, and tested through that mechanism. No
+directory-shaped vendor family is admitted, and none of this admits one.
+
+**What is delivered is the Rust authority, not a visible control.** The policy
+vocabulary reaches the boundary as a narrow closed-vocabulary request field --
+never a path -- and the one command that resolves a reservation asks the queue's
+own policy whether a folder must be chosen. `source sibling` and
+`named subfolder` therefore run through the production coordinator today and
+have no control on screen: **M6.6 owns the destination policy's visible form**,
+its presentation and the conflict UX, exactly as this route says.
 
 ### M6.6 — Destination and conflict UX, including the destructive question
 

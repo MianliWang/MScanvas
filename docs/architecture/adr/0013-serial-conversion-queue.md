@@ -13,6 +13,9 @@
   be. Membership, order, bound, seriality, Stop, Retry, diagnostics and
   adoption are unchanged. See
   [ADR 0020](0020-first-visible-shimadzu-lcd-workflow.md).
+- Amended: 2026-09-06 (M6.5) — **the count, and nothing else.** One policy still
+  binds the whole queue; how many admitted objects that policy resolves to is a
+  property of the policy. See the amendment at the end of this document.
 
 ## Context
 
@@ -118,6 +121,13 @@ is the safe direction for a rule whose whole purpose is to refuse, and the hones
 limit of comparing names without asking the volume itself.
 
 ### One destination and one policy for the whole queue
+
+**Amended 2026-09-06 by M6.5: one *policy* for the whole queue, and as many
+admitted objects as that policy implies.** Everything this section decides
+*about* a destination is preserved verbatim and is what M6.5 still does; what
+changed is that an item may prove a different admitted object where the policy
+resolves to one. The amendment is recorded at the end of this document, and the
+paragraphs below are the decision as it was made rather than a rewrite.
 
 One folder, chosen once, admitted once, under ADR 0012's rules unchanged: local,
 a real directory, not a link, not UNC, not a mapped or otherwise remote volume.
@@ -520,3 +530,46 @@ before the destination is inspected, and a collision there is its own typed,
 non-retryable outcome rather than something the conflict policy settles. The
 Windows folding argument that lived inline in the planner is now one helper,
 `folded_output_name`, used by both rules.
+
+
+## Amendment, 2026-09-06 (M6.5) — one policy, and as many objects as it implies
+
+This ADR was accepted "into one local folder", and its *One destination and one
+policy for the whole queue* section is built on that count. It was right for the
+queue it was written for: a batch of Thermo RAW rows under one conflict policy,
+where the only way to name a destination was to choose one.
+
+[ADR 0043](0043-conversion-completion-route.md)'s M6.5 adds the policy CNV-003
+has carried since before the queue existed — source sibling, named subfolder,
+custom local folder — and **one folder cannot express `source sibling` for a
+queue whose items have different parents.** The queue has never required them to
+share one: `ConversionQueue::new` requires a non-empty list, within capacity,
+free of duplicates, and nothing more. So the choice was between amending the
+count and refusing a batch that was always valid, and the count is what gives.
+
+**What changed.** The queue holds a `DestinationPolicy` where it held an
+`Option<AdmittedDestination>`, and beside it an `ItemDestinationBindings` — every
+item, and the admitted object it is bound to, complete by construction. Several
+items sharing one object is ordinary and is stored once. The queue-wide output
+name comparison became *(destination identity, folded name)*, in the planner and
+in the per-item claim alike: two items writing `sample.mzML` into two directories
+do not collide, and the same two names in one directory still do.
+
+**What did not.** Admission is this document's, unchanged and not weakened by
+adding a policy in front of it: local, a real directory, not a link, not remote;
+retained as an object by volume serial and 128-bit file ID rather than as a name;
+a platform that will not answer with an identity read as a refusal; the admission
+*held* rather than released the moment it answers; and the proof repeated before
+**every item** rather than once for the queue. The per-item cadence is this
+document's own — what M6.5 alters is only that the item may prove a *different*
+admitted object.
+
+**And retry is extended in the same direction rather than relaxed.** "Against the
+same folder" becomes *against the same object for every identity the pass will
+use*: a retry still never re-asks the user, still never re-resolves the policy
+into a different destination, and now revalidates each bound identity rather
+than the single one. A destination that is no longer the object it was refuses
+with `queue_destination_changed`, exactly as it did.
+
+Nothing here admits a directory-shaped acquisition family, changes the conflict
+policy, weakens no-clobber finalization, or adds an overwrite.

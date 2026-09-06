@@ -911,6 +911,18 @@ async fn choose_workspace_conversion_destination(
     let owner = main_window_handle(&app);
     let service = Arc::clone(&service);
     let operation = service.claim_conversion(&reservation_id, document_epoch)?;
+    // **A source-relative policy has no folder to choose.** The reservation
+    // still owns the decision and the resolution is still the one authorized
+    // step that may create a directory -- what it does not need is a dialog.
+    // Asked of the claimed queue rather than of the caller, so the webview
+    // names a policy once, at `BEGIN`, and never again.
+    if service.claimed_policy_needs_a_folder(operation) == Some(false) {
+        let service = Arc::clone(&service);
+        return off_the_async_runtime(move || {
+            Ok::<_, PreviewErrorDto>(service.resolve_claimed_conversion(operation))
+        })
+        .await?;
+    }
     let (sender, receiver) = std::sync::mpsc::channel();
     if app
         .run_on_main_thread(move || {

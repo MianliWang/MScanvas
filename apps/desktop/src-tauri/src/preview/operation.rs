@@ -34,6 +34,7 @@ use mscanvas_proteowizard::{
 use super::adoption::FinalizedOutputAdoptionTicket;
 use super::adoption::FinalizedOutputSetAdoptionTicket;
 use super::destination::DestinationIdentity;
+use super::destination_policy::{DestinationPolicy, ItemDestinationBindings};
 use super::diagnostics::{
     ConversionFailureDiagnosticTicket, DiagnosticItemIdentity, DiagnosticsProviderFacts,
     DiagnosticsQueueFacts,
@@ -256,6 +257,12 @@ pub(super) struct ClaimedOutputName {
     pub(super) display: String,
     /// Which item owns it.
     pub(super) item: usize,
+    /// **The object it is owned in.**
+    //
+    // Half the key. A name is not claimed anywhere: it is claimed in a
+    // directory, and under a source-relative policy two items own the same
+    /// spelling in two different directories without either being a conflict.
+    pub(super) destination: AdmittedDestination,
     /// Where it sat in the list the asker was comparing, when there was one.
     pub(super) discovered_position: usize,
 }
@@ -665,9 +672,27 @@ pub(super) struct ConversionQueue {
     /// Which item is running, or how many have finished when none is.
     current: usize,
     retry_round: u64,
-    /// Set when a destination has been admitted, and kept for the queue's life
-    /// so a retry does not ask for one again.
-    destination: Option<AdmittedDestination>,
+    /// Where this queue's outputs go, as one bound user decision.
+    //
+    // Bound when the queue is made and never reassigned -- there is no setter
+    // and the field is private, exactly as for the conflict policy and the
+    // intent. A retry re-reads this rather than deciding again, which is what
+    // makes "a retry never re-resolves the policy into a different destination"
+    // a property of the type.
+    //
+    /// The *kind* is fixed here even where its input is not: a custom-folder
+    /// queue knows it is one before the picker opens, and does not yet know
+    /// which folder.
+    policy: DestinationPolicy,
+    /// The admitted object each item will be written into, once the policy has
+    /// resolved.
+    //
+    // `None` until the authorized resolution step runs, which for a custom
+    // folder is when the picker answers and for a source-relative policy is
+    // when the resolution command is called. Complete by construction when it
+    // is `Some`: there is no way to build one that leaves an item unbound, so
+    /// no item can run against a destination nothing resolved.
+    bindings: Option<ItemDestinationBindings>,
     /// The authority this queue last resolved a backend at.
     //
     // Two things at once, deliberately: its revision is the durable record of
@@ -699,6 +724,7 @@ impl ConversionQueue {
         document_epoch: u64,
         conflict: ConversionConflictPolicyDto,
         intent: ConversionIntent,
+        policy: DestinationPolicy,
         items: Vec<QueueItem>,
     ) -> Result<Self, PreviewErrorDto> {
         if items.is_empty() {
@@ -725,7 +751,8 @@ impl ConversionQueue {
             items,
             current: 0,
             retry_round: 0,
-            destination: None,
+            policy,
+            bindings: None,
             // Nothing is bound at BEGIN. `ConversionQueue::new` runs before
             // the picker, and the first drain pass is what records a build --
             // so an unresolved projection here is the truthful answer rather
@@ -745,8 +772,26 @@ impl ConversionQueue {
         self.intent
     }
 
-    pub(super) fn destination(&self) -> Option<&AdmittedDestination> {
-        self.destination.as_ref()
+    /// The bound membership, in the order it will run.
+    pub(super) fn items(&self) -> &[QueueItem] {
+        &self.items
+    }
+
+    /// What this queue's outputs go under, first attempt and every retry alike.
+    pub(super) const fn policy(&self) -> &DestinationPolicy {
+        &self.policy
+    }
+
+    /// The object this dataset's outputs go into.
+    ///
+    /// `None` where the policy has not resolved, or where this dataset is not
+    /// one of the bound items. Both are refusals: a caller that cannot name an
+    /// item's destination must not run it.
+    pub(super) fn destination_for(&self, dataset: DatasetId) -> Option<&AdmittedDestination> {
+        self.bindings
+            .as_ref()?
+            .destination_for(dataset)
+            .map(|bound| bound.admitted())
     }
 
     /// Whether this dataset belongs to the queue, at any state.
@@ -782,14 +827,30 @@ impl ConversionQueue {
     // Derived on demand rather than accumulated, so there is no second list to
     // keep in step with the items, and bounded by
     /// [`Self::max_output_names`].
+    /// Every name this queue's items own, and **the object each owns it in**.
+    //
+    // The destination is half the key. Two items writing `sample.mzML` into two
+    // directories own two different things; the same two names in one directory
+    // are one claim twice. Before M6.5 there was one folder for the whole queue
+    // and the object could be left out of the comparison; under a
+    // source-relative policy leaving it out refuses batches that never
+    /// collided.
     pub(super) fn claimed_output_names(&self) -> Vec<ClaimedOutputName> {
         let mut claimed = Vec::new();
         for (index, item) in self.items.iter().enumerate() {
+            // An item whose destination nothing resolved owns nothing: there is
+            // no object for a name to be claimed in. It cannot run either, so
+            // this is not a hole -- it is the same refusal seen from the other
+            // side.
+            let Some(destination) = self.destination_for(item.dataset) else {
+                continue;
+            };
             if let Some(planned) = item.output().planned_name() {
                 claimed.push(ClaimedOutputName {
                     folded: folded_output_name(planned),
                     display: planned.to_owned(),
                     item: index,
+                    destination: destination.clone(),
                     discovered_position: 0,
                 });
             }
@@ -798,6 +859,7 @@ impl ConversionQueue {
                     folded: folded_output_name(published),
                     display: published.clone(),
                     item: index,
+                    destination: destination.clone(),
                     discovered_position: 0,
                 });
             }
@@ -833,16 +895,31 @@ impl ConversionQueue {
         item: usize,
         names: &[String],
     ) -> Option<ClaimedOutputName> {
+        // The asker's own object. An item with none is not running, so nothing
+        // it might have been about to write can be claimed by anybody.
+        let asking_in = self
+            .items
+            .get(item)
+            .and_then(|item| self.destination_for(item.dataset))?;
         let claimed = self.claimed_output_names();
         names.iter().enumerate().find_map(|(position, name)| {
             let folded = folded_output_name(name);
             claimed
                 .iter()
-                .find(|owned| owned.item != item && owned.folded == folded)
+                .find(|owned| {
+                    // **Both halves.** A different item, the same folded name,
+                    // and the same object -- by identity, so two spellings of
+                    // one directory are one object and two directories are
+                    // never confused for one.
+                    owned.item != item
+                        && owned.folded == folded
+                        && owned.destination.is_still(asking_in)
+                })
                 .map(|owned| ClaimedOutputName {
                     folded: owned.folded.clone(),
                     display: owned.display.clone(),
                     item: owned.item,
+                    destination: owned.destination.clone(),
                     // Where in the asker's own list the collision was, so a
                     // caller that must not be handed a name can still be told
                     // which one.
@@ -1426,23 +1503,36 @@ impl ConversionSlot {
     // takes. A reload in that window releases the slot, and a caller that
     // transitioned whatever it found could mark a *replacement* operation as
     /// running and then overwrite it with the old one's results.
+    /// Installs resolved bindings and starts the queue, or hands them back.
+    ///
+    /// **`Err` returns the bindings rather than dropping them.** The slot can
+    /// refuse a resolution that succeeded -- the reservation moved on while the
+    /// objects were being proved -- and the caller is then the only one left
+    /// who can take back the children that resolution created. Returning them
+    /// is what makes forgetting that impossible to write.
     pub(super) fn start_running(
         &mut self,
         operation: u64,
-        destination: AdmittedDestination,
-    ) -> bool {
+        bindings: ItemDestinationBindings,
+    ) -> Result<(), ItemDestinationBindings> {
         if self.operation != operation {
-            return false;
+            return Err(bindings);
         }
         let SlotState::AwaitingDestination { queue, .. } = &self.state else {
-            return false;
+            return Err(bindings);
         };
+        // Every item, or none. A resolution that bound some of the queue is a
+        // partial mapping, and a partial mapping must never be installed as a
+        // complete one -- the items it did not name would run against nothing.
+        if bindings.len() != queue.items.len() {
+            return Err(bindings);
+        }
         let mut queue = queue.clone();
-        queue.destination = Some(destination);
+        queue.bindings = Some(bindings);
         queue.current = 0;
         self.state = SlotState::Running { queue };
         self.advance();
-        true
+        Ok(())
     }
 
     /// Returns the slot to idle after a cancelled picker.
@@ -1542,9 +1632,14 @@ impl ConversionSlot {
         let Some(queue) = self.running_mut(operation) else {
             return false;
         };
-        // Read before the item is borrowed. A ticket needs the folder the queue
-        // is writing into, and that lives on the queue rather than on the item.
-        let destination = queue.destination.clone();
+        // Read before the item is borrowed. A ticket needs the folder *this
+        // item* was written into -- which under a source-relative policy is not
+        // the same object as the item beside it, and is what makes an adoption
+        // look in the right place.
+        let destination = queue
+            .items
+            .get(index)
+            .and_then(|item| queue.destination_for(item.dataset).cloned());
         let Some(item) = queue.items.get_mut(index) else {
             return false;
         };
@@ -1858,10 +1953,13 @@ impl ConversionSlot {
         }
     }
 
-    /// The folder a terminal queue was run against, for a retry.
-    pub(super) fn terminal_destination(&self) -> Option<AdmittedDestination> {
+    /// Every object a terminal queue was run against, for a retry.
+    //
+    // All of them, not one: a source-relative policy resolves per item, and a
+    /// retry revalidates each identity it will actually use.
+    pub(super) fn terminal_bindings(&self) -> Option<ItemDestinationBindings> {
         match &self.state {
-            SlotState::Terminal { queue, .. } => queue.destination.clone(),
+            SlotState::Terminal { queue, .. } => queue.bindings.clone(),
             SlotState::Idle
             | SlotState::AwaitingDestination { .. }
             | SlotState::Running { .. }

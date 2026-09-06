@@ -1456,6 +1456,36 @@ pub struct ConversionBeginRequestDto {
     pub conflict_policy: ConversionConflictPolicyDto,
     /// The binding the plan on screen was authored under.
     pub expected_receipt: BackendBindingReceiptDto,
+    /// Where this queue's outputs go, as one bound decision.
+    ///
+    /// **A closed vocabulary and a validated child name, never a path.** The
+    /// webview names a policy; it does not name a folder, and nothing here
+    /// widens what it may reach on the filesystem -- a custom folder is still
+    /// chosen by a Rust-owned native picker and a source-relative one is
+    /// resolved from the acquisition the session already holds.
+    ///
+    /// Absent means `custom folder`, which is what every request means today.
+    /// M6.5 puts the vocabulary on the wire; M6.6 gives it a visible control.
+    #[serde(default)]
+    pub destination_policy: Option<DestinationPolicyDto>,
+}
+
+/// One destination policy, as a request spells it.
+///
+/// Deliberately not a path in any arm. `named_subfolder` carries a *name*,
+/// which Rust validates as a single child component before anything is created
+/// -- a rooted name, a traversal or a separator is refused rather than
+/// rewritten into a different folder.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum DestinationPolicyDto {
+    /// Beside each acquisition, in its own sibling container.
+    SourceSibling,
+    /// A named child of each acquisition's sibling container.
+    #[serde(rename_all = "camelCase")]
+    NamedSubfolder { name: String },
+    /// One folder, chosen through the native picker this reservation opens.
+    CustomFolder,
 }
 
 /// What one `BEGIN` produced.

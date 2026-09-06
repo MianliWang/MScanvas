@@ -19,6 +19,10 @@ mod chromatogram;
 mod configuration;
 mod conversion;
 mod destination;
+/// CNV-003's three destination choices, and the admitted objects each resolves
+/// to. One decision, and as many objects as the decision implies. See ADR 0043's
+/// M6.5 and the amendment notes in ADRs 0013 and 0020.
+mod destination_policy;
 /// Redacted, bounded diagnostics for the attempts a terminal queue could not
 /// complete, and the one explicit local export that writes them out.
 ///

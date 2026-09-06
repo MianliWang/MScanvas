@@ -28,6 +28,10 @@ use super::backend::{
 };
 use super::conversion::{conversion_source_kind, is_convertible};
 #[cfg(windows)]
+use super::destination_policy::{
+    DestinationPolicy, ItemDestinationBindings, ResolutionSubject, ResolvedDestinationBinding,
+    SubfolderName, resolve_destinations,
+};
 use super::discovery::inspect_drop_root;
 use super::discovery::{
     DiscoveryBudget, DiscoveryError, DiscoveryErrorKind, DiscoveryUsage, DropRootInspection,
@@ -13192,6 +13196,7 @@ fn releasing_another_attempt_leaves_the_live_stop_handle_alone() {
         0,
         ConversionConflictPolicyDto::Fail,
         ConversionIntent::SHIPPED,
+        DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
     .expect("one item is a queue");
@@ -13201,7 +13206,10 @@ fn releasing_another_attempt_leaves_the_live_stop_handle_alone() {
     let operation = slot
         .claim(&reservation_handle(&slot), 0)
         .expect("claim the reservation");
-    assert!(slot.start_running(operation, test_destination()));
+    assert!(
+        slot.start_running(operation, test_bindings(&["file-0"]))
+            .is_ok()
+    );
     let attempt = slot.start_item(operation, 0).expect("the item starts");
     slot.bind_attempt(operation, 0, attempt, request);
 
@@ -13229,6 +13237,7 @@ fn releasing_another_attempt_leaves_the_live_stop_handle_alone() {
         0,
         ConversionConflictPolicyDto::Fail,
         ConversionIntent::SHIPPED,
+        DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
     .expect("one item is a queue");
@@ -13236,7 +13245,10 @@ fn releasing_another_attempt_leaves_the_live_stop_handle_alone() {
     let operation = slot
         .claim(&reservation_handle(&slot), 0)
         .expect("claim the reservation");
-    assert!(slot.start_running(operation, test_destination()));
+    assert!(
+        slot.start_running(operation, test_bindings(&["file-0"]))
+            .is_ok()
+    );
     let attempt = slot.start_item(operation, 0).expect("the item starts");
     slot.bind_attempt(operation, 0, attempt, cancellation.request_handle());
     slot.release_attempt(operation, 0, attempt);
@@ -13266,6 +13278,7 @@ fn a_stop_arriving_before_the_handle_is_bound_still_reaches_that_attempt() {
         0,
         ConversionConflictPolicyDto::Fail,
         ConversionIntent::SHIPPED,
+        DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
     .expect("one item is a queue");
@@ -13273,7 +13286,10 @@ fn a_stop_arriving_before_the_handle_is_bound_still_reaches_that_attempt() {
     let operation = slot
         .claim(&reservation_handle(&slot), 0)
         .expect("claim the reservation");
-    assert!(slot.start_running(operation, test_destination()));
+    assert!(
+        slot.start_running(operation, test_bindings(&["file-0"]))
+            .is_ok()
+    );
 
     // The item is running, and the worker has not bound its handle yet.
     let attempt = slot.start_item(operation, 0).expect("the item starts");
@@ -13686,6 +13702,7 @@ fn a_queue_keeps_the_intent_it_was_bound_to_across_a_retry() {
         0,
         ConversionConflictPolicyDto::Fail,
         bound,
+        DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
     .expect("one item is a queue");
@@ -13693,7 +13710,10 @@ fn a_queue_keeps_the_intent_it_was_bound_to_across_a_retry() {
     let operation = slot
         .claim(&reservation_handle(&slot), 0)
         .expect("claim the reservation");
-    assert!(slot.start_running(operation, test_destination()));
+    assert!(
+        slot.start_running(operation, test_bindings(&["file-0"]))
+            .is_ok()
+    );
     assert_eq!(
         slot.running(operation).expect("a running queue").intent(),
         bound,
@@ -13744,6 +13764,7 @@ fn a_stopped_retry_keeps_the_failures_it_had_not_reached() {
         0,
         ConversionConflictPolicyDto::Fail,
         ConversionIntent::SHIPPED,
+        DestinationPolicy::CustomFolder,
         vec![test_queue_item(), test_queue_item_named(1, "two.raw")],
     )
     .expect("two items are a queue");
@@ -13751,7 +13772,10 @@ fn a_stopped_retry_keeps_the_failures_it_had_not_reached() {
     let operation = slot
         .claim(&reservation_handle(&slot), 0)
         .expect("claim the reservation");
-    assert!(slot.start_running(operation, test_destination()));
+    assert!(
+        slot.start_running(operation, test_bindings(&["file-0", "file-1"]))
+            .is_ok()
+    );
 
     // Both fail retryably, and the queue ends on its own.
     for index in 0..2 {
@@ -13919,6 +13943,7 @@ fn a_stop_accepted_while_a_queue_settles_is_not_overwritten_by_completion() {
         0,
         ConversionConflictPolicyDto::Fail,
         ConversionIntent::SHIPPED,
+        DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
     .expect("one item is a queue");
@@ -13926,7 +13951,10 @@ fn a_stop_accepted_while_a_queue_settles_is_not_overwritten_by_completion() {
     let operation = slot
         .claim(&reservation_handle(&slot), 0)
         .expect("claim the reservation");
-    assert!(slot.start_running(operation, test_destination()));
+    assert!(
+        slot.start_running(operation, test_bindings(&["file-0"]))
+            .is_ok()
+    );
 
     // The worker has observed no stop and is about to commit a completion.
     assert!(!slot.stop_requested(operation));
@@ -14157,6 +14185,22 @@ fn test_queue_item_named(index: usize, file_name: &str) -> QueueItem {
 /// A destination the slot can hold without one existing.
 fn test_destination() -> AdmittedDestination {
     AdmittedDestination::new(PathBuf::from("destination"), None)
+}
+
+/// Every item of a queue bound to one destination, without a filesystem.
+///
+/// The shape `CustomFolder` produces. These are state-machine tests: what they
+/// are about is a transition, and admitting a real directory to reach one would
+/// make them about admission instead.
+fn test_bindings(datasets: &[&str]) -> super::destination_policy::ItemDestinationBindings {
+    let ids: Vec<DatasetId> = datasets
+        .iter()
+        .map(|handle| DatasetId::parse(handle).expect("a dataset handle"))
+        .collect();
+    super::destination_policy::ItemDestinationBindings::bound_to_one(
+        &ids,
+        super::destination_policy::ResolvedDestinationBinding::new(test_destination()),
+    )
 }
 
 /// The reservation the slot currently holds, as the webview would return it.
@@ -14715,6 +14759,7 @@ fn a_queue_reports_each_distinct_family_once_in_first_appearance_order() {
         0,
         ConversionConflictPolicyDto::Fail,
         ConversionIntent::SHIPPED,
+        DestinationPolicy::CustomFolder,
         vec![
             item(
                 0,
@@ -15122,6 +15167,7 @@ fn begin_request(
         intent_id: intent.stable_id(),
         conflict_policy: conflict,
         expected_receipt: receipt,
+        destination_policy: None,
     }
 }
 
@@ -15313,6 +15359,7 @@ fn an_identity_no_admitted_row_carries_never_becomes_a_plan_or_a_queue() {
             intent_id: invented,
             conflict_policy: ConversionConflictPolicyDto::Fail,
             expected_receipt: receipt,
+            destination_policy: None,
         },
         document,
     );
@@ -16844,6 +16891,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
         0,
         ConversionConflictPolicyDto::Fail,
         ConversionIntent::SHIPPED,
+        DestinationPolicy::CustomFolder,
         vec![test_queue_item(), test_queue_item_named(1, "two.raw")],
     )
     .expect("two items are a queue");
@@ -16851,7 +16899,10 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
     let operation = slot
         .claim(&reservation_handle(&slot), 0)
         .expect("claim the reservation");
-    assert!(slot.start_running(operation, test_destination()));
+    assert!(
+        slot.start_running(operation, test_bindings(&["file-0", "file-1"]))
+            .is_ok()
+    );
 
     // One ordinary refusal, and one stop whose tree was confirmed gone with
     // nothing left behind.
@@ -16958,6 +17009,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
         0,
         ConversionConflictPolicyDto::Fail,
         ConversionIntent::SHIPPED,
+        DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
     .expect("one item is a queue");
@@ -22096,6 +22148,7 @@ fn every_set_bearing_debug_is_opaque() {
         folded: folded_output_name(names[0]),
         display: names[0].to_owned(),
         item: 0,
+        destination: test_destination(),
         discovered_position: 0,
     };
     let rendered = format!("{claimed:?}");
@@ -26279,4 +26332,1159 @@ fn a_claimed_range_export_writes_its_begin_time_range_after_the_selection_moves(
         document.ends_with("110,20\n120,9000000\n130,8\n"),
         "{document}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// M6.5 -- destination authority
+//
+// One policy, and as many admitted objects as it implies. Every test below
+// drives the production coordinator through `PreviewService`: there is no
+// parallel resolver, and the policies that have no visible control until M6.6
+// reach exactly the same admission, safety, binding and collision rules as the
+// custom folder the product ships.
+// ---------------------------------------------------------------------------
+
+/// A folder somewhere else entirely, so two acquisitions can have different
+/// parents on the same volume.
+fn other_parent(label: &str) -> PathBuf {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock after Unix epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "mscanvas-m65-{label}-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&directory).expect("create a second parent");
+    directory
+}
+
+/// The subjects a resolution is asked about, for the unit-level rules.
+fn subject(dataset: &str, source: &Path, acquisition_root: Option<PathBuf>) -> ResolutionSubject {
+    ResolutionSubject {
+        dataset: DatasetId::parse(dataset).expect("a dataset handle"),
+        source: source.to_path_buf(),
+        acquisition_root,
+    }
+}
+
+/// A child name is one component, and anything that could leave it is refused
+/// rather than rewritten.
+#[test]
+fn a_subfolder_name_is_one_component_or_a_refusal() {
+    for accepted in [
+        "converted",
+        "mzML outputs",
+        "run 2026-09-06",
+        "переработано",
+    ] {
+        SubfolderName::parse(accepted)
+            .unwrap_or_else(|_| panic!("{accepted:?} is an ordinary child name"));
+    }
+    // Every one of these is a request to write somewhere other than the child
+    // the user named. None is silently flattened, resolved or trimmed into a
+    // different name: the answer is no.
+    for refused in [
+        "",
+        "   ",
+        "..",
+        ".",
+        "a/b",
+        r"a\b",
+        "/rooted",
+        r"C:\elsewhere",
+        r"\\server\share",
+        "../escape",
+        "trailing.",
+        "trailing ",
+        "star*",
+        "question?",
+        "pipe|",
+        "colon:name",
+    ] {
+        let error = SubfolderName::parse(refused)
+            .err()
+            .unwrap_or_else(|| panic!("{refused:?} is not a child name"));
+        assert_eq!(error.kind, "subfolder_name_unusable", "{refused:?}");
+    }
+    // A name longer than a component may be is its own refusal rather than an
+    // opaque creation failure later.
+    let overlong = "x".repeat(256);
+    assert_eq!(
+        SubfolderName::parse(&overlong)
+            .expect_err("256 units is longer than a component")
+            .kind,
+        "subfolder_name_unusable"
+    );
+}
+
+/// `source sibling` resolves per item: two acquisitions in different parents
+/// are two destination objects, and two in one parent share the one object.
+#[test]
+fn source_sibling_resolves_one_object_per_container() {
+    let here = TestFile::new("m65-sibling-here");
+    let first = here.thermo_raw("first.raw");
+    let beside = here.thermo_raw("beside.raw");
+    let elsewhere = other_parent("sibling-there");
+    let far = elsewhere.join("far.raw");
+    fs::write(&far, thermo_raw_bytes()).expect("write a second acquisition");
+
+    let bindings = resolve_destinations(
+        &DestinationPolicy::SourceSibling,
+        &[
+            subject("file-0", &first, None),
+            subject("file-1", &beside, None),
+            subject("file-2", &far, None),
+        ],
+        None,
+    )
+    .expect("three ordinary local acquisitions resolve");
+
+    assert_eq!(bindings.len(), 3, "every item is bound, or none is");
+    assert_eq!(
+        bindings.distinct_destinations().len(),
+        2,
+        "two containers, two objects -- sharing is by identity, not by path spelling"
+    );
+    let of = |handle: &str| {
+        bindings
+            .destination_for(DatasetId::parse(handle).expect("a handle"))
+            .expect("every item is bound")
+            .admitted()
+            .clone()
+    };
+    assert!(
+        of("file-0").is_still(&of("file-1")),
+        "two acquisitions in one folder share one admitted object"
+    );
+    assert!(
+        !of("file-0").is_still(&of("file-2")),
+        "an acquisition in another folder resolves to another object"
+    );
+
+    fs::remove_dir_all(&elsewhere).ok();
+}
+
+/// One chosen folder resolves every item to the same admitted identity, and
+/// that is the policy working rather than a special case.
+#[test]
+fn a_custom_folder_binds_every_item_to_one_object() {
+    let here = TestFile::new("m65-custom");
+    let first = here.thermo_raw("first.raw");
+    let elsewhere = other_parent("custom-there");
+    let far = elsewhere.join("far.raw");
+    fs::write(&far, thermo_raw_bytes()).expect("write a second acquisition");
+    let chosen = here.destination("chosen");
+
+    let bindings = resolve_destinations(
+        &DestinationPolicy::CustomFolder,
+        &[
+            subject("file-0", &first, None),
+            subject("file-1", &far, None),
+        ],
+        Some(&chosen),
+    )
+    .expect("one chosen folder resolves both");
+
+    assert_eq!(bindings.len(), 2);
+    assert_eq!(
+        bindings.distinct_destinations().len(),
+        1,
+        "two items sharing one object is one destination, not two equal copies"
+    );
+
+    fs::remove_dir_all(&elsewhere).ok();
+}
+
+/// A source-relative policy has no folder to be given, and a custom folder
+/// cannot resolve without one. Neither borrows the other's input.
+#[test]
+fn a_policy_refuses_the_other_policy_s_input() {
+    let here = TestFile::new("m65-inputs");
+    let acquisition = here.thermo_raw("one.raw");
+    let chosen = here.destination("chosen");
+    let subjects = [subject("file-0", &acquisition, None)];
+
+    assert_eq!(
+        resolve_destinations(&DestinationPolicy::CustomFolder, &subjects, None)
+            .expect_err("a custom folder with no folder resolves nothing")
+            .kind,
+        "destination_not_resolvable"
+    );
+    assert_eq!(
+        resolve_destinations(&DestinationPolicy::SourceSibling, &subjects, Some(&chosen))
+            .expect_err("a sibling policy is not given a folder")
+            .kind,
+        "destination_not_resolvable"
+    );
+}
+
+/// `named subfolder` resolves under the sibling container, creates the child
+/// only after the parent is admitted, and adopts an existing child rather than
+/// remaking it or disturbing what is in it.
+#[test]
+fn a_named_subfolder_is_created_beside_the_acquisition_and_adopted_when_it_is_there() {
+    let here = TestFile::new("m65-subfolder");
+    let acquisition = here.thermo_raw("one.raw");
+    let name = SubfolderName::parse("converted").expect("an ordinary child name");
+
+    let bindings = resolve_destinations(
+        &DestinationPolicy::NamedSubfolder(name.clone()),
+        &[subject("file-0", &acquisition, None)],
+        None,
+    )
+    .expect("a child of the sibling container resolves");
+
+    let bound = bindings
+        .destination_for(DatasetId::parse("file-0").expect("a handle"))
+        .expect("the item is bound")
+        .clone();
+    let child = here.directory.join("converted");
+    assert!(
+        child.is_dir(),
+        "the folder is created beside the acquisition, not inside it"
+    );
+
+    // Asked again, the same object is found rather than remade -- and a folder
+    // that was already there keeps whatever the user put in it.
+    std::fs::write(child.join("theirs.txt"), b"the user's")
+        .expect("the user writes into their own folder");
+    let again = resolve_destinations(
+        &DestinationPolicy::NamedSubfolder(name),
+        &[subject("file-0", &acquisition, None)],
+        None,
+    )
+    .expect("an existing child resolves");
+    assert!(
+        again
+            .destination_for(DatasetId::parse("file-0").expect("a handle"))
+            .expect("the item is bound")
+            .admitted()
+            .is_still(bound.admitted()),
+        "an existing child is adopted as the same object, not replaced"
+    );
+    assert!(
+        child.join("theirs.txt").is_file(),
+        "and nothing in a folder that was already there is disturbed"
+    );
+}
+
+/// A child created and then *refused by admission* is still taken back.
+///
+/// **This is why the record is taken where the creation is decided.** Creating
+/// the child and admitting it are two steps, and the second can refuse the
+/// first: here the child, once it exists, *is* the subject's own source object,
+/// which row 1 refuses on identity. A record taken after admission would never
+/// have heard of this folder, and MSCanvas would have made a directory beside
+/// the user's data, refused the conversion, and never mentioned it again.
+///
+/// Windows-only for the reason every identity test is: elsewhere there is no
+/// object identity to compare, so row 1 cannot fire.
+#[test]
+#[cfg(windows)]
+fn a_child_refused_after_it_was_created_is_still_reclaimed() {
+    let here = TestFile::new("m65-created-then-refused");
+    // A directory-shaped subject whose container is the test root, so the
+    // child the policy names is the subject's own source.
+    let source = here.directory.join("converted");
+    assert!(!source.exists(), "the child does not exist yet");
+    let name = SubfolderName::parse("converted").expect("an ordinary child name");
+
+    let refusal = resolve_destinations(
+        &DestinationPolicy::NamedSubfolder(name),
+        &[subject("file-0", &source, None)],
+        None,
+    )
+    .expect_err("a destination that is the source object is refused");
+
+    assert_eq!(
+        refusal.kind, "destination_is_the_source",
+        "and refused for that reason, on identity"
+    );
+    assert!(
+        !source.exists(),
+        "the child this attempt created before the refusal is taken back, \
+         not left beside the user's data unmentioned"
+    );
+}
+
+/// A subfolder whose name cannot be created is refused, and nothing is left
+/// behind for it.
+#[test]
+fn a_subfolder_that_cannot_be_created_refuses_and_leaves_nothing() {
+    let here = TestFile::new("m65-subfolder-refused");
+    let acquisition = here.thermo_raw("one.raw");
+    // A file already occupies the name, so a directory cannot take it.
+    let occupied = here.named_bytes("converted", b"not a folder");
+    assert!(occupied.is_file());
+
+    let error = resolve_destinations(
+        &DestinationPolicy::NamedSubfolder(
+            SubfolderName::parse("converted").expect("an ordinary child name"),
+        ),
+        &[subject("file-0", &acquisition, None)],
+        None,
+    )
+    .expect_err("a file of that name is not a destination");
+    // Admitted as a destination and refused as one -- creation is not
+    // admission, and a name that exists still has to pass every rule.
+    assert_eq!(error.kind, "destination_not_a_folder");
+    assert!(
+        occupied.is_file(),
+        "a refusal changes nothing the user already had"
+    );
+}
+
+/// Row 2: a destination at or under a recognised acquisition root fails closed,
+/// and the parent of that root is admitted.
+///
+/// The acquisition root is supplied rather than discovered, because no admitted
+/// family is directory-shaped. What is tested is the **safety mechanism** a
+/// directory-shaped source would enter -- not the admission of one.
+#[test]
+fn a_destination_inside_a_directory_shaped_acquisition_fails_closed() {
+    let here = TestFile::new("m65-inside");
+    let acquisition_root = here.destination("acquisition.vendor");
+    let interior = acquisition_root.join("interior");
+    fs::create_dir_all(&interior).expect("a folder inside the acquisition");
+    let primary = acquisition_root.join("run.dat");
+    fs::write(&primary, b"payload").expect("write the acquisition's payload");
+
+    // The root itself.
+    let at_root = resolve_destinations(
+        &DestinationPolicy::CustomFolder,
+        &[subject("file-0", &primary, Some(acquisition_root.clone()))],
+        Some(&acquisition_root),
+    )
+    .expect_err("the acquisition root is not a destination");
+    assert_eq!(at_root.kind, "destination_inside_acquisition");
+
+    // And anything under it, however deep.
+    let under = resolve_destinations(
+        &DestinationPolicy::CustomFolder,
+        &[subject("file-0", &primary, Some(acquisition_root.clone()))],
+        Some(&interior),
+    )
+    .expect_err("a folder inside the acquisition is not a destination");
+    assert_eq!(under.kind, "destination_inside_acquisition");
+
+    // The parent is admitted, which is what `source sibling` resolves to for a
+    // directory-shaped acquisition. Row 2 declines, and row 3 admits.
+    let sibling = resolve_destinations(
+        &DestinationPolicy::SourceSibling,
+        &[subject("file-0", &primary, Some(acquisition_root.clone()))],
+        None,
+    )
+    .expect("the parent of an acquisition directory is its sibling container");
+    let bound = sibling
+        .destination_for(DatasetId::parse("file-0").expect("a handle"))
+        .expect("the item is bound");
+    assert!(
+        bound.admitted().root().ends_with(
+            here.directory
+                .file_name()
+                .expect("the fixture directory has a name")
+        ),
+        "the sibling container of a directory acquisition is its parent, never its interior"
+    );
+}
+
+/// Row 2 is decided by object identity, not by a path prefix: a destination
+/// that merely *looks* like it is inside is not, and one reached by another
+/// spelling of the same object is.
+#[cfg(windows)]
+#[test]
+fn ancestry_is_decided_by_object_identity_rather_than_by_a_path_prefix() {
+    let here = TestFile::new("m65-ancestry");
+    let acquisition_root = here.destination("run.vendor");
+    let primary = acquisition_root.join("run.dat");
+    fs::write(&primary, b"payload").expect("write the acquisition's payload");
+    // A sibling whose name begins with the acquisition's name. A canonical
+    // string-prefix test calls this "inside"; it is not, and refusing it would
+    // refuse an ordinary folder.
+    let lookalike = here.destination("run.vendor-outputs");
+
+    let admitted = resolve_destinations(
+        &DestinationPolicy::CustomFolder,
+        &[subject("file-0", &primary, Some(acquisition_root.clone()))],
+        Some(&lookalike),
+    )
+    .expect("a folder whose name merely starts with the acquisition's is not inside it");
+    assert_eq!(admitted.len(), 1);
+}
+
+/// Row 1: a destination that *is* the source object is refused on identity.
+///
+/// Unexercisable through an admitted family -- every admitted source is a
+/// regular file and every destination is a directory -- so it is asked here
+/// through the mechanism a directory-shaped source would enter.
+#[cfg(windows)]
+#[test]
+fn a_destination_that_is_the_source_object_is_refused_on_identity() {
+    let here = TestFile::new("m65-alias");
+    let acquisition = here.destination("acquisition.vendor");
+
+    let error = resolve_destinations(
+        &DestinationPolicy::CustomFolder,
+        // The source *is* the directory: the one shape in which row 1 can fire.
+        &[subject("file-0", &acquisition, None)],
+        Some(&acquisition),
+    )
+    .expect_err("the acquisition object is not a place to write into");
+    assert_eq!(error.kind, "destination_is_the_source");
+}
+
+/// Every destination refusal the boundary already made is still made, whichever
+/// policy proposed the folder.
+#[test]
+fn a_named_subfolder_and_a_custom_folder_pass_the_same_admission() {
+    let here = TestFile::new("m65-admission");
+    let acquisition = here.thermo_raw("one.raw");
+    let not_a_folder = here.named_bytes("file-destination", b"not a folder");
+    let absent = here.directory.join("nothing-here");
+
+    // Written out rather than looped, so each refusal names its own kind.
+    assert_eq!(
+        resolve_destinations(
+            &DestinationPolicy::CustomFolder,
+            &[subject("file-0", &acquisition, None)],
+            Some(&not_a_folder),
+        )
+        .expect_err("a file is not a folder")
+        .kind,
+        "destination_not_a_folder"
+    );
+    assert_eq!(
+        resolve_destinations(
+            &DestinationPolicy::CustomFolder,
+            &[subject("file-0", &acquisition, None)],
+            Some(&absent),
+        )
+        .expect_err("a name with nothing behind it")
+        .kind,
+        "destination_unusable"
+    );
+
+    // A named subfolder reaches the same admission through its own parent: the
+    // child is created under the *sibling container*, so an ordinary source in
+    // an ordinary folder resolves, and the child is admitted rather than
+    // trusted because this boundary made it.
+    let ordinary = resolve_destinations(
+        &DestinationPolicy::NamedSubfolder(
+            SubfolderName::parse("converted").expect("an ordinary child name"),
+        ),
+        &[subject("file-0", &acquisition, None)],
+        None,
+    )
+    .expect("a child of an ordinary container resolves");
+    assert_eq!(ordinary.len(), 1);
+}
+
+/// A mixed-parent queue runs through the real service under `source sibling`,
+/// and every output lands beside its own acquisition.
+///
+/// The end-to-end proof that these policies are not a disconnected type: the
+/// reservation, the proof, the plan, the resolution, the drain, the staging and
+/// the finalization are the production path, and only the policy is named.
+#[test]
+fn a_mixed_parent_queue_converts_beside_each_acquisition() {
+    let here = TestFile::new("m65-e2e-sibling");
+    let first = here.thermo_raw("first.raw");
+    let elsewhere = other_parent("e2e-sibling-there");
+    let far = elsewhere.join("second.raw");
+    fs::write(&far, thermo_raw_bytes()).expect("write a second acquisition");
+
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let one = add_one_acquisition(&service, &first);
+    let two = add_one_acquisition(&service, &far);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion_under_now(
+            &[one.clone(), two.clone()],
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::SourceSibling,
+        )
+        .expect("two vendor rows in different folders are a queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the exact reservation is claimed once");
+    // No picker: a source-relative policy has no folder to choose, and the
+    // reservation still owns the decision.
+    let update = service.resolve_claimed_conversion(operation);
+
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
+        panic!("the queue reaches an outcome; got {:?}", update.state);
+    };
+    assert_eq!(queue.finalized_count, 2, "both items converted");
+    assert!(
+        here.directory.join("first.mzML").is_file(),
+        "the first output is beside the first acquisition"
+    );
+    assert_eq!(
+        entry_names(&elsewhere),
+        vec!["second.mzML", "second.raw"],
+        "and the second beside the second, which one queue-wide folder could not express"
+    );
+
+    fs::remove_dir_all(&elsewhere).ok();
+}
+
+/// Two acquisitions of one name in different folders are not a collision, and
+/// the queue that would have been refused now runs.
+///
+/// The whole point of `(destination identity, folded name)`: the refusal stays
+/// exactly as strong where the pair really does collide, and stops refusing
+/// batches that never did.
+#[test]
+fn one_name_in_two_destinations_is_not_a_queue_collision() {
+    // Deliberately not `sample`: this fixture already holds its own
+    // `sample.mzML`, and a pre-existing file of the planned name is a
+    // *conflict* rather than a queue collision -- a different question, settled
+    // by Fail/Skip and not by this rule.
+    let here = TestFile::new("m65-collision-apart");
+    let first = here.thermo_raw("run.raw");
+    let elsewhere = other_parent("collision-there");
+    let far = elsewhere.join("run.raw");
+    fs::write(&far, thermo_raw_bytes()).expect("write a second acquisition of one name");
+
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let one = add_one_acquisition(&service, &first);
+    let two = add_one_acquisition(&service, &far);
+    let document = current_document(&service);
+
+    // Under a custom folder the policy already proves they share one object, so
+    // the pre-picker refusal stands -- unchanged, and before anything is
+    // created.
+    let refused = service
+        .begin_conversion_under_now(
+            &[one.clone(), two.clone()],
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::CustomFolder,
+        )
+        .expect_err("one folder cannot hold two files of one name");
+    assert_eq!(refused.kind, "queue_output_name_collision");
+
+    // Under a source-relative policy it proves nothing of the sort, and the
+    // batch is perfectly valid.
+    let reservation = service
+        .begin_conversion_under_now(
+            &[one, two],
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::SourceSibling,
+        )
+        .expect("two distinct destinations are two distinct names");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+    let update = service.resolve_claimed_conversion(operation);
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
+        panic!("the queue reaches an outcome; got {:?}", update.state);
+    };
+    assert_eq!(queue.finalized_count, 2, "{queue:?}");
+
+    fs::remove_dir_all(&elsewhere).ok();
+}
+
+/// The post-binding collision key is the **pair**, and both halves of it
+/// decide.
+///
+/// Asked of the rule directly, because on the current tree the service cannot
+/// reach the positive case: two distinct files in one container cannot fold to
+/// one output name, since their *sources* would already be one file on a
+/// case-insensitive volume. That is why this check narrows the pre-binding
+/// refusal safely rather than replacing it -- and why it is tested here, where
+/// both cardinalities can be stated, rather than through a path nothing can
+/// currently take.
+#[test]
+fn the_bound_collision_key_is_the_destination_and_the_folded_name() {
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        ConversionIntent::SHIPPED,
+        DestinationPolicy::SourceSibling,
+        vec![
+            test_queue_item_named(0, "sample.raw"),
+            test_queue_item_named(1, "SAMPLE.raw"),
+        ],
+    )
+    .expect("two rows are a queue");
+    let datasets = [
+        DatasetId::parse("file-0").expect("a handle"),
+        DatasetId::parse("file-1").expect("a handle"),
+    ];
+
+    // One object, two names that fold together: a collision, and refused.
+    let together = ItemDestinationBindings::bound_to_one(
+        &datasets,
+        ResolvedDestinationBinding::new(AdmittedDestination::new(
+            PathBuf::from("one"),
+            Some((1, [7u8; 16])),
+        )),
+    );
+    assert_eq!(
+        PreviewService::refuse_bound_name_collisions(&queue, &together)
+            .expect_err("one object cannot hold two files of one folded name")
+            .kind,
+        "queue_output_name_collision"
+    );
+
+    // Two objects, the same two names: not a collision at all.
+    let apart = ItemDestinationBindings::bound_each(&[
+        (
+            datasets[0],
+            ResolvedDestinationBinding::new(AdmittedDestination::new(
+                PathBuf::from("one"),
+                Some((1, [7u8; 16])),
+            )),
+        ),
+        (
+            datasets[1],
+            ResolvedDestinationBinding::new(AdmittedDestination::new(
+                PathBuf::from("two"),
+                Some((1, [9u8; 16])),
+            )),
+        ),
+    ]);
+    PreviewService::refuse_bound_name_collisions(&queue, &apart)
+        .expect("one name in two objects is two names");
+}
+
+/// A named subfolder queue runs end to end, and every output lands in the child
+/// beside its own acquisition.
+#[test]
+fn a_named_subfolder_queue_converts_into_the_child_beside_each_acquisition() {
+    let here = TestFile::new("m65-e2e-subfolder");
+    let first = here.thermo_raw("first.raw");
+    let elsewhere = other_parent("e2e-subfolder-there");
+    let far = elsewhere.join("second.raw");
+    fs::write(&far, thermo_raw_bytes()).expect("write a second acquisition");
+
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let one = add_one_acquisition(&service, &first);
+    let two = add_one_acquisition(&service, &far);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion_under_now(
+            &[one, two],
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::NamedSubfolder(
+                SubfolderName::parse("converted").expect("an ordinary child name"),
+            ),
+        )
+        .expect("two rows under a named subfolder are a queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+    let update = service.resolve_claimed_conversion(operation);
+
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
+        panic!("the queue reaches an outcome; got {:?}", update.state);
+    };
+    assert_eq!(queue.finalized_count, 2);
+    assert_eq!(
+        entry_names(&here.directory.join("converted")),
+        vec!["first.mzML"],
+        "beside the acquisition, in the child this resolution created"
+    );
+    assert_eq!(
+        entry_names(&elsewhere.join("converted")),
+        vec!["second.mzML"]
+    );
+
+    fs::remove_dir_all(&elsewhere).ok();
+}
+
+/// A collision refused after the objects were resolved takes back the folders
+/// that resolution created.
+///
+/// **Two families, one stem, one container.** `sample.raw` and `sample.lcd`
+/// sit beside each other and both convert to `sample.mzML`. Under a custom
+/// folder this is refused before `BEGIN`, because one folder is already proved;
+/// under `named subfolder` it cannot be decided until the objects exist, so the
+/// child is created first and the refusal comes after. Nothing runs -- and the
+/// child this attempt made goes back, rather than being left beside the user's
+/// data as an empty folder MSCanvas never mentions again.
+#[test]
+fn a_collision_refused_after_resolution_takes_back_the_folder_it_created() {
+    let here = TestFile::new("m65-collision-reclaims");
+    let raw = here.thermo_raw("sample.raw");
+    let lcd = here.directory.join("sample.lcd");
+    fs::write(&lcd, shimadzu_lcd_bytes()).expect("write a Shimadzu acquisition");
+
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let one = add_one_acquisition(&service, &raw);
+    let two = add_one_acquisition(&service, &lcd);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion_under_now(
+            &[one, two],
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::NamedSubfolder(
+                SubfolderName::parse("converted").expect("an ordinary child name"),
+            ),
+        )
+        .expect("two stems that only collide once the objects exist are a queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+
+    let child = here.directory.join("converted");
+    let update = service.resolve_claimed_conversion(operation);
+
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
+        panic!(
+            "the queue is refused rather than started; got {:?}",
+            update.state
+        );
+    };
+    assert_eq!(
+        queue.error.as_ref().map(|error| error.kind.as_str()),
+        Some("queue_output_name_collision"),
+        "and refused for the reason it was refused"
+    );
+    assert_eq!(queue.finalized_count, 0, "nothing was published");
+    assert!(
+        !child.exists(),
+        "and the child created while resolving is taken back, not left behind"
+    );
+}
+
+/// The custom-folder workflow the product ships is unchanged, and now runs
+/// through the new authority.
+#[test]
+fn the_shipped_custom_folder_workflow_runs_through_the_new_authority() {
+    let here = TestFile::new("m65-custom-preserved");
+    let acquisition = here.thermo_raw("FT-HCD-MSX.raw");
+    let destination = destination_root(&here, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("a vendor row can be converted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+    let update = service.run_claimed_conversion(operation, &destination);
+
+    let Some(report) = sole_report(&update.state) else {
+        panic!("the conversion reaches an outcome; got {:?}", update.state);
+    };
+    assert_eq!(report.outcome, "finalized");
+    assert_eq!(entry_names(&destination), vec!["FT-HCD-MSX.mzML"]);
+    assert!(
+        entry_names(&here.directory)
+            .iter()
+            .all(|name| !name.ends_with(".mzML") || name == "sample.mzML"),
+        "nothing was written beside the acquisition under a custom folder"
+    );
+}
+
+/// A non-shipped combination survives destination resolution and a retry.
+#[test]
+fn a_non_shipped_intent_survives_source_relative_resolution() {
+    let here = TestFile::new("m65-intent");
+    let acquisition = here.thermo_raw("one.raw");
+    // A build whose grammar admits every one of the nine rows, because this
+    // test is about a *chosen* combination surviving resolution -- on the
+    // narrow build there is one available row and the choice could not be seen.
+    let service = PreviewService::new(Box::new(ConvertingProvider::offering_every_admitted_row()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+    // A combination that is not the shipped posture.
+    let other = ConversionIntent::ADMITTED
+        .iter()
+        .map(|admitted| admitted.intent())
+        .find(|intent| *intent != ConversionIntent::SHIPPED)
+        .expect("the admitted table holds more than one row");
+
+    let request = ConversionBeginRequestDto {
+        handles: vec![handle],
+        intent_id: other.stable_id(),
+        conflict_policy: ConversionConflictPolicyDto::Fail,
+        expected_receipt: service.readied_receipt(),
+        destination_policy: None,
+    };
+    let outcome = service
+        .begin_conversion_queue_under(&request, document, DestinationPolicy::SourceSibling)
+        .outcome;
+    let ConversionBeginOutcomeDto::Reserved { reservation } = outcome else {
+        panic!("an admitted combination is reserved; got {outcome:?}");
+    };
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+    let update = service.resolve_claimed_conversion(operation);
+
+    let Some(report) = sole_report(&update.state) else {
+        panic!("the conversion reaches an outcome; got {:?}", update.state);
+    };
+    // **The combination reached the run, and so did the destination.** The
+    // attempt was made, and what refused it is the integrity comparison of the
+    // document the fake produced -- this fake writes the shipped posture
+    // whatever it is asked for, so a 64/64 request is correctly rejected on its
+    // output rather than on anything about where that output was going. What is
+    // proved here is that resolution preserved both facts: an intent lost on
+    // the way would have been refused before the run, and a destination lost on
+    // the way would have refused as `queue_destination_changed`.
+    assert_eq!(
+        report.outcome, "output_rejected",
+        "the deterministic fake writes one posture; the run happened under the chosen one"
+    );
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
+        panic!("the queue reaches an outcome");
+    };
+    assert!(
+        queue.error.is_none(),
+        "nothing about the queue or its destination refused it: {queue:?}"
+    );
+    assert!(
+        !here.directory.join("one.mzML").is_file(),
+        "a rejected output publishes nothing, and its staging is reclaimed"
+    );
+    assert!(
+        entry_names(&here.directory)
+            .iter()
+            .all(|name| name == "one.raw" || name == "sample.mzML"),
+        "and nothing else was left beside the acquisition: {:?}",
+        entry_names(&here.directory)
+    );
+}
+
+/// Planning, summarising and polling create nothing on the filesystem.
+///
+/// Filesystem creation belongs to the authorized resolution step, and to
+/// nothing a read-only request can reach.
+#[test]
+fn planning_and_polling_create_no_directory() {
+    let here = TestFile::new("m65-read-only");
+    let acquisition = here.thermo_raw("one.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let before = entry_names(&here.directory);
+
+    let _summary = service
+        .conversion_plan_summary(&handle)
+        .expect("a vendor row can be described");
+    let _state = service.conversion_state();
+    let _again = service.conversion_state();
+
+    assert_eq!(
+        entry_names(&here.directory),
+        before,
+        "describing a conversion and polling the slot create nothing"
+    );
+}
+
+/// A retry reruns against the objects the queue bound, and refuses when one of
+/// them is no longer the object it was.
+#[test]
+fn a_retry_revalidates_every_bound_object_and_never_re_resolves_the_policy() {
+    let here = TestFile::new("m65-retry");
+    let first = here.thermo_raw("first.raw");
+    let elsewhere = other_parent("retry-there");
+    let far = elsewhere.join("second.raw");
+    fs::write(&far, thermo_raw_bytes()).expect("write a second acquisition");
+
+    // The second item fails, so the queue has something to rerun.
+    let provider = ConvertingProvider::faithful();
+    let service = PreviewService::new(Box::new(provider));
+    let one = add_one_acquisition(&service, &first);
+    let two = add_one_acquisition(&service, &far);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion_under_now(
+            &[one, two],
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::SourceSibling,
+        )
+        .expect("two rows are a queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+    let update = service.resolve_claimed_conversion(operation);
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
+        panic!("the queue reaches an outcome; got {:?}", update.state);
+    };
+    assert_eq!(queue.finalized_count, 2);
+
+    // One of the two bound objects is replaced at the same path. A retry that
+    // trusted the name would write into whatever had since taken it.
+    fs::remove_dir_all(&elsewhere).expect("remove the second destination");
+    fs::create_dir_all(&elsewhere).expect("a different object at the same path");
+
+    let refused = service
+        .retry_conversion_queue(document)
+        .expect_err("a replaced destination is refused");
+    assert_eq!(
+        refused.kind, "queue_destination_changed",
+        "every identity the pass will use is revalidated, not just the first"
+    );
+
+    fs::remove_dir_all(&elsewhere).ok();
+}
+
+/// A queue whose bound destination is gone refuses before it writes, and the
+/// policy is not re-resolved into a replacement.
+#[test]
+fn a_removed_bound_destination_refuses_rather_than_being_recreated() {
+    let here = TestFile::new("m65-removed");
+    let acquisition = here.thermo_raw("one.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion_under_now(
+            std::slice::from_ref(&handle),
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::NamedSubfolder(
+                SubfolderName::parse("converted").expect("an ordinary child name"),
+            ),
+        )
+        .expect("one row under a named subfolder is a queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+    let update = service.resolve_claimed_conversion(operation);
+    assert!(matches!(
+        update.state,
+        WorkspaceConversionStateDto::Terminal { .. }
+    ));
+    assert!(here.directory.join("converted").is_dir());
+
+    // The user removes the folder MSCanvas created. A retry does not silently
+    // recreate it: the binding is to the object, and that object is gone.
+    fs::remove_dir_all(here.directory.join("converted")).expect("remove the created child");
+    let refused = service
+        .retry_conversion_queue(document)
+        .expect_err("a destination that no longer exists is refused");
+    assert_eq!(refused.kind, "queue_destination_changed");
+    assert!(
+        !here.directory.join("converted").is_dir(),
+        "a retry re-resolves nothing, so nothing is recreated behind the user"
+    );
+}
+
+/// A partial resolution is an error, and it takes back exactly what it made.
+///
+/// The first acquisition's child is created; the second's cannot be, because a
+/// file already holds the name. Nothing runs, and the folder this attempt made
+/// beside the first acquisition does not survive as an empty leftover nobody
+/// asked for.
+#[test]
+fn a_partial_resolution_reclaims_only_the_children_it_created() {
+    let here = TestFile::new("m65-partial");
+    let first = here.thermo_raw("first.raw");
+    let elsewhere = other_parent("partial-there");
+    let far = elsewhere.join("second.raw");
+    fs::write(&far, thermo_raw_bytes()).expect("write a second acquisition");
+    // A file of the child's name beside the second acquisition, so its
+    // resolution fails after the first one has already created a folder.
+    fs::write(elsewhere.join("converted"), b"not a folder").expect("occupy the child name");
+    // And a child that already exists beside the first, to prove the rule is
+    // ownership rather than "remove whatever is there".
+    let pre_existing = other_parent("partial-preexisting");
+    let third = pre_existing.join("third.raw");
+    fs::write(&third, thermo_raw_bytes()).expect("write a third acquisition");
+    fs::create_dir(pre_existing.join("converted")).expect("a child the user already had");
+
+    let error = resolve_destinations(
+        &DestinationPolicy::NamedSubfolder(
+            SubfolderName::parse("converted").expect("an ordinary child name"),
+        ),
+        &[
+            subject("file-0", &first, None),
+            subject("file-2", &third, None),
+            subject("file-1", &far, None),
+        ],
+        None,
+    )
+    .expect_err("one item that cannot resolve is a queue that cannot");
+    assert_eq!(error.kind, "destination_not_a_folder");
+
+    assert!(
+        !here.directory.join("converted").exists(),
+        "the child this attempt created is taken back"
+    );
+    assert!(
+        pre_existing.join("converted").is_dir(),
+        "and the child the user already had is not"
+    );
+    assert!(
+        elsewhere.join("converted").is_file(),
+        "nor is the file that refused it"
+    );
+
+    fs::remove_dir_all(&elsewhere).ok();
+    fs::remove_dir_all(&pre_existing).ok();
+}
+
+/// Between a reservation and its resolution there is no root, and nothing
+/// pretends there is one.
+///
+/// The custom-folder flow creates the reservation *before* the picker returns a
+/// folder. That temporal truth is preserved: the queue knows which policy it is
+/// under and does not know, and does not invent, where it will write.
+#[test]
+fn a_reserved_custom_folder_queue_holds_no_resolved_root() {
+    let here = TestFile::new("m65-unresolved");
+    let acquisition = here.thermo_raw("one.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("a vendor row can be converted");
+    let state = service.conversion_state();
+    assert!(
+        matches!(
+            state.state,
+            WorkspaceConversionStateDto::AwaitingDestination { .. }
+        ),
+        "the slot says a destination is being chosen, not that one was chosen"
+    );
+    // Nothing on the wire names a root, because none exists to name.
+    let rendered = serde_json::to_string(&state).expect("the state serializes");
+    assert!(!rendered.contains("destinationRoot"), "{rendered}");
+    // And this policy is the one that needs a folder, which is what makes the
+    // picker the next step rather than an immediate resolution.
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+    assert_eq!(
+        service.claimed_policy_needs_a_folder(operation),
+        Some(true),
+        "a custom-folder reservation opens a picker; a source-relative one does not"
+    );
+    assert_eq!(
+        entry_names(&here.directory),
+        vec!["one.raw", "sample.mzML"],
+        "reserving a queue creates nothing on the filesystem"
+    );
+}
+
+/// A source-relative reservation needs no folder, and says so before anything
+/// is resolved.
+#[test]
+fn a_reserved_source_relative_queue_needs_no_chosen_folder() {
+    let here = TestFile::new("m65-no-picker");
+    let acquisition = here.thermo_raw("one.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion_under_now(
+            std::slice::from_ref(&handle),
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::SourceSibling,
+        )
+        .expect("one row is a queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+
+    assert_eq!(
+        service.claimed_policy_needs_a_folder(operation),
+        Some(false)
+    );
+    assert_eq!(
+        entry_names(&here.directory),
+        vec!["one.raw", "sample.mzML"],
+        "and claiming it still creates nothing"
+    );
+}
+
+/// A destination replaced after the queue is running refuses before the item
+/// that would have used it writes anything.
+///
+/// The binding is to the object. A drain that trusted the name would take a
+/// substitute directory as its own baseline -- which the crate's root lock
+/// would then faithfully protect.
+#[test]
+fn a_destination_replaced_after_the_queue_starts_refuses_before_it_writes() {
+    let here = TestFile::new("m65-substituted");
+    let acquisition = here.thermo_raw("one.raw");
+    let destination = destination_root(&here, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("a vendor row can be converted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+    // Marked running against the object that was admitted, and *then* the name
+    // is made to mean a different object. The two halves are separated exactly
+    // so a test can occupy the interval between them.
+    assert!(service.start_running_for_test(operation, &destination));
+    fs::remove_dir_all(&destination).expect("remove the admitted object");
+    fs::create_dir_all(&destination).expect("a different object under the same name");
+
+    let update = service.drain_queue_for_test(operation);
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
+        panic!("the queue reaches an outcome; got {:?}", update.state);
+    };
+    assert_eq!(
+        queue.error.as_ref().map(|error| error.kind.as_str()),
+        Some("queue_destination_changed"),
+        "the per-item proof is by identity, so a substitute is refused rather than written into"
+    );
+    assert_eq!(
+        entry_names(&destination),
+        Vec::<String>::new(),
+        "and nothing was written into the object that took the name"
+    );
+}
+
+/// Nothing the destination authority holds renders a user's own text.
+///
+/// The same discipline the admitted destination has had since ADR 0013: a
+/// folder name is the user's -- an acquisition label, a study, a date -- and a
+/// `{:?}` of anything holding one would put it into a log. Every refusal is
+/// static text and names neither a path nor a name.
+#[test]
+fn the_destination_authority_never_renders_a_path_or_a_name() {
+    let name = SubfolderName::parse("Patient-042").expect("an ordinary child name");
+    let policy = DestinationPolicy::NamedSubfolder(name);
+    let rendered = format!("{policy:?}");
+    assert!(!rendered.contains("Patient-042"), "{rendered}");
+
+    // And every refusal this module can produce.
+    let here = TestFile::new("m65-privacy");
+    let secret = here.directory.join("private").join("study");
+    for error in [
+        SubfolderName::parse("../escape").expect_err("a traversal is refused"),
+        resolve_destinations(
+            &DestinationPolicy::CustomFolder,
+            &[subject("file-0", &here.thermo_raw("one.raw"), None)],
+            Some(&secret),
+        )
+        .expect_err("an absent folder is refused"),
+        resolve_destinations(&DestinationPolicy::CustomFolder, &[], None)
+            .expect_err("no subjects resolve nothing"),
+    ] {
+        let rendered = serde_json::to_string(&error).expect("the error serializes");
+        assert!(!rendered.contains("private"), "{rendered}");
+        assert!(!rendered.contains("study"), "{rendered}");
+        assert!(!rendered.contains("escape"), "{rendered}");
+        assert!(!rendered.contains("\\"), "{rendered}");
+    }
 }

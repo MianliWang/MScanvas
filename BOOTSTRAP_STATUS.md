@@ -7295,3 +7295,151 @@ unplannable by type, centroiding stays unscoped, and the mzXML disposition
 remains M6.10's. It does not start M6.5.
 
 **M6.5 — destination authority — is next. M6.5 has not started.**
+
+## M6.5 — Destination authority, 2026-09-06
+
+Baseline `0a6a8a1f4c0c55a4397c3d26b822bbeea9180f65`, the merged M6.4 replacement,
+clean and level with `origin/main`.
+
+Where a conversion writes was one folder, chosen once, admitted once and held for
+the queue's life. It still is, for the policy the product offers. What M6.5 adds
+is the thing CNV-003 decided before the queue existed: **three policies, and the
+fact that one of them is one decision and several objects.**
+
+### The lifecycle, for all three
+
+| | source sibling | named subfolder | custom folder |
+|---|---|---|---|
+| Authorized input | none — the acquisitions | a validated child *name* | one folder, from the native picker |
+| Anchor | the logical acquisition's container | the same container | the chosen folder |
+| Policy immutable from | `ConversionQueue::new` (`BEGIN`) | `BEGIN`, name and all | `BEGIN` |
+| Parameters complete at | `BEGIN` | `BEGIN` | when the picker answers |
+| Filesystem resolution | the resolution step | the resolution step, which may create the child | the resolution step |
+| Per-item identities committed at | `start_running`, all or none | `start_running`, all or none | `start_running`, all or none |
+| Destination collisions decidable at | after binding | after binding | at `BEGIN` — one folder proves it |
+| Failure | nothing runs; created children reclaimed | same; only children this attempt made | same |
+| Cancellation | unchanged | unchanged | unchanged |
+| Retry | revalidates every bound object | revalidates every bound object | revalidates every bound object |
+
+Four states are kept apart, and the type system keeps them apart: a **requested**
+policy is a closed-vocabulary wire value; an **incomplete** destination request
+is a custom-folder queue whose picker has not answered; a **resolved** binding is
+an admitted object; and a **runnable** item is one the bindings name.
+`ItemDestinationBindings` is complete by construction — there is no way to build
+one that leaves an item unbound — so "no item runs against an unbound
+destination" is a property of the type rather than a check to remember.
+
+**Ownership belongs to the attempt, not to the object.** Who created a directory
+is true of the resolution that created it, not of the folder — the same child is
+`CreatedHere` for the attempt that made it and `PreExisting` for every attempt
+afterwards. So the resolution keeps its own list, written **where the creation is
+decided rather than after the child is admitted**: admitting a freshly created
+child can refuse it, and a record taken afterwards would never have heard of the
+folder it left behind. The list travels with the bindings, because a caller can
+refuse a resolution that succeeded — a name collision the identities have only
+now made decidable, or a slot that moved on while the objects were being proved —
+and **whoever refuses after a successful resolution owns taking back what it
+made.** `start_running` returns the bindings it declines rather than dropping
+them, which is what makes forgetting that impossible to write. Removal is
+`remove_dir`, never recursive, newest first, and never touches a folder that was
+already there.
+
+**The reservation's temporal truth is preserved.** `ConversionQueue::new` runs
+before the picker opens, so a custom-folder queue knows which policy it is under
+and does not know, and does not invent, where it will write. Nothing on the wire
+names a root while none exists.
+
+### One policy, item-specific identities
+
+`DestinationPolicy` is bound to the plan beside the intent and the conflict
+policy, with no setter, which is what makes "a retry never re-resolves the policy
+into a different destination" a property of the type. `ItemDestinationBindings`
+keys by `DatasetId` — the queue item's own stable identity, not a source
+basename two folders share, and not a parallel vector that can lose alignment —
+and stores the distinct objects once, so several items sharing one destination is
+one object rather than several equal copies.
+
+`resolve_destinations` is the only resolver. The shipped custom-folder command
+reaches it with the folder the picker returned; a source-relative policy reaches
+it with none, through the same claimed reservation and the same coordinator.
+There is no second implementation for the policies that have no control yet.
+
+### Safety is object-based and ordered
+
+```text
+1  the destination object IS the source object      -> refused, on identity
+2  the destination is a directory-shaped
+   acquisition root, or lies under one              -> fails closed
+3  the sibling container of the logical acquisition  -> admitted
+```
+
+Row 1 compares object identities. Row 2 walks from the admitted destination up by
+parent, comparing identity at each step, with an explicit bound and an explicit
+termination — and **inability to establish ancestry is a refusal**, not evidence
+of safety. Row 3 needs no comparison: it is what the policy produced, admitted
+because the two above it declined. None of the three asks whether one canonical
+path begins with another, which is the mechanism that fails over links,
+substituted drives and mount points.
+
+Rows 1 and 2 are unexercisable through an admitted family — every admitted source
+is a regular file, every destination is a directory, and no admitted family is
+directory-shaped. They are implemented, ordered first, and tested through the
+mechanism a directory-shaped source would enter. That is the named exception ADR
+0043's exit criterion 4 carries, and it is not the admission of a new reader.
+
+### Names are compared against the object they are written in
+
+The queue-wide key became *(destination identity, folded name)*, in the planner
+and in the per-item claim alike. The pre-`BEGIN` refusal is retained exactly
+where the policy already proves one object — a custom-folder queue is going to
+put every item in whatever single folder the picker returns, which proves the
+collision without knowing which folder it is — and is **pending** rather than
+absent where it does not. `refuse_bound_name_collisions` asks it the moment the
+identities exist and before any item can create staging or launch a provider.
+
+### What did not change
+
+Admission strength: local, a real directory, not a link, not remote, identified by
+volume serial and 128-bit file ID, the handle held for the length of the work, and
+the proof repeated before every item. Fail/Skip, serial execution, private
+staging, validation before publication, no-clobber finalization and per-item
+failure isolation. The nine admitted combinations, provider admission, vendor
+family support, cancellation and quarantine semantics, capacity, scope, the
+diagnostics schema, and M6.4's authority and delivery behaviour.
+
+### Validation
+
+Rust 1459 passed / 22 ignored, on `windows-latest` in CI and on Windows locally —
+which is where these object, hold, creation and identity guarantees are the
+guarantees. Frontend 1602 across 67 files and browser 225 across 11 specs are
+unchanged and are what protect M6.4 and the retained custom-folder workflow;
+browser mocks prove nothing about directory identity, and are not asked to.
+
+Eight mechanism reversions were applied and restored one at a time: one global
+folder for the queue, name claims without the destination, path equality instead
+of identity, no per-item revalidation, a retry that re-resolves, a created
+subfolder trusted rather than admitted, a creation recorded after admission
+rather than where it is decided, and a collision refusal that keeps what the
+resolution made. Each failed the tests that hold it, and no other.
+
+Review of the candidate accepted three findings, all in the same seam — what
+happens to a folder MSCanvas created when the step after creating it says no.
+A user's own folder name was renderable through `Debug`, and is now opaque for
+the reason an admitted destination has always been. A child created and then
+refused by admission was unrecorded and so unreclaimable; the record moved to
+where the creation is decided. And a collision refused after resolution kept the
+child it had just made; the bindings now carry what the attempt created, and
+every refusal downstream of a successful resolution hands it back. Each has a
+discriminating test: the two reversions above, and a `Debug` that must not
+contain the name.
+
+### What this slice does not do
+
+It adds no visible policy control, no destination presentation and no conflict
+UX — those are M6.6's, and the source-relative policies run through the
+production coordinator with no control on screen. It admits no directory-shaped
+vendor family, adds no overwrite or automatic rename, changes no queue
+membership, order, scope or capacity, no cancellation or quarantine semantics, no
+scientific integrity policy, no persistence and no diagnostics schema.
+
+**M6.6 — destination and conflict UX — is next. M6.6 has not started.**

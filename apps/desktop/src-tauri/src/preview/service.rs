@@ -56,6 +56,9 @@ use super::conversion::{
     run_planned_conversion_cancellable,
 };
 use super::destination::admit_destination_root;
+use super::destination_policy::{
+    DestinationPolicy, ItemDestinationBindings, ResolutionSubject, resolve_destinations,
+};
 use super::diagnostics::OutputSetDiagnosticFacts;
 use super::diagnostics::payload;
 use super::diagnostics::{
@@ -1592,7 +1595,13 @@ impl PreviewService {
             RowAdmission::Unavailable => return Err(conversion_intent_unavailable()),
             RowAdmission::NoCatalog => return Err(conversion_configuration_unread()),
         }
-        let items = self.plan_queue_items(&request.handles, intent)?;
+        // The summary describes the queue a `BEGIN` from this webview would
+        // create, and that is a custom-folder queue: it is the one policy with
+        // a control today. Planning creates nothing -- no directory, no staging
+        // area, no admission -- so this is a description of what would run
+        // rather than a resolution of where.
+        let items =
+            self.plan_queue_items(&request.handles, intent, &DestinationPolicy::CustomFolder)?;
         Ok(ConversionPlanOutcomeDto::Planned {
             plan: ConversionQueuePlanDto {
                 items: items
@@ -1634,8 +1643,9 @@ impl PreviewService {
         &self,
         handles: &[String],
         intent: ConversionIntent,
+        policy: &DestinationPolicy,
     ) -> Result<Vec<QueueItem>, PreviewErrorDto> {
-        self.plan_items(handles, intent)
+        self.plan_items(handles, intent, policy)
     }
 
     /// Turns handles into queue items.
@@ -1656,6 +1666,7 @@ impl PreviewService {
         &self,
         handles: &[String],
         intent: ConversionIntent,
+        policy: &DestinationPolicy,
     ) -> Result<Vec<QueueItem>, PreviewErrorDto> {
         // Refused before the workspace is even read. A list longer than a
         // session may run is not a queue whose rows are worth resolving.
@@ -1692,6 +1703,18 @@ impl PreviewService {
         // settle it -- and letting queue order pick the winner would make the
         // result depend on a sort the user can change. Refused outright.
         //
+        // **Only where the policy already proves one folder.** This runs before
+        // a picker opens, so no destination object exists yet -- but a
+        // custom-folder queue is going to put every item in whatever single
+        // folder the picker returns, and that is enough to prove the collision
+        // without knowing which folder it is. A source-relative policy proves
+        // nothing of the sort: `C:/run-a/sample.raw` and `D:/run-b/sample.raw`
+        // both plan `sample.mzML` into *different* objects, and refusing them
+        // here would refuse a batch that never collided. Their check is
+        // **pending**, not absent: `refuse_bound_name_collisions` asks it the
+        // moment the identities exist, and before any of these items can create
+        // staging or launch a provider.
+        //
         // Only the names that exist yet. A backend-named set has none at
         // planning time, and comparing a guess would be worse than comparing
         // nothing; its discovered names meet this queue's claims at the
@@ -1700,6 +1723,9 @@ impl PreviewService {
         // Folded the way the destination volume will resolve them -- see
         // `folded_output_name`, which is the one implementation of that
         // relation.
+        if !policy.shares_one_destination() {
+            return Ok(items);
+        }
         let mut collisions: Vec<String> = Vec::new();
         for (index, item) in items.iter().enumerate() {
             let Some(name) = item.output().planned_name() else {
@@ -1757,7 +1783,42 @@ impl PreviewService {
         request: &ConversionBeginRequestDto,
         document_epoch: u64,
     ) -> AuthorityObservedDto<ConversionBeginOutcomeDto> {
-        let outcome = self.begin_queue(request, document_epoch);
+        // The policy the request names, or the custom folder every request
+        // means when it names none. Validated before anything is reserved, so a
+        // subfolder name this boundary would refuse to create never becomes a
+        // queue.
+        match DestinationPolicy::from_request(request.destination_policy.as_ref()) {
+            Ok(policy) => self.begin_conversion_queue_under(request, document_epoch, policy),
+            Err(error) => AuthorityObservedDto {
+                authority: self.authority_projection().to_dto(),
+                outcome: ConversionBeginOutcomeDto::Refused { error },
+            },
+        }
+    }
+
+    /// Whether the claimed reservation's policy needs a folder to be chosen.
+    ///
+    /// Asked by the one command that resolves a reservation, so that a
+    /// source-relative queue resolves without a dialog and a custom-folder one
+    /// opens exactly the picker it always did. `None` where nothing is claimed.
+    pub fn claimed_policy_needs_a_folder(&self, operation: u64) -> Option<bool> {
+        let (claimed, queue) = self.conversion_slot().claimed()?;
+        (claimed == operation).then(|| queue.policy().needs_a_chosen_folder())
+    }
+
+    /// The same `BEGIN`, under a named destination policy.
+    //
+    // Not a second implementation: everything below this line is the production
+    // path, and the public command above is this one with the policy the
+    // product currently offers. A source-relative queue is reserved, proved and
+    /// planned exactly as a custom-folder queue is.
+    pub(super) fn begin_conversion_queue_under(
+        &self,
+        request: &ConversionBeginRequestDto,
+        document_epoch: u64,
+        policy: DestinationPolicy,
+    ) -> AuthorityObservedDto<ConversionBeginOutcomeDto> {
+        let outcome = self.begin_queue(request, document_epoch, policy);
         AuthorityObservedDto {
             // Read after the outcome, never beside it: by this point the
             // preflight's own observation has been recorded, so this is the
@@ -1776,6 +1837,7 @@ impl PreviewService {
         &self,
         request: &ConversionBeginRequestDto,
         document_epoch: u64,
+        policy: DestinationPolicy,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
         // Before the plan, so a quarantined session refuses a queue without
         // first describing one it will never run.
@@ -1799,7 +1861,7 @@ impl PreviewService {
         // is the plan the queue is actually bound from. This first pass also
         // keeps a batch of dead handles from costing a help probe.
         let preflight_families: Vec<ConversionSourceKind> = {
-            let items = self.plan_items(&request.handles, intent)?;
+            let items = self.plan_items(&request.handles, intent, &policy)?;
             let mut families = Vec::new();
             for item in &items {
                 let kind = conversion_source_kind(item.kind());
@@ -1832,7 +1894,7 @@ impl PreviewService {
         // picker would open for a run guaranteed to end superseded. Planning
         // is lock-cheap and launches nothing, so it is simply done again where
         // it counts.
-        let items = self.plan_items(&request.handles, intent)?;
+        let items = self.plan_items(&request.handles, intent, &policy)?;
         let mut slot = self.conversion_slot();
         // Under the slot lock, and immediately before the slot is taken. The
         // authority proof is awaited, so a reload can start any time after it
@@ -1848,7 +1910,23 @@ impl PreviewService {
         // integrity comparison -- reads it back off the queue rather than
         // deciding again, which is what makes a settings change after this
         // point a change to the *next* conversion and to nothing in this one.
-        let queue = ConversionQueue::new(document_epoch, request.conflict_policy, intent, items)?;
+        // **The policy is bound here, with the plan, and its input is not.**
+        // `ConversionQueue::new` runs before the picker opens, so a
+        // custom-folder queue knows it is one and does not yet know which
+        // folder -- which is the temporal truth of the reservation this
+        // boundary has always had, and nothing here invents a resolved root
+        // for it.
+        //
+        // Custom folder is what a `BEGIN` from the webview means today: the
+        // source-relative policies have no visible control until M6.6, and
+        // reach the same coordinator through `begin_conversion_queue_under`.
+        let queue = ConversionQueue::new(
+            document_epoch,
+            request.conflict_policy,
+            intent,
+            policy,
+            items,
+        )?;
         let reservation = slot.begin(queue);
         self.publish_conversion_busy(&slot);
         // The previous queue's diagnostics go with the previous queue. Under
@@ -1863,6 +1941,54 @@ impl PreviewService {
         drop(slot);
         drop(gate);
         reservation
+    }
+
+    /// Refuses a queue two of whose bound items would write one name into one
+    /// object.
+    //
+    // **The key is the pair.** `C:/run-a/sample.raw` and `D:/run-b/sample.raw`
+    // both plan `sample.mzML`, and under a source-relative policy they land in
+    // different objects and do not collide; the same two names in one object
+    // still do, whatever the paths were spelled like. Identity rather than
+    // path, so two spellings of one directory are one destination here exactly
+    // as they are everywhere else.
+    //
+    // Only the names that exist yet. A backend-named set has none at this
+    // point, and its discovered names meet this queue's claims at the
+    /// publication gate, under that item's own destination.
+    pub(super) fn refuse_bound_name_collisions(
+        queue: &ConversionQueue,
+        bindings: &ItemDestinationBindings,
+    ) -> Result<(), PreviewErrorDto> {
+        let mut seen: Vec<(usize, String)> = Vec::new();
+        let mut collisions: Vec<String> = Vec::new();
+        for item in queue.items() {
+            let Some(name) = item.output().planned_name() else {
+                continue;
+            };
+            let Some(bound) = bindings.destination_for(item.dataset()) else {
+                return Err(queue_destination_changed());
+            };
+            let at = bindings
+                .position_of(bound)
+                .ok_or_else(queue_destination_changed)?;
+            let folded = folded_output_name(name);
+            if seen
+                .iter()
+                .any(|(seen_at, seen_folded)| *seen_at == at && *seen_folded == folded)
+                && !collisions
+                    .iter()
+                    .any(|already| folded_output_name(already) == folded)
+            {
+                collisions.push(name.to_owned());
+            }
+            seen.push((at, folded));
+        }
+        if collisions.is_empty() {
+            Ok(())
+        } else {
+            Err(queue_output_name_collision(&collisions))
+        }
     }
 
     /// The whole of what must be true before a `BEGIN` may reach anything.
@@ -2039,18 +2165,121 @@ impl PreviewService {
         if claimed != operation {
             return self.conversion_state();
         }
-        let admitted = match admit_destination_root(destination) {
-            Ok((root, identity, _held)) => AdmittedDestination::new(root, identity),
-            Err(error) => return self.refuse_queue(operation, error),
+        match self.bind_claimed_destinations(operation, Some(destination)) {
+            Ok(bindings) => self.start_bound_conversion(operation, bindings),
+            Err(error) => self.refuse_queue(operation, error),
+        }
+    }
+
+    /// Resolves a claimed queue's own policy, for the policies with no picker.
+    //
+    // The source-relative half of the same two-command shape: `BEGIN` reserves
+    // and binds the policy, and this resolves it. There is no folder to choose,
+    // so nothing opens -- but the reservation still owns the decision, and the
+    // resolution is still the one authorized step where a directory may be
+    // created.
+    //
+    /// M6.6 gives these policies a control; M6.5 gives them this coordinator.
+    pub fn resolve_claimed_conversion(&self, operation: u64) -> WorkspaceConversionUpdateDto {
+        let Some((claimed, _)) = self.conversion_slot().claimed() else {
+            return self.conversion_state();
         };
+        if claimed != operation {
+            return self.conversion_state();
+        }
+        match self.bind_claimed_destinations(operation, None) {
+            Ok(bindings) => self.start_bound_conversion(operation, bindings),
+            Err(error) => self.refuse_queue(operation, error),
+        }
+    }
+
+    /// Resolves the claimed queue's bound policy over its bound membership.
+    //
+    // **The one production coordinator.** Both entry points above reach it, so
+    // there is no second resolution for the policies that have no control yet
+    // -- and the safety, admission and collision rules cannot come to differ
+    /// between the policy the user can see and the ones they cannot.
+    fn bind_claimed_destinations(
+        &self,
+        operation: u64,
+        chosen: Option<&Path>,
+    ) -> Result<ItemDestinationBindings, PreviewErrorDto> {
+        let Some((claimed, queue)) = self.conversion_slot().claimed() else {
+            return Err(invalid_conversion_reservation());
+        };
+        if claimed != operation {
+            return Err(invalid_conversion_reservation());
+        }
+        let subjects = self.resolution_subjects(&queue)?;
+        let bindings = resolve_destinations(queue.policy(), &subjects, chosen)?;
+        // **Every collision the identities have now made decidable**, before
+        // any of these items can create a staging area or launch a provider.
+        // The pre-picker check refuses only what the policy already proved; the
+        // rest waits for exactly this moment, when the objects are known.
+        //
+        // A refusal here follows a resolution that succeeded, so it takes back
+        // the children that resolution created: nothing is going to run, and
+        // an empty folder beside the user's data that MSCanvas never mentions
+        // again is the thing this whole path exists to avoid.
+        if let Err(refusal) = Self::refuse_bound_name_collisions(&queue, &bindings) {
+            bindings.reclaim_created();
+            return Err(refusal);
+        }
+        Ok(bindings)
+    }
+
+    /// Marks a resolved queue running and drains it.
+    fn start_bound_conversion(
+        &self,
+        operation: u64,
+        bindings: ItemDestinationBindings,
+    ) -> WorkspaceConversionUpdateDto {
         let mut slot = self.conversion_slot();
-        let started = slot.start_running(operation, admitted);
+        let started = slot.start_running(operation, bindings);
         self.publish_conversion_busy(&slot);
         drop(slot);
-        if !started {
+        // The slot refused a resolution that succeeded -- the reservation moved
+        // on while the objects were being proved. Nothing will run against
+        // these, so the children this attempt created go back.
+        if let Err(unused) = started {
+            unused.reclaim_created();
             return self.conversion_state();
         }
         self.drain_queue(operation)
+    }
+
+    /// What each bound item contributes to a resolution.
+    //
+    // Read from the workspace registry, which is the repository's authoritative
+    // logical-acquisition authority: the path is the acquisition's primary, and
+    // the acquisition root is `None` for every family admitted today because
+    // every one of them is file-shaped. Carried rather than inferred -- guessing
+    /// a dataset root from a suffix would be claiming a discovery nobody made.
+    fn resolution_subjects(
+        &self,
+        queue: &ConversionQueue,
+    ) -> Result<Vec<ResolutionSubject>, PreviewErrorDto> {
+        let workspace = self.workspace();
+        queue
+            .items()
+            .iter()
+            .map(|item| {
+                let dataset = item.dataset();
+                let held = workspace
+                    .registry
+                    .get(dataset)
+                    .ok_or_else(unknown_dataset)?;
+                Ok(ResolutionSubject {
+                    dataset,
+                    source: held.file().path().to_path_buf(),
+                    // No admitted family is directory-shaped, so no acquisition
+                    // root exists to protect. Stated here rather than left
+                    // implicit: the moment one is admitted, this is the line
+                    // that carries it and row 2 begins to fire.
+                    acquisition_root: None,
+                })
+            })
+            .collect()
     }
 
     /// Runs every retryable failure of the terminal queue again.
@@ -2081,13 +2310,21 @@ impl PreviewService {
         if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
+        // **Every object this pass will use, not one.** A source-relative
+        // policy resolved per item, so "against the same folder" became
+        // "against the same object for every identity the pass will use". The
+        // policy itself is never re-resolved: what is proved here is the
+        // binding the queue already holds.
         let stored = self
-            .terminal_destination()
+            .terminal_bindings()
             .ok_or_else(invalid_conversion_reservation)?;
-        let (root, identity, _held) =
-            admit_destination_root(stored.root()).map_err(|_| queue_destination_changed())?;
-        if !stored.is_still(&AdmittedDestination::new(root, identity)) {
-            return Err(queue_destination_changed());
+        for bound in stored.distinct_destinations() {
+            let admitted = bound.admitted();
+            let (root, identity, _held) =
+                admit_destination_root(admitted.root()).map_err(|_| queue_destination_changed())?;
+            if !admitted.is_still(&AdmittedDestination::new(root, identity)) {
+                return Err(queue_destination_changed());
+            }
         }
 
         let gate = self.enter_workspace_mutation_after_drop();
@@ -2110,7 +2347,7 @@ impl PreviewService {
         // whole further queue and made *its* destination the terminal one. This
         // is what refuses to retry a queue whose folder was never the one just
         // proved.
-        if slot.terminal_destination().as_ref() != Some(&stored) {
+        if slot.terminal_bindings().as_ref() != Some(&stored) {
             return Err(queue_destination_changed());
         }
         let Some(operation) = slot.begin_retry() else {
@@ -3901,14 +4138,19 @@ impl PreviewService {
     /// launch nothing.
     #[cfg(test)]
     pub(super) fn start_running_for_test(&self, operation: u64, destination: &Path) -> bool {
-        let admitted = match admit_destination_root(destination) {
-            Ok((root, identity, _held)) => AdmittedDestination::new(root, identity),
-            Err(_) => return false,
+        let Ok(bindings) = self.bind_claimed_destinations(operation, Some(destination)) else {
+            return false;
         };
         let mut slot = self.conversion_slot();
-        let started = slot.start_running(operation, admitted);
+        let started = slot.start_running(operation, bindings);
         self.publish_conversion_busy(&slot);
-        started
+        match started {
+            Ok(()) => true,
+            Err(unused) => {
+                unused.reclaim_created();
+                false
+            }
+        }
     }
 
     /// The worker half, for a queue a test already marked running.
@@ -3917,9 +4159,9 @@ impl PreviewService {
         self.drain_queue(operation)
     }
 
-    /// The destination a terminal queue was run against.
-    fn terminal_destination(&self) -> Option<AdmittedDestination> {
-        self.conversion_slot().terminal_destination()
+    /// Every destination a terminal queue was run against.
+    fn terminal_bindings(&self) -> Option<ItemDestinationBindings> {
+        self.conversion_slot().terminal_bindings()
     }
 
     /// Converts every pending item, in order, on one backend binding.
@@ -4032,8 +4274,16 @@ impl PreviewService {
             let Some((index, item)) = queue.next_pending() else {
                 break;
             };
-            let Some(admitted) = queue.destination().cloned() else {
-                break;
+            // **This item's object, not the queue's.** Under a
+            // source-relative policy the item beside this one is bound to a
+            // different directory, and a drain that read one queue-wide folder
+            // would write the second item beside the first item's source.
+            //
+            // `None` is a refusal rather than a default: an item whose
+            // destination nothing resolved must not run.
+            let Some(admitted) = queue.destination_for(item.dataset()).cloned() else {
+                drop(running);
+                return self.refuse_queue(operation, queue_destination_changed());
             };
             // Re-proved before every item, not once for the queue. Admission
             // holds the directory only while it is judging it, so between that
@@ -4747,7 +4997,7 @@ impl PreviewService {
     // read one at all, quarantined or behind a held gate, is left exactly as
     /// it was for the assertion to find.
     #[cfg(test)]
-    fn readied_receipt(&self) -> BackendBindingReceiptDto {
+    pub(super) fn readied_receipt(&self) -> BackendBindingReceiptDto {
         let unread = match self.authority_projection().state.binding() {
             None => true,
             Some(binding) => {
@@ -4795,14 +5045,36 @@ impl PreviewService {
         conflict: ConversionConflictPolicyDto,
         document_epoch: u64,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
+        self.begin_conversion_under_now(
+            handles,
+            conflict,
+            document_epoch,
+            DestinationPolicy::CustomFolder,
+        )
+    }
+
+    /// The same `BEGIN`, under a named destination policy.
+    //
+    // The one seam a source-relative policy needs while it has no control: the
+    // request, the proof, the plan and the reservation are the production
+    /// path's, and only the policy is named by the caller instead of assumed.
+    #[cfg(test)]
+    pub(super) fn begin_conversion_under_now(
+        &self,
+        handles: &[String],
+        conflict: ConversionConflictPolicyDto,
+        document_epoch: u64,
+        policy: DestinationPolicy,
+    ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
         let request = ConversionBeginRequestDto {
             handles: handles.to_vec(),
             intent_id: ConversionIntent::SHIPPED.stable_id(),
             conflict_policy: conflict,
             expected_receipt: self.readied_receipt(),
+            destination_policy: None,
         };
         match self
-            .begin_conversion_queue(&request, document_epoch)
+            .begin_conversion_queue_under(&request, document_epoch, policy)
             .outcome
         {
             ConversionBeginOutcomeDto::Reserved { reservation } => Ok(reservation),

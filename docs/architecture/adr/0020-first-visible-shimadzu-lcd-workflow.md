@@ -94,6 +94,12 @@ creation.
 
 ### The mixed-family queue
 
+**Amended 2026-09-06 by M6.5: one queue, one destination *policy*.** The
+restatement below is preserved as it was made; what changed is the count of
+admitted objects one policy may resolve to, and nothing else about it. See the
+amendment at the end of this document and
+[ADR 0013](0013-serial-conversion-queue.md)'s.
+
 One queue, one destination, one conflict policy, one serial backend lane, in
 the visible order captured at planning. Each item revalidates under its
 recorded family immediately before converting and is planned and gated as its
@@ -195,3 +201,21 @@ or says.
 The "not claimed" list above loses `SCIEX WIFF` and keeps every other entry —
 in particular generic vendor RAW support, compound-file acquisitions in general,
 directory acquisitions, vendor-file preview and source-fidelity verification.
+
+
+## Amendment, 2026-09-06 (M6.5) — the destination count, restated
+
+This document restated [ADR 0013](0013-serial-conversion-queue.md)'s destination
+rule for the mixed-family queue it introduced: *one queue, one destination, one
+conflict policy, one serial backend lane*. M6.5 amends the one word.
+
+**One queue, one destination policy.** A source-relative policy resolves per
+item, so a mixed-family queue whose rows come from different folders is bound to
+several admitted objects — each admitted by exactly the rules ADR 0013 states,
+each re-proved before its own item, and each revalidated by a retry. One conflict
+policy, one serial backend lane and one visible order are untouched, as is every
+per-family rule this document decided: each item is still planned, gated and
+revalidated as its own family, and the provider-evidence gate is still asked per
+distinct family in the queue.
+
+Nothing here admits a new family or a directory-shaped acquisition.
