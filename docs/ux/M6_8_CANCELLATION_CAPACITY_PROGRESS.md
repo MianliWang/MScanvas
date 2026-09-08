@@ -334,7 +334,7 @@ three ownership tests did not discriminate what they were named for. Each repair
 is proved by reverting it and watching a test report the defect.
 
 **Native**, on the build attributable to the final candidate — binary SHA-256
-`0a0cfd29129d48ee47f084de1cb3b366d62031b19c41e6a197911eabf1f90ea2`, WebView2 and
+`6db463738e80f37156b3ea6b92c0a195df3d452c4c0eca43de6cc98262414e17`, WebView2 and
 driver 152.0.4191.66. Rebuilt and rerun after the review repairs: no native
 evidence is inherited across a changed process implementation.
 
@@ -342,18 +342,29 @@ evidence is inherited across a changed process implementation.
 | --- | --- |
 | A stop while the provider is genuinely executing | Item 2, attempt 1, settled `ownedTree: confirmed_gone`, `processLaunched: true`, 34 ms from request to settle; queue `completed` with 7 finalized, 0 not run, session unquarantined |
 | A waiting item settled without launching it | 0 attempts, keeps its place and its planned output name, counted apart, queue `completed` with 7 finalized |
-| The whole queue stopped mid-execution | `stopped`, 1 attempted of 8, 1 cancelled, 0 unconfirmed, 7 not run |
+| The whole queue stopped mid-execution | `stopped`, 2 attempted of 8, 1 finalized, 1 cancelled, 0 unconfirmed, 6 not run |
 
 The phase is observed, never assumed: the suite reads Rust's own authoritative
 state until an item reports running, dispatches against that exact item and
 attempt, and asks again if the queue moved on. A request Rust refused is not
 counted as a stop.
 
-Affected regressions on the same binary: **M6.6 native 5/5**, including the real
-Escape cancellation through the exact foreground guard, and **M6.7 native 2/2**.
+Affected regressions on the same binary: **M6.7 native 2/2**, and **M6.6 native
+4/5**.
 
-Evidence: `D:/tmp/mscanvas-m68-20260908/m68-native-UnWUBC/`,
-`m66-native-SwVrmE/`, `m67-native-mwLPtY/`.
+**The fifth M6.6 scenario is BLOCKED by the interactive environment, not by this
+candidate.** It presses a real Escape at the exact owned folder picker, and the
+guard in `e2e/native/choose-workspace-files.ps1` refuses to send a key unless
+that exact dialog holds the foreground. The Windows session was locked when this
+ran: `LockApp` held the foreground across six consecutive samples, and the guard
+did what it exists to do rather than typing into whatever was active. The four
+scenarios that do not need foreground ownership pass on this binary, and the
+same suite passed 5/5 earlier the same day on an unlocked session at an earlier
+head. No guard was weakened, no Cancel was substituted for Escape, and no focus
+was scripted after cancellation.
+
+Evidence: `D:/tmp/mscanvas-m68-20260908/m68-native-ng3n5k/`,
+`m66-native-JNkICd/`, `m67-native-9Dkfz5/`.
 
 ## Residuals
 

@@ -7742,11 +7742,14 @@ display no longer speaks for a rerun that is already done.
 Implementation and validation are complete: 1652 frontend tests, 1502 Rust tests
 across the workspace, all required local gates, browser 10/10 at four inner
 sizes, and native 3/3 on binary SHA-256
-`0a0cfd29129d48ee47f084de1cb3b366d62031b19c41e6a197911eabf1f90ea2` — a stop that
+`6db463738e80f37156b3ea6b92c0a195df3d452c4c0eca43de6cc98262414e17` — a stop that
 landed while the provider was executing settled `confirmed_gone` 34 ms after the
 request, with the queue completing and the session unquarantined. Affected
-regressions on the same binary: M6.6 native 5/5 including the real Escape
-cancellation, and M6.7 native 2/2.
+regressions on the same binary: M6.7 native 2/2, and M6.6 native 4/5 — its fifth
+scenario presses a real Escape at the exact owned picker and the foreground
+guard refused, because the Windows session was locked when it ran. That is an
+environment fact; the same suite passed 5/5 on an unlocked session earlier the
+same day, and nothing was weakened to get past it.
 
 Two browser cases fail here and on the published baseline alike, verified in a
 separate worktree at `735dfeb`: `m4.1` "offers all three formats for a spectrum
