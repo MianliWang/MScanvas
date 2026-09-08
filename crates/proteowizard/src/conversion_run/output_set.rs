@@ -695,8 +695,11 @@ impl MultiOutputFailure {
     pub const fn leaves_an_owned_process_unaccounted(&self) -> bool {
         matches!(
             self,
-            Self::Backend(BackendExecutionFailure::NotTerminated)
-                | Self::CancellationNotConfirmed(BackendExecutionFailure::NotTerminated)
+            Self::Backend(
+                BackendExecutionFailure::NotTerminated | BackendExecutionFailure::NotAwaited
+            ) | Self::CancellationNotConfirmed(
+                BackendExecutionFailure::NotTerminated | BackendExecutionFailure::NotAwaited
+            )
         )
     }
 

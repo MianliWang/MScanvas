@@ -1158,6 +1158,11 @@ mod windows_job {
     /// failure. A previous count of zero is its own error here: the thread was
     /// not suspended, so this is not the process the caller created.
     const RESUME_THREAD_FAILED: u32 = u32::MAX;
+    /// How many times a thread snapshot is taken before its failure is the
+    /// answer. The suspended process cannot change under it, so a retry asks
+    /// the same question of a system that has moved on.
+    const SNAPSHOT_ATTEMPTS: usize = 4;
+    const SNAPSHOT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(15);
     const JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION_CLASS: i32 = 1;
     const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: i32 = 9;
     const CANCELLED_EXIT_CODE: u32 = 0xC000_013A;
@@ -1310,6 +1315,27 @@ mod windows_job {
     /// Any other count refuses: a process created suspended has one thread, so
     /// zero means it is already gone and more than one means this is not it.
     fn sole_thread_of(process_id: u32) -> io::Result<u32> {
+        // The snapshot is documented to fail transiently while the system's
+        // thread list is changing, so a single attempt would turn ordinary load
+        // into a launch that refuses. Bounded, and short: the process being
+        // asked about is suspended and cannot go anywhere in the meantime.
+        let mut last = None;
+        for attempt in 0..SNAPSHOT_ATTEMPTS {
+            match sole_thread_in_one_snapshot(process_id) {
+                Ok(thread_id) => return Ok(thread_id),
+                Err(error) => {
+                    last = Some(error);
+                    if attempt + 1 < SNAPSHOT_ATTEMPTS {
+                        std::thread::sleep(SNAPSHOT_RETRY_DELAY);
+                    }
+                }
+            }
+        }
+        Err(last.expect("at least one attempt was made"))
+    }
+
+    /// One snapshot, and what it says about the process.
+    fn sole_thread_in_one_snapshot(process_id: u32) -> io::Result<u32> {
         // SAFETY: A thread snapshot over every process, which is what the
         // documented call takes a zero process id to mean. The returned handle
         // is checked against both failure spellings before use.

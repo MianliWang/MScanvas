@@ -291,6 +291,59 @@ fn entry_names(directory: &Path) -> Vec<OsString> {
     names
 }
 
+/// The question a run is asked before anything else starts covers every way an
+/// owned process can be left unaccounted for, not only the one with a name that
+/// says so.
+///
+/// `NotTerminated` is the obvious one. `NotAwaited` is the same fact by a
+/// different route — a Job that would not empty within its bounded window, or a
+/// supervision loop that lost track of its child — and in both the run owned
+/// processes and cannot say they are gone. Whether anyone asked for a stop is
+/// not what decides whether a process survived, so neither is it what decides
+/// this.
+#[test]
+fn every_failure_that_leaves_an_owned_process_unaccounted_says_so() {
+    for cause in [
+        BackendExecutionFailure::NotTerminated,
+        BackendExecutionFailure::NotAwaited,
+    ] {
+        assert!(
+            ConversionRunFailure::Backend(cause).leaves_an_owned_process_unaccounted(),
+            "{cause:?} leaves a process this run owned unaccounted for"
+        );
+    }
+
+    // And nothing else does. A launch that never happened, a capture that
+    // failed and a root reclaimed without running all leave nothing behind, and
+    // quarantining for them would refuse work on a fact that is not true.
+    for cause in [
+        BackendExecutionFailure::NotSupervised,
+        BackendExecutionFailure::RootNotStarted,
+        BackendExecutionFailure::EnvironmentInvalid,
+        BackendExecutionFailure::ExecutableChanged,
+        BackendExecutionFailure::SourceChanged,
+        BackendExecutionFailure::OutputInsideSource,
+        BackendExecutionFailure::StagingDirectoryNotEmpty,
+        BackendExecutionFailure::StagedDestinationExists,
+    ] {
+        assert!(
+            !ConversionRunFailure::Backend(cause).leaves_an_owned_process_unaccounted(),
+            "{cause:?} leaves nothing of this run's behind"
+        );
+    }
+
+    // The same question, of the lifecycle that runs a backend-named set.
+    assert!(
+        MultiOutputFailure::Backend(BackendExecutionFailure::NotAwaited)
+            .leaves_an_owned_process_unaccounted()
+    );
+    assert!(
+        MultiOutputFailure::CancellationNotConfirmed(BackendExecutionFailure::NotTerminated)
+            .leaves_an_owned_process_unaccounted()
+    );
+    assert!(!MultiOutputFailure::BackendDidNotComplete.leaves_an_owned_process_unaccounted());
+}
+
 /// The two halves of a resume failure classify differently, and only one of
 /// them is an ordinary backend failure.
 ///

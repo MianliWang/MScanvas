@@ -1552,9 +1552,22 @@ impl ConversionRunFailure {
     /// establish. A run that reaches it without a stop in flight — a root that
     /// was created and could neither be started nor reclaimed — leaves the same
     /// uncertainty as one that reaches it with a stop.
+    ///
+    /// `NotAwaited` is the same fact by a different route and is included for
+    /// the same reason. It is what a Job that would not empty within its
+    /// bounded window reports, and what a supervision loop that lost track of
+    /// its child reports; in both the run owned processes and cannot say they
+    /// are gone. The boundary already reclassifies it as a cancellation failure
+    /// where a stop was in flight, and whether anyone asked for a stop is not
+    /// what decides whether a process survived.
     #[must_use]
     pub const fn leaves_an_owned_process_unaccounted(&self) -> bool {
-        matches!(self, Self::Backend(BackendExecutionFailure::NotTerminated))
+        matches!(
+            self,
+            Self::Backend(
+                BackendExecutionFailure::NotTerminated | BackendExecutionFailure::NotAwaited
+            )
+        )
     }
 }
 
