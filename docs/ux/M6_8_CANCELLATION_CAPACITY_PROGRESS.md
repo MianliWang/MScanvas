@@ -423,13 +423,18 @@ control reachable with no horizontal overflow at 1366x768, 1920x1080, 1200x800
 and 960x640, plus M6.6 8/8 and M6.7 7/7 on the same head. Screenshots and console
 records inspected; console empty.
 
-Run at `4104680`, and **carried to this head on a measurement rather than on an
-assumption**. The only frontend file that changed since is a unit test, and a
-rebuild says so rather than an argument about module graphs: rebuilding with
-that one file restored to its `4104680` content produces a byte-identical
-`apps/desktop/dist` — the same three SHA-256 digests and the same
-content-hashed bundle name `index-RLGlfC3r.js`. The rendered product these
-cases exercised is this one.
+**Run at this head**, not carried. The fourth review's repairs changed the
+rendered product — the completed summary names two more counts, the per-item
+stop says something different while it is in flight and no longer predicts an
+outcome, the plan-time disclosure names all three scopes, and the stop-failed
+live region carries the counts — so the earlier run describes a different
+bundle and is not inherited. The bundle these cases exercised is
+`index-BC-KKVLT.js`, SHA-256 prefix `f193dabc4c0f445b`, beside
+`index-BGNQ9ajg.css` (`d6f6a6c32034f882`) and `index.html`
+(`2193de452e0f5ee8`).
+
+The suite is headless, so it does not need an unlocked session — which is why
+it could be re-run at this head when the native suites could not.
 
 **Three rounds of two independent reviews rejected three candidates, and every
 finding was verified against the code before it was acted on.** Each repair is

@@ -7747,9 +7747,8 @@ Implementation is complete and every local gate passes: 1654 frontend tests,
 1511 Rust tests across the workspace, lint, both typechecks, the build,
 `cargo fmt --check`, clippy with warnings denied, and `check_repo.py` with the
 claim guard's nineteen self-proved bypasses. Rendered QA is browser 10/10 at four
-inner sizes plus M6.6 8/8 and M6.7 7/7, measured at `4104680` and carried here on
-a byte-identical `apps/desktop/dist` — the only frontend file changed since is a
-unit test, and a rebuild proves the bundle is the same one.
+inner sizes plus M6.6 8/8 and M6.7 7/7, re-run at this head against the bundle
+this head builds. That suite is headless, so a locked session does not block it.
 
 **Native validation is outstanding and blocked by the environment.** Three M6.8
 scenarios, M6.7's two and four of M6.6's five passed on binary SHA-256
