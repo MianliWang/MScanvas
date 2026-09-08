@@ -986,10 +986,10 @@ fn admit_and_check(
 /// created under the substitute. The hold is opened without `FILE_SHARE_DELETE`
 /// (see `hold_chosen_directory`), so keeping it alive across the creation is
 /// what stops *this* container being renamed or deleted while the child is made
-/// under it. It is not a claim about the whole path: Windows still allows an
-/// ancestor of a held directory to be renamed, and `create_dir` re-resolves the
-/// name it is given, so the window is closed for the object admission proved
-/// and narrowed for the path above it.
+/// under it. Creation uses that parent handle and one validated component,
+/// never the parent's full pathname. A subsequent pathname-based lease
+/// candidate must match the still-live original object's full identity before
+/// lifetime transfers; an ancestor rename cannot silently redirect ownership.
 pub(super) fn admit_and_hold(
     candidate: &Path,
     subjects: &[ResolutionSubject],
