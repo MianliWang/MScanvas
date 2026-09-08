@@ -375,6 +375,57 @@ describe("the conversion lane's one authority, as it ships", () => {
     rerun.resolve({ status: "idle" });
   });
 
+  it("stops saying it is retrying once the rerun's own result is on screen", async () => {
+    /*
+     * The retry command answers once, when the whole rerun is over, and this
+     * document polls while it waits -- so a read can install the *finished*
+     * rerun before the command replies. The panel used to go on saying
+     * "Retrying the failures…" over a queue that was done, for the length of a
+     * command round trip.
+     *
+     * The signal is the round rather than the status or the name. A rerun keeps
+     * its queue's name and is terminal at both ends of this window; only
+     * `retryRound` separates the pass that was on screen when the control was
+     * pressed from the pass that answers it.
+     */
+    const rerun = deferred<WorkspaceConversionState>();
+    const finished: WorkspaceConversionState = {
+      status: "terminal",
+      operationId: "1",
+      reason: "completed",
+      queue: { ...queueOf([queueItem("file-1", "run-1.raw", { state: "finalized", attempts: 2 })]), retryRound: 1 },
+    };
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      availability: availableBackend,
+      initialConversion: retryableQueue(1),
+      retry: () => rerun.promise,
+    });
+    renderApp(api);
+
+    const panel = await conversionPanel();
+    const retry = await within(panel).findByRole("button", { name: "Retry 1 failed" });
+    await waitFor(() => {
+      expect(retry).toBeEnabled();
+    });
+    fireEvent.click(retry);
+    // The window this is about: the command has not answered, so the claim is
+    // still held and the interface says so.
+    await waitFor(() => {
+      expect(within(panel).getByText("Retrying the failures…")).toBeVisible();
+    });
+
+    // A poll installs the rerun's own finished state, ahead of the reply.
+    api.publishConversion(finished);
+
+    await waitFor(() => {
+      expect(within(panel).queryByText("Retrying the failures…")).toBeNull();
+    });
+    expect(within(panel).getByText("Converted")).toBeVisible();
+
+    rerun.resolve(finished);
+  });
+
   it("refuses a rerun where a start is offered", async () => {
     // The other direction, so accidental equivalence cannot return from either
     // side. A finished queue whose failures another attempt would not change

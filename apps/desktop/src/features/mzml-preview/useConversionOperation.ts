@@ -386,7 +386,30 @@ type ConversionDispatch =
        */
       readonly reported: boolean;
     }
-  | { readonly kind: "retry" };
+  | {
+      readonly kind: "retry";
+      /**
+       * The retry round the queue was on when this was dispatched.
+       *
+       * How an arriving read is told apart from the one this dispatch replaces
+       * -- the same job `replacing` does for a conversion, in the one term that
+       * can do it here. A rerun keeps its queue's name, so the name cannot say
+       * which pass a terminal state is about; the round advances with every
+       * rerun, so a terminal state past this number is the rerun's own result.
+       */
+      readonly fromRound: number;
+    };
+
+/**
+ * Which pass of a queue a state is describing.
+ *
+ * Zero where there is no queue to be on a pass of, which is the same answer a
+ * first pass gives and is harmless: a retry dispatched against no queue is
+ * refused before it can claim the lane.
+ */
+function retryRoundOf(state: WorkspaceConversionState): number {
+  return state.status === "idle" ? 0 : state.queue.retryRound;
+}
 
 /** Whether an arriving state describes a queue that is not the one named. */
 function reportsAQueueOtherThan(
@@ -511,7 +534,30 @@ export function useConversionOperation(
   }, []);
   // The two windows the rest of this file names, each one projection of the
   // single claim above rather than a flag of its own.
-  const retrying = dispatch?.kind === "retry";
+  // The claim, which is what the lane is held by. It is lowered only by the
+  // retry command's own outcome, because a claim that an arriving read could
+  // clear would let a second dispatch slip through the window this exists to
+  // close.
+  const retryClaimed = dispatch?.kind === "retry";
+  // What the interface says, which is not the same thing.
+  //
+  // The retry command answers once, when the whole rerun is over, and this
+  // document polls while it waits -- so a read can install the *finished* rerun
+  // before the command replies. Saying "Retrying the failures…" over a queue
+  // that is done is untrue for the length of a command round trip, and it is a
+  // progress claim rather than an availability one: nothing is offered here
+  // that Rust would refuse.
+  //
+  // The signal is the round, not the status. A rerun is terminal at both ends
+  // of this window; only the round tells the pass that was on screen when the
+  // control was pressed from the pass that answers it.
+  const retrying =
+    retryClaimed &&
+    !(
+      state.status === "terminal" &&
+      dispatch?.kind === "retry" &&
+      state.queue.retryRound > dispatch.fromRound
+    );
   // Whether this document has dispatched a stop and has not seen the queue
   // settle. Rendered, because Stop queue has to stop being offered for the
   // whole of that window rather than only once Rust answers.
@@ -1149,7 +1195,7 @@ export function useConversionOperation(
     if (!canRetryConversion(readLane(), target.retryableFailureCount, target.queueCompleted)) {
       return;
     }
-    claimLane({ kind: "retry" });
+    claimLane({ kind: "retry", fromRound: retryRoundOf(stateRef.current) });
     setError(null);
     api
       .retryConversions()

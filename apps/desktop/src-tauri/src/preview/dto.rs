@@ -1082,15 +1082,32 @@ pub enum ConversionConflictPolicyDto {
 
 /// The most items one queue may hold.
 ///
-/// Far below the workspace's own capacity, and deliberately so. This slice runs
-/// items serially and has no cancellation, so a queue is something the user
-/// waits out: at a realistic minute or three per acquisition, sixteen is
-/// something like half an hour. A queue sized to the roster would be an
-/// afternoon nobody could stop.
+/// Far below the workspace's own capacity, and deliberately so.
 ///
-/// Stated as one number rather than derived from anything, because it is a
-/// judgement about how long a person should be asked to wait and not a fact
-/// about the machine.
+/// **Re-decided after cancellation was understood, and the number is
+/// unchanged.** The premise it used to be defended on is not: it said the queue
+/// had "no cancellation", and a queue-level stop has existed since ADR 0015.
+/// A user can now also end the file being converted and leave the rest running,
+/// or settle a waiting item without running it.
+///
+/// What that changes is the cost of getting the size wrong, not the size. Items
+/// run serially, so a queue is still something a user commits to: at a
+/// realistic minute or three per acquisition, sixteen is something like half an
+/// hour, and a queue sized to the roster would be an afternoon. What is no
+/// longer true is that a wrong decision has to be waited out -- it can be ended
+/// at any point, in whichever of the three scopes fits.
+///
+/// **It remains a judgement about how long a person should be asked to commit
+/// to, and not a fact about the machine.** Nothing in this repository measures
+/// memory, throughput or scaling against the number of queue items, and this
+/// number must not be described as though something did. Deriving one from the
+/// largest fixture that happened to pass would be the same invention wearing a
+/// measurement's clothes.
+///
+/// Bounded is the part that is not a judgement. Rust is the only authority for
+/// it: the limit is enforced before a queue is committed, delivered to the
+/// interface through `ConversionQueuePlanDto.capacity`, and never restated as a
+/// frontend constant.
 pub const MAX_CONVERSION_QUEUE_ITEMS: usize = 16;
 
 /// One bounded, path-free read of the session's conversion slot.
