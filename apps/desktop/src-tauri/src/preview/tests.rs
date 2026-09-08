@@ -15357,6 +15357,79 @@ fn a_plan_answers_the_intent_policy_and_binding_it_was_asked_under() {
     assert_eq!(plan.items.len(), 1);
 }
 
+#[test]
+fn m67_capacity_is_authoritative_before_queue_destination_or_provider_work() {
+    let fixture = TestFile::new("m67-capacity");
+    let provider = ConvertingProvider::offering_every_admitted_row();
+    let launches = provider.runner.launches();
+    let service = PreviewService::new(Box::new(provider));
+    let handles: Vec<_> = (0..=MAX_CONVERSION_QUEUE_ITEMS)
+        .map(|index| {
+            add_one_acquisition(
+                &service,
+                &fixture.thermo_raw(&format!("source-{index}.raw")),
+            )
+        })
+        .collect();
+    let receipt = current_receipt(&service);
+    let document = current_document(&service);
+    for count in [
+        0,
+        1,
+        MAX_CONVERSION_QUEUE_ITEMS,
+        MAX_CONVERSION_QUEUE_ITEMS + 1,
+    ] {
+        let mut request = plan_request(
+            &handles[..count],
+            a_chosen_intent(),
+            ConversionConflictPolicyDto::Fail,
+            receipt,
+        );
+        request.destination_policy = Some(super::dto::DestinationPolicyDto::NamedSubfolder {
+            name: "m67-output".to_owned(),
+        });
+        let answer = service.conversion_queue_plan(&request);
+        if count == 0 {
+            assert_eq!(answer.expect_err("empty scope").kind, "queue_is_empty");
+        } else if count <= MAX_CONVERSION_QUEUE_ITEMS {
+            let described = planned(answer.expect("within capacity"));
+            assert_eq!(described.capacity, MAX_CONVERSION_QUEUE_ITEMS);
+            assert_eq!(
+                described
+                    .items
+                    .iter()
+                    .map(|item| &item.dataset_handle)
+                    .collect::<Vec<_>>(),
+                handles[..count].iter().collect::<Vec<_>>()
+            );
+        } else {
+            assert_eq!(
+                answer.expect("typed capacity refusal"),
+                ConversionPlanOutcomeDto::CapacityExceeded {
+                    capacity: MAX_CONVERSION_QUEUE_ITEMS,
+                    requested_count: count,
+                }
+            );
+            let refused = service.begin_conversion_queue(
+                &begin_request(
+                    &handles,
+                    a_chosen_intent(),
+                    ConversionConflictPolicyDto::Fail,
+                    receipt,
+                ),
+                document,
+            );
+            assert_eq!(begin_refusal(&refused).kind, "queue_too_large");
+        }
+        assert!(matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Idle
+        ));
+        assert_eq!(launches.load(Ordering::SeqCst), 0);
+        assert!(!fixture.directory.join("m67-output").exists());
+    }
+}
+
 /// An identity no admitted row carries never becomes an intent.
 ///
 /// Five individually valid parts do not compose a measured combination, and the

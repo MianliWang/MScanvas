@@ -7577,7 +7577,9 @@ vendor family, adds no overwrite or automatic rename, changes no queue
 membership, order, scope or capacity, no cancellation or quarantine semantics, no
 scientific integrity policy, no persistence and no diagnostics schema.
 
-**M6.6 — destination and conflict UX — is next. M6.6 has not started.**
+**Historical M6.5 handoff:** M6.6 was next at that checkpoint. It subsequently
+shipped in PR #99, whose true merge is
+`5b91f6c5ab1c3013eb9556ddf83b76217a56f249`.
 
 ## M6.6 destination and conflict candidate, 2026-09-08
 
@@ -7663,3 +7665,29 @@ could follow a link and create its missing target; `OBJ_DONT_REPARSE` closes tha
 case. The independently verified bot finding for valid COM0/LPT0 names is also
 repaired in the Rust validator. Final exact-head validation and review records
 remain in the PR and external checkpoint, not in the earlier local-run totals.
+
+## M6.7 explicit conversion scope, 2026-09-08
+
+Baseline live-verified before edits: local HEAD/main/origin-main and remote main
+all `5b91f6c5ab1c3013eb9556ddf83b76217a56f249`, with clean index/worktree,
+no untracked files, stash or active operation. PR #99 is the published M6.6
+true merge. The prior candidate-stage records above remain historical evidence.
+
+M6.7 implements explicit selected/all scope on the existing conversion panel.
+All includes eligible workspace rows outside search; selected includes every
+curated eligible row and never falls back to focus. Counts explain excluded
+rows. One pure model uses the existing full-roster ordering and stable added
+tie-break. Rust returns its unchanged capacity on plans and typed oversized-scope
+refusals. The existing BEGIN, lane, receipt and queue/retry authorities remain
+the execution path. No production dependency or scientific-support gate changes.
+
+Implementation and validation are complete: 1649 frontend tests; all required
+local frontend/Rust/repository gates; browser scope 7/7 plus M6.6 8/8; and
+exact-head native scope 2/2 plus unchanged M6.6 5/5. Two isolated full-diff
+reviews admitted `fe176c2a524aa9ab7ea1fbfa363bc30fef31ed30` with zero must-fix
+findings. The record follow-up corrects two stale state-count comments and
+closes current product/status wording. Final confirmation, protected merge
+and natural-main CI identities are in [PR #100](https://github.com/MianliWang/MScanvas/pull/100).
+The evidence and 36-path closure are in
+[the M6.7 record](docs/ux/M6_7_CONVERSION_SCOPE.md).
+M6.8 has not started.

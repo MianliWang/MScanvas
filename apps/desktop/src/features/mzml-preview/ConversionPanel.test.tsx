@@ -80,16 +80,17 @@ describe("destination request and queue truth", () => {
     });
     renderApp(api);
     const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
     const named = () => within(panel).getByRole("radio", { name: "Named subfolder beside each source" });
     fireEvent.click(named());
     fireEvent.change(within(panel).getByLabelText("Subfolder name"), { target: { value: "Native QA" } });
     fireEvent.click(within(panel).getByRole("radio", { name: "Custom local folder" }));
     fireEvent.click(within(panel).getByRole("radio", { name: "Skip if a file of that name already exists" }));
-    await pressConvert(panel, "Convert focused…");
+    await pressConvert(panel, "Convert 1 selected…");
     expect(api.beginRequests()[0]?.destinationPolicy).toEqual({ kind: "customFolder" });
-    expect(within(panel).queryByRole("button", { name: "Convert focused…" })).toBeNull();
+    expect(within(panel).queryByRole("button", { name: "Convert 1 selected…" })).toBeNull();
     await act(async () => picker.resolve({ status: "idle" }));
-    await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert focused…" })).toHaveFocus());
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toHaveFocus());
     expect(within(panel).getByRole("radio", { name: "Skip if a file of that name already exists" })).toBeChecked();
     fireEvent.click(named());
     expect(within(panel).getByLabelText("Subfolder name")).toHaveValue("Native QA");
@@ -107,6 +108,7 @@ describe("destination request and queue truth", () => {
     });
     renderApp(api);
     const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
     await waitFor(() => expect(within(panel).getByText("Requested destination")).toBeVisible());
     const actual = queueResult();
     expect(within(actual).getByText("Queue destination").nextElementSibling?.textContent).toContain("Original");
@@ -143,7 +145,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /sample-7\.lcd/ });
+    fireEvent.click(await screen.findByRole("option", { name: /sample-7\.lcd/ }));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
@@ -157,7 +159,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     expect(within(panel).getByText("sample-7.mzML")).toBeVisible();
     expect(within(panel).getAllByText("Shimadzu LabSolutions LCD").length).toBeGreaterThan(0);
 
-    await pressConvert(panel, "Convert focused…");
+    await pressConvert(panel, "Convert 1 selected…");
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([{ handles: ["file-7"], conflictPolicy: "fail" }]);
     });
@@ -190,7 +192,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     expect(within(panel).queryByText(/not part of this conversion/)).toBeNull();
   });
 
-  it("mounts no Convert panel for an mzML-only workspace, and no family-specific invitation", async () => {
+  it("shows an empty eligible scope for an mzML-only workspace", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [selectedFile],
       availability: availableBackend,
@@ -198,11 +200,10 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     renderApp(api);
     await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
 
-    // The panel is not a fixture: with nothing convertible and nothing to
-    // report it stays unmounted, and no sentence anywhere invites the user to
-    // pick a "Thermo RAW row" -- the empty state, where it does render, is
-    // family-neutral.
-    expect(screen.queryByRole("region", { name: "Convert" })).toBeNull();
+    // Scope remains explicit and the empty-state recovery is family-neutral.
+    const panel = screen.getByRole("region", { name: "Convert" });
+    expect(within(panel).getByRole("button", { name: "Convert 0 selected…" })).toBeDisabled();
+    expect(within(panel).getByText("No eligible acquisitions in this scope.")).toBeVisible();
     expect(document.body.textContent).not.toMatch(/Thermo RAW row/);
   });
 
@@ -251,7 +252,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
       },
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /sample-7\.lcd/ });
+    fireEvent.click(await screen.findByRole("option", { name: /sample-7\.lcd/ }));
 
     // A success, in the queue's own terms, with the exact measured facts --
     // never "empty", "failed" or "no data".
@@ -265,13 +266,13 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
 });
 
 describe("queueing selected Thermo RAW conversions", () => {
-  it("keeps one focused row a queue of one, with the action it always had", async () => {
+  it("keeps one explicitly selected row a queue of one", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [first],
       availability: availableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /run-1\.raw/ });
+    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
@@ -280,7 +281,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       ).toBeVisible();
     });
 
-    await pressConvert(panel, "Convert focused…");
+    await pressConvert(panel, "Convert 1 selected…");
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([{ handles: ["file-1"], conflictPolicy: "fail" }]);
     });
@@ -334,7 +335,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     });
     // Counted out loud rather than silently dropped.
     expect(
-      within(panel).getByText(/1 selected row is already mzML and is not part of this conversion/),
+      within(panel).getByText(/3 requested · 2 eligible · 1 excluded/),
     ).toBeVisible();
 
     await pressConvert(panel, "Convert 2 selected…");
@@ -777,7 +778,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       },
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /run-1\.raw/ });
+    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
@@ -914,10 +915,10 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /run-1\.raw/ });
+    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
     const panel = await screen.findByRole("region", { name: "Convert" });
 
-    await pressConvert(panel, "Convert focused…");
+    await pressConvert(panel, "Convert 1 selected…");
     await waitFor(() => {
       expect(within(panel).getByText("1 converted, 0 skipped, 0 failed of 1.")).toBeVisible();
     });
@@ -944,7 +945,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /run-1\.raw/ });
+    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
 
     const preview = screen.getByRole("button", { name: "Preview focused" });
     expect(preview).toBeDisabled();
@@ -967,7 +968,7 @@ describe("queueing selected Thermo RAW conversions", () => {
         </PreviewApiProvider>
       </WorkspaceDropTransportProvider>,
     );
-    await screen.findByRole("option", { name: /run-1\.raw/ });
+    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
 
     await act(async () => {
       transport.emit({ sequence: 1, state: { status: "rejected", reason: "conversion_busy" } });

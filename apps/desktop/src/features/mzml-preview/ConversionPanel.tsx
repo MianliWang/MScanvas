@@ -20,6 +20,8 @@ import { formatByteLength, formatCount, formatDuration } from "./format";
 import type { ConversionConfigurationView } from "./useConversionConfiguration";
 import type { ConversionOperation } from "./useConversionOperation";
 import type { ConversionPlanView } from "./useConversionPlan";
+import type { ConversionScope, ResolvedConversionScope } from "./conversionScope";
+import { SORT_MODE_LABEL } from "./rosterView";
 
 /**
  * What each conflict policy means, in the user's terms rather than the
@@ -230,30 +232,22 @@ export interface ConversionPanelProps {
    * One selected row is still a selected row: labelling it `Convert focused…`
    * would name a row the action might not be acting on.
    */
-  readonly scope: "selection" | "focused";
-  /** The rows this panel would queue, in the order they would run. */
-  readonly handles: readonly string[];
-  /** How many selected rows are not convertible and are therefore excluded. */
-  readonly excludedSelectedCount: number;
+  readonly resolvedScope: ResolvedConversionScope;
+  readonly onScopeChange: (scope: ConversionScope) => void;
 }
 
 /**
  * The conversion queue: what it would do, and what it did.
  *
- * Acts on the selection where there is one and on the focused row otherwise, so
- * a multi-row selection becomes a queue without a second control. The scope a
- * selection gives is a set the user curates, so the whole of it — the ordered
- * list, the name each item would write, and the rows excluded for being mzML
- * already — is on screen before the action is pressed, and it is bound at that
- * moment rather than tracked afterwards.
+ * The explicitly chosen scope is described before commitment. The queue then
+ * owns its resolved membership and order, including on retry.
  */
 export function ConversionPanel({
   conversion,
   configuration,
   plan,
-  scope,
-  handles,
-  excludedSelectedCount,
+  resolvedScope,
+  onScopeChange,
 }: ConversionPanelProps): ReactElement | null {
   const { state } = conversion;
   const terminal = state.status === "terminal";
@@ -276,7 +270,7 @@ export function ConversionPanel({
   // whole.
   const startAvailability = conversionAvailability(conversion.lane, {
     kind: "start",
-    targetCount: handles.length,
+    targetCount: resolvedScope.handles.length,
     // The plan is a fact the one rule consults, not a second gate beside it.
     // What a reader presses `Convert` for is the conversion the summary above
     // describes, so a control that could be pressed while that summary is
@@ -300,7 +294,7 @@ export function ConversionPanel({
   // With rows to convert it is always offered and `startAvailability` says
   // whether it may be pressed and why not, which is what lets a failed plan and
   // one being read refuse it differently.
-  const startOffered = !conversion.busy && plan.startPlan !== "absent";
+  const startOffered = !conversion.busy;
   const retryOffered =
     state.status === "terminal" &&
     state.reason === "completed" &&
@@ -336,13 +330,6 @@ export function ConversionPanel({
   // child. Handed down so the control names the element this panel actually
   // rendered.
   const settingsRefusalNoticeId = conversionRefusalNoticeId(settingsRefusal);
-
-  // Nothing to say. The panel is not a permanent fixture: with no convertible
-  // row focused and no operation to report, it would be a heading over an empty
-  // space in the one column the roster is trying to use.
-  if (!conversion.busy && !terminal && plan.startPlan === "absent") {
-    return null;
-  }
 
   return (
     <section
@@ -397,14 +384,13 @@ export function ConversionPanel({
           disabled — is the panel describing two different things in the same
           shape. A finished queue is different: there the plan is how the user
           converts something else, so it stays. */}
-      {conversion.busy || plan.startPlan === "absent" ? null : (
+      {conversion.busy ? null : (
         <PlanState
           conversion={conversion}
-          excludedSelectedCount={excludedSelectedCount}
-          handles={handles}
+          resolvedScope={resolvedScope}
+          onScopeChange={onScopeChange}
           plan={plan}
           repeating={terminal}
-          scope={scope}
           startAvailability={startAvailability}
           convertButton={convertButton}
           onCustomStart={() => { restoreAfterPicker.current = true; }}
@@ -680,10 +666,9 @@ function ExportDiagnostics({
 function PlanState({
   conversion,
   plan,
-  handles,
-  excludedSelectedCount,
+  resolvedScope,
+  onScopeChange,
   startAvailability,
-  scope,
   convertButton,
   onCustomStart,
 }: {
@@ -692,11 +677,10 @@ function PlanState({
   readonly convertButton: RefObject<HTMLButtonElement | null>;
   readonly onCustomStart: () => void;
   /** The rows this panel would queue, for the control that names them. */
-  readonly handles: readonly string[];
-  readonly excludedSelectedCount: number;
+  readonly resolvedScope: ResolvedConversionScope;
+  readonly onScopeChange: (scope: ConversionScope) => void;
   /** Whether a conversion of these rows may start, and what to say when not. */
   readonly startAvailability: ConversionAvailability;
-  readonly scope: "selection" | "focused";
   /** Whether a previous result is on screen above this plan. */
   readonly repeating: boolean;
 }): ReactElement | null {
@@ -707,23 +691,43 @@ function PlanState({
   // now, so reading this off the summary made the label say "Convert 0
   // selected…" for the whole of the window a plan is being worked out -- a
   // count that was never true of anything.
-  const count = summary === null ? handles.length : summary.items.length;
+  const count = resolvedScope.handles.length;
   return (
     <div className="conversion-plan">
+      <fieldset className="conversion-scope" aria-describedby="conversion-scope-summary">
+        <legend>Conversion scope</legend>
+        <label><input type="radio" name="conversion-scope" value="selected"
+          checked={resolvedScope.scope === "selected"} onChange={() => onScopeChange("selected")} />Selected rows</label>
+        <label><input type="radio" name="conversion-scope" value="all"
+          checked={resolvedScope.scope === "all"} onChange={() => onScopeChange("all")} />All workspace rows</label>
+      </fieldset>
+      <p id="conversion-scope-summary" aria-live="polite">
+        {resolvedScope.requestedCount} requested · {count} eligible · {resolvedScope.excludedCount} excluded
+        {resolvedScope.excludedCount > 0 ? " (not convertible)" : ""}.
+        {resolvedScope.scope === "all" ? " All workspace rows, including those outside search." : " All selected rows, including those outside search."}
+      </p>
+      <p className="quiet-text">Order: {SORT_MODE_LABEL[resolvedScope.sort]}. Equal keys keep added order.</p>
+      {summary === null ? null : <p className="quiet-text" data-testid="conversion-capacity">Queue capacity: {summary.capacity} eligible acquisitions.</p>}
+      {plan.capacityRefusal === null ? null : <p className="notice notice-warning" data-testid="conversion-capacity">
+        {plan.capacityRefusal.requestedCount} eligible acquisitions exceed the queue capacity of {plan.capacityRefusal.capacity}.
+      </p>}
       {summary === null ? (
-        <PlanPending plan={plan} />
+        <>
+          <PlanPending plan={plan} />
+          {count === 0 ? null : <ol aria-label="Requested conversion order">
+            {resolvedScope.members.map((row, index) => <li key={row.handle}>
+              <span className="conversion-queue-order">{index + 1}</span>
+              <span className="conversion-queue-name">{row.fileName}</span>
+            </li>)}
+          </ol>}
+        </>
       ) : (
         <>
           <p id="conversion-plan-summary">
             {describeQueueFamilies(summary.items)}
-            {excludedSelectedCount === 0
-              ? ""
-              : ` ${String(excludedSelectedCount)} selected ${
-                  excludedSelectedCount === 1 ? "row is" : "rows are"
-                } already mzML and ${excludedSelectedCount === 1 ? "is" : "are"} not part of this conversion.`}
           </p>
 
-          <ol className="conversion-queue-list">
+          <ol aria-label="Reviewed conversion order" className="conversion-queue-list">
             {summary.items.map((item, index) => (
               <li key={item.datasetHandle}>
                 <span className="conversion-queue-order">{index + 1}</span>
@@ -903,7 +907,7 @@ function PlanState({
           }}
           type="button"
         >
-          {scope === "focused" ? "Convert focused…" : `Convert ${String(count)} selected…`}
+          {resolvedScope.scope === "selected" ? `Convert ${String(count)} selected…` : `Convert all ${String(count)} eligible…`}
         </button>
         {/* An explicit re-ask of the same question, and nothing automatic. A
             plan can fail for a reason the reader cannot act on, and a machine
@@ -933,7 +937,9 @@ const PLAN_PENDING_ID = "conversion-plan-pending";
 function PlanPending({ plan }: { readonly plan: ConversionPlanView }): ReactElement {
   return (
     <div className="empty-state" id={PLAN_PENDING_ID}>
-      {plan.startPlan === "failed" && plan.error !== null ? (
+      {plan.startPlan === "absent" ? <span>No eligible acquisitions in this scope.</span>
+      : plan.startPlan === "capacityExceeded" ? <span>Conversion cannot start for this scope.</span>
+      : plan.startPlan === "failed" && plan.error !== null ? (
         <span>{plan.error.summary}</span>
       ) : plan.startPlan === "selectionUnavailable" ? (
         <span>
@@ -1002,6 +1008,9 @@ function QueueState({
   const retrying = conversion.retrying && state.status === "terminal";
   return (
     <div className="conversion-running">
+      <p className="quiet-text" data-testid="conversion-bound-membership">
+        Membership and order were fixed when this queue started. Later workspace rows are outside this queue and its retry.
+      </p>
       {retrying ? (
         <>
           <p>Retrying the failures…</p>

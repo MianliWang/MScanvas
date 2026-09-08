@@ -537,6 +537,7 @@ button:disabled {
 /* Native radios in a native fieldset. The policy is a two-way choice with a
    caption, which is what a fieldset and a legend are; a pair of styled buttons
    would be the same choice with the grouping left implicit. */
+.conversion-scope,
 .conversion-conflict,
 .conversion-destination {
   display: flex;
@@ -548,6 +549,7 @@ button:disabled {
   gap: 4px;
 }
 
+.conversion-scope > legend,
 .conversion-conflict > legend,
 .conversion-destination > legend {
   padding: 0 4px;
@@ -555,6 +557,7 @@ button:disabled {
   font-size: 0.85rem;
 }
 
+.conversion-scope > label,
 .conversion-conflict > label,
 .conversion-destination > label {
   display: flex;

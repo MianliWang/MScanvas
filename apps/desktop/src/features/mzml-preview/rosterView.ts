@@ -185,6 +185,12 @@ function compareIn(mode: SortMode): (left: Placed, right: Placed) => number {
   }
 }
 
+/** The complete roster in the same order as its visible projection. */
+export function orderRoster(datasets: readonly SelectedFile[], sort: SortMode): readonly SelectedFile[] {
+  return datasets.map((dataset, index) => ({ dataset, index }))
+    .sort(compareIn(sort)).map(({ dataset }) => dataset);
+}
+
 /**
  * Which of the true things about a pinned row to say.
  *

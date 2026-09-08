@@ -1303,6 +1303,35 @@ after cancellation is understood.
 
 *Downstream:* M6.8.
 
+**M6.7 implementation, 2026-09-08.** `Selected rows` and `All workspace rows`
+are explicit choices on the existing conversion surface. Selected means every
+curated eligible row, including a selection of one; all means every eligible
+workspace row. Focus and search are not scope operands. The complete roster's
+existing sort comparison supplies order, with Rust's added order breaking ties;
+no second stored roster or scientific-support table is introduced.
+
+Requested, eligible and excluded counts precede the ordered plan. The plan
+question also carries the document-local scope choice; changing it invalidates
+the earlier question even when both scopes resolve to the same members. Member
+and order changes synchronously withdraw the review before React renders again.
+The plan effect reads the current question at dispatch, and both identity and
+ordinal still guard reply installation. Search-only presentation changes retain
+an identical question and cause no new plan read.
+
+The plan boundary minimally adds `capacityExceeded { capacity, requestedCount }`
+so an oversized eligible request can receive Rust's actual bound without creating
+a queue or resolving a destination. BEGIN retains its independent size refusal.
+The UI carries no numeric capacity constant. `MAX_CONVERSION_QUEUE_ITEMS` and
+its rationale remain M6.8's; M6.7 does not re-decide them.
+
+The existing handle-list BEGIN revalidates roster identity and binds membership
+and order once. Queue state then states that later workspace rows are outside
+that queue and its retry. No mutation/admission guard is relaxed. Destination
+policies, configuration receipts, scientific intent, cleanup leases, private
+staging and all five lifecycle judgements remain their existing owners' facts.
+The changed-path closure and validation record are in
+[M6_7_CONVERSION_SCOPE.md](../../ux/M6_7_CONVERSION_SCOPE.md).
+
 ### M6.8 — Cancellation, capacity, and truthful progress
 
 *Purpose:* say exactly what a user may stop, prove it against the real backend,

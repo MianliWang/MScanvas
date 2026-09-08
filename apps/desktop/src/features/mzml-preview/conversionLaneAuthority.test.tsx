@@ -129,6 +129,7 @@ async function conversionPanel(): Promise<HTMLElement> {
 }
 
 async function convertControl(): Promise<HTMLElement> {
+  fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
   const panel = await conversionPanel();
   return within(panel).findByRole("button", { name: /^Convert/u });
 }
@@ -364,9 +365,8 @@ describe("the conversion lane's one authority, as it ships", () => {
     await waitFor(() => {
       expect(retry).toBeEnabled();
     });
-    // There is no start control to compare against, because there is nothing to
-    // start on -- which is exactly the state the two rules disagree in.
-    expect(within(panel).queryByRole("button", { name: /^Convert/u })).toBeNull();
+    // The explicit empty scope refuses a new start while the bound retry is usable.
+    expect(within(panel).getByRole("button", { name: /^Convert/u })).toBeDisabled();
 
     fireEvent.click(retry);
     await waitFor(() => {
@@ -589,6 +589,8 @@ describe("the conversion lane's one authority, as it ships", () => {
     });
 
     const search = screen.getByRole("searchbox", { name: "Search files" });
+    // Select the row the query will match; a selected nonmatch stays pinned.
+    fireEvent.click(await screen.findByRole("option", { name: /run-2\.raw/ }));
     expect(search).toBeEnabled();
     fireEvent.change(search, { target: { value: "run-2" } });
     await waitFor(() => {

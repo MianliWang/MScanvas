@@ -44,6 +44,7 @@ import type {
   PreviewError,
 } from "./contracts";
 import { catalogRow } from "./conversionIntentSelection";
+import type { ConversionScope } from "./conversionScope";
 
 /**
  * The exact question one plan answers.
@@ -52,6 +53,7 @@ import { catalogRow } from "./conversionIntentSelection";
  * question and an answer that could not say which one would be uncheckable.
  */
 export interface ConversionPlanIdentity {
+  readonly scope: ConversionScope;
   /** In the order they would run, which is the order on screen. */
   readonly handles: readonly string[];
   readonly intentId: string;
@@ -73,6 +75,7 @@ export function sameQuestion(
   right: ConversionPlanIdentity,
 ): boolean {
   return (
+    left.scope === right.scope &&
     left.intentId === right.intentId &&
     left.conflictPolicy === right.conflictPolicy &&
     sameDestination(left.destinationPolicy, right.destinationPolicy) &&
@@ -115,7 +118,7 @@ export type ConversionPlanQuestion =
   | { readonly kind: "ask"; readonly identity: ConversionPlanIdentity };
 
 /**
- * The plan machine's five states.
+ * The plan machine's six states.
  *
  * **Only `loading` carries an ordinal**, because matching a reply is the only
  * thing an ordinal is for and an answer has no outstanding request to
@@ -146,6 +149,12 @@ export type ConversionPlanState =
       readonly plan: ConversionQueuePlan;
     }
   | {
+      readonly status: "capacityExceeded";
+      readonly identity: ConversionPlanIdentity;
+      readonly capacity: number;
+      readonly requestedCount: number;
+    }
+  | {
       readonly status: "failed";
       readonly identity: ConversionPlanIdentity;
       readonly error: PreviewError;
@@ -153,6 +162,7 @@ export type ConversionPlanState =
 
 /** The facts a plan question is posed from, none of which this module owns. */
 export interface ConversionPlanInputs {
+  readonly scope: ConversionScope;
   /** The rows a conversion would act on, in the order they would run. */
   readonly handles: readonly string[];
   /** The projection this document is rendering. */
@@ -202,6 +212,7 @@ export function planQuestion(inputs: ConversionPlanInputs): ConversionPlanQuesti
   return {
     kind: "ask",
     identity: {
+      scope: inputs.scope,
       handles: inputs.handles,
       intentId: inputs.selectedIntentId,
       conflictPolicy: inputs.conflictPolicy,
@@ -227,7 +238,7 @@ export type ConversionPlanStep =
 /**
  * The transition table, whole.
  *
- * Total over the five states and the three questions, and it is the only thing
+ * Total over the six states and the three questions, and it is the only thing
  * that decides what the machine does — so "no `loading` without a request
  * actually in flight" is a property of this function rather than a rule every
  * call site has to remember: the one step that produces `loading` is the one
@@ -258,6 +269,7 @@ export function planStep(
   if (
     (current.status === "loading" ||
       current.status === "ready" ||
+      current.status === "capacityExceeded" ||
       current.status === "failed") &&
     sameQuestion(current.identity, question.identity)
   ) {
@@ -288,6 +300,7 @@ export function retryStep(
 /** What a reply says, once the transport has been unwrapped. */
 export type ConversionPlanReply =
   | { readonly kind: "plan"; readonly plan: ConversionQueuePlan }
+  | { readonly kind: "capacityExceeded"; readonly capacity: number; readonly requestedCount: number }
   | { readonly kind: "failed"; readonly error: PreviewError };
 
 /**
@@ -355,7 +368,19 @@ export function installReply(
   if (!awaitsReply(current, identity, ordinal)) {
     return null;
   }
+  if (reply.kind === "capacityExceeded") {
+    return reply.requestedCount === identity.handles.length &&
+      Number.isSafeInteger(reply.capacity) && reply.capacity > 0 &&
+      reply.requestedCount > reply.capacity
+      ? { status: "capacityExceeded", identity, capacity: reply.capacity, requestedCount: reply.requestedCount }
+      : { status: "failed", identity, error: {
+        kind: "conversion_plan_mismatch",
+        summary: "The conversion description did not match this request. Describe it again.",
+        detail: null, retryable: true,
+      } };
+  }
   if (reply.kind === "plan" && !sameQuestion(identity, {
+    scope: identity.scope,
     handles: reply.plan.items.map((item) => item.datasetHandle),
     intentId: reply.plan.intent.id,
     conflictPolicy: reply.plan.conflictPolicy,
@@ -388,6 +413,7 @@ export function installReply(
  * the replacement request is issued by the very commit this render produces.
  */
 export type ConversionStartPlan =
+  | "capacityExceeded"
   /** A plan for exactly the question being asked. */
   | "ready"
   /** A request is in flight, or one is about to replace an answer that is not
@@ -423,6 +449,9 @@ export function startPlan(
       // which is the shape this whole machine exists to remove.
       return question.reason;
     case "ask":
+      if (state.status === "capacityExceeded" && sameQuestion(state.identity, question.identity)) {
+        return "capacityExceeded";
+      }
       if (state.status === "ready" && sameQuestion(state.identity, question.identity)) {
         return "ready";
       }

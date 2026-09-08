@@ -258,6 +258,8 @@ describe("the conversion lane's availability decision", () => {
  */
 function planFor(reason: ConversionUnavailableReason): ConversionStartPlan {
   switch (reason) {
+    case "plan-capacity-exceeded":
+      return "capacityExceeded";
     case "plan-reading":
       return "reading";
     case "plan-failed":
@@ -294,6 +296,7 @@ function laneFor(reason: ConversionUnavailableReason): Partial<ConversionLane> {
       return { workspaceSettling: true };
     // The target and plan reasons are reached on a clear lane, by the action.
     case "no-convertible-target":
+    case "plan-capacity-exceeded":
     case "plan-reading":
     case "plan-failed":
     case "plan-settings-unknown":

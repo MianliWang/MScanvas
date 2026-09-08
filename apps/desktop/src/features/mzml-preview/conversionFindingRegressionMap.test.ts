@@ -302,6 +302,7 @@ describe("the PR #95 blocker families, and what now prevents each", () => {
     // is in, and every fact that changes what the queue would mean -- the rows,
     // the combination, the policy and the binding -- is part of the question.
     const asked = {
+      scope: "selected" as const,
       handles: ["file-1"],
       intentId: shippedIntent.id,
       conflictPolicy: "fail" as const,

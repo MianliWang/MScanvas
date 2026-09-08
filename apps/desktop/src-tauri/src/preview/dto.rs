@@ -1438,6 +1438,12 @@ pub struct ConversionQueuePlanDto {
 pub enum ConversionPlanOutcomeDto {
     #[serde(rename_all = "camelCase")]
     Planned { plan: Box<ConversionQueuePlanDto> },
+    /// A scope cannot commit. Carries the actual bound before any queue or picker.
+    #[serde(rename_all = "camelCase")]
+    CapacityExceeded {
+        capacity: usize,
+        requested_count: usize,
+    },
     /// The requested binding is not the one Rust holds. The current authority
     /// travels with the refusal, so the panel learns of the replacement from
     /// the refusal itself rather than from an unrelated delivery.

@@ -81,7 +81,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /Enolase_repeats\.wiff/ });
+    fireEvent.click(await screen.findByRole("option", { name: /Enolase_repeats\.wiff/ }));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
@@ -100,7 +100,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     expect((output?.textContent ?? "").trim()).not.toBe("");
 
     // And the action takes the row.
-    await pressConvert(panel, "Convert focused…");
+    await pressConvert(panel, "Convert 1 selected…");
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([{ handles: ["file-9"], conflictPolicy: "fail" }]);
     });

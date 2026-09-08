@@ -1468,6 +1468,11 @@ export interface ConversionQueuePlan {
 export type ConversionPlanOutcome =
   | { readonly outcome: "planned"; readonly plan: ConversionQueuePlan }
   | {
+      readonly outcome: "capacityExceeded";
+      readonly capacity: number;
+      readonly requestedCount: number;
+    }
+  | {
       readonly outcome: "bindingReplaced";
       readonly authority: BackendAuthorityProjection;
     };

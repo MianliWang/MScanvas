@@ -1599,6 +1599,12 @@ impl PreviewService {
         // and acquires no destination object: source-relative anchors remain
         // conditional until BEGIN captures the logical acquisitions under its
         // mutation gate, and a custom folder still awaits the native picker.
+        if request.handles.len() > MAX_CONVERSION_QUEUE_ITEMS {
+            return Ok(ConversionPlanOutcomeDto::CapacityExceeded {
+                capacity: MAX_CONVERSION_QUEUE_ITEMS,
+                requested_count: request.handles.len(),
+            });
+        }
         let policy = DestinationPolicy::from_request(request.destination_policy.as_ref())?;
         let items = self.plan_queue_items(&request.handles, intent, &policy)?;
         Ok(ConversionPlanOutcomeDto::Planned {
@@ -4949,6 +4955,7 @@ impl PreviewService {
     ) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
         match self.conversion_queue_plan(&self.shipped_plan_request(&[handle.to_owned()]))? {
             ConversionPlanOutcomeDto::Planned { plan } => Ok(*plan),
+            ConversionPlanOutcomeDto::CapacityExceeded { .. } => Err(queue_too_large()),
             ConversionPlanOutcomeDto::BindingReplaced { .. } => {
                 panic!("this session is asked about the binding it is on")
             }
@@ -4968,6 +4975,7 @@ impl PreviewService {
     ) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
         match self.conversion_queue_plan(&self.shipped_plan_request(handles))? {
             ConversionPlanOutcomeDto::Planned { plan } => Ok(*plan),
+            ConversionPlanOutcomeDto::CapacityExceeded { .. } => Err(queue_too_large()),
             ConversionPlanOutcomeDto::BindingReplaced { .. } => {
                 panic!("this session is asked about the binding it is on")
             }
