@@ -1214,6 +1214,9 @@ export interface ConversionQueue {
   readonly itemCount: number;
   readonly retryRound: number;
   readonly conflictPolicy: ConversionConflictPolicy;
+  readonly destinationPolicy: DestinationPolicy;
+  /** Whether Rust holds destination bindings, not a promise that names are free. */
+  readonly destinationStatus: "unresolved" | "bound";
   readonly finalizedCount: number;
   readonly skippedCount: number;
   readonly failedCount: number;
@@ -1407,12 +1410,19 @@ export interface ConversionQueuePlanItem {
  * move on a build that has not changed — and a question carrying the revision
  * would call its own answer stale for a fact about msaccess's grammar.
  */
+/** A semantic destination choice. Rust alone resolves and retains locations. */
+export type DestinationPolicy =
+  | { readonly kind: "customFolder" }
+  | { readonly kind: "sourceSibling" }
+  | { readonly kind: "namedSubfolder"; readonly name: string };
+
 export interface ConversionPlanRequest {
   /** The rows, in the order they would run, which is the order on screen. */
   readonly handles: readonly string[];
   /** The admitted combination, by the identity Rust's catalog gave it. */
   readonly intentId: string;
   readonly conflictPolicy: ConversionConflictPolicy;
+  readonly destinationPolicy: DestinationPolicy;
   /** The binding this side is rendering. */
   readonly expectedReceipt: BackendBindingReceipt;
 }
@@ -1435,6 +1445,8 @@ export interface ConversionQueuePlan {
   readonly intent: ConversionIntentDescriptor;
   /** The conflict policy this plan was asked under. */
   readonly conflictPolicy: ConversionConflictPolicy;
+  /** Validated by Rust; describing it creates and resolves no destination. */
+  readonly destinationPolicy: DestinationPolicy;
   /** The binding this plan is about, checked by Rust and given back. */
   readonly receipt: BackendBindingReceipt;
 }
@@ -1472,6 +1484,7 @@ export interface ConversionBeginRequest {
   readonly handles: readonly string[];
   readonly intentId: string;
   readonly conflictPolicy: ConversionConflictPolicy;
+  readonly destinationPolicy: DestinationPolicy;
   /** The binding the plan on screen was authored under. */
   readonly expectedReceipt: BackendBindingReceipt;
 }

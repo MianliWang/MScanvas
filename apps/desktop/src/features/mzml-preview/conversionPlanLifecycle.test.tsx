@@ -22,6 +22,7 @@ import { PreviewApiProvider } from "./api";
 import type {
   ConversionPlanOutcome,
   ConversionPlanRequest,
+  DestinationPolicy,
   SelectedFile,
 } from "./contracts";
 import { WorkspaceDropTransportProvider } from "./dropTransport";
@@ -117,6 +118,7 @@ function planFor(request: ConversionPlanRequest): ConversionPlanOutcome {
       intent: admitted.intent,
       conflictPolicy: request.conflictPolicy,
       receipt: request.expectedReceipt,
+      destinationPolicy: request.destinationPolicy,
     },
   };
 }
@@ -167,6 +169,7 @@ describe("the plan the panel is showing", () => {
       intentId: shippedIntent.id,
       conflictPolicy: "fail",
       expectedReceipt: firstBindingReceipt,
+      destinationPolicy: { kind: "customFolder" },
     });
     // And nothing about the ordering token, which says which answer is newer
     // and never which installation one is about.
@@ -593,13 +596,164 @@ describe("the plan the panel is showing", () => {
     expect(summary.getByText("Spectra")).toBeVisible();
     expect(summary.getByText("Stored precision")).toBeVisible();
     expect(summary.getAllByText("If an output name is taken").length).toBeGreaterThan(0);
-    expect(summary.getByText("Destination").nextElementSibling?.textContent).toBe(
-      "One folder, chosen next",
+    expect(summary.getByText("Requested destination").nextElementSibling?.textContent).toBe(
+      "One local folder, chosen after Convert",
     );
   });
 });
 
 describe("starting the conversion the plan describes", () => {
+  it.each((["ready", "loading"] as const).flatMap((initial) =>
+    (["policy", "conflict", "intent", "rows", "name"] as const).map((component) => ({ initial, component })),
+  ))("invalidates $initial A through same-batch $component A to B to A before any effect", async ({ initial, component }) => {
+    const plans = controlledPlans();
+    const api = createFakePreviewApi({ initialDatasets: [FIRST], availability: availableBackend, conversionPlan: plans.conversionPlan });
+    const { result } = await mountHook(api);
+    await waitFor(() => expect(plans.asked).toHaveLength(1));
+    let aIndex = 0;
+    if (component === "name") {
+      act(() => result.current.conversion.setDestinationPolicy({ kind: "namedSubfolder", name: "A" }));
+      await waitFor(() => expect(plans.asked).toHaveLength(2));
+      aIndex = 1;
+    }
+    if (initial === "ready") await act(async () => plans.answer(aIndex));
+    const question = planOf(result).question;
+    if (question.kind !== "ask") throw new Error("expected a conversion question");
+    const oldConvert = result.current.conversion.convert;
+    act(() => {
+      if (component === "policy") {
+        result.current.conversion.setDestinationPolicy({ kind: "sourceSibling" });
+        result.current.conversion.setDestinationPolicy({ kind: "customFolder" });
+      } else if (component === "conflict") {
+        result.current.conversion.setConflictPolicy("skip");
+        result.current.conversion.setConflictPolicy("fail");
+      } else if (component === "intent") {
+        result.current.conversionConfiguration.select(OTHER_INTENT.id);
+        result.current.conversionConfiguration.select(shippedIntent.id);
+      } else if (component === "rows") {
+        result.current.conversionPlan.describe([SECOND.handle]);
+        result.current.conversionPlan.describe([FIRST.handle]);
+      } else {
+        result.current.conversion.setDestinationPolicy({ kind: "namedSubfolder", name: "B" });
+        result.current.conversion.setDestinationPolicy({ kind: "namedSubfolder", name: "A" });
+      }
+      oldConvert(question.identity);
+      expect(api.beginRequests()).toHaveLength(0);
+    });
+    await waitFor(() => expect(plans.asked).toHaveLength(aIndex + 2));
+    expect(plans.asked[aIndex]).toEqual(plans.asked[aIndex + 1]);
+    await act(async () => plans.answer(aIndex));
+    expect(planOf(result).current).toBeNull();
+    expect(planOf(result).state.status).toBe("loading");
+    await act(async () => plans.answer(aIndex + 1));
+    expect(planOf(result).startPlan).toBe("ready");
+  });
+
+  it("discards the first A reply after A to B to A issued a new ordinal", async () => {
+    const plans = controlledPlans();
+    const api = createFakePreviewApi({
+      initialDatasets: [FIRST], availability: availableBackend, conversionPlan: plans.conversionPlan,
+    });
+    const { result } = await mountHook(api);
+    await waitFor(() => expect(plans.asked).toHaveLength(1));
+    act(() => result.current.conversion.setDestinationPolicy({ kind: "sourceSibling" }));
+    await waitFor(() => expect(plans.asked).toHaveLength(2));
+    act(() => result.current.conversion.setDestinationPolicy({ kind: "customFolder" }));
+    await waitFor(() => expect(plans.asked).toHaveLength(3));
+    expect(plans.asked[0]).toEqual(plans.asked[2]);
+    await act(async () => {
+      plans.fail(0, previewError({ summary: "An obsolete failure." }));
+      plans.answer(1);
+    });
+    expect(planOf(result).state.status).toBe("loading");
+    expect(planOf(result).error).toBeNull();
+    await act(async () => plans.answer(2));
+    expect(planOf(result).startPlan).toBe("ready");
+    expect(api.beginRequests()).toHaveLength(0);
+  });
+
+  it.each(["policy", "subfolder name", "conflict", "intent", "rows"] as const)(
+    "rejects an old Convert handler after a %s setter in the same batch before effects",
+    async (change) => {
+      const plans = controlledPlans();
+      const api = createFakePreviewApi({
+        initialDatasets: [FIRST], availability: availableBackend,
+        conversionPlan: plans.conversionPlan,
+      });
+      const { result } = await mountHook(api);
+      await waitFor(() => expect(plans.asked).toHaveLength(1));
+      await act(async () => plans.answer(0));
+      if (change === "subfolder name") {
+        act(() => result.current.conversion.setDestinationPolicy({ kind: "namedSubfolder", name: "Before" }));
+        await waitFor(() => expect(plans.asked).toHaveLength(2));
+        await act(async () => plans.answer(1));
+      }
+      const oldIdentity = planOf(result).current!.identity;
+      const oldConvert = result.current.conversion.convert;
+      const nextIndex = plans.asked.length;
+      act(() => {
+        if (change === "conflict") result.current.conversion.setConflictPolicy("skip");
+        else if (change === "intent") result.current.conversionConfiguration.select(OTHER_INTENT.id);
+        else if (change === "rows") result.current.conversionPlan.describe([SECOND.handle]);
+        else result.current.conversion.setDestinationPolicy(change === "policy"
+          ? { kind: "sourceSibling" }
+          : { kind: "namedSubfolder", name: "After" });
+        // Deliberately inside the same act, before React can render or run the
+        // plan effect. An effect-only invalidation lets this old closure start.
+        oldConvert(oldIdentity);
+        expect(api.beginRequests()).toHaveLength(0);
+      });
+      expect(planOf(result).current).toBeNull();
+      await waitFor(() => expect(plans.asked).toHaveLength(nextIndex + 1));
+      await act(async () => plans.answer(nextIndex));
+      act(() => oldConvert(oldIdentity));
+      expect(api.beginRequests()).toHaveLength(0);
+      act(() => result.current.conversion.convert(planOf(result).current!.identity));
+      expect(api.beginRequests()).toEqual([plans.asked[nextIndex]]);
+    },
+  );
+
+  it("keeps an invalid subfolder as a Rust refusal and recovers on a new name", async () => {
+    const plans = controlledPlans();
+    const api = mount({ conversionPlan: plans.conversionPlan });
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => expect(plans.asked).toHaveLength(1));
+    await act(async () => plans.answer(0));
+    expect(within(panel).getByRole("radio", { name: "Custom local folder" })).toBeChecked();
+    fireEvent.click(within(panel).getByRole("radio", { name: "Named subfolder beside each source" }));
+    await waitFor(() => expect(plans.asked).toHaveLength(2));
+    fireEvent.change(within(panel).getByLabelText("Subfolder name"), { target: { value: "../taken " } });
+    await waitFor(() => expect(plans.asked).toHaveLength(3));
+    expect(plans.asked[2]!.destinationPolicy).toEqual({ kind: "namedSubfolder", name: "../taken " });
+    await act(async () => {
+      plans.fail(2, previewError({ kind: "subfolder_name_unusable", summary: "Use one local subfolder name." }));
+      plans.answer(1); // A valid answer for the old name cannot erase the refusal.
+    });
+    expect(within(panel).getByRole("button", { name: "Convert focused…" })).toBeDisabled();
+    expect(within(panel).getByText("Use one local subfolder name.")).toBeVisible();
+    expect(within(panel).getByLabelText("Subfolder name")).toHaveAttribute("aria-invalid", "true");
+    expect(api.beginRequests()).toHaveLength(0);
+    fireEvent.change(within(panel).getByLabelText("Subfolder name"), { target: { value: "Results" } });
+    await waitFor(() => expect(plans.asked).toHaveLength(4));
+    await act(async () => plans.answer(3));
+    expect(within(panel).getByRole("button", { name: "Convert focused…" })).toBeEnabled();
+    expect(within(panel).getByText("Requested destination").nextElementSibling?.textContent).toContain("Results");
+  });
+
+  it.each<DestinationPolicy>([
+    { kind: "customFolder" }, { kind: "sourceSibling" }, { kind: "namedSubfolder", name: "Results" },
+  ])("sends the complete current destination $kind to BEGIN", async (destinationPolicy) => {
+    const api = createFakePreviewApi({ initialDatasets: [FIRST], availability: availableBackend });
+    const { result } = await mountHook(api);
+    act(() => result.current.conversion.setDestinationPolicy(destinationPolicy));
+    await waitFor(() => expect(planOf(result).current?.identity.destinationPolicy).toEqual(destinationPolicy));
+    act(() => result.current.conversion.convert(planOf(result).current!.identity));
+    expect(api.beginRequests()[0]).toEqual({
+      handles: [FIRST.handle], intentId: shippedIntent.id, conflictPolicy: "fail",
+      destinationPolicy, expectedReceipt: firstBindingReceipt,
+    });
+  });
+
   it("sends the plan's own question, not a list of rows", async () => {
     const api = mount();
     const panel = await screen.findByRole("region", { name: "Convert" });
@@ -615,6 +769,7 @@ describe("starting the conversion the plan describes", () => {
       intentId: shippedIntent.id,
       conflictPolicy: "fail",
       expectedReceipt: firstBindingReceipt,
+      destinationPolicy: { kind: "customFolder" },
     });
   });
 

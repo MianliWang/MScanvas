@@ -4,7 +4,6 @@ import type { PreviewApi } from "./api";
 import type { RenderedAuthority } from "./backendAuthority";
 import type {
   BackendAuthorityProjection,
-  ConversionConflictPolicy,
   PreviewError,
 } from "./contracts";
 import { toPreviewError } from "./contracts";
@@ -13,6 +12,7 @@ import {
   planQuestion,
   planStep,
   retryStep,
+  sameQuestion,
   startPlan,
   type ConversionCurrentPlan,
   type ConversionPlanIdentity,
@@ -22,7 +22,8 @@ import {
   bindingReplacedReply,
   installReply,
 } from "./conversionPlanAuthority";
-import type { ConversionConfigurationView } from "./useConversionConfiguration";
+import type { ConversionConfigurationController } from "./useConversionConfiguration";
+import type { ConversionPlanOptions } from "./useConversionOperation";
 
 /** What the panel may render about the conversion it would start. */
 export interface ConversionPlanView {
@@ -35,6 +36,8 @@ export interface ConversionPlanView {
    * read from authorities this hook already holds.
    */
   readonly describe: (handles: readonly string[]) => void;
+  /** Withdraws the previous review before a preference setter can return. */
+  readonly invalidate: () => void;
   /** The machine's state, for the tests and the sentences that need the arm. */
   readonly state: ConversionPlanState;
   /** The question these facts pose right now, derived and never stored. */
@@ -49,6 +52,8 @@ export interface ConversionPlanView {
    * it so a control starts exactly what the summary beside it describes.
    */
   readonly current: ConversionCurrentPlan | null;
+  /** Same identity comparison at dispatch, before a setter's render/effect. */
+  readonly readCurrent: () => ConversionCurrentPlan | null;
   /** What the plan contributes to whether a conversion may start. */
   readonly startPlan: ConversionStartPlan;
   /** The error a failed plan is refused with, where the plan is the failure. */
@@ -74,12 +79,16 @@ export function useConversionPlan(
   api: PreviewApi,
   /** The projection this document is rendering. */
   authority: RenderedAuthority | null,
-  configuration: ConversionConfigurationView,
-  conflictPolicy: ConversionConflictPolicy,
+  configuration: ConversionConfigurationController,
+  options: ConversionPlanOptions,
+  readOptions: () => ConversionPlanOptions,
+  readAuthority: () => RenderedAuthority | null,
   /** Where the projection a refused plan carried is delivered. */
   onAuthority: (authority: BackendAuthorityProjection) => void,
 ): ConversionPlanView {
   const [handles, setHandles] = useState<readonly string[]>([]);
+  const handlesRef = useRef(handles);
+  const { readCurrent: readConfiguration } = configuration;
   const [state, setState] = useState<ConversionPlanState>({ status: "none" });
   /**
    * The per-panel request ordinal, never reset.
@@ -111,6 +120,7 @@ export function useConversionPlan(
     stateRef.current = next;
     setState(next);
   }, []);
+  const invalidate = useCallback(() => commit({ status: "none" }), [commit]);
 
   const question = useMemo(
     () =>
@@ -119,9 +129,25 @@ export function useConversionPlan(
         authority,
         configuration: configuration.configuration,
         selectedIntentId: configuration.selectedIntentId,
-        conflictPolicy,
+        ...options,
       }),
-    [authority, configuration.configuration, configuration.selectedIntentId, conflictPolicy, handles],
+    [authority, configuration.configuration, configuration.selectedIntentId, options.conflictPolicy, options.destinationPolicy, handles],
+  );
+
+  const readQuestion = useCallback(() => {
+    const currentAuthority = readAuthority();
+    const currentConfiguration = readConfiguration(currentAuthority);
+    return planQuestion({
+      handles: handlesRef.current,
+      authority: currentAuthority,
+      configuration: currentConfiguration.configuration,
+      selectedIntentId: currentConfiguration.selectedIntentId,
+      ...readOptions(),
+    });
+  }, [readAuthority, readConfiguration, readOptions]);
+  const readCurrent = useCallback(
+    () => currentPlan(stateRef.current, readQuestion()),
+    [readQuestion],
   );
 
   const issue = useCallback(
@@ -132,6 +158,7 @@ export function useConversionPlan(
           handles: identity.handles,
           intentId: identity.intentId,
           conflictPolicy: identity.conflictPolicy,
+          destinationPolicy: identity.destinationPolicy,
           expectedReceipt: identity.receipt,
         })
         .then((outcome) => {
@@ -139,6 +166,10 @@ export function useConversionPlan(
             return;
           }
           if (outcome.outcome === "planned") {
+            const latest = readQuestion();
+            if (latest.kind !== "ask" || !sameQuestion(latest.identity, identity)) {
+              return;
+            }
             const installed = installReply(stateRef.current, identity, issued, {
               kind: "plan",
               plan: outcome.plan,
@@ -154,6 +185,10 @@ export function useConversionPlan(
           // rendered binding, which changes the question, which is what makes
           // the next request the right one to make.
           onAuthority(outcome.authority);
+          const latest = readQuestion();
+          if (latest.kind !== "ask" || !sameQuestion(latest.identity, identity)) {
+            return;
+          }
           const refused = installReply(
             stateRef.current,
             identity,
@@ -168,6 +203,10 @@ export function useConversionPlan(
           if (!mounted.current) {
             return;
           }
+          const latest = readQuestion();
+          if (latest.kind !== "ask" || !sameQuestion(latest.identity, identity)) {
+            return;
+          }
           const installed = installReply(stateRef.current, identity, issued, {
             kind: "failed",
             error: toPreviewError(cause),
@@ -177,10 +216,10 @@ export function useConversionPlan(
           }
         });
     },
-    [api, commit, onAuthority],
+    [api, commit, onAuthority, readQuestion],
   );
 
-  // The one place the machine moves for a question that changed. Everything it
+  // The one place the machine moves for a changed or withdrawn question. Everything it
   // does is `planStep`'s decision; nothing here adds a condition of its own.
   useEffect(() => {
     const step = planStep(stateRef.current, question, ordinal.current + 1);
@@ -194,7 +233,7 @@ export function useConversionPlan(
         ordinal.current = step.ordinal;
         issue(step.identity, step.ordinal);
     }
-  }, [commit, issue, question]);
+  }, [commit, issue, question, state]);
 
   /**
    * The rows, taken as rows.
@@ -205,8 +244,11 @@ export function useConversionPlan(
    * is the wrong direction for a fact the screen owns.
    */
   const describe = useCallback((next: readonly string[]) => {
+    if (handlesRef.current.length !== next.length ||
+      handlesRef.current.some((handle, index) => handle !== next[index])) invalidate();
+    handlesRef.current = next;
     setHandles(next);
-  }, []);
+  }, [invalidate]);
 
   /**
    * What the plan contributes to a start, computed once.
@@ -226,7 +268,7 @@ export function useConversionPlan(
    */
   const retryOffered = start === "failed";
   const retry = useCallback(() => {
-    if (!retryOffered) {
+    if (startPlan(stateRef.current, readQuestion()) !== "failed") {
       return;
     }
     const step = retryStep(stateRef.current, ordinal.current + 1);
@@ -235,13 +277,15 @@ export function useConversionPlan(
     }
     ordinal.current = step.ordinal;
     issue(step.identity, step.ordinal);
-  }, [issue, retryOffered]);
+  }, [issue, readQuestion]);
 
   return {
     describe,
+    invalidate,
     state,
     question,
     current: currentPlan(state, question),
+    readCurrent,
     startPlan: start,
     // The error of an answer that still describes the question being asked.
     // A failure about a question nobody is asking any more is not a sentence

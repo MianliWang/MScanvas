@@ -1778,8 +1778,13 @@ fn a_staging_path_unlinked_after_validation_never_finalizes_the_replacement() {
 /// of entry it is.
 #[test]
 fn a_destination_taken_after_validation_is_never_replaced() {
-    for occupant in ["file", "directory", "hard-link"] {
-        let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    for (conflict, occupant) in [ConflictPolicy::Fail, ConflictPolicy::Skip]
+        .into_iter()
+        .flat_map(|conflict| {
+            ["file", "directory", "hard-link"].map(|occupant| (conflict, occupant))
+        })
+    {
+        let fixture = fixture("sample.mzML", conflict);
         let act = convert_faithfully;
         let runner = FakeRunner::new(&act);
         let finalized = fixture.root.join("sample.mzML");
@@ -1824,6 +1829,72 @@ fn a_destination_taken_after_validation_is_never_replaced() {
             "occupant: {occupant}"
         );
         assert_eq!(report.residue(), None, "occupant: {occupant}");
+    }
+}
+
+/// The refusal covers a reparse entry too, under both admitted policies. The
+/// destination was empty at preflight, so Skip cannot turn the late conflict
+/// into a success or follow a junction into somebody else's directory.
+#[cfg(windows)]
+#[test]
+fn a_reparse_destination_taken_after_validation_is_never_replaced_or_followed() {
+    use std::os::windows::fs::MetadataExt;
+
+    // Remove only the junction entry, including on an assertion unwind, before
+    // the fixture's normal directory teardown. The target has its own fixture.
+    struct JunctionEntry(PathBuf);
+    impl Drop for JunctionEntry {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir(&self.0);
+        }
+    }
+
+    for conflict in [ConflictPolicy::Fail, ConflictPolicy::Skip] {
+        let fixture = fixture("sample.mzML", conflict);
+        let outside = TestDirectory::new();
+        let sentinel = outside.path().join("keep.txt");
+        fs::write(&sentinel, b"the existing directory belongs to its owner")
+            .expect("write the independent target's sentinel");
+        let final_name = fixture.root.join("sample.mzML");
+        let mut junction = None;
+        let act = convert_faithfully;
+        let runner = FakeRunner::new(&act);
+
+        let report = run_admitted_seamed(&fixture.plan, &capabilities(), &runner, || {
+            assert!(
+                make_junction(&final_name, outside.path()),
+                "this Windows proof requires a real task-owned junction"
+            );
+            junction = Some(JunctionEntry(final_name.clone()));
+        });
+
+        assert_eq!(
+            *report.outcome(),
+            ConversionRunOutcome::Failed(ConversionRunFailure::DestinationAppearedDuringRun),
+            "policy: {conflict:?}"
+        );
+        let occupant = fs::symlink_metadata(&final_name).expect("the late junction survives");
+        assert_ne!(
+            occupant.file_attributes() & 0x400,
+            0,
+            "still a reparse entry"
+        );
+        assert_eq!(
+            fs::read(&sentinel).expect("read the independent sentinel"),
+            b"the existing directory belongs to its owner"
+        );
+        assert_eq!(
+            entry_names(outside.path()),
+            vec![OsString::from("keep.txt")]
+        );
+        assert_eq!(
+            entry_names(&fixture.root),
+            vec![OsString::from("sample.mzML")]
+        );
+        assert_eq!(report.residue(), None, "the staging area was cleaned");
+        assert_eq!(runner.calls(), 1, "the occupation arrived after validation");
+        drop(junction);
+        assert!(entry_names(&fixture.root).is_empty());
     }
 }
 

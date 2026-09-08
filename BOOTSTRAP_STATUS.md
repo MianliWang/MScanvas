@@ -7578,3 +7578,62 @@ membership, order, scope or capacity, no cancellation or quarantine semantics, n
 scientific integrity policy, no persistence and no diagnostics schema.
 
 **M6.6 — destination and conflict UX — is next. M6.6 has not started.**
+
+## M6.6 destination and conflict candidate, 2026-09-08
+
+This section continues the historical M6.5 closeout above. The candidate starts
+from published main `33d882054e240fa4bc69cc17564f90aa518ec3bc`; publication is
+subject to exact-head review/checks, protected true merge and natural main CI.
+It does not assert that M6.6 was already complete on main when this record was
+written. The external preflight REPORT/HANDOFF/INPUT_CLOSEOUT remain unchanged.
+
+The existing conversion panel now offers source sibling, one named subfolder
+and custom local folder, retaining custom plus Fail as shipped defaults. Rust
+validates the exact folder name and authors both the requested-policy summary
+and the queue's unresolved/bound facts. No absolute destination path is added
+to the webview contract. Settings survive refusal and picker cancellation.
+
+BEGIN now pins each item's logical acquisition anchor. Resolution consumes those
+queue facts, while retry retains and revalidates the existing destination objects.
+Changing any reviewed option withdraws the old plan synchronously, including an
+A-to-B-to-A change within one React batch; reply identity and dispatch identity
+are checked against the same current configuration/receipt owners.
+
+**CNV-D4: `OVERWRITE_REFUSED`.** The current finalizer binds the validated new
+object but does not bind an authorized old target. Replacement flags alone
+cannot provide old-object preservation on failure, conditional replacement after
+confirmation, or atomic rollback of a partially published multi-output set.
+Fail/Skip remain the only actionable policies, and provider output remains private
+staging. Internal batch claims and partially existing sets remain explicit
+refusals; Skip does not promise to resolve either. ADRs 0009/0043 record the
+terminal decision and supersede the older proposal's overwrite/rename promise.
+
+Local evidence is retained under `D:/tmp/mscanvas-m66-20260908T031943Z/`:
+
+- `native-run-004.log` and `m66-native-uhSrB8/evidence.json`: **5/5** real
+  Windows/Tauri cases with installed ProteoWizard, native picker cancellation,
+  all three policies, five actual mzML outputs and unchanged source/occupied-target
+  hashes. Scientific validation remains `output_only`, not full-source fidelity.
+- `browser-m66-inner-viewport.log`: **8/8** browser cases. Browser and native
+  captures measure inner 1366x768, 1920x1080, 960x640 and 1200x800; keyboard,
+  draft/focus recovery, long names, refusal and nested scrolling are exercised.
+  Browser invoke fixtures are separate from native provider/filesystem evidence.
+- Sequential isolated reversions remove synchronous plan invalidation, remove
+  successful-reply identity checking, restore mutable-registry anchor resolution,
+  and enable replace-existing finalization. Their discriminating tests fail for
+  the intended reasons; restored source hashes and recompilation pass again.
+  The first scratch dependency layout was discarded from mutation evidence after
+  an automatic relink. Actual experiments use physical copies with no reparse
+  entries and no shared mutable build tree; no primary source was mutated.
+
+The rendered repair gives conversion its own effective scrollport and sufficient
+narrow-layout height. The full regression run exposed an exact-selector reader
+in `narrowLayout.test.tsx`; its recorded scope addition retains every assertion.
+The existing roster's long-family-label crowding is unchanged and belongs to its
+later roster/layout consumer. It does not hide M6.6 destination/conflict actions.
+
+Full gate, independent review, repair and publication results belong to the
+candidate's PR and external checkpoint/closeout. No new dependency, scientific
+intent, directory acquisition family, membership semantics or M7 foundation is
+introduced. M6.7 owns the next scope surface; M6.7 through M6.11 and M7 onward
+remain unstarted by this instruction.

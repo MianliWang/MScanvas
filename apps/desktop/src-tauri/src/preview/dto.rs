@@ -1203,6 +1203,11 @@ pub struct ConversionQueueDto {
     /// How many times `Retry failed` has run. Zero for a queue's first pass.
     pub retry_round: u64,
     pub conflict_policy: ConversionConflictPolicyDto,
+    /// The queue's immutable decision, including its validated child name.
+    pub destination_policy: DestinationPolicyDto,
+    /// Whether this queue has acquired destination objects. This is not an
+    /// all-clear conflict check or a promise that a later revalidation succeeds.
+    pub destination_status: ConversionDestinationStatusDto,
     pub finalized_count: usize,
     pub skipped_count: usize,
     pub failed_count: usize,
@@ -1346,8 +1351,8 @@ pub struct ConversionCancellationDto {
 ///
 /// Every fact that changes what the future queue *means*, and nothing that does
 /// not. [ADR 0044] Decision 9 fixes the membership: the ordered rows, the
-/// selected admitted semantic, the conflict policy and the binding the reader
-/// is looking at.
+/// selected admitted semantic, the conflict policy, destination policy (and
+/// exact child name where applicable), and the binding the reader is looking at.
 ///
 /// **The receipt is part of the question, not a stamp on the answer.**
 /// `conversion_queue_plan` runs no discovery, so it has nothing to observe and
@@ -1377,6 +1382,9 @@ pub struct ConversionPlanRequestDto {
     pub conflict_policy: ConversionConflictPolicyDto,
     /// The binding the caller is rendering, which Rust compares with its own.
     pub expected_receipt: BackendBindingReceiptDto,
+    /// The same closed vocabulary BEGIN validates; omission preserves custom.
+    #[serde(default)]
+    pub destination_policy: Option<DestinationPolicyDto>,
 }
 
 /// What the interface shows before a queue is started.
@@ -1402,6 +1410,9 @@ pub struct ConversionQueuePlanDto {
     /// same reason: the summary a reader acts on states the plan's own facts,
     /// not the controls' current values.
     pub conflict_policy: ConversionConflictPolicyDto,
+    /// A validated requested policy, not a resolved or admitted destination.
+    /// DESCRIBE creates no directory and acquires no destination object.
+    pub destination_policy: DestinationPolicyDto,
     /// The binding this plan is about.
     ///
     /// Echoed from the question after Rust has checked it against its own
@@ -1426,7 +1437,7 @@ pub struct ConversionQueuePlanDto {
 #[serde(tag = "outcome", rename_all = "camelCase")]
 pub enum ConversionPlanOutcomeDto {
     #[serde(rename_all = "camelCase")]
-    Planned { plan: ConversionQueuePlanDto },
+    Planned { plan: Box<ConversionQueuePlanDto> },
     /// The requested binding is not the one Rust holds. The current authority
     /// travels with the refusal, so the panel learns of the replacement from
     /// the refusal itself rather than from an unrelated delivery.
@@ -1464,16 +1475,13 @@ pub struct ConversionBeginRequestDto {
     /// resolved from acquisitions the session already holds -- so what this can
     /// reach stays bounded by what the user already opened.
     ///
-    /// It does change what a request can *cause*, and saying otherwise would be
-    /// false: a source-relative policy resolves without opening a dialog, so a
-    /// `BEGIN` naming one creates a directory beside each acquisition and
-    /// publishes there with no picker in the flow. That is the policy doing
-    /// what it means rather than a widened capability, and **M6.6 is what puts
-    /// the choice in front of the user**; until then no shipped request names
-    /// this field at all.
+    /// A source-relative policy resolves without another dialog: the claim
+    /// command uses BEGIN's logical anchors, and a named subfolder may create
+    /// its one child beside each acquisition. BEGIN itself creates nothing.
+    /// M6.6 makes this decision explicit in the review before it is dispatched.
     ///
-    /// Absent means `custom folder`, which is what every request means today.
-    /// M6.5 puts the vocabulary on the wire; M6.6 gives it a visible control.
+    /// Absent means `custom folder`, preserving the shipped default and callers
+    /// predating the visible M6.6 control.
     #[serde(default)]
     pub destination_policy: Option<DestinationPolicyDto>,
 }
@@ -1484,7 +1492,7 @@ pub struct ConversionBeginRequestDto {
 /// which Rust validates as a single child component before anything is created
 /// -- a rooted name, a traversal or a separator is refused rather than
 /// rewritten into a different folder.
-#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum DestinationPolicyDto {
     /// Beside each acquisition, in its own sibling container.
@@ -1494,6 +1502,14 @@ pub enum DestinationPolicyDto {
     NamedSubfolder { name: String },
     /// One folder, chosen through the native picker this reservation opens.
     CustomFolder,
+}
+
+/// The lifetime of a queue's destination objects, without exposing their paths.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ConversionDestinationStatusDto {
+    Unresolved,
+    Bound,
 }
 
 impl std::fmt::Debug for DestinationPolicyDto {

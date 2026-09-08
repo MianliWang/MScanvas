@@ -34,7 +34,7 @@ use mscanvas_proteowizard::{
 use super::adoption::FinalizedOutputAdoptionTicket;
 use super::adoption::FinalizedOutputSetAdoptionTicket;
 use super::destination::DestinationIdentity;
-use super::destination_policy::{DestinationPolicy, ItemDestinationBindings};
+use super::destination_policy::{DestinationPolicy, ItemDestinationBindings, ResolutionSubject};
 use super::diagnostics::{
     ConversionFailureDiagnosticTicket, DiagnosticItemIdentity, DiagnosticsProviderFacts,
     DiagnosticsQueueFacts,
@@ -42,12 +42,13 @@ use super::diagnostics::{
 use super::dto::BackendAuthorityProjectionDto;
 use super::dto::{
     AdoptionCandidateIdentityDto, ConversionAttemptResultDto, ConversionCancellationDto,
-    ConversionConflictPolicyDto, ConversionDiagnosticsStateDto, ConversionOutputPlanDto,
-    ConversionQueueDto, ConversionQueueItemDto, ConversionQueueItemStateDto,
-    ConversionQueueTerminalReasonDto, MAX_CONVERSION_QUEUE_ITEMS, PreviewErrorDto, SelectedFileDto,
-    WorkspaceConversionReservationDto, WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
-    conversion_busy, conversion_not_stoppable, invalid_conversion_reservation,
-    queue_duplicate_dataset, queue_installation_changed, queue_is_empty, queue_too_large,
+    ConversionConflictPolicyDto, ConversionDestinationStatusDto, ConversionDiagnosticsStateDto,
+    ConversionOutputPlanDto, ConversionQueueDto, ConversionQueueItemDto,
+    ConversionQueueItemStateDto, ConversionQueueTerminalReasonDto, MAX_CONVERSION_QUEUE_ITEMS,
+    PreviewErrorDto, SelectedFileDto, WorkspaceConversionReservationDto,
+    WorkspaceConversionStateDto, WorkspaceConversionUpdateDto, conversion_busy,
+    conversion_not_stoppable, invalid_conversion_reservation, queue_duplicate_dataset,
+    queue_installation_changed, queue_is_empty, queue_too_large,
 };
 use super::installation::InstallationIdentity;
 use super::selection::{DatasetId, DatasetSourceKind};
@@ -388,6 +389,10 @@ pub(super) fn item_output_topology(
 #[derive(Clone)]
 pub(super) struct QueueItem {
     dataset: DatasetId,
+    /// The logical acquisition anchor captured with this item at BEGIN, under
+    /// the workspace mutation gate. Resolution must not consult the registry
+    /// again after a user pause. Filesystem objects are admitted separately.
+    resolution_subject: ResolutionSubject,
     /// The dataset's request epoch as it stood when the queue was created, read
     // rather than claimed. Claiming would supersede whatever the user was
     /// already doing with the row merely by opening a picker they might cancel.
@@ -491,14 +496,15 @@ impl CancellationFacts {
 
 impl QueueItem {
     pub(super) const fn new(
-        dataset: DatasetId,
+        resolution_subject: ResolutionSubject,
         request_epoch: u64,
         kind: DatasetSourceKind,
         dataset_dto: SelectedFileDto,
         output: ItemOutputTopology,
     ) -> Self {
         Self {
-            dataset,
+            dataset: resolution_subject.dataset,
+            resolution_subject,
             request_epoch,
             kind,
             dataset_dto,
@@ -520,6 +526,10 @@ impl QueueItem {
 
     pub(super) const fn dataset(&self) -> DatasetId {
         self.dataset
+    }
+
+    pub(super) const fn resolution_subject(&self) -> &ResolutionSubject {
+        &self.resolution_subject
     }
 
     pub(super) const fn request_epoch(&self) -> u64 {
@@ -1078,6 +1088,12 @@ impl ConversionQueue {
             item_count: self.items.len(),
             retry_round: self.retry_round,
             conflict_policy: self.conflict,
+            destination_policy: self.policy.to_dto(),
+            destination_status: if self.bindings.is_some() {
+                ConversionDestinationStatusDto::Bound
+            } else {
+                ConversionDestinationStatusDto::Unresolved
+            },
             finalized_count: self.count(ItemState::Finalized),
             skipped_count: self.count(ItemState::Skipped),
             failed_count: failed,

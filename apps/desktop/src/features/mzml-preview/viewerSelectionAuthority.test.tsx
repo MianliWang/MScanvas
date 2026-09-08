@@ -44,7 +44,6 @@ import {
   createFakePreviewApi,
   createFakeWorkspaceDropTransport,
   deferred,
-  planIdentity,
   previewError,
   queueItem,
   queueOf,
@@ -812,7 +811,11 @@ describe("what a scan step says it can do", () => {
     const revision = result.current.viewerInteraction.selection?.revision ?? 0;
 
     act(() => {
-      result.current.conversion.convert(planIdentity([VENDOR_ROW.handle]));
+      result.current.conversionPlan.describe([VENDOR_ROW.handle]);
+    });
+    await waitFor(() => expect(result.current.conversionPlan.current).not.toBeNull());
+    act(() => {
+      result.current.conversion.convert(result.current.conversionPlan.current!.identity);
     });
     await waitFor(() => {
       expect(result.current.conversion.busy).toBe(true);

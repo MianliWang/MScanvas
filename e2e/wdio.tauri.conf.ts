@@ -57,8 +57,26 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const APP_BINARY = resolve(HERE, "..", "target", "e2e", "release", "mscanvas-desktop.exe");
 
 /** Where `tauri-driver` listens, and where it expects the platform driver. */
-const DRIVER_PORT = 4444;
-const NATIVE_DRIVER_PORT = 4445;
+function configuredPort(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  if (!/^\d+$/u.test(value)) {
+    throw new Error(`${name} must be an integer from 1 to 65535.`);
+  }
+  const port = Number(value);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${name} must be an integer from 1 to 65535.`);
+  }
+  return port;
+}
+
+// Process-local overrides let a native run avoid Windows-reserved port ranges
+// without changing the machine's network settings or the default harness route.
+const DRIVER_PORT = configuredPort("MSCANVAS_TAURI_DRIVER_PORT", 4444);
+const NATIVE_DRIVER_PORT = configuredPort("MSCANVAS_TAURI_NATIVE_PORT", 4445);
+if (DRIVER_PORT === NATIVE_DRIVER_PORT) {
+  throw new Error("The Tauri driver and native driver ports must differ.");
+}
 
 let driver: ChildProcess | undefined;
 
@@ -106,7 +124,7 @@ export const config: WebdriverIO.Config = {
     driver = spawn(
       "tauri-driver",
       ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_DRIVER_PORT)],
-      { stdio: "ignore" },
+      { stdio: "ignore", windowsHide: true },
     );
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {

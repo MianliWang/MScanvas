@@ -193,13 +193,21 @@ See also
 
 **Success:** valid outputs are easy to locate and failures do not require rebuilding the batch.
 
-**Partly built.** Steps 4 and 5 are reachable for one vendor family, as WF-004a
-below. Step 1's "all" is not: a queue holds at most 16 items. Steps 2's semantic
-settings, its output-root choice and "Open file/folder" remain unreachable. See
+**Partly built.** WF-004a below is the bounded serial queue for three evidenced
+vendor families, with semantic settings and explicit output adoption. M6.6's
+candidate adds visible destination policies and conflict explanations; its
+publication and current rendered/native proof remain pending. Step 1's
+selected/all scope decision remains M6.7's, the queue still holds at most 16
+items, and "Open file/folder" remains outside this slice. See
 [ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md) and
 [ADR 0013](../architecture/adr/0013-serial-conversion-queue.md).
 
 ## WF-004a — Convert a queue of vendor acquisitions
+
+**M6.6 candidate continuation, publication pending.** The destination and
+conflict steps below continue the accepted v5.11 organization in the current
+conversion surface. They preserve existing membership, scientific intent,
+availability, queue, adoption and export contracts.
 
 1. `Add files…` and choose acquisitions. mzML, evidenced Thermo Scientific RAW,
    evidenced Shimadzu LabSolutions LCD and evidenced SCIEX WIFF are all
@@ -236,20 +244,48 @@ settings, its output-root choice and "Open file/folder" remain unreachable. See
    While MSCanvas is reading these options from ProteoWizard, or while it cannot
    read them, it says which of those it is — and offers to read them again where
    another attempt could change the answer.
-4. Review the plan: the ordered list of what will run, which family each row
+4. Choose source sibling, named subfolder or custom local folder. Custom keeps
+   the shipped default and its native picker. A named subfolder is exactly one
+   folder name; Rust validates it and a refusal preserves the entered text for
+   correction. There is no path entry or silent sanitization.
+
+   Review the plan: the ordered list of what will run, which family each row
    is, what each item will write, the combination it will be converted under,
-   how many selected rows are excluded for
-   being mzML already, and the
-   output-only validation disclosure. Two rows that would write one name are
-   refused here, before anything is chosen or created.
+   how many selected rows are excluded for being mzML already, and the
+   output-only validation disclosure. A compact summary states the requested
+   policy, relevant name and conflict behavior. It describes conditional
+   destinations until Rust admits the directory objects, not a fixed folder or
+   an all-clear conflict result.
+
+   An internal collision means two items claim the same folded output name in
+   the same destination object. Equal names in different objects are allowed.
+   Rust refuses an internal collision when the policy/objects establish it;
+   Fail/Skip does not settle that conflict and TypeScript does not resolve
+   aliases or fold filesystem names.
 
    A row whose outputs the backend names itself says so — *1–24 mzML outputs,
    filenames determined during conversion* — rather than naming a file MSCanvas
    would be inventing.
 5. Choose Fail or Skip if a file of that name already exists. There is no
-   overwrite. The choice applies to the whole queue.
-6. `Convert N selected…` opens a Rust-owned picker for one local folder, which
-   every item of the queue writes into.
+   overwrite. Fail remains the default and the choice applies to the whole
+   queue. For backend-named sets, any occupied target refuses the set under
+   Fail; Skip skips only an entirely occupied set and refuses a partially
+   occupied set. These names and their occupation are checked after the
+   provider produces and validates its private staged outputs. Existing files
+   remain untouched. `OVERWRITE_REFUSED` is the terminal finalization decision
+   in [ADR 0043, CNV-D4](../architecture/adr/0043-conversion-completion-route.md#cnv-d4--conflict-and-overwrite),
+   not a pending checkbox or provider experiment.
+6. Activate the primary conversion action after the current plan is ready.
+   Changing policy, name, conflict policy or another bound component makes the
+   earlier review unusable, including an old reply arriving after the change.
+
+   Only custom local folder opens the Rust-owned picker; its selected directory
+   object applies to every queue item. Source sibling and named subfolder
+   resolve beside each item's logical acquisition. At `BEGIN`, Rust pins those
+   logical anchors as reservation facts, and resolution consumes them across
+   the pause. Cancelling the picker settles the reservation without conversion
+   or an owned-directory leak, keeps the settings, and returns focus to the
+   conversion surface.
 
    Before anything is created, MSCanvas proves the exact combination on the
    installation it resolves at that moment, and refuses if that is not the
@@ -282,7 +318,9 @@ settings, its output-root choice and "Open file/folder" remain unreachable. See
    is not offered a retry, and it is never described as though nothing had been
    converted.
 9. `Retry N failed` reruns only the failures another attempt could change, in
-   their original places, into the same folder under the same policy. Converted
+   their original places, into their bound per-item destination objects under
+   the same policy. Every destination is revalidated; retry neither re-resolves
+   the policy nor asks for a replacement folder. Converted
    and skipped files are left exactly as they are. A queue that was stopped is
    over instead: it reports how many converted, were skipped, failed, were
    cancelled and were never run, and converting those rows again is a new queue.

@@ -12,6 +12,7 @@ import type {
   ConversionConflictPolicy,
   ConversionDiagnosticsExport,
   ConversionDiagnosticsState,
+  DestinationPolicy,
   PreviewError,
   WorkspaceConversionState,
   WorkspaceConversionUpdate,
@@ -67,6 +68,11 @@ function describes(
   );
 }
 
+export interface ConversionPlanOptions {
+  readonly conflictPolicy: ConversionConflictPolicy;
+  readonly destinationPolicy: DestinationPolicy;
+}
+
 export interface ConversionOperation {
   /** The authoritative slot, as Rust last reported it. */
   readonly state: WorkspaceConversionState;
@@ -108,6 +114,12 @@ export interface ConversionOperation {
   readonly error: PreviewError | null;
   readonly conflictPolicy: ConversionConflictPolicy;
   readonly setConflictPolicy: (policy: ConversionConflictPolicy) => void;
+  readonly destinationPolicy: DestinationPolicy;
+  readonly setDestinationPolicy: (policy: DestinationPolicy) => void;
+  /** The inactive named-folder draft survives a picker and a queue result. */
+  readonly subfolderName: string;
+  /** The preferences as they stand now, including setters in this same batch. */
+  readonly readPlanOptions: () => ConversionPlanOptions;
   /**
    * Starts the conversion one plan describes.
    *
@@ -387,7 +399,22 @@ export function useConversionOperation(
   const api = usePreviewApi();
   const [state, setState] = useState<WorkspaceConversionState>({ status: "idle" });
   const [error, setError] = useState<PreviewError | null>(null);
-  const [conflictPolicy, setConflictPolicy] = useState<ConversionConflictPolicy>("fail");
+  const [planOptions, setPlanOptions] = useState<ConversionPlanOptions>({
+    conflictPolicy: "fail",
+    destinationPolicy: { kind: "customFolder" },
+  });
+  const optionsRef = useRef(planOptions);
+  const [subfolderName, setSubfolderName] = useState("Converted");
+  const setConflictPolicy = useCallback((policy: ConversionConflictPolicy) => {
+    optionsRef.current = { ...optionsRef.current, conflictPolicy: policy };
+    setPlanOptions(optionsRef.current);
+  }, []);
+  const setDestinationPolicy = useCallback((policy: DestinationPolicy) => {
+    optionsRef.current = { ...optionsRef.current, destinationPolicy: policy };
+    if (policy.kind === "namedSubfolder") setSubfolderName(policy.name);
+    setPlanOptions(optionsRef.current);
+  }, []);
+  const readPlanOptions = useCallback(() => optionsRef.current, []);
   /**
    * Bumped when an authoritative read failed, to ask again.
    *
@@ -796,6 +823,7 @@ export function useConversionOperation(
             handles: identity.handles,
             intentId: identity.intentId,
             conflictPolicy: identity.conflictPolicy,
+            destinationPolicy: identity.destinationPolicy,
             expectedReceipt: identity.receipt,
           },
           () => {
@@ -1159,8 +1187,12 @@ export function useConversionOperation(
     retrying,
     converting,
     error,
-    conflictPolicy,
+    conflictPolicy: planOptions.conflictPolicy,
     setConflictPolicy,
+    destinationPolicy: planOptions.destinationPolicy,
+    setDestinationPolicy,
+    subfolderName,
+    readPlanOptions,
     convert,
     dismissError,
     stop,

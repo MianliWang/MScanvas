@@ -13,10 +13,11 @@ import {
   queueOf,
   selectedFile,
   shimadzuDataset,
+  deferred,
 } from "../../test/previewFixtures";
 import { pressConvert } from "../../test/conversionPanelInteractions";
 import type { FakePreviewApi } from "../../test/previewFixtures";
-import type { SelectedFile } from "./contracts";
+import type { SelectedFile, WorkspaceConversionState } from "./contracts";
 
 function acquisition(index: number): SelectedFile {
   return {
@@ -70,6 +71,54 @@ function selectAllRows(): void {
     fireEvent.click(row, { ctrlKey: true });
   }
 }
+
+describe("destination request and queue truth", () => {
+  it("preserves the inactive subfolder draft and restores Convert focus after picker cancellation", async () => {
+    const picker = deferred<WorkspaceConversionState>();
+    const api = createFakePreviewApi({
+      initialDatasets: [first], availability: availableBackend, conversion: () => picker.promise,
+    });
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const named = () => within(panel).getByRole("radio", { name: "Named subfolder beside each source" });
+    fireEvent.click(named());
+    fireEvent.change(within(panel).getByLabelText("Subfolder name"), { target: { value: "Native QA" } });
+    fireEvent.click(within(panel).getByRole("radio", { name: "Custom local folder" }));
+    fireEvent.click(within(panel).getByRole("radio", { name: "Skip if a file of that name already exists" }));
+    await pressConvert(panel, "Convert focused…");
+    expect(api.beginRequests()[0]?.destinationPolicy).toEqual({ kind: "customFolder" });
+    expect(within(panel).queryByRole("button", { name: "Convert focused…" })).toBeNull();
+    await act(async () => picker.resolve({ status: "idle" }));
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert focused…" })).toHaveFocus());
+    expect(within(panel).getByRole("radio", { name: "Skip if a file of that name already exists" })).toBeChecked();
+    fireEvent.click(named());
+    expect(within(panel).getByLabelText("Subfolder name")).toHaveValue("Native QA");
+  });
+
+  it.each(["unresolved", "bound"] as const)("renders the queue's %s destination independently of the next request", async (destinationStatus) => {
+    const api = createFakePreviewApi({
+      initialDatasets: [first], availability: availableBackend,
+      initialConversion: {
+        status: "terminal", operationId: "1", reason: "completed",
+        queue: { ...queueOf([queueItem(first.handle, first.fileName)]),
+          destinationPolicy: { kind: "namedSubfolder", name: "Original" },
+          destinationStatus, conflictPolicy: "skip" },
+      },
+    });
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => expect(within(panel).getByText("Requested destination")).toBeVisible());
+    const actual = queueResult();
+    expect(within(actual).getByText("Queue destination").nextElementSibling?.textContent).toContain("Original");
+    expect(within(actual).getByText("Destination binding").nextElementSibling?.textContent).toBe(
+      destinationStatus === "bound" ? "Bound when this queue started; revalidated before each attempt" : "Not resolved",
+    );
+    expect(within(panel).getByRole("radio", { name: "Custom local folder" })).toBeChecked();
+    fireEvent.click(within(panel).getByRole("radio", { name: "Beside each source" }));
+    expect(within(actual).getByText("Queue destination").nextElementSibling?.textContent).toContain("Original");
+    expect(within(actual).getByText("Queue conflict policy").nextElementSibling?.textContent).toContain("Skip");
+  });
+});
 
 describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
   const lcdRow = shimadzuDataset(7);

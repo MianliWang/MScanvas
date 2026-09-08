@@ -306,6 +306,7 @@ describe("the PR #95 blocker families, and what now prevents each", () => {
       intentId: shippedIntent.id,
       conflictPolicy: "fail" as const,
       receipt: firstBindingReceipt,
+      destinationPolicy: { kind: "customFolder" as const },
     };
     expect(sameQuestion(asked, { ...asked })).toBe(true);
     expect(sameQuestion(asked, { ...asked, receipt: firstBindingReceipt + 1 })).toBe(false);
@@ -413,6 +414,7 @@ const PLAN = {
   intent: shippedIntent,
   conflictPolicy: "fail" as const,
   receipt: firstBindingReceipt,
+  destinationPolicy: { kind: "customFolder" as const },
 };
 
 const ERROR = {

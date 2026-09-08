@@ -13,6 +13,8 @@ import type { ConversionOperation } from "./useConversionOperation";
 import { useConversionOperation } from "./useConversionOperation";
 import type { ConversionPlanView } from "./useConversionPlan";
 import { useConversionPlan } from "./useConversionPlan";
+import { sameDestination, sameQuestion, type ConversionPlanIdentity } from "./conversionPlanAuthority";
+import { catalogRow } from "./conversionIntentSelection";
 import type {
   BackendAuthorityProjection,
   BackendAvailability,
@@ -21,6 +23,8 @@ import type {
   ChromatogramRangeScope,
   ChromatogramTraceSet,
   CopiedFigure,
+  ConversionConflictPolicy,
+  DestinationPolicy,
   ExportedFigure,
   ExportedSpectrumRange,
   LinkedFigureFormat,
@@ -3749,13 +3753,42 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
   // After both, because a plan question is posed out of what they answer: the
   // binding this document renders, the catalog held for it, the row chosen in
   // that catalog, and the policy the operation holds.
+  const readPlanAuthority = useCallback(() => renderedAuthority.current, []);
   const conversionPlan = useConversionPlan(
     api,
     projection,
     conversionConfiguration,
-    conversion.conflictPolicy,
+    conversion,
+    conversion.readPlanOptions,
+    readPlanAuthority,
     acceptDeliveredAuthority,
   );
+  const { readCurrent: readCurrentConversionPlan } = conversionPlan;
+  const { convert: dispatchConversion } = conversion;
+  const convertCurrentPlan = useCallback((identity: ConversionPlanIdentity) => {
+    const current = readCurrentConversionPlan();
+    if (current !== null && sameQuestion(current.identity, identity)) {
+      dispatchConversion(current.identity);
+    }
+  }, [dispatchConversion, readCurrentConversionPlan]);
+  const { invalidate: invalidateConversionPlan } = conversionPlan;
+  const { readPlanOptions, setConflictPolicy, setDestinationPolicy } = conversion;
+  const chooseConflictPolicy = useCallback((policy: ConversionConflictPolicy) => {
+    if (readPlanOptions().conflictPolicy !== policy) invalidateConversionPlan();
+    setConflictPolicy(policy);
+  }, [invalidateConversionPlan, readPlanOptions, setConflictPolicy]);
+  const chooseDestinationPolicy = useCallback((policy: DestinationPolicy) => {
+    if (!sameDestination(readPlanOptions().destinationPolicy, policy)) invalidateConversionPlan();
+    setDestinationPolicy(policy);
+  }, [invalidateConversionPlan, readPlanOptions, setDestinationPolicy]);
+  const { readCurrent: readConfiguration, select: selectConversionIntent } = conversionConfiguration;
+  const chooseConversionIntent = useCallback((intentId: string) => {
+    const current = readConfiguration(readPlanAuthority());
+    if (current.selectedIntentId !== intentId && catalogRow(current.catalog, intentId) !== null) {
+      invalidateConversionPlan();
+    }
+    selectConversionIntent(intentId);
+  }, [invalidateConversionPlan, readConfiguration, readPlanAuthority, selectConversionIntent]);
   // A stop that could not be confirmed makes this session's backend unusable
   // without changing the installation, so nothing about it advances the
   // installation sequence and the reconciler above would never fire. Left
@@ -4204,8 +4237,13 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     setFigureTheme,
     completeRenderMeasurements,
     recordMeasurement,
-    conversion,
-    conversionConfiguration,
+    conversion: {
+      ...conversion,
+      convert: convertCurrentPlan,
+      setConflictPolicy: chooseConflictPolicy,
+      setDestinationPolicy: chooseDestinationPolicy,
+    },
+    conversionConfiguration: { ...conversionConfiguration, select: chooseConversionIntent },
     conversionPlan,
   };
 }

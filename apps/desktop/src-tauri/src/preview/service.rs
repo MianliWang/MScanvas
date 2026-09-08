@@ -1595,15 +1595,14 @@ impl PreviewService {
             RowAdmission::Unavailable => return Err(conversion_intent_unavailable()),
             RowAdmission::NoCatalog => return Err(conversion_configuration_unread()),
         }
-        // The summary describes the queue a `BEGIN` from this webview would
-        // create, and that is a custom-folder queue: it is the one policy with
-        // a control today. Planning creates nothing -- no directory, no staging
-        // area, no admission -- so this is a description of what would run
-        // rather than a resolution of where.
-        let items =
-            self.plan_queue_items(&request.handles, intent, &DestinationPolicy::CustomFolder)?;
+        // The same validated decision BEGIN consumes. Planning creates nothing
+        // and acquires no destination object: source-relative anchors remain
+        // conditional until BEGIN captures the logical acquisitions under its
+        // mutation gate, and a custom folder still awaits the native picker.
+        let policy = DestinationPolicy::from_request(request.destination_policy.as_ref())?;
+        let items = self.plan_queue_items(&request.handles, intent, &policy)?;
         Ok(ConversionPlanOutcomeDto::Planned {
-            plan: ConversionQueuePlanDto {
+            plan: Box::new(ConversionQueuePlanDto {
                 items: items
                     .iter()
                     .map(|item| ConversionQueuePlanItemDto {
@@ -1627,8 +1626,9 @@ impl PreviewService {
                 validation_mode: ValidationModeDto::OutputOnly,
                 capacity: MAX_CONVERSION_QUEUE_ITEMS,
                 conflict_policy: request.conflict_policy,
+                destination_policy: policy.to_dto(),
                 receipt: request.expected_receipt,
-            },
+            }),
         })
     }
 
@@ -1694,7 +1694,20 @@ impl PreviewService {
             // excluded, and a boundary that quietly shortened the list would
             // make that count a fiction.
             let output = item_output_topology(kind, &dto.file_name, intent)?;
-            items.push(QueueItem::new(id, epoch, kind, dto, output));
+            items.push(QueueItem::new(
+                ResolutionSubject {
+                    dataset: id,
+                    source: dataset.file().path().to_path_buf(),
+                    // Every admitted family is file-shaped. Carry the logical
+                    // root here if a future owning slice admits another shape;
+                    // never infer an acquisition root from a filename suffix.
+                    acquisition_root: None,
+                },
+                epoch,
+                kind,
+                dto,
+                output,
+            ));
         }
         drop(workspace);
 
@@ -1910,16 +1923,14 @@ impl PreviewService {
         // integrity comparison -- reads it back off the queue rather than
         // deciding again, which is what makes a settings change after this
         // point a change to the *next* conversion and to nothing in this one.
-        // **The policy is bound here, with the plan, and its input is not.**
+        // The policy and each item's logical anchor are bound here together.
+        // plan_items captured the registry under this same mutation gate; later
+        // resolution reads those items, never the mutable registry again.
         // `ConversionQueue::new` runs before the picker opens, so a
         // custom-folder queue knows it is one and does not yet know which
         // folder -- which is the temporal truth of the reservation this
         // boundary has always had, and nothing here invents a resolved root
         // for it.
-        //
-        // Custom folder is what a `BEGIN` from the webview means today: the
-        // source-relative policies have no visible control until M6.6, and
-        // reach the same coordinator through `begin_conversion_queue_under`.
         let queue = ConversionQueue::new(
             document_epoch,
             request.conflict_policy,
@@ -2193,9 +2204,8 @@ impl PreviewService {
     /// Resolves the claimed queue's bound policy over its bound membership.
     //
     // **The one production coordinator.** Both entry points above reach it, so
-    // there is no second resolution for the policies that have no control yet
-    // -- and the safety, admission and collision rules cannot come to differ
-    /// between the policy the user can see and the ones they cannot.
+    // the safety, admission and collision rules cannot differ between the
+    /// custom picker and source-relative policies.
     fn bind_claimed_destinations(
         &self,
         operation: u64,
@@ -2207,7 +2217,11 @@ impl PreviewService {
         if claimed != operation {
             return Err(invalid_conversion_reservation());
         }
-        let subjects = self.resolution_subjects(&queue)?;
+        let subjects: Vec<_> = queue
+            .items()
+            .iter()
+            .map(|item| item.resolution_subject().clone())
+            .collect();
         let bindings = resolve_destinations(queue.policy(), &subjects, chosen)?;
         // **Every collision the identities have now made decidable**, before
         // any of these items can create a staging area or launch a provider.
@@ -2243,40 +2257,6 @@ impl PreviewService {
             return self.conversion_state();
         }
         self.drain_queue(operation)
-    }
-
-    /// What each bound item contributes to a resolution.
-    //
-    // Read from the workspace registry, which is the repository's authoritative
-    // logical-acquisition authority: the path is the acquisition's primary, and
-    // the acquisition root is `None` for every family admitted today because
-    // every one of them is file-shaped. Carried rather than inferred -- guessing
-    /// a dataset root from a suffix would be claiming a discovery nobody made.
-    fn resolution_subjects(
-        &self,
-        queue: &ConversionQueue,
-    ) -> Result<Vec<ResolutionSubject>, PreviewErrorDto> {
-        let workspace = self.workspace();
-        queue
-            .items()
-            .iter()
-            .map(|item| {
-                let dataset = item.dataset();
-                let held = workspace
-                    .registry
-                    .get(dataset)
-                    .ok_or_else(unknown_dataset)?;
-                Ok(ResolutionSubject {
-                    dataset,
-                    source: held.file().path().to_path_buf(),
-                    // No admitted family is directory-shaped, so no acquisition
-                    // root exists to protect. Stated here rather than left
-                    // implicit: the moment one is admitted, this is the line
-                    // that carries it and row 2 begins to fire.
-                    acquisition_root: None,
-                })
-            })
-            .collect()
     }
 
     /// Runs every retryable failure of the terminal queue again.
@@ -4933,7 +4913,7 @@ impl PreviewService {
         handle: &str,
     ) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
         match self.conversion_queue_plan(&self.shipped_plan_request(&[handle.to_owned()]))? {
-            ConversionPlanOutcomeDto::Planned { plan } => Ok(plan),
+            ConversionPlanOutcomeDto::Planned { plan } => Ok(*plan),
             ConversionPlanOutcomeDto::BindingReplaced { .. } => {
                 panic!("this session is asked about the binding it is on")
             }
@@ -4952,7 +4932,7 @@ impl PreviewService {
         handles: &[String],
     ) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
         match self.conversion_queue_plan(&self.shipped_plan_request(handles))? {
-            ConversionPlanOutcomeDto::Planned { plan } => Ok(plan),
+            ConversionPlanOutcomeDto::Planned { plan } => Ok(*plan),
             ConversionPlanOutcomeDto::BindingReplaced { .. } => {
                 panic!("this session is asked about the binding it is on")
             }
@@ -4974,6 +4954,7 @@ impl PreviewService {
             intent_id: ConversionIntent::SHIPPED.stable_id(),
             conflict_policy: ConversionConflictPolicyDto::Fail,
             expected_receipt: self.readied_receipt(),
+            destination_policy: None,
         }
     }
 

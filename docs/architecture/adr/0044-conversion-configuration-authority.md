@@ -56,7 +56,7 @@ coding.
 | What does React retain? | The Rust-authored authority projection it is rendering, whole; the selected intent id; request-in-flight for rendering; per-obligation bookkeeping (in flight, whether the quarantine transition has been dispatched for, and whether an occasion has passed since — never a judgement that one is *owed*, which Rust's state makes); the never-reset plan request ordinal; the Rust-authored configuration snapshot it is rendering, catalog included; the `BackendAvailabilityDto` the banner is rendering; Rust's plan answer, with its identity's receipt for the life of the plan; the receipt a request was issued under, for that request, consulted only for an answer carrying no binding; and presentation. Nothing else. |
 | May the obliged backend check be issued now? | Process ownership, never a verdict about a build — the read's predicate minus quarantine, which refuses a probe and answers a check. |
 | At what granularity does availability exist? | The admitted **row** — one composition. There is no per-value availability authority. |
-| What makes a pre-run plan current? | Ordered handles, intent id, conflict policy, binding receipt, document epoch — compared against Rust's own answer. |
+| What makes a pre-run plan current? | Ordered handles, intent id, conflict policy, destination policy and its exact subfolder name where applicable, binding receipt, document epoch — compared against Rust's own answer. |
 | What must be established before BEGIN reserves anything? | The current binding has proved the exact selected intent executable. Mandatory, never a courtesy. |
 
 ## The failure shape, before the decisions
@@ -1962,7 +1962,7 @@ a reply arrives while the state is none, blocked, ready or failed
 failed, and the reader asks for the same question again
   -> loading { the same identity, the next ordinal }
 
-handles, intent, conflict policy, binding receipt or document authority
+handles, intent, conflict policy, destination policy/name, binding receipt or document authority
 change, and a replacement request is issued
   -> loading { the replacement's identity, the next ordinal }
 
@@ -2018,10 +2018,46 @@ being reread. The Convert refusal must distinguish a failed plan from one being
 recomputed, because the reader can act on the first and can only wait for the
 second.
 
-Plan identity is ordered handles, intent id, conflict policy, **binding
-receipt**, and the document/workspace authority the live design already requires
+Plan identity is ordered handles, intent id, conflict policy, destination policy
+(including the exact name for a named subfolder), **binding receipt**, and the
+document/workspace authority the live design already requires
 — compared against Rust's own answer rather than against a second copy of the
 question. A plan from binding A cannot start under binding B.
+
+**M6.6 continuation: destination edits are changes of question.** Policy kind
+and the exact named-subfolder value travel with the selected intent and conflict
+policy through the plan request, Rust's answer and `BEGIN`. Equality here is
+semantic request equality, not filesystem interpretation: React neither folds
+names nor resolves aliases, validates paths or substitutes a sanitized name.
+Rust's existing destination policy validator owns whether the name is legal.
+An invalid name produces an actionable refusal while the text remains editable.
+
+The plan owner checks the answer's own ordered item handles, intent id, conflict
+policy, destination policy/name and receipt against the question it is awaiting.
+A matching transport request identity is insufficient if the payload describes
+something else. Such a mismatch is a failed, explicitly retryable description;
+it is never a ready plan and does not trigger heuristic authority refresh. The
+request ordinal still distinguishes late replies to otherwise equal questions,
+and Decision 4b still orders authority revisions separately from payload receipt
+identity.
+
+Settings setters invalidate the previous executable plan **before** publishing
+the changed React value. That closes the interval before the next render/effect
+can reconcile the new question: a repeated activation in that interval cannot
+dispatch an old review under new settings. Dispatch compares the current plan
+against the current request components and sends the admitted facts together;
+it does not assemble intent, policy or name from an unrelated rendered snapshot.
+The existing conversion-lane/ref claim remains the immediate occupancy guard,
+and ordinary render state remains its presentation. No second acceptance path,
+frontend backend authority or duplicate unavailable-notice owner is introduced.
+
+Before `BEGIN`, the destination summary is conditional policy text. At `BEGIN`,
+Rust records the logical acquisition anchors with the reservation; resolution
+consumes those facts across any picker pause. An admitted destination object is
+not inferred from a label, and no extra absolute path is exported to make that
+label convenient. Retry keeps its stored per-item objects and revalidates them;
+it does not reconstruct them from current settings. CNV-D4's M6.6 disposition is
+`OVERWRITE_REFUSED`, so this continuation adds no destructive authorization.
 
 **Ownership splits cleanly here and should be read that way.** The plan *answer*
 is Rust's, as it already is. The state machine above is the frontend's model of

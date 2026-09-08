@@ -579,3 +579,49 @@ claim that the file will still be there, and it takes nothing away from the
 person who owns it: writing, renaming and deleting all remain theirs. That is
 why the byte comparison at adoption time is load-bearing rather than a
 formality.
+
+## M6.6 decision: explicit overwrite is refused
+
+**`OVERWRITE_REFUSED`.** M6.6's authorized finalization audit reaches the terminal
+disposition required by [ADR 0043, CNV-D4](0043-conversion-completion-route.md#cnv-d4--conflict-and-overwrite).
+Fail remains the default and Skip the other admitted policy. The provider stays
+inside private staging, and this ADR's no-clobber guarantee is unchanged.
+
+The existing mechanism binds the **validated new object**, not an existing
+target object the user might authorize replacing. `finalize_validated` retains
+that new object before publication; `rename_object_to` supplies a pathname and
+`ReplaceIfExists = false` to `FileRenameInfo`. The admitted destination directory
+is pinned, but its entries are not an authorization to replace any particular
+existing object. The call has no expected-old-object identity argument. Enabling
+replacement would therefore act on whichever object occupied the name when the
+call ran, rather than on an object confirmed earlier. Checking its identity
+first would only shorten that interval. The current primitives provide no
+conditional replacement of the confirmed object and no preservation/restoration
+authority for an old target after a failed destructive publication.
+
+The single-file atomicity stated above is atomic **no-clobber publication** to
+an empty name; it does not establish an atomic destructive replacement contract.
+Nor is [ADR 0021's](0021-private-multi-output-conversion-lifecycle.md) member-wise
+publication a transaction over a set. It retains a successfully published new
+prefix, stops at the failed member and cleans the still-staged suffix. It has
+neither old-object retention for members already replaced nor a recovery
+contract that could preserve the old set after a later destructive failure.
+Deleting old targets before publishing new ones cannot fill these gaps.
+
+This is a refusal based on this repository's authority and primitives, not a
+claim that every possible filesystem API is incapable of replacement. No
+destructive control or reusable destructive authorization is introduced. Retry
+continues to reuse and revalidate its bound destinations under Fail/Skip. The
+unmeasured provider-overwrite fact recorded above remains historical and
+non-authoritative for this decision: the provider never meets the user's target.
+
+The direct regression readers are
+`conversion_run::tests::an_existing_destination_is_refused_or_skipped_and_never_overwritten`,
+`a_destination_taken_after_validation_is_never_replaced` (Fail and Skip, file,
+directory and hard link), and
+`a_reparse_destination_taken_after_validation_is_never_replaced_or_followed`
+(a required, real Windows junction). The set readers are
+`one_occupied_name_under_fail_publishes_nothing`,
+`skip_is_a_group_decision_never_a_partial_one`, and
+`a_mid_set_publication_failure_is_reported_as_partially_finalized`. These test
+the retained non-destructive contract, not an unimplemented replacement path.

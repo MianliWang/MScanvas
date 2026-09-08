@@ -320,7 +320,7 @@ button:disabled {
    panel this one is as tall as its own content and no taller. Giving it a share
    of the column would take space from the list on every window that has it and
    leave an empty box on every window that does not. */
-.conversion-panel {
+.panel.conversion-panel {
   display: flex;
   min-width: 0;
   flex: 0 1 auto;
@@ -329,6 +329,7 @@ button:disabled {
      sentence or a long output name scrolls here rather than pushing the roster
      out of the column. */
   overflow: auto;
+  scroll-padding-block: 12px;
   /* The header alone, so a panel squeezed to its floor still says which panel
      it is rather than becoming an unlabelled sliver. */
   min-height: 54px;
@@ -536,7 +537,8 @@ button:disabled {
 /* Native radios in a native fieldset. The policy is a two-way choice with a
    caption, which is what a fieldset and a legend are; a pair of styled buttons
    would be the same choice with the grouping left implicit. */
-.conversion-conflict {
+.conversion-conflict,
+.conversion-destination {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -546,16 +548,36 @@ button:disabled {
   gap: 4px;
 }
 
-.conversion-conflict > legend {
+.conversion-conflict > legend,
+.conversion-destination > legend {
   padding: 0 4px;
   color: var(--color-text-muted);
   font-size: 0.85rem;
 }
 
-.conversion-conflict > label {
+.conversion-conflict > label,
+.conversion-destination > label {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.conversion-subfolder {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.conversion-subfolder input {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+}
+
+.conversion-destination .quiet-text,
+.conversion-conflict .quiet-text {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
 }
 
 /* Wraps rather than clipping, so the one primary action stays reachable at
@@ -1804,6 +1826,17 @@ button:disabled {
        give all of its scrollable detail space to the roster at the minimum
        window, but its 52px header plus the panel borders must remain visible. */
     min-height: 54px;
+  }
+
+  /* A conversion contains form controls as well as facts. Keep a usable
+     scrollport below the roster; the existing workspace scroll owner carries
+     the extra height at narrow windows. Viewer-only tracks retain their floor. */
+  .workspace-layout:has(.conversion-panel) {
+    grid-template-rows: minmax(648px, 0.9fr) minmax(526px, 1.6fr);
+  }
+
+  .workspace-sidebar > .conversion-panel {
+    min-height: 360px;
   }
 
   .viewer-stack {

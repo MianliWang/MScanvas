@@ -115,6 +115,7 @@ function plannedAs(intent: ConversionIntentDescriptor, receipt: number) {
       intent,
       conflictPolicy: "fail",
       receipt,
+      destinationPolicy: { kind: "customFolder" },
     },
   };
 }

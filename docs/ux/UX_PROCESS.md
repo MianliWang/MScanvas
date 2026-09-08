@@ -50,3 +50,58 @@ Essential information may appear on hover for speed only when an equivalent visi
 - screenshots or rendered evidence;
 - interaction exercised;
 - known uncertainty and next validation.
+
+## M6.6 destination and conflict continuation
+
+**Accepted direction implemented and exercised locally; review and publication
+pending.**
+The v5.11 prototype's concise destination/conflict organization is the reference
+for this slice. The user authorized continuation in the current production
+surface, so steps 6-7 above do not reopen the accepted direction. The prototype
+does not authorize its initial selection, simulated capabilities, globals, shell
+or accumulated style overrides. M6.6 uses the locked stack and owned components;
+the wider design-system and localization work remain M7's.
+
+The user goal is to choose where the existing conversion intent writes, explain
+what an occupied name will do, and execute that reviewed request. The baseline
+is one custom-folder picker for the queue plus Fail/Skip. The candidate path is:
+
+1. Keep the current custom-folder default or choose source sibling/named
+   subfolder. Enter one folder name only for the latter.
+2. Read one compact policy/name/conflict summary and the Rust-authored plan.
+   Source-relative text is conditional until Rust admits destination objects;
+   backend-named output sets do not acquire invented names or a clean-conflict
+   claim in the review.
+3. Activate conversion once. Only custom folder opens the existing native
+   picker; cancellation returns to the settings without conversion.
+4. Correct a refused name in place, choose a usable local destination after a
+   destination refusal, or retry a retryable result against its stored objects.
+   The settings survive refusal and cancellation.
+
+The budget is the existing primary conversion action, plus a policy choice and
+name entry only when the user changes destination behavior. Custom folder keeps
+its existing picker decision and external context switch; source-relative
+policies add no picker. Review remains on the conversion surface. There is no
+destructive confirmation step because overwrite is terminally refused.
+
+The walkthrough must distinguish an existing target from two batch items
+claiming one destination/name. Fail/Skip cannot resolve the latter. For a
+backend-named set, Skip applies only when all names are occupied; partial
+occupation refuses the set. A late publication failure can leave a reported
+prefix and must not imply complete conversion. Rust validates the subfolder
+name; the UI preserves invalid text and gives a corrective message instead of
+changing the requested name.
+
+The real Windows/Tauri task passed **5/5** on 2026-09-08: native picker Escape
+and keyboard focus/draft recovery, custom-folder conversion, equal names in
+different source parents, invalid-name refusal followed by named-subfolder
+conversion, and byte preservation under Fail/Skip. Its measured inner viewports
+were exactly 1366×768, 1920×1080, 960×640 and 1200×800. The five produced mzML
+files retain the existing `output_only` validation claim; this is not source
+fidelity evidence. All five captured application-console records were empty.
+
+The browser/mock task has a separate **8/8** pass with exact inner dimensions
+asserted at all four viewports. The provenance and remaining limits are in
+[USABILITY_TEST_PLAN.md](USABILITY_TEST_PLAN.md). These local runs do not claim
+final-head checks, independent review, protected publication or broad regression
+completion. Historical prototype QA is not counted as current evidence.

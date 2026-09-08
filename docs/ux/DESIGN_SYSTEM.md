@@ -67,3 +67,36 @@ Every control defines default, hover, active, focus-visible, selected, disabled,
 ## Motion
 
 Use motion to maintain spatial continuity, signal state or reveal a panel. Avoid decorative motion over scientific evidence. Respect reduced-motion preferences.
+
+## M6.6 destination and conflict surface
+
+This is a focused continuation of the accepted v5.11 organization using the
+current owned conversion controls and tokens. It is not a replacement of this
+foundation or an approval to install proposed component, motion or localization
+packages.
+
+- Keep the destination policy, its relevant name field and Fail/Skip together
+  within the existing conversion surface. Custom local folder remains the
+  shipped default; source sibling and named subfolder describe their policy
+  without pretending a folder has already been admitted.
+- Use one compact requested-policy/name/conflict summary. Render a named
+  subfolder as user text, distinct from filesystem identity. Do not expose a
+  raw absolute path, invented fixed folder, output count/name or all-clear
+  conflict result to make the summary look complete.
+- Preserve the exact entered name after Rust refuses it. Place one actionable
+  validation message by the control, retain focus-visible treatment, and avoid
+  repeated explanatory paragraphs. The UI does not sanitize, case-fold or
+  resolve the filesystem name.
+- Label Fail and Skip according to their existing-target behavior. Explain
+  internal batch claim collisions and partially existing backend-named sets as
+  separate refusals. `OVERWRITE_REFUSED` admits no actionable overwrite control.
+- Disabled, describing, refused, picker-cancelled and retry states must remain
+  legible without relying on color. Keyboard users can reach the policy, name,
+  conflict and primary action in order and recover focus after the native picker.
+- Validate 1366×768, 1920×1080, 960×640 and 1200×800. Long names and narrow
+  reflow must preserve the primary action, error text and science area without
+  clipping or a new full-width toolbar ribbon.
+
+These are candidate design rules. The rendered and native evidence required to
+accept their implementation is recorded separately; this section claims no new
+QA result.

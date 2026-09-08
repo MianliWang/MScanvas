@@ -1220,6 +1220,28 @@ the refusal is a recorded decision with its evidence, not an omission.
 
 *Downstream:* M6.7.
 
+**M6.6 candidate continuation (publication pending).** The accepted v5.11
+destination/conflict organization continues within the existing conversion
+surface and owned components; it does not replace the application shell or
+admit prototype simulations. Custom local folder remains the shipped default.
+The three policy descriptions distinguish requested policy from resolved
+directory authority; a named subfolder is one name validated by Rust, and
+unresolved destinations and backend-named output sets are not presented as known
+folders or filenames. A change to a bound plan component invalidates the old
+review. Logical acquisition anchors are reservation facts at `BEGIN`, so a user
+pause cannot make resolution silently consult a different registry answer.
+Retry keeps the already bound per-item destination objects and revalidates them.
+
+**The destructive disposition is `OVERWRITE_REFUSED`.** The finalization audit
+below in CNV-D4 closes the architectural question before the conflict surface
+offers any destructive action. Fail remains the default and Skip remains
+available; there is no overwrite control or inherited destructive permission.
+An existing destination conflict, a partially existing backend-named output set,
+and two items claiming the same `(destination identity, folded output name)` are
+different outcomes. The surface explains them under their existing Rust
+contracts. M6.7's membership decision and M6.8-M6.11's other responsibilities do
+not move into this candidate.
+
 ### M6.7 — Convert selected, convert all
 
 *Purpose:* make the scope of a conversion a decision the user takes and can see,
@@ -1817,7 +1839,7 @@ those two.
 Fail                LOCKED
 Skip                LOCKED
 Automatic rename    REFUSED, here
-Explicit overwrite  ARCHITECTURE_DECISION_REQUIRED, owner M6.6
+Explicit overwrite  OVERWRITE_REFUSED, M6.6 finalization audit
 ```
 
 **An explicit overwrite does not have to be admitted for M6 to complete.** M6.6
@@ -1829,15 +1851,37 @@ is not one of them. ADR 0009 refuses to replace a file this boundary did not
 create, and a policy that could would make the no-clobber guarantee a
 preference."
 
-**`FEATURE_CATALOG.md`'s CNV-008 says the opposite** — "Default is fail/skip;
-overwrite requires explicit confirmation" — as does `PROJECT_PROPOSAL.md` §7.7,
-which lists "fail/skip/automatic rename" plus a confirmed overwrite. This is
-not a gap; it is **two accepted documents disagreeing**, and M6.0 records it as
-such rather than resolving it by picking the one it prefers. The decision M6.6
-must take is explicit: either amend ADR 0009's no-clobber guarantee with a
-stated scope, or refuse CNV-008's overwrite half and say so in the catalogue.
-This route takes neither, because taking it silently is exactly how a guarantee
-becomes a preference.
+**At route lock, `FEATURE_CATALOG.md`'s CNV-008 said the opposite** — "Default is fail/skip;
+overwrite requires explicit confirmation" — as did `PROJECT_PROPOSAL.md` §7.7,
+which listed "fail/skip/automatic rename" plus a confirmed overwrite. This was
+**two accepted documents disagreeing**, recorded by M6.0 rather than silently
+resolved. M6.6 takes the authorized decision explicitly: it refuses CNV-008's
+overwrite half, updates the catalogue and proposal, and preserves ADR 0009's
+no-clobber guarantee. The original conflict is history, not a remaining request
+for permission or a deferred provider measurement.
+
+**M6.6 terminal audit: `OVERWRITE_REFUSED`.** The existing Rust finalization
+contract was audited before any overwrite surface was implemented. Its supported
+operations cannot establish all the required destructive guarantees:
+
+| Required guarantee | Current authority and consequence |
+|---|---|
+| Authorize one existing object, bind its identity, refuse a changed target after confirmation | `ConversionPlan` binds a destination directory and output name. Single-output and set preflights inspect occupation with `symlink_metadata`, without retaining an authorized old target. `rename_object_to` takes the validated new handle and a target pathname; it has no expected-old-object parameter. A replacement flag would operate on the occupant at call time. A preceding identity check would leave an interval in which that occupant could change. |
+| Replace with the validated new object while preserving the old target on failure | `finalize_validated` already retains the validated new object, but the only publication primitive is no-clobber. No old-object preservation or recovery authority exists. Removing an old file before attempting publication would sacrifice the guarantee and is refused. |
+| State atomicity, directory, reparse, link and alias behavior | The held directory prevents its own replacement; it does not bind an old target within it. The existing primitive refuses every occupied target without following or replacing it, including files, directories, hard links and junctions. Atomic single-file no-clobber publication says nothing about conditional destructive replacement. |
+| Obtain fresh per-pass authorization on retry | Retry revalidates the queue's bound destination objects without re-resolving policy. No destructive permission is admitted, so neither an initial pass nor a retry can inherit or manufacture one. |
+| Answer multi-output collisions, partially existing sets and partial destructive failure | Names from a backend-named set are available only after the provider runs in staging. Internal claims are checked before existing targets. Fail refuses any occupied member; Skip skips only an entirely occupied set and refuses a strict subset. Publication then proceeds per member, retains a new published prefix on failure, and cleans the unpublished suffix. There is no transaction or old-set recovery authority for destructive replacement of that prefix. |
+
+The source owners are `crates/proteowizard/src/conversion_run/finalize.rs`
+(`DestinationDirectory`, `finalize_validated`, `rename_object_to`),
+`conversion_run.rs::run_admitted`, and
+`conversion_run/output_set.rs::settle_staged_output_set_seamed`; the retry owner is
+`PreviewService::retry_conversion_queue`. [ADR 0009's M6.6
+amendment](0009-mzml-conversion-execution-boundary.md#m66-decision-explicit-overwrite-is-refused)
+names their direct discriminating tests. The refusal is about these reviewed
+primitives and authorities, not a general impossibility claim about all
+filesystem designs. It is terminal for this route, with no overwrite checkbox,
+automatic rename, or wait on msconvert experiments.
 
 **And the authority for it is MSCanvas, not the provider — which an earlier draft
 of this decision got wrong.** That draft held the question open until someone
@@ -1848,6 +1892,10 @@ never writes into the destination root"; each run gets a private staging
 directory; finalization is a **no-clobber move of the validated output onto its
 final name**; and where the final target already exists, `Fail` reports it,
 `Skip` reports work that was not needed, and **the backend never runs**.
+
+That last statement is the known single-output preflight. A backend-named set
+must first run in private staging to discover its names; its existing-target
+checks then apply to the complete discovered set, as the audit table states.
 
 ```text
 provider
@@ -1871,10 +1919,10 @@ slice waits on it, and M6.6 must not treat it as a prerequisite. If some later
 question needs it — a mode in which the provider is pointed at a user path, which
 this boundary does not have — it can be measured then.
 
-**What M6.6 does need first is the finalization contract**, and the admission
-gate for it is in M6.5's downstream slice rather than in a provider run. Its
-questions are enumerated in [M6.6](#m66--destination-and-conflict-ux-including-the-destructive-question),
-and if they cannot be answered the terminal disposition is `OVERWRITE_REFUSED`.
+**M6.6 answered the finalization gate first**, in M6.5's downstream slice rather
+than through a provider run. The questions enumerated in
+[M6.6](#m66--destination-and-conflict-ux-including-the-destructive-question)
+terminate on the `OVERWRITE_REFUSED` audit above.
 
 **Automatic rename is the third policy the proposal names, and it is refused
 here** rather than left unstatused, because unlike overwrite it needs no
@@ -2701,11 +2749,10 @@ skip and any part of M7 or M8 are simply unnamed by every criterion.
 
 Recorded so a later slice inherits a question rather than an assumption.
 
-1. **How MSCanvas replaces an existing destination object without a failure
-   losing the old one.** This is the real destructive question, it belongs to the
-   Rust finalization boundary, and no measurement of the provider can answer it.
-   Owner **M6.6**, and CNV-D4 terminates on `OVERWRITE_REFUSED` if it cannot be
-   answered. (What `msconvert` does to an existing output remains unobserved and
+1. **Closed by M6.6: how MSCanvas replaces an existing destination object without
+   a failure losing the old one.** CNV-D4 terminates on `OVERWRITE_REFUSED` because
+   the audited Rust publication primitives do not establish that contract.
+   (What `msconvert` does to an existing output remains unobserved and
    is recorded as a non-authoritative provider fact off the critical path — the
    provider never meets that file.)
 2. **Whether `msconvert` writes anything besides its output _for a format other
@@ -2715,9 +2762,9 @@ Recorded so a later slice inherits a question rather than an assumption.
    if a second format is admitted.
 3. **Whether a real `msconvert` run is a process tree at all.** The termination
    mechanism is right; the evidence is about one process. Owner **M6.8**.
-4. **Whether overwrite is admissible at all**, given ADR 0009's no-clobber
-   guarantee and CNV-008's "overwrite requires explicit confirmation". Two
-   accepted documents disagree, and a person decides. Owner **M6.6**.
+4. **Closed by M6.6: whether overwrite is admissible at all.** The authorized
+   CNV-D4 decision is `OVERWRITE_REFUSED`; ADR 0009's no-clobber guarantee stands,
+   and CNV-008 and the proposal now state that refusal explicitly.
 5. **What numeric precision MSCanvas means to ship.** The provider's default is
    currently answering a question MSCanvas has never asked. Owner **M6.2** to
    measure, **M6.3** to type, **M6.4** to show.

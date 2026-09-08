@@ -203,13 +203,24 @@ impl DestinationPolicy {
         requested: Option<&super::dto::DestinationPolicyDto>,
     ) -> Result<Self, PreviewErrorDto> {
         match requested {
-            // Absent is the custom folder, which is what every request means
-            // today and what the picker that follows a reservation is for.
+            // Absent preserves the shipped custom-folder default.
             None | Some(super::dto::DestinationPolicyDto::CustomFolder) => Ok(Self::CustomFolder),
             Some(super::dto::DestinationPolicyDto::SourceSibling) => Ok(Self::SourceSibling),
             Some(super::dto::DestinationPolicyDto::NamedSubfolder { name }) => {
                 Ok(Self::NamedSubfolder(SubfolderName::parse(name)?))
             }
+        }
+    }
+
+    /// The validated policy, without filesystem identity or a resolved path.
+    pub(super) fn to_dto(&self) -> super::dto::DestinationPolicyDto {
+        use super::dto::DestinationPolicyDto;
+        match self {
+            Self::SourceSibling => DestinationPolicyDto::SourceSibling,
+            Self::NamedSubfolder(name) => DestinationPolicyDto::NamedSubfolder {
+                name: name.as_str().to_owned(),
+            },
+            Self::CustomFolder => DestinationPolicyDto::CustomFolder,
         }
     }
 
@@ -462,6 +473,7 @@ impl ItemDestinationBindings {
 /// member: for a SCIEX bundle the container is the primary's parent, because
 /// the companion is derived from the primary's whole name in the primary's own
 /// parent, so that is where the acquisition lives.
+#[derive(Clone)]
 pub(super) struct ResolutionSubject {
     pub(super) dataset: DatasetId,
     /// The acquisition's primary object, as the workspace holds it.
@@ -493,9 +505,8 @@ impl ResolutionSubject {
 /// Resolves one bound policy over one bound membership, or says why it cannot.
 ///
 /// **This is the production coordinator**, and the only one: the custom-folder
-/// flow the product ships today reaches it with the folder the picker returned,
-/// and a source-relative policy reaches it with none. There is no second
-/// implementation for the policies that have no control yet.
+/// flow reaches it with the folder the picker returned, and a source-relative
+/// policy reaches it with none. There is no second implementation.
 ///
 /// `chosen` is the folder a native picker returned, and is required by
 /// [`DestinationPolicy::CustomFolder`] and refused by the others — a

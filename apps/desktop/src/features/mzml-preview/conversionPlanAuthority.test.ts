@@ -33,6 +33,7 @@ function identity(overrides: Partial<ConversionPlanIdentity> = {}): ConversionPl
     intentId: shippedIntent.id,
     conflictPolicy: "fail",
     receipt: 1,
+    destinationPolicy: { kind: "customFolder" },
     ...overrides,
   };
 }
@@ -50,6 +51,7 @@ function inputs(overrides: Partial<Parameters<typeof planQuestion>[0]> = {}) {
     configuration: READY_CONFIGURATION as ConversionConfiguration | null,
     selectedIntentId: shippedIntent.id as string | null,
     conflictPolicy: "fail" as const,
+    destinationPolicy: { kind: "customFolder" as const },
     ...overrides,
   };
 }
@@ -60,7 +62,10 @@ function loading(id: ConversionPlanIdentity, ordinal: number): ConversionPlanSta
 }
 
 const PLAN = {
-  items: [],
+  items: [{
+    datasetHandle: "one", fileName: "one.raw", sourceKind: "thermo_raw",
+    output: { kind: "knownSingle", fileName: "one.mzML" },
+  }],
   outputFormat: "mzML",
   compression: "zlib",
   validationMode: "output_only",
@@ -68,6 +73,7 @@ const PLAN = {
   intent: shippedIntent,
   conflictPolicy: "fail",
   receipt: 1,
+  destinationPolicy: { kind: "customFolder" },
 } as const;
 
 describe("the plan question", () => {
@@ -121,6 +127,7 @@ describe("the plan question", () => {
         intentId: shippedIntent.id,
         conflictPolicy: "fail",
         receipt: 1,
+        destinationPolicy: { kind: "customFolder" },
       },
     });
   });
@@ -135,6 +142,8 @@ describe("the plan question", () => {
       identity({ handles: ["two", "one"] }),
       identity({ intentId: OTHER_INTENT.id }),
       identity({ conflictPolicy: "skip" }),
+      identity({ destinationPolicy: { kind: "sourceSibling" } }),
+      identity({ destinationPolicy: { kind: "namedSubfolder", name: "Converted" } }),
       identity({ receipt: 2 }),
     ]) {
       expect(sameQuestion(base, moved)).toBe(false);
@@ -150,6 +159,29 @@ describe("the plan question", () => {
     const after = planQuestion(inputs({ authority: settledAt(9, 7) }));
     expect(before.kind).toBe("ask");
     expect(after).toEqual(before);
+  });
+});
+
+describe("destination and reply identity", () => {
+  it("compares a subfolder name exactly, without trimming or case folding", () => {
+    const named = identity({ destinationPolicy: { kind: "namedSubfolder", name: "Results" } });
+    expect(sameQuestion(named, identity({ destinationPolicy: { kind: "namedSubfolder", name: "Results" } }))).toBe(true);
+    for (const name of ["results", "Results ", "Other"]) {
+      expect(sameQuestion(named, identity({ destinationPolicy: { kind: "namedSubfolder", name } }))).toBe(false);
+    }
+  });
+
+  it("rejects a successful response whose own question differs from the request", () => {
+    for (const changed of [
+      { ...PLAN, receipt: 2 },
+      { ...PLAN, intent: OTHER_INTENT },
+      { ...PLAN, conflictPolicy: "skip" as const },
+      { ...PLAN, destinationPolicy: { kind: "sourceSibling" as const } },
+      { ...PLAN, items: [] },
+    ]) {
+      expect(installReply(loading(identity(), 3), identity(), 3, { kind: "plan", plan: changed }))
+        .toMatchObject({ status: "failed", error: { kind: "conversion_plan_mismatch" } });
+    }
   });
 });
 
@@ -237,9 +269,13 @@ describe("which reply may install", () => {
     expect(
       installReply(inFlight, identity({ intentId: OTHER_INTENT.id, handles: ["two"] }), 4, {
         kind: "plan",
-        plan: PLAN,
+        plan: {
+          ...PLAN,
+          intent: OTHER_INTENT,
+          items: PLAN.items.map((item) => ({ ...item, datasetHandle: "two" })),
+        },
       }),
-    ).not.toBeNull();
+    ).toMatchObject({ status: "ready" });
   });
 
   it("discards a superseded request's reply even where a retry re-asked its question", () => {

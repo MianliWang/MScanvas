@@ -201,13 +201,13 @@ describe("narrow desktop layout rules", () => {
 describe("narrow desktop layout markup", () => {
   it("keeps the conversion panel inside the column rather than beside it", () => {
     const app = mountStyles(appStyles);
-    const panel = requireStyleRule(app, ".conversion-panel").style;
+    const panel = requireStyleRule(app, ".panel.conversion-panel").style;
 
     // As tall as its own content and no taller. A share of the column would
     // take height from the list on every window that has the panel and leave an
     // empty box on every window that does not.
     expect(panel.getPropertyValue("flex")).toBe("0 1 auto");
-    // Its own overflow, inside `.panel`'s hidden. A long failure sentence or a
+    // Its own overflow outranks `.panel`'s hidden. A long failure sentence or a
     // long output name scrolls here rather than pushing the roster out.
     expect(panel.getPropertyValue("overflow")).toBe("auto");
     expect(panel.getPropertyValue("min-width")).toBe("0px");

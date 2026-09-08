@@ -427,6 +427,8 @@ export const tauriPreviewApi: PreviewApi = {
       if (begun.outcome.outcome === "refused") {
         return { authority: begun.authority, outcome: begun.outcome };
       }
+      // The same opaque claim resolves source-relative destinations in Rust,
+      // or opens the native picker for a custom folder. No location crosses IPC.
       const converted = invoke<WorkspaceConversionUpdate>(
         "choose_workspace_conversion_destination",
         { reservationId: begun.outcome.reservation.reservationId },

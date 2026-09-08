@@ -182,6 +182,8 @@ const QUEUE = {
   itemCount: 2,
   retryRound: 1,
   conflictPolicy: "fail",
+  destinationPolicy: { kind: "customFolder" },
+  destinationStatus: "bound",
   finalizedCount: 1,
   skippedCount: 0,
   failedCount: 1,
@@ -238,6 +240,8 @@ const STOPPED_QUEUE = {
   itemCount: 3,
   retryRound: 0,
   conflictPolicy: "fail",
+  destinationPolicy: { kind: "customFolder" },
+  destinationStatus: "bound",
   finalizedCount: 1,
   skippedCount: 0,
   failedCount: 0,
@@ -439,7 +443,7 @@ describe("the conversion wire contract", () => {
     expect(Object.keys(FAILED_ITEM)).not.toContain("history");
   });
 
-  it("never carries a path, a destination or a raw backend stream", () => {
+  it("carries semantic destination facts without a path or raw backend stream", () => {
     // The whole key set, so a field added upstream has to be answered for here
     // rather than arriving unnoticed.
     expect(Object.keys(QUEUE).sort()).toEqual(
@@ -447,6 +451,8 @@ describe("the conversion wire contract", () => {
         "adoptableOutputCount",
         "conflictPolicy",
         "currentIndex",
+        "destinationPolicy",
+        "destinationStatus",
         "error",
         "failedCount",
         "finalizedCount",
@@ -515,7 +521,7 @@ describe("the conversion wire contract", () => {
 
     // Nowhere in the whole serialized queue, at any depth.
     const serialized = JSON.stringify({ sequence: 3, state: { status: "terminal", queue: QUEUE } });
-    for (const forbidden of ["path", "destination", "root", "stdout", "stderr", "identity"]) {
+    for (const forbidden of ["path", "root", "stdout", "stderr", "identity"]) {
       expect(serialized.toLowerCase()).not.toContain(forbidden.toLowerCase());
     }
     // `stagingResidue` is the one member whose name says "staging", and it says
