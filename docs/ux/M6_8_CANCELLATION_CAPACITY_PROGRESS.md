@@ -386,8 +386,16 @@ E2E typecheck.
 
 **Rendered QA**: 10/10 in `m6.8-cancellation-controls.browser`, including every
 control reachable with no horizontal overflow at 1366x768, 1920x1080, 1200x800
-and 960x640, plus M6.6 8/8 and M6.7 7/7 unchanged on the same head. Screenshots
-and console records inspected; console empty.
+and 960x640, plus M6.6 8/8 and M6.7 7/7 on the same head. Screenshots and console
+records inspected; console empty.
+
+Run at `4104680`, and **carried to this head on a measurement rather than on an
+assumption**. The only frontend file that changed since is a unit test, and a
+rebuild says so rather than an argument about module graphs: rebuilding with
+that one file restored to its `4104680` content produces a byte-identical
+`apps/desktop/dist` — the same three SHA-256 digests and the same
+content-hashed bundle name `index-RLGlfC3r.js`. The rendered product these
+cases exercised is this one.
 
 **Three rounds of two independent reviews rejected three candidates, and every
 finding was verified against the code before it was acted on.** Each repair is
@@ -419,10 +427,27 @@ tree; the diagnostics schema had moved from 1 to 2 with nothing recording it; an
 this document overstated what the compiler carries and contradicted itself about
 what the bypass proofs prove. All are repaired above.
 
-**Native**, on the build attributable to the final candidate — binary SHA-256
+**Native is NOT carried to this head, and the rerun is BLOCKED.**
+
+The process implementation changed after the results below were taken: the
+launch now resumes every thread of the owned root rather than refusing a count
+other than one, and both lanes now ask one question about an unaccounted
+process. No native evidence is inherited across a changed process
+implementation, so these results describe the binary they were taken on and not
+this candidate. The candidate binary at this head is SHA-256
+`f3aaf1e1109e5a5250cc489cfc4e96043e75c72d93d53c3da5a7c2829336a0a4`.
+
+Rerunning needs an unlocked interactive Windows session. At 16:36 local time on
+2026-09-08, `LockApp` held the foreground across six consecutive samples, which
+is the same environment fact that blocks the fifth M6.6 scenario below. Nothing
+was weakened to get past it: no guard relaxed, no Cancel substituted for Escape,
+no focus scripted after cancellation, and no browser result counted as native
+evidence.
+
+**What follows was measured at `4104680`** — binary SHA-256
 `6db463738e80f37156b3ea6b92c0a195df3d452c4c0eca43de6cc98262414e17`, WebView2 and
-driver 152.0.4191.66. Rebuilt and rerun after the review repairs: no native
-evidence is inherited across a changed process implementation.
+driver 152.0.4191.66 — and is recorded as the shape the rerun must reproduce,
+not as this candidate's evidence.
 
 | Scenario | Result |
 | --- | --- |

@@ -7742,17 +7742,26 @@ not widened. Capacity stays 16 with a current rationale. Two progress defects
 are closed: a completed queue now accounts for every item it held, and the retry
 display no longer speaks for a rerun that is already done.
 
-Implementation and validation are complete: 1652 frontend tests, 1507 Rust tests
-across the workspace, all required local gates, browser 10/10 at four inner
-sizes, and native 3/3 on binary SHA-256
+Implementation is complete and every local gate passes: 1652 frontend tests,
+1507 Rust tests across the workspace, lint, both typechecks, the build,
+`cargo fmt --check`, clippy with warnings denied, and `check_repo.py` with the
+claim guard's fifteen self-proved bypasses. Rendered QA is browser 10/10 at four
+inner sizes plus M6.6 8/8 and M6.7 7/7, measured at `4104680` and carried here on
+a byte-identical `apps/desktop/dist` — the only frontend file changed since is a
+unit test, and a rebuild proves the bundle is the same one.
+
+**Native validation is outstanding and blocked by the environment.** Three M6.8
+scenarios, M6.7's two and four of M6.6's five passed on binary SHA-256
 `6db463738e80f37156b3ea6b92c0a195df3d452c4c0eca43de6cc98262414e17` — a stop that
 landed while the provider was executing settled `confirmed_gone` 34 ms after the
-request, with the queue completing and the session unquarantined. Affected
-regressions on the same binary: M6.7 native 2/2, and M6.6 native 4/5 — its fifth
-scenario presses a real Escape at the exact owned picker and the foreground
-guard refused, because the Windows session was locked when it ran. That is an
-environment fact; the same suite passed 5/5 on an unlocked session earlier the
-same day, and nothing was weakened to get past it.
+request, with the queue completing and the session unquarantined. The process
+implementation changed after that, so those results are not inherited; the
+candidate binary is now `f3aaf1e1…` and the suites have to run again on it. They
+need an unlocked interactive Windows session, and `LockApp` has held the
+foreground across every sample taken. The fifth M6.6 scenario is blocked by the
+same fact: it presses a real Escape at the exact owned picker and the foreground
+guard refuses to send a key to anything else. Nothing was weakened to get past
+it, and this milestone is not published until the rerun passes.
 
 Two browser cases fail here and on the published baseline alike, verified in a
 separate worktree at `735dfeb`: `m4.1` "offers all three formats for a spectrum
