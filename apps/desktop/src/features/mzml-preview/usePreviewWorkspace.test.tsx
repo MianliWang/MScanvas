@@ -285,6 +285,8 @@ function harness(
     retryConversions: () => Promise.reject(new Error("not used in this file")),
     adoptConversionOutputs: () =>
       Promise.reject(new Error("this test never adopts converted outputs")),
+cancelCurrentConversionItem: () => Promise.reject(new Error("not used")),
+skipPendingConversionItem: () => Promise.reject(new Error("not used")),
     stopConversion: () => Promise.reject(new Error("not used in this file")),
     exportConversionDiagnostics: () =>
       Promise.reject(new Error("this test never exports conversion diagnostics")),

@@ -1223,6 +1223,10 @@ pub struct ConversionQueueDto {
     /// process, and counting them as failures would report work that was never
     /// attempted as work that went wrong.
     pub not_run_count: usize,
+    /// Items the user settled without running, while the queue carried on.
+    /// Counted apart from `not_run_count` because a decision the user made is
+    /// not a consequence of ending the batch.
+    pub skipped_by_request_count: usize,
     /// Items whose stop could not be confirmed. Apart from both of the above,
     /// because what is unknown here is whether a process survived.
     pub cancellation_failed_count: usize,
@@ -1307,6 +1311,18 @@ pub enum ConversionQueueItemStateDto {
     /// A stopped queue never began this item. Not a failure: no process was
     /// launched and nothing was created.
     NotRun,
+    /// The user settled this item without running it, and the queue carried on.
+    ///
+    /// Its own state rather than either neighbour. `Skipped` is the conflict
+    /// policy leaving an existing file alone -- a decision about a destination,
+    /// which this is not. `NotRun` is a stopped queue never reaching the item --
+    /// a consequence of ending the batch, which this is not either.
+    ///
+    /// No conversion ran and no output was written. It does **not** say that
+    /// nothing was created: a destination folder the queue prepared is bound to
+    /// the queue and governed by the queue's own reclamation rule, not by what
+    /// became of one item.
+    SkippedByRequest,
     /// The stop was requested and could not be confirmed. Whether a converter
     /// process survived is unknown, which is why this is neither cancelled nor
     /// an ordinary failure.
@@ -2059,6 +2075,41 @@ pub fn conversion_not_stoppable() -> PreviewErrorDto {
         "conversion_not_stoppable",
         "There is no conversion of yours to stop.",
         false,
+    )
+}
+
+/// What cancelling one item answers with when that exact attempt is not the one
+/// in flight.
+///
+/// One refusal for every way of naming something else -- a replaced document, an
+/// operation the slot no longer holds, an item that has already settled, an
+/// attempt number from an earlier retry round, or a queue already stopping as a
+/// whole. They are one answer because the caller is, by construction, not the
+/// one running the queue, and telling them apart would describe the session's
+/// internal state to it.
+///
+/// Retryable, unlike the queue-level refusal: what makes this fail is usually
+/// that the queue moved on, and the next read shows what to ask about instead.
+pub fn conversion_item_not_cancellable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_item_not_cancellable",
+        "That conversion is no longer the one running, so it was not stopped.",
+        true,
+    )
+}
+
+/// What skipping one item answers with when it is not a pending item of the
+/// caller's running queue.
+///
+/// Deliberately separate from the cancel refusal. An item the worker has
+/// already started is not skippable, and answering that with a cancellation
+/// would turn a request to leave something alone into a request to stop work in
+/// progress.
+pub fn conversion_item_not_skippable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_item_not_skippable",
+        "That item is no longer waiting its turn, so it was not skipped.",
+        true,
     )
 }
 

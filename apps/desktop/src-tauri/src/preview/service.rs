@@ -129,7 +129,10 @@ use super::dto::{
     FolderDiscoverySummaryDto, FolderImportReservationDto, FolderIngestionResultDto,
     FolderScanLimitDto, SelectedFileDto, import_superseded, invalid_folder_import_reservation,
 };
-use super::dto::{MAX_WORKSPACE_DATASETS, backend_quarantined, conversion_not_stoppable};
+use super::dto::{
+    MAX_WORKSPACE_DATASETS, backend_quarantined, conversion_item_not_cancellable,
+    conversion_item_not_skippable, conversion_not_stoppable,
+};
 use super::dto::{
     SpectrumDomainRefusalDto, SpectrumProjectionDto, SpectrumViewportDomainDto,
     spectrum_projection_no_domain, spectrum_projection_stale, spectrum_projection_window_refused,
@@ -1515,6 +1518,81 @@ impl PreviewService {
         if let StopAccepted::Requested(Some(request)) = accepted {
             request.request();
         }
+        Ok(update)
+    }
+
+    /// Stops the one conversion in flight and lets the queue carry on.
+    ///
+    /// Admitted by M6.8 on the two things the route required together: the
+    /// process boundary owns the backend tree before it can grow, so a stop of
+    /// a launched conversion can settle as a cancellation that means something;
+    /// and the installed build was measured rather than assumed. Without both,
+    /// this would invite a user to keep a queue running beside a process nobody
+    /// could account for.
+    ///
+    /// The caller names the exact attempt -- operation, item and attempt number
+    /// -- and Rust checks that against what is actually running under the same
+    /// lock that records the request. An identity from a moment ago is refused
+    /// rather than redirected onto whatever is running now.
+    pub fn cancel_current_conversion_item(
+        &self,
+        operation_id: &str,
+        item_index: usize,
+        attempt: u64,
+        document_epoch: u64,
+    ) -> Result<WorkspaceConversionUpdateDto, PreviewErrorDto> {
+        let operation: u64 = operation_id
+            .parse()
+            .map_err(|_| conversion_item_not_cancellable())?;
+        let mut slot = self.conversion_slot();
+        if document_epoch != self.workspace_drop_document_epoch() {
+            return Err(conversion_item_not_cancellable());
+        }
+        let accepted = slot.request_item_stop(operation, item_index, attempt)?;
+        self.publish_conversion_busy(&slot);
+        let update = slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.authority_projection().to_dto(),
+        );
+        drop(slot);
+
+        // Outside the lock, exactly as the queue-level stop asks: termination
+        // takes as long as it takes, and holding the lock every reader needs
+        // would stop the interface answering for that whole time.
+        if let StopAccepted::Requested(Some(request)) = accepted {
+            request.request();
+        }
+        Ok(update)
+    }
+
+    /// Settles one item that has not started, without running it.
+    ///
+    /// The item keeps its place in the bound plan and the plan keeps an answer
+    /// for it. Removing it is a different request and is refused outright,
+    /// because membership is bound at BEGIN and a plan that could lose a row
+    /// afterwards could no longer say what it was asked to do.
+    pub fn skip_pending_conversion_item(
+        &self,
+        operation_id: &str,
+        item_index: usize,
+        document_epoch: u64,
+    ) -> Result<WorkspaceConversionUpdateDto, PreviewErrorDto> {
+        let operation: u64 = operation_id
+            .parse()
+            .map_err(|_| conversion_item_not_skippable())?;
+        let mut slot = self.conversion_slot();
+        if document_epoch != self.workspace_drop_document_epoch() {
+            return Err(conversion_item_not_skippable());
+        }
+        slot.skip_pending_item(operation, item_index)?;
+        self.publish_conversion_busy(&slot);
+        let update = slot.read(
+            self.backend_is_quarantined(),
+            self.diagnostics_read(),
+            self.authority_projection().to_dto(),
+        );
+        drop(slot);
         Ok(update)
     }
 
@@ -4377,7 +4455,7 @@ impl PreviewService {
             // classification below never turns into a cancellation.
             let elapsed = self
                 .conversion_slot()
-                .stop_requested_ago(operation)
+                .stop_requested_ago_for(operation, index, attempt)
                 .unwrap_or_else(|| started_at.elapsed());
             drop(held);
             // Released for this exact attempt only, and before the queue moves,

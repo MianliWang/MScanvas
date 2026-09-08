@@ -67,6 +67,7 @@ pub(in crate::preview) fn render(request: &DiagnosticsExportRequest) -> Rendered
         queue.count("failedCount", facts.failed_count);
         queue.count("cancelledCount", facts.cancelled_count);
         queue.count("notRunCount", facts.not_run_count);
+        queue.count("skippedByRequestCount", facts.skipped_by_request_count);
         queue.count("cancellationFailedCount", facts.cancellation_failed_count);
         queue.number("installationGeneration", facts.installation_generation);
         queue.optional_string("queueError", facts.queue_error.as_deref());
@@ -314,6 +315,7 @@ const fn item_state_id(state: ItemState) -> &'static str {
         ItemState::Failed => "failed",
         ItemState::Cancelled => "cancelled",
         ItemState::NotRun => "not_run",
+        ItemState::SkippedByRequest => "skipped_by_request",
         ItemState::CancellationFailed => "cancellation_failed",
     }
 }

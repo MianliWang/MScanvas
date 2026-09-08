@@ -47,6 +47,12 @@ const DATASETS = [acquisition(1), acquisition(2), acquisition(3)];
 const STOP_EXPLANATION =
   "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.";
 
+// The other scope's copy, written out here for the same reason the one above is:
+// asserting the rendered sentence against a constant imported from the panel
+// would pass whatever the panel happened to say.
+const CANCEL_ITEM_EXPLANATION =
+  "Its output is not written. Files already converted are kept, and the items after it still run.";
+
 function renderApp(api: FakePreviewApi): void {
   render(
     <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
@@ -178,11 +184,28 @@ describe("stopping a running conversion queue", () => {
     expect(within(panel).getByText(STOP_EXPLANATION)).toBeVisible();
     expect(stop).toHaveAccessibleDescription(STOP_EXPLANATION);
 
-    // Not a cancel, not a pause, not a resume, and not a per-item control.
-    expect(within(panel).queryByRole("button", { name: /^cancel/i })).toBeNull();
+    // Two scopes, and exactly two. M6.8 admitted ending the one file being
+    // converted, on a process boundary that owns the backend tree before it can
+    // grow and a measurement of the installed build; the queue-level stop it
+    // sits beside is unchanged. Each names its own scope, because two controls
+    // both called "Stop" would be the ambiguity this pair exists to avoid.
+    const stopScoped = within(panel).getAllByRole("button", { name: /stop/i });
+    expect(stopScoped.map((button) => button.textContent)).toEqual([
+      "Stop queue",
+      "Stop this file",
+    ]);
+    const cancelItem = within(panel).getByRole("button", { name: "Stop this file" });
+    expect(cancelItem).toBeEnabled();
+    expect(cancelItem).toHaveAccessibleDescription(
+      `Stop this file ends run-2.raw and carries on with the rest of the queue. ${CANCEL_ITEM_EXPLANATION}`,
+    );
+
+    // Still no pause and no resume: M6.8 adds neither, and a queue that could
+    // be suspended is a different lifecycle from the one this ships.
     expect(within(panel).queryByRole("button", { name: /resume/i })).toBeNull();
     expect(within(panel).queryByRole("button", { name: /pause/i })).toBeNull();
-    expect(within(panel).getAllByRole("button", { name: /stop/i })).toHaveLength(1);
+    // And still nothing that would take a row out of the bound plan.
+    expect(within(panel).queryByRole("button", { name: /remove/i })).toBeNull();
     // And still no fraction of an item.
     expect(within(panel).queryByRole("progressbar")).toBeNull();
     expect(panel.textContent ?? "").not.toMatch(/\d+\s?%/);
@@ -264,7 +287,9 @@ describe("stopping a running conversion queue", () => {
     expect(items[1].textContent ?? "").not.toContain("28,655");
 
     expect(
-      within(panel).getByText("1 converted, 0 skipped, 0 failed, 1 cancelled, 1 not run of 3."),
+      within(panel).getByText(
+        "1 converted, 0 skipped, 0 failed, 1 cancelled, 1 not run, 0 skipped by you of 3.",
+      ),
     ).toBeVisible();
     expect(
       within(panel).getByText(

@@ -182,6 +182,44 @@ export interface ConversionOperation {
    */
   readonly stopping: boolean;
   /**
+   * Asks Rust to end the one conversion in flight, leaving the queue running.
+   *
+   * Takes no arguments on purpose. The exact attempt is read from the same
+   * authoritative state this hook already holds, at the moment of the press --
+   * a caller passing an identity it had captured earlier could name an item
+   * that has since settled.
+   */
+  readonly cancelCurrentItem: () => void;
+  /**
+   * The item a press of that action would end, or `null` when there is none.
+   *
+   * Its index and the file name, so the control can say which acquisition it is
+   * about rather than "the current one". `null` is the disabled state: between
+   * items, while the whole queue is stopping, and once this attempt has already
+   * been asked to end.
+   */
+  readonly cancellableItem: { readonly index: number; readonly fileName: string } | null;
+  /**
+   * Whether this document has asked for the current item to end and it has not
+   * settled.
+   *
+   * Per attempt, not per queue. It clears when the queue moves on, so the
+   * control comes back for the next item rather than staying disabled for the
+   * rest of the run.
+   */
+  readonly cancellingItem: boolean;
+  /** Asks Rust to settle one waiting item without running it. */
+  readonly skipItem: (index: number) => void;
+  /**
+   * Whether that item can be skipped right now.
+   *
+   * Reads the same authoritative state the action dispatches against, so what
+   * the interface offers and what Rust will accept are one rule rather than
+   * two. An item the worker has already started is not skippable: ending work
+   * in progress is the other action, and it says so.
+   */
+  readonly canSkipItem: (index: number) => boolean;
+  /**
    * Whether this session has stopped trusting the backend.
    *
    * Read from the authoritative slot rather than derived from the terminal
@@ -996,6 +1034,112 @@ export function useConversionOperation(
       });
   }, [api, applyUpdate, readState, state]);
 
+  // Per attempt, not per queue. Keyed by the exact identity so that when the
+  // queue moves to the next item the control comes back on its own rather than
+  // staying disabled for the rest of the run.
+  const [itemStopRequested, setItemStopRequested] = useState<string | null>(null);
+
+  // The one attempt a per-item stop could reach, read from the authoritative
+  // state rather than remembered. `null` is every reason there is nothing to
+  // end: no running queue, between items, or the whole queue already stopping.
+  const runningItem =
+    state.status === "running" && !stopping
+      ? (() => {
+          const index = state.queue.items.findIndex((item) => item.state === "running");
+          if (index === -1) {
+            return null;
+          }
+          const item = state.queue.items[index];
+          return item === undefined
+            ? null
+            : { index, fileName: item.fileName, attempt: item.attempts };
+        })()
+      : null;
+  const runningItemKey =
+    runningItem === null
+      ? null
+      : `${state.status === "idle" ? "" : state.operationId}:${String(runningItem.index)}:${String(
+          runningItem.attempt,
+        )}`;
+  const cancellingItem = runningItemKey !== null && itemStopRequested === runningItemKey;
+  const cancellableItem =
+    runningItem === null || cancellingItem
+      ? null
+      : { index: runningItem.index, fileName: runningItem.fileName };
+
+  const cancelCurrentItem = useCallback(() => {
+    const current = stateRef.current;
+    if (current.status !== "running") {
+      return;
+    }
+    const index = current.queue.items.findIndex((item) => item.state === "running");
+    const item = index === -1 ? undefined : current.queue.items[index];
+    if (item === undefined) {
+      return;
+    }
+    const { operationId } = current;
+    const key = `${operationId}:${String(index)}:${String(item.attempts)}`;
+    // Marked before the request leaves, exactly as the queue-level stop is.
+    // Termination takes as long as it takes and a control that stayed live
+    // would invite a second press at something already under way.
+    setItemStopRequested(key);
+    setError(null);
+    api
+      .cancelCurrentConversionItem(operationId, index, item.attempts)
+      .then((update) => {
+        applyUpdate(update);
+      })
+      .catch((cause: unknown) => {
+        if (!mounted.current) {
+          return;
+        }
+        // Nothing was stopped, so this document must not go on saying it was.
+        setItemStopRequested((requested) => (requested === key ? null : requested));
+        setError(toPreviewError(cause));
+        readState();
+      });
+  }, [api, applyUpdate, readState, setError]);
+
+  const canSkipItem = useCallback(
+    (index: number) => {
+      if (state.status !== "running" || stopping) {
+        return false;
+      }
+      return state.queue.items[index]?.state === "pending";
+    },
+    [state, stopping],
+  );
+
+  const skipItem = useCallback(
+    (index: number) => {
+      const current = stateRef.current;
+      if (current.status !== "running") {
+        return;
+      }
+      // Re-read at the moment of the press. The rendered decision was made
+      // against a state that may have moved, and Rust refuses a skip that
+      // raced a start rather than turning it into a cancellation -- this keeps
+      // the interface from asking for one it already knows is not available.
+      if (current.queue.items[index]?.state !== "pending") {
+        return;
+      }
+      setError(null);
+      api
+        .skipPendingConversionItem(current.operationId, index)
+        .then((update) => {
+          applyUpdate(update);
+        })
+        .catch((cause: unknown) => {
+          if (!mounted.current) {
+            return;
+          }
+          setError(toPreviewError(cause));
+          readState();
+        });
+    },
+    [api, applyUpdate, readState, setError],
+  );
+
   const retry = useCallback(() => {
     // Retry availability, not the start control's. The lane is the same and the
     // target is not: this asks the one authority about a rerun of the slot as
@@ -1198,6 +1342,11 @@ export function useConversionOperation(
     stop,
     canStop,
     stopping,
+    cancelCurrentItem,
+    cancellableItem,
+    cancellingItem,
+    skipItem,
+    canSkipItem,
     backendQuarantined,
     adopt,
     canAdopt,

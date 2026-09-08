@@ -113,6 +113,7 @@ const itemStateIsExact: Equal<
   | "failed"
   | "cancelled"
   | "notRun"
+  | "skippedByRequest"
   | "cancellationFailed"
 > = true;
 const terminalReasonIsExact: Equal<
@@ -191,6 +192,7 @@ const QUEUE = {
   nonRetryableFailedCount: 0,
   cancelledCount: 0,
   notRunCount: 0,
+  skippedByRequestCount: 0,
   cancellationFailedCount: 0,
   adoptableOutputCount: 1,
   error: null,
@@ -249,6 +251,7 @@ const STOPPED_QUEUE = {
   nonRetryableFailedCount: 0,
   cancelledCount: 1,
   notRunCount: 1,
+  skippedByRequestCount: 0,
   cancellationFailedCount: 0,
   adoptableOutputCount: 1,
   error: null,
@@ -462,6 +465,7 @@ describe("the conversion wire contract", () => {
         "nonRetryableFailedCount",
         "cancelledCount",
         "notRunCount",
+        "skippedByRequestCount",
         "cancellationFailedCount",
         "retryRound",
         "retryableFailedCount",

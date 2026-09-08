@@ -360,6 +360,63 @@ async fn stop_workspace_conversion_queue(
         .await?
 }
 
+/// Stops the one conversion in flight and lets the queue carry on.
+///
+/// A different promise from stopping the queue, and the two are deliberately
+/// separate commands. This one ends one attempt; the queue keeps its bound
+/// membership, its order and its finished outputs, and the next item starts.
+///
+/// The caller names the exact attempt it means -- the operation, the item's
+/// index and that item's attempt number. Rust checks all three against what is
+/// actually running, under the lock that records the request, so a request
+/// built from a read taken a moment ago cannot land on whatever happens to be
+/// running now. It is refused instead, and the reply carries the state that
+/// says what to ask about.
+///
+/// Proves the calling document exactly as a stop and a retry do.
+#[tauri::command]
+async fn cancel_current_workspace_conversion_item(
+    operation_id: String,
+    item_index: usize,
+    attempt: u64,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceConversionUpdateDto, PreviewErrorDto> {
+    let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || {
+        service.cancel_current_conversion_item(&operation_id, item_index, attempt, document_epoch)
+    })
+    .await?
+}
+
+/// Settles one item that has not started, without running it.
+///
+/// The item keeps its place in the plan and the plan keeps an answer for it.
+/// Taking a row *out* of a bound plan is a different request and is refused
+/// outright, because membership is fixed at BEGIN: a plan that could lose a row
+/// afterwards could no longer say what it was asked to do.
+///
+/// Only an item still waiting its turn. One the worker has already started is
+/// answered with a refusal rather than a cancellation, so a skip that raced a
+/// start never becomes a request to stop work in progress.
+#[tauri::command]
+async fn skip_pending_workspace_conversion_item(
+    operation_id: String,
+    item_index: usize,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceConversionUpdateDto, PreviewErrorDto> {
+    let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || {
+        service.skip_pending_conversion_item(&operation_id, item_index, document_epoch)
+    })
+    .await?
+}
+
 /// Adds a terminal queue's finalized mzML outputs to the workspace.
 ///
 /// Explicit, and never a consequence of a conversion finishing. The caller says
@@ -1225,6 +1282,8 @@ pub fn run() {
             choose_workspace_conversion_destination,
             retry_workspace_conversion_queue,
             stop_workspace_conversion_queue,
+            cancel_current_workspace_conversion_item,
+            skip_pending_workspace_conversion_item,
             adopt_workspace_conversion_outputs,
             begin_workspace_conversion_diagnostics_export,
             save_workspace_conversion_diagnostics,

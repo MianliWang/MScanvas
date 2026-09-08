@@ -49,8 +49,9 @@ use super::dto::{
     ConversionQueueItemStateDto, ConversionQueueTerminalReasonDto, MAX_CONVERSION_QUEUE_ITEMS,
     PreviewErrorDto, SelectedFileDto, WorkspaceConversionReservationDto,
     WorkspaceConversionStateDto, WorkspaceConversionUpdateDto, conversion_busy,
-    conversion_not_stoppable, invalid_conversion_reservation, queue_duplicate_dataset,
-    queue_installation_changed, queue_is_empty, queue_too_large,
+    conversion_item_not_cancellable, conversion_item_not_skippable, conversion_not_stoppable,
+    invalid_conversion_reservation, queue_duplicate_dataset, queue_installation_changed,
+    queue_is_empty, queue_too_large,
 };
 use super::installation::InstallationIdentity;
 use super::selection::{DatasetId, DatasetSourceKind};
@@ -354,6 +355,16 @@ pub(super) enum ItemState {
     Cancelled,
     /// A stopped queue never began it. Not a failure and not an attempt.
     NotRun,
+    /// The user settled this item without running it, while the queue carried
+    /// on with the rest.
+    ///
+    /// Three states now say "no process ran for this item", and they are three
+    /// because they answer three different questions. `Skipped` is the conflict
+    /// policy leaving an existing file alone. `NotRun` is a stopped queue never
+    /// reaching it. This one is a decision the user made about this item, and
+    /// the plan still holds it and still says what became of it -- which is the
+    /// whole reason skipping is an outcome rather than a membership change.
+    SkippedByRequest,
     /// Stopped while running, and the termination could not be confirmed.
     CancellationFailed,
 }
@@ -368,6 +379,7 @@ impl ItemState {
             Self::Failed => ConversionQueueItemStateDto::Failed,
             Self::Cancelled => ConversionQueueItemStateDto::Cancelled,
             Self::NotRun => ConversionQueueItemStateDto::NotRun,
+            Self::SkippedByRequest => ConversionQueueItemStateDto::SkippedByRequest,
             Self::CancellationFailed => ConversionQueueItemStateDto::CancellationFailed,
         }
     }
@@ -1117,6 +1129,7 @@ impl ConversionQueue {
             failed_count: self.count(ItemState::Failed),
             cancelled_count: self.count(ItemState::Cancelled),
             not_run_count: self.count(ItemState::NotRun),
+            skipped_by_request_count: self.count(ItemState::SkippedByRequest),
             cancellation_failed_count: self.count(ItemState::CancellationFailed),
             installation_generation: self.authority.revision,
             queue_error: self.error.as_ref().map(|error| error.kind.clone()),
@@ -1154,6 +1167,7 @@ impl ConversionQueue {
             non_retryable_failed_count: failed - retryable,
             cancelled_count: self.count(ItemState::Cancelled),
             not_run_count: self.count(ItemState::NotRun),
+            skipped_by_request_count: self.count(ItemState::SkippedByRequest),
             cancellation_failed_count: self.count(ItemState::CancellationFailed),
             // Output files, not finalized items. Summed from the authorities
             // the items actually hold, which is the same source the adoption
@@ -1255,6 +1269,14 @@ struct CurrentAttempt {
     index: usize,
     attempt: u64,
     request: CancellationRequest,
+    /// When this exact attempt was asked to end on its own, leaving the queue
+    /// running.
+    ///
+    /// Lives here rather than beside the queue-level flag because that is what
+    /// scopes it: `bind_attempt` replaces this record whole, so a request made
+    /// against one attempt cannot be found by the next one, and a token left
+    /// over from an earlier item or an earlier retry round is not the live one.
+    item_stop_requested_at: Option<Instant>,
 }
 
 impl CurrentAttempt {
@@ -1557,7 +1579,116 @@ impl ConversionSlot {
             index,
             attempt,
             request,
+            item_stop_requested_at: None,
         });
+    }
+
+    /// Asks the one attempt in flight to end, leaving the queue running.
+    ///
+    /// Bound to the exact operation, item and attempt. A caller holding an
+    /// identity from a moment ago is refused rather than redirected: the item
+    /// it named may have settled and the next one begun, and a request that
+    /// slid onto that one would cancel work nobody asked about.
+    ///
+    /// **A queue stop takes precedence and is not undone by this.** Once a
+    /// whole-queue stop has been accepted there is no "continue" left to
+    /// preserve, so this refuses rather than adding a second meaning to a
+    /// decision the user already made.
+    pub(super) fn request_item_stop(
+        &mut self,
+        operation: u64,
+        index: usize,
+        attempt: u64,
+    ) -> Result<StopAccepted, PreviewErrorDto> {
+        if self.operation != operation {
+            return Err(conversion_item_not_cancellable());
+        }
+        // `Running` only. `Stopping` is the whole queue already ending, and a
+        // terminal or idle slot has no attempt of this caller's in flight.
+        if !matches!(self.state, SlotState::Running { .. }) || self.stop_requested {
+            return Err(conversion_item_not_cancellable());
+        }
+        let Some(current) = self.current_attempt.as_mut() else {
+            return Err(conversion_item_not_cancellable());
+        };
+        if !current.is(operation, index, attempt) {
+            return Err(conversion_item_not_cancellable());
+        }
+        if current.item_stop_requested_at.is_some() {
+            return Ok(StopAccepted::AlreadyRequested);
+        }
+        current.item_stop_requested_at = Some(Instant::now());
+        let request = current.request.clone();
+        // No slot transition. The queue is not stopping -- one attempt is --
+        // and moving to `Stopping` would tell every reader that no later item
+        // will start, which is the opposite of what this action promises.
+        self.advance();
+        Ok(StopAccepted::Requested(Some(request)))
+    }
+
+    /// How long the user has waited for a stop of this exact attempt.
+    ///
+    /// The per-attempt request where there is one, and the queue-level request
+    /// otherwise. Either way it is measured from when the stop was accepted
+    /// rather than from when the attempt began: an item converting for a minute
+    /// before the request must not report a minute as the cost of stopping it.
+    pub(super) fn stop_requested_ago_for(
+        &self,
+        operation: u64,
+        index: usize,
+        attempt: u64,
+    ) -> Option<Duration> {
+        self.current_attempt
+            .as_ref()
+            .filter(|current| current.is(operation, index, attempt))
+            .and_then(|current| current.item_stop_requested_at)
+            .map(|at| at.elapsed())
+            .or_else(|| self.stop_requested_ago(operation))
+    }
+
+    /// Settles one pending item terminally without launching it.
+    ///
+    /// The item keeps its place and the plan keeps its answer for it, which is
+    /// what makes this an outcome rather than a membership change. Removing it
+    /// would delete the question along with the answer, and membership is bound
+    /// at BEGIN.
+    ///
+    /// **Only a pending item.** An item the worker has already started is a
+    /// different request with a different meaning, and letting a skip slide
+    /// onto it would turn one into a cancellation the user did not ask for.
+    /// The check and the transition are the same lock acquisition, so a skip
+    /// racing a start resolves to one or the other and never to both.
+    pub(super) fn skip_pending_item(
+        &mut self,
+        operation: u64,
+        index: usize,
+    ) -> Result<(), PreviewErrorDto> {
+        if self.operation != operation {
+            return Err(conversion_item_not_skippable());
+        }
+        // A queue that is stopping settles the rest as `NotRun` on its own, and
+        // a skip accepted here would claim the user chose for an item the stop
+        // was already going to answer for.
+        if !matches!(self.state, SlotState::Running { .. }) || self.stop_requested {
+            return Err(conversion_item_not_skippable());
+        }
+        let Some(queue) = self.running_mut(operation) else {
+            return Err(conversion_item_not_skippable());
+        };
+        let Some(item) = queue.items.get_mut(index) else {
+            return Err(conversion_item_not_skippable());
+        };
+        if item.state != ItemState::Pending {
+            return Err(conversion_item_not_skippable());
+        }
+        item.state = ItemState::SkippedByRequest;
+        // Not retryable, and for the reason a cancelled item is not: there is
+        // no failure to correct. A user who wants it converted after all starts
+        // a queue that includes it.
+        item.retryable = false;
+        queue.recount();
+        self.advance();
+        Ok(())
     }
 
     /// Releases the handle of one exact attempt.

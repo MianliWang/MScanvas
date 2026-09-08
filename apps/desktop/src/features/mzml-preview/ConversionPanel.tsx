@@ -149,6 +149,26 @@ const STOP_EXPLANATION =
   "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.";
 
 /**
+ * What ending one file does, said before it is pressed.
+ *
+ * The difference from Stop queue is the whole reason both exist, so it is
+ * stated rather than implied: this one is about the acquisition being converted
+ * now, and the queue keeps going.
+ */
+const CANCEL_ITEM_EXPLANATION =
+  "Its output is not written. Files already converted are kept, and the items after it still run.";
+
+/**
+ * Why the control is unavailable, at the control.
+ *
+ * One sentence for the three ways there is nothing to end -- between items, a
+ * stop already asked for, or the whole queue ending -- because a reader does
+ * not need the session's internal state to know that pressing would do nothing.
+ */
+const CANCEL_ITEM_UNAVAILABLE =
+  "Available while a file is being converted, and not once the whole queue is stopping.";
+
+/**
  * What is true while a stop is in flight.
  *
  * Deliberately silent about the current item. Whether it is cancelled or
@@ -1052,9 +1072,27 @@ function QueueState({
             >
               Stop queue
             </button>
+            {/* Beside Stop queue rather than in the row it is about. The two
+                are the same kind of decision at two scales, and a control that
+                ended one acquisition from inside the list would read as an
+                attribute of that row instead of an action on the run. */}
+            <button
+              type="button"
+              className="secondary-button"
+              aria-describedby="conversion-cancel-item-scope"
+              disabled={conversion.cancellableItem === null}
+              onClick={conversion.cancelCurrentItem}
+            >
+              {conversion.cancellingItem ? "Stopping this file…" : "Stop this file"}
+            </button>
           </div>
           <p className="quiet-text" id="conversion-stop-scope" role="note">
             {STOP_EXPLANATION}
+          </p>
+          <p className="quiet-text" id="conversion-cancel-item-scope" role="note">
+            {conversion.cancellableItem === null
+              ? CANCEL_ITEM_UNAVAILABLE
+              : `Stop this file ends ${conversion.cancellableItem.fileName} and carries on with the rest of the queue. ${CANCEL_ITEM_EXPLANATION}`}
           </p>
         </>
       ) : state.reason === "stopFailed" ? (
@@ -1134,6 +1172,22 @@ function QueueState({
               )}
               <span className="visually-hidden">, </span>
               <span className="conversion-queue-status">{itemStateLabel(item)}</span>
+              {/* Only on a row that is actually waiting. Skipping is about an
+                  item that has not started; the file being converted now is
+                  ended by Stop this file, which says so. The same authoritative
+                  state decides this and the dispatch, so the interface never
+                  offers what Rust would refuse. */}
+              {conversion.canSkipItem(index) ? (
+                <button
+                  type="button"
+                  className="link-button conversion-queue-skip"
+                  onClick={() => {
+                    conversion.skipItem(index);
+                  }}
+                >
+                  {`Skip ${item.fileName}`}
+                </button>
+              ) : null}
               {item.attempts > 1 ? (
                 <>
                   <span className="visually-hidden">, </span>
@@ -1319,6 +1373,7 @@ function stoppedSummary(queue: ConversionQueue): string {
     `${String(queue.failedCount)} failed`,
     `${String(queue.cancelledCount)} cancelled`,
     `${String(queue.notRunCount)} not run`,
+    `${String(queue.skippedByRequestCount)} skipped by you`,
   ];
   if (queue.cancellationFailedCount > 0) {
     parts.push(`${String(queue.cancellationFailedCount)} stop could not be confirmed`);
@@ -1370,6 +1425,11 @@ const ITEM_STATE_LABEL: Record<ConversionQueueItem["state"], string> = {
   cancelled: "Cancelled",
   cancellationFailed: "Stop could not be confirmed",
   notRun: "Not run",
+  // Says who decided, because that is the whole of what separates this from the
+  // two states beside it. It deliberately does not say "nothing was created":
+  // a destination folder the queue prepared is the queue's, and what became of
+  // one item does not answer for it.
+  skippedByRequest: "Skipped — you chose not to convert this one",
   pending: "Waiting",
   running: "Converting",
   finalized: "Converted",

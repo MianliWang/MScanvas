@@ -3746,6 +3746,8 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "choose_workspace_conversion_destination",
             "retry_workspace_conversion_queue",
             "stop_workspace_conversion_queue",
+            "cancel_current_workspace_conversion_item",
+            "skip_pending_workspace_conversion_item",
             "adopt_workspace_conversion_outputs",
             // Two, and the same two-phase shape the destination picker uses:
             // the reservation is issued synchronously and the dialog is a
@@ -11260,6 +11262,7 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "receipt",
             "retryRound",
             "retryableFailedCount",
+            "skippedByRequestCount",
             "skippedCount",
         ]
     );
@@ -13192,6 +13195,269 @@ fn writer_hold(path: &Path) -> fs::File {
             .open(path)
             .expect("hold the acquisition open for writing")
     }
+}
+
+/// The running queue of a slot, as the interface reads it.
+#[cfg(test)]
+fn running_queue_dto(slot: &ConversionSlot) -> ConversionQueueDto {
+    let update = slot.read(
+        false,
+        ConversionDiagnosticsStateDto::default(),
+        BackendAuthorityProjectionDto::unresolved(),
+    );
+    match update.state {
+        WorkspaceConversionStateDto::Running { queue, .. } => queue,
+        other => panic!("the slot is not running: {other:?}"),
+    }
+}
+
+/// Builds a running two-item queue with the first item started and bound.
+///
+/// Shared by the per-item control tests below, because what each of them is
+/// about is the identity check and the race, not the setup.
+#[cfg(test)]
+fn running_two_item_slot(
+    request: mscanvas_proteowizard::CancellationRequest,
+) -> (ConversionSlot, u64, u64) {
+    let mut slot = ConversionSlot::default();
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        ConversionIntent::SHIPPED,
+        DestinationPolicy::CustomFolder,
+        vec![
+            test_queue_item_named(0, "first.raw"),
+            test_queue_item_named(1, "second.raw"),
+        ],
+    )
+    .expect("two items are a queue");
+    let _ = slot
+        .begin(queue)
+        .expect("an idle slot issues a reservation");
+    let operation = slot
+        .claim(&reservation_handle(&slot), 0)
+        .expect("claim the reservation");
+    assert!(
+        slot.start_running(operation, test_bindings(&["file-0", "file-1"]))
+            .is_ok()
+    );
+    let attempt = slot.start_item(operation, 0).expect("the item starts");
+    slot.bind_attempt(operation, 0, attempt, request);
+    (slot, operation, attempt)
+}
+
+/// A per-item stop reaches the attempt it names, and only that one.
+///
+/// Every other identity is refused rather than redirected. The one this is
+/// really about is the attempt number: a control rendered from a read taken a
+/// moment ago carries the attempt that was running then, and a request that
+/// slid onto the next one would cancel work nobody asked about.
+#[test]
+fn a_per_item_stop_reaches_only_the_exact_attempt_it_names() {
+    let cancellation = ConversionCancellation::new();
+    let (mut slot, operation, attempt) = running_two_item_slot(cancellation.request_handle());
+
+    for (wrong_operation, wrong_index, wrong_attempt) in [
+        (operation + 1, 0, attempt),
+        (operation, 1, attempt),
+        (operation, 0, attempt + 1),
+    ] {
+        assert_eq!(
+            slot.request_item_stop(wrong_operation, wrong_index, wrong_attempt)
+                .expect_err("a mismatched identity is refused")
+                .kind,
+            "conversion_item_not_cancellable"
+        );
+        assert!(
+            !cancellation.request_handle().is_requested(),
+            "a refused request must reach nothing"
+        );
+    }
+
+    match slot
+        .request_item_stop(operation, 0, attempt)
+        .expect("the live attempt is cancellable")
+    {
+        StopAccepted::Requested(handle) => handle.expect("the live attempt is reachable").request(),
+        StopAccepted::AlreadyRequested => panic!("the first request is not a repeat"),
+    }
+    assert!(cancellation.request_handle().is_requested());
+
+    // Idempotent for the same attempt, rather than a second request or a
+    // refusal: the user asking twice is asking for what is already happening.
+    assert!(matches!(
+        slot.request_item_stop(operation, 0, attempt),
+        Ok(StopAccepted::AlreadyRequested)
+    ));
+}
+
+/// A per-item stop does not stop the queue.
+///
+/// The slot stays `Running`, so nothing reads it as "no later item will start"
+/// -- which is the opposite of what this action promises -- and the queue-level
+/// flag stays clear.
+#[test]
+fn a_per_item_stop_leaves_the_queue_running() {
+    let cancellation = ConversionCancellation::new();
+    let (mut slot, operation, attempt) = running_two_item_slot(cancellation.request_handle());
+
+    let _ = slot
+        .request_item_stop(operation, 0, attempt)
+        .expect("the live attempt is cancellable");
+
+    assert!(
+        !slot.stop_requested(operation),
+        "ending one item is not a request to end the queue"
+    );
+    assert!(
+        slot.running(operation).is_some(),
+        "the slot must still read as running"
+    );
+    // And the interval reported is the one the user waited for *this* stop.
+    assert!(
+        slot.stop_requested_ago_for(operation, 0, attempt).is_some(),
+        "a per-item stop is timed from when it was accepted"
+    );
+}
+
+/// A queue stop takes precedence, and a per-item stop cannot undo it.
+///
+/// Once the whole queue is ending there is no "continue" left to preserve, so
+/// the narrower action is refused rather than given a second meaning.
+#[test]
+fn a_queue_stop_takes_precedence_over_ending_one_item() {
+    let cancellation = ConversionCancellation::new();
+    let (mut slot, operation, attempt) = running_two_item_slot(cancellation.request_handle());
+
+    let _ = slot.request_stop(operation).expect("stoppable");
+
+    assert_eq!(
+        slot.request_item_stop(operation, 0, attempt)
+            .expect_err("a stopping queue has no one item to end")
+            .kind,
+        "conversion_item_not_cancellable"
+    );
+    assert_eq!(
+        slot.skip_pending_item(operation, 1)
+            .expect_err("a stopping queue settles the rest itself")
+            .kind,
+        "conversion_item_not_skippable"
+    );
+}
+
+/// A skip settles the exact pending item and leaves the plan's membership and
+/// order alone.
+#[test]
+fn a_skip_settles_one_pending_item_without_launching_it() {
+    let cancellation = ConversionCancellation::new();
+    let (mut slot, operation, _attempt) = running_two_item_slot(cancellation.request_handle());
+
+    slot.skip_pending_item(operation, 1)
+        .expect("a waiting item is skippable");
+
+    let dto = running_queue_dto(&slot);
+    assert_eq!(
+        dto.items.iter().map(|item| item.state).collect::<Vec<_>>(),
+        vec![
+            ConversionQueueItemStateDto::Running,
+            ConversionQueueItemStateDto::SkippedByRequest
+        ]
+    );
+    // Its place and its name are still in the plan: this is an outcome, not a
+    // membership change.
+    assert_eq!(dto.item_count, 2);
+    assert_eq!(dto.items[1].file_name, "second.raw");
+    assert_eq!(dto.items[1].attempts, 0);
+    // Counted apart from every neighbouring state, and not as a failure.
+    assert_eq!(dto.skipped_by_request_count, 1);
+    assert_eq!(dto.not_run_count, 0);
+    assert_eq!(dto.skipped_count, 0);
+    assert_eq!(dto.failed_count, 0);
+    assert_eq!(dto.cancelled_count, 0);
+
+    // Repeating it is refused rather than settling it twice.
+    assert_eq!(
+        slot.skip_pending_item(operation, 1)
+            .expect_err("an item already settled is not pending")
+            .kind,
+        "conversion_item_not_skippable"
+    );
+}
+
+/// A skip that raced a start is refused, and never becomes a cancellation.
+///
+/// The check and the transition are the same lock acquisition, so an item the
+/// worker has already begun is answered as not skippable -- turning it into a
+/// request to end work in progress would be a different action than the one the
+/// user pressed.
+#[test]
+fn a_skip_that_raced_a_start_is_refused_rather_than_becoming_a_cancellation() {
+    let cancellation = ConversionCancellation::new();
+    let (mut slot, operation, _attempt) = running_two_item_slot(cancellation.request_handle());
+
+    // Item 0 is the one running.
+    assert_eq!(
+        slot.skip_pending_item(operation, 0)
+            .expect_err("a running item is not skippable")
+            .kind,
+        "conversion_item_not_skippable"
+    );
+    assert!(
+        !cancellation.request_handle().is_requested(),
+        "a refused skip must not reach the attempt"
+    );
+    assert_eq!(
+        running_queue_dto(&slot).items[0].state,
+        ConversionQueueItemStateDto::Running,
+        "the running item is untouched"
+    );
+
+    // And an index the plan does not hold is refused too.
+    assert_eq!(
+        slot.skip_pending_item(operation, 9)
+            .expect_err("an item outside the plan is not skippable")
+            .kind,
+        "conversion_item_not_skippable"
+    );
+}
+
+/// A user-skipped item is not retried, and does not widen the retry policy.
+///
+/// A retry moves retryable *failures* back to pending. A skipped item has no
+/// failure to correct, exactly as a cancelled one does not, so it keeps its
+/// answer through a rerun of the queue it belongs to.
+#[test]
+fn a_retry_leaves_a_user_skipped_item_where_it_is() {
+    let cancellation = ConversionCancellation::new();
+    let (mut slot, operation, attempt) = running_two_item_slot(cancellation.request_handle());
+
+    slot.skip_pending_item(operation, 1)
+        .expect("a waiting item is skippable");
+    slot.release_attempt(operation, 0, attempt);
+    // The running item fails in a way another attempt could change, which is
+    // the only thing a retry moves.
+    assert!(slot.settle_item(
+        operation,
+        0,
+        ItemOutcome::Refused {
+            retryable: true,
+            error: PreviewErrorDto::new("backend_wait_failed", "lost track", true),
+        },
+    ));
+    slot.finish(operation, None, TerminalReason::Completed);
+
+    let retried = slot.begin_retry().expect("a retryable failure is rerun");
+    let _ = retried;
+    let dto = running_queue_dto(&slot);
+    assert_eq!(
+        dto.items.iter().map(|item| item.state).collect::<Vec<_>>(),
+        vec![
+            ConversionQueueItemStateDto::Pending,
+            ConversionQueueItemStateDto::SkippedByRequest
+        ],
+        "only the retryable failure goes back to pending"
+    );
+    assert_eq!(dto.skipped_by_request_count, 1);
 }
 
 /// The stop handle belongs to one exact attempt.

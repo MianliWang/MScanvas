@@ -1054,6 +1054,15 @@ export type ConversionQueueItemState =
   | "cancelled"
   /** A stopped queue never began it. Not a failure and not an attempt. */
   | "notRun"
+  /**
+   * The user settled it without running it, and the queue carried on.
+   *
+   * Three states now say no process ran, and they are three because they answer
+   * three questions. `skipped` is the conflict policy leaving an existing file
+   * alone. `notRun` is a stopped queue never reaching the item. This is a
+   * decision the user made about this item, and the plan still holds it.
+   */
+  | "skippedByRequest"
   /** Stopped while running, and the termination could not be confirmed. */
   | "cancellationFailed";
 
@@ -1241,6 +1250,12 @@ export interface ConversionQueue {
   readonly cancelledCount: number;
   /** Items a stopped queue never began. Not failures. */
   readonly notRunCount: number;
+  /**
+   * Items the user settled without running, while the queue carried on.
+   * Counted apart from `notRunCount`: a decision the user made is not a
+   * consequence of ending the batch.
+   */
+  readonly skippedByRequestCount: number;
   /** Items whose stop could not be confirmed. */
   readonly cancellationFailedCount: number;
   /**

@@ -212,6 +212,33 @@ export interface PreviewApi {
    */
   stopConversion(operationId: string): Promise<WorkspaceConversionUpdate>;
   /**
+   * Stops the one conversion in flight and lets the queue carry on.
+   *
+   * A different promise from stopping the queue. The caller names the exact
+   * attempt it means -- the operation, the item's index and that item's attempt
+   * number -- and Rust checks all three against what is actually running. An
+   * identity built from a read taken a moment ago is refused rather than
+   * redirected onto whatever happens to be running now, so a late press can
+   * never cancel the next item.
+   */
+  cancelCurrentConversionItem(
+    operationId: string,
+    itemIndex: number,
+    attempt: number,
+  ): Promise<WorkspaceConversionUpdate>;
+  /**
+   * Settles one item that has not started, without running it.
+   *
+   * The item keeps its place in the bound plan. Taking a row out of the plan is
+   * a different request and is refused outright, because membership is fixed at
+   * BEGIN. An item the worker has already started is refused too, so a skip
+   * that raced a start never becomes a cancellation.
+   */
+  skipPendingConversionItem(
+    operationId: string,
+    itemIndex: number,
+  ): Promise<WorkspaceConversionUpdate>;
+  /**
    * Adds a terminal queue's finalized mzML outputs to the workspace.
    *
    * Takes the operation identifier the caller is looking at and nothing else.
@@ -454,6 +481,18 @@ export const tauriPreviewApi: PreviewApi = {
     invoke<WorkspaceConversionUpdate>(
       "stop_workspace_conversion_queue",
       { operationId },
+      { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } },
+    ),
+  cancelCurrentConversionItem: (operationId, itemIndex, attempt) =>
+    invoke<WorkspaceConversionUpdate>(
+      "cancel_current_workspace_conversion_item",
+      { operationId, itemIndex, attempt },
+      { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } },
+    ),
+  skipPendingConversionItem: (operationId, itemIndex) =>
+    invoke<WorkspaceConversionUpdate>(
+      "skip_pending_workspace_conversion_item",
+      { operationId, itemIndex },
       { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } },
     ),
   adoptConversionOutputs: (operationId) =>

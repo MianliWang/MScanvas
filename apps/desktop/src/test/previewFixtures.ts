@@ -938,6 +938,25 @@ export interface FakePreviewApiOptions {
     publish: (state: WorkspaceConversionState) => void,
   ) => Promise<WorkspaceConversionState>;
   /**
+   * What ending the one item in flight settles to, leaving the queue running.
+   *
+   * Supplied when a test needs the item to reach a particular state; without it
+   * the fake records the request and answers with the state it holds, which is
+   * what Rust does when termination is still in flight.
+   */
+  readonly cancelItem?: (
+    operationId: string,
+    itemIndex: number,
+    attempt: number,
+    publish: (state: WorkspaceConversionState) => void,
+  ) => Promise<WorkspaceConversionState>;
+  /** What settling one waiting item without running it produces. */
+  readonly skipItem?: (
+    operationId: string,
+    itemIndex: number,
+    publish: (state: WorkspaceConversionState) => void,
+  ) => Promise<WorkspaceConversionState>;
+  /**
    * What adopting this queue's outputs settles to.
    *
    * Supplied when a test needs a particular mix of added, duplicate and refused
@@ -1064,6 +1083,21 @@ export interface FakePreviewApi extends PreviewApi {
   readonly quarantineBackend: () => void;
   /** Every operation identifier a stop was asked for, in order. */
   readonly stopRequests: readonly string[];
+  /**
+   * Every per-item stop this document asked for, with the exact identity it
+   * named. A test asserts on the identity rather than only the count: sending
+   * the wrong attempt number is precisely the mistake this command refuses.
+   */
+  readonly itemCancelRequests: readonly {
+    readonly operationId: string;
+    readonly itemIndex: number;
+    readonly attempt: number;
+  }[];
+  /** Every skip this document asked for, with the item it named. */
+  readonly itemSkipRequests: readonly {
+    readonly operationId: string;
+    readonly itemIndex: number;
+  }[];
   /** Every operation identifier a diagnostics export was asked for, in order. */
   readonly diagnosticsExportRequests: readonly string[];
   /** Every operation identifier an adoption was asked for, in order. */
@@ -1245,6 +1279,7 @@ export function queueOf(items: readonly ConversionQueueItem[]) {
     nonRetryableFailedCount: failed - retryable,
     cancelledCount: count("cancelled"),
     notRunCount: count("notRun"),
+    skippedByRequestCount: count("skippedByRequest"),
     cancellationFailedCount: count("cancellationFailed"),
     // Output files, not finalized items: Rust counts what the authorities hold,
     // so a finalized set contributes every member it published.
@@ -1309,6 +1344,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   let conversionSequence = options.initialConversion === undefined ? 0 : 1;
   const conversionRequests: ConversionRequest[] = [];
   const stopRequests: string[] = [];
+  const itemCancelRequests: { operationId: string; itemIndex: number; attempt: number }[] = [];
+  const itemSkipRequests: { operationId: string; itemIndex: number }[] = [];
   const adoptionRequests: string[] = [];
   const diagnosticsExportRequests: string[] = [];
   const spectrumExportRequests: SpectrumExportRequest[] = [];
@@ -1587,6 +1624,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     publishConversion,
     quarantineBackend,
     stopRequests,
+    itemCancelRequests,
+    itemSkipRequests,
     diagnosticsExportRequests,
     adoptionRequests,
     conversionRequests,
@@ -1952,6 +1991,27 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         roster: snapshot(),
         outcomes,
       };
+    },
+    // Modelled as Rust behaves: the exact attempt is recorded and the
+    // authoritative state is answered with. A test that wants the item to
+    // settle differently publishes that itself.
+    cancelCurrentConversionItem: async (operationId, itemIndex, attempt) => {
+      itemCancelRequests.push({ operationId, itemIndex, attempt });
+      const settled =
+        options.cancelItem === undefined
+          ? conversion
+          : await options.cancelItem(operationId, itemIndex, attempt, publishConversion);
+      publishConversion(settled);
+      return conversionUpdate();
+    },
+    skipPendingConversionItem: async (operationId, itemIndex) => {
+      itemSkipRequests.push({ operationId, itemIndex });
+      const settled =
+        options.skipItem === undefined
+          ? conversion
+          : await options.skipItem(operationId, itemIndex, publishConversion);
+      publishConversion(settled);
+      return conversionUpdate();
     },
     stopConversion: async (operationId) => {
       stopRequests.push(operationId);
