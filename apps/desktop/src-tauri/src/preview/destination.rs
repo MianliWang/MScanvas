@@ -37,6 +37,45 @@ pub(super) type DestinationHold = std::fs::File;
 #[cfg(not(windows))]
 pub(super) type DestinationHold = ();
 
+/// A permissive lifetime for an identity retained across user pauses. Unlike
+/// an admission hold, it allows rename/delete and does not assert the path is
+/// still current. The original object stays alive until the last owner drops.
+#[cfg(windows)]
+pub(super) type DestinationLease = std::sync::Arc<std::fs::File>;
+#[cfg(not(windows))]
+pub(super) type DestinationLease = ();
+
+/// Transfer object lifetime without a gap. The name only locates a candidate;
+/// equality with the still-live original handle is the authority. Keeping that
+/// handle alive prevents a deleted object's numeric ID from being recycled
+/// between the two readings. A replacement or unanswerable identity refuses.
+#[cfg(windows)]
+pub(super) fn lease_destination(
+    path: &Path,
+    original: &DestinationHold,
+) -> Result<DestinationLease, PreviewErrorDto> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let identity = identity_of_hold(original).ok_or_else(destination_unusable)?;
+    let candidate = std::fs::OpenOptions::new()
+        .access_mode(0x80) // FILE_READ_ATTRIBUTES; no DELETE access.
+        .share_mode(7) // FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+        .custom_flags(0x0200_0000 | 0x0020_0000) // BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+        .open(path)
+        .map_err(|_| destination_unusable())?;
+    if identity_of_hold(&candidate) != Some(identity) {
+        return Err(destination_unusable());
+    }
+    Ok(std::sync::Arc::new(candidate))
+}
+
+#[cfg(not(windows))]
+pub(super) fn lease_destination(
+    _path: &Path,
+    _original: &DestinationHold,
+) -> Result<DestinationLease, PreviewErrorDto> {
+    Err(destination_unusable())
+}
+
 /// Admits one chosen folder as a destination root, or says why not.
 ///
 /// Every refusal is decided before the conversion boundary is entered, so a

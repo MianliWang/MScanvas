@@ -33,7 +33,9 @@ use mscanvas_proteowizard::{
 
 use super::adoption::FinalizedOutputAdoptionTicket;
 use super::adoption::FinalizedOutputSetAdoptionTicket;
-use super::destination::DestinationIdentity;
+use super::destination::{
+    DestinationHold, DestinationIdentity, DestinationLease, lease_destination,
+};
 use super::destination_policy::{DestinationPolicy, ItemDestinationBindings, ResolutionSubject};
 use super::diagnostics::{
     ConversionFailureDiagnosticTicket, DiagnosticItemIdentity, DiagnosticsProviderFacts,
@@ -91,7 +93,7 @@ impl fmt::Debug for ConversionReservationId {
 // Retained for the length of the queue so a retry runs against the same
 // directory without asking for it again — and so it can be *proved* to be the
 /// same directory rather than assumed. The path never leaves this module.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub(super) struct AdmittedDestination {
     root: PathBuf,
     /// The volume serial and file id the directory was admitted with, where the
@@ -99,11 +101,40 @@ pub(super) struct AdmittedDestination {
     // that retried on a name alone could write into whatever had since taken
     /// it.
     identity: Option<DestinationIdentity>,
+    /// Lifetime, not a path lock. Retry/adoption still revalidate the name.
+    _lease: Option<DestinationLease>,
 }
 
+impl PartialEq for AdmittedDestination {
+    fn eq(&self, other: &Self) -> bool {
+        self.root == other.root && self.identity == other.identity
+    }
+}
+
+impl Eq for AdmittedDestination {}
+
 impl AdmittedDestination {
+    /// Synthetic comparison facts are confined to tests. Production retained
+    /// destinations must transfer lifetime from the actual admission hold.
+    #[cfg(test)]
     pub(super) const fn new(root: PathBuf, identity: Option<DestinationIdentity>) -> Self {
-        Self { root, identity }
+        Self {
+            root,
+            identity,
+            _lease: None,
+        }
+    }
+
+    pub(super) fn from_held(
+        root: PathBuf,
+        held: &DestinationHold,
+    ) -> Result<Self, super::dto::PreviewErrorDto> {
+        let lease = lease_destination(&root, held)?;
+        Ok(Self {
+            root,
+            identity: super::destination::identity_of_hold(held),
+            _lease: Some(lease),
+        })
     }
 
     pub(super) fn root(&self) -> &Path {
@@ -116,7 +147,22 @@ impl AdmittedDestination {
     // caller here reads that as a refusal rather than as agreement: there is
     /// no weaker comparison to fall back to.
     pub(super) fn is_still(&self, other: &Self) -> bool {
-        self.root == other.root && self.identity.is_some() && self.identity == other.identity
+        self.matches_current(&other.root, other.identity)
+    }
+
+    pub(super) fn matches_current(
+        &self,
+        root: &Path,
+        identity: Option<DestinationIdentity>,
+    ) -> bool {
+        self.root == root && self.identity.is_some() && self.identity == identity
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn lease_witness(&self) -> std::sync::Weak<std::fs::File> {
+        self._lease
+            .as_ref()
+            .map_or_else(std::sync::Weak::new, std::sync::Arc::downgrade)
     }
 }
 
@@ -814,8 +860,8 @@ impl ConversionQueue {
         if self.items.iter().any(|item| item.attempts > 0) {
             return;
         }
-        if let Some(bindings) = self.bindings.as_mut() {
-            bindings.reclaim_created_now();
+        if let Some(bindings) = self.bindings.take() {
+            bindings.reclaim_created();
         }
     }
 

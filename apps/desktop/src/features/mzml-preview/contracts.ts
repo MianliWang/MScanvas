@@ -1215,7 +1215,7 @@ export interface ConversionQueue {
   readonly retryRound: number;
   readonly conflictPolicy: ConversionConflictPolicy;
   readonly destinationPolicy: DestinationPolicy;
-  /** Whether Rust holds destination bindings, not a promise that names are free. */
+  /** Current retained bindings; zero-attempt cleanup releases them. Not a conflict check. */
   readonly destinationStatus: "unresolved" | "bound";
   readonly finalizedCount: number;
   readonly skippedCount: number;

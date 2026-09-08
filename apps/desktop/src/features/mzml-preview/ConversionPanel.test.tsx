@@ -111,7 +111,7 @@ describe("destination request and queue truth", () => {
     const actual = queueResult();
     expect(within(actual).getByText("Queue destination").nextElementSibling?.textContent).toContain("Original");
     expect(within(actual).getByText("Destination binding").nextElementSibling?.textContent).toBe(
-      destinationStatus === "bound" ? "Bound when this queue started; revalidated before each attempt" : "Not resolved",
+      destinationStatus === "bound" ? "Bound when this queue started; revalidated before each attempt" : "No destination bound",
     );
     expect(within(panel).getByRole("radio", { name: "Custom local folder" })).toBeChecked();
     fireEvent.click(within(panel).getByRole("radio", { name: "Beside each source" }));

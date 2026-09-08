@@ -1072,7 +1072,7 @@ function QueueState({
           <dt>Destination binding</dt>
           <dd>{queue.destinationStatus === "bound"
             ? "Bound when this queue started; revalidated before each attempt"
-            : "Not resolved"}</dd>
+            : "No destination bound"}</dd>
         </div>
         <div>
           <dt>Queue conflict policy</dt>

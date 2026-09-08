@@ -1504,7 +1504,8 @@ pub enum DestinationPolicyDto {
     CustomFolder,
 }
 
-/// The lifetime of a queue's destination objects, without exposing their paths.
+/// Current retained destination bindings, without exposing their paths. A
+/// zero-attempt terminal cleanup releases them and returns to Unresolved.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ConversionDestinationStatusDto {

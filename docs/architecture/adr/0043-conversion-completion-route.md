@@ -1237,9 +1237,10 @@ creation followed by reopening a name could record a replacement as ours, and
 identity comparison followed by pathname deletion could remove a replacement.
 The private Windows resolver now uses documented
 [NtCreateFile](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile)
-with `FILE_CREATE`, one validated component and the admitted parent handle.
+with `FILE_CREATE`, `OBJ_DONT_REPARSE`, one validated component and the admitted parent handle.
 It records identity from the returned new-object handle; existing names fail
-creation rather than being opened or replaced. Reclaim opens without following
+creation rather than being opened or replaced, including dangling junctions
+whose targets must not be created. Reclaim opens without following
 reparse points, checks that held object's identity and applies
 [FileDispositionInfo](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle)
 to the same handle. It removes only an empty object, never traverses contents,
@@ -1247,6 +1248,24 @@ and has no pathname-deletion fallback. Deterministic interleavings cover both
 replacement windows, late population and a replacement junction. This narrows
 existing Rust-owned creation/reclaim operations without changing the discovery
 API, dependency set, IPC surface or destructive-publication decision.
+
+Both retained destinations and created-child cleanup facts carry a permissive
+directory lease. The original handle remains alive while a candidate is opened
+with read-attributes access and read/write/delete sharing; its full identity must
+match that original before lifetime transfers. A path replacement during this
+handoff refuses, and only the original empty created object is reclaimed through
+its original handle. Clones retain the lease across queue, retry and adoption;
+identity comparison never uses an Arc address. User rename and writes remain
+possible, while a fresh admission must still match the bound object. The numeric
+ID cannot be recycled while these facts retain the original object.
+
+A terminal queue with zero attempts releases its unusable bindings before
+reclaiming created children. The worker releases its admission hold and snapshot
+leases before that transition, including a Stop accepted immediately before
+`start_item`. The projected status then means no destination is currently bound;
+it does not claim the policy was never resolved. Attempted queues retain their
+bindings for retry. The real name validator accepts COM0/LPT0 and keeps Windows'
+reserved 1-9 and superscript-device-name refusals.
 
 **The destructive disposition is `OVERWRITE_REFUSED`.** The finalization audit
 below in CNV-D4 closes the architectural question before the conflict surface

@@ -233,7 +233,7 @@ describe("M6.6 destination and conflict review", () => {
       destinationPolicy: { kind: "customFolder" }, expectedReceipt: 1,
     } });
     await browser.$('.conversion-running [aria-label="Queue destination"]').waitForExist();
-    expect(await browser.$(".conversion-running").getText()).toContain("Not resolved");
+    expect(await browser.$(".conversion-running").getText()).toContain("No destination bound");
     const cancelled = { ...IDLE, sequence: 2 };
     await setInvokeResult("get_workspace_conversion_state", cancelled);
     await setInvokeResult(RESOLVE, cancelled);

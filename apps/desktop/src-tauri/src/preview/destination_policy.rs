@@ -324,11 +324,23 @@ pub(super) struct ItemDestinationBindings {
 /// admissions, more creations -- and a sync client or an installer can remove
 /// the child and leave its own directory at the same path. Removing by name
 /// would then remove theirs.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 struct CreatedChild {
     path: PathBuf,
     identity: Option<DestinationIdentity>,
+    /// Keeps this identity from being recycled until cleanup authority ends.
+    /// No DELETE access: normal destination admission withholds delete sharing.
+    #[cfg(windows)]
+    lease: std::sync::Arc<std::fs::File>,
 }
+
+impl PartialEq for CreatedChild {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path && self.identity == other.identity
+    }
+}
+
+impl Eq for CreatedChild {}
 
 impl std::fmt::Debug for CreatedChild {
     /// Opaque, for the reason every path in this module is.
@@ -398,15 +410,11 @@ impl ItemDestinationBindings {
     /// anyway. Consuming, because bindings that have been reclaimed name
     /// directories that are gone and must not be run against.
     pub(super) fn reclaim_created(mut self) {
-        self.reclaim_created_now();
-    }
-
-    /// The same, leaving the bindings usable and the list empty.
-    ///
-    /// Draining is what makes a second call a no-op: a queue that reclaimed at
-    /// one terminal transition must not try again at another, and an empty list
-    /// says "there is nothing of mine out there" rather than "ask again".
-    pub(super) fn reclaim_created_now(&mut self) {
+        // These bindings cannot be used after reclamation. Release their
+        // destination leases before marking an empty created object for delete;
+        // otherwise our own retained binding would postpone deletion.
+        self.destinations.clear();
+        self.bound.clear();
         let created = std::mem::take(&mut self.created);
         reclaim_created(&created);
     }
@@ -420,10 +428,10 @@ impl ItemDestinationBindings {
     /// the resolver, so the record is made directly.
     #[cfg(all(test, windows))]
     pub(super) fn with_created(mut self, path: &Path) -> Self {
-        self.created.push(CreatedChild {
-            identity: directory_identity_of(path),
-            path: path.to_path_buf(),
-        });
+        let (_, _, held) =
+            admit_destination_root(path).expect("the test-created directory is admitted");
+        self.created
+            .push(record_created_child(path, held).expect("the test-created object is leased"));
         self
     }
 
@@ -686,9 +694,17 @@ fn record_created_child(path: &Path, held: std::fs::File) -> Result<CreatedChild
         let _ = remove_held_empty_child(held);
         return Err(destination_unprovable());
     }
+    let lease = match super::destination::lease_destination(path, &held) {
+        Ok(lease) => lease,
+        Err(_) => {
+            let _ = remove_held_empty_child(held);
+            return Err(destination_unprovable());
+        }
+    };
     Ok(CreatedChild {
         path: path.to_path_buf(),
         identity,
+        lease,
     })
 }
 
@@ -765,6 +781,7 @@ fn create_child_object(
     const FILE_DIRECTORY_FILE: u32 = 1;
     const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x20;
     const OBJ_CASE_INSENSITIVE: u32 = 0x40;
+    const OBJ_DONT_REPARSE: u32 = 0x1000;
     let mut units: Vec<u16> = name.as_str().encode_utf16().collect();
     let bytes = u16::try_from(units.len() * 2).expect("validated child name fits UNICODE_STRING");
     let mut unicode = UnicodeString {
@@ -777,7 +794,7 @@ fn create_child_object(
             .expect("OBJECT_ATTRIBUTES fits ULONG"),
         root_directory: parent.as_raw_handle(),
         object_name: &raw mut unicode,
-        attributes: OBJ_CASE_INSENSITIVE,
+        attributes: OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE,
         security_descriptor: std::ptr::null_mut(),
         security_quality_of_service: std::ptr::null_mut(),
     };
@@ -818,6 +835,9 @@ fn create_child_object(
 fn open_created_for_reclaim(child: &CreatedChild) -> Option<std::fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
     let expected = child.identity?;
+    if super::destination::identity_of_hold(&child.lease) != Some(expected) {
+        return None;
+    }
     let held = std::fs::OpenOptions::new()
         .access_mode(0x80 | 0x1_0000 | 0x10_0000) // READ_ATTRIBUTES | DELETE | SYNCHRONIZE
         .share_mode(7)
@@ -906,7 +926,7 @@ fn names_a_device(name: &str) -> bool {
     let (Some(only), None) = (characters.next(), characters.next()) else {
         return false;
     };
-    only.is_ascii_digit() || matches!(only, '\u{b9}' | '\u{b2}' | '\u{b3}')
+    matches!(only, '1'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}')
 }
 
 /// Whether the child is already there, or would be this attempt's to make.
@@ -1024,7 +1044,7 @@ pub(super) fn admit_and_hold(
     // because the two rows above declined. The hold goes to the caller, which
     // decides whether the proof still has work to do.
     Ok((
-        ResolvedDestinationBinding::new(AdmittedDestination::new(root, identity)),
+        ResolvedDestinationBinding::new(AdmittedDestination::from_held(root, &held)?),
         held,
     ))
 }
@@ -1162,7 +1182,7 @@ mod creation_cleanup_tests {
     }
 
     #[test]
-    fn creation_records_the_returned_object_after_its_name_is_replaced() {
+    fn creation_refuses_a_replacement_during_lease_transfer_and_reclaims_only_its_object() {
         let root = fixture();
         let (_, _, parent) = admit_destination_root(&root).unwrap();
         let name = SubfolderName::parse("Converted").unwrap();
@@ -1174,21 +1194,19 @@ mod creation_cleanup_tests {
         fs::create_dir(&path).unwrap();
         let replacement = directory_identity_of(&path).unwrap();
         assert_ne!(original, replacement);
-        let recorded = record_created_child(&path, held).unwrap();
+        let refused = record_created_child(&path, held).unwrap_err();
         assert_eq!(
-            recorded.identity,
-            Some(original),
-            "creation must not claim the replacement"
+            refused.kind, "destination_unprovable",
+            "lifetime must not transfer to the replacement object"
         );
-        reclaim_created(&[recorded]);
         assert!(path.is_dir(), "the foreign replacement survives cleanup");
+        assert_eq!(directory_identity_of(&path), Some(replacement));
         assert!(
-            parked.is_dir(),
-            "a moved object is not searched for by name"
+            !parked.exists(),
+            "refusal reclaims the original empty object through its creation handle"
         );
         drop(parent);
         fs::remove_dir(path).unwrap();
-        fs::remove_dir(parked).unwrap();
         fs::remove_dir(root).unwrap();
     }
 
@@ -1308,6 +1326,81 @@ mod creation_cleanup_tests {
         fs::remove_dir(path).unwrap(); // Remove only the owned test junction, never its target tree.
         fs::remove_file(target.join("keep")).unwrap();
         fs::remove_dir(target).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn created_identity_lease_survives_clones_and_allows_normal_admission() {
+        let root = fixture();
+        let (_, _, parent) = admit_destination_root(&root).unwrap();
+        let name = SubfolderName::parse("Converted").unwrap();
+        let path = root.join(name.as_str());
+        let recorded = create_owned_child(&parent, &name, &path).unwrap();
+        let witness = std::sync::Arc::downgrade(&recorded.lease);
+        let clone = recorded.clone();
+        drop(recorded);
+        assert!(
+            witness.upgrade().is_some(),
+            "cleanup authority keeps its exact object alive"
+        );
+        let (_, identity, admitted) =
+            admit_destination_root(&path).expect("lease must not retain DELETE access");
+        assert_eq!(identity, clone.identity);
+        drop(admitted);
+        reclaim_created(&[clone]);
+        assert!(
+            witness.upgrade().is_none(),
+            "consumed cleanup authority releases its lease"
+        );
+        assert!(!path.exists());
+        drop(parent);
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn atomic_creation_refuses_a_dangling_junction_without_creating_its_target() {
+        let root = fixture();
+        let (_, _, parent) = admit_destination_root(&root).unwrap();
+        let name = SubfolderName::parse("Converted").unwrap();
+        let path = root.join(name.as_str());
+        let target = root.join("absent-target");
+        let made = std::process::Command::new("cmd.exe")
+            .args(["/C", "mklink", "/J"])
+            .arg(&path)
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(made.status.success());
+        assert!(
+            create_child_object(&parent, &name).is_err(),
+            "creation must not follow a dangling junction"
+        );
+        assert!(
+            !target.exists(),
+            "no directory may be created through the junction"
+        );
+        drop(parent);
+        fs::remove_dir(path).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn zero_port_suffixes_are_valid_real_subfolder_names() {
+        let root = fixture();
+        let (_, _, parent) = admit_destination_root(&root).unwrap();
+        for text in ["COM0", "LPT0", "COM0.results", "lpt0.results"] {
+            let name = SubfolderName::parse(text).expect("zero is not a reserved port suffix");
+            let path = root.join(text);
+            let record = create_owned_child(&parent, &name, &path).unwrap();
+            let (_, _, admitted) = admit_destination_root(&path).unwrap();
+            drop(admitted);
+            reclaim_created(&[record]);
+            assert!(!path.exists());
+        }
+        for text in ["COM1", "COM9", "LPT1", "LPT9", "COM¹", "LPT³"] {
+            assert!(SubfolderName::parse(text).is_err());
+        }
+        drop(parent);
         fs::remove_dir(root).unwrap();
     }
 }

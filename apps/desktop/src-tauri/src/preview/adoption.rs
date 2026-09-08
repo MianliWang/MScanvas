@@ -213,10 +213,7 @@ impl FinalizedOutputAdoptionTicket {
     fn held_destination_root(&self) -> Result<DestinationHold, AdoptionRefusal> {
         let (root, identity, held) = admit_destination_root(self.destination.root())
             .map_err(|_| AdoptionRefusal::Missing)?;
-        if self
-            .destination
-            .is_still(&AdmittedDestination::new(root, identity))
-        {
+        if self.destination.matches_current(&root, identity) {
             return Ok(held);
         }
         Err(AdoptionRefusal::Missing)

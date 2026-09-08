@@ -7650,3 +7650,16 @@ The records review also corrected WF-004's outdated statement that the already
 recorded local rendered/native evidence was still pending. Historical evidence
 is retained; the repaired native binary and final reviewed head are recorded in
 the later external checkpoint and PR.
+
+The subsequent lifetime review identified that numeric directory IDs need
+continuous object lifetime across user pauses. Retained destinations and cleanup
+facts now share permissive, identity-checked directory leases; real retry and
+adoption keep the original binding. Zero-attempt termination releases bindings
+and worker admission holds before reclaiming unused children. A deterministic
+Stop immediately before `start_item` proves this order, and adoption refuses a
+replacement directory even when the finalized output object itself is unchanged.
+An additional real dangling-junction test demonstrated that `FILE_CREATE` alone
+could follow a link and create its missing target; `OBJ_DONT_REPARSE` closes that
+case. The independently verified bot finding for valid COM0/LPT0 names is also
+repaired in the Rust validator. Final exact-head validation and review records
+remain in the PR and external checkpoint, not in the earlier local-run totals.

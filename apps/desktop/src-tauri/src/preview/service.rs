@@ -2299,7 +2299,7 @@ impl PreviewService {
             let admitted = bound.admitted();
             let (root, identity, _held) =
                 admit_destination_root(admitted.root()).map_err(|_| queue_destination_changed())?;
-            if !admitted.is_still(&AdmittedDestination::new(root, identity)) {
+            if !admitted.matches_current(&root, identity) {
                 return Err(queue_destination_changed());
             }
         }
@@ -4115,7 +4115,12 @@ impl PreviewService {
     /// launch nothing.
     #[cfg(test)]
     pub(super) fn start_running_for_test(&self, operation: u64, destination: &Path) -> bool {
-        let Ok(bindings) = self.bind_claimed_destinations(operation, Some(destination)) else {
+        self.start_resolved_for_test(operation, Some(destination))
+    }
+
+    #[cfg(test)]
+    pub(super) fn start_resolved_for_test(&self, operation: u64, chosen: Option<&Path>) -> bool {
+        let Ok(bindings) = self.bind_claimed_destinations(operation, chosen) else {
             return false;
         };
         let mut slot = self.conversion_slot();
@@ -4141,6 +4146,19 @@ impl PreviewService {
         self.conversion_slot().terminal_bindings()
     }
 
+    #[cfg(all(test, windows))]
+    pub(super) fn terminal_destination_leases_for_test(
+        &self,
+    ) -> Vec<std::sync::Weak<std::fs::File>> {
+        self.terminal_bindings().map_or_else(Vec::new, |bindings| {
+            bindings
+                .distinct_destinations()
+                .iter()
+                .map(|binding| binding.admitted().lease_witness())
+                .collect()
+        })
+    }
+
     /// Converts every pending item, in order, on one backend binding.
     //
     // The gate is taken once for the whole queue and released only when it
@@ -4152,6 +4170,16 @@ impl PreviewService {
     // process runs. Each is taken briefly to read a row or commit a
     /// transition, and released before the next item starts.
     fn drain_queue(&self, operation: u64) -> WorkspaceConversionUpdateDto {
+        self.drain_queue_before_item(operation, &mut || {})
+    }
+
+    /// The hook occupies the user-stop interval after directory admission and
+    /// before start_item. Production passes a no-op; tests request a real stop.
+    pub(super) fn drain_queue_before_item(
+        &self,
+        operation: u64,
+        before_item: &mut dyn FnMut(),
+    ) -> WorkspaceConversionUpdateDto {
         let running = self.enter_backend();
         // Asked on this side of the gate as well as before it. A queue admitted
         // while an earlier one was still running waits here for its whole
@@ -4245,6 +4273,7 @@ impl PreviewService {
             // converting is honoured here rather than after one more file has
             // been written.
             if self.conversion_slot().stop_requested(operation) {
+                drop(queue);
                 drop(running);
                 return self.finish_queue(operation, TerminalReason::Stopped);
             }
@@ -4259,6 +4288,7 @@ impl PreviewService {
             // `None` is a refusal rather than a default: an item whose
             // destination nothing resolved must not run.
             let Some(admitted) = queue.destination_for(item.dataset()).cloned() else {
+                drop(queue);
                 drop(running);
                 return self.refuse_queue(operation, queue_destination_changed());
             };
@@ -4276,21 +4306,26 @@ impl PreviewService {
             // item is done, so the object cannot be renamed or deleted out from
             // under the plan that is about to adopt it.
             let held = match admit_destination_root(admitted.root()) {
-                Ok((root, identity, held))
-                    if admitted.is_still(&AdmittedDestination::new(root.clone(), identity)) =>
-                {
-                    held
-                }
+                Ok((root, identity, held)) if admitted.matches_current(&root, identity) => held,
                 _ => {
+                    drop(admitted);
+                    drop(queue);
                     drop(running);
                     return self.refuse_queue(operation, queue_destination_changed());
                 }
             };
+            before_item();
             // Refuses once a stop has been accepted, whatever this worker
             // believed a moment ago. The check above narrows the window; this
             // closes it, because the transition and the refusal are the same
             // lock acquisition.
             let Some(attempt) = self.conversion_slot().start_item(operation, index) else {
+                // The terminal transition reclaims untouched named children.
+                // Release the deny-delete admission hold and every worker lease
+                // before cleanup opens the exact created object with DELETE.
+                drop(held);
+                drop(admitted);
+                drop(queue);
                 drop(running);
                 return if self.conversion_slot().stop_requested(operation) {
                     self.finish_queue(operation, TerminalReason::Stopped)
@@ -6216,8 +6251,7 @@ impl PreviewService {
         // Admitted as an object before anything is written into it, so what the
         // result carries is the folder this run actually targeted rather than a
         // name that may mean something else by the time it is adopted.
-        let (destination_root, destination_identity, _held) =
-            admit_destination_root(destination_root)?;
+        let (destination_root, _, _held) = admit_destination_root(destination_root)?;
         let run = run_admitted_multi_output_conversion_seamed(
             AdmittedSetRun {
                 source: &source,
@@ -6245,7 +6279,7 @@ impl PreviewService {
                 source_kind: file.source_kind(),
                 bound_source_objects,
                 authority: generation,
-                destination: AdmittedDestination::new(destination_root, destination_identity),
+                destination: AdmittedDestination::from_held(destination_root, &_held)?,
             },
         ))
     }
