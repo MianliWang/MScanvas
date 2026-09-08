@@ -1,5 +1,30 @@
 # Usability test plan
 
+## M6.7 selected/all verification
+
+The production scope controls and complete review are exercised by
+`e2e/specs/m6.7-conversion-scope.browser.e2e.ts`: selected subset with unrelated
+rows, mixed eligible/excluded counts, all under search, authoritative capacity
+refusal before BEGIN/picker, keyboard scope recovery, deferred-order review
+withdrawal and destination/conflict draft preservation. Seven cases pass at
+measured inner 1366x768, 1920x1080, 1200x800 and 960x640. The existing M6.6
+browser suite separately passes eight cases. Console assertions remain active;
+runner-level Tauri browser-mode warnings are not application-console errors.
+
+`e2e/specs/m6.7-conversion-scope.tauri.e2e.ts` uses the unchanged guarded native
+picker helpers, installed provider and hash-pinned task-owned Thermo copies.
+It requires a strict selected subset and all under active search, compares the
+reviewed order with the actual queue, and checks unrelated source/target bytes
+and existing Fail/Skip behavior. Its complete second run passed **2/2** in 55.2
+seconds under WebView2 152.0.4191.66, with five new mzML outputs. Evidence is in
+`D:/tmp/mscanvas-m67-20260908/m67-native-d6vfZe/evidence.json`; binary SHA-256
+`bcf0390d90f735680bfd215151e53efc75d3b7846fcddd836902e86c74a96919`.
+The initial selected case's picker button timeout remains recorded separately;
+the guarded helpers were unchanged on the successful rerun. No browser result
+is counted as native evidence. Output validation remains `output_only`, not
+full-source fidelity. Exact-head review/publication still remain. See the
+[M6.7 record](M6_7_CONVERSION_SCOPE.md) for current disposition and limitations.
+
 ## Purpose
 
 Validate task structure before expensive backend integration and establish repeatable regression tasks.

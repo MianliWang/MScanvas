@@ -29,6 +29,7 @@ const OTHER_INTENT = completeCatalog[1]!.intent;
 
 function identity(overrides: Partial<ConversionPlanIdentity> = {}): ConversionPlanIdentity {
   return {
+    scope: "selected",
     handles: ["one"],
     intentId: shippedIntent.id,
     conflictPolicy: "fail",
@@ -46,6 +47,7 @@ const READY_CONFIGURATION: ConversionConfiguration = {
 
 function inputs(overrides: Partial<Parameters<typeof planQuestion>[0]> = {}) {
   return {
+    scope: "selected" as const,
     handles: ["one"] as readonly string[],
     authority: settledAt(1, 1) as BackendAuthorityProjection | null,
     configuration: READY_CONFIGURATION as ConversionConfiguration | null,
@@ -75,6 +77,27 @@ const PLAN = {
   receipt: 1,
   destinationPolicy: { kind: "customFolder" },
 } as const;
+
+describe("M6.7 scope and capacity replies", () => {
+  it("makes selected and all different questions even for equal members", () => {
+    expect(sameQuestion(identity(), identity({ scope: "all" }))).toBe(false);
+    expect(installReply(loading(identity({ scope: "all" }), 2), identity(), 1, { kind: "plan", plan: PLAN })).toBeNull();
+  });
+
+  it("installs only the matching capacity refusal and requires a smaller scope", () => {
+    const asked = identity({ handles: ["one", "two"] });
+    const reply = { kind: "capacityExceeded", capacity: 1, requestedCount: 2 } as const;
+    const refused = installReply(loading(asked, 4), asked, 4, reply)!;
+    expect(refused).toEqual({ status: "capacityExceeded", identity: asked, capacity: 1, requestedCount: 2 });
+    expect(startPlan(refused, { kind: "ask", identity: asked })).toBe("capacityExceeded");
+    expect(currentPlan(refused, { kind: "ask", identity: asked })).toBeNull();
+    expect(retryStep(refused, 5)).toEqual({ kind: "hold" });
+    expect(planStep(refused, { kind: "ask", identity: identity() }, 5).kind).toBe("issue");
+    expect(installReply(loading(asked, 5), asked, 4, reply)).toBeNull();
+    expect(installReply(loading(asked, 4), asked, 4, { ...reply, requestedCount: 3 })?.status).toBe("failed");
+    expect(installReply(loading(asked, 4), asked, 4, { ...reply, capacity: 2 })?.status).toBe("failed");
+  });
+});
 
 describe("the plan question", () => {
   it("is none when nothing is selected, and says nothing about the build", () => {
@@ -123,6 +146,7 @@ describe("the plan question", () => {
     expect(planQuestion(inputs())).toEqual({
       kind: "ask",
       identity: {
+        scope: "selected",
         handles: ["one"],
         intentId: shippedIntent.id,
         conflictPolicy: "fail",

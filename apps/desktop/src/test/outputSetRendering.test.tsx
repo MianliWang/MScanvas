@@ -216,6 +216,7 @@ describe("rendered QA for the one-to-many output topology", () => {
       availability: availableBackend,
     });
     renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: new RegExp(LONG_NAME.slice(0, 20)) }));
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
       expect(

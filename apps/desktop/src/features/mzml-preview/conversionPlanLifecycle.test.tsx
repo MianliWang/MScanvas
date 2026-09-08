@@ -57,7 +57,7 @@ function acquisition(index: number): SelectedFile {
 const FIRST = acquisition(1);
 const SECOND = acquisition(2);
 
-function mount(options: FakePreviewApiOptions = {}): FakePreviewApi {
+async function mount(options: FakePreviewApiOptions = {}): Promise<FakePreviewApi> {
   const api = createFakePreviewApi({
     initialDatasets: [FIRST, SECOND],
     availability: availableBackend,
@@ -70,6 +70,7 @@ function mount(options: FakePreviewApiOptions = {}): FakePreviewApi {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
+  fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
   return api;
 }
 
@@ -158,7 +159,7 @@ function planOf(result: { current: ReturnType<typeof usePreviewWorkspace> }) {
 describe("the plan the panel is showing", () => {
   it("asks one question naming every fact that decides what the queue means", async () => {
     const plans = controlledPlans();
-    const api = mount({ conversionPlan: plans.conversionPlan });
+    const api = await mount({ conversionPlan: plans.conversionPlan });
     await screen.findByRole("region", { name: "Convert" });
 
     await waitFor(() => {
@@ -181,7 +182,7 @@ describe("the plan the panel is showing", () => {
     // A session whose settings cannot be read has no plan question to pose, so
     // the panel is blocked rather than loading -- and nothing was asked.
     const plans = controlledPlans();
-    mount({
+    await mount({
       conversionPlan: plans.conversionPlan,
       conversionConfiguration: {
         authority: settledAt(1, firstBindingReceipt),
@@ -545,7 +546,7 @@ describe("the plan the panel is showing", () => {
 
   it("refuses Convert differently for a failed plan and one being worked out", async () => {
     const plans = controlledPlans();
-    mount({ conversionPlan: plans.conversionPlan });
+    await mount({ conversionPlan: plans.conversionPlan });
     const panel = await screen.findByRole("region", { name: "Convert" });
 
     await waitFor(() => {
@@ -582,6 +583,7 @@ describe("the plan the panel is showing", () => {
         </PreviewApiProvider>
       </WorkspaceDropTransportProvider>,
     );
+    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
       expect(panel.querySelector(".conversion-queue-list")).not.toBeNull();
@@ -715,7 +717,7 @@ describe("starting the conversion the plan describes", () => {
 
   it("keeps an invalid subfolder as a Rust refusal and recovers on a new name", async () => {
     const plans = controlledPlans();
-    const api = mount({ conversionPlan: plans.conversionPlan });
+    const api = await mount({ conversionPlan: plans.conversionPlan });
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => expect(plans.asked).toHaveLength(1));
     await act(async () => plans.answer(0));
@@ -729,14 +731,14 @@ describe("starting the conversion the plan describes", () => {
       plans.fail(2, previewError({ kind: "subfolder_name_unusable", summary: "Use one local subfolder name." }));
       plans.answer(1); // A valid answer for the old name cannot erase the refusal.
     });
-    expect(within(panel).getByRole("button", { name: "Convert focused…" })).toBeDisabled();
+    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeDisabled();
     expect(within(panel).getByText("Use one local subfolder name.")).toBeVisible();
     expect(within(panel).getByLabelText("Subfolder name")).toHaveAttribute("aria-invalid", "true");
     expect(api.beginRequests()).toHaveLength(0);
     fireEvent.change(within(panel).getByLabelText("Subfolder name"), { target: { value: "Results" } });
     await waitFor(() => expect(plans.asked).toHaveLength(4));
     await act(async () => plans.answer(3));
-    expect(within(panel).getByRole("button", { name: "Convert focused…" })).toBeEnabled();
+    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeEnabled();
     expect(within(panel).getByText("Requested destination").nextElementSibling?.textContent).toContain("Results");
   });
 
@@ -755,9 +757,9 @@ describe("starting the conversion the plan describes", () => {
   });
 
   it("sends the plan's own question, not a list of rows", async () => {
-    const api = mount();
+    const api = await mount();
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await pressConvert(panel, "Convert focused…");
+    await pressConvert(panel, "Convert 1 selected…");
 
     await waitFor(() => {
       expect(api.beginRequests()).toHaveLength(1);
@@ -774,9 +776,9 @@ describe("starting the conversion the plan describes", () => {
   });
 
   it("refuses a start under an installation the session has left, and learns of it from the refusal", async () => {
-    const api = mount();
+    const api = await mount();
     const panel = await screen.findByRole("region", { name: "Convert" });
-    const convert = within(panel).getByRole("button", { name: "Convert focused…" });
+    const convert = within(panel).getByRole("button", { name: "Convert 1 selected…" });
     await waitFor(() => {
       expect(convert).toBeEnabled();
     });
@@ -841,7 +843,7 @@ describe("starting the conversion the plan describes", () => {
       const asked = api.planRequests();
       expect(asked[asked.length - 1]?.expectedReceipt).not.toBe(firstBindingReceipt);
     });
-    await pressConvert(panel, "Convert focused…");
+    await pressConvert(panel, "Convert 1 selected…");
     await waitFor(() => {
       expect(api.beginRequests()).toHaveLength(2);
     });
@@ -856,7 +858,7 @@ describe("starting the conversion the plan describes", () => {
     // collision or a busy lane is not news about the installation, so nothing
     // about the session may be re-read for it -- and the plan on screen is
     // exactly as good as it was.
-    const api = mount({
+    const api = await mount({
       conversionRefusal: () => ({
         outcome: "refused",
         error: previewError({
@@ -867,7 +869,7 @@ describe("starting the conversion the plan describes", () => {
       }),
     });
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await pressConvert(panel, "Convert focused…");
+    await pressConvert(panel, "Convert 1 selected…");
 
     await waitFor(() => {
       expect(within(panel).getByText("Two of those rows would write one file.")).toBeVisible();

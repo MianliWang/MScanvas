@@ -4,7 +4,8 @@ import { BackendStatus } from "./BackendStatus";
 import { Chromatogram } from "./Chromatogram";
 import { ChromatogramExportPanel } from "./ChromatogramExportPanel";
 import type { WorkspaceDropRejectionReason } from "./contracts";
-import { conversionJudgedAnyOutput, isConvertibleSourceKind } from "./contracts";
+import { conversionJudgedAnyOutput } from "./contracts";
+import { resolveConversionScope } from "./conversionScope";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
 import { PreviewSummary } from "./PreviewSummary";
@@ -217,71 +218,18 @@ export function PreviewWorkspace() {
   // decides it, and each control projects its own decision from that lane; see
   // `conversionAvailability.ts`.
 
-  // The row the keyboard is on. Deliberately not `activeDataset`: the preview
-  // and the conversion panel may describe different rows, and this slice's whole
-  // point is that moving focus to a vendor row does not disturb an mzML preview
-  // already on screen.
-  const focusedDataset = useMemo(
-    () => projection.datasets.find((dataset) => dataset.handle === roster.focused) ?? null,
-    [projection, roster.focused],
-  );
-
-  // Asked for whenever the focused row changes, and cleared when it is not
-  // convertible. The summary is read from Rust rather than composed here so it
-  // describes the plan the run is actually fixed with.
-  // What a conversion would act on, in the order the user is looking at.
-  //
-  // The selection when it holds convertible rows, and the focused row
-  // otherwise -- so `Convert focused…` stays exactly what it was and a
-  // multi-row selection becomes a queue without a second control. The order is
-  // the projection's, which is the order on screen after search and sort.
-  const selectedConvertible = useMemo(
-    () =>
-      projection.datasets.filter(
-        (dataset) =>
-          roster.selected.has(dataset.handle) && isConvertibleSourceKind(dataset.sourceKind),
-      ),
-    [projection, roster.selected],
-  );
-  // Stated, never silently dropped: a user who selected ten rows and sees a
-  // queue of six is owed the other four.
-  const excludedSelectedCount = useMemo(
-    () =>
-      projection.datasets.filter(
-        (dataset) =>
-          roster.selected.has(dataset.handle) && !isConvertibleSourceKind(dataset.sourceKind),
-      ).length,
-    [projection, roster.selected],
-  );
-  const focusedConvertible =
-    focusedDataset !== null && isConvertibleSourceKind(focusedDataset.sourceKind);
-  const queueHandlesToConvert = useMemo(
-    () =>
-      selectedConvertible.length > 0
-        ? selectedConvertible.map((dataset) => dataset.handle)
-        : focusedConvertible
-          ? [focusedDataset.handle]
-          : [],
-    [selectedConvertible, focusedConvertible, focusedDataset],
+  const resolvedScope = useMemo(
+    () => resolveConversionScope(workspace.conversionScope, roster),
+    [workspace.conversionScope, roster.datasets, roster.selected, roster.sort],
   );
 
   const { describe: describeConversion } = workspace.conversionPlan;
-  // The rows this panel would convert, handed to the plan the moment they
-  // change. Everything *else* about the question -- the combination, the
-  // policy, the binding -- the plan reads from authorities of its own; the rows
-  // are the screen's, because search, sort and focus resolve them here.
-  //
-  // The joined key is the dependency; the array itself is the input. A fresh
-  // array is built on every render, so depending on it would re-describe the
-  // same queue on every keystroke in the search box -- and splitting the key
-  // back apart to rebuild the input would turn a handle that ever held the
-  // separator into a different queue. A unit separator is the one thing an
-  // opaque handle cannot contain.
-  const describeKey = queueHandlesToConvert.join("\u001f");
-  useEffect(() => {
-    describeConversion(queueHandlesToConvert);
-    // `queueHandlesToConvert` is deliberately absent: `describeKey` is its
-    // content, and the content is what decides whether to ask again.
+  // Only resolved question content triggers a description. The layout effect
+  // installs it before paint; roster/scope setters already withdraw an old
+  // executable review synchronously, before this render can happen.
+  const describeKey = JSON.stringify([resolvedScope.scope, resolvedScope.handles]);
+  useLayoutEffect(() => {
+    describeConversion(resolvedScope.handles, resolvedScope.scope);
   }, [describeConversion, describeKey]);
 
   const handleTableRendered = useCallback(
@@ -645,9 +593,8 @@ export function PreviewWorkspace() {
             configuration={workspace.conversionConfiguration}
             conversion={workspace.conversion}
             plan={workspace.conversionPlan}
-            excludedSelectedCount={excludedSelectedCount}
-            handles={queueHandlesToConvert}
-            scope={selectedConvertible.length > 0 ? "selection" : "focused"}
+            resolvedScope={resolvedScope}
+            onScopeChange={workspace.setConversionScope}
           />
           {preview.status === "loaded" ? (
             <PreviewSummary

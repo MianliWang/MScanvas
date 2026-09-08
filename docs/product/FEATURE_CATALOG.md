@@ -30,13 +30,16 @@ Implementation notes for the two folder-bearing features follow. The acceptance
 table remains the target, including the unsupported portions called out below:
 
 - **WSP-002 — Partially implemented.** M1.4.0 built the private discovery foundation and M1.4.1 exposed `Add mzML folder…` over it ([ADR 0007](../architecture/adr/0007-logical-acquisition-discovery-and-folder-traversal.md)). What works today: one chosen local Windows folder is scanned recursively for regular `.mzML` files, in a deterministic order, under four named limits, without following any linked or special filesystem entry, and an incomplete scan says so. What is still absent from the acceptance above: directory-formatted acquisitions are not recognized, so there is nothing to stop descending inside. They remain evidence-gated — MSCanvas recognizes none of them today, and will only claim one once this repository can convert it.
-- **WSP-008 — Partially implemented.** M3.2 converts the selection, in the order
-  it is displayed, at up to 16 items per queue ([ADR 0013](../architecture/adr/0013-serial-conversion-queue.md)).
-  The scope is visible before execution — the ordered list, the name each item
-  would write, and how many selected rows are excluded for being mzML already —
-  and unrelated rows are untouched, including when an item fails. What is absent
-  from the acceptance above: "all" is not an option, because a queue is bounded
-  at 16 and a workspace holds up to 1,024 rows; and only the three evidenced
+- **WSP-008 — Implemented by M6.7; publication pending.** Selected means the
+  user's curated rows, including a selection of one; all means every eligible
+  workspace row, including rows outside search. Focus never supplies a fallback.
+  Requested, eligible and excluded counts are visible. Both scopes use the
+  complete roster's chosen sort, with added order breaking ties, and show every
+  resolved queue member in order. Rust's current capacity is displayed and an
+  oversized eligible scope is refused before queue creation, picker, staging or
+  provider work. The number is unchanged; M6.8 owns its re-evaluation.
+  Membership/order bind at BEGIN and survive search, sort, selection, later
+  workspace changes and retry. Only the three evidenced
   vendor families — Thermo Scientific RAW, Shimadzu LabSolutions LCD and SCIEX
   WIFF — can be queued, alone or mixed. A SCIEX row is a **bundle**: a `.wiff`
   and the `.wiff.scan` beside it, admitted together as one row, and the plan
@@ -224,7 +227,7 @@ process and a single row of the plan. Items convert one at a time in
 the order shown. One file's failure marks that file and the queue continues,
 and `Retry N failed` reruns only the failures Rust marks retryable.
 
-**M6.6 candidate continuation, publication pending:** CNV-003 exposes source
+**M6.6 published continuation (PR #99):** CNV-003 exposes source
 sibling, named subfolder and custom local folder through M6.5's existing Rust
 authority. Custom folder preserves the shipped default and opens the existing
 Rust-owned picker. The compact summary states the requested policy, relevant

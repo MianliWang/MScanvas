@@ -97,6 +97,7 @@ async function supersedeTheReading(
     conversion: heldDrain,
   });
   renderWorkspace(api);
+  fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
   const panel = await screen.findByRole("region", { name: "Convert" });
   // A conversion takes the lane, so the check the replacement will owe is
   // deferred and the superseded window is one this test can look at.

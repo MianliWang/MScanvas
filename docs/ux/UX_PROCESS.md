@@ -53,8 +53,8 @@ Essential information may appear on hover for speed only when an equivalent visi
 
 ## M6.6 destination and conflict continuation
 
-**Accepted direction implemented and exercised locally; review and publication
-pending.**
+**Published in M6.6, PR #99.** The evidence below records the local validation
+stage; final publication is at `5b91f6c5ab1c3013eb9556ddf83b76217a56f249`.
 The v5.11 prototype's concise destination/conflict organization is the reference
 for this slice. The user authorized continuation in the current production
 surface, so steps 6-7 above do not reopen the accepted direction. The prototype
@@ -105,3 +105,16 @@ asserted at all four viewports. The provenance and remaining limits are in
 [USABILITY_TEST_PLAN.md](USABILITY_TEST_PLAN.md). These local runs do not claim
 final-head checks, independent review, protected publication or broad regression
 completion. Historical prototype QA is not counted as current evidence.
+
+## M6.7 explicit conversion scope
+
+The existing conversion panel retains one settings draft and one review. An
+inline native-radio choice selects curated rows or all workspace rows, followed
+by one matching Convert action. Counts, ordering and the complete member list
+make the decision visible, including under search. Empty and over-capacity
+scopes preserve controls and give a route to a usable selection.
+
+The three considered structures, interaction budget, frozen changed-path
+closure, keyboard/recovery tasks and evidence are recorded in
+[M6_7_CONVERSION_SCOPE.md](M6_7_CONVERSION_SCOPE.md). This is a scope slice over
+the published M6.6 surface; M7 layout, libraries and localization remain outside.

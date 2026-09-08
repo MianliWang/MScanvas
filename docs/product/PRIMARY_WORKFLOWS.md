@@ -195,17 +195,15 @@ See also
 
 **Partly built.** WF-004a below is the bounded serial queue for three evidenced
 vendor families, with semantic settings and explicit output adoption. M6.6's
-candidate adds visible destination policies and conflict explanations; its
-local rendered/native proof is recorded in the usability test plan; review and
-publication remain pending. Step 1's
-selected/all scope decision remains M6.7's, the queue still holds at most 16
-items, and "Open file/folder" remains outside this slice. See
+destination policies and conflict explanations shipped in PR #99. M6.7 adds the
+explicit selected/all decision below; its validation/publication is in progress.
+The queue's bound remains unchanged, and "Open file/folder" remains outside this slice. See
 [ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md) and
 [ADR 0013](../architecture/adr/0013-serial-conversion-queue.md).
 
 ## WF-004a — Convert a queue of vendor acquisitions
 
-**M6.6 candidate continuation, publication pending.** The destination and
+**M6.6 published continuation, with M6.7 scope.** The destination and
 conflict steps below continue the accepted v5.11 organization in the current
 conversion surface. They preserve existing membership, scientific intent,
 availability, queue, adoption and export contracts.
@@ -219,8 +217,12 @@ availability, queue, adoption and export contracts.
    missing, is not a file, or is not the companion MSCanvas expects, the
    acquisition is refused with a sentence saying which file to put beside it —
    and choosing the `.wiff.scan` on its own says to choose the `.wiff` instead.
-2. Select the vendor rows to convert, or focus one. The three families may be
-   mixed in one selection. Vendor rows cannot be previewed, and say so.
+2. Choose `Selected rows` or `All workspace rows`. Selected uses the curated
+   selection even when it contains just one row; focus is viewer/keyboard state
+   only. All uses every eligible row in the workspace, regardless of search.
+   Both scopes exclude unsupported rows and show requested/eligible/excluded
+   counts. The three families may be mixed. Vendor rows cannot be previewed,
+   and say so. There is no Convert visible action.
 3. Choose the conversion settings, or leave the ones MSCanvas ships. Four
    groups — peak processing, spectra included, numeric precision, array
    compression — edit one dimension each, over one combination. A choice either
@@ -252,7 +254,7 @@ availability, queue, adoption and export contracts.
 
    Review the plan: the ordered list of what will run, which family each row
    is, what each item will write, the combination it will be converted under,
-   how many selected rows are excluded for being mzML already, and the
+   how many requested rows are excluded as non-convertible, and the
    output-only validation disclosure. A compact summary states the requested
    policy, relevant name and conflict behavior. It describes conditional
    destinations until Rust admits the directory objects, not a fixed folder or
@@ -276,7 +278,19 @@ availability, queue, adoption and export contracts.
    remain untouched. `OVERWRITE_REFUSED` is the terminal finalization decision
    in [ADR 0043, CNV-D4](../architecture/adr/0043-conversion-completion-route.md#cnv-d4--conflict-and-overwrite),
    not a pending checkbox or provider experiment.
-6. Activate the primary conversion action after the current plan is ready.
+6. Read the exact ordered member list and the Rust-authored capacity, then use
+   `Convert N selected…` or `Convert all N eligible…` when that plan is ready.
+   The existing roster sort applies to the full workspace before scope selection;
+   ties keep Rust's added order. Search does not alter either scope's membership
+   or order. Over-capacity means too many eligible items, not too many requested
+   or workspace rows, and refuses before BEGIN or any destination/provider work.
+
+   Scope, membership or ordering changes withdraw the old review synchronously;
+   a search-only change does not. A late or mismatched answer cannot restore an
+   old review. BEGIN binds that resolved order once. Later workspace rows are
+   outside the queue and its retry, as the bound queue states. Existing mutation
+   and backend-lane guards remain in force.
+
    Changing policy, name, conflict policy or another bound component makes the
    earlier review unusable, including an old reply arriving after the change.
 

@@ -14,6 +14,7 @@ import { useConversionOperation } from "./useConversionOperation";
 import type { ConversionPlanView } from "./useConversionPlan";
 import { useConversionPlan } from "./useConversionPlan";
 import { sameDestination, sameQuestion, type ConversionPlanIdentity } from "./conversionPlanAuthority";
+import { resolveConversionScope, sameConversionScope, type ConversionScope } from "./conversionScope";
 import { catalogRow } from "./conversionIntentSelection";
 import type {
   BackendAuthorityProjection,
@@ -524,6 +525,8 @@ export interface PreviewWorkspace {
    * spans them -- which rows, under which combination, on which installation.
    */
   readonly conversionPlan: ConversionPlanView;
+  readonly conversionScope: ConversionScope;
+  readonly setConversionScope: (scope: ConversionScope) => void;
   readonly backend: BackendState;
   /**
    * Whether the reading above has stopped describing the session.
@@ -962,7 +965,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     useState<TraceVisibility>(INITIAL_TRACES);
   const [measurements, setMeasurements] = useState<readonly PreviewMeasurement[]>([]);
 
-  const [roster, dispatchRoster] = useReducer(rosterReducer, initialRosterState);
+  const [roster, renderRosterAction] = useReducer(rosterReducer, initialRosterState);
+  const [conversionScope, renderConversionScope] = useState<ConversionScope>("selected");
+  const conversionScopeRef = useRef(conversionScope);
+  const invalidateScopePlan = useRef<() => void>(() => undefined);
   const [rosterLoad, setRosterLoadState] = useState<RosterLoadState>({ status: "loading" });
   /**
    * Whether this window has an authoritative list, where a start guard can read
@@ -1000,11 +1006,24 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * exactly the wrong answer.
    */
   const rosterRef = useRef(roster);
-  // Written during the render whose value it mirrors, not in an effect. An
-  // effect would leave it one commit behind, and a picker reply landing in that
-  // gap would decide "was the workspace empty" from the workspace before the
-  // last change.
-  rosterRef.current = roster;
+  // This is the reducer's immediate mirror for dispatch, not another roster.
+  // A selection/sort action must withdraw its old review before returning,
+  // including two actions batched before React publishes the next render.
+  const dispatchRoster = useCallback((action: RosterAction) => {
+    const before = rosterRef.current;
+    const next = rosterReducer(before, action);
+    if (!sameConversionScope(
+      resolveConversionScope(conversionScopeRef.current, before),
+      resolveConversionScope(conversionScopeRef.current, next),
+    )) invalidateScopePlan.current();
+    rosterRef.current = next;
+    renderRosterAction(action);
+  }, []);
+  const setConversionScope = useCallback((scope: ConversionScope) => {
+    if (scope !== conversionScopeRef.current) invalidateScopePlan.current();
+    conversionScopeRef.current = scope;
+    renderConversionScope(scope);
+  }, []);
 
   const [backendBusy, setBackendBusy] = useState(true);
   /**
@@ -3772,6 +3791,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     }
   }, [dispatchConversion, readCurrentConversionPlan]);
   const { invalidate: invalidateConversionPlan } = conversionPlan;
+  invalidateScopePlan.current = invalidateConversionPlan;
   const { readPlanOptions, setConflictPolicy, setDestinationPolicy } = conversion;
   const chooseConflictPolicy = useCallback((policy: ConversionConflictPolicy) => {
     if (readPlanOptions().conflictPolicy !== policy) invalidateConversionPlan();
@@ -4245,6 +4265,8 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     },
     conversionConfiguration: { ...conversionConfiguration, select: chooseConversionIntent },
     conversionPlan,
+    conversionScope,
+    setConversionScope,
   };
 }
 

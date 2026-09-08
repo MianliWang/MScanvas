@@ -24,6 +24,7 @@ import {
 } from "./conversionPlanAuthority";
 import type { ConversionConfigurationController } from "./useConversionConfiguration";
 import type { ConversionPlanOptions } from "./useConversionOperation";
+import type { ConversionScope } from "./conversionScope";
 
 /** What the panel may render about the conversion it would start. */
 export interface ConversionPlanView {
@@ -31,11 +32,11 @@ export interface ConversionPlanView {
    * The rows a conversion would act on, as the surface that owns the selection
    * says they are.
    *
-   * Imperative because the rows are the *screen's*, and the screen is where
-   * search, sort and focus resolve them. Everything else about the question is
-   * read from authorities this hook already holds.
+   * The scope model resolves the complete roster's selected/all query and sort.
+   * Search and focus never contribute members. Everything else about the
+   * question is read from authorities this hook already holds.
    */
-  readonly describe: (handles: readonly string[]) => void;
+  readonly describe: (handles: readonly string[], scope?: ConversionScope) => void;
   /** Withdraws the previous review before a preference setter can return. */
   readonly invalidate: () => void;
   /** The machine's state, for the tests and the sentences that need the arm. */
@@ -58,6 +59,7 @@ export interface ConversionPlanView {
   readonly startPlan: ConversionStartPlan;
   /** The error a failed plan is refused with, where the plan is the failure. */
   readonly error: PreviewError | null;
+  readonly capacityRefusal: { readonly capacity: number; readonly requestedCount: number } | null;
   /** Whether the reader is offered a control that asks the same question again. */
   readonly retryOffered: boolean;
   /** Asks the same question again, at the next ordinal. */
@@ -87,6 +89,8 @@ export function useConversionPlan(
   onAuthority: (authority: BackendAuthorityProjection) => void,
 ): ConversionPlanView {
   const [handles, setHandles] = useState<readonly string[]>([]);
+  const [scope, setScope] = useState<ConversionScope>("selected");
+  const scopeRef = useRef(scope);
   const handlesRef = useRef(handles);
   const { readCurrent: readConfiguration } = configuration;
   const [state, setState] = useState<ConversionPlanState>({ status: "none" });
@@ -125,19 +129,21 @@ export function useConversionPlan(
   const question = useMemo(
     () =>
       planQuestion({
+        scope,
         handles,
         authority,
         configuration: configuration.configuration,
         selectedIntentId: configuration.selectedIntentId,
         ...options,
       }),
-    [authority, configuration.configuration, configuration.selectedIntentId, options.conflictPolicy, options.destinationPolicy, handles],
+    [authority, configuration.configuration, configuration.selectedIntentId, options.conflictPolicy, options.destinationPolicy, handles, scope],
   );
 
   const readQuestion = useCallback(() => {
     const currentAuthority = readAuthority();
     const currentConfiguration = readConfiguration(currentAuthority);
     return planQuestion({
+      scope: scopeRef.current,
       handles: handlesRef.current,
       authority: currentAuthority,
       configuration: currentConfiguration.configuration,
@@ -165,12 +171,14 @@ export function useConversionPlan(
           if (!mounted.current) {
             return;
           }
-          if (outcome.outcome === "planned") {
+          if (outcome.outcome === "planned" || outcome.outcome === "capacityExceeded") {
             const latest = readQuestion();
             if (latest.kind !== "ask" || !sameQuestion(latest.identity, identity)) {
               return;
             }
-            const installed = installReply(stateRef.current, identity, issued, {
+            const installed = installReply(stateRef.current, identity, issued, outcome.outcome === "capacityExceeded" ? {
+              kind: "capacityExceeded", capacity: outcome.capacity, requestedCount: outcome.requestedCount,
+            } : {
               kind: "plan",
               plan: outcome.plan,
             });
@@ -222,7 +230,7 @@ export function useConversionPlan(
   // The one place the machine moves for a changed or withdrawn question. Everything it
   // does is `planStep`'s decision; nothing here adds a condition of its own.
   useEffect(() => {
-    const step = planStep(stateRef.current, question, ordinal.current + 1);
+    const step = planStep(stateRef.current, readQuestion(), ordinal.current + 1);
     switch (step.kind) {
       case "hold":
         return;
@@ -233,7 +241,7 @@ export function useConversionPlan(
         ordinal.current = step.ordinal;
         issue(step.identity, step.ordinal);
     }
-  }, [commit, issue, question, state]);
+  }, [commit, issue, question, readQuestion, state]);
 
   /**
    * The rows, taken as rows.
@@ -243,9 +251,11 @@ export function useConversionPlan(
    * be computing the screen's own selection from the plan's copy of it, which
    * is the wrong direction for a fact the screen owns.
    */
-  const describe = useCallback((next: readonly string[]) => {
-    if (handlesRef.current.length !== next.length ||
+  const describe = useCallback((next: readonly string[], nextScope: ConversionScope = "selected") => {
+    if (scopeRef.current !== nextScope || handlesRef.current.length !== next.length ||
       handlesRef.current.some((handle, index) => handle !== next[index])) invalidate();
+    scopeRef.current = nextScope;
+    setScope(nextScope);
     handlesRef.current = next;
     setHandles(next);
   }, [invalidate]);
@@ -291,6 +301,8 @@ export function useConversionPlan(
     // A failure about a question nobody is asking any more is not a sentence
     // to put on screen.
     error: state.status === "failed" && start === "failed" ? state.error : null,
+    capacityRefusal: state.status === "capacityExceeded" && start === "capacityExceeded"
+      ? { capacity: state.capacity, requestedCount: state.requestedCount } : null,
     retryOffered,
     retry,
   };

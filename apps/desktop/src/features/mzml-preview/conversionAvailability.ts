@@ -131,6 +131,7 @@ export type ConversionUnavailableReason =
   | "no-convertible-target"
   | "plan-reading"
   | "plan-failed"
+  | "plan-capacity-exceeded"
   | "plan-settings-unknown"
   | "plan-selection-unavailable"
   | "queue-not-retryable"
@@ -185,7 +186,8 @@ const CONVERSION_MESSAGES: Record<ConversionUnavailableReason, string> = {
   "diagnostics-exporting":
     "Converting is unavailable while failure diagnostics are being saved.",
   "workspace-settling": "Converting is unavailable while the file list is being changed.",
-  "no-convertible-target": "Select or focus a supported vendor acquisition to convert.",
+  "no-convertible-target": "Choose a scope containing supported vendor acquisitions to convert.",
+  "plan-capacity-exceeded": "Choose fewer eligible rows before converting.",
   // Three sentences for three situations a single "no plan" could not tell
   // apart, and the difference is what the reader can do. One is a wait, one is
   // a control to press, and one is a change to make above.
@@ -317,6 +319,8 @@ function targetReason(action: ConversionAction): ConversionUnavailableReason | n
  */
 function planReason(plan: ConversionStartPlan): ConversionUnavailableReason | null {
   switch (plan) {
+    case "capacityExceeded":
+      return "plan-capacity-exceeded";
     case "ready":
       return null;
     case "reading":

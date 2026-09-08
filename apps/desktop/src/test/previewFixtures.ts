@@ -257,6 +257,7 @@ export function planIdentity(
   overrides: Partial<Omit<ConversionPlanIdentity, "handles">> = {},
 ): ConversionPlanIdentity {
   return {
+    scope: "selected",
     handles,
     intentId: shippedIntent.id,
     conflictPolicy: "fail",
@@ -1765,6 +1766,9 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         });
       }
       const admitted = completeCatalog.find((row) => row.intent.id === request.intentId);
+      if (request.handles.length > 16) {
+        return Promise.resolve({ outcome: "capacityExceeded" as const, capacity: 16, requestedCount: request.handles.length });
+      }
       if (admitted === undefined || !admitted.available) {
         return Promise.reject(
           previewError({
