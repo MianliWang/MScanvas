@@ -249,7 +249,7 @@ buys is narrower and worth stating exactly: a wrong *description* cannot become
 a wrong *claim in code*. The words can drift; the member cannot be written by
 the code that reads them.
 
-**The guard proves itself.** On every run it applies nineteen deliberate bypasses
+**The guard proves itself.** On every run it applies twenty-three deliberate bypasses
 to isolated copies and requires each to be detected, including all six the two
 reviewers demonstrated: the alias import, the braced member import, the braced
 ownership import, a production claim hidden behind a file-based test module, the
@@ -259,16 +259,35 @@ tree.
 That last one is written in words the rule already lists. It proves the rule
 fires; it does **not** prove an unlisted synonym would be caught, and this record
 previously called it a synonym proof — which contradicted the paragraph above it.
-Two of the nineteen are the rules added after the third review: a consumer
-deriving the disposition for itself, and the claim written out as a string. Four
-more came from the fourth, and two of those are edits reviewers demonstrated
-against this guard rather than defects imagined for it — a braced `#[cfg(test)]`
-import arming a skip region over 158 lines of production `service.rs`, and a
-module declaration written inside a raw string literal that made all 8,303 lines
-of it a test source. The other two prove the document rule, which until then no
-proof exercised at all: the pristine copy held no markdown, so deleting that
-rule outright would have left the suite green. The proofs also fail if the guard
-has stopped checking at all, and they never edit the worktree.
+Two came from the third review — a consumer deriving the disposition for
+itself, and the claim written out as a string. Four came from the fourth, two of
+them edits a reviewer demonstrated rather than defects imagined for the guard: a
+braced `#[cfg(test)]` import arming a skip region over 158 lines of production
+`service.rs`, and a module declaration written inside a raw string literal that
+made all 8,303 lines of it a test source. The other two of those four prove the
+document rule, which until then no proof exercised at all — the pristine copy
+held no markdown, so deleting that rule outright would have left the suite green.
+
+**Four more came from the fifth, and two of those were the same two attacks
+again in shapes the repairs had not covered.** A comment containing a brace,
+placed between the attribute and the item it sits on, opened a 160-line region
+over production code — the brace counter read raw text, so a `{` in a comment
+was a body. And `mod r#service;` is the same module `service.rs` under a raw
+identifier, which the plain-declaration subtraction did not match. Both are
+answered at the root: comments, strings, chars and raw strings are scrubbed out
+before anything is counted or matched, and the region now ends where its own
+depth returns to zero rather than at the first left-margin `}`.
+
+The other two of the fifth's proofs are for rules that could not fail at all.
+Neutralising the conjunction's one-definition count, or the comparison of the
+Rust vocabulary against the identifiers this repository fixed, left every
+existing proof green: the first because the only duplicate anyone had written
+also failed a different rule, the second because both sides were filtered
+through the same constant, so a fourth disposition Rust invented alone could not
+show up and a rename carried out in step showed up as somebody else's problem.
+The wire union is now read as a union, the two comparisons ask different
+questions, and each is proved by an edit only it refuses. The proofs also fail
+if the guard has stopped checking at all, and they never edit the worktree.
 
 An earlier version walked each file to skip `#[cfg(test)]` regions and read only
 what was left. It twice turned out to be skipping production code instead —
@@ -324,6 +343,17 @@ which is unchanged.
 pending. A user-skipped or user-cancelled item has no failure to correct, so it
 keeps its answer through a rerun of the queue it belongs to.
 
+**And a skip during a rerun is not a skip of the failure underneath it.** A
+retry moves retryable failures back to `pending` while their error, attempt
+count and diagnostic ticket stay in place, so a `pending` row in the second pass
+may be one that ran in the first. Settling it as "you chose not to convert this"
+would delete a failure the user has already seen, take it out of the failure
+count and drop its diagnostics from the export, so such a row keeps the result
+it earned — and the control is not offered on it at all, because a `Skip` that
+turned "Waiting" into "Failed" would be doing something other than what its
+label says. `Skip` is offered on rows with no attempt behind them, which is
+where it means what it reads.
+
 ## Capacity under CNV-D6
 
 `MAX_CONVERSION_QUEUE_ITEMS = 16` **stays, with a rationale that is true.**
@@ -372,11 +402,16 @@ pressed from the pass that answers it.
 
 ## Changed-path closure
 
-47 paths: 35 of code and evidence, and 12 documents. Each of the 35 is either
+54 paths: 39 of code and evidence, and 15 documents. Each of the 39 is either
 the boundary that decides the claim, a direct consumer of it, a surface that
 carries it, or the evidence for one; the documents are listed at the end, so the
 closure is the whole diff against the baseline rather than the part of it that
 compiles.
+
+This section was wrong once and it is worth saying why: it was written at a
+head, five paths were added by a later round of repairs, and the count was not
+re-derived. A reviewer found it by running the command this section names. It is
+re-derived at every head now.
 
 **Process boundary and the claim's origin** — `crates/proteowizard/src/process.rs`,
 `conversion_run.rs`, `conversion_run/output_set.rs`, `conversion_run/tests.rs`,
@@ -392,6 +427,12 @@ later one claim a confirmed tree by forgetting to say otherwise.
 **Evidence harness** — `crates/proteowizard/examples/conversion_cancellation_evidence.rs`.
 The three process quantities and the disposition.
 
+**Discovery** — `crates/proteowizard/src/discovery.rs`. The third lane that
+starts backend processes. Its typed error was reduced to an `io::ErrorKind` and
+a string, so the one question about an unaccounted process could not be asked of
+it; the error is kept as the `io::Error`'s source, the probe failure carries the
+answer, and `DiscoveryResult` reports it.
+
 **Queue, commands and wire** — `apps/desktop/src-tauri/src/preview/operation.rs`,
 `service.rs`, `dto.rs`, `conversion.rs`, `backend.rs`, `diagnostics.rs`,
 `diagnostics/payload.rs`, `lib.rs`, `e2e_seed.rs`, `preview/tests.rs`. The two
@@ -405,7 +446,13 @@ only for items that ran — plus the tests that pin them:
 `conversionContract.test.ts`, `ConversionStop.test.tsx`,
 `ConversionDiagnostics.test.tsx`, `conversionLaneAuthority.test.tsx`,
 `usePreviewWorkspace.test.tsx`, `src/test/outputSetRendering.test.tsx`,
-`src/test/previewFixtures.ts`.
+`src/test/previewFixtures.ts`. Plus the two places the quarantine sentence is
+written for a user — `conversionAvailability.ts` and
+`conversionNoticeRegistry.ts` — which said a *converter* had not been confirmed
+to have *stopped*, when this state is now reached by a preview, a spectrum read
+and a discovery probe as well, and by a failure with no stop in flight; and
+`rosterView.ts`, which told a reader the only action they have is stopping the
+queue.
 
 **Guard** — `scripts/check_repo.py`.
 
@@ -415,18 +462,20 @@ only for items that ran — plus the tests that pin them:
 **Documents** — `README.md`, `CHANGELOG.md`, `ROADMAP.md`, `BOOTSTRAP_STATUS.md`,
 `docs/product/FEATURE_CATALOG.md`, `docs/product/PRIMARY_WORKFLOWS.md`,
 `docs/architecture/adr/0043-conversion-completion-route.md` (the route
-decisions), `0014` (the interval it left open), `0015` (the decision this
-milestone amends), `0017` (the diagnostics schema version) and `0020` (one
-measured sentence made unambiguous), plus this record. Twelve, and the count is
-checkable: `git diff --name-only` against the baseline reports 47 paths, 12 of
-them documents.
+decisions), `0013` (the capacity premise and the "no Cancel" paragraph), `0014`
+(the interval it left open), `0015` (the decision this milestone amends), `0016`
+(the adoption-eligibility enumeration), `0017` (the diagnostics schema version)
+and `0020` (one measured sentence made unambiguous), plus
+`docs/spikes/M0_PROTEOWIZARD_SPIKE.md` (the spawn-to-assignment race it left
+open) and this record. Fifteen, and the count is checkable: `git diff
+--name-only` against the baseline reports 54 paths, 15 of them documents.
 
 ## Validation
 
-Local gates: frontend lint, typecheck, 1654 tests across 69 files, build;
+Local gates: frontend lint, typecheck, 1655 tests across 69 files, build;
 `cargo fmt --all --check`; `cargo clippy --locked --workspace --all-targets
 --all-features -- -D warnings`; `cargo test --locked --workspace --all-targets`
-(1511 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
+(1512 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
 E2E typecheck.
 
 **Rendered QA**: 10/10 in `m6.8-cancellation-controls.browser`, including every
@@ -464,6 +513,16 @@ file-based test module. The answer was to stop matching spellings for the
 member's name and make the compiler refuse it, which is where `non_exhaustive`
 came from, and to invert the description rule into an allowlist — which
 immediately found a live defect on a public API arm.
+
+Round 5: a comment containing a brace opened a skip region over production code
+and a raw-identifier module declaration exempted a whole production file — the
+same two attacks as round 4, in shapes the repairs had not covered, and both now
+answered by scrubbing comments and literals before anything is counted; two
+guard rules could not fail at all; a resume could start the root and *then*
+refuse, and the refusal was classified as a root that never started, which is
+retryable and raises no quarantine; and a skip during a rerun was still offered
+on a row that had already run, which Rust settled correctly and the interface
+then labelled as a failure with no mention of a skip.
 
 Round 3: the guard's own test-source exemption could be won by naming a
 directory; the assign-failure path could strand an owned root without saying so;

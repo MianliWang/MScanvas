@@ -1468,6 +1468,18 @@ impl PreviewService {
     // establish that the process it lost track of has ended, and a flag that
     /// could be cleared would need something that can.
     pub(super) fn backend_is_quarantined(&self) -> bool {
+        // The discovery latch is folded in *here* rather than at the places
+        // that start work, and that position is the whole of it. A discovery
+        // happens inside other operations, so a probe that lost a process is
+        // learned about halfway through one -- and the reader that has to know
+        // is not only the next launch. `refuse_queue` decides whether a waiting
+        // item is still waiting by asking this: with the latch read only on the
+        // way into new work, a queue refused by that very probe left its rows
+        // `Pending` in a terminal queue, offered no retry, and quarantined the
+        // next operation instead. One place, and it cannot be forgotten.
+        if self.provider.discovery_lost_a_process() {
+            self.quarantine_backend();
+        }
         self.backend_quarantined.load(Ordering::Acquire)
     }
 
@@ -1478,14 +1490,8 @@ impl PreviewService {
     // exit; what quarantine changes is not who may take the gate but whether
     /// MSCanvas is willing to start another process at all.
     fn require_usable_backend(&self) -> Result<(), PreviewErrorDto> {
-        // Asked before the flag, because discovery is the one lane that cannot
-        // report through an attempt: it happens inside every other entry point
-        // and answers with an installation rather than with a run. A help probe
-        // whose owned Job would not empty is the same uncertainty a conversion's
-        // is, and a session that started one must not start another.
-        if self.provider.discovery_lost_a_process() {
-            self.quarantine_backend();
-        }
+        // Discovery's own answer is folded into `backend_is_quarantined`, so
+        // this asks one question rather than two that could drift.
         if self.backend_is_quarantined() {
             return Err(backend_quarantined());
         }

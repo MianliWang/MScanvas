@@ -2151,7 +2151,15 @@ pub fn conversion_item_not_cancellable() -> PreviewErrorDto {
 pub fn conversion_item_not_skippable() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "conversion_item_not_skippable",
-        "That item is no longer waiting its turn, so it was not skipped.",
+        // About the request, not about the row. Five conditions answer with
+        // this, and in two of them -- a stopping slot, and a queue whose
+        // stop was accepted -- the named item *is* still waiting its turn;
+        // the queue is simply about to settle it itself. The sibling
+        // refusal was corrected for the same reason.
+        concat!(
+            "MSCanvas could not act on that request, so nothing was skipped. ",
+            "That row may have started, or the whole queue may already be stopping."
+        ),
         true,
     )
 }
@@ -2168,8 +2176,13 @@ pub fn conversion_item_not_skippable() -> PreviewErrorDto {
 pub fn backend_quarantined() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "backend_quarantined",
-        "MSCanvas could not confirm that a converter process it started has ended. Restart \
-         MSCanvas before starting another preview or conversion.",
+        // "a ProteoWizard process", not "a converter": this is reached from a
+        // preview, a spectrum read and a discovery help probe as well as
+        // from a conversion, and only one of those runs a converter.
+        concat!(
+            "MSCanvas could not confirm that a ProteoWizard process it started has ended. ",
+            "Restart MSCanvas before starting another preview or conversion."
+        ),
         false,
     )
 }

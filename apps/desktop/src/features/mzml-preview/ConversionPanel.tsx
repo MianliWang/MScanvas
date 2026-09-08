@@ -156,7 +156,7 @@ const STOP_EXPLANATION =
  * now, and the queue keeps going.
  */
 const CANCEL_ITEM_EXPLANATION =
-  "Files already converted are kept, and the items after it still run. It may finish on its own first, and then it keeps its result.";
+  "Files already converted are kept, and the items after it still run. It may finish on its own first, and then it keeps its result. If MSCanvas cannot confirm that its converter ended, the whole queue stops and the session needs a restart.";
 
 /**
  * Why the control is unavailable, at the control.
@@ -1393,13 +1393,18 @@ function QueueState({
  * can now hold either -- and a three-count sentence would report two of three
  * items as unaccounted for.
  *
- * **And two more that only a completed queue was assumed never to hold.** A
- * session that loses track of a converter process refuses the rest of the queue
+ * **And `notRun`, which only a stopped queue was assumed to hold.** A session
+ * that loses track of a process it started refuses the rest of the queue
  * without the user having pressed anything, so the terminal reason is
- * `completed` while the items left behind are `notRun` and the item that lost
- * the process is `cancellationFailed`. Naming only the first five would have
- * reported those rows nowhere -- the same defect this function was widened to
- * fix, reached by the path this milestone added.
+ * `completed` and every row it never began is `notRun`. Naming only the first
+ * five would have reported those rows nowhere -- the same defect this function
+ * was widened to fix, reached by the path this milestone added.
+ *
+ * `cancellationFailed` is named beside it defensively rather than because this
+ * path produces one: an item reaches that state only through a stop whose
+ * termination could not be confirmed, and the queue is then `stopFailed`. A
+ * count this summary cannot render is a count it would report nowhere if the
+ * pairing ever changed.
  *
  * All four are named only when they happened. Unlike the stopped summary, where
  * every count is named including the zeroes because the reader is auditing what

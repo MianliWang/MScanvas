@@ -51,7 +51,7 @@ const STOP_EXPLANATION =
 // asserting the rendered sentence against a constant imported from the panel
 // would pass whatever the panel happened to say.
 const CANCEL_ITEM_EXPLANATION =
-  "Files already converted are kept, and the items after it still run. It may finish on its own first, and then it keeps its result.";
+  "Files already converted are kept, and the items after it still run. It may finish on its own first, and then it keeps its result. If MSCanvas cannot confirm that its converter ended, the whole queue stops and the session needs a restart.";
 
 // What the same control says once this document has asked. Its own sentence,
 // because the unavailable one -- "available while a file is being converted" --
@@ -328,6 +328,37 @@ describe("stopping a running conversion queue", () => {
         "1 converted, 0 skipped, 0 failed, 1 cancelled, 1 skipped by you.",
       );
     });
+  });
+
+  it("does not offer Skip on a row a retry moved back to waiting", async () => {
+    /*
+     * `begin_retry` moves every retryable failure back to `pending` while its
+     * error, its attempt count and its diagnostic ticket stay in place, so
+     * during a rerun a `pending` row may be one that ran and failed in the pass
+     * before. Rust settles such a row with the result it earned rather than
+     * claiming nothing ran -- which is right, and would make pressing `Skip`
+     * turn a row labelled "Waiting" into one labelled "Failed" with no mention
+     * of a skip. The control is withdrawn instead: it is offered only where it
+     * does what its label says.
+     */
+    const api = apiWith({
+      status: "running",
+      operationId: "1",
+      queue: queueOf([
+        queueItem("file-1", "run-1.raw", { state: "running", attempts: 2 }),
+        // Failed in the first pass, moved back to waiting by the retry.
+        queueItem("file-2", "run-2.raw", { state: "pending", attempts: 1 }),
+        // Never reached in either pass.
+        queueItem("file-3", "run-3.raw", { state: "pending" }),
+      ]),
+    });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(within(panel).getByRole("button", { name: "Skip run-3.raw" })).toBeEnabled();
+    });
+    expect(within(panel).queryByRole("button", { name: "Skip run-2.raw" })).toBeNull();
   });
 
   it("stops saying the control is available once this document has asked", async () => {

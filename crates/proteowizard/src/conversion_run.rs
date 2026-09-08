@@ -1445,17 +1445,26 @@ impl From<&ProcessError> for BackendExecutionFailure {
                 }
             }
             ProcessError::OwnedJobNotEmptied { .. } => Self::NotTerminated,
-            // Two different facts wear one variant here, and which one applies
-            // is decided by teardown rather than by the resume failure. A root
-            // that was reclaimed executed nothing and is gone; one that was not
-            // is an owned process whose disappearance this boundary cannot
-            // state, which is exactly what `NotTerminated` already means and
-            // exactly the state a stop must not be allowed to call clean.
+            // Two different facts wear one variant here, and it takes **both**
+            // halves to tell them apart. A root that was reclaimed *and had
+            // executed nothing* ran nothing and is gone; anything else is an
+            // owned process whose disappearance this boundary cannot state,
+            // which is exactly what `NotTerminated` already means and exactly
+            // the state a stop must not be allowed to call clean.
+            //
+            // Reclamation alone is not enough, and reading it alone was a
+            // defect: teardown is `TerminateJobObject` plus a kill and a wait,
+            // which is a *request* rather than an observation of an empty Job.
+            // A root that was already executing when the resume was refused may
+            // have created descendants, so calling that "never started" —
+            // retryable, and no quarantine — would offer another converter
+            // beside processes nothing had accounted for.
             ProcessError::ResumeOwnedRoot {
                 owned_root_reclaimed,
+                root_never_ran,
                 ..
             } => {
-                if *owned_root_reclaimed {
+                if *owned_root_reclaimed && *root_never_ran {
                     Self::RootNotStarted
                 } else {
                     Self::NotTerminated
@@ -1600,8 +1609,17 @@ impl ConversionRunFailure {
     /// and a root that was created and could neither be started nor reclaimed.
     /// Each is a process this run owned whose end nothing observed.
     ///
-    /// **`NotAwaited` is deliberately not included.** It is an ordinary wait
-    /// failure whose owned teardown then succeeded — the Job was terminated, and
+    /// **`NotAwaited` is deliberately not included, and the line is finer than
+    /// it looks.** Both this and `OwnedJobNotEmptied` end in the same teardown,
+    /// and neither re-reads the Job's process count afterwards — so the
+    /// distinction is not "one observed an empty Job and the other did not".
+    /// It is what the run *already knows*: `OwnedJobNotEmptied` is the Job
+    /// having been asked and having said it still held processes, which is a
+    /// positive observation of survival, while this is a supervision loop that
+    /// lost its answer with nothing having said anything survives. Quarantining
+    /// on the absence of an answer would end a session on a fact nobody
+    /// established. It is an ordinary wait failure whose owned teardown then
+    /// succeeded — the Job was terminated, and
     /// a run that lost track of its child but tore down what held it has not
     /// lost the child. Including it quarantined a session for a queue whose
     /// processes were in fact gone, and quarantine is never lifted.

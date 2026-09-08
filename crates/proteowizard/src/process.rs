@@ -320,6 +320,15 @@ pub enum ProcessError {
         /// disappearance it cannot state, and callers classify it exactly as
         /// they classify a Job that would not terminate.
         owned_root_reclaimed: bool,
+        /// Whether the image had still executed nothing when this was refused.
+        ///
+        /// Reclaiming a root says it is gone; this says whether it had run.
+        /// Only both together make the failure an ordinary one, because
+        /// "terminating it afterwards is a request rather than an
+        /// observation" — a root that was already executing when the refusal
+        /// came may have created descendants that the Job holds and that no
+        /// emptiness check was made about.
+        root_never_ran: bool,
     },
     #[error("failed while waiting for the backend process: {detail}")]
     Wait { detail: String },
@@ -488,14 +497,15 @@ fn execute_command_after_assignment(
     // it was owned. `ROOT_TREE_OWNERSHIP` can therefore stay a constant: what
     // makes it true is the signature below, not a convention.
     let mut owned_job = Some(owned_job);
-    if let Err(error) = resume_owned_root(&child, owned_job.as_ref().expect("just assigned")) {
+    if let Err(refusal) = resume_owned_root(&child, owned_job.as_ref().expect("just assigned")) {
         let cleanup = force_owned_cleanup(&mut child, &mut owned_job);
         let owned_root_reclaimed = cleanup.is_ok();
         let captures = join_captures(stdout_reader, stderr_reader);
-        let detail = add_cleanup_context(error.to_string(), cleanup, captures.err());
+        let detail = add_cleanup_context(refusal.error.to_string(), cleanup, captures.err());
         return Err(ProcessError::ResumeOwnedRoot {
             detail,
             owned_root_reclaimed,
+            root_never_ran: refusal.root_never_ran,
         });
     }
     after_assignment();
@@ -618,17 +628,40 @@ fn suspend_root_creation(command: &mut Command) {
 #[cfg(not(windows))]
 fn suspend_root_creation(_command: &mut Command) {}
 
+/// Why a resume was refused, and whether the image had run by then.
+///
+/// The second half is not a detail. A refusal *before* anything is resumed
+/// leaves a root that has executed nothing, so terminating the direct child is
+/// complete; a refusal after one leaves a process that may have created
+/// descendants, and a run that ends there has not established that its tree is
+/// gone. The two classify differently and only one of them is retryable.
+#[derive(Debug)]
+struct ResumeRefusal {
+    error: io::Error,
+    root_never_ran: bool,
+}
+
+impl ResumeRefusal {
+    /// A refusal taken while the image had still executed nothing.
+    fn before_anything_ran(error: io::Error) -> Self {
+        Self {
+            error,
+            root_never_ran: true,
+        }
+    }
+}
+
 /// Starts the owned root process.
 ///
 /// Called only after [`OwnedProcessJob::assign`] has succeeded, so what it
 /// releases is a process this run already owns.
 #[cfg(windows)]
-fn resume_owned_root(child: &Child, _owned: &OwnedProcessJob) -> io::Result<()> {
+fn resume_owned_root(child: &Child, _owned: &OwnedProcessJob) -> Result<(), ResumeRefusal> {
     windows_job::resume_primary_thread(child)
 }
 
 #[cfg(not(windows))]
-fn resume_owned_root(_child: &Child, _owned: &OwnedProcessJob) -> io::Result<()> {
+fn resume_owned_root(_child: &Child, _owned: &OwnedProcessJob) -> Result<(), ResumeRefusal> {
     Ok(())
 }
 
@@ -1189,6 +1222,8 @@ mod windows_job {
     use std::process::Child;
     use std::ptr;
 
+    use super::ResumeRefusal;
+
     type Handle = *mut c_void;
     type Bool = i32;
 
@@ -1338,51 +1373,65 @@ mod windows_job {
     /// Resuming a thread that was not suspended does nothing at all, so the
     /// others cost only the call.
     ///
-    /// **And every thread must have been reachable.** A thread this run cannot
-    /// open or resume is one it cannot say anything about, and "some thread
-    /// reported one" would then be satisfied by a thread another product
-    /// created suspended while the primary stayed exactly as it was — a root
-    /// that never runs and a wait that never ends. Failing closed with the
-    /// operating system's own reason is worse for nobody and better than a
-    /// launch that hangs.
-    pub(super) fn resume_primary_thread(child: &Child) -> io::Result<()> {
+    /// **Every handle is opened before any thread is resumed**, and that order
+    /// is the whole of the error contract. A resume cannot be taken back: once
+    /// the primary thread is running, the image may have created descendants,
+    /// and a refusal returned after that would be classified as a root that
+    /// never started — retryable, and not a quarantine — while a process this
+    /// run owns is executing. Refusing during the opening phase is refusing
+    /// while "it has executed nothing" is still true.
+    ///
+    /// A thread that cannot be opened is skipped rather than fatal. It is one
+    /// that ended between the snapshot and the call, which is the ordinary life
+    /// of an injected loader thread, and it cannot be the primary: that one is
+    /// suspended, and this run holds its process handle.
+    pub(super) fn resume_primary_thread(child: &Child) -> Result<(), ResumeRefusal> {
         let process_id = child.id();
-        let threads = threads_of_owned_root(process_id)?;
-        let mut resumed_one_created_suspended = false;
-        // A thread this run cannot open or resume is remembered rather than
-        // fatal. Whether the root will run is decided by the primary thread
-        // alone, and that is what the loop is looking for.
-        let mut refusal: Option<io::Error> = None;
+        let threads =
+            threads_of_owned_root(process_id).map_err(ResumeRefusal::before_anything_ran)?;
+        let mut handles = Vec::with_capacity(threads.len());
         for thread_id in threads {
             // SAFETY: A thread id the system just reported for a live process,
             // asked for with the one access right this needs. The returned
             // handle is checked before use and owned exactly once.
             let raw_thread = unsafe { open_thread(THREAD_SUSPEND_RESUME, 0, thread_id) };
             if raw_thread.is_null() {
-                refusal.get_or_insert_with(io::Error::last_os_error);
                 continue;
             }
             // SAFETY: OpenThread returned a new, non-null owned HANDLE whose
             // ownership is transferred exactly once to OwnedHandle.
-            let thread = unsafe { OwnedHandle::from_raw_handle(raw_thread) };
-            // SAFETY: The handle remains owned by `thread` and is valid for the call.
-            let previous_suspend_count = unsafe { resume_thread(thread.as_raw_handle()) };
+            handles.push(unsafe { OwnedHandle::from_raw_handle(raw_thread) });
+        }
+
+        let mut resumed_one_created_suspended = false;
+        for handle in &handles {
+            // SAFETY: The handle remains owned by `handles` and is valid for
+            // the call.
+            let previous_suspend_count = unsafe { resume_thread(handle.as_raw_handle()) };
             if previous_suspend_count == RESUME_THREAD_FAILED {
-                refusal.get_or_insert_with(io::Error::last_os_error);
+                // The thread ended between opening and this call. Nothing of
+                // the image can have been started by it, so the loop goes on
+                // looking for the one that was created suspended.
                 continue;
             }
             if previous_suspend_count == 1 {
                 resumed_one_created_suspended = true;
             }
         }
-        match refusal {
-            Some(error) => Err(error),
-            None if resumed_one_created_suspended => Ok(()),
-            None => Err(io::Error::other(
+        if resumed_one_created_suspended {
+            return Ok(());
+        }
+        // Nothing reported the count it was created with. Either the process is
+        // not the one this run created suspended, or something else resumed it
+        // first -- and in the second case the image is already running, so this
+        // refusal must not claim it executed nothing.
+        Err(ResumeRefusal {
+            error: io::Error::other(
                 "no thread of the owned root was still suspended as it was created, so \
                  this run cannot say the image had executed nothing when it took ownership",
-            )),
-        }
+            ),
+            root_never_ran: false,
+        })
     }
 
     /// Every thread the system reports for a process.
@@ -2431,21 +2480,37 @@ mod tests {
     /// process whose disappearance this boundary cannot state — which is what
     /// `NotTerminated` already means, and the state a stop must never be
     /// allowed to call clean.
+    /// A refusal taken before anything ran is the only one that says so.
+    ///
+    /// This used to assert that two hand-built values were unequal and printed
+    /// the same, which a derive and a format string satisfy between them and
+    /// which says nothing about the boundary. What matters is that the two
+    /// facts are carried *separately* and that neither is inferred from the
+    /// other: reclamation says the root is gone, and the second half says
+    /// whether it had run before it went.
     #[test]
-    fn a_root_that_could_not_be_started_says_whether_it_was_reclaimed() {
-        let reclaimed = ProcessError::ResumeOwnedRoot {
-            detail: "the owned root thread had a suspend count of 0".to_owned(),
-            owned_root_reclaimed: true,
-        };
-        let stranded = ProcessError::ResumeOwnedRoot {
-            detail: "the owned root thread had a suspend count of 0".to_owned(),
-            owned_root_reclaimed: false,
-        };
+    fn a_refused_resume_carries_reclamation_and_execution_apart() {
+        let combinations = [(true, true), (true, false), (false, true), (false, false)];
+        let errors = combinations.map(|(reclaimed, never_ran)| ProcessError::ResumeOwnedRoot {
+            detail: "the owned root could not be resumed".to_owned(),
+            owned_root_reclaimed: reclaimed,
+            root_never_ran: never_ran,
+        });
 
-        assert_ne!(reclaimed, stranded);
-        // The detail is identical, so nothing but the reclamation tells them
-        // apart -- which is the point of carrying it.
-        assert_eq!(reclaimed.to_string(), stranded.to_string());
+        // Four distinct values from one detail: nothing but the two facts tells
+        // them apart, which is what carrying both is for.
+        for (first, error) in errors.iter().enumerate() {
+            for other in &errors[first + 1..] {
+                assert_ne!(error, other, "two of the four are the same value");
+            }
+        }
+        for error in &errors {
+            assert_eq!(
+                error.to_string(),
+                errors[0].to_string(),
+                "the message is the detail, so only the facts distinguish them"
+            );
+        }
     }
 
     /// A process with several threads is enumerated, not refused.

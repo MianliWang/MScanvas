@@ -913,12 +913,14 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
   // existing file was explicitly not inspected.
   const judged = queue.items.some(conversionJudgedAnyOutput);
   // Every item the queue held, including the two a user decides about and the
-  // two a lost converter process leaves behind. Three counts were complete only
-  // while a cancelled item required a queue stop; a completed queue can now hold
-  // a file the user ended, a row they skipped, an item whose stop could not be
-  // confirmed, and the rows the session then refused to start. A region that
-  // named any of them short would tell a listener less than the panel tells a
-  // sighted reader, which is the one thing it exists not to do.
+  // rows a lost process leaves behind. Three counts were complete only while a
+  // cancelled item required a queue stop; a completed queue can now hold a file
+  // the user ended, a row they skipped, and the rows a session that lost track
+  // of a process refused to start. `cancellationFailed` is carried defensively
+  // -- that state pairs with a `stopFailed` queue today -- for the same reason
+  // the panel carries it. A region that named any of them short would tell a
+  // listener less than the panel tells a sighted reader, which is the one thing
+  // it exists not to do.
   const decided = [
     queue.cancelledCount > 0 ? `${String(queue.cancelledCount)} cancelled` : null,
     queue.skippedByRequestCount > 0

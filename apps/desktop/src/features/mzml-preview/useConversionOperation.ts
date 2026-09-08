@@ -1168,7 +1168,18 @@ export function useConversionOperation(
       if (skipsInFlight.includes(`${state.operationId}:${String(index)}`)) {
         return false;
       }
-      return state.queue.items[index]?.state === "pending";
+      const item = state.queue.items[index];
+      if (item?.state !== "pending") {
+        return false;
+      }
+      // **Pending is not the same as never run.** A retry moves every retryable
+      // failure back to pending, so during a rerun this rule would offer `Skip`
+      // on rows that failed in the pass before. Rust settles such a row with the
+      // result it earned rather than claiming nothing ran -- which is right, and
+      // makes pressing `Skip` turn a row labelled "Waiting" into one labelled
+      // "Failed" with no mention of a skip. The control is withdrawn instead, so
+      // it is offered only where it does what its label says.
+      return item.attempts === 0;
     },
     [skipsInFlight, state, stopping],
   );

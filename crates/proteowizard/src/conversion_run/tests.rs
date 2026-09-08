@@ -375,6 +375,15 @@ fn a_process_failure_answers_the_same_way_to_every_lane() {
         ProcessError::ResumeOwnedRoot {
             detail: String::from("the root could not be resumed"),
             owned_root_reclaimed: false,
+            root_never_ran: true,
+        },
+        // Reclaimed, but the image had already started: terminating it is a
+        // request rather than an observation, so what it created is unaccounted
+        // for.
+        ProcessError::ResumeOwnedRoot {
+            detail: String::from("the root was refused after it had been resumed"),
+            owned_root_reclaimed: true,
+            root_never_ran: false,
         },
     ];
     for error in &unaccounted {
@@ -382,11 +391,13 @@ fn a_process_failure_answers_the_same_way_to_every_lane() {
             error.leaves_an_owned_process_unaccounted(),
             "{error:?} leaves a process of this run's on the machine"
         );
+        // Against the classification named outright, not against the
+        // expression the predicate is defined as -- which is what this
+        // asserted at first, and which cannot fail.
         assert_eq!(
-            error.leaves_an_owned_process_unaccounted(),
-            ConversionRunFailure::Backend(BackendExecutionFailure::from(error))
-                .leaves_an_owned_process_unaccounted(),
-            "the lanes disagree about {error:?}"
+            BackendExecutionFailure::from(error),
+            BackendExecutionFailure::NotTerminated,
+            "{error:?} must classify as the failure that means exactly this"
         );
     }
 
@@ -400,6 +411,7 @@ fn a_process_failure_answers_the_same_way_to_every_lane() {
         ProcessError::ResumeOwnedRoot {
             detail: String::from("the root could not be resumed"),
             owned_root_reclaimed: true,
+            root_never_ran: true,
         },
         ProcessError::Wait {
             detail: String::from("the wait was interrupted"),
@@ -412,11 +424,10 @@ fn a_process_failure_answers_the_same_way_to_every_lane() {
             !error.leaves_an_owned_process_unaccounted(),
             "{error:?} leaves nothing of this run's behind"
         );
-        assert_eq!(
-            error.leaves_an_owned_process_unaccounted(),
-            ConversionRunFailure::Backend(BackendExecutionFailure::from(error))
-                .leaves_an_owned_process_unaccounted(),
-            "the lanes disagree about {error:?}"
+        assert_ne!(
+            BackendExecutionFailure::from(error),
+            BackendExecutionFailure::NotTerminated,
+            "{error:?} must not classify as a process nothing can account for"
         );
     }
 }
@@ -434,14 +445,29 @@ fn a_resume_failure_classifies_by_whether_the_owned_root_was_reclaimed() {
     let reclaimed = BackendExecutionFailure::from(&ProcessError::ResumeOwnedRoot {
         detail: "no".to_owned(),
         owned_root_reclaimed: true,
+        root_never_ran: true,
     });
     let stranded = BackendExecutionFailure::from(&ProcessError::ResumeOwnedRoot {
         detail: "no".to_owned(),
         owned_root_reclaimed: false,
+        root_never_ran: true,
+    });
+    // Reclaimed, and *not* an ordinary failure: the image had already started,
+    // so terminating it afterwards is a request rather than an observation of
+    // what it may have created.
+    let started = BackendExecutionFailure::from(&ProcessError::ResumeOwnedRoot {
+        detail: "no".to_owned(),
+        owned_root_reclaimed: true,
+        root_never_ran: false,
     });
 
     assert_eq!(reclaimed, BackendExecutionFailure::RootNotStarted);
     assert_eq!(stranded, BackendExecutionFailure::NotTerminated);
+    assert_eq!(
+        started,
+        BackendExecutionFailure::NotTerminated,
+        "reclamation alone does not make a started root an ordinary failure"
+    );
     assert_ne!(reclaimed.stable_id(), stranded.stable_id());
     assert_eq!(reclaimed.stable_id(), "backend_root_not_started");
 }

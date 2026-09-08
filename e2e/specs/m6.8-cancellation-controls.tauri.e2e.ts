@@ -390,14 +390,21 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
     const state = await terminal();
     // The whole queue ended: the attempt in flight settled, and nothing behind
     // it began.
-    expect(["stopped", "stopFailed"]).toContain(state.reason);
+    // `stopped`, not "either of the two". `stopFailed` is the outcome this
+    // evidence exists to refuse -- a stop the boundary could not confirm -- and
+    // accepting it here would let the suite pass on exactly the result that
+    // would make the shipped control unsafe. If a real machine produces it, the
+    // recorded reason is what has to be explained, not tolerated.
+    expect(state.reason).toBe("stopped");
     expect(state.queue.notRunCount).toBeGreaterThan(0);
     const attempted = state.queue.items.filter((item) => item.attempts > 0).length;
     expect(attempted).toBeLessThan(QUEUE_SIZE);
     // Whatever the stop reached says which of the three senses applies, and a
     // stop this queue could not confirm is never reported as a success.
+    let dispositionsChecked = 0;
     for (const item of state.queue.items) {
       if (item.cancellation === null) continue;
+      dispositionsChecked += 1;
       expect(["confirmed_gone", "none_launched", "unconfirmed"]).toContain(item.cancellation.ownedTree);
       if (item.state === "cancelled") {
         expect(item.cancellation.ownedTree).not.toBe("unconfirmed");
@@ -406,6 +413,9 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
         expect(item.cancellation.ownedTree).toBe("unconfirmed");
       }
     }
+    // A loop that ran zero times asserts nothing. A queue stopped while an item
+    // was running always settles at least one item with cancellation facts.
+    expect(dispositionsChecked).toBeGreaterThan(0);
     evidence.push({
       kind: "queue-stop-outcome",
       scenario,

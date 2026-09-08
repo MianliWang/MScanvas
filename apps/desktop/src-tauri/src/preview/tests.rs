@@ -2221,6 +2221,17 @@ fn a_discovery_that_could_not_account_for_its_process_quarantines_the_session() 
     // no operation reports it: it is what discovery found.
     world.discovery_loses_a_process();
 
+    // **In force for every reader, not only for the next launch.** A plain
+    // state read reports it, which is what `refuse_queue` asks when it decides
+    // whether a waiting item is still waiting: with the latch consulted only on
+    // the way into new work, a queue refused by that very probe left its rows
+    // pending in a terminal queue and quarantined the operation after it.
+    assert!(
+        service.backend_is_quarantined(),
+        "a lost probe process is the session's business the moment it is known"
+    );
+    assert!(service.conversion_state().backend_quarantined);
+
     let refused = service
         .open_preview(&selected.handle)
         .expect_err("a session that lost a process starts no further one");
@@ -7374,6 +7385,7 @@ impl FakeConversionRunner {
                 return Err(ProcessError::ResumeOwnedRoot {
                     detail: "injected: the owned root could not be started or reclaimed".to_owned(),
                     owned_root_reclaimed: false,
+                    root_never_ran: true,
                 });
             }
         };
@@ -11060,7 +11072,16 @@ fn a_queue_is_bounded_deduplicated_and_convertible_or_it_is_refused() {
             .kind,
         "queue_is_empty"
     );
-    let too_many: Vec<String> = (0..17).map(|_| handle.clone()).collect();
+    // The number itself, not only the refusal above it. M6.8 re-decided this
+    // bound and kept it; a test that only refused "one more than the constant"
+    // would pass for any value the constant took, including one nobody chose.
+    assert_eq!(
+        MAX_CONVERSION_QUEUE_ITEMS, 16,
+        "the queue bound is sixteen, decided under ADR 0043's CNV-D6"
+    );
+    let too_many: Vec<String> = (0..MAX_CONVERSION_QUEUE_ITEMS + 1)
+        .map(|_| handle.clone())
+        .collect();
     assert_eq!(
         service
             .conversion_queue_plan_now(&too_many)

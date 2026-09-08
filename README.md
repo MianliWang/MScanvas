@@ -168,8 +168,10 @@ you restart it, rather than starting a second converter beside one it has lost
 track of.
 
 `Stop this file` is the narrower one: it ends only the conversion under way and
-lets the queue carry on with the rest, and `Skip` on a row that has not started
-settles that row without converting it. Both carry the same race the queue stop
+lets the queue carry on with the rest — unless MSCanvas cannot confirm that
+converter ended, in which case the whole queue stops and the session needs a
+restart, for the reason above. `Skip` on a row that has not started settles that
+row without converting it. Both carry the same race the queue stop
 does — a file that finished before the request arrived keeps its result — and a
 file stopped before its converter had started is cancelled having launched
 nothing at all, which MSCanvas says rather than claiming it ended something.

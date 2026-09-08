@@ -267,6 +267,14 @@ Progress is `Converting item N of M`. Nothing measures a fraction of an
 `msconvert` run, and this workflow still cannot stop one — so there is no
 percentage and no Cancel, and the panel says so while it runs.
 
+> **Amended by [ADR 0015](0015-user-visible-queue-stop.md) and again 2026-09-08
+> by M6.8: the second clause is gone, the first is not.** The panel offers
+> `Stop queue`, `Stop this file` and a per-row `Skip`, and says what each of
+> them does before it is pressed. There is still no percentage, no fraction of
+> an item and no estimate: nothing measures a fraction of an `msconvert` run,
+> which is the half of this paragraph that was about measurement rather than
+> about what had been built.
+
 Each item shows its position, its source name, its planned output name, its
 state in words, its attempt count once it exceeds one, its failure sentence if it
 has one, and — where it produced a file — that file's size, spectrum and

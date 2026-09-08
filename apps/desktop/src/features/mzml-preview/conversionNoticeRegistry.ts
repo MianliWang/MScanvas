@@ -75,8 +75,10 @@ export type ConversionAvailabilityFact = (typeof CONVERSION_LANE_FACTS)[number];
  * is unavailable.
  */
 const CONVERSION_FACT_MESSAGES: Record<ConversionAvailabilityFact, string> = {
+  // The same correction as the availability copy: not "a converter", and not
+  // "stopped".
   "backend-quarantined":
-    "MSCanvas could not confirm that a converter process stopped. " +
+    "MSCanvas could not confirm that a ProteoWizard process it started has ended. " +
     "Restart MSCanvas before running anything else on ProteoWizard.",
   "backend-changing": "MSCanvas is checking the installed ProteoWizard.",
   "backend-unavailable":

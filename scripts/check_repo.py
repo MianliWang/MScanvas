@@ -3324,8 +3324,12 @@ CLAIM_STABLE_ID = "confirmed_gone"
 CLAIM_DESCRIPTION_GLOBS = (
     "crates/proteowizard/src/**/*.rs",
     "apps/desktop/src-tauri/src/**/*.rs",
-    "apps/desktop/src/features/mzml-preview/*.ts",
-    "apps/desktop/src/features/mzml-preview/*.tsx",
+    # Recursive, and over the whole frontend source rather than one folder. The
+    # reason globs replaced a file list was that a user-facing label lives in a
+    # component; a non-recursive glob over one directory is the same snapshot
+    # with a wider name.
+    "apps/desktop/src/**/*.ts",
+    "apps/desktop/src/**/*.tsx",
     "docs/architecture/adr/*.md",
     "docs/product/*.md",
     "docs/ux/*.md",
@@ -3399,7 +3403,13 @@ CLAIM_RUST_GLOBS = ("crates/**/*.rs", "apps/desktop/src-tauri/src/**/*.rs")
 # next few lines rather than only the next one.
 _TEST_CFG = re.compile(r"^\s*#\[cfg\((?:all\()?\s*test\b")
 _TEST_MODULE_DECLARATION = re.compile(
-    r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;"
+    r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;"
+)
+# The same declaration wherever it appears on a line, for counting how many
+# times a module is declared at all. `r#service` is `service`; a reviewer used
+# exactly that to keep a production module out of the plain-declaration set.
+_ANY_MODULE_DECLARATION = re.compile(
+    r"\bmod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;"
 )
 _DECLARED_TEST_MODULES: dict[Path, frozenset[Path]] = {}
 
@@ -3442,7 +3452,10 @@ def _declared_test_modules(root: Path) -> frozenset[Path]:
     plain: set[Path] = set()
     for glob in CLAIM_RUST_GLOBS:
         for path in sorted(root.glob(glob)):
-            lines = path.read_text(encoding="utf-8").splitlines()
+            # Read as code. A declaration written inside a raw string is not
+            # a declaration, and a reviewer exempted all 8,303 lines of
+            # `service.rs` by writing one there.
+            lines = _code_only(path.read_text(encoding="utf-8").splitlines())
             owner = (
                 path.parent
                 if path.stem in ("mod", "lib", "main")
@@ -3482,9 +3495,101 @@ def _declared_test_modules(root: Path) -> frozenset[Path]:
                     # Declared without the attribute: this module is part of the
                     # product wherever else its name appears.
                     plain.update(files_for(found.group(1)))
+            # And the same question asked without anchoring to the line start,
+            # so a declaration this file writes in some other shape still counts
+            # as one. What is being decided is whether a module is part of the
+            # product, and a shape nobody anticipated must not answer "no".
+            for line_number, line in enumerate(lines):
+                for name in _ANY_MODULE_DECLARATION.findall(line):
+                    if line_number not in attributed:
+                        plain.update(files_for(name))
     frozen = frozenset(declared - plain)
     _DECLARED_TEST_MODULES[root] = frozen
     return frozen
+
+
+def _code_only(lines: list[str]) -> list[str]:
+    """Each line with its comments, strings, chars and raw strings removed.
+
+    Brace counting has to be over code. A `{` inside a comment or a literal is
+    not a body, and a reviewer opened a 160-line skip region over production
+    `service.rs` with a single comment line reading ``// only `mod tests {`
+    below needs this``. The same scrubbing is what makes a module declaration
+    written inside a raw string stop being a declaration at all.
+
+    Indentation and structure are preserved so the result lines up with the
+    original line numbers; only the contents that are not code are dropped.
+    """
+    scrubbed: list[str] = []
+    in_block_comment = False
+    raw_hashes: int | None = None
+    for line in lines:
+        kept: list[str] = []
+        index = 0
+        length = len(line)
+        while index < length:
+            if in_block_comment:
+                if line.startswith("*/", index):
+                    in_block_comment = False
+                    index += 2
+                else:
+                    index += 1
+                continue
+            if raw_hashes is not None:
+                closing = '"' + "#" * raw_hashes
+                at = line.find(closing, index)
+                if at == -1:
+                    index = length
+                else:
+                    raw_hashes = None
+                    index = at + len(closing)
+                continue
+            if line.startswith("//", index):
+                break
+            if line.startswith("/*", index):
+                in_block_comment = True
+                index += 2
+                continue
+            character = line[index]
+            if character == "r" and index + 1 < length and line[index + 1] in '#"':
+                cursor = index + 1
+                hashes = 0
+                while cursor < length and line[cursor] == "#":
+                    hashes += 1
+                    cursor += 1
+                if cursor < length and line[cursor] == '"':
+                    raw_hashes = hashes
+                    index = cursor + 1
+                    continue
+            if character == '"':
+                index += 1
+                while index < length:
+                    if line[index] == "\\":
+                        index += 2
+                        continue
+                    if line[index] == '"':
+                        index += 1
+                        break
+                    index += 1
+                continue
+            if character == "'":
+                # A character literal, or a lifetime. A lifetime has no closing
+                # quote, and dropping it would swallow the rest of the line.
+                cursor = index + 1
+                if cursor < length and line[cursor] == "\\":
+                    cursor += 2
+                elif cursor < length:
+                    cursor += 1
+                if cursor < length and line[cursor] == "'":
+                    index = cursor + 1
+                    continue
+                kept.append(character)
+                index += 1
+                continue
+            kept.append(character)
+            index += 1
+        scrubbed.append("".join(kept))
+    return scrubbed
 
 
 _TEST_ONLY_LINES: dict[Path, frozenset[int]] = {}
@@ -3497,11 +3602,13 @@ def _test_only_lines(path: Path) -> frozenset[int]:
     inline `#[cfg(test)] mod tests { .. }`, and the fixtures inside it build the
     `ProcessOutput` values the boundary would otherwise be the only source of.
 
-    **Bounded at the left margin, not by lexing Rust.** A `#[cfg(test)]` written
-    in column zero introduces a top-level item, so its closing brace is in column
-    zero too; a brace inside a string literal or a nested block is indented. That
-    makes the region exact without a tokenizer, and a tokenizer is the kind of
-    thing that is wrong in one file a year after it is written.
+    **Bounded by the matching brace, counted over code.** The left margin was
+    the bound at first, on the argument that a brace inside a literal is always
+    indented. It is not an argument that survives contact: a reviewer opened a
+    160-line region over production `service.rs` with one comment line
+    containing a brace. Comments and literals are scrubbed out first now, and
+    the region ends where its own depth returns to zero rather than at the first
+    left-margin `}`.
 
     **Whether the item opens a region at all is decided by the first terminator,
     not by the first brace.** An earlier version looked for `{` before it looked
@@ -3524,48 +3631,40 @@ def _test_only_lines(path: Path) -> frozenset[int]:
     if cached is not None:
         return cached
     lines = path.read_text(encoding="utf-8").splitlines()
+    code = _code_only(lines)
     inside: set[int] = set()
     index = 0
     while index < len(lines):
         if not lines[index].startswith(("#[cfg(test)]", "#[cfg(all(test")):
             index += 1
             continue
-        item = index + 1
+        cursor = index + 1
         depth = 0
         opened = False
-        outcome = None
-        while item < len(lines) and outcome is None:
-            for character in lines[item]:
+        finished = False
+        while cursor < len(code) and not finished:
+            for character in code[cursor]:
                 if character == "{":
                     depth += 1
                     opened = True
                 elif character == "}":
                     depth -= 1
-                elif character == ";" and depth == 0:
-                    # The item ends here. It is a region only if it carried a
-                    # body of its own, and a balanced one is contained in the
-                    # lines already read.
-                    outcome = "contained" if opened else "none"
+                    if opened and depth == 0:
+                        finished = True
+                        break
+                elif character == ";" and depth == 0 and not opened:
+                    # A statement, not an item with a body. `#[cfg(test)] mod
+                    # tests;` and `#[cfg(test)] use a::{B, C};` both end here.
+                    finished = True
                     break
-            if outcome is not None:
+            if finished:
                 break
-            if depth > 0:
-                outcome = "open"
-            elif opened:
-                outcome = "contained"
-            else:
-                item += 1
-        if outcome is None or outcome == "none":
+            cursor += 1
+        if not opened or cursor >= len(code):
             index += 1
             continue
-        if outcome == "contained":
-            close = item
-        else:
-            close = item + 1
-            while close < len(lines) and lines[close] != "}":
-                close += 1
-        inside.update(range(index + 1, min(close, len(lines) - 1) + 2))
-        index = close + 1
+        inside.update(range(index + 1, cursor + 2))
+        index = cursor + 1
     frozen = frozenset(inside)
     _TEST_ONLY_LINES[path] = frozen
     return frozen
@@ -3631,13 +3730,37 @@ def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
     #    it would only be a second thing to keep in step.
 
     # 3. One vocabulary, agreed across the layers that carry it.
-    rust_members = {
-        member for member in CLAIM_DISPOSITIONS if f'"{member}"' in vocabulary_text
-    }
-    if rust_members != set(CLAIM_DISPOSITIONS):
-        missing = ", ".join(sorted(set(CLAIM_DISPOSITIONS) - rust_members))
+    #
+    #    Read out of the vocabulary's own `stable_id` arms rather than by asking
+    #    whether each expected identifier appears somewhere in the file. That
+    #    filter could only ever produce a subset, so "the set differs" meant
+    #    exactly "one is missing" and a *fourth* disposition the wire had never
+    #    heard of would have passed — which is what a reviewer found when
+    #    neutralising the comparison changed nothing.
+    stable_id_arms = ""
+    implementation = vocabulary_text.find("impl OwnedTreeDisposition {")
+    if implementation == -1:
         errors.append(
-            f"{CLAIM_VOCABULARY} no longer publishes the identifiers {missing}; the three "
+            f"{CLAIM_VOCABULARY} has no `impl OwnedTreeDisposition`; the identifiers the "
+            "claim travels as cannot be read"
+        )
+    else:
+        opening = vocabulary_text.find("fn stable_id(", implementation)
+        closing = vocabulary_text.find("\n    }", opening) if opening != -1 else -1
+        if opening == -1 or closing == -1:
+            errors.append(
+                f"{CLAIM_VOCABULARY} no longer gives OwnedTreeDisposition a `stable_id`; "
+                "the identifiers the claim travels as cannot be read"
+            )
+        else:
+            stable_id_arms = vocabulary_text[opening:closing]
+    rust_members = set(re.findall(r'=> "([A-Za-z0-9_]+)"', stable_id_arms))
+    if rust_members != set(CLAIM_DISPOSITIONS):
+        missing = ", ".join(sorted(set(CLAIM_DISPOSITIONS) - rust_members)) or "none"
+        extra = ", ".join(sorted(rust_members - set(CLAIM_DISPOSITIONS))) or "none"
+        errors.append(
+            f"{CLAIM_VOCABULARY} publishes a different set of disposition identifiers "
+            f"than the wire knows: missing {missing}, unexpected {extra}. The "
             "dispositions a stop can reach are a contract, not a convenience"
         )
 
@@ -3649,9 +3772,25 @@ def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
         )
     else:
         contract_text = contract.read_text(encoding="utf-8")
-        wire_members = {
-            member for member in CLAIM_DISPOSITIONS if f'"{member}"' in contract_text
-        }
+        # The union's own members, read the way the Rust side is read. Filtering
+        # a known list on both sides made this a comparison of two subsets of
+        # one constant rather than of the layers against each other: a rename
+        # carried out in step showed up here instead of at the rule that pins
+        # the names, and a member either side invented alone could not show up
+        # at all.
+        wire_union = re.search(
+            r"export type ConversionOwnedTreeDisposition\s*=(.*?);",
+            contract_text,
+            re.S,
+        )
+        wire_members = set(
+            re.findall(r'"([A-Za-z0-9_]+)"', wire_union.group(1) if wire_union else "")
+        )
+        if wire_union is None:
+            errors.append(
+                f"{CLAIM_WIRE} no longer declares ConversionOwnedTreeDisposition as a "
+                "union; the wire side of the claim cannot be read"
+            )
         if wire_members != rust_members:
             errors.append(
                 f"{CLAIM_WIRE} carries {sorted(wire_members)} where Rust publishes "
@@ -4009,6 +4148,69 @@ CLAIM_BYPASSES: tuple[tuple[str, str, str, str], ...] = (
         "use super::destination::admit_destination_root;",
         "use super::destination::admit_destination_root;\n"
         "use mscanvas_proteowizard::OwnedTreeDisposition::ConfirmedGone;",
+    ),
+    # The two the fifth review demonstrated, and the two rules it found nothing
+    # was exercising.
+    #
+    # A comment containing a brace, between the attribute and the item it sits
+    # on. The region walk counted braces over raw text, so this one line opened
+    # a 160-line skip over production `service.rs`.
+    (
+        "a comment opens a skip region over production code",
+        "apps/desktop/src-tauri/src/preview/service.rs",
+        "#[cfg(test)]\nuse mscanvas_proteowizard::ConflictPolicy;",
+        "#[cfg(test)]\n// only `mod tests {` below needs this\n"
+        "use mscanvas_proteowizard::ConflictPolicy;\n"
+        'const _FORGED: &str = "confirmed_gone";',
+    ),
+    # A raw identifier. `mod r#service;` declares the same module the product
+    # compiles, so subtracting plainly-declared modules missed it and the
+    # string-literal declaration exempted the file again.
+    (
+        "a raw identifier hides a production module declaration",
+        "apps/desktop/src-tauri/src/preview/mod.rs",
+        "pub mod service;",
+        '#[allow(dead_code)]\nconst _N: &str = r#"\n#[cfg(test)]\nmod service;\n"#;\n'
+        "pub mod r#service;",
+        (
+            "apps/desktop/src-tauri/src/preview/service.rs",
+            "use super::conversion::conversion_source_kind;",
+            "use super::conversion::conversion_source_kind;\n"
+            'const _FORGED: &str = "confirmed_gone";',
+        ),
+    ),
+    # The conjunction defined twice. This is the guard's headline property and
+    # nothing exercised it: neutralising the count left every proof green.
+    (
+        "the conjunction is defined a second time",
+        CLAIM_ORIGIN,
+        "    pub const fn owned_tree_confirmed_gone(&self) -> bool {",
+        # The copy reads both halves, so the conjunction rule is satisfied by
+        # it and only the count can refuse. A copy that read one half would
+        # have proved the other rule instead.
+        "    pub const fn owned_tree_confirmed_gone(&self) -> bool {\n"
+        "        self.tree_ownership.covers_every_descendant()\n"
+        "            && matches!(self.final_active_processes, Some(0))\n"
+        "    }\n"
+        "    pub const fn owned_tree_confirmed_gone(&self) -> bool {",
+    ),
+    # The Rust vocabulary and the wire union disagreeing. The existing wire
+    # bypass edits the TypeScript side and is caught by a different rule, so
+    # this one moves the Rust side instead.
+    # A rename carried out on *both* sides. The two layers still agree with each
+    # other, so the cross-comparison is satisfied and only the check against the
+    # vocabulary this repository fixed can refuse it. Changing one side alone
+    # would have proved the cross-comparison instead, which is already proved.
+    (
+        "both layers rename a disposition in step",
+        CLAIM_VOCABULARY,
+        '            Self::Unconfirmed => "unconfirmed",',
+        '            Self::Unconfirmed => "undetermined",',
+        (
+            CLAIM_WIRE,
+            '  | "unconfirmed";',
+            '  | "undetermined";',
+        ),
     ),
     # The two the fourth review demonstrated, each as the edit that won.
     #

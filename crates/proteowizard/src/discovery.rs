@@ -1386,6 +1386,57 @@ mod tests {
     use super::*;
     use crate::{HelpCapabilityError, Sha256Digest};
 
+    /// A probe failure says whether it left a process of its own unaccounted
+    /// for, and says it from the typed error rather than from a string.
+    ///
+    /// This lane's failure used to reach the caller as an `io::ErrorKind` and a
+    /// message, so the one question every lane asks could not be asked of it at
+    /// all -- discovery starts `msconvert --help` and `msaccess --help` like any
+    /// other process. The typed error is kept as the `io::Error`'s source for
+    /// exactly this, so the test asks it the way the production site does.
+    #[test]
+    fn a_probe_failure_says_whether_it_left_a_process_unaccounted_for() {
+        let unaccounted = process_error_as_io(ProcessError::OwnedJobNotEmptied {
+            detail: String::from("the owned job would not empty"),
+        });
+        let ordinary = process_error_as_io(ProcessError::Launch {
+            executable: String::from("msconvert.exe"),
+            kind: LaunchFailureKind::NotFound,
+            detail: String::from("no such executable"),
+        });
+
+        let answer = |error: &io::Error| {
+            error
+                .get_ref()
+                .and_then(|inner| inner.downcast_ref::<ProcessError>())
+                .is_some_and(ProcessError::leaves_an_owned_process_unaccounted)
+        };
+        assert!(
+            answer(&unaccounted),
+            "a Job that would not empty is a process this probe cannot account for"
+        );
+        assert!(
+            !answer(&ordinary),
+            "an executable that is not there started nothing"
+        );
+
+        // And the result carries it, which is what the desktop reads.
+        let mut failed = DiscoveredTool::undiscovered();
+        failed.failure = Some(DiscoveryFailure::ProbeLaunchFailed {
+            executable: String::from("msconvert.exe"),
+            path: PathBuf::from("msconvert.exe"),
+            detail: unaccounted.to_string(),
+            owned_process_unaccounted: true,
+        });
+        let mut result = DiscoveryResult::unavailable(None, DiscoveryFailure::BackendNotFound);
+        assert!(
+            !result.leaves_an_owned_process_unaccounted(),
+            "a discovery that started nothing has nothing to account for"
+        );
+        result.msconvert = failed;
+        assert!(result.leaves_an_owned_process_unaccounted());
+    }
+
     struct TempTree {
         root: PathBuf,
     }

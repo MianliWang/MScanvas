@@ -316,7 +316,10 @@ availability, queue, adoption and export contracts.
    control says which one it is before it is pressed. `Stop queue` ends the whole
    queue: it asks the current conversion to stop and begins none of the items
    after it. `Stop this file` ends only the acquisition being converted now and
-   the queue carries on with the rest; the file it names is on screen. `Skip` on
+   the queue carries on with the rest; the file it names is on screen. Unless
+   MSCanvas cannot confirm that its converter ended — then the whole queue stops
+   and the session is quarantined, exactly as it is for an unconfirmed queue
+   stop, because what that state is about is a process nothing can account for. `Skip` on
    a row still waiting its turn settles that row without running it — the row
    keeps its place and the queue still says what became of it. Adding, clearing
    and previewing are unavailable until the queue ends; searching, sorting and

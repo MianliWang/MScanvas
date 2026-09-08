@@ -246,9 +246,14 @@ output auto-import or auto-preview.
   a reason, so every exhaustive match over them had to be answered for. That is
   the intent: the states are closed on both sides of the wire and pinned by
   contract tests.
-- Quarantine is a session-ending state for backend work, and it is reachable
-  only from an unconfirmed stop. It is the first state in this product a user
-  can enter that a restart is the only way out of, and it says so.
+- Quarantine is a session-ending state for backend work, and when this shipped
+  it was reachable only from an unconfirmed stop. It is the first state in this
+  product a user can enter that a restart is the only way out of, and it says
+  so. *(Amended 2026-09-08 by M6.8: three more ways in, all of them the same
+  fact rather than the same action — a conversion that could not account for a
+  process with no stop in flight, a preview or spectrum read that could not, and
+  a discovery help probe that could not. The state is about a process this
+  session may have lost, so what reaches it is every lane that starts one.)*
 - The item DTO still carries the planned output name for every item, including
   a cancelled one. That is the name the plan derived and the queue displays
   throughout; the claim that a file *was produced* lives in the report, and a
