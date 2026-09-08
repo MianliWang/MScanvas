@@ -1103,9 +1103,7 @@ function QueueState({
       ) : state.reason === "stopped" ? (
         <p>Queue stopped</p>
       ) : (
-        <p>
-          {`${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed of ${String(queue.itemCount)}.`}
-        </p>
+        <p>{completedSummary(queue)}</p>
       )}
 
       <dl className="metadata-list" aria-label="Queue destination">
@@ -1366,6 +1364,36 @@ function QueueState({
  * one number a user most needs to trust here is how many files are in the
  * folder.
  */
+/**
+ * What a queue that ran to its own end did.
+ *
+ * Three counts used to be the whole vocabulary here, because a completed queue
+ * could only reach three states: a cancelled item arrived only through a queue
+ * stop, and a stopped queue is a different summary. M6.8 admitted ending the
+ * file being converted and settling a waiting item, so a queue that completed
+ * can now hold either -- and a three-count sentence would report two of three
+ * items as unaccounted for.
+ *
+ * The two are named only when they happened. Unlike the stopped summary, where
+ * every count is named including the zeroes because the reader is auditing what
+ * a stop left behind, an ordinary completion has no such question to answer and
+ * a row of zeroes for actions nobody took would be noise.
+ */
+function completedSummary(queue: ConversionQueue): string {
+  const parts = [
+    `${String(queue.finalizedCount)} converted`,
+    `${String(queue.skippedCount)} skipped`,
+    `${String(queue.failedCount)} failed`,
+  ];
+  if (queue.cancelledCount > 0) {
+    parts.push(`${String(queue.cancelledCount)} cancelled`);
+  }
+  if (queue.skippedByRequestCount > 0) {
+    parts.push(`${String(queue.skippedByRequestCount)} skipped by you`);
+  }
+  return `${parts.join(", ")} of ${String(queue.itemCount)}.`;
+}
+
 function stoppedSummary(queue: ConversionQueue): string {
   const parts = [
     `${String(queue.finalizedCount)} converted`,
