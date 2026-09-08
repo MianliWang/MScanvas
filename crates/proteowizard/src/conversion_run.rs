@@ -2080,6 +2080,18 @@ pub enum OwnedTreeDisposition {
     /// Both halves are required. An empty Job under an open ownership window
     /// would be an observation about the processes ownership happened to hold,
     /// which says nothing about one it never held.
+    ///
+    /// **`non_exhaustive` is load-bearing, not a compatibility hedge.** It is
+    /// what makes this member unconstructible — and unmatchable — outside this
+    /// crate, so the one claim in this repository that is about the user's
+    /// machine cannot be written by a caller at all. Every consumer reaches it
+    /// through [`OwnedTreeDisposition::of`], which derives it from a supervised
+    /// run, or asks one of the predicates below.
+    ///
+    /// A repository check over spellings cannot do this: an import can put a
+    /// member behind any name, and prose can assert a terminated tree in words
+    /// nobody listed. The compiler has neither problem.
+    #[non_exhaustive]
     ConfirmedGone,
     /// A tree existed and its disappearance could not be established.
     ///
@@ -2090,8 +2102,14 @@ pub enum OwnedTreeDisposition {
 
 impl OwnedTreeDisposition {
     /// Derives the disposition from a supervised run. The only place it is
-    /// decided.
-    pub(crate) const fn of(output: &ProcessOutput) -> Self {
+    /// decided, and — because [`OwnedTreeDisposition::ConfirmedGone`] cannot be
+    /// named outside this crate — the only way anyone obtains the affirmative
+    /// member at all.
+    ///
+    /// Public for that reason. A caller that needs the confirmed member, a test
+    /// fixture included, must present a run that earns it.
+    #[must_use]
+    pub const fn of(output: &ProcessOutput) -> Self {
         if !output.termination.launched() {
             return Self::NoneLaunched;
         }
@@ -2274,8 +2292,15 @@ pub enum ConversionAttempt {
     /// The attempt ran to a verdict of its own. That verdict may be a success,
     /// a skip or a failure; cancellation simply did not decide it.
     Completed(ConversionRunReport),
-    /// The request was confirmed: no process of the owned tree survived, and no
-    /// output was finalized.
+    /// The request settled the attempt with no backend process of it
+    /// surviving, and no output was finalized.
+    ///
+    /// **Two ways that is so, and this arm is both**: a tree existed and was
+    /// confirmed gone, or nothing was launched for there to be one. It is
+    /// reached with `NoneLaunched` from every path that observes the request
+    /// before the launch, so describing it as a confirmed tree would assert one
+    /// for a run that never started a process.
+    /// [`CancellationReport::owned_tree`] says which.
     Cancelled(CancellationReport),
     /// The request was made and could not be confirmed.
     CancellationFailed(CancellationFailure),

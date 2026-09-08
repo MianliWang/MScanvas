@@ -241,6 +241,21 @@ fn selected_spectrum_output(index: u64, points: &[(f64, f64)]) -> String {
     text
 }
 
+/// The confirmed disposition, obtained the only way anyone can obtain it.
+///
+/// `OwnedTreeDisposition::ConfirmedGone` is `non_exhaustive`, so no code
+/// outside the crate that decides it may name it — a fixture included. This
+/// presents a supervised run that earns it and lets the one origin say so.
+fn confirmed_gone_disposition() -> mscanvas_proteowizard::OwnedTreeDisposition {
+    let supervised = ProcessOutput {
+        termination: mscanvas_proteowizard::Termination::Cancelled,
+        final_active_processes: Some(0),
+        tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
+        ..completed_process("")
+    };
+    mscanvas_proteowizard::OwnedTreeDisposition::of(&supervised)
+}
+
 fn completed_process(stdout: &str) -> ProcessOutput {
     let bytes = stdout.as_bytes().to_vec();
     let total = bytes.len() as u64;
@@ -17366,7 +17381,12 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
             set: None,
             facts: CancellationFacts {
                 process_launched: true,
-                owned_tree: mscanvas_proteowizard::OwnedTreeDisposition::ConfirmedGone,
+                // Earned rather than written. The affirmative member cannot be
+                // named outside the crate that decides it, so even a fixture
+                // has to present a run that reaches it -- which is the whole
+                // point: a test that could assert a confirmed tree by typing
+                // its name is a test that proves nothing about who may.
+                owned_tree: confirmed_gone_disposition(),
                 elapsed: Duration::from_millis(5),
                 termination: None,
                 partial_output_observed: false,
