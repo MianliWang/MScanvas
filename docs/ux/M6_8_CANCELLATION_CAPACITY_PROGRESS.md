@@ -47,6 +47,20 @@ service or COM server that was already running is not a descendant, was never
 this Job's, and is not covered. This is a process-ownership boundary for one
 backend, not a sandbox.
 
+**What proves it, and what does not.** No behavioural test of a descendant can
+prove the interval is gone: it is instructions wide, and no child can be made to
+create a descendant reliably inside it. What proves it is observable directly —
+at the moment ownership is taken the root has written nothing, has not exited,
+and is already in the Job, and resuming it is what makes that absence mean
+suspension rather than a fixture that never worked. Removing suspended creation
+makes that test report the escape.
+
+Two further tests carry the other half, which the structural one does not reach:
+a descendant created as early as the operating system allows is inside the Job's
+accounting and termination, and a root that exits the instant it has spawned
+leaves the run waiting on the Job rather than on the handle it holds. Neither
+discriminates the interval, and both say so.
+
 ### What runtime failures retain
 
 | Failure | What is known, and what follows |
@@ -56,6 +70,7 @@ backend, not a sandbox.
 | Resume fails, teardown could not reclaim it | An owned process whose disappearance cannot be stated. Classified as `NotTerminated`, which is what that already means, so a stop reaching it settles `CancellationFailed` and quarantines. |
 | Job accounting unavailable | `None`, never zero. Unknown surviving-process state is not zero, and the claim is unreachable without a bounded count. |
 | Emptiness times out | The Job would not empty. `NotTerminated`. |
+| Any of the above **with no stop in flight** | The same uncertainty, and the same consequence. The invariant is about the machine rather than about anything the user pressed, so the run is asked a typed question about its own failure and the queue ends on the quarantine that is then in force. Before this, quarantine fired only on the stop path and the queue went on to launch the next converter beside a process nothing could account for. |
 | Capture or launch failure coinciding with a request | Keeps the reason that is true of it. An execution error does not erase an ownership uncertainty, and only the two failures that describe one are reclassified. |
 
 ## The measurement
@@ -121,22 +136,44 @@ alike, so it asserted a terminated process tree for a run that never started
 one. That conflation is exactly what the route named as one the reconciliation
 must undo.
 
-`validate_the_cancellation_claim_has_one_origin` in `scripts/check_repo.py` is
-structural rather than a list of symbols: it checks that the conjunction is
-defined once and reads both halves, that no production file outside the
-vocabulary constructs the affirmative member or states when ownership began,
-that the Rust identifiers and the TypeScript union are the same set compared
-against *each other*, and that the retired boolean does not return in code.
-Producing the fail-closed member stays unrestricted — refusing to claim needs
-no permission.
+**And the state a wrong description would have named is not expressible.**
+`ItemOutcome::Stopped` used to carry the item state, so a caller could pair a
+confirmed-sounding state with an unconfirmed disposition — rendering an
+unconfirmed stop as a success and skipping the quarantine that keeps the next
+conversion from starting. The state is derived from the disposition where the
+item settles, and the quarantine reads the disposition rather than a rendering
+of it. A check can only guard the spellings it knows; this removes the state a
+wrong spelling would have named.
 
-**The guard proves itself.** On every run it applies six deliberate bypasses to
-isolated copies and requires each to be detected: a second producer asserting
-the claim, the conjunction dropping its ownership half, a second lifecycle
-deriving the judgement for itself, a consumer knowing only some of the
-dispositions, the retired boolean returning, and a production file stating when
-ownership began. The proofs also fail if the guard has stopped checking at all.
-They never edit the worktree.
+`validate_the_cancellation_claim_has_one_origin` in `scripts/check_repo.py` is
+structural rather than a list of symbols. It checks that the conjunction is
+defined once and reads both halves; that no production file outside the
+vocabulary constructs the affirmative member, reaches it through an import, or
+states when ownership began; that the Rust identifiers and the TypeScript union
+are the same set compared against *each other*; that the retired boolean does
+not return in code; and — the class a check over constructors cannot see — that
+a symbol meaning **both** senses is not described as only the narrow one.
+Producing the fail-closed member stays unrestricted: refusing to claim needs no
+permission.
+
+**The guard proves itself, and it proves the part of itself that decides what
+it reads.** On every run it applies eight deliberate bypasses to isolated copies
+and requires each to be detected: a second producer asserting the claim, the
+conjunction dropping its ownership half, a second lifecycle deriving the
+judgement, a consumer knowing only some of the dispositions, the retired boolean
+returning, a both-sense description claiming only a confirmed tree, the claim
+reached through an import, and a production file stating when ownership began.
+The proofs also fail if the guard has stopped checking at all, and they never
+edit the worktree.
+
+Beside them is a check of the walk that decides which lines the guard reads,
+against its **output** rather than its logic: every region it declines to read
+must begin at a body with a test attribute directly above it. That check exists
+because the first version of the walk armed on attributes inside regions it was
+already skipping, so the flag survived a test module's closing brace and
+swallowed the next block — 650 contiguous lines of production `service.rs` among
+them. The bypass proofs could not see it, because each plants its edit where the
+walk happened to be looking.
 
 ## The four operations under CNV-D7
 
@@ -266,6 +303,15 @@ E2E typecheck.
 **Rendered QA**: 10/10 in `m6.8-cancellation-controls.browser`, including every
 control reachable with no horizontal overflow at 1366x768, 1920x1080, 1200x800
 and 960x640. Screenshots and console records inspected; console empty.
+
+Two independent reviews rejected the first candidate. Both were right, and every
+finding was verified against the code before it was acted on: a skip landing
+between the worker choosing an item and starting it wedged the queue; the guard
+was blind to 650 lines of production `service.rs`; the item state and queue count
+still described a confirmed tree for a state also reached by a run that launched
+nothing; exit criterion 7's invariant fired only on the stop path; and two of the
+three ownership tests did not discriminate what they were named for. Each repair
+is proved by reverting it and watching a test report the defect.
 
 **Native**, on the build attributable to the final candidate — binary SHA-256
 `e311cc5b241b72911ce64a0fac73cc84028d0bc4da3dbe0f056729c178dc8c4d`, WebView2 and

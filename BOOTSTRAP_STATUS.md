@@ -5966,8 +5966,12 @@ provider never spawns children.
 is the conjunction of an empty owned Job and ownership that preceded execution;
 `OwnedTreeDisposition` carries the judgement with three members, replacing a
 boolean that said `true` both for a terminated tree and for a run that launched
-nothing. `check_repo.py` guards the semantic structurally rather than by a list,
-and proves itself against six deliberate bypasses on every run.
+nothing. The item state is derived from that judgement rather than supplied, so pairing a
+confirmed-sounding state with an unconfirmed disposition is not expressible.
+`check_repo.py` guards the semantic structurally rather than by a list — the
+descriptions attached to a both-sense name included — and proves itself against
+eight deliberate bypasses on every run, beside a check of the walk that decides
+which lines it reads.
 
 With all three satisfied, a stop of a launched conversion settles as a
 successful `Cancelled`; `CancellationFailed` still quarantines the session, and
@@ -7711,7 +7715,16 @@ refused, and an assignment or resume failure terminates a root that has provably
 run nothing. The confirmed-cancellation claim becomes a conjunction with one
 origin, and `OwnedTreeDisposition` replaces the boolean that asserted a
 terminated tree for a run that never started one. A structural `check_repo.py`
-guard proves itself against six deliberate bypasses on every run.
+guard proves itself against eight deliberate bypasses on every run.
+
+Two independent reviews rejected the first candidate and every finding was real:
+a skip landing between the worker choosing an item and starting it wedged the
+queue; the guard was blind to 650 lines of production `service.rs`; the item
+state and queue count still described a confirmed tree for a state also reached
+by a run that launched nothing; exit criterion 7's invariant fired only on the
+stop path; and two of the three ownership tests did not discriminate what they
+were named for. Each repair is proved by reverting it and watching a test report
+the defect.
 
 The exact installed build was measured: release `3.0.26013`, revision `47b13cf`,
 `msconvert.exe` SHA-256 `9BB6F5D5…D590BD`, re-observed unchanged after the set.

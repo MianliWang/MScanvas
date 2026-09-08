@@ -1582,9 +1582,15 @@ provider never spawns children.
 
 **The reconciliation is a guard, not a list.** One typed origin, a three-member
 vocabulary replacing the boolean that answered `true` both for a terminated tree
-and for a run that launched nothing, and a `check_repo.py` validator that is
-structural over the semantic and proves itself against six deliberate bypasses
-on every run.
+and for a run that launched nothing, the item state made underivable by a
+caller, and a `check_repo.py` validator that is structural over the semantic and
+proves itself against eight deliberate bypasses on every run — including the
+class a check over constructors cannot see, where the claim is made in the
+description attached to a name rather than in a call. The audit baseline above
+is where that class was found: `ItemState::Cancelled` and `cancelled_count` are
+reached both by a confirmed tree and by a run that launched nothing, and the
+first candidate reconciled the field names while leaving those two describing a
+confirmed process tree.
 
 With all three satisfied, an owned-Job-empty stop of a launched conversion
 settles as a successful `Cancelled`, and **cancel the current item and continue**
