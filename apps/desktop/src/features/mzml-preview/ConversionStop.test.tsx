@@ -346,8 +346,10 @@ describe("stopping a running conversion queue", () => {
       operationId: "1",
       queue: queueOf([
         queueItem("file-1", "run-1.raw", { state: "running", attempts: 2 }),
-        // Failed in the first pass, moved back to waiting by the retry.
-        queueItem("file-2", "run-2.raw", { state: "pending", attempts: 1 }),
+        // Failed in the first pass, moved back to waiting by the retry. Two
+        // attempts, not one: `attempts === 0` is the rule, and a test that only
+        // used one would pass for `attempts !== 1` as well.
+        queueItem("file-2", "run-2.raw", { state: "pending", attempts: 2 }),
         // Never reached in either pass.
         queueItem("file-3", "run-3.raw", { state: "pending" }),
       ]),

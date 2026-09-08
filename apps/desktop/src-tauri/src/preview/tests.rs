@@ -2197,6 +2197,32 @@ fn launch_failure_leaving_a_process_unaccounted() -> Response {
     ))
 }
 
+/// The preview lane's own question about a failed process, asked directly.
+///
+/// The lane's quarantine tests substitute the whole provider, so the production
+/// mapping in `execute_bound` never runs in them: replacing its answer with
+/// `false` left them green while a preview that lost a process stopped
+/// quarantining the session.
+#[test]
+fn a_preview_process_failure_says_whether_it_left_a_process_unaccounted_for() {
+    use super::backend::unaccounted_by;
+
+    assert!(unaccounted_by(&ProcessError::OwnedJobNotEmptied {
+        detail: String::from("the owned job would not empty"),
+    }));
+    assert!(unaccounted_by(&ProcessError::ResumeOwnedRoot {
+        detail: String::from("refused after resuming"),
+        owned_root_reclaimed: true,
+        refused_before_resuming: false,
+    }));
+    assert!(!unaccounted_by(&ProcessError::ResumeOwnedRoot {
+        detail: String::from("refused before resuming"),
+        owned_root_reclaimed: true,
+        refused_before_resuming: true,
+    }));
+    assert!(!unaccounted_by(&ProcessError::ExecutableIdentityChanged));
+}
+
 /// Discovery is a lane too, and it could not say this at all.
 ///
 /// A help probe is a process: created suspended, owned before it executes, torn
@@ -7385,7 +7411,7 @@ impl FakeConversionRunner {
                 return Err(ProcessError::ResumeOwnedRoot {
                     detail: "injected: the owned root could not be started or reclaimed".to_owned(),
                     owned_root_reclaimed: false,
-                    root_never_ran: true,
+                    refused_before_resuming: true,
                 });
             }
         };

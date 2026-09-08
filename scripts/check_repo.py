@@ -3305,6 +3305,30 @@ CLAIM_MEMBERS = (
 # compiler cannot tell those apart and neither can a type. What it can be is
 # *contained*: only the boundary that supervises a real process may ask.
 CLAIM_DERIVATION = "OwnedTreeDisposition::of"
+# The type itself, under any spelling a file can give it. A file that never
+# names it cannot be deriving from it, and one that does is asked about every
+# `of` call it makes.
+CLAIM_VOCABULARY_TYPE = "OwnedTreeDisposition"
+# Every name a file can reach the type by: the type itself, an import renamed
+# with `as`, and a local type alias. Matching a qualified path saw only the
+# first, which is the one spelling an import removes -- a reviewer derived the
+# disposition through `use ... as Disposition` and the rule did not see it.
+# Matching *any* `X::of(` instead would be wrong the other way: this repository
+# has several unrelated `of` constructors.
+_DERIVATION_ALIASES = (
+    re.compile(r"\bOwnedTreeDisposition\s+as\s+([A-Za-z_][A-Za-z0-9_]*)"),
+    re.compile(
+        r"\btype\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[A-Za-z0-9_:]*OwnedTreeDisposition\s*;"
+    ),
+)
+
+
+def _derivation_names(text: str) -> set[str]:
+    """Every name `OwnedTreeDisposition::of` can be written under in one file."""
+    names = {CLAIM_VOCABULARY_TYPE}
+    for pattern in _DERIVATION_ALIASES:
+        names.update(pattern.findall(text))
+    return names
 # The crate that creates the process and watches it end. Two lifecycles inside
 # it derive the judgement, and both supervise a real run; nothing outside it may.
 CLAIM_DERIVATION_SCOPE = "crates/proteowizard/src/"
@@ -3374,8 +3398,6 @@ NARROW_CLAIM_SYMBOLS = (
     "CancellationFailure",
     "NotTerminated",
 )
-# How far a description runs above the line it describes.
-DESCRIPTION_LINES = 16
 
 # Everything the guard reads, and therefore everything a bypass proof has to be
 # able to edit. The document globs are here because the description rule reads
@@ -3495,14 +3517,32 @@ def _declared_test_modules(root: Path) -> frozenset[Path]:
                     # Declared without the attribute: this module is part of the
                     # product wherever else its name appears.
                     plain.update(files_for(found.group(1)))
-            # And the same question asked without anchoring to the line start,
-            # so a declaration this file writes in some other shape still counts
-            # as one. What is being decided is whether a module is part of the
-            # product, and a shape nobody anticipated must not answer "no".
-            for line_number, line in enumerate(lines):
-                for name in _ANY_MODULE_DECLARATION.findall(line):
-                    if line_number not in attributed:
-                        plain.update(files_for(name))
+            # And the same question asked over the file as one text, so a
+            # declaration whose `mod` and whose name are on different lines
+            # still counts as one. Matching per line meant `\s+` could not
+            # cross a newline, and a reviewer split a declaration in two to keep
+            # a production module out of this set. What is being decided is
+            # whether a module is part of the product, and a shape nobody
+            # anticipated must not answer "no".
+            joined = "\n".join(lines)
+            for match in _ANY_MODULE_DECLARATION.finditer(joined):
+                at = joined.count("\n", 0, match.start())
+                # Governed by a `#[cfg(test)]` if one stands above it with
+                # nothing but attributes and blank lines between -- comments are
+                # already scrubbed to nothing.
+                governed = at in attributed
+                if not governed:
+                    back = at - 1
+                    while back >= 0 and back >= at - 3:
+                        above = lines[back].strip()
+                        if _TEST_CFG.match(lines[back]) is not None:
+                            governed = True
+                            break
+                        if above and not above.startswith("#["):
+                            break
+                        back -= 1
+                if not governed:
+                    plain.update(files_for(match.group(1)))
     frozen = frozenset(declared - plain)
     _DECLARED_TEST_MODULES[root] = frozen
     return frozen
@@ -3634,11 +3674,17 @@ def _test_only_lines(path: Path) -> frozenset[int]:
     code = _code_only(lines)
     inside: set[int] = set()
     index = 0
-    while index < len(lines):
-        if not lines[index].startswith(("#[cfg(test)]", "#[cfg(all(test")):
+    while index < len(code):
+        # **The attribute is read as code too.** The brace counter was scrubbed
+        # and this line was left raw, so `/*` `#[cfg(test)]` `*/` armed a region
+        # from inside a block comment -- the same attack as the round before,
+        # one line further up. And the scan starts *at* the attribute rather
+        # than after it, because `#[cfg(test)] fn _t() {}` written on one line
+        # would otherwise leave its own braces unread and take the next item's.
+        if not code[index].startswith(("#[cfg(test)]", "#[cfg(all(test")):
             index += 1
             continue
-        cursor = index + 1
+        cursor = index
         depth = 0
         opened = False
         finished = False
@@ -3664,7 +3710,7 @@ def _test_only_lines(path: Path) -> frozenset[int]:
             index += 1
             continue
         inside.update(range(index + 1, cursor + 2))
-        index = cursor + 1
+        index = max(cursor, index) + 1
     frozen = frozenset(inside)
     _TEST_ONLY_LINES[path] = frozen
     return frozen
@@ -3961,15 +4007,23 @@ def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
             if _is_test_source(path, root):
                 continue
             test_only = _test_only_lines(path)
-            for number, line in enumerate(
-                path.read_text(encoding="utf-8").splitlines(), start=1
-            ):
+            text = path.read_text(encoding="utf-8")
+            derivation_names = _derivation_names(text)
+            for number, line in enumerate(text.splitlines(), start=1):
                 stripped = line.strip()
                 if stripped.startswith("//") or number in test_only:
                     continue
-                if CLAIM_DERIVATION in stripped and not relative.startswith(
-                    CLAIM_DERIVATION_SCOPE
-                ):
+                # Matched as a *call* rather than as a qualified path, for
+                # the reason rule 6 gives about members: `use ... as Alias` is
+                # the one spelling a path check cannot see, and a reviewer
+                # derived the disposition through exactly that. Any `X::of(` in
+                # a file that knows this type at all is the question, because
+                # nothing else in this repository names an `of` constructor.
+                collapsed = stripped.replace(" ", "")
+                derives = any(
+                    f"{name}::of(" in collapsed for name in derivation_names
+                )
+                if derives and not relative.startswith(CLAIM_DERIVATION_SCOPE):
                     errors.append(
                         f"{relative}:{number} derives a disposition from a run; only "
                         f"{CLAIM_DERIVATION_SCOPE} supervises one, and a consumer that can "
@@ -4148,6 +4202,51 @@ CLAIM_BYPASSES: tuple[tuple[str, str, str, str], ...] = (
         "use super::destination::admit_destination_root;",
         "use super::destination::admit_destination_root;\n"
         "use mscanvas_proteowizard::OwnedTreeDisposition::ConfirmedGone;",
+    ),
+    # The three the sixth review demonstrated. Each compiles, and each left the
+    # guard passing.
+    #
+    # A `#[cfg(test)]` written inside a block comment. The brace counter was
+    # scrubbed in round five and the line that *arms* a region was left raw, so
+    # the same attack worked one line further up.
+    (
+        "a commented-out attribute arms a skip region",
+        "apps/desktop/src-tauri/src/preview/service.rs",
+        "use super::conversion::conversion_source_kind;",
+        "/*\n#[cfg(test)]\n*/\n"
+        "fn _forged(output: &mscanvas_proteowizard::ProcessOutput) -> &'static str {\n"
+        "    let _disposition = mscanvas_proteowizard::OwnedTreeDisposition::of(output);\n"
+        '    "confirmed_gone"\n'
+        "}\n"
+        "use super::conversion::conversion_source_kind;",
+    ),
+    # A declaration split across two lines. `\s+` cannot cross a newline in a
+    # per-line match, so the plain-declaration subtraction did not see it and a
+    # production module became a test module.
+    (
+        "a line-split declaration hides a production module",
+        "apps/desktop/src-tauri/src/preview/mod.rs",
+        "mod diagnostics;",
+        "#[cfg(not(test))]\nmod\n    diagnostics;\n#[cfg(test)]\nmod diagnostics;",
+        (
+            "apps/desktop/src-tauri/src/preview/diagnostics.rs",
+            "use super::conversion::{ValidationFacts, WorkspaceConversionReport};",
+            "use super::conversion::{ValidationFacts, WorkspaceConversionReport};\n"
+            'const _FORGED: &str = "confirmed_gone";',
+        ),
+    ),
+    # The derivation reached under an alias, which is the one spelling a
+    # qualified-path check cannot see -- the same lesson rule 6 already carried
+    # about members, applied a round late to rule 7.
+    (
+        "the derivation is reached under an alias",
+        "apps/desktop/src-tauri/src/preview/service.rs",
+        "use super::destination::admit_destination_root;",
+        "use super::destination::admit_destination_root;\n"
+        "use mscanvas_proteowizard::OwnedTreeDisposition as Disposition;\n"
+        "fn _forged(output: &mscanvas_proteowizard::ProcessOutput) -> Disposition {\n"
+        "    Disposition::of(output)\n"
+        "}",
     ),
     # The two the fifth review demonstrated, and the two rules it found nothing
     # was exercising.

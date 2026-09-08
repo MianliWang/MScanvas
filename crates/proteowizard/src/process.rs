@@ -320,15 +320,25 @@ pub enum ProcessError {
         /// disappearance it cannot state, and callers classify it exactly as
         /// they classify a Job that would not terminate.
         owned_root_reclaimed: bool,
-        /// Whether the image had still executed nothing when this was refused.
+        /// Whether this run refused before it resumed anything.
         ///
-        /// Reclaiming a root says it is gone; this says whether it had run.
-        /// Only both together make the failure an ordinary one, because
-        /// "terminating it afterwards is a request rather than an
-        /// observation" — a root that was already executing when the refusal
-        /// came may have created descendants that the Job holds and that no
-        /// emptiness check was made about.
-        root_never_ran: bool,
+        /// **Named for what it observed, not for what it would like to
+        /// conclude.** It was `root_never_ran`, which claimed more than the
+        /// boundary can see: a root an external agent had already resumed, or
+        /// one whose primary thread could not be opened, is a root that may or
+        /// may not have run, and only the *order* of this run's own actions is
+        /// a fact. What follows from the order is still the thing that matters
+        /// — nothing resumed means nothing of the image can have executed
+        /// because of this run — and where it is `false` the boundary declines
+        /// to say either way, which is the conservative answer.
+        ///
+        /// Reclaiming a root says it is gone; this says whether this run had
+        /// released it. Only both together make the failure an ordinary one,
+        /// because "terminating it afterwards is a request rather than an
+        /// observation" — a root already executing when the refusal came may
+        /// have created descendants the Job holds and that no emptiness check
+        /// was made about.
+        refused_before_resuming: bool,
     },
     #[error("failed while waiting for the backend process: {detail}")]
     Wait { detail: String },
@@ -505,7 +515,7 @@ fn execute_command_after_assignment(
         return Err(ProcessError::ResumeOwnedRoot {
             detail,
             owned_root_reclaimed,
-            root_never_ran: refusal.root_never_ran,
+            refused_before_resuming: refusal.refused_before_resuming,
         });
     }
     after_assignment();
@@ -638,17 +648,50 @@ fn suspend_root_creation(_command: &mut Command) {}
 #[derive(Debug)]
 struct ResumeRefusal {
     error: io::Error,
-    root_never_ran: bool,
+    refused_before_resuming: bool,
 }
 
 impl ResumeRefusal {
-    /// A refusal taken while the image had still executed nothing.
-    fn before_anything_ran(error: io::Error) -> Self {
+    /// A refusal taken before this run resumed anything.
+    fn before_resuming(error: io::Error) -> Self {
         Self {
             error,
-            root_never_ran: true,
+            refused_before_resuming: true,
         }
     }
+
+    /// A refusal taken after this run had resumed what it could.
+    ///
+    /// Not "the root ran": whether it did is exactly what this boundary cannot
+    /// see once it has released threads and none reported the count it created
+    /// them with. Declining to say is what makes the classification safe.
+    fn after_resuming(error: io::Error) -> Self {
+        Self {
+            error,
+            refused_before_resuming: false,
+        }
+    }
+}
+
+/// What a set of observed previous suspend counts means for the launch.
+///
+/// Split out from the Windows calls so the decision can be tested without a
+/// process: the whole point of the two-phase resume is which answer follows
+/// which observation, and that was reachable only through a real refusal.
+///
+/// `Ok` exactly when some thread reported the count a thread created suspended
+/// has. Nothing else identifies the primary — a thread another product injected
+/// suspended reports the same one — so this is the strongest statement the
+/// observation supports, and the docs say so rather than claiming the root is
+/// certainly running.
+fn resume_verdict(previous_suspend_counts: &[u32]) -> Result<(), ResumeRefusal> {
+    if previous_suspend_counts.contains(&1) {
+        return Ok(());
+    }
+    Err(ResumeRefusal::after_resuming(io::Error::other(
+        "no thread of the owned root was still suspended as it was created, so this \
+         run cannot say the image had executed nothing when it took ownership",
+    )))
 }
 
 /// Starts the owned root process.
@@ -1387,8 +1430,7 @@ mod windows_job {
     /// suspended, and this run holds its process handle.
     pub(super) fn resume_primary_thread(child: &Child) -> Result<(), ResumeRefusal> {
         let process_id = child.id();
-        let threads =
-            threads_of_owned_root(process_id).map_err(ResumeRefusal::before_anything_ran)?;
+        let threads = threads_of_owned_root(process_id).map_err(ResumeRefusal::before_resuming)?;
         let mut handles = Vec::with_capacity(threads.len());
         for thread_id in threads {
             // SAFETY: A thread id the system just reported for a live process,
@@ -1403,7 +1445,7 @@ mod windows_job {
             handles.push(unsafe { OwnedHandle::from_raw_handle(raw_thread) });
         }
 
-        let mut resumed_one_created_suspended = false;
+        let mut previous_suspend_counts = Vec::with_capacity(handles.len());
         for handle in &handles {
             // SAFETY: The handle remains owned by `handles` and is valid for
             // the call.
@@ -1414,24 +1456,9 @@ mod windows_job {
                 // looking for the one that was created suspended.
                 continue;
             }
-            if previous_suspend_count == 1 {
-                resumed_one_created_suspended = true;
-            }
+            previous_suspend_counts.push(previous_suspend_count);
         }
-        if resumed_one_created_suspended {
-            return Ok(());
-        }
-        // Nothing reported the count it was created with. Either the process is
-        // not the one this run created suspended, or something else resumed it
-        // first -- and in the second case the image is already running, so this
-        // refusal must not claim it executed nothing.
-        Err(ResumeRefusal {
-            error: io::Error::other(
-                "no thread of the owned root was still suspended as it was created, so \
-                 this run cannot say the image had executed nothing when it took ownership",
-            ),
-            root_never_ran: false,
-        })
+        super::resume_verdict(&previous_suspend_counts)
     }
 
     /// Every thread the system reports for a process.
@@ -2480,6 +2507,35 @@ mod tests {
     /// process whose disappearance this boundary cannot state — which is what
     /// `NotTerminated` already means, and the state a stop must never be
     /// allowed to call clean.
+    /// The verdict follows the observation, and only the observation.
+    ///
+    /// The whole point of the two-phase resume is which answer follows which
+    /// set of previous suspend counts, and that decision was reachable only
+    /// through a real refusal -- so changing `refused_before_resuming` to
+    /// `true` at the one site that sets it false kept every test green while
+    /// restoring the defect the fifth review reported.
+    #[test]
+    fn a_resume_verdict_follows_the_counts_it_observed() {
+        // Some thread reported the count a thread created suspended has.
+        assert!(resume_verdict(&[1]).is_ok());
+        assert!(resume_verdict(&[0, 1, 0]).is_ok());
+
+        // None did. This run released what it could and cannot say what the
+        // image did, so it must not claim it never started.
+        for counts in [&[][..], &[0][..], &[0, 0][..], &[2, 0][..]] {
+            let refusal = resume_verdict(counts).expect_err("nothing was created suspended");
+            assert!(
+                !refusal.refused_before_resuming,
+                "this run had already resumed what it opened: {counts:?}"
+            );
+        }
+
+        // And a refusal taken before any resume says so, which is the only
+        // case an ordinary classification is allowed to follow from.
+        let early = ResumeRefusal::before_resuming(io::Error::other("no snapshot"));
+        assert!(early.refused_before_resuming);
+    }
+
     /// A refusal taken before anything ran is the only one that says so.
     ///
     /// This used to assert that two hand-built values were unequal and printed
@@ -2494,7 +2550,7 @@ mod tests {
         let errors = combinations.map(|(reclaimed, never_ran)| ProcessError::ResumeOwnedRoot {
             detail: "the owned root could not be resumed".to_owned(),
             owned_root_reclaimed: reclaimed,
-            root_never_ran: never_ran,
+            refused_before_resuming: never_ran,
         });
 
         // Four distinct values from one detail: nothing but the two facts tells

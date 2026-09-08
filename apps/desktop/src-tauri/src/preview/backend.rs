@@ -548,10 +548,7 @@ impl ProteoWizardProvider {
 
         let process = match execute(&command) {
             Ok(process) => process,
-            Err(error) => {
-                let unaccounted = error.leaves_an_owned_process_unaccounted();
-                return (Err(process_error(error)), unaccounted);
-            }
+            Err(error) => return (Err(process_error_seen(&error)), unaccounted_by(&error)),
         };
 
         let manifest = match capture_manifest(output_root.path(), operation) {
@@ -874,7 +871,7 @@ pub fn process_error(error: ProcessError) -> PreviewErrorDto {
         // have been running, and offered a retry beside it.
         ProcessError::ResumeOwnedRoot {
             owned_root_reclaimed: true,
-            root_never_ran: true,
+            refused_before_resuming: true,
             ..
         } => PreviewErrorDto::new(
             "backend_not_started",
@@ -916,6 +913,24 @@ pub fn process_error(error: ProcessError) -> PreviewErrorDto {
 ///
 /// Only stable identifiers cross this boundary: no English backend text is
 /// inspected and none is forwarded.
+/// Whether this failure left a process the run started unaccounted for.
+///
+/// Named, and asked of the error rather than computed inline at the one call
+/// site, because a test that substitutes the whole provider never reaches that
+/// site: replacing the expression with `false` left the lane's own quarantine
+/// tests green.
+pub fn unaccounted_by(error: &ProcessError) -> bool {
+    error.leaves_an_owned_process_unaccounted()
+}
+
+/// The transfer object for a process failure, from a borrowed error.
+///
+/// `process_error` consumes; this is what a caller that also has to ask the
+/// error a second question uses, so the two answers describe one failure.
+pub fn process_error_seen(error: &ProcessError) -> PreviewErrorDto {
+    process_error(error.clone())
+}
+
 pub fn interpretation_error(error: PreviewInterpretError) -> PreviewErrorDto {
     let identifier = error.stable_id();
     match error {

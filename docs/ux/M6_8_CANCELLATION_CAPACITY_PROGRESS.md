@@ -249,7 +249,7 @@ buys is narrower and worth stating exactly: a wrong *description* cannot become
 a wrong *claim in code*. The words can drift; the member cannot be written by
 the code that reads them.
 
-**The guard proves itself.** On every run it applies twenty-three deliberate bypasses
+**The guard proves itself.** On every run it applies twenty-six deliberate bypasses
 to isolated copies and requires each to be detected, including all six the two
 reviewers demonstrated: the alias import, the braced member import, the braced
 ownership import, a production claim hidden behind a file-based test module, the
@@ -277,6 +277,8 @@ identifier, which the plain-declaration subtraction did not match. Both are
 answered at the root: comments, strings, chars and raw strings are scrubbed out
 before anything is counted or matched, and the region now ends where its own
 depth returns to zero rather than at the first left-margin `}`.
+
+Three more came from the sixth, one for each of the bypasses above.
 
 The other two of the fifth's proofs are for rules that could not fail at all.
 Neutralising the conjunction's one-definition count, or the comparison of the
@@ -475,7 +477,7 @@ open) and this record. Fifteen, and the count is checkable: `git diff
 Local gates: frontend lint, typecheck, 1656 tests across 69 files, build;
 `cargo fmt --all --check`; `cargo clippy --locked --workspace --all-targets
 --all-features -- -D warnings`; `cargo test --locked --workspace --all-targets`
-(1512 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
+(1514 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
 E2E typecheck.
 
 **Rendered QA**: 10/10 in `m6.8-cancellation-controls.browser`, including every
@@ -513,6 +515,18 @@ file-based test module. The answer was to stop matching spellings for the
 member's name and make the compiler refuse it, which is where `non_exhaustive`
 came from, and to invert the description rule into an allowlist — which
 immediately found a live defect on a public API arm.
+
+Round 6 also defeated the guard three more times, each with something that
+compiles. A `#[cfg(test)]` written inside a block comment armed a region: the
+brace counter had been scrubbed a round earlier and the line that *arms* a
+region was left raw, so the same attack worked one line further up. A
+declaration split across two lines was invisible to the plain-declaration
+subtraction, because `\s+` cannot cross a newline in a per-line match. And the
+derivation was reached through `use ... as Disposition`, which is the one
+spelling a qualified-path check cannot see — the lesson rule 6 already carried
+about members, arriving a round late at rule 7. The attribute is read as code
+now, declarations are matched over the file as one text, and the derivation is
+matched under every name the type can be reached by in that file.
 
 Round 6: the screen-reader region returned the refusal *instead of* the counts
 in exactly the state this milestone added — a session that loses track of a

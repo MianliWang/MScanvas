@@ -7717,7 +7717,7 @@ decides it — not the value, which any caller can still derive from a
 `ProcessOutput` it built, because that report is what a substituted runner
 returns and no type separates a fabricated one from a supervised one. The
 derivation is therefore confined to that crate by a `check_repo.py` guard, which
-proves itself against twenty-three deliberate bypasses on every run, four of
+proves itself against twenty-six deliberate bypasses on every run, four of
 them edits reviewers demonstrated against it and two written for rules that
 until the fifth review could not fail at all.
 
@@ -7745,9 +7745,9 @@ are closed: a completed queue now accounts for every item it held, and the retry
 display no longer speaks for a rerun that is already done.
 
 Implementation is complete and every local gate passes: 1656 frontend tests,
-1512 Rust tests across the workspace, lint, both typechecks, the build,
+1514 Rust tests across the workspace, lint, both typechecks, the build,
 `cargo fmt --check`, clippy with warnings denied, and `check_repo.py` with the
-claim guard's twenty-three self-proved bypasses. Rendered QA is browser 10/10 at four
+claim guard's twenty-six self-proved bypasses. Rendered QA is browser 10/10 at four
 inner sizes plus M6.6 8/8 and M6.7 7/7, re-run at this head against the bundle
 this head builds. That suite is headless, so a locked session does not block it.
 

@@ -572,6 +572,23 @@ fn backend_tool(executable: &Path) -> io::Result<BackendTool> {
 /// one question about an unaccounted process still be asked. Reducing the error
 /// to a kind and a string is what made discovery the lane that could not answer
 /// it.
+/// Whether a failed probe left a process it started unaccounted for.
+///
+/// The typed error is carried inside the `io::Error` rather than reduced to its
+/// kind, so the one question every lane asks can still be asked here;
+/// `process_error_as_io` keeps it as the source for exactly this.
+///
+/// A named function rather than an expression at the construction site, because
+/// a test could otherwise only assert the field it had written itself: replacing
+/// the expression with `false` left every test green while a help probe whose
+/// owned Job would not empty stopped quarantining the session.
+fn probe_left_a_process_unaccounted(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<ProcessError>())
+        .is_some_and(ProcessError::leaves_an_owned_process_unaccounted)
+}
+
 fn process_error_as_io(error: ProcessError) -> io::Error {
     let kind = match &error {
         ProcessError::Launch {
@@ -975,14 +992,7 @@ fn probe_tool(backend_tool: BackendTool, tool: &mut DiscoveredTool, executor: &d
                     executable: executable_name.to_owned(),
                     path: path.clone(),
                     detail: error.to_string(),
-                    // The typed error is carried inside the `io::Error` rather
-                    // than reduced to its kind, so the one question every lane
-                    // asks can still be asked here. `process_error_as_io` keeps
-                    // it as the source for exactly this.
-                    owned_process_unaccounted: error
-                        .get_ref()
-                        .and_then(|inner| inner.downcast_ref::<ProcessError>())
-                        .is_some_and(ProcessError::leaves_an_owned_process_unaccounted),
+                    owned_process_unaccounted: probe_left_a_process_unaccounted(&error),
                 }
             });
         }
@@ -1405,12 +1415,8 @@ mod tests {
             detail: String::from("no such executable"),
         });
 
-        let answer = |error: &io::Error| {
-            error
-                .get_ref()
-                .and_then(|inner| inner.downcast_ref::<ProcessError>())
-                .is_some_and(ProcessError::leaves_an_owned_process_unaccounted)
-        };
+        // The production function, not a copy of its body written here.
+        let answer = probe_left_a_process_unaccounted;
         assert!(
             answer(&unaccounted),
             "a Job that would not empty is a process this probe cannot account for"

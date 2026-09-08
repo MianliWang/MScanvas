@@ -375,7 +375,7 @@ fn a_process_failure_answers_the_same_way_to_every_lane() {
         ProcessError::ResumeOwnedRoot {
             detail: String::from("the root could not be resumed"),
             owned_root_reclaimed: false,
-            root_never_ran: true,
+            refused_before_resuming: true,
         },
         // Reclaimed, but the image had already started: terminating it is a
         // request rather than an observation, so what it created is unaccounted
@@ -383,7 +383,7 @@ fn a_process_failure_answers_the_same_way_to_every_lane() {
         ProcessError::ResumeOwnedRoot {
             detail: String::from("the root was refused after it had been resumed"),
             owned_root_reclaimed: true,
-            root_never_ran: false,
+            refused_before_resuming: false,
         },
     ];
     for error in &unaccounted {
@@ -411,7 +411,7 @@ fn a_process_failure_answers_the_same_way_to_every_lane() {
         ProcessError::ResumeOwnedRoot {
             detail: String::from("the root could not be resumed"),
             owned_root_reclaimed: true,
-            root_never_ran: true,
+            refused_before_resuming: true,
         },
         ProcessError::Wait {
             detail: String::from("the wait was interrupted"),
@@ -445,12 +445,12 @@ fn a_resume_failure_classifies_by_whether_the_owned_root_was_reclaimed() {
     let reclaimed = BackendExecutionFailure::from(&ProcessError::ResumeOwnedRoot {
         detail: "no".to_owned(),
         owned_root_reclaimed: true,
-        root_never_ran: true,
+        refused_before_resuming: true,
     });
     let stranded = BackendExecutionFailure::from(&ProcessError::ResumeOwnedRoot {
         detail: "no".to_owned(),
         owned_root_reclaimed: false,
-        root_never_ran: true,
+        refused_before_resuming: true,
     });
     // Reclaimed, and *not* an ordinary failure: the image had already started,
     // so terminating it afterwards is a request rather than an observation of
@@ -458,7 +458,7 @@ fn a_resume_failure_classifies_by_whether_the_owned_root_was_reclaimed() {
     let started = BackendExecutionFailure::from(&ProcessError::ResumeOwnedRoot {
         detail: "no".to_owned(),
         owned_root_reclaimed: true,
-        root_never_ran: false,
+        refused_before_resuming: false,
     });
 
     assert_eq!(reclaimed, BackendExecutionFailure::RootNotStarted);

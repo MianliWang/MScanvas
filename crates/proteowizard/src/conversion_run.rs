@@ -1461,10 +1461,10 @@ impl From<&ProcessError> for BackendExecutionFailure {
             // beside processes nothing had accounted for.
             ProcessError::ResumeOwnedRoot {
                 owned_root_reclaimed,
-                root_never_ran,
+                refused_before_resuming,
                 ..
             } => {
-                if *owned_root_reclaimed && *root_never_ran {
+                if *owned_root_reclaimed && *refused_before_resuming {
                     Self::RootNotStarted
                 } else {
                     Self::NotTerminated
