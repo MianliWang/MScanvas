@@ -202,12 +202,6 @@ impl WorkspaceConversionReport {
         self.retryable
     }
 
-    /// What this report contributes to a failure diagnostic.
-    ///
-    /// Read individually rather than projected into a second structure. These
-    /// are the same safe values `to_dto` forwards -- stable identifiers, closed
-    /// enumerations and measurements -- so a diagnostic built from them can
-    /// carry no more than the panel already shows.
     /// Whether this run left a backend process it owned unaccounted for.
     ///
     /// MSCanvas must not begin new backend work while it cannot say whether an
@@ -217,6 +211,12 @@ impl WorkspaceConversionReport {
         self.owned_process_unaccounted
     }
 
+    /// What this report contributes to a failure diagnostic.
+    ///
+    /// Read individually rather than projected into a second structure. These
+    /// are the same safe values `to_dto` forwards -- stable identifiers, closed
+    /// enumerations and measurements -- so a diagnostic built from them can
+    /// carry no more than the panel already shows.
     pub(super) const fn outcome_id(&self) -> &'static str {
         self.outcome
     }

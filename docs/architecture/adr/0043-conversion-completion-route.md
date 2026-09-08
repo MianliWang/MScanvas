@@ -1580,17 +1580,27 @@ kernel-counted and therefore without the sampling gap a polled peak leaves. That
 is an honest result about this build and these inputs, not a claim that this
 provider never spawns children.
 
-**The reconciliation is a guard, not a list.** One typed origin, a three-member
-vocabulary replacing the boolean that answered `true` both for a terminated tree
-and for a run that launched nothing, the item state made underivable by a
-caller, and a `check_repo.py` validator that is structural over the semantic and
-proves itself against eight deliberate bypasses on every run — including the
-class a check over constructors cannot see, where the claim is made in the
-description attached to a name rather than in a call. The audit baseline above
-is where that class was found: `ItemState::Cancelled` and `cancelled_count` are
-reached both by a confirmed tree and by a run that launched nothing, and the
-first candidate reconciled the field names while leaving those two describing a
-confirmed process tree.
+**The reconciliation is carried by the compiler where a claim can be, and by a
+guard where it cannot.** `OwnedTreeDisposition::ConfirmedGone` is
+`non_exhaustive`: outside the crate that decides it, the affirmative member
+cannot be constructed or matched at all — not by production code, not by a
+fixture, not under an alias or a braced import. Four independent reviews across
+two rounds each defeated the string-matching versions that preceded this, and
+none of those bypasses compiles now. The item state is derived from the
+disposition rather than supplied, so the wrong pairing is not expressible
+either.
+
+What a type cannot carry, `check_repo.py` does: one definition of the
+conjunction reading both halves, one derivation, the Rust and TypeScript sets
+compared against each other, the retired boolean kept out, neither member named
+outside the files that own them — as bare identifiers, because a qualified path
+is the spelling an import removes — and no description asserting a confirmed
+tree unless that is all the symbol means. That last rule is an allowlist of what
+may claim rather than a list of sites to inspect: the version that listed sites
+passed while three other descriptions asserted a confirmed tree, one of them a
+public API arm reached by a run that launched nothing, and inverting it is what
+found that. Thirteen deliberate bypasses are proved on every run. Prose remains
+the fallible half and says so.
 
 With all three satisfied, an owned-Job-empty stop of a launched conversion
 settles as a successful `Cancelled`, and **cancel the current item and continue**
@@ -2109,8 +2119,11 @@ The locked semantics:
 
 ### CNV-D6 — queue capacity
 
-**Status: `PROVISIONAL_PENDING_MEASUREMENT`. Bounded-ness is `LOCKED`. M6.7
-surfaces the bound; M6.8 re-decides it.**
+**Status: `DECIDED` by M6.8, 2026-09-08 — the value is `16`, unchanged, on a
+stated basis. Bounded-ness remains `LOCKED`.** M6.7 surfaced the bound; M6.8
+re-decided it after cancellation was understood and kept it, replacing the stale
+premise. What follows is the decision as it stood before that, kept because it
+is what the re-decision was made against.
 
 The current value is `MAX_CONVERSION_QUEUE_ITEMS = 16`, enforced twice and
 carried to the interface as `ConversionQueuePlanDto.capacity`, **which no surface
@@ -2137,6 +2150,16 @@ is **M6.8's, after cancellation is understood**, because how large a queue may
 reasonably be is a function of what a user can interrupt. A capacity change with
 no stated basis is refused.
 
+**Closed by M6.8.** The number stays `16`. What changed is the cost of getting
+it wrong, not the size: items still run serially, so sixteen is still something
+like half an hour a user commits to, but a wrong decision no longer has to be
+waited out — a queue-level stop, ending the file being converted, and settling a
+waiting item are all available at any point. It remains a judgement about how
+long a person should be asked to commit to, and the doc comment now says that
+rather than defending it on a premise that had gone stale. Nothing measures
+memory or throughput against queue length, and deriving a number from the
+largest fixture that happened to pass would be invention.
+
 **M6.7 and M6.8 do not depend on each other circularly**, and the distinction is
 worth stating because it looks as though they might. M6.7 surfaces **the capacity
 the queue enforces**, reading `ConversionQueuePlanDto.capacity` — a field that
@@ -2160,10 +2183,15 @@ reconciliation, and no one of them settles it — owner M6.8, terminal on
 `OWNERSHIP_STRUCTURALLY_CLOSED` or `OWNERSHIP_UNCONFIRMED`. Under
 `OWNERSHIP_UNCONFIRMED` that outcome is `REFUSED` by this decision rather than
 deferred: the stop settles `CancellationFailed` / `StopFailed` and quarantines.
-Per-item cancel `PROVISIONAL_PENDING_MEASUREMENT` **and** conditional on the
-ownership outcome, owner M6.8. Queued-item *skip*
-`PROVISIONAL_PENDING_MEASUREMENT`, owner M6.8. Queued-item *removal* `REFUSED`,
-here.**
+Per-item cancel and queued-item *skip* are both `ADMITTED` by M6.8, 2026-09-08,
+on the outcome `OWNERSHIP_STRUCTURALLY_CLOSED` and a measurement of the exact
+installed build. Queued-item *removal* stays `REFUSED`, here.**
+
+**Closed by M6.8.** Both conditions the decision set were met together, so both
+optional controls are shipped: `Stop this file` ends the acquisition being
+converted and the queue carries on, and `Skip` settles a waiting row without
+running it. Removal is unchanged. What follows is the decision as it stood
+before that.
 
 **Four different promises, and M6 must not blur them** — least of all the last
 two, which read as one request and are not:
@@ -2875,17 +2903,21 @@ Recorded so a later slice inherits a question rather than an assumption.
    M3.10 and are not open; only a non-mzML format is, which makes this a
    consequence of CNV-D1 rather than a standing debt. Owner **M6.2**, and only
    if a second format is admitted.
-3. **Whether a real `msconvert` run is a process tree at all.** The termination
-   mechanism is right; the evidence is about one process. Owner **M6.8**.
+3. **Closed by M6.8: whether a real `msconvert` run is a process tree at all.**
+   Measured against the exact installed build: every case reports a cumulative
+   total of one process, counted by the kernel rather than sampled. That is a
+   result about this build and these inputs, not a claim that the provider never
+   spawns children — and the structural closure is what makes the answer
+   sufficient either way.
 4. **Closed by M6.6: whether overwrite is admissible at all.** The authorized
    CNV-D4 decision is `OVERWRITE_REFUSED`; ADR 0009's no-clobber guarantee stands,
    and CNV-008 and the proposal now state that refusal explicitly.
 5. **What numeric precision MSCanvas means to ship.** The provider's default is
    currently answering a question MSCanvas has never asked. Owner **M6.2** to
    measure, **M6.3** to type, **M6.4** to show.
-6. **What queue capacity should be**, once cancellation is understood. The current
-   number is a wait-time judgement whose stated premise has gone stale. Owner
-   **M6.8**.
+6. **Closed by M6.8: what queue capacity should be**, once cancellation is
+   understood. Re-decided and kept at `16`, with the stale premise replaced by
+   the one that is true. It is still a wait-time judgement and still says so.
 7. **Whether a mzML `dataProcessing` record can be relied on as verification**,
    given that other writers emit placeholders. Owner **M6.2**.
 

@@ -5924,61 +5924,58 @@ rather than resolving it by preference. **Owner: M6.6**, and it waits on no
 provider measurement — only on whether the Rust finalization contract can justify
 a destructive publication.
 
-### Queue capacity, re-decided and unchanged
+### Queue capacity, stated accurately
 
-`MAX_CONVERSION_QUEUE_ITEMS = 16` is a **judgement about how long a person
-should be asked to commit to, not a memory limit**, and the code says so.
-Nothing in the repository measures memory, throughput or scaling against queue
-length.
+`MAX_CONVERSION_QUEUE_ITEMS = 16` is a **wait-time judgement, not a memory
+limit**, and the code says so. Nothing in the repository measures memory,
+throughput or scaling against queue length. Its stated premise has gone stale —
+the doc comment justifies 16 on the queue having "no cancellation", and a
+queue-level stop has existed since ADR 0015. The queue stays finitely bounded
+whatever value M6 lands on, and re-evaluating it is **M6.8's**, after
+cancellation is understood.
 
-**M6.8 re-decided it after cancellation was understood and kept the number,
-replacing the premise.** The doc comment used to justify 16 on the queue having
-"no cancellation"; a queue-level stop has existed since ADR 0015, and M6.8 adds
-ending the file being converted and settling a waiting item. What that changes
-is the cost of getting the size wrong, not the size: items still run serially,
-so sixteen is still something like half an hour, but a wrong decision no longer
-has to be waited out. Rust stays the only authority, and the queue stays
-finitely bounded.
+### Cancellation: a strong mechanism, an unmade measurement, and an open window
 
-### Cancellation: the window is closed, and the measurement was taken
+Job Objects, `TerminateJobObject` and an emptiness check are implemented and
+correct in shape. What has **not** been established is that a real `msconvert`
+run is a *tree at all*: `surviving_processes == Some(0)` after termination is
+satisfied trivially by a one-process run, `max_active_processes` is printed by
+the M0 spike harness but recorded in no evidence document, absent from
+`BackendRunFacts` and not reported by the cancellation harness, and the only
+multi-process evidence is against a synthetic mock parent and grandchild — which
+[ADR 0014](docs/architecture/adr/0014-proteowizard-cancellation-evidence.md)
+states openly.
 
-**Terminal outcome, M6.8: `OWNERSHIP_STRUCTURALLY_CLOSED`.** Job Objects,
-`TerminateJobObject` and an emptiness check were always implemented and correct
-in shape. Two things were missing and both are now supplied.
+**And a measurement would not be enough on its own.** The child is spawned
+*before* `AssignProcessToJobObject`, so a descendant created in that window
+belongs to no Job — outside `TerminateJobObject` **and outside the count that
+reports the Job empty**. A sample cannot observe a process nothing was counting,
+so no number of representative runs closes it; the same holds for an assignment
+failure, which degrades to a direct-child kill without being reclassified as
+unconfirmed. The route therefore requires **three** things to agree — a
+representative measurement, a structural ownership answer, and an **exhaustive
+reconciliation of every claim** that asserts confirmed process-tree termination —
+ending on one of two outcomes: `OWNERSHIP_STRUCTURALLY_CLOSED`, or
+`OWNERSHIP_UNCONFIRMED` in which **a stop of a launched conversion does not
+settle as a successful `Cancelled` at all** — it settles `CancellationFailed`,
+the queue settles `StopFailed`, and the session is quarantined. An earlier draft
+kept the success state and withdrew only the wording, on the grounds that the
+alternative makes `Stop queue` less useful; that is a consequence, not evidence,
+and [ADR 0014](docs/architecture/adr/0014-proteowizard-cancellation-evidence.md)
+had already decided that a run which cannot establish the tree is gone gets
+`CancellationFailed`. `NotStarted` is unaffected. The third is a semantic
+contract with a repository guard behind it, not a list of symbols: the claim is
+propagated across item states, queue counts, cancellation facts, mirrored wire
+fields, diagnostics keys, set-stop facts and the quarantine reason, and an
+enumeration would be correct only until the next surface was added. No
+implementation is prescribed. **Owner: M6.8**, before any surface claims a tree
+was terminated.
 
-**The window is gone rather than narrowed.** The child used to be spawned before
-`AssignProcessToJobObject`, so a descendant created in that interval belonged to
-no Job — outside termination *and* outside the count that reports the Job empty,
-which no number of samples could have closed. The root is now created suspended,
-assigned while it has executed no instruction of its own, and only then resumed;
-breakaway is refused, so ownership established before execution cannot be given
-up after it. The assignment-failure path closes with it: the direct-child kill
-it degrades to is complete, because the root has provably run nothing.
-
-**A real `msconvert` run was measured**, against release `3.0.26013`, revision
-`47b13cf`, `msconvert.exe` SHA-256 `9BB6F5D5…D590BD`, re-observed unchanged
-after the set. Every case reports a cumulative total of one process — counted by
-the kernel rather than polled, so without the gap a sampled peak leaves. That is
-an honest result about this build and these inputs, not a claim that this
-provider never spawns children.
-
-**And every claim reads one origin.** `ProcessOutput::owned_tree_confirmed_gone`
-is the conjunction of an empty owned Job and ownership that preceded execution;
-`OwnedTreeDisposition` carries the judgement with three members, replacing a
-boolean that said `true` both for a terminated tree and for a run that launched
-nothing. The item state is derived from that judgement rather than supplied, so pairing a
-confirmed-sounding state with an unconfirmed disposition is not expressible.
-`check_repo.py` guards the semantic structurally rather than by a list — the
-descriptions attached to a both-sense name included — and proves itself against
-eight deliberate bypasses on every run, beside a check of the walk that decides
-which lines it reads.
-
-With all three satisfied, a stop of a launched conversion settles as a
-successful `Cancelled`; `CancellationFailed` still quarantines the session, and
-an owned process whose disappearance cannot be stated still reaches it. The
-scope of the claim is the provider's own process tree — work brokered to a
-service that was already running is not a descendant and is not owned. The
-record is [the M6.8 evidence document](docs/ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md).
+**Both of the above were settled by M6.8**, whose own entry records the
+outcome. They are left here as M6.0 wrote them on 2026-09-01, because a dated
+entry that is edited to match a later answer stops being a record of what was
+known when the route was locked — and the reasoning M6.0 had to do to get
+there is the part a reader of this log is looking for.
 
 ### XIC: no new identity at this baseline
 
@@ -7714,8 +7711,10 @@ provider execution cannot produce an uncaptured descendant; breakaway is
 refused, and an assignment or resume failure terminates a root that has provably
 run nothing. The confirmed-cancellation claim becomes a conjunction with one
 origin, and `OwnedTreeDisposition` replaces the boolean that asserted a
-terminated tree for a run that never started one. A structural `check_repo.py`
-guard proves itself against eight deliberate bypasses on every run.
+terminated tree for a run that never started one. The affirmative member is
+`non_exhaustive`, so the compiler refuses the claim outside the crate that
+decides it, and a `check_repo.py` guard proves itself against thirteen
+deliberate bypasses on every run.
 
 Two independent reviews rejected the first candidate and every finding was real:
 a skip landing between the worker choosing an item and starting it wedged the
@@ -7740,7 +7739,7 @@ not widened. Capacity stays 16 with a current rationale. Two progress defects
 are closed: a completed queue now accounts for every item it held, and the retry
 display no longer speaks for a rerun that is already done.
 
-Implementation and validation are complete: 1651 frontend tests, 1490 Rust tests
+Implementation and validation are complete: 1652 frontend tests, 1502 Rust tests
 across the workspace, all required local gates, browser 10/10 at four inner
 sizes, and native 3/3 on binary SHA-256
 `0a0cfd29129d48ee47f084de1cb3b366d62031b19c41e6a197911eabf1f90ea2` — a stop that

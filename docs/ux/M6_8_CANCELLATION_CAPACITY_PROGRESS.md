@@ -70,7 +70,8 @@ discriminates the interval, and both say so.
 | Resume fails, teardown could not reclaim it | An owned process whose disappearance cannot be stated. Classified as `NotTerminated`, which is what that already means, so a stop reaching it settles `CancellationFailed` and quarantines. |
 | Job accounting unavailable | `None`, never zero. Unknown surviving-process state is not zero, and the claim is unreachable without a bounded count. |
 | Emptiness times out | The Job would not empty. `NotTerminated`. |
-| Any of the above **with no stop in flight** | The same uncertainty, and the same consequence. The invariant is about the machine rather than about anything the user pressed, so the run is asked a typed question about its own failure and the queue ends on the quarantine that is then in force. Before this, quarantine fired only on the stop path and the queue went on to launch the next converter beside a process nothing could account for. |
+| Any of the above **with no stop in flight** | The same uncertainty, and the same consequence. The invariant is about the machine rather than about anything the user pressed, so the run is asked a typed question about its own failure and the queue ends on the quarantine that is then in force. Before this, quarantine fired only on the stop path and the queue went on to launch the next converter beside a process nothing could account for. The question covers `NotAwaited` as well as `NotTerminated`: a Job that would not empty and a supervision loop that lost its child leave the same uncertainty by different routes. |
+| The thread snapshot the launch takes fails | Retried a bounded four times. It is documented to fail transiently while the system's thread list changes, and the process being asked about is suspended and cannot move under the retry. |
 | Capture or launch failure coinciding with a request | Keeps the reason that is true of it. An execution error does not erase an ownership uncertainty, and only the two failures that describe one are reclassified. |
 
 ## The measurement
@@ -142,38 +143,56 @@ confirmed-sounding state with an unconfirmed disposition — rendering an
 unconfirmed stop as a success and skipping the quarantine that keeps the next
 conversion from starting. The state is derived from the disposition where the
 item settles, and the quarantine reads the disposition rather than a rendering
-of it. A check can only guard the spellings it knows; this removes the state a
-wrong spelling would have named.
+of it.
 
-`validate_the_cancellation_claim_has_one_origin` in `scripts/check_repo.py` is
-structural rather than a list of symbols. It checks that the conjunction is
-defined once and reads both halves; that no production file outside the
-vocabulary constructs the affirmative member, reaches it through an import, or
-states when ownership began; that the Rust identifiers and the TypeScript union
-are the same set compared against *each other*; that the retired boolean does
-not return in code; and — the class a check over constructors cannot see — that
-a symbol meaning **both** senses is not described as only the narrow one.
-Producing the fail-closed member stays unrestricted: refusing to claim needs no
-permission.
+**The claim itself is carried by the compiler, not by a check over spellings.**
+`OwnedTreeDisposition::ConfirmedGone` is `non_exhaustive`, so outside the crate
+that decides it the affirmative member cannot be constructed *or* matched — by
+production code, by a fixture, under an alias, through a braced import, or
+under a renamed import. `OwnedTreeDisposition::of` is public for that reason: it
+is the only way anyone obtains the member, and a caller that needs it must
+present a run that earns it. Two independent reviewers each demonstrated
+bypasses of the string-matching version that preceded this; none of them
+compiles now.
 
-**The guard proves itself, and it proves the part of itself that decides what
-it reads.** On every run it applies eight deliberate bypasses to isolated copies
-and requires each to be detected: a second producer asserting the claim, the
-conjunction dropping its ownership half, a second lifecycle deriving the
-judgement, a consumer knowing only some of the dispositions, the retired boolean
-returning, a both-sense description claiming only a confirmed tree, the claim
-reached through an import, and a production file stating when ownership began.
-The proofs also fail if the guard has stopped checking at all, and they never
-edit the worktree.
+`validate_the_cancellation_claim_has_one_origin` in `scripts/check_repo.py`
+carries what a type cannot. It checks that the conjunction is defined once and
+reads both halves; that the derivation exists exactly once, so both lifecycles
+read one judgement; that the Rust identifiers and the TypeScript union are the
+same set compared against *each other*; that the retired boolean does not
+return in code; that neither claim-bearing member is named outside the two
+files that own them — matched as bare identifiers, because a qualified path is
+the one spelling an import removes; and that nothing describes itself as a
+confirmed process tree unless that is all it means.
 
-Beside them is a check of the walk that decides which lines the guard reads,
-against its **output** rather than its logic: every region it declines to read
-must begin at a body with a test attribute directly above it. That check exists
-because the first version of the walk armed on attributes inside regions it was
-already skipping, so the flag survived a test module's closing brace and
-swallowed the next block — 650 contiguous lines of production `service.rs` among
-them. The bypass proofs could not see it, because each plants its edit where the
-walk happened to be looking.
+**The description rule is an allowlist of what may claim, not a list of sites to
+inspect.** The version that listed sites passed while three other descriptions
+asserted a confirmed tree, one of them a public API arm reached by a run that
+launched nothing. Inverted, a description nobody thought about is an error by
+default — and inverting it is what found that live defect.
+
+**Prose is the fallible half and is written down as such.** A synonym nobody
+listed still passes the description rule. That is why the member is
+`non_exhaustive` rather than merely watched: the compiler carries the claim, and
+the check carries the wording.
+
+**The guard proves itself.** On every run it applies thirteen deliberate
+bypasses to isolated copies and requires each to be detected, including all six
+the two reviewers demonstrated: the alias import, the braced member import, the
+braced ownership import, a production claim hidden behind a file-based test
+module, the set-stop facts re-described, and a description synonym nobody
+listed. The proofs also fail if the guard has stopped checking at all, and they
+never edit the worktree.
+
+An earlier version walked each file to skip `#[cfg(test)]` regions and read only
+what was left. It twice turned out to be skipping production code instead —
+first when an attribute inside a skipped region survived its closing brace, then
+when an attribute on a brace-less item armed a skip the next item's brace
+consumed — and the check written to catch the first was a tautology, searching
+the same window with the same condition that had armed the skip. The walk is
+gone. The member rule reads whole files, and the only places that may name a
+member are the two that own them and files that are tests outright, both named
+rather than inferred.
 
 ## The four operations under CNV-D7
 
@@ -294,10 +313,10 @@ them: `conversionContract.test.ts`, `ConversionStop.test.tsx`,
 
 ## Validation
 
-Local gates: frontend lint, typecheck, 1651 tests across 69 files, build;
+Local gates: frontend lint, typecheck, 1652 tests across 69 files, build;
 `cargo fmt --all --check`; `cargo clippy --locked --workspace --all-targets
 --all-features -- -D warnings`; `cargo test --locked --workspace --all-targets`
-(1490 passed, 22 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
+(1502 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
 E2E typecheck.
 
 **Rendered QA**: 10/10 in `m6.8-cancellation-controls.browser`, including every
@@ -351,3 +370,22 @@ Evidence: `D:/tmp/mscanvas-m68-20260908/m68-native-UnWUBC/`,
 - Whether a *different* `msconvert` build spawns children is not established by
   this measurement, and the re-observation gate is what would catch a changed
   executable identity.
+- **The suspended launch has no degradation path.** It refuses unless the child
+  presents exactly the one thread a process that has executed nothing has, and
+  unless `ResumeThread` reports it was suspended. A security product that
+  injects a thread at process creation would meet that deterministically, and
+  every conversion on that installation would fail — fail-closed and now
+  retryable, but permanently. The honest degradation exists and is not taken:
+  fall back to assigning after spawn and publish
+  `TreeOwnership::NotEstablishedBeforeExecution`, which downgrades the *claim*
+  rather than the *function* and is exactly what the disposition vocabulary was
+  built to express. Not attempted here because it restructures the launch path,
+  which is the most safety-critical function in this slice, and no such
+  environment has been observed. Owner: the process boundary, on the first
+  report of an installation this refuses.
+- **A queue-level refusal the session can recover from still leaves later items
+  `Pending` in a terminal queue**, where they render as "Waiting" and are
+  counted nowhere. Corrected for the refusal this slice adds, where the backend
+  is quarantined and nothing can run; left alone for the inherited shape, where
+  a retry may still reach those items and stranding them would change what a
+  rerun converts. Owner: whichever slice next owns retry semantics.

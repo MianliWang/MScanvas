@@ -29,9 +29,13 @@
 //! behaves exactly as it always has; [`run_conversion_cancellable`] takes one
 //! [`ConversionCancellation`] bound to that single attempt and reports a
 //! distinct result when no backend process of that attempt survives — whether
-//! its tree was confirmed gone or nothing was launched. Nothing here
-//! is reachable from the product: there is no command, transfer object, queue
-//! semantics or surface for it.
+//! its tree was confirmed gone or nothing was launched.
+//!
+//! **M6.8 made this reachable from the product**, and the sentence that said
+//! otherwise is corrected rather than deleted: it was true when this boundary
+//! shipped, and ADR 0014 records why it was written that way. There are now two
+//! commands, a wire field and two controls above it, and this remains the one
+//! place the judgement is made.
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -2627,8 +2631,11 @@ pub fn run_conversion(
 /// same ones, and an attempt nobody asks to stop reaches exactly the result
 /// that function would have returned.
 ///
-/// This is a private evidence primitive. Nothing about the visible conversion
-/// queue is cancellable, and no product surface reaches this.
+/// **Reached by the product since M6.8**, through the queue's stop, its per-item
+/// stop, and the skip that settles a waiting row. It was a private evidence
+/// primitive when it shipped — ADR 0014 admitted it on that footing and forbade
+/// a user-visible cancellation on its own strength — and what changed is that
+/// the three obligations that decision named have since been discharged.
 #[must_use]
 pub fn run_conversion_cancellable(
     plan: &ConversionPlan,
