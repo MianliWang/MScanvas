@@ -217,6 +217,28 @@ fn write_backend(written: &mut Members<'_>, backend: BackendRunFacts) {
         Some(bytes) => written.number("peakJobMemoryBytes", bytes),
         None => written.null("peakJobMemoryBytes"),
     }
+    // Two process counts under names that keep them apart, and a third fact
+    // that says what they are counts *of*.
+    //
+    // `sampledMaxActiveProcesses` is polled, so it is a floor on the real peak:
+    // a process that began and ended between two observations was never
+    // sampled. `totalOwnedProcesses` is the kernel's own cumulative count and
+    // has no such interval. Neither is the number left at the end.
+    //
+    // `null` is the absence of bounded accounting, never a count of zero. A
+    // reader that saw `0` for both a run that owned nothing and a run that could
+    // not count could not tell them apart, and only one of those is a fact.
+    match backend.max_active_processes() {
+        Some(count) => written.number("sampledMaxActiveProcesses", u64::from(count)),
+        None => written.null("sampledMaxActiveProcesses"),
+    }
+    match backend.total_owned_processes() {
+        Some(count) => written.number("totalOwnedProcesses", u64::from(count)),
+        None => written.null("totalOwnedProcesses"),
+    }
+    // Whether the counts above are about the whole tree or only the part
+    // ownership happened to hold.
+    written.string("treeOwnership", backend.tree_ownership().stable_id());
 }
 
 /// One stream, or the honest absence of one.

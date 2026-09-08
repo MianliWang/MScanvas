@@ -16746,6 +16746,28 @@ fn every_spelling_of_a_known_path_is_replaced_and_the_rest_survives() {
     let stderr = &item["stderr"];
     let stdout = &item["stdout"];
 
+    // The exported backend object is a contract, so its members are pinned.
+    // Two process counts under names that keep them apart -- a polled floor and
+    // the kernel's own cumulative total -- and the ownership that says what
+    // they are counts of. None of them can carry a process identifier: the
+    // counts are integers and the ownership is one of two stable identifiers.
+    assert_eq!(
+        sorted_keys(&item["backend"]),
+        vec![
+            "elapsedMilliseconds",
+            "exitCode",
+            "peakJobMemoryBytes",
+            "sampledMaxActiveProcesses",
+            "termination",
+            "totalOwnedProcesses",
+            "treeOwnership",
+        ]
+    );
+    assert_eq!(
+        item["backend"]["treeOwnership"],
+        "established_before_execution"
+    );
+
     // The truthful facts about the streams, whichever way they went.
     assert_eq!(stderr["lossy"], true, "invalid UTF-8 is reported as lossy");
     assert!(stderr["totalBytes"].as_u64().expect("a total") > 0);
