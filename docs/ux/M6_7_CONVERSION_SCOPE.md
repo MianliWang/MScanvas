@@ -160,3 +160,9 @@ Final reviewed head, binary/evidence identity, individually resolved review
 threads, protected true-merge parents/tree and naturally triggered main CI are
 recorded in PR #100, since a committed record cannot contain its own commit or
 future merge identity. No M6.8 work is included.
+
+The PR's automated reviewer additionally found ambiguous workflow wording:
+"no Convert visible action" could be read as hiding the primary button. The
+follow-up names the absent `Convert visible` scope explicitly and retains the
+selected/all actions. This is a documentation clarification, with no execution
+or test-input change; its review thread is replied to and resolved individually.

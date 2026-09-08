@@ -222,7 +222,8 @@ availability, queue, adoption and export contracts.
    only. All uses every eligible row in the workspace, regardless of search.
    Both scopes exclude unsupported rows and show requested/eligible/excluded
    counts. The three families may be mixed. Vendor rows cannot be previewed,
-   and say so. There is no Convert visible action.
+   and say so. There is no `Convert visible` scope: search changes presentation
+   only; the selected/all actions remain available.
 3. Choose the conversion settings, or leave the ones MSCanvas ships. Four
    groups — peak processing, spectra included, numeric precision, array
    compression — edit one dimension each, over one combination. A choice either
