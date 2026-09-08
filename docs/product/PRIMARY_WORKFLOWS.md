@@ -196,7 +196,7 @@ See also
 **Partly built.** WF-004a below is the bounded serial queue for three evidenced
 vendor families, with semantic settings and explicit output adoption. M6.6's
 destination policies and conflict explanations shipped in PR #99. M6.7 adds the
-explicit selected/all decision below; its validation/publication is in progress.
+explicit selected/all decision below ([PR #100](https://github.com/MianliWang/MScanvas/pull/100)).
 The queue's bound remains unchanged, and "Open file/folder" remains outside this slice. See
 [ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md) and
 [ADR 0013](../architecture/adr/0013-serial-conversion-queue.md).
@@ -205,7 +205,7 @@ The queue's bound remains unchanged, and "Open file/folder" remains outside this
 
 **M6.6 published continuation, with M6.7 scope.** The destination and
 conflict steps below continue the accepted v5.11 organization in the current
-conversion surface. They preserve existing membership, scientific intent,
+conversion surface. They preserve bound-queue membership, scientific intent,
 availability, queue, adoption and export contracts.
 
 1. `Add files…` and choose acquisitions. mzML, evidenced Thermo Scientific RAW,

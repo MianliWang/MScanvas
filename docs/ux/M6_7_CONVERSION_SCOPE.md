@@ -1,6 +1,6 @@
 # M6.7 conversion scope
 
-Status: implemented and locally validated; exact-head review/publication pending.
+Status: implemented and validated; release record [PR #100](https://github.com/MianliWang/MScanvas/pull/100).
 Baseline: `5b91f6c5ab1c3013eb9556ddf83b76217a56f249` (published M6.6).
 
 ## Outcome and interaction
@@ -131,3 +131,32 @@ native picker button timeout, while all passed. No foreground/dialog guard was
 weakened, and the successful run used fresh task copies. Test repairs also made
 legacy initial-focus tests select their intended rows explicitly and corrected
 the browser modifier key to WebDriver's key code. No product fallback was added.
+
+## Exact-head review and release evidence
+
+The implementation candidate is `fe176c2a524aa9ab7ea1fbfa363bc30fef31ed30`,
+tree `665558ebb16ae5fd4db6851152e5440e0275693b`. Both independent reviewers
+read the full 36-file diff in separate physical archives without writing or
+running tests. Both returned ADMIT with zero must-fix findings. One additionally
+checked all 36 new Git blob hashes. The only optional repair was two comments
+that still called the expanded plan machine five states; they now say six.
+
+That committed head was rebuilt with `pnpm e2e:build`. Binary SHA-256:
+`f1b004a9aa005013669b533f4be19214b0aac2b0368a533d4924b70beb2afb24`.
+M6.7 native passed 2/2 (34.3 seconds) and the unchanged M6.6 native regression
+passed 5/5 (35.2 seconds), in one sequential 75-second run. The evidence roots
+are `D:/tmp/mscanvas-m67-20260908/m67-native-G39AY3/` and
+`D:/tmp/mscanvas-m67-20260908/m66-native-Hle71a/`. The seven console records
+are empty, the IPC mock tables are empty, and source/target byte checks pass.
+Selected and filtered-all review screenshots and constrained terminal results
+were inspected. The four measured inner viewports and `output_only` boundary
+are unchanged.
+
+The final record commit receives a fresh exact-head confirmation review,
+rebuild/native run, required PR CI and repository validation. Unchanged test
+inputs permit reuse of the 1649-test frontend, full Rust and browser evidence
+above; CI independently repeats the repository's required frontend/Rust gates.
+Final reviewed head, binary/evidence identity, individually resolved review
+threads, protected true-merge parents/tree and naturally triggered main CI are
+recorded in PR #100, since a committed record cannot contain its own commit or
+future merge identity. No M6.8 work is included.

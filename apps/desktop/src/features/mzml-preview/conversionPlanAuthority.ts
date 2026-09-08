@@ -118,7 +118,7 @@ export type ConversionPlanQuestion =
   | { readonly kind: "ask"; readonly identity: ConversionPlanIdentity };
 
 /**
- * The plan machine's five states.
+ * The plan machine's six states.
  *
  * **Only `loading` carries an ordinal**, because matching a reply is the only
  * thing an ordinal is for and an answer has no outstanding request to
@@ -238,7 +238,7 @@ export type ConversionPlanStep =
 /**
  * The transition table, whole.
  *
- * Total over the five states and the three questions, and it is the only thing
+ * Total over the six states and the three questions, and it is the only thing
  * that decides what the machine does — so "no `loading` without a request
  * actually in flight" is a property of this function rather than a rule every
  * call site has to remember: the one step that produces `loading` is the one

@@ -409,8 +409,8 @@ Twelve slices, plus one authority interlude:
   policy controls are M6.6's).
 - M6.6 — destination and conflict UX. **Complete**, published by PR #99 at
   `5b91f6c5ab1c3013eb9556ddf83b76217a56f249`; `OVERWRITE_REFUSED`.
-- M6.7 — convert selected, convert all. **Implemented; validation and publication
-  in progress.** Scope, exclusion counts, complete roster ordering and the
+- M6.7 — convert selected, convert all. **Complete** ([PR #100](https://github.com/MianliWang/MScanvas/pull/100)).
+  Scope, exclusion counts, complete roster ordering and the
   Rust-authored capacity are reviewed before BEGIN. Search never narrows all.
   See [the scope record](docs/ux/M6_7_CONVERSION_SCOPE.md).
 - M6.8 — cancellation, capacity, and truthful progress.

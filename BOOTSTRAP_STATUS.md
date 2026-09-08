@@ -7681,7 +7681,13 @@ tie-break. Rust returns its unchanged capacity on plans and typed oversized-scop
 refusals. The existing BEGIN, lane, receipt and queue/retry authorities remain
 the execution path. No production dependency or scientific-support gate changes.
 
-Implementation and the first local gate set are complete, including native
-selected/all proof (2/2). Exact-head review and protected publication remain pending. The live evidence
-and changed-path closure are in [the M6.7 record](docs/ux/M6_7_CONVERSION_SCOPE.md).
+Implementation and validation are complete: 1649 frontend tests; all required
+local frontend/Rust/repository gates; browser scope 7/7 plus M6.6 8/8; and
+exact-head native scope 2/2 plus unchanged M6.6 5/5. Two isolated full-diff
+reviews admitted `fe176c2a524aa9ab7ea1fbfa363bc30fef31ed30` with zero must-fix
+findings. The record follow-up corrects two stale state-count comments and
+closes current product/status wording. Final confirmation, protected merge
+and natural-main CI identities are in [PR #100](https://github.com/MianliWang/MScanvas/pull/100).
+The evidence and 36-path closure are in
+[the M6.7 record](docs/ux/M6_7_CONVERSION_SCOPE.md).
 M6.8 has not started.

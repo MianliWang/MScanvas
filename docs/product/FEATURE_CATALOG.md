@@ -30,7 +30,7 @@ Implementation notes for the two folder-bearing features follow. The acceptance
 table remains the target, including the unsupported portions called out below:
 
 - **WSP-002 — Partially implemented.** M1.4.0 built the private discovery foundation and M1.4.1 exposed `Add mzML folder…` over it ([ADR 0007](../architecture/adr/0007-logical-acquisition-discovery-and-folder-traversal.md)). What works today: one chosen local Windows folder is scanned recursively for regular `.mzML` files, in a deterministic order, under four named limits, without following any linked or special filesystem entry, and an incomplete scan says so. What is still absent from the acceptance above: directory-formatted acquisitions are not recognized, so there is nothing to stop descending inside. They remain evidence-gated — MSCanvas recognizes none of them today, and will only claim one once this repository can convert it.
-- **WSP-008 — Implemented by M6.7; publication pending.** Selected means the
+- **WSP-008 — Implemented by M6.7 ([PR #100](https://github.com/MianliWang/MScanvas/pull/100)).** Selected means the
   user's curated rows, including a selection of one; all means every eligible
   workspace row, including rows outside search. Focus never supplies a fallback.
   Requested, eligible and excluded counts are visible. Both scopes use the
