@@ -941,10 +941,17 @@ impl PreviewService {
                 release: None,
                 build_date: None,
                 same_installation: true,
+                // The same sentence the refusal carries, for the same
+                // reason it was corrected there: this state is reached from a
+                // preview, a spectrum read and a discovery help probe as well
+                // as from a conversion, and by a failure with no stop in
+                // flight. Two sentences about one fact, one region apart on one
+                // screen, is how a reader learns not to trust either.
                 failure: Some(BackendFailureDto {
                     kind: String::from("backend_quarantined"),
                     summary: String::from(
-                        "MSCanvas could not confirm that the converter process stopped.",
+                        "MSCanvas could not confirm that a ProteoWizard process it started \
+                         has ended.",
                     ),
                     corrective_action: String::from(
                         "Restart MSCanvas before starting another preview or conversion.",
@@ -1463,10 +1470,12 @@ impl PreviewService {
 
     /// Whether this session has stopped trusting the backend.
     //
-    // Set exactly once, where a converter process this session owned could not
-    // be accounted for, and never cleared: nothing in this session can
-    // establish that the process it lost track of has ended, and a flag that
-    /// could be cleared would need something that can.
+    // Raised where a process this session started could not be accounted for --
+    // by a conversion, a preview, a spectrum read or a discovery probe -- and
+    // never cleared: nothing in this session can establish that the process it
+    // lost track of has ended, and a flag that could be cleared would need
+    // something that can. Reading it can also raise it, because discovery
+    /// reports through no operation of its own.
     pub(super) fn backend_is_quarantined(&self) -> bool {
         // The discovery latch is folded in *here* rather than at the places
         // that start work, and that position is the whole of it. A discovery

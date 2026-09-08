@@ -39,6 +39,7 @@ import type {
   ConversionPlanRequest,
   ConversionQueuePlan,
   ConversionStartOutcome,
+  ConversionQueue,
   ConversionQueueItem,
   FolderDiscoverySummary,
   FolderIngestionResult,
@@ -1250,7 +1251,13 @@ export function outputFileNamesOf(
 }
 
 /** A whole queue from its items, with the counts Rust would derive. */
-export function queueOf(items: readonly ConversionQueueItem[]) {
+export function queueOf(
+  items: readonly ConversionQueueItem[],
+  // The refusal that ended the queue, where one did. A queue the session
+  // refused always carries it, so a fixture that could not carry one could not
+  // model the state this milestone added.
+  error: ConversionQueue["error"] = null,
+) {
   const count = (state: ConversionQueueItem["state"]) =>
     items.filter((item) => item.state === state).length;
   const failed = count("failed");
@@ -1295,7 +1302,7 @@ export function queueOf(items: readonly ConversionQueueItem[]) {
             : 1),
         0,
       ),
-    error: null,
+    error,
   };
 }
 

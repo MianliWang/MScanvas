@@ -171,7 +171,8 @@ track of.
 lets the queue carry on with the rest — unless MSCanvas cannot confirm that
 converter ended, in which case the whole queue stops and the session needs a
 restart, for the reason above. `Skip` on a row that has not started settles that
-row without converting it. Both carry the same race the queue stop
+row without converting it — on a row that has never run, so a rerun's earlier
+failure keeps its own answer instead of being called something you chose. Both carry the same race the queue stop
 does — a file that finished before the request arrived keeps its result — and a
 file stopped before its converter had started is cancelled having launched
 nothing at all, which MSCanvas says rather than claiming it ended something.

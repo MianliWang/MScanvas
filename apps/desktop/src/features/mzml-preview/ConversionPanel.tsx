@@ -1205,6 +1205,24 @@ function QueueState({
                   {`Skip ${item.fileName}`}
                 </button>
               ) : null}
+              {/* Why there is no Skip here, at the row that does not have one.
+                  Two rows both read "Waiting" during a rerun and only one is
+                  skippable: the other failed in the earlier pass and keeps that
+                  failure, which is a decision a reader cannot make sense of
+                  from an absent control. The per-item stop states its own
+                  unavailability for the same reason. */}
+              {item.state === "pending" &&
+              item.attempts > 0 &&
+              state.status === "running" &&
+              !conversion.canSkipItem(index) ? (
+                <>
+                  <span className="visually-hidden">, </span>
+                  <span className="conversion-queue-reason">
+                    Rerunning an earlier failure — it keeps that result if it is not run
+                    again.
+                  </span>
+                </>
+              ) : null}
               {item.attempts > 1 ? (
                 <>
                   <span className="visually-hidden">, </span>

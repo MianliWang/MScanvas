@@ -359,6 +359,13 @@ describe("stopping a running conversion queue", () => {
       expect(within(panel).getByRole("button", { name: "Skip run-3.raw" })).toBeEnabled();
     });
     expect(within(panel).queryByRole("button", { name: "Skip run-2.raw" })).toBeNull();
+    // And the row says why, rather than being a "Waiting" row that silently
+    // lacks a control its neighbour has.
+    expect(
+      within(panel).getByText(
+        "Rerunning an earlier failure — it keeps that result if it is not run again.",
+      ),
+    ).toBeVisible();
   });
 
   it("stops saying the control is available once this document has asked", async () => {
@@ -402,6 +409,51 @@ describe("stopping a running conversion queue", () => {
     });
     await waitFor(() => {
       expect(within(panel).getByRole("button", { name: "Stop this file" })).toBeEnabled();
+    });
+  });
+
+  it("tells a listener the counts and the refusal, not the refusal alone", async () => {
+    /*
+     * The one state this milestone added always carries both: a session that
+     * loses track of a process refuses the rest of the queue, which settles
+     * `completed` with rows marked not-run *and* an error. The live region used
+     * to return the error summary and stop, so a listener got the refusal and
+     * none of the counts while the panel showed both -- and the test that was
+     * meant to catch it built its queue with a fixture that hard-coded
+     * `error: null`, a state Rust never emits on this path.
+     */
+    const api = apiWith({
+      status: "terminal",
+      operationId: "1",
+      reason: "completed",
+      queue: queueOf(
+        [
+          converted("file-1", "run-1.raw"),
+          queueItem("file-2", "run-2.raw", { state: "failed", attempts: 1 }),
+          queueItem("file-3", "run-3.raw", { state: "notRun" }),
+        ],
+        previewError({
+          kind: "backend_quarantined",
+          summary:
+            "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
+          retryable: false,
+        }),
+      ),
+    });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(
+        within(panel).getByText("1 converted, 0 skipped, 1 failed, 1 not run of 3."),
+      ).toBeVisible();
+    });
+    await waitFor(() => {
+      const spoken = liveRegion();
+      expect(spoken).toContain("1 converted, 0 skipped, 1 failed, 1 not run.");
+      expect(spoken).toContain(
+        "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
+      );
     });
   });
 

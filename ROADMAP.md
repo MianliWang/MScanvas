@@ -564,10 +564,14 @@ guard had been unable to see.
   and kept at 16 with a current rationale, and per-item cancellation was
   admitted. Both were gated on M6.8's measurement of what an `msconvert` run
   actually is **and on its ownership outcome**, and both conditions were met —
-  the outcome is `OWNERSHIP_STRUCTURALLY_CLOSED`, so an empty Job is an empty
-  tree and a stop of a launched conversion settles as a successful cancellation.
-  Had the window stayed open, that stop would have settled `CancellationFailed`
-  / `StopFailed` and quarantined the session instead. The queue stays finitely
+  the outcome is `OWNERSHIP_STRUCTURALLY_CLOSED`, so an empty Job **is** an empty
+  tree — which is what makes a confirmed cancellation sayable at all. It does not
+  make every stop a confirmed one: a Job that will not empty within its window, a
+  teardown that fails, and a root that could neither be started nor reclaimed all
+  still settle `CancellationFailed` / `StopFailed` and quarantine the session,
+  and the whole `stopFailed` surface exists because they can. What the closed
+  outcome changed is that an *empty* Job now answers for the whole tree rather
+  than for the processes ownership happened to hold. The queue stays finitely
   bounded, and removing an item from a queue
   already running is refused outright: membership is bound when the queue is
   created. See

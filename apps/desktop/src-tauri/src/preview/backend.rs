@@ -865,17 +865,26 @@ pub fn process_error(error: ProcessError) -> PreviewErrorDto {
             // the offer this boundary exists to refuse.
             owned_root_reclaimed,
         ),
-        // The owned root was created and could not be started. Whether it was
-        // reclaimed decides how bad this is, and the crate carries that;
-        // neither answer is one the user can act on differently, so the message
-        // stays the same and only the retryability follows the fact.
+        // The owned root was created and could not be started. **Both halves
+        // decide this**, exactly as they decide it on the conversion lane: a
+        // root that was reclaimed *and had executed nothing* is an ordinary
+        // failure another attempt could change, and anything else is a process
+        // this run may have left on the machine. Reading reclamation alone told
+        // the user the program "could not be started" about an image that may
+        // have been running, and offered a retry beside it.
         ProcessError::ResumeOwnedRoot {
-            owned_root_reclaimed,
+            owned_root_reclaimed: true,
+            root_never_ran: true,
             ..
         } => PreviewErrorDto::new(
             "backend_not_started",
             "MSCanvas prepared the ProteoWizard program under its own supervision but could not start it.",
-            owned_root_reclaimed,
+            true,
+        ),
+        ProcessError::ResumeOwnedRoot { .. } => PreviewErrorDto::new(
+            "backend_not_accounted_for",
+            "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
+            false,
         ),
         ProcessError::Wait { .. } => PreviewErrorDto::new(
             "backend_wait_failed",

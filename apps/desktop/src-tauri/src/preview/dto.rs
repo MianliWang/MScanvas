@@ -1122,9 +1122,11 @@ pub struct WorkspaceConversionUpdateDto {
     pub diagnostics: ConversionDiagnosticsStateDto,
     /// Whether this session has stopped trusting the backend.
     ///
-    /// Set when a stop request could not be confirmed, which is the one state
-    /// in which MSCanvas cannot say whether a converter process of its own is
-    /// still running. It rides on the conversion read because that is what a
+    /// Set where MSCanvas cannot say whether a process it started is still
+    /// running. A stop it could not confirm is one way in; so are a conversion,
+    /// a preview, a spectrum read or a discovery help probe that ends without
+    /// accounting for a process, with nothing in flight. It rides on the
+    /// conversion read because that is what a
     /// document already asks for on mount and while work is under way, so a
     /// reload recovers the quarantine with the queue that caused it rather
     /// than needing a second question.
@@ -1341,8 +1343,12 @@ pub enum ConversionQueueItemStateDto {
     /// cancellation facts' `ownedTree` says which. Describing this state as a
     /// confirmed tree would claim one for a run that never started a process.
     Cancelled,
-    /// A stopped queue never began this item. Not a failure: no process was
-    /// launched and nothing was created.
+    /// The queue never began this item. Not a failure: no process was launched
+    /// and nothing was created.
+    ///
+    /// A stop is one way that happens and not the only one — a session that
+    /// loses track of a process it started refuses the rest of the queue on its
+    /// own, and that queue is `completed`.
     NotRun,
     /// The user settled this item without running it, and the queue carried on.
     ///

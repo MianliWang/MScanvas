@@ -472,7 +472,7 @@ open) and this record. Fifteen, and the count is checkable: `git diff
 
 ## Validation
 
-Local gates: frontend lint, typecheck, 1655 tests across 69 files, build;
+Local gates: frontend lint, typecheck, 1656 tests across 69 files, build;
 `cargo fmt --all --check`; `cargo clippy --locked --workspace --all-targets
 --all-features -- -D warnings`; `cargo test --locked --workspace --all-targets`
 (1512 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
@@ -513,6 +513,20 @@ file-based test module. The answer was to stop matching spellings for the
 member's name and make the compiler refuse it, which is where `non_exhaustive`
 came from, and to invert the description rule into an allowlist — which
 immediately found a live defect on a public API arm.
+
+Round 6: the screen-reader region returned the refusal *instead of* the counts
+in exactly the state this milestone added — a session that loses track of a
+process refuses the rest of the queue, which settles `completed` with rows marked
+not-run and an error, and the region short-circuited on the error; the test meant
+to catch it built its queue from a fixture that hard-coded no error, a state Rust
+never emits there. The backend banner still carried the pre-M6.8 quarantine
+sentence that names a converter and a stop. The preview lane still read
+`owned_root_reclaimed` alone — the exact half round 5 had repaired on the
+conversion side — so it told a user the program "could not be started" about an
+image that may have been running, and offered a retry. `BOOTSTRAP_STATUS.md`
+still cited a 34-path closure, and `ROADMAP.md` said a stop of a launched
+conversion now settles as a successful cancellation, which is the claim the whole
+`stopFailed` surface exists because it cannot make.
 
 Round 5: a comment containing a brace opened a skip region over production code
 and a raw-identifier module declaration exempted a whole production file — the

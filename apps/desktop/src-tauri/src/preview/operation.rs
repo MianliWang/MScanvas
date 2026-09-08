@@ -363,7 +363,11 @@ pub(super) enum ItemState {
     /// started a process, which is the conflation the disposition exists to
     /// undo.
     Cancelled,
-    /// A stopped queue never began it. Not a failure and not an attempt.
+    /// The queue never began it. Not a failure and not an attempt.
+    ///
+    /// A stop is one way that happens and not the only one: a session that
+    /// loses track of a process it started refuses the rest of the queue, and
+    /// that queue is `Completed`.
     NotRun,
     /// The user settled this item without running it, while the queue carried
     /// on with the rest.

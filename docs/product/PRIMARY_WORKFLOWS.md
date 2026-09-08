@@ -321,7 +321,10 @@ availability, queue, adoption and export contracts.
    and the session is quarantined, exactly as it is for an unconfirmed queue
    stop, because what that state is about is a process nothing can account for. `Skip` on
    a row still waiting its turn settles that row without running it — the row
-   keeps its place and the queue still says what became of it. Adding, clearing
+   keeps its place and the queue still says what became of it. It is offered on
+   rows that have not run: during a rerun, a row that failed in the earlier pass
+   keeps the failure it earned rather than being called something the user
+   chose, so there is nothing there for a skip to settle. Adding, clearing
    and previewing are unavailable until the queue ends; searching, sorting and
    reading the list are not, and every queued row stays visible through a search.
 

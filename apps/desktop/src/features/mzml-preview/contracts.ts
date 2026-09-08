@@ -1059,7 +1059,13 @@ export type ConversionQueueItemState =
    * not be described as a confirmed tree.
    */
   | "cancelled"
-  /** A stopped queue never began it. Not a failure and not an attempt. */
+  /**
+   * The queue never began it. Not a failure and not an attempt.
+   *
+   * A stop is one way that happens and not the only one: a session that loses
+   * track of a process it started refuses the rest of the queue, and that queue
+   * is `completed`.
+   */
   | "notRun"
   /**
    * The user settled it without running it, and the queue carried on.
@@ -1406,9 +1412,11 @@ export interface WorkspaceConversionUpdate {
   /**
    * Whether this session has stopped trusting the backend.
    *
-   * Set by a stop whose termination could not be confirmed, and never cleared:
-   * nothing in the session can establish that the process it lost track of has
-   * ended.
+   * Set where MSCanvas cannot say whether a process it started is still
+   * running — a stop it could not confirm, or a conversion, preview, spectrum
+   * read or discovery probe that ended without accounting for one. Never
+   * cleared: nothing in the session can establish that the process it lost
+   * track of has ended.
    */
   readonly backendQuarantined: boolean;
   /**
