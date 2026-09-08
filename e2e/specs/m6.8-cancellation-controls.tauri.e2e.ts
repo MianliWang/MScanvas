@@ -121,8 +121,17 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
   beforeEach(async () => {
     scenario += 1;
     await browser.setWindowSize(1366, 768);
+    // A queue still running holds its rows, so the roster cannot be cleared
+    // until it settles. Waited for rather than forced: ending someone else's
+    // queue to tidy up would be this suite deciding what the previous scenario
+    // proved.
+    await browser.waitUntil(async () => (await conversionState()).status !== "running", {
+      timeout: 180_000, timeoutMsg: "A previous scenario's queue never settled.",
+    });
     const clear = browser.$("button=Clear list");
     if (await clear.isExisting()) {
+      await clear.scrollIntoView({ block: "center" });
+      await clear.waitForClickable({ timeout: 30_000 });
       await clear.click();
       await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);
     }
@@ -141,11 +150,23 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
     }
   });
 
+  /**
+   * One task-owned copy of the approved acquisition, under its own name.
+   *
+   * The names differ because the outputs must. Every item of one queue writes
+   * into the same chosen folder, and two queued outputs claiming one
+   * destination name are refused before anything runs -- correctly, and it is
+   * the plan refusing, not a defect to work around. Eight copies of one name
+   * would test that rule instead of the one this suite is about.
+   */
+  /** Where the next queue's copies start, so a retried queue writes new names. */
+  let sourceIndex = 0;
+
   function source(index: number): string {
     if (FIXTURE === undefined) throw new Error("The authorized fixture is absent.");
     const directory = join(runRoot, `scenario-${String(scenario)}`, `source-${String(index)}`);
     mkdirSync(directory, { recursive: true });
-    const path = join(directory, "FT-HCD-MSX.raw");
+    const path = join(directory, `FT-HCD-MSX-${String(index)}.raw`);
     copyFileSync(FIXTURE, path);
     sourceCopies.push(path);
     return path;
@@ -159,9 +180,19 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
 
   async function add(path: string): Promise<void> {
     const before = await browser.$$(ROWS).length;
-    await browser.$("button=Add files…").waitForEnabled({ timeout: 60_000 });
+    const addButton = browser.$("button=Add files…");
+    await addButton.waitForEnabled({ timeout: 60_000 });
+    // Eight rows and a settled queue make the document taller than the window,
+    // and a control below the fold is enabled without being clickable. The
+    // layout also settles for a moment after a queue ends, so this re-scrolls
+    // until the control is genuinely reachable rather than scrolling once.
+    await browser.waitUntil(async () => {
+      await browser.execute(() => { window.scrollTo(0, 0); });
+      await addButton.scrollIntoView({ block: "center" });
+      return addButton.isClickable();
+    }, { timeout: 60_000, timeoutMsg: "Add files… never became reachable." });
     const handler = handleDialog(applicationProcessId, "workspace-files", "choose", path);
-    const [handled] = await Promise.all([handler, browser.$("button=Add files…").click()]);
+    const [handled] = await Promise.all([handler, addButton.click()]);
     evidence.push({ kind: "native-picker", scenario, result: handled });
     expect(handled.entered).toBe(true);
     await browser.waitUntil(async () => (await browser.$$(ROWS).length) === before + 1);
@@ -169,8 +200,8 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
 
   /** A real queue of `QUEUE_SIZE` lawful sources, into one task-owned folder. */
   async function beginRealQueue(): Promise<string> {
-    for (let index = 0; index < QUEUE_SIZE; index += 1) await add(source(index));
-    const destination = join(runRoot, `scenario-${String(scenario)}`, "converted");
+    for (let index = 0; index < QUEUE_SIZE; index += 1) await add(source(sourceIndex + index));
+    const destination = join(runRoot, `scenario-${String(scenario)}`, `converted-${String(sourceIndex)}`);
     mkdirSync(destination, { recursive: true });
     await browser.$(ROWS).click();
     await browser.keys(["Control", "a"]);
@@ -205,31 +236,55 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
   }
 
   it("ends the file the provider is actually converting, and the queue carries on", async () => {
-    const destination = await beginRealQueue();
+    const firstDestination = await beginRealQueue();
 
     // Observed, not assumed. The control is pressed against the exact item and
     // attempt Rust reports as running; if the queue moved on first, Rust
     // refuses and this asks again about the next one. A refused request is not
     // counted as a stop.
+    //
+    // The lawful acquisition converts in about half a second, so this competes
+    // with the provider rather than waiting for it. Being between two items is
+    // not a reason to give up -- only a settled queue is -- and if a whole
+    // queue finishes before a press lands, another is begun and tried again.
     let stopped: { index: number; attempt: number; fileName: string } | null = null;
-    const deadline = Date.now() + 120_000;
-    while (stopped === null && Date.now() < deadline) {
-      const current = await runningItem();
-      if (current === null) break;
-      const button = browser.$(RUNNING).$("button=Stop this file");
-      if (!(await button.isExisting()) || !(await button.isEnabled())) continue;
-      await reveal(`${RUNNING} .conversion-actions`);
-      await button.click();
-      await browser.waitUntil(async () => {
+    let destination = firstDestination;
+    const deadline = Date.now() + 240_000;
+    for (let round = 0; round < 3 && stopped === null && Date.now() < deadline; round += 1) {
+      if (round > 0) {
+        await browser.waitUntil(async () => (await conversionState()).status !== "running", { timeout: 180_000 });
+        const clearAgain = browser.$("button=Clear list");
+        await clearAgain.scrollIntoView({ block: "center" });
+        await clearAgain.waitForClickable({ timeout: 30_000 });
+        await clearAgain.click();
+        await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);
+        sourceIndex += QUEUE_SIZE;
+        destination = await beginRealQueue();
+      }
+      while (stopped === null && Date.now() < deadline) {
         const state = await conversionState();
-        if (state.status === "terminal") return true;
-        if (state.status === "idle") return true;
-        const item = state.queue.items[current.index];
-        return item !== undefined && item.state !== "running";
-      }, { timeout: 60_000, timeoutMsg: "The item the stop named never left running." });
-      const after = await conversionState();
-      const settled = after.status === "idle" ? undefined : after.queue.items[current.index];
-      if (settled !== undefined && settled.state === "cancelled") stopped = current;
+        if (state.status === "terminal" || state.status === "idle") break;
+        if (state.status !== "running") continue;
+        const index = state.queue.items.findIndex((entry) => entry.state === "running");
+        const current = index === -1 ? undefined : state.queue.items[index];
+        // Between two items. The queue is still going, so this waits rather
+        // than concluding there was nothing to stop.
+        if (current === undefined) continue;
+        const button = browser.$(RUNNING).$("button=Stop this file");
+        if (!(await button.isExisting()) || !(await button.isEnabled())) continue;
+        await button.click();
+        await browser.waitUntil(async () => {
+          const settling = await conversionState();
+          if (settling.status === "terminal" || settling.status === "idle") return true;
+          const item = settling.queue.items[index];
+          return item !== undefined && item.state !== "running";
+        }, { timeout: 60_000, timeoutMsg: "The item the stop named never left running." });
+        const after = await conversionState();
+        const settled = after.status === "idle" ? undefined : after.queue.items[index];
+        if (settled !== undefined && settled.state === "cancelled") {
+          stopped = { index, attempt: current.attempts, fileName: current.fileName };
+        }
+      }
     }
     expect(stopped).not.toBeNull();
     const reached = stopped as { index: number; attempt: number; fileName: string };
@@ -267,6 +322,9 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
       notRunCount: state.queue.notRunCount,
       reason: state.reason,
     });
+    // Framed on the row the stop reached, so the screenshot shows the state it
+    // is evidence of rather than whatever the page had scrolled to.
+    await reveal(`${PANEL} .conversion-queue-list > li:nth-child(${String(reached.index + 1)})`);
     await browser.saveScreenshot(join(runRoot, `${String(scenario)}-item-stop.png`));
   });
 
@@ -313,6 +371,7 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
       finalizedCount: state.queue.finalizedCount,
       reason: state.reason,
     });
+    await reveal(`${PANEL} .conversion-queue-list > li:nth-child(${String(last + 1)})`);
     await browser.saveScreenshot(join(runRoot, `${String(scenario)}-item-skip.png`));
   });
 
@@ -322,8 +381,11 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
     await browser.waitUntil(async () => (await runningItem()) !== null, {
       timeout: 60_000, timeoutMsg: "No item was ever observed running.",
     });
-    await reveal(`${RUNNING} .conversion-actions`);
-    await browser.$(RUNNING).$("button=Stop queue").click();
+    const stop = browser.$(RUNNING).$("button=Stop queue");
+    await stop.waitForExist({ timeout: 30_000 });
+    await stop.scrollIntoView({ block: "center" });
+    await stop.waitForClickable({ timeout: 30_000 });
+    await stop.click();
 
     const state = await terminal();
     // The whole queue ended: the attempt in flight settled, and nothing behind
@@ -354,6 +416,7 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
       cancellationFailedCount: state.queue.cancellationFailedCount,
       notRunCount: state.queue.notRunCount,
     });
+    await reveal(`${PANEL} .conversion-queue-list`);
     await browser.saveScreenshot(join(runRoot, `${String(scenario)}-queue-stop.png`));
   });
 });
