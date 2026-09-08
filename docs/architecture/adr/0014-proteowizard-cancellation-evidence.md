@@ -7,6 +7,8 @@
   [ADR 0009](0009-mzml-conversion-execution-boundary.md), which put it out of
   scope because it was unmeasured.
 - **Evidence:** [M3.3 cancellation evidence record](../../spikes/M3_CANCELLATION_EVIDENCE.md)
+- Amended: 2026-09-08 (M6.8) — the interval this ADR left open is closed. See
+  the amendment at the end of this document.
 
 ## Context
 

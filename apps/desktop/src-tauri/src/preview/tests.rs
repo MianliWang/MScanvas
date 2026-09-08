@@ -241,11 +241,15 @@ fn selected_spectrum_output(index: u64, points: &[(f64, f64)]) -> String {
     text
 }
 
-/// The confirmed disposition, obtained the only way anyone can obtain it.
+/// The confirmed disposition, obtained the only way this crate can obtain it.
 ///
 /// `OwnedTreeDisposition::ConfirmedGone` is `non_exhaustive`, so no code
 /// outside the crate that decides it may name it — a fixture included. This
-/// presents a supervised run that earns it and lets the one origin say so.
+/// builds the run that earns it and lets the one origin say so.
+///
+/// A fixture may do this; production code here may not, and that is a guard
+/// rule rather than a compiler one. The value is derivable by anyone who can
+/// build a `ProcessOutput`, which is everyone who can substitute a runner.
 fn confirmed_gone_disposition() -> mscanvas_proteowizard::OwnedTreeDisposition {
     let supervised = ProcessOutput {
         termination: mscanvas_proteowizard::Termination::Cancelled,
@@ -295,6 +299,13 @@ enum Response {
         total_bytes: u64,
     },
     Error(PreviewErrorDto),
+    /// A failure that also left a process of this run's unaccounted for.
+    ///
+    /// Its own variant rather than a flag on `Error`, because the two are
+    /// different facts: the transfer object is what the user is told about
+    /// this request, and the second half is what the session must do about
+    /// the machine whatever it says.
+    ErrorLeavingAProcessUnaccounted(PreviewErrorDto),
 }
 
 /// One named backend, distinguishable from any other by name alone.
@@ -602,6 +613,15 @@ impl PreviewProvider for FakeProvider {
                     installation: self.resolved_backend(),
                     preview_availability: self.world.resolved_preview_availability(),
                     outcome: Err(error),
+                    owned_process_unaccounted: false,
+                });
+            }
+            Response::ErrorLeavingAProcessUnaccounted(error) => {
+                return Ok(OperationAttempt {
+                    installation: self.resolved_backend(),
+                    preview_availability: self.world.resolved_preview_availability(),
+                    outcome: Err(error),
+                    owned_process_unaccounted: true,
                 });
             }
         };
@@ -611,6 +631,7 @@ impl PreviewProvider for FakeProvider {
             installation: self.resolved_backend(),
             preview_availability: self.world.resolved_preview_availability(),
             outcome: Ok(outcome),
+            owned_process_unaccounted: false,
         })
     }
 
@@ -2145,6 +2166,109 @@ fn a_retryable_failure_under_the_same_backend_keeps_its_own_error() {
     assert_eq!(error.kind, "backend_launch_failed");
     assert!(error.retryable);
     assert_eq!(service.inspect_backend().authority.revision, before);
+}
+
+/// What a run that could not account for a process it started answers with.
+///
+/// Not retryable, and not the same fact as the message: the transfer object is
+/// what this request is told, and the attempt separately says that a process of
+/// this application's is unaccounted for on the machine.
+fn launch_failure_leaving_a_process_unaccounted() -> Response {
+    Response::ErrorLeavingAProcessUnaccounted(PreviewErrorDto::new(
+        "backend_not_accounted_for",
+        "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
+        false,
+    ))
+}
+
+/// A preview is a process, and one it could not account for stops the session.
+///
+/// The quarantine used to be raised on the conversion path alone, while the
+/// sentence it shows named preview and conversion both. A preview that lost
+/// track of a process it started left the session trusting the backend, and the
+/// next conversion started a converter beside whatever was still there.
+#[test]
+fn a_preview_that_could_not_account_for_its_process_quarantines_the_session() {
+    let file = TestFile::new("preview-lost-a-process");
+    let provider = Box::new(FakeProvider::available(vec![
+        launch_failure_leaving_a_process_unaccounted(),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+    ]));
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+    assert!(!service.backend_is_quarantined());
+
+    let error = service
+        .open_preview(&selected.handle)
+        .expect_err("the preview could not account for its process");
+
+    assert_eq!(error.kind, "backend_not_accounted_for");
+    assert!(!error.retryable);
+    assert!(
+        service.backend_is_quarantined(),
+        "a lost process on the preview lane left the session trusting the backend"
+    );
+    assert!(service.conversion_state().backend_quarantined);
+    let refused = service
+        .open_preview(&selected.handle)
+        .expect_err("a quarantined session starts no further process");
+    assert_eq!(refused.kind, "backend_quarantined");
+}
+
+/// The spectrum lane asks the same question the open does.
+#[test]
+fn a_spectrum_read_that_could_not_account_for_its_process_quarantines_the_session() {
+    let file = TestFile::new("spectrum-lost-a-process");
+    let provider = Box::new(FakeProvider::available(vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        launch_failure_leaving_a_process_unaccounted(),
+    ]));
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+    assert!(!service.backend_is_quarantined());
+
+    let error = service
+        .load_spectrum(&selected.handle, 0)
+        .expect_err("the spectrum read could not account for its process");
+
+    assert_eq!(error.kind, "backend_not_accounted_for");
+    assert!(service.backend_is_quarantined());
+}
+
+/// And an ordinary failure is not one, so it does not stop the session.
+///
+/// Without this the rule above could be "quarantine whenever a preview fails",
+/// which would end every session that met a refused launch.
+#[test]
+fn an_ordinary_preview_failure_leaves_the_session_trusting_the_backend() {
+    let file = TestFile::new("preview-ordinary-failure");
+    let provider = Box::new(FakeProvider::available(vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        retryable_launch_failure(),
+    ]));
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+
+    let error = service
+        .load_spectrum(&selected.handle, 0)
+        .expect_err("the read failed");
+
+    assert_eq!(error.kind, "backend_launch_failed");
+    assert!(
+        !service.backend_is_quarantined(),
+        "a refused launch is not a process nobody can account for"
+    );
 }
 
 #[test]

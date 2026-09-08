@@ -1,8 +1,18 @@
 # ADR 0015: a user-visible queue stop
 
-- **Status:** Accepted. One queue-level Stop is reachable from the product;
-  per-item cancellation, resume and retry-after-stop are not.
+- **Status:** Accepted, amended. One queue-level Stop is reachable from the
+  product, and since M6.8 so are a per-item stop and a queued-item skip; resume
+  and retry-after-stop are not, and removing a row from a bound queue is
+  refused.
 - **Date:** 2026-08-08
+- Amended: 2026-09-08 (M6.8) — **per-item cancellation exists.** This ADR said
+  it did not, and that was true of everything measured then. What admitted it is
+  process-tree ownership established before the child executes and a measurement
+  of the installed provider, so a stop of one item can say what it ended;
+  ADR 0014's amendment records the measurement and
+  [the M6.8 record](../../ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md) records the
+  slice. The `cancelled` item state widened with it — see the amendment under
+  *What the states mean*.
 - **Builds on:** [ADR 0013](0013-serial-conversion-queue.md) (the serial queue)
   and [ADR 0014](0014-proteowizard-cancellation-evidence.md) (the private
   cancellation primitive and the measured race rule).
@@ -47,6 +57,11 @@ There is **no cancel-current-and-continue**, no pause, no resume and no per-item
 cancellation. Each is a different promise about work already begun, and none of
 them has been asked for by anything measured.
 
+> **Amended 2026-09-08 by M6.8.** Two of those were asked for and measured, and
+> both exist: cancel-current-and-continue is `Stop this file`, and a waiting item
+> can be settled with `Skip`. Pause, resume, and removing a row from a queue that
+> is already running remain unbuilt, for the reason this paragraph gives.
+
 ### The race rule is ADR 0014's, unchanged
 
 Observation order inside the supervision loop decides the current item. A
@@ -75,9 +90,20 @@ first item had finalized, and that output stayed.
 
 | Item | Meaning |
 | --- | --- |
-| `cancelled` | Stopped while running, owned tree confirmed gone, nothing finalized |
+| `cancelled` | Stopped with nothing finalized: either the owned tree was confirmed gone, or nothing was launched to be a tree |
 | `notRun` | The stopped queue never began it — no process, nothing created |
 | `cancellationFailed` | Stopped while running, termination not confirmed |
+
+> **Amended 2026-09-08 by M6.8: the `cancelled` row above widened.** It read
+> "Stopped while running, owned tree confirmed gone, nothing finalized", and
+> that was the whole of the state when this shipped, because the only stop was a
+> queue stop and it could only reach an item that was running. A per-item stop
+> can also be observed before the launch. That item is `cancelled` too, and there
+> was no tree to confirm because nothing was launched. Both settle the same way;
+> the item's own `ownedTree` fact says which happened, and a definition naming
+> only the first would assert a process tree for a run that never started a
+> process — the defect this repository's cancellation-claim guard exists to
+> catch.
 
 `stopping` is a state rather than a flag beside `running`, so nothing can read
 "running" and conclude another item may start. The terminal reason is carried

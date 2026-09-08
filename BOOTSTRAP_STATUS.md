@@ -7712,9 +7712,12 @@ refused, and an assignment or resume failure terminates a root that has provably
 run nothing. The confirmed-cancellation claim becomes a conjunction with one
 origin, and `OwnedTreeDisposition` replaces the boolean that asserted a
 terminated tree for a run that never started one. The affirmative member is
-`non_exhaustive`, so the compiler refuses the claim outside the crate that
-decides it, and a `check_repo.py` guard proves itself against thirteen
-deliberate bypasses on every run.
+`non_exhaustive`, so the compiler refuses the *name* outside the crate that
+decides it — not the value, which any caller can still derive from a
+`ProcessOutput` it built, because that report is what a substituted runner
+returns and no type separates a fabricated one from a supervised one. The
+derivation is therefore confined to that crate by a `check_repo.py` guard, which
+proves itself against fifteen deliberate bypasses on every run.
 
 Two independent reviews rejected the first candidate and every finding was real:
 a skip landing between the worker choosing an item and starting it wedged the
@@ -7739,7 +7742,7 @@ not widened. Capacity stays 16 with a current rationale. Two progress defects
 are closed: a completed queue now accounts for every item it held, and the retry
 display no longer speaks for a rerun that is already done.
 
-Implementation and validation are complete: 1652 frontend tests, 1502 Rust tests
+Implementation and validation are complete: 1652 frontend tests, 1507 Rust tests
 across the workspace, all required local gates, browser 10/10 at four inner
 sizes, and native 3/3 on binary SHA-256
 `6db463738e80f37156b3ea6b92c0a195df3d452c4c0eca43de6cc98262414e17` — a stop that

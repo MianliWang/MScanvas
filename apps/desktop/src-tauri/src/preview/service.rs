@@ -43,8 +43,8 @@ use super::authority::{
     BackendAuthority, BackendAuthorityProjection, DiscoveryTarget, Observation, PreviewAvailability,
 };
 use super::backend::{
-    ConversionBackend, ConversionBackendAttempt, PreviewProvider, open_operations,
-    reporting_redactor, selected_spectrum_operation,
+    ConversionBackend, ConversionBackendAttempt, OperationAttempt, PreviewProvider,
+    open_operations, reporting_redactor, selected_spectrum_operation,
 };
 use super::configuration::{
     ConversionConfigurations, ReadAnswer, RowAdmission, intent_dto, read_configuration,
@@ -4569,6 +4569,25 @@ impl PreviewService {
         update
     }
 
+    /// Stops trusting the backend if an attempt left a process unaccounted for.
+    ///
+    /// **Every lane that starts a process asks this, not only the queue.** The
+    /// quarantine used to be raised on the conversion path alone, while the
+    /// sentence it shows — restart before starting another preview or
+    /// conversion — described both. A preview that lost track of a process it
+    /// started left the session trusting a backend that had already proved it
+    /// could not be accounted for, and the next conversion started a converter
+    /// beside it. What is asked is the process boundary's own classification,
+    /// so the two lanes cannot answer it differently.
+    fn observe_owned_processes(&self, attempts: &[OperationAttempt]) {
+        if attempts
+            .iter()
+            .any(|attempt| attempt.owned_process_unaccounted)
+        {
+            self.quarantine_backend();
+        }
+    }
+
     /// Stops trusting the backend for the rest of this session.
     fn quarantine_backend(&self) {
         self.backend_quarantined.store(true, Ordering::Release);
@@ -6718,6 +6737,11 @@ impl PreviewService {
         // the hold means losing the guarantee.
         let guard = lock_against_replacement(file.path())?;
         let attempts = self.provider.run_batch(file.path(), &operations)?;
+        // Before anything is decided about what to show. A preview is a
+        // process like a conversion is, and one that ended without accounting
+        // for a process it started leaves the same uncertainty on the same
+        // machine.
+        self.observe_owned_processes(&attempts);
         // Which backend actually did this work, taken from the attempts rather
         // than from a later look. The batch shares one resolution, so they all
         // report the same one; taking the first is taking that resolution. Read
@@ -7055,6 +7079,9 @@ impl PreviewService {
         let operation = selected_spectrum_operation(index);
         let guard = lock_against_replacement(file.path())?;
         let attempt = self.provider.run(file.path(), &operation)?;
+        // As above: whatever this spectrum read is about to answer, a process
+        // it could not account for is the session's business.
+        self.observe_owned_processes(std::slice::from_ref(&attempt));
         // What ran, recorded before how it went. An operation can fail for
         // reasons that say nothing about which backend ran it -- a launch that
         // was refused, a wait that was interrupted, output that could not be

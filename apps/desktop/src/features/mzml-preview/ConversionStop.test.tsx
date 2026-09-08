@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { PreviewApiProvider } from "./api";
@@ -239,6 +239,14 @@ describe("stopping a running conversion queue", () => {
      * it still reports the row as pending. Two presses in that window used to
      * both pass, Rust would accept the first and refuse the second, and this
      * document would show an error for a skip that had in fact succeeded.
+     *
+     * **The two presses share one render pass, and that is the whole test.**
+     * Written as consecutive `fireEvent.click` calls it proved nothing: each
+     * one flushes React, the button is gone by the second, and the assertion
+     * below passed with the single-flight guard removed. Dispatching both
+     * inside one `act` is the window a real double-press lands in -- the
+     * handler runs twice against a state that has not moved, which is why the
+     * guard has to be a ref rather than the rendered decision.
      */
     let settle: (state: WorkspaceConversionState) => void = () => {};
     const held = new Promise<WorkspaceConversionState>((resolve) => {
@@ -249,9 +257,11 @@ describe("stopping a running conversion queue", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     const skip = await within(panel).findByRole("button", { name: "Skip run-3.raw" });
-    fireEvent.click(skip);
-    fireEvent.click(skip);
-    fireEvent.click(skip);
+    act(() => {
+      skip.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      skip.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      skip.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
 
     // One request, whatever the pressing looked like.
     await waitFor(() => {

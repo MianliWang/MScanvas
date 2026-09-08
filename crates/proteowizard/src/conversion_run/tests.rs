@@ -295,28 +295,32 @@ fn entry_names(directory: &Path) -> Vec<OsString> {
 /// owned process can be left unaccounted for, not only the one with a name that
 /// says so.
 ///
-/// `NotTerminated` is the obvious one. `NotAwaited` is the same fact by a
-/// different route — a Job that would not empty within its bounded window, or a
-/// supervision loop that lost track of its child — and in both the run owned
-/// processes and cannot say they are gone. Whether anyone asked for a stop is
-/// not what decides whether a process survived, so neither is it what decides
-/// this.
+/// `NotTerminated` is the one, and it is the whole of it. A Job that would not
+/// empty is classified as `NotTerminated` at the boundary rather than folded
+/// into a wait failure, so the name means what it says: this run owned
+/// processes and cannot state that they are gone. `NotAwaited` is a supervision
+/// loop that lost its answer after its owned teardown succeeded, which is a
+/// failure to report rather than a process left running — and quarantining for
+/// it would refuse every later operation on a fact that is not true, for the
+/// rest of a session, because quarantine is never lifted.
+///
+/// Whether anyone asked for a stop is not what decides whether a process
+/// survived, so neither is it what decides this.
 #[test]
 fn every_failure_that_leaves_an_owned_process_unaccounted_says_so() {
-    for cause in [
-        BackendExecutionFailure::NotTerminated,
-        BackendExecutionFailure::NotAwaited,
-    ] {
-        assert!(
-            ConversionRunFailure::Backend(cause).leaves_an_owned_process_unaccounted(),
-            "{cause:?} leaves a process this run owned unaccounted for"
-        );
-    }
+    assert!(
+        ConversionRunFailure::Backend(BackendExecutionFailure::NotTerminated)
+            .leaves_an_owned_process_unaccounted(),
+        "a process this run owned whose end nothing observed"
+    );
 
     // And nothing else does. A launch that never happened, a capture that
-    // failed and a root reclaimed without running all leave nothing behind, and
-    // quarantining for them would refuse work on a fact that is not true.
+    // failed, a root reclaimed without running, and a wait that failed after
+    // its owned teardown succeeded all leave nothing behind — and quarantining
+    // for them would refuse work on a fact that is not true, permanently,
+    // because quarantine is never lifted.
     for cause in [
+        BackendExecutionFailure::NotAwaited,
         BackendExecutionFailure::NotSupervised,
         BackendExecutionFailure::RootNotStarted,
         BackendExecutionFailure::EnvironmentInvalid,
@@ -334,7 +338,11 @@ fn every_failure_that_leaves_an_owned_process_unaccounted_says_so() {
 
     // The same question, of the lifecycle that runs a backend-named set.
     assert!(
-        MultiOutputFailure::Backend(BackendExecutionFailure::NotAwaited)
+        MultiOutputFailure::Backend(BackendExecutionFailure::NotTerminated)
+            .leaves_an_owned_process_unaccounted()
+    );
+    assert!(
+        !MultiOutputFailure::Backend(BackendExecutionFailure::NotAwaited)
             .leaves_an_owned_process_unaccounted()
     );
     assert!(
@@ -342,6 +350,75 @@ fn every_failure_that_leaves_an_owned_process_unaccounted_says_so() {
             .leaves_an_owned_process_unaccounted()
     );
     assert!(!MultiOutputFailure::BackendDidNotComplete.leaves_an_owned_process_unaccounted());
+}
+
+/// Every lane asks the same question of the same failure.
+///
+/// The queue reads it through its own classification; a preview reads it
+/// straight off the process error. Both must be the *same* answer, or a
+/// preview that lost a process leaves a session that goes on to start a
+/// converter beside it — which is exactly what happened while the quarantine
+/// was raised on the conversion path alone.
+#[test]
+fn a_process_failure_answers_the_same_way_to_every_lane() {
+    let unaccounted = [
+        ProcessError::OwnedJobNotEmptied {
+            detail: String::from("the owned job would not empty"),
+        },
+        ProcessError::Terminate {
+            detail: String::from("the owned job would not terminate"),
+        },
+        ProcessError::AssignToOwnedJob {
+            detail: String::from("the root could not be assigned"),
+            owned_root_reclaimed: false,
+        },
+        ProcessError::ResumeOwnedRoot {
+            detail: String::from("the root could not be resumed"),
+            owned_root_reclaimed: false,
+        },
+    ];
+    for error in &unaccounted {
+        assert!(
+            error.leaves_an_owned_process_unaccounted(),
+            "{error:?} leaves a process of this run's on the machine"
+        );
+        assert_eq!(
+            error.leaves_an_owned_process_unaccounted(),
+            ConversionRunFailure::Backend(BackendExecutionFailure::from(error))
+                .leaves_an_owned_process_unaccounted(),
+            "the lanes disagree about {error:?}"
+        );
+    }
+
+    // And the failures that leave nothing behind, including the two that differ
+    // from the above only by having reclaimed the root they created.
+    let accounted = [
+        ProcessError::AssignToOwnedJob {
+            detail: String::from("the root could not be assigned"),
+            owned_root_reclaimed: true,
+        },
+        ProcessError::ResumeOwnedRoot {
+            detail: String::from("the root could not be resumed"),
+            owned_root_reclaimed: true,
+        },
+        ProcessError::Wait {
+            detail: String::from("the wait was interrupted"),
+        },
+        ProcessError::ExecutableIdentityChanged,
+        ProcessError::OutputDestinationExists,
+    ];
+    for error in &accounted {
+        assert!(
+            !error.leaves_an_owned_process_unaccounted(),
+            "{error:?} leaves nothing of this run's behind"
+        );
+        assert_eq!(
+            error.leaves_an_owned_process_unaccounted(),
+            ConversionRunFailure::Backend(BackendExecutionFailure::from(error))
+                .leaves_an_owned_process_unaccounted(),
+            "the lanes disagree about {error:?}"
+        );
+    }
 }
 
 /// The two halves of a resume failure classify differently, and only one of

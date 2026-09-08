@@ -36,6 +36,13 @@ use super::installation::{InstallationIdentity, classify_chosen_folder};
 /// to name one.
 pub struct OperationAttempt {
     pub installation: Option<InstallationIdentity>,
+    /// Whether this attempt left a process it started unaccounted for.
+    ///
+    /// Carried out separately from `outcome` because it is a fact about the
+    /// machine rather than about this preview: whatever the user is told, the
+    /// session must stop starting backend processes. The message a failed
+    /// attempt shows is about the request; this is about everything after it.
+    pub owned_process_unaccounted: bool,
     /// The preview verdict for that same installation, from the same discovery.
     ///
     /// Here for ADR 0044's Decision 1: an attempt names a binding, and a
@@ -462,37 +469,67 @@ impl ProteoWizardProvider {
         source: &Path,
         operation: &PreviewOperation,
     ) -> OperationAttempt {
+        let (outcome, owned_process_unaccounted) =
+            Self::execute_bound(capabilities, source, operation);
         OperationAttempt {
             installation: installation.cloned(),
             preview_availability,
-            outcome: Self::execute_bound(capabilities, source, operation),
+            outcome,
+            owned_process_unaccounted,
         }
     }
 
+    /// The attempt, and whether it left a process of its own unaccounted for.
+    ///
+    /// Two answers rather than one because a `?` would keep only the first. The
+    /// second is `true` on exactly the launch failures the process boundary
+    /// classifies that way, and every other step here — a temporary directory,
+    /// a plan, a manifest, an interpretation — starts no process and so cannot
+    /// leave one.
     fn execute_bound(
         capabilities: &InstalledHelpCapabilities,
         source: &Path,
         operation: &PreviewOperation,
-    ) -> Result<PreviewOutcome, PreviewErrorDto> {
-        let output_root = TemporaryOutputDirectory::create()?;
-        let command = build_msaccess_command_with_capabilities(
+    ) -> (Result<PreviewOutcome, PreviewErrorDto>, bool) {
+        let output_root = match TemporaryOutputDirectory::create() {
+            Ok(root) => root,
+            Err(refusal) => return (Err(refusal), false),
+        };
+        let command = match build_msaccess_command_with_capabilities(
             capabilities,
             source,
             output_root.path(),
             operation.clone(),
+        ) {
+            Ok(command) => command,
+            Err(_) => {
+                return (
+                    Err(PreviewErrorDto::new(
+                        "preview_not_plannable",
+                        "MSCanvas could not prepare that preview request.",
+                        false,
+                    )),
+                    false,
+                );
+            }
+        };
+
+        let process = match execute(&command) {
+            Ok(process) => process,
+            Err(error) => {
+                let unaccounted = error.leaves_an_owned_process_unaccounted();
+                return (Err(process_error(error)), unaccounted);
+            }
+        };
+
+        let manifest = match capture_manifest(output_root.path(), operation) {
+            Ok(manifest) => manifest,
+            Err(refusal) => return (Err(refusal), false),
+        };
+        (
+            interpret_preview(operation, &process, &manifest).map_err(interpretation_error),
+            false,
         )
-        .map_err(|_| {
-            PreviewErrorDto::new(
-                "preview_not_plannable",
-                "MSCanvas could not prepare that preview request.",
-                false,
-            )
-        })?;
-
-        let process = execute(&command).map_err(process_error)?;
-
-        let manifest = capture_manifest(output_root.path(), operation)?;
-        interpret_preview(operation, &process, &manifest).map_err(interpretation_error)
     }
 }
 
@@ -780,11 +817,17 @@ pub fn process_error(error: ProcessError) -> PreviewErrorDto {
             "MSCanvas could not build a safe environment for the ProteoWizard program.",
             false,
         ),
-        ProcessError::AssignToOwnedJob { .. } => PreviewErrorDto::new(
+        ProcessError::AssignToOwnedJob {
+            owned_root_reclaimed,
+            ..
+        } => PreviewErrorDto::new(
             "backend_supervision_failed",
-            "MSCanvas could not keep the ProteoWizard program under its own supervision, \
-             so it did not use its output.",
-            true,
+            "MSCanvas could not keep the ProteoWizard program under its own supervision, so it did not use its output.",
+            // Whether another attempt could differ depends on whether the root
+            // this one created was reclaimed. One that was not is a process
+            // still on the machine, and offering to start another beside it is
+            // the offer this boundary exists to refuse.
+            owned_root_reclaimed,
         ),
         // The owned root was created and could not be started. Whether it was
         // reclaimed decides how bad this is, and the crate carries that;
@@ -807,6 +850,14 @@ pub fn process_error(error: ProcessError) -> PreviewErrorDto {
             "backend_output_capture_failed",
             "MSCanvas could not read what the ProteoWizard program produced.",
             true,
+        ),
+        // The owned job would not report itself empty, or its teardown failed.
+        // Either way a process this run created has not been observed to end,
+        // so nothing here offers to try again.
+        ProcessError::OwnedJobNotEmptied { .. } => PreviewErrorDto::new(
+            "backend_not_accounted_for",
+            "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
+            false,
         ),
         ProcessError::Terminate { .. } => PreviewErrorDto::new(
             "backend_termination_failed",

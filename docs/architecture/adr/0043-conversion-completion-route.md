@@ -1581,7 +1581,8 @@ is an honest result about this build and these inputs, not a claim that this
 provider never spawns children.
 
 **The reconciliation is carried by the compiler where a claim can be, and by a
-guard where it cannot.** `OwnedTreeDisposition::ConfirmedGone` is
+guard where it cannot — and the line between them is exactly where the member's
+*name* ends and its *value* begins.** `OwnedTreeDisposition::ConfirmedGone` is
 `non_exhaustive`: outside the crate that decides it, the affirmative member
 cannot be constructed or matched at all — not by production code, not by a
 fixture, not under an alias or a braced import. Four independent reviews across
@@ -1590,17 +1591,30 @@ none of those bypasses compiles now. The item state is derived from the
 disposition rather than supplied, so the wrong pairing is not expressible
 either.
 
+The compiler stops there, and the route says so rather than claiming more.
+`OwnedTreeDisposition::of` is public and takes a `ProcessOutput`, which every
+consumer that substitutes a runner must be able to build — so a consumer could
+present a run that never happened and receive the affirmative member without
+naming it. No type separates a fabricated report from a supervised one. The
+containment is therefore on the *asking*: only the crate that creates the
+process and watches it end may derive a disposition, and the identifier the
+judgement travels as once it leaves the type is watched as a string.
+
 What a type cannot carry, `check_repo.py` does: one definition of the
 conjunction reading both halves, one derivation, the Rust and TypeScript sets
 compared against each other, the retired boolean kept out, neither member named
 outside the files that own them — as bare identifiers, because a qualified path
-is the spelling an import removes — and no description asserting a confirmed
-tree unless that is all the symbol means. That last rule is an allowlist of what
-may claim rather than a list of sites to inspect: the version that listed sites
-passed while three other descriptions asserted a confirmed tree, one of them a
-public API arm reached by a run that launched nothing, and inverting it is what
-found that. Thirteen deliberate bypasses are proved on every run. Prose remains
-the fallible half and says so.
+is the spelling an import removes — the derivation called only inside the crate
+that supervises a run, the claim's identifier written as a string nowhere, and
+no description asserting a confirmed tree unless that is all the symbol means.
+That last rule is an allowlist of what may claim rather than a list of sites to
+inspect: the version that listed sites passed while three other descriptions
+asserted a confirmed tree, one of them a public API arm reached by a run that
+launched nothing, and inverting it is what found that. It reads the state tables
+in documents too, which found a fourth — ADR 0015's shipping definition of
+`cancelled`. Fifteen deliberate bypasses are proved on every run. Prose remains
+the fallible half and says so: an unlisted synonym still passes, and no proof
+here claims otherwise.
 
 With all three satisfied, an owned-Job-empty stop of a launched conversion
 settles as a successful `Cancelled`, and **cancel the current item and continue**

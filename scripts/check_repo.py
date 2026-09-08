@@ -1344,6 +1344,26 @@ CURRENT_STATUS_DOCUMENTS: tuple[str, ...] = (
 SHIPPED_CAPABILITIES: tuple[tuple[str, str], ...] = (
     ("spectrum zoom and pan", "M5.2 made the selected spectrum's m/z range zoom, pan and reset"),
     ("spectrum zoom/pan", "M5.2 made the selected spectrum's m/z range zoom, pan and reset"),
+    (
+        "cancelling one item of a queue while the rest carry on",
+        "M6.8 shipped `Stop this file`, which ends the conversion under way and "
+        "leaves the queue running",
+    ),
+    (
+        "cancelling one item while the rest carry on",
+        "M6.8 shipped `Stop this file`, which ends the conversion under way and "
+        "leaves the queue running",
+    ),
+    (
+        "skipping a queued item",
+        "M6.8 shipped a per-row `Skip`, which settles a waiting item without "
+        "converting it",
+    ),
+    (
+        "skipping a queued conversion",
+        "M6.8 shipped a per-row `Skip`, which settles a waiting item without "
+        "converting it",
+    ),
 )
 
 MISSING_LIST_OPENINGS: tuple[str, ...] = (
@@ -3187,6 +3207,13 @@ def validate_current_status_documents_describe_the_shipped_product(
     recorded complete -- checked against the roadmap's M5 section, which is where
     that contradiction was.
 
+    **M6.8 is the second instance, and it widened the scan.** `README.md` listed
+    "cancelling one item of a queue while the rest carry on" among what is not
+    implemented in the same slice that implemented it. The scan also read only
+    the *first* occurrence of each opening in a document, so a page that says
+    what is missing in two places was checked in one — and the second list is
+    exactly where a sentence survives the milestone that fixed the first.
+
     Nothing here reads prose for tone, and nothing pins a snapshot of it.
     """
     for name in CURRENT_STATUS_DOCUMENTS:
@@ -3196,18 +3223,19 @@ def validate_current_status_documents_describe_the_shipped_product(
         text = source.read_text(encoding="utf-8").lower()
         for opening in MISSING_LIST_OPENINGS:
             at = text.find(opening)
-            if at == -1:
-                continue
-            end = text.find("\n\n", at)
-            listed = text[at:] if end == -1 else text[at:end]
-            for capability, why in SHIPPED_CAPABILITIES:
-                if capability in listed:
-                    fail(
-                        f"{name}: {opening!r} still lists {capability!r}, which is "
-                        f"implemented -- {why}. A reader planning the next slice from "
-                        "this section would treat finished behaviour as outstanding",
-                        errors,
-                    )
+            while at != -1:
+                end = text.find("\n\n", at)
+                listed = text[at:] if end == -1 else text[at:end]
+                for capability, why in SHIPPED_CAPABILITIES:
+                    if capability in listed:
+                        fail(
+                            f"{name}:{text.count(chr(10), 0, at) + 1} {opening!r} still "
+                            f"lists {capability!r}, which is implemented -- {why}. A "
+                            "reader planning the next slice from this section would "
+                            "treat finished behaviour as outstanding",
+                            errors,
+                        )
+                at = text.find(opening, at + len(opening))
 
     roadmap = ROOT / "ROADMAP.md"
     if not roadmap.is_file():
@@ -3263,19 +3291,44 @@ RETIRED_CLAIM_SPELLINGS = ("tree_termination_confirmed", "treeTerminationConfirm
 # derivation a run that did not earn its answer.
 CLAIM_MEMBERS = (
     ("ConfirmedGone", ("crates/**/*.rs", "apps/desktop/src-tauri/src/**/*.rs")),
-    ("EstablishedBeforeExecution", ("apps/desktop/src-tauri/src/**/*.rs",)),
+    (
+        "EstablishedBeforeExecution",
+        ("crates/**/*.rs", "apps/desktop/src-tauri/src/**/*.rs"),
+    ),
 )
+
+# The one call that mints the affirmative member from a run.
+#
+# `ProcessOutput` is the report a `ProcessRunner` returns, so every consumer
+# that substitutes a runner must be able to build one — which means a consumer
+# can build one that did not happen and hand it to the derivation. The
+# compiler cannot tell those apart and neither can a type. What it can be is
+# *contained*: only the boundary that supervises a real process may ask.
+CLAIM_DERIVATION = "OwnedTreeDisposition::of"
+# The crate that creates the process and watches it end. Two lifecycles inside
+# it derive the judgement, and both supervise a real run; nothing outside it may.
+CLAIM_DERIVATION_SCOPE = "crates/proteowizard/src/"
+# Where the claim travels once it leaves the type: the wire, the diagnostics
+# payload and anything rendered. A string is not a member and no compiler
+# refuses it, so the identifier itself is watched.
+CLAIM_STABLE_ID = "confirmed_gone"
 
 # Where a description of this claim can live. Every file that carries the
 # vocabulary, the states derived from it, or the wire it crosses.
-CLAIM_DESCRIPTION_FILES = (
-    "crates/proteowizard/src/conversion_run.rs",
-    "crates/proteowizard/src/conversion_run/output_set.rs",
-    "crates/proteowizard/src/process.rs",
-    "apps/desktop/src-tauri/src/preview/operation.rs",
-    "apps/desktop/src-tauri/src/preview/dto.rs",
-    "apps/desktop/src-tauri/src/preview/service.rs",
-    "apps/desktop/src/features/mzml-preview/contracts.ts",
+# Where a description of this claim can live. **Globs rather than a file list**,
+# because a list is a snapshot: the version that named seven files could not see
+# an item-state table in an ADR asserting a confirmed tree for a state also
+# reached by a run that launched nothing, and could not see a user-facing label
+# in a component. Documents are included because ADR 0043's own contract names
+# documentation as a carrier of this claim.
+CLAIM_DESCRIPTION_GLOBS = (
+    "crates/proteowizard/src/**/*.rs",
+    "apps/desktop/src-tauri/src/**/*.rs",
+    "apps/desktop/src/features/mzml-preview/*.ts",
+    "apps/desktop/src/features/mzml-preview/*.tsx",
+    "docs/architecture/adr/*.md",
+    "docs/product/*.md",
+    "docs/ux/*.md",
 )
 
 # What it means to assert, in prose, that a process tree which existed was
@@ -3319,6 +3372,8 @@ NARROW_CLAIM_SYMBOLS = (
 )
 # How far a description runs above the line it describes.
 DESCRIPTION_LINES = 16
+# How far either way a sentence in a document may wrap.
+MARKDOWN_CONTEXT_LINES = 3
 
 CLAIM_SOURCE_GLOBS = (
     "crates/**/*.rs",
@@ -3330,20 +3385,136 @@ CLAIM_SOURCE_GLOBS = (
 CLAIM_RUST_GLOBS = ("crates/**/*.rs", "apps/desktop/src-tauri/src/**/*.rs")
 
 
-def _is_test_source(path: Path) -> bool:
+# A `#[cfg(test)]` attribute and the file module it declares. Attributes stack
+# and a doc comment may sit between, so the declaration is looked for over the
+# next few lines rather than only the next one.
+_TEST_CFG = re.compile(r"^\s*#\[cfg\((?:all\()?\s*test\b")
+_TEST_MODULE_DECLARATION = re.compile(
+    r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;"
+)
+_DECLARED_TEST_MODULES: dict[Path, frozenset[Path]] = {}
+
+
+def _declared_test_modules(root: Path) -> frozenset[Path]:
+    """Every file the sources declare as compiled for tests only.
+
+    A test source is one the crate *says* is a test source: some module writes
+    `#[cfg(test)] mod <name>;` above it. Two simpler rules were both wrong, in
+    opposite directions, and this one exists because of them.
+
+    `"tests" in path.parts or path.stem == "tests"` took a directory name for
+    the fact, so a production module at `preview/tests/forged.rs` was exempt for
+    being called tests.
+
+    Reading the file for `#[test]` or `#[cfg(test)]` was worse. Nearly every
+    production module in this repository ends in an inline `#[cfg(test)] mod
+    tests`, so that exemption covered `service.rs`, `conversion.rs` and
+    `output_set.rs` — the files this guard exists to check — and eight of its
+    own bypass proofs stopped being detected. A guard that exempts the boundary
+    is not a guard, and the bypass suite is what said so.
+
+    Only the *declaration* is read. A file that merely contains tests is still
+    production if nothing declares it as a test module, and a `#[cfg(test)] mod
+    hostile;` naming a file that does not exist exempts nothing.
+    """
+    cached = _DECLARED_TEST_MODULES.get(root)
+    if cached is not None:
+        return cached
+    declared: set[Path] = set()
+    for glob in CLAIM_RUST_GLOBS:
+        for path in sorted(root.glob(glob)):
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for index, line in enumerate(lines):
+                if _TEST_CFG.match(line) is None:
+                    continue
+                for follower in lines[index + 1 : index + 4]:
+                    stripped = follower.strip()
+                    if not stripped or stripped.startswith(("//", "#[")):
+                        continue
+                    found = _TEST_MODULE_DECLARATION.match(follower)
+                    if found is not None:
+                        owner = (
+                            path.parent
+                            if path.stem in ("mod", "lib", "main")
+                            else path.parent / path.stem
+                        )
+                        name = found.group(1)
+                        for candidate in (
+                            owner / f"{name}.rs",
+                            owner / name / "mod.rs",
+                        ):
+                            if candidate.is_file():
+                                declared.add(candidate)
+                    break
+    frozen = frozenset(declared)
+    _DECLARED_TEST_MODULES[root] = frozen
+    return frozen
+
+
+_TEST_ONLY_LINES: dict[Path, frozenset[int]] = {}
+
+
+def _test_only_lines(path: Path) -> frozenset[int]:
+    """The line numbers a file compiles only for tests, by its own attributes.
+
+    A file module is not the only place tests live. Most modules here end in an
+    inline `#[cfg(test)] mod tests { .. }`, and the fixtures inside it build the
+    `ProcessOutput` values the boundary would otherwise be the only source of.
+
+    **Bounded at the left margin, not by lexing Rust.** A `#[cfg(test)]` written
+    in column zero introduces a top-level item, so its closing brace is in column
+    zero too; a brace inside a string literal or a nested block is indented. That
+    makes the region exact without a tokenizer, and a tokenizer is the kind of
+    thing that is wrong in one file a year after it is written.
+
+    A `#[cfg(test)] mod tests;` opens no region here — it names another file, and
+    `_declared_test_modules` is what reads that.
+
+    Only column zero counts. A `#[cfg(test)]` on an indented helper leaves that
+    helper checked. Nothing in this repository needs the wider exemption, and
+    the narrower one is the one that can be justified from the text.
+    """
+    cached = _TEST_ONLY_LINES.get(path)
+    if cached is not None:
+        return cached
+    lines = path.read_text(encoding="utf-8").splitlines()
+    inside: set[int] = set()
+    index = 0
+    while index < len(lines):
+        if not lines[index].startswith(("#[cfg(test)]", "#[cfg(all(test")):
+            index += 1
+            continue
+        item = index
+        opens = False
+        while item < len(lines):
+            if "{" in lines[item]:
+                opens = True
+                break
+            if lines[item].rstrip().endswith(";"):
+                break
+            item += 1
+        if not opens:
+            index += 1
+            continue
+        close = item + 1
+        while close < len(lines) and lines[close] != "}":
+            close += 1
+        inside.update(range(index + 1, min(close, len(lines) - 1) + 2))
+        index = close + 1
+    frozen = frozenset(inside)
+    _TEST_ONLY_LINES[path] = frozen
+    return frozen
+
+
+def _is_test_source(path: Path, root: Path) -> bool:
     """Whether this file exists to test the boundary rather than to be it.
 
     Negative fixtures have to be able to build a disposition production code may
     not, and a guard that refused them would be a guard against testing the
-    claim at all.
-
-    **Only files that are tests, and not files that merely serve them.** The
-    rendered-QA seed used to be exempt by name; it is compiled under a feature
-    rather than under `cfg(test)`, so exempting it made the guard's own
-    statement — that no production file outside the launch path says when
-    ownership began — untrue as checked.
+    claim at all. What makes a file one is the declaration that compiles it for
+    tests only, which `_declared_test_modules` reads.
     """
-    return "tests" in path.parts or path.stem == "tests"
+    return path in _declared_test_modules(root)
 
 
 def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
@@ -3436,33 +3607,74 @@ def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
     #    A synonym nobody listed still passes, which is why the affirmative
     #    member is `non_exhaustive` rather than merely watched: the compiler
     #    carries the claim, and this carries the wording.
-    for relative in CLAIM_DESCRIPTION_FILES:
-        target = root / relative
-        if not target.is_file():
-            errors.append(
-                f"{relative} is missing; the cancellation claim guard cannot read the "
-                "descriptions it checks"
-            )
+    described_files = sorted(
+        {
+            candidate
+            for glob in CLAIM_DESCRIPTION_GLOBS
+            for candidate in root.glob(glob)
+        }
+    )
+    if not described_files:
+        errors.append(
+            "the cancellation claim guard found no descriptions to read; its globs no "
+            "longer match this repository"
+        )
+    for target in described_files:
+        relative = target.relative_to(root).as_posix()
+        # A test may describe the claim in order to assert it, and a test file
+        # that could not would be a guard against testing the boundary.
+        if ".test." in target.name or (
+            target.suffix == ".rs" and _is_test_source(target, root)
+        ):
             continue
         lines = target.read_text(encoding="utf-8").splitlines()
+        markdown = relative.endswith(".md")
         block: list[str] = []
         block_at = 0
         for number, line in enumerate(lines, start=1):
             stripped = line.strip()
-            if stripped.startswith("///") or stripped.startswith("//") or stripped.startswith("*"):
+            # In a document the definitions are the state tables, and a table
+            # row is read as a description of whatever its first cell names.
+            #
+            # **Prose is not read, deliberately.** The first version of this
+            # rule read every line of every ADR and product document and
+            # reported eleven hits. One was the defect it was written for — the
+            # `cancelled` row of ADR 0015 asserting a confirmed process tree for
+            # a state a run that launched nothing also reaches. The other ten
+            # were prose doing what prose is for: an amendment quoting the
+            # superseded sentence, a route contract *forbidding* the claim, and
+            # a record of one measured run that did launch a process. A rule
+            # satisfied only by rewording honest sentences trains the writer to
+            # dodge it, so it reads the definitions and leaves the narrative.
+            if markdown:
+                if not stripped.startswith("|"):
+                    continue
+                # A row wraps into its neighbours: the amendment under a table
+                # and the row above it are part of the same definition.
+                window = lines[max(0, number - 1 - MARKDOWN_CONTEXT_LINES) : number
+                    + MARKDOWN_CONTEXT_LINES]
+                described = " ".join(" ".join(window).lower().split())
+                block_at = number
+            elif (
+                stripped.startswith("///")
+                or stripped.startswith("//")
+                or stripped.startswith("*")
+            ):
                 if not block:
                     block_at = number
                 block.append(stripped.lstrip("/*").strip())
                 continue
-            if not block:
+            elif not block:
                 continue
-            described = " ".join(" ".join(block).lower().split())
-            block = []
+            else:
+                described = " ".join(" ".join(block).lower().split())
+                block = []
             if not any(phrase in described for phrase in CONFIRMED_TREE_PHRASES):
                 continue
             if any(phrase in described for phrase in BOTH_SENSE_PHRASES):
                 continue
-            if any(symbol in stripped for symbol in NARROW_CLAIM_SYMBOLS):
+            subject = described if markdown else stripped
+            if any(symbol in subject for symbol in NARROW_CLAIM_SYMBOLS):
                 continue
             asserted = next(
                 phrase for phrase in CONFIRMED_TREE_PHRASES if phrase in described
@@ -3497,13 +3709,17 @@ def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
             candidate for glob in scope for candidate in root.glob(glob)
         ):
             relative = path.relative_to(root).as_posix()
-            if _is_test_source(path) or relative in (CLAIM_ORIGIN, CLAIM_VOCABULARY):
+            if _is_test_source(path, root) or relative in (
+                CLAIM_ORIGIN,
+                CLAIM_VOCABULARY,
+            ):
                 continue
+            test_only = _test_only_lines(path)
             for number, line in enumerate(
                 path.read_text(encoding="utf-8").splitlines(), start=1
             ):
                 stripped = line.strip()
-                if stripped.startswith("//"):
+                if stripped.startswith("//") or number in test_only:
                     continue
                 if re.search(rf"\b{member}\b", stripped) is None:
                     continue
@@ -3512,6 +3728,51 @@ def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
                     "claim belong to the boundary that decides them, and a caller "
                     "that can write one can assert a terminated process tree"
                 )
+
+    # 7. The claim's two remaining routes out of the type.
+    #
+    #    `ProcessOutput` is what a substituted runner returns, so every consumer
+    #    can build one — including one that did not happen. No type can tell
+    #    those apart, so the *asking* is contained instead: only the crate that
+    #    creates and supervises the process may derive a disposition from one.
+    #
+    #    The scope is that crate rather than one file, because there are two
+    #    lifecycles inside it — a single output and a set of them — and both
+    #    supervise a real run. Naming one file would have been a snapshot that
+    #    the multi-output lifecycle already contradicted. What the rule refuses
+    #    is a *consumer* minting the judgement: the desktop crate substitutes
+    #    backends, so a `ProcessOutput` reaching it need not have happened.
+    #
+    #    And once the judgement leaves the type it is a string. `owned_tree` is
+    #    a `String` on the wire and in the diagnostics payload, and writing the
+    #    identifier by hand is a claim no compiler refuses.
+    for glob in CLAIM_RUST_GLOBS:
+        for path in sorted(root.glob(glob)):
+            relative = path.relative_to(root).as_posix()
+            if _is_test_source(path, root):
+                continue
+            test_only = _test_only_lines(path)
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                stripped = line.strip()
+                if stripped.startswith("//") or number in test_only:
+                    continue
+                if CLAIM_DERIVATION in stripped and not relative.startswith(
+                    CLAIM_DERIVATION_SCOPE
+                ):
+                    errors.append(
+                        f"{relative}:{number} derives a disposition from a run; only "
+                        f"{CLAIM_DERIVATION_SCOPE} supervises one, and a consumer that can "
+                        f"substitute a backend can build a "
+                        f"{CLAIM_DERIVATION.split('::')[0]} input that did not happen"
+                    )
+                if f'"{CLAIM_STABLE_ID}"' in stripped and relative != CLAIM_VOCABULARY:
+                    errors.append(
+                        f"{relative}:{number} writes the identifier {CLAIM_STABLE_ID!r}; the "
+                        "claim leaves the type as a string, and a string written by hand is "
+                        "a claim no compiler refuses"
+                    )
 
     # 4. The retired boolean stays retired in code. Documents may quote it as
     #    history; a source file that reintroduces it reintroduces the defect.
@@ -3677,6 +3938,24 @@ CLAIM_BYPASSES: tuple[tuple[str, str, str, str], ...] = (
         "use super::destination::admit_destination_root;",
         "use super::destination::admit_destination_root;\n"
         "use mscanvas_proteowizard::OwnedTreeDisposition::ConfirmedGone;",
+    ),
+    # The two rules M6.8 added, each with the edit it exists to refuse.
+    (
+        "a consumer derives the disposition for itself",
+        "apps/desktop/src-tauri/src/preview/service.rs",
+        "use super::destination::admit_destination_root;",
+        "use super::destination::admit_destination_root;\n"
+        "fn _forged(output: &mscanvas_proteowizard::ProcessOutput)\n"
+        "    -> mscanvas_proteowizard::OwnedTreeDisposition {\n"
+        "    mscanvas_proteowizard::OwnedTreeDisposition::of(output)\n"
+        "}",
+    ),
+    (
+        "the claim is written as a string",
+        "apps/desktop/src-tauri/src/preview/service.rs",
+        "use super::destination::admit_destination_root;",
+        "use super::destination::admit_destination_root;\n"
+        'const _FORGED: &str = "confirmed_gone";',
     ),
     (
         "a production file states when ownership began",

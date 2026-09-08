@@ -10,10 +10,13 @@
 //! of datasets, the destination they all go to, and the latest result of each —
 //! replaced whole by the next queue.
 //!
-//! One queue-level stop was added on top of that, and deliberately nothing
-//! narrower: it asks the running attempt to end and refuses to begin any item
-//! after it. There is no per-item cancellation, no pause and no resume, because
-//! each of those is a different promise about work already done.
+//! Stopping arrived in two steps. A queue-level stop came first and
+//! deliberately nothing narrower: it asks the running attempt to end and
+//! refuses to begin any item after it. M6.8 added the two narrower ones its
+//! measurement admitted — ending the item being converted while the queue
+//! carries on, and settling a waiting item without converting it. There is
+//! still no pause, no resume, and no removing a row from a bound queue,
+//! because each of those is a different promise about work already done.
 //!
 //! It exists because a conversion outlives the request that started it. The
 //! webview can reload at any point, and Tauri dispatches Windows invokes as

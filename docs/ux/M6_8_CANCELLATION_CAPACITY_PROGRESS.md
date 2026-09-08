@@ -70,8 +70,11 @@ discriminates the interval, and both say so.
 | Resume fails, teardown could not reclaim it | An owned process whose disappearance cannot be stated. Classified as `NotTerminated`, which is what that already means, so a stop reaching it settles `CancellationFailed` and quarantines. |
 | Job accounting unavailable | `None`, never zero. Unknown surviving-process state is not zero, and the claim is unreachable without a bounded count. |
 | Emptiness times out | The Job would not empty. `NotTerminated`. |
-| Any of the above **with no stop in flight** | The same uncertainty, and the same consequence. The invariant is about the machine rather than about anything the user pressed, so the run is asked a typed question about its own failure and the queue ends on the quarantine that is then in force. Before this, quarantine fired only on the stop path and the queue went on to launch the next converter beside a process nothing could account for. The question covers `NotAwaited` as well as `NotTerminated`: a Job that would not empty and a supervision loop that lost its child leave the same uncertainty by different routes. |
+| Any of the above **with no stop in flight** | The same uncertainty, and the same consequence. The invariant is about the machine rather than about anything the user pressed, so the run is asked a typed question about its own failure and the queue ends on the quarantine that is then in force. Before this, quarantine fired only on the stop path and the queue went on to launch the next converter beside a process nothing could account for. |
+| Any of the above **on a lane that is not the queue** | The same again. A preview is a process too, and the sentence the quarantine shows had always named preview and conversion both while only the queue could raise it — so a preview that lost track of a process left the session trusting the backend and the next conversion started a converter beside it. Both lanes now ask `ProcessError::leaves_an_owned_process_unaccounted`, which is *derived from* the queue's own classification rather than restated beside it, so the two cannot answer differently. |
+| A wait that failed after its owned teardown succeeded | `NotAwaited`, and **not** a quarantine. This run cannot report how its process ended; it can say the owned Job was emptied. Quarantining here would refuse every later operation, for the rest of a session, on a fact that is not true — and a Job that would not empty is already classified `NotTerminated` at the boundary rather than folded into this. |
 | The thread snapshot the launch takes fails | Retried a bounded four times. It is documented to fail transiently while the system's thread list changes, and the process being asked about is suspended and cannot move under the retry. |
+| The suspended root reports more than one thread | Every one of them is resumed, and the launch continues. A process created suspended has one thread of its own, but a second can be one another product injected — which endpoint security software does routinely — and refusing there would have failed conversion, discovery and preview alike on such a machine over something that is not about ownership. Ownership comes from the suspended creation and the Job assignment that precede the resume. What is still required is checked directly: some thread must report a previous suspend count of one, which is the primary thread as created and before it ran. |
 | Capture or launch failure coinciding with a request | Keeps the reason that is true of it. An execution error does not erase an ownership uncertainty, and only the two failures that describe one are reclassified. |
 
 ## The measurement
@@ -145,25 +148,52 @@ conversion from starting. The state is derived from the disposition where the
 item settles, and the quarantine reads the disposition rather than a rendering
 of it.
 
-**The claim itself is carried by the compiler, not by a check over spellings.**
+**The claim's *name* is carried by the compiler. Its *value* is not, and the
+difference is written down because this record overstated it once.**
+
 `OwnedTreeDisposition::ConfirmedGone` is `non_exhaustive`, so outside the crate
 that decides it the affirmative member cannot be constructed *or* matched — by
-production code, by a fixture, under an alias, through a braced import, or
-under a renamed import. `OwnedTreeDisposition::of` is public for that reason: it
-is the only way anyone obtains the member, and a caller that needs it must
-present a run that earns it. Two independent reviewers each demonstrated
-bypasses of the string-matching version that preceded this; none of them
-compiles now.
+production code, by a fixture, under an alias, through a braced import, or under
+a renamed import. Two independent reviewers each demonstrated bypasses of the
+string-matching version that preceded this, and none of them compiles now.
+
+What that does **not** do is put the judgement out of reach.
+`OwnedTreeDisposition::of` is public, and its input is a `ProcessOutput` — the
+report a `ProcessRunner` returns, which every consumer that substitutes a runner
+must be able to build. A consumer could build a run that did not happen, hand it
+to the derivation and receive the affirmative member back without ever naming
+it. No type distinguishes a fabricated report from a supervised one, and none is
+claimed to.
+
+So the *asking* is contained instead, and by the guard rather than by the
+compiler: only `crates/proteowizard/src/`, the crate that creates the process
+and watches it end, may call the derivation. The scope is that crate rather than
+one file because two lifecycles inside it each supervise a real run; what the
+rule refuses is a consumer minting the judgement for itself. And once the
+judgement leaves the type it is a string — on the wire and in the diagnostics
+payload — which no compiler refuses either, so the identifier itself is
+watched.
 
 `validate_the_cancellation_claim_has_one_origin` in `scripts/check_repo.py`
 carries what a type cannot. It checks that the conjunction is defined once and
 reads both halves; that the derivation exists exactly once, so both lifecycles
 read one judgement; that the Rust identifiers and the TypeScript union are the
 same set compared against *each other*; that the retired boolean does not
-return in code; that neither claim-bearing member is named outside the two
-files that own them — matched as bare identifiers, because a qualified path is
-the one spelling an import removes; and that nothing describes itself as a
-confirmed process tree unless that is all it means.
+return in code; that neither claim-bearing member is named outside the two files
+that own them — matched as bare identifiers, because a qualified path is the one
+spelling an import removes; that the derivation is called only inside the crate
+that supervises a run, and the claim's identifier written as a string nowhere at
+all; and that nothing describes itself as a confirmed process tree unless that
+is all it means.
+
+A test may name what production may not, and what makes a file a test is the
+declaration that compiles it as one — `#[cfg(test)] mod <name>;` for a file
+module, a `#[cfg(test)]` block at the left margin for an inline one. Two simpler
+rules were both wrong. Reading it off the path exempted anything under a
+directory called `tests`; reading the file for `#[cfg(test)]` exempted nearly
+every production module in the repository, including the three this guard exists
+to check, and eight of its own bypass proofs stopped being detected. The bypass
+suite is what said so.
 
 **The description rule is an allowlist of what may claim, not a list of sites to
 inspect.** The version that listed sites passed while three other descriptions
@@ -171,18 +201,39 @@ asserted a confirmed tree, one of them a public API arm reached by a run that
 launched nothing. Inverted, a description nobody thought about is an error by
 default — and inverting it is what found that live defect.
 
-**Prose is the fallible half and is written down as such.** A synonym nobody
-listed still passes the description rule. That is why the member is
-`non_exhaustive` rather than merely watched: the compiler carries the claim, and
-the check carries the wording.
+It reads documents as well as code, and in a document it reads the **state
+tables** rather than the prose. That found a fourth live defect: ADR 0015's
+shipping definition of `cancelled` still said "owned tree confirmed gone", which
+asserts a process tree for a state a run that launched nothing also reaches — the
+identical defect round 2 had found and repaired in `dto.rs`, `operation.rs` and
+`contracts.ts`, and not here. Prose is left alone deliberately. The first version
+read every line and reported eleven hits, of which ten were prose doing what
+prose is for: an amendment quoting the sentence it supersedes, ADR 0043's
+contract *forbidding* the claim, and ADR 0020's record of one measured run that
+did launch a process. A rule that can only be satisfied by rewording honest
+sentences teaches the writer to dodge it.
 
-**The guard proves itself.** On every run it applies thirteen deliberate
-bypasses to isolated copies and requires each to be detected, including all six
-the two reviewers demonstrated: the alias import, the braced member import, the
-braced ownership import, a production claim hidden behind a file-based test
-module, the set-stop facts re-described, and a description synonym nobody
-listed. The proofs also fail if the guard has stopped checking at all, and they
-never edit the worktree.
+**Prose is the fallible half, and nothing here fixes that.** A synonym nobody
+listed still passes the description rule, because prose is not typed and no
+check over words can be exhaustive over words. What the `non_exhaustive` member
+buys is narrower and worth stating exactly: a wrong *description* cannot become
+a wrong *claim in code*. The words can drift; the member cannot be written by
+the code that reads them.
+
+**The guard proves itself.** On every run it applies fifteen deliberate bypasses
+to isolated copies and requires each to be detected, including all six the two
+reviewers demonstrated: the alias import, the braced member import, the braced
+ownership import, a production claim hidden behind a file-based test module, the
+set-stop facts re-described, and a state description narrowed to a confirmed
+tree.
+
+That last one is written in words the rule already lists. It proves the rule
+fires; it does **not** prove an unlisted synonym would be caught, and this record
+previously called it a synonym proof — which contradicted the paragraph above it.
+Two of the fifteen are the rules added after the third review: a consumer
+deriving the disposition for itself, and the claim written out as a string. The
+proofs also fail if the guard has stopped checking at all, and they never edit
+the worktree.
 
 An earlier version walked each file to skip `#[cfg(test)]` regions and read only
 what was left. It twice turned out to be skipping production code instead —
@@ -276,8 +327,11 @@ pressed from the pass that answers it.
 
 ## Changed-path closure
 
-34 paths. Each is either the boundary that decides the claim, a direct consumer
-of it, a surface that carries it, or the evidence for one.
+47 paths: 35 of code and evidence, and 12 documents. Each of the 35 is either
+the boundary that decides the claim, a direct consumer of it, a surface that
+carries it, or the evidence for one; the documents are listed at the end, so the
+closure is the whole diff against the baseline rather than the part of it that
+compiles.
 
 **Process boundary and the claim's origin** — `crates/proteowizard/src/process.rs`,
 `conversion_run.rs`, `conversion_run/output_set.rs`, `conversion_run/tests.rs`,
@@ -300,8 +354,10 @@ new operations, the new item state and count, the typed judgement replacing the
 boolean, the bounded diagnostic facts, and the command registration.
 
 **Interface** — `apps/desktop/src/features/mzml-preview/contracts.ts`, `api.ts`,
-`useConversionOperation.ts`, `ConversionPanel.tsx`, plus the tests that pin
-them: `conversionContract.test.ts`, `ConversionStop.test.tsx`,
+`useConversionOperation.ts`, `ConversionPanel.tsx`, `PreviewWorkspace.tsx` — the
+live region, which had to account for items a user decided about rather than
+only for items that ran — plus the tests that pin them:
+`conversionContract.test.ts`, `ConversionStop.test.tsx`,
 `ConversionDiagnostics.test.tsx`, `conversionLaneAuthority.test.tsx`,
 `usePreviewWorkspace.test.tsx`, `src/test/outputSetRendering.test.tsx`,
 `src/test/previewFixtures.ts`.
@@ -311,12 +367,21 @@ them: `conversionContract.test.ts`, `ConversionStop.test.tsx`,
 **Rendered and native evidence** — `e2e/specs/m6.8-cancellation-controls.browser.e2e.ts`,
 `e2e/specs/m6.8-cancellation-controls.tauri.e2e.ts`.
 
+**Documents** — `README.md`, `CHANGELOG.md`, `ROADMAP.md`, `BOOTSTRAP_STATUS.md`,
+`docs/product/FEATURE_CATALOG.md`, `docs/product/PRIMARY_WORKFLOWS.md`,
+`docs/architecture/adr/0043-conversion-completion-route.md` (the route
+decisions), `0014` (the interval it left open), `0015` (the decision this
+milestone amends), `0017` (the diagnostics schema version) and `0020` (one
+measured sentence made unambiguous), plus this record. Twelve, and the count is
+checkable: `git diff --name-only` against the baseline reports 47 paths, 12 of
+them documents.
+
 ## Validation
 
 Local gates: frontend lint, typecheck, 1652 tests across 69 files, build;
 `cargo fmt --all --check`; `cargo clippy --locked --workspace --all-targets
 --all-features -- -D warnings`; `cargo test --locked --workspace --all-targets`
-(1502 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
+(1507 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
 E2E typecheck.
 
 **Rendered QA**: 10/10 in `m6.8-cancellation-controls.browser`, including every
@@ -324,14 +389,35 @@ control reachable with no horizontal overflow at 1366x768, 1920x1080, 1200x800
 and 960x640, plus M6.6 8/8 and M6.7 7/7 unchanged on the same head. Screenshots
 and console records inspected; console empty.
 
-Two independent reviews rejected the first candidate. Both were right, and every
-finding was verified against the code before it was acted on: a skip landing
-between the worker choosing an item and starting it wedged the queue; the guard
-was blind to 650 lines of production `service.rs`; the item state and queue count
-still described a confirmed tree for a state also reached by a run that launched
-nothing; exit criterion 7's invariant fired only on the stop path; and two of the
-three ownership tests did not discriminate what they were named for. Each repair
-is proved by reverting it and watching a test report the defect.
+**Three rounds of two independent reviews rejected three candidates, and every
+finding was verified against the code before it was acted on.** Each repair is
+proved by reverting it and watching a test report the defect.
+
+Round 1: a skip landing between the worker choosing an item and starting it
+wedged the queue; the guard was blind to 650 lines of production `service.rs`;
+the item state and queue count still described a confirmed tree for a state also
+reached by a run that launched nothing; exit criterion 7's invariant fired only
+on the stop path; and two of the three ownership tests did not discriminate what
+they were named for.
+
+Round 2: both reviewers demonstrated working bypasses of the guard rather than
+arguing about it — an alias import, a braced import, a production claim behind a
+file-based test module. The answer was to stop matching spellings for the
+member's name and make the compiler refuse it, which is where `non_exhaustive`
+came from, and to invert the description rule into an allowlist — which
+immediately found a live defect on a public API arm.
+
+Round 3: the guard's own test-source exemption could be won by naming a
+directory; the assign-failure path could strand an owned root without saying so;
+`NotAwaited` had been widened into the quarantine and would have refused a whole
+session on a fact that was not true; the launch refused any process reporting
+more than one thread, which would have failed every lane on a machine that
+injects one; the quarantine was raised by the conversion lane alone while its
+sentence named preview too; the skip single-flight test passed with its guard
+removed; ADR 0015's shipping definition of `cancelled` still asserted a confirmed
+tree; the diagnostics schema had moved from 1 to 2 with nothing recording it; and
+this document overstated what the compiler carries and contradicted itself about
+what the bypass proofs prove. All are repaired above.
 
 **Native**, on the build attributable to the final candidate — binary SHA-256
 `6db463738e80f37156b3ea6b92c0a195df3d452c4c0eca43de6cc98262414e17`, WebView2 and

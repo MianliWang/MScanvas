@@ -1385,6 +1385,30 @@ impl BackendExecutionFailure {
     }
 }
 
+impl ProcessError {
+    /// Whether this failure leaves a process this run created unaccounted for.
+    ///
+    /// **Derived from the classification rather than restated beside it.** The
+    /// answer is exactly the failures that classify as
+    /// [`BackendExecutionFailure::NotTerminated`], and a second match over the
+    /// same variants would be a second place to be wrong — which is how the
+    /// preview lane came to disagree with the conversion lane about the same
+    /// process in the first place.
+    ///
+    /// It is on `ProcessError` because the question is about the machine, not
+    /// about which lane happened to be running. Every lane that starts a
+    /// backend process can ask it, and the queue's own use goes through
+    /// [`ConversionRunFailure::leaves_an_owned_process_unaccounted`], which
+    /// reads the same classification.
+    #[must_use]
+    pub fn leaves_an_owned_process_unaccounted(&self) -> bool {
+        matches!(
+            BackendExecutionFailure::from(self),
+            BackendExecutionFailure::NotTerminated
+        )
+    }
+}
+
 impl From<&ProcessError> for BackendExecutionFailure {
     fn from(error: &ProcessError) -> Self {
         match error {
@@ -1407,7 +1431,20 @@ impl From<&ProcessError> for BackendExecutionFailure {
             }
             ProcessError::SourceIdentityChanged => Self::SourceChanged,
             ProcessError::Launch { kind, .. } => Self::NotLaunched { kind: *kind },
-            ProcessError::AssignToOwnedJob { .. } => Self::NotSupervised,
+            // Ownership was never established, and what follows depends on
+            // whether teardown reclaimed the root it had already created.
+            // There is no Job on that path, so nothing else would.
+            ProcessError::AssignToOwnedJob {
+                owned_root_reclaimed,
+                ..
+            } => {
+                if *owned_root_reclaimed {
+                    Self::NotSupervised
+                } else {
+                    Self::NotTerminated
+                }
+            }
+            ProcessError::OwnedJobNotEmptied { .. } => Self::NotTerminated,
             // Two different facts wear one variant here, and which one applies
             // is decided by teardown rather than by the resume failure. A root
             // that was reclaimed executed nothing and is gone; one that was not
@@ -1557,21 +1594,20 @@ impl ConversionRunFailure {
     /// was created and could neither be started nor reclaimed — leaves the same
     /// uncertainty as one that reaches it with a stop.
     ///
-    /// `NotAwaited` is the same fact by a different route and is included for
-    /// the same reason. It is what a Job that would not empty within its
-    /// bounded window reports, and what a supervision loop that lost track of
-    /// its child reports; in both the run owned processes and cannot say they
-    /// are gone. The boundary already reclassifies it as a cancellation failure
-    /// where a stop was in flight, and whether anyone asked for a stop is not
-    /// what decides whether a process survived.
+    /// It is exactly `NotTerminated`, and that identifier now means what it
+    /// says. Three paths reach it and no others: a Job that would not report
+    /// itself empty within its bounded window, an owned teardown that failed,
+    /// and a root that was created and could neither be started nor reclaimed.
+    /// Each is a process this run owned whose end nothing observed.
+    ///
+    /// **`NotAwaited` is deliberately not included.** It is an ordinary wait
+    /// failure whose owned teardown then succeeded — the Job was terminated, and
+    /// a run that lost track of its child but tore down what held it has not
+    /// lost the child. Including it quarantined a session for a queue whose
+    /// processes were in fact gone, and quarantine is never lifted.
     #[must_use]
     pub const fn leaves_an_owned_process_unaccounted(&self) -> bool {
-        matches!(
-            self,
-            Self::Backend(
-                BackendExecutionFailure::NotTerminated | BackendExecutionFailure::NotAwaited
-            )
-        )
+        matches!(self, Self::Backend(BackendExecutionFailure::NotTerminated))
     }
 }
 
@@ -2101,13 +2137,23 @@ pub enum OwnedTreeDisposition {
     /// **`non_exhaustive` is load-bearing, not a compatibility hedge.** It is
     /// what makes this member unconstructible — and unmatchable — outside this
     /// crate, so the one claim in this repository that is about the user's
-    /// machine cannot be written by a caller at all. Every consumer reaches it
-    /// through [`OwnedTreeDisposition::of`], which derives it from a supervised
-    /// run, or asks one of the predicates below.
+    /// machine cannot be *written* by a caller. Every consumer reaches it
+    /// through [`OwnedTreeDisposition::of`], or asks one of the predicates
+    /// below.
     ///
-    /// A repository check over spellings cannot do this: an import can put a
-    /// member behind any name, and prose can assert a terminated tree in words
-    /// nobody listed. The compiler has neither problem.
+    /// A repository check over spellings cannot do that much: an import can put
+    /// a member behind any name, and four reviewers demonstrated exactly that
+    /// against the versions of the guard that tried.
+    ///
+    /// **What it does not do is make the judgement unobtainable, and saying so
+    /// would be the same overclaim in a new place.** `of` takes a
+    /// [`ProcessOutput`], which is the report a `ProcessRunner` returns — so
+    /// every consumer that substitutes a runner can build one, including one
+    /// that describes a run that never happened. No type tells those apart.
+    /// What is contained instead is the *asking*: `check_repo.py` allows this
+    /// derivation only inside this crate, the one that creates the process and
+    /// watches it end, and watches the identifier the judgement travels as once
+    /// it leaves the type and becomes a string.
     #[non_exhaustive]
     ConfirmedGone,
     /// A tree existed and its disappearance could not be established.

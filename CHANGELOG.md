@@ -66,6 +66,16 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Changed
 
+- **The conversion diagnostics file is now schema version 2.** An item used to
+  carry `treeTerminationConfirmed`, a yes-or-no about the converter's process
+  tree, and a `false` could not tell an end that could not be confirmed from a
+  run that never started a process at all. It is replaced by `ownedTree`, which
+  names which of the three actually happened, alongside three new measurements of
+  what the run owned. Nothing else about the file changed, and the version moved
+  because a field left rather than because fields were added — a reader written
+  for version 1 will see the number and know not to read the boolean's absence as
+  a `false`.
+
 - **A queue item now states what it will produce rather than naming one file.**
   Items whose output name is known before the run — Thermo and Shimadzu — are
   unchanged in meaning; items whose backend names its own outputs say so

@@ -164,6 +164,8 @@ mzML files with no sidecars and no residue, output-only and not fully verified
 on every item, the chromatogram-only shape intact; adoption added three
 ordinary mzML rows; and a product Stop against a running Shimadzu conversion
 cancelled it with the process tree confirmed empty and an empty destination.
+That run had launched, so there was a tree to confirm; a stop that launched
+nothing has none, and M6.8's vocabulary keeps the two apart.
 Output digests are per-run facts, not family facts, for the reason the M3.7
 record documents.
 

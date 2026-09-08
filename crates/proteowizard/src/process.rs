@@ -286,7 +286,24 @@ pub enum ProcessError {
         detail: String,
     },
     #[error("failed to assign the backend to an owned process job: {detail}")]
-    AssignToOwnedJob { detail: String },
+    AssignToOwnedJob {
+        detail: String,
+        /// Whether teardown observed the created root reclaimed.
+        ///
+        /// There is no Job on this path, so `KILL_ON_JOB_CLOSE` is not a
+        /// backstop and dropping the handle does not kill anything. `false` is
+        /// a suspended process this run created, still holding the pipes and
+        /// working directory it was given, that nothing observed end.
+        owned_root_reclaimed: bool,
+    },
+    /// The owned Job would not report itself empty within its bounded window.
+    ///
+    /// Distinct from an ordinary wait failure because of what is *not* known:
+    /// processes the Job held were still there when the window closed, and
+    /// terminating it afterwards is a request rather than an observation. A run
+    /// that ends here has not established that its tree is gone.
+    #[error("the owned backend process job did not empty: {detail}")]
+    OwnedJobNotEmptied { detail: String },
     /// Ownership was established, and the owned root could not then be started.
     ///
     /// Its own variant rather than a `Launch` failure: the process exists and
@@ -444,9 +461,13 @@ fn execute_command_after_assignment(
             let stderr_reader =
                 capture_stream(child.stderr.take().expect("stderr was configured as piped"));
             let cleanup = force_unowned_cleanup(&mut child);
+            let owned_root_reclaimed = cleanup.is_ok();
             let captures = join_captures(stdout_reader, stderr_reader);
             let detail = add_cleanup_context(error.to_string(), cleanup, captures.err());
-            return Err(ProcessError::AssignToOwnedJob { detail });
+            return Err(ProcessError::AssignToOwnedJob {
+                detail,
+                owned_root_reclaimed,
+            });
         }
     };
 
@@ -496,7 +517,10 @@ fn execute_command_after_assignment(
                     },
                     final_active_processes,
                 )),
-                Err(error) => Err(ProcessError::Wait {
+                // Its own kind, because what it means is its own fact: the Job
+                // still held processes when its window closed, and nothing
+                // after this observes them leave.
+                Err(error) => Err(ProcessError::OwnedJobNotEmptied {
                     detail: format!("failed to observe an empty owned process job: {error}"),
                 }),
             }
@@ -872,6 +896,13 @@ fn add_cleanup_context(
     detail
 }
 
+/// Folds what teardown and capture reported into the error a run returns.
+///
+/// **A failed owned teardown changes the kind, not only the text.** The
+/// difference between "this run failed and its Job was terminated" and "this
+/// run failed and its Job would not go" is the whole of what decides whether
+/// anything of this session's may start next, and folding the second into a
+/// detail string is how it stopped being decidable.
 fn add_process_cleanup_context(
     primary: ProcessError,
     cleanup: Option<&ProcessError>,
@@ -887,6 +918,9 @@ fn add_process_cleanup_context(
     }
     if let Some(error) = capture {
         detail.push_str(&format!("; capture cleanup error: {error}"));
+    }
+    if cleanup.is_some() {
+        return ProcessError::OwnedJobNotEmptied { detail };
     }
     ProcessError::Wait { detail }
 }
@@ -1155,8 +1189,8 @@ mod windows_job {
     const THREAD_SUSPEND_RESUME: u32 = 0x0002;
     const INVALID_HANDLE_VALUE: isize = -1;
     /// `ResumeThread` returns the thread's previous suspend count, or this on
-    /// failure. A previous count of zero is its own error here: the thread was
-    /// not suspended, so this is not the process the caller created.
+    /// failure. Zero is not a failure: a thread that was not suspended keeps
+    /// the count it had, because the call will not take one below zero.
     const RESUME_THREAD_FAILED: u32 = u32::MAX;
     /// How many times a thread snapshot is taken before its failure is the
     /// answer. The suspended process cannot change under it, so a retry asks
@@ -1271,58 +1305,85 @@ mod windows_job {
     /// Starts the suspended root process this run already owns.
     ///
     /// Stable `std::process` creates the process but hands back no handle to
-    /// its primary thread, so the thread is found by asking the system which
-    /// threads belong to the child's process id. Two things make that
-    /// identification sound rather than a lookup that could hit a stranger:
+    /// its primary thread, so the threads are found by asking the system which
+    /// ones belong to the child's process id. That identification is sound
+    /// rather than a lookup that could hit a stranger because the caller still
+    /// holds the child's process handle: the process cannot have exited and its
+    /// id cannot have been reused, so every thread reported for that id belongs
+    /// to the process this run created.
     ///
-    /// - the caller still holds the child's process handle, so the process
-    ///   cannot have exited and its id cannot have been reused;
-    /// - the process was created suspended and has executed nothing, so it has
-    ///   exactly the one thread it was created with. Finding any other number
-    ///   means this is not that process, and it is refused rather than resumed.
+    /// **Every one of them is resumed, and a count other than one is not an
+    /// error.** An earlier version took "a process created suspended has one
+    /// thread" as an identity check and refused anything else. A process
+    /// created suspended does have one thread of its own — but a second thread
+    /// in it need not be a stranger's process, it can be one another product
+    /// injected, which endpoint security software does routinely. This boundary
+    /// is the one every lane uses, so that refusal would have failed conversion,
+    /// discovery and preview alike on such a machine, over something that was
+    /// never about ownership in the first place. Ownership comes from
+    /// `CREATE_SUSPENDED` and the Job assignment that both precede this call,
+    /// and no thread count changes what they established.
     ///
-    /// `ResumeThread` returning a previous suspend count of one is the
-    /// confirmation that the thread really was the suspended primary thread.
+    /// What the count was standing in for is still required, and is checked
+    /// directly: some thread must report a previous suspend count of one, which
+    /// is the primary thread exactly as it was created and before it ran.
+    /// Resuming a thread that was not suspended does nothing at all, so the
+    /// others cost only the call.
     pub(super) fn resume_primary_thread(child: &Child) -> io::Result<()> {
         let process_id = child.id();
-        let thread_id = sole_thread_of(process_id)?;
-        // SAFETY: A thread id the system just reported for a live process, asked
-        // for with the one access right this needs. The returned handle is
-        // checked before use and owned exactly once.
-        let raw_thread = unsafe { open_thread(THREAD_SUSPEND_RESUME, 0, thread_id) };
-        if raw_thread.is_null() {
-            return Err(io::Error::last_os_error());
+        let threads = threads_of_owned_root(process_id)?;
+        let mut resumed_one_created_suspended = false;
+        // A thread this run cannot open or resume is remembered rather than
+        // fatal. Whether the root will run is decided by the primary thread
+        // alone, and that is what the loop is looking for.
+        let mut refusal: Option<io::Error> = None;
+        for thread_id in threads {
+            // SAFETY: A thread id the system just reported for a live process,
+            // asked for with the one access right this needs. The returned
+            // handle is checked before use and owned exactly once.
+            let raw_thread = unsafe { open_thread(THREAD_SUSPEND_RESUME, 0, thread_id) };
+            if raw_thread.is_null() {
+                refusal.get_or_insert_with(io::Error::last_os_error);
+                continue;
+            }
+            // SAFETY: OpenThread returned a new, non-null owned HANDLE whose
+            // ownership is transferred exactly once to OwnedHandle.
+            let thread = unsafe { OwnedHandle::from_raw_handle(raw_thread) };
+            // SAFETY: The handle remains owned by `thread` and is valid for the call.
+            let previous_suspend_count = unsafe { resume_thread(thread.as_raw_handle()) };
+            if previous_suspend_count == RESUME_THREAD_FAILED {
+                refusal.get_or_insert_with(io::Error::last_os_error);
+                continue;
+            }
+            if previous_suspend_count == 1 {
+                resumed_one_created_suspended = true;
+            }
         }
-        // SAFETY: OpenThread returned a new, non-null owned HANDLE whose
-        // ownership is transferred exactly once to OwnedHandle.
-        let thread = unsafe { OwnedHandle::from_raw_handle(raw_thread) };
-        // SAFETY: The handle remains owned by `thread` and is valid for the call.
-        let previous_suspend_count = unsafe { resume_thread(thread.as_raw_handle()) };
-        if previous_suspend_count == RESUME_THREAD_FAILED {
-            return Err(io::Error::last_os_error());
+        if resumed_one_created_suspended {
+            return Ok(());
         }
-        if previous_suspend_count != 1 {
-            return Err(io::Error::other(format!(
-                "the owned root thread had a suspend count of {previous_suspend_count} \
-                 rather than the one it was created with"
-            )));
-        }
-        Ok(())
+        Err(refusal.unwrap_or_else(|| {
+            io::Error::other(
+                "no thread of the owned root was still suspended as it was created, so \
+                 this run cannot say the image had executed nothing when it took ownership",
+            )
+        }))
     }
 
-    /// The one thread of a process that has executed nothing.
+    /// Every thread the system reports for a process.
     ///
-    /// Any other count refuses: a process created suspended has one thread, so
-    /// zero means it is already gone and more than one means this is not it.
-    fn sole_thread_of(process_id: u32) -> io::Result<u32> {
+    /// An empty answer is an error: the caller holds the process handle, so a
+    /// process with no thread is a snapshot that has not caught up rather than
+    /// a fact about the process.
+    pub(super) fn threads_of_owned_root(process_id: u32) -> io::Result<Vec<u32>> {
         // The snapshot is documented to fail transiently while the system's
         // thread list is changing, so a single attempt would turn ordinary load
         // into a launch that refuses. Bounded, and short: the process being
         // asked about is suspended and cannot go anywhere in the meantime.
         let mut last = None;
         for attempt in 0..SNAPSHOT_ATTEMPTS {
-            match sole_thread_in_one_snapshot(process_id) {
-                Ok(thread_id) => return Ok(thread_id),
+            match threads_in_one_snapshot(process_id) {
+                Ok(threads) => return Ok(threads),
                 Err(error) => {
                     last = Some(error);
                     if attempt + 1 < SNAPSHOT_ATTEMPTS {
@@ -1334,8 +1395,8 @@ mod windows_job {
         Err(last.expect("at least one attempt was made"))
     }
 
-    /// One snapshot, and what it says about the process.
-    fn sole_thread_in_one_snapshot(process_id: u32) -> io::Result<u32> {
+    /// One snapshot, and every thread it reports for the process.
+    fn threads_in_one_snapshot(process_id: u32) -> io::Result<Vec<u32>> {
         // SAFETY: A thread snapshot over every process, which is what the
         // documented call takes a zero process id to mean. The returned handle
         // is checked against both failure spellings before use.
@@ -1351,18 +1412,13 @@ mod windows_job {
             size: entry_size,
             ..ThreadEntry32::default()
         };
-        let mut found = None;
+        let mut found = Vec::new();
         // SAFETY: The snapshot is live and the entry is a correctly sized,
         // writable THREADENTRY32 for the duration of each call.
         let mut more = unsafe { thread32_first(snapshot.as_raw_handle(), &mut entry) };
         while more != 0 {
             if entry.owner_process_id == process_id {
-                if found.is_some() {
-                    return Err(io::Error::other(
-                        "the owned root process reported more than one thread before it ran",
-                    ));
-                }
-                found = Some(entry.thread_id);
+                found.push(entry.thread_id);
             }
             // Reset on every iteration: the enumeration is documented to require
             // the size field, and a call that overwrote it would walk off.
@@ -1370,9 +1426,12 @@ mod windows_job {
             // SAFETY: As above.
             more = unsafe { thread32_next(snapshot.as_raw_handle(), &mut entry) };
         }
-        found.ok_or_else(|| {
-            io::Error::other("the owned root process reported no thread before it ran")
-        })
+        if found.is_empty() {
+            return Err(io::Error::other(
+                "the owned root process reported no thread before it ran",
+            ));
+        }
+        Ok(found)
     }
 
     #[derive(Debug)]
@@ -2372,6 +2431,51 @@ mod tests {
         // The detail is identical, so nothing but the reclamation tells them
         // apart -- which is the point of carrying it.
         assert_eq!(reclaimed.to_string(), stranded.to_string());
+    }
+
+    /// A process with several threads is enumerated, not refused.
+    ///
+    /// This is the property the launch path lost when it read "a process
+    /// created suspended has one thread" as an identity check: on a machine
+    /// where anything injects a thread, every lane that starts a backend would
+    /// have failed. The test process is made to have several threads on
+    /// purpose and the count is asserted, because a harness that happened to
+    /// have one would make the assertion below say nothing.
+    #[cfg(windows)]
+    #[test]
+    fn every_thread_of_a_process_is_reported_rather_than_only_a_lone_one() {
+        let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let spares = (0..3)
+            .map(|_| {
+                let running = std::sync::Arc::clone(&running);
+                std::thread::spawn(move || {
+                    while running.load(std::sync::atomic::Ordering::SeqCst) {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let threads = windows_job::threads_of_owned_root(std::process::id())
+            .expect("enumerate the threads of this process");
+
+        running.store(false, std::sync::atomic::Ordering::SeqCst);
+        for spare in spares {
+            spare.join().expect("join a spare thread");
+        }
+
+        assert!(
+            threads.len() > 1,
+            "a process with several threads reported {} of them, so this test cannot \
+             say whether more than one is refused",
+            threads.len()
+        );
+        let unique = threads.iter().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            unique.len(),
+            threads.len(),
+            "the same thread was reported twice: {threads:?}"
+        );
     }
 
     #[test]
