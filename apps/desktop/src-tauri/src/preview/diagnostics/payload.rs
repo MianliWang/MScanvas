@@ -138,10 +138,7 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
         Some(cancellation) => item.object("cancellation", |written| {
             written.boolean("processLaunched", cancellation.process_launched);
             written.boolean("terminationRequested", true);
-            written.boolean(
-                "treeTerminationConfirmed",
-                cancellation.tree_termination_confirmed,
-            );
+            written.string("ownedTree", cancellation.owned_tree.stable_id());
             written.number(
                 "elapsedMilliseconds",
                 u64::try_from(cancellation.elapsed.as_millis()).unwrap_or(u64::MAX),

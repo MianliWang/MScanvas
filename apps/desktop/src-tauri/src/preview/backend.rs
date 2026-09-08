@@ -786,6 +786,18 @@ pub fn process_error(error: ProcessError) -> PreviewErrorDto {
              so it did not use its output.",
             true,
         ),
+        // The owned root was created and could not be started. Whether it was
+        // reclaimed decides how bad this is, and the crate carries that;
+        // neither answer is one the user can act on differently, so the message
+        // stays the same and only the retryability follows the fact.
+        ProcessError::ResumeOwnedRoot {
+            owned_root_reclaimed,
+            ..
+        } => PreviewErrorDto::new(
+            "backend_not_started",
+            "MSCanvas prepared the ProteoWizard program under its own supervision              but could not start it.",
+            owned_root_reclaimed,
+        ),
         ProcessError::Wait { .. } => PreviewErrorDto::new(
             "backend_wait_failed",
             "MSCanvas lost track of the ProteoWizard program while it was running.",

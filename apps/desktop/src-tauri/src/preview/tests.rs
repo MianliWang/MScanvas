@@ -257,6 +257,7 @@ fn completed_process(stdout: &str) -> ProcessOutput {
         max_active_processes: None,
         final_active_processes: None,
         peak_job_memory_bytes: None,
+        tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
     }
 }
 
@@ -7121,6 +7122,7 @@ impl ProcessRunner for FakeConversionRunner {
             max_active_processes: Some(1),
             final_active_processes: Some(0),
             peak_job_memory_bytes: Some(2_048),
+            tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         })
     }
 }
@@ -9371,9 +9373,9 @@ fn a_real_shimadzu_stop_terminates_the_owned_process_tree() {
                 ConversionQueueItemStateDto::Cancelled => {
                     let facts = item.cancellation.as_ref().expect("a reached stop reports");
                     assert!(facts.termination_requested);
-                    assert!(
-                        facts.tree_termination_confirmed,
-                        "no owned converter survives a confirmed stop"
+                    assert_eq!(
+                        facts.owned_tree, "confirmed_gone",
+                        "a launched attempt whose owned tree was confirmed gone"
                     );
                     assert!(
                         entry_names(&destination).is_empty(),
@@ -12068,6 +12070,7 @@ impl ProcessRunner for StopAwareRunner {
             max_active_processes: Some(1),
             final_active_processes: Some(0),
             peak_job_memory_bytes: Some(2_048),
+            tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         })
     }
 
@@ -12092,6 +12095,7 @@ impl ProcessRunner for StopAwareRunner {
                 stdout_truncated: false,
                 stderr_truncated: false,
                 peak_job_memory_bytes: None,
+                tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
             });
         }
         self.calls.fetch_add(1, Ordering::SeqCst);
@@ -12130,6 +12134,7 @@ impl ProcessRunner for StopAwareRunner {
                 max_active_processes: Some(1),
                 final_active_processes: Some(0),
                 peak_job_memory_bytes: Some(2_048),
+                tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
             });
         }
         fs::write(&destination, b"<indexedmzML><mzML").expect("write a partial staged output");
@@ -12155,6 +12160,7 @@ impl ProcessRunner for StopAwareRunner {
                 Some(0)
             },
             peak_job_memory_bytes: Some(2_048),
+            tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         })
     }
 }
@@ -12275,7 +12281,7 @@ fn a_confirmed_stop_cancels_the_running_item_and_runs_no_other() {
         .expect("a stop that reached an attempt says what it established");
     assert!(facts.process_launched);
     assert!(facts.termination_requested);
-    assert!(facts.tree_termination_confirmed);
+    assert_eq!(facts.owned_tree, "confirmed_gone");
     assert!(facts.partial_output_observed);
     assert_eq!(facts.staging_residue, None);
     // A not-run item launched nothing, so there is nothing to have established.
@@ -12399,8 +12405,8 @@ fn an_unconfirmed_stop_quarantines_the_backend_and_refuses_every_operation() {
             .as_ref()
             .expect("a stop that reached an attempt says what it established");
         assert!(facts.termination_requested);
-        assert!(
-            !facts.tree_termination_confirmed,
+        assert_eq!(
+            facts.owned_tree, "unconfirmed",
             "the whole reason this state exists"
         );
         // No later item ran.
@@ -12736,7 +12742,7 @@ fn a_real_queue_stops_the_running_item_and_starts_no_other() {
         .expect("a stop that reached a real attempt says what it established");
     println!("cancellation: {facts:?}");
     assert!(facts.process_launched);
-    assert!(facts.tree_termination_confirmed);
+    assert_eq!(facts.owned_tree, "confirmed_gone");
     assert_eq!(facts.staging_residue, None, "no staging was left behind");
     // Nothing was finalized and nothing was left in the folder the user chose,
     // staging included.
@@ -13047,12 +13053,12 @@ fn the_serialized_stopped_queue_carries_no_location_and_names_no_output() {
         sorted_keys(&items[0]["cancellation"]),
         vec![
             "elapsedMilliseconds",
+            "ownedTree",
             "partialOutputObserved",
             "processLaunched",
             "stagingResidue",
             "termination",
             "terminationRequested",
-            "treeTerminationConfirmed",
         ]
     );
     // A cancelled item finalized nothing, so it carries no report to name an
@@ -14447,7 +14453,7 @@ fn a_stop_reaching_a_running_shimadzu_item_cancels_it_and_runs_no_other() {
         .as_ref()
         .expect("a reached stop reports what it established");
     assert!(cancellation.termination_requested);
-    assert!(cancellation.tree_termination_confirmed);
+    assert_eq!(cancellation.owned_tree, "confirmed_gone");
     // One process: the first item's. Nothing behind the stop launched.
     assert_eq!(launches.load(Ordering::SeqCst), 1);
     assert!(
@@ -16431,6 +16437,7 @@ impl ProcessRunner for NoisyFailingRunner {
             max_active_processes: Some(1),
             final_active_processes: Some(0),
             peak_job_memory_bytes: Some(4_096),
+            tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         })
     }
 }
@@ -16711,10 +16718,7 @@ fn a_stop_failed_queue_exports_while_the_backend_is_quarantined() {
         .iter()
         .find(|item| item["state"] == "cancellation_failed")
         .expect("the item whose stop could not be confirmed");
-    assert_eq!(
-        unconfirmed["cancellation"]["treeTerminationConfirmed"],
-        false
-    );
+    assert_eq!(unconfirmed["cancellation"]["ownedTree"], "unconfirmed");
     assert_eq!(unconfirmed["cancellation"]["terminationRequested"], true);
 
     assert_no_location(&saved, &[fixture.directory.to_string_lossy().as_ref()]);
@@ -17050,7 +17054,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
             state: ItemState::Cancelled,
             facts: CancellationFacts {
                 process_launched: true,
-                tree_termination_confirmed: true,
+                owned_tree: mscanvas_proteowizard::OwnedTreeDisposition::ConfirmedGone,
                 elapsed: Duration::from_millis(5),
                 termination: None,
                 partial_output_observed: false,
@@ -17109,7 +17113,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
             state: ItemState::CancellationFailed,
             facts: CancellationFacts {
                 process_launched: true,
-                tree_termination_confirmed: false,
+                owned_tree: mscanvas_proteowizard::OwnedTreeDisposition::Unconfirmed,
                 elapsed: Duration::from_millis(7),
                 termination: None,
                 partial_output_observed: true,
@@ -17176,6 +17180,7 @@ impl ProcessRunner for VerboseFailingRunner {
             max_active_processes: Some(1),
             final_active_processes: Some(0),
             peak_job_memory_bytes: Some(1_024),
+            tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         })
     }
 }
@@ -17922,6 +17927,7 @@ impl ProcessRunner for FakeOutputSetRunner {
                 max_active_processes: Some(1),
                 final_active_processes: Some(0),
                 peak_job_memory_bytes: Some(2_048),
+                tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
             });
         }
         let args = spec.args();
@@ -17972,6 +17978,7 @@ impl ProcessRunner for FakeOutputSetRunner {
             max_active_processes: Some(1),
             final_active_processes: Some(0),
             peak_job_memory_bytes: Some(2_048),
+            tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         })
     }
 
@@ -18001,6 +18008,7 @@ impl ProcessRunner for FakeOutputSetRunner {
                 stdout_truncated: false,
                 stderr_truncated: false,
                 peak_job_memory_bytes: None,
+                tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
             });
         }
         if self.calls.load(Ordering::SeqCst) + 1 < self.park_on_call {
@@ -18052,6 +18060,7 @@ impl ProcessRunner for FakeOutputSetRunner {
                 max_active_processes: Some(1),
                 final_active_processes: Some(0),
                 peak_job_memory_bytes: Some(2_048),
+                tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
             });
         }
         // A partial document, as a terminated backend leaves behind, so the
@@ -18082,6 +18091,7 @@ impl ProcessRunner for FakeOutputSetRunner {
                 Some(0)
             },
             peak_job_memory_bytes: Some(2_048),
+            tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         })
     }
 }
@@ -21148,7 +21158,7 @@ fn a_confirmed_stop_cancels_the_running_set_item() {
         .as_ref()
         .expect("the cancelled item says what the stop established");
     assert!(cancellation.process_launched);
-    assert!(cancellation.tree_termination_confirmed);
+    assert_eq!(cancellation.owned_tree, "confirmed_gone");
     assert!(
         cancellation.partial_output_observed,
         "the run says what it had staged when it was interrupted"
@@ -21196,7 +21206,7 @@ fn an_unconfirmed_stop_of_a_set_quarantines_the_backend() {
         .cancellation
         .as_ref()
         .expect("the item says what the stop could not establish");
-    assert!(!cancellation.tree_termination_confirmed);
+    assert_eq!(cancellation.owned_tree, "unconfirmed");
     assert!(adopt_visible(&service, operation).is_err());
     // Nothing further may run, at all.
     let document = service.workspace_drop_document_epoch();

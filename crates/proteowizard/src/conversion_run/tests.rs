@@ -263,6 +263,7 @@ impl ProcessRunner for FakeRunner<'_> {
             max_active_processes: Some(1),
             final_active_processes: Some(0),
             peak_job_memory_bytes: Some(1_024),
+            tree_ownership: crate::process::TreeOwnership::EstablishedBeforeExecution,
         })
     }
 }
@@ -5750,7 +5751,8 @@ fn a_cancelled_multi_output_run_publishes_nothing_and_cleans_staging() {
     assert!(matches!(
         run.report.outcome(),
         MultiOutputOutcome::RefusedBeforePublication(MultiOutputFailure::Cancelled {
-            surviving_processes: Some(0)
+            surviving_processes: Some(0),
+            owned_tree: OwnedTreeDisposition::ConfirmedGone
         })
     ));
     assert!(run.retained.is_empty());
@@ -5983,6 +5985,7 @@ impl ProcessRunner for CancellingRunner<'_> {
             max_active_processes: Some(1),
             final_active_processes: self.final_active_processes,
             peak_job_memory_bytes: Some(2_048),
+            tree_ownership: crate::process::TreeOwnership::EstablishedBeforeExecution,
         })
     }
 }

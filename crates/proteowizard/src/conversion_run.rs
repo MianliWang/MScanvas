@@ -58,7 +58,9 @@ use crate::finalized_output::FinalizedOutput;
 use crate::fs_guard::{self, OutputEntryKind, RegularFileError, snapshot_output_directory};
 use crate::intent::ConversionIntent;
 use crate::mzml::{MzmlFacts, MzmlScanError, MzmlScanLimits};
-use crate::process::{LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner, Termination};
+use crate::process::{
+    LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner, Termination, TreeOwnership,
+};
 use crate::sciex_wiff;
 
 /// Appended to the planned output file name to name the staging directory.
@@ -1336,6 +1338,16 @@ pub enum BackendExecutionFailure {
     NotLaunched { kind: LaunchFailureKind },
     #[error("the backend could not be assigned to an owned process job")]
     NotSupervised,
+    /// The owned root was created and reclaimed without ever executing.
+    ///
+    /// Distinct from every failure above it because of what it rules out: the
+    /// process this run owned never ran an instruction, so it created no
+    /// descendant, and teardown observed it gone. Where teardown could *not*
+    /// say that, the failure is [`BackendExecutionFailure::NotTerminated`]
+    /// instead — an owned process whose disappearance is unstated is the one
+    /// thing this vocabulary must not describe as a clean stop.
+    #[error("the owned backend process could not be started")]
+    RootNotStarted,
     #[error("the backend process could not be awaited")]
     NotAwaited,
     #[error("backend {stream} could not be captured")]
@@ -1360,6 +1372,7 @@ impl BackendExecutionFailure {
             Self::SourceChanged => "source_changed",
             Self::NotLaunched { .. } => "backend_not_launched",
             Self::NotSupervised => "backend_not_supervised",
+            Self::RootNotStarted => "backend_root_not_started",
             Self::NotAwaited => "backend_not_awaited",
             Self::OutputNotCaptured { .. } => "backend_output_not_captured",
             Self::NotTerminated => "backend_not_terminated",
@@ -1390,6 +1403,22 @@ impl From<&ProcessError> for BackendExecutionFailure {
             ProcessError::SourceIdentityChanged => Self::SourceChanged,
             ProcessError::Launch { kind, .. } => Self::NotLaunched { kind: *kind },
             ProcessError::AssignToOwnedJob { .. } => Self::NotSupervised,
+            // Two different facts wear one variant here, and which one applies
+            // is decided by teardown rather than by the resume failure. A root
+            // that was reclaimed executed nothing and is gone; one that was not
+            // is an owned process whose disappearance this boundary cannot
+            // state, which is exactly what `NotTerminated` already means and
+            // exactly the state a stop must not be allowed to call clean.
+            ProcessError::ResumeOwnedRoot {
+                owned_root_reclaimed,
+                ..
+            } => {
+                if *owned_root_reclaimed {
+                    Self::RootNotStarted
+                } else {
+                    Self::NotTerminated
+                }
+            }
             ProcessError::Wait { .. } => Self::NotAwaited,
             ProcessError::Capture { stream, .. } => Self::OutputNotCaptured {
                 stream: BackendStream::from_label(stream),
@@ -1561,6 +1590,8 @@ pub struct BackendRunFacts {
     stdout_truncated: bool,
     stderr_truncated: bool,
     peak_job_memory_bytes: Option<u64>,
+    max_active_processes: Option<u32>,
+    tree_ownership: TreeOwnership,
 }
 
 impl BackendRunFacts {
@@ -1601,6 +1632,32 @@ impl BackendRunFacts {
     pub const fn peak_job_memory_bytes(self) -> Option<u64> {
         self.peak_job_memory_bytes
     }
+
+    /// The largest number of processes the owned Job was ever observed holding
+    /// at one time.
+    ///
+    /// Three quantities are easy to confuse and this is only one of them. It is
+    /// the **sampled maximum concurrently active** count, taken by polling the
+    /// Job while the run was supervised. It is not the cumulative number of
+    /// processes the run created, and it is not the count left at the end.
+    ///
+    /// Sampling can miss a process that started and exited between two polls,
+    /// so this is a floor on the real peak rather than the real peak. `None`
+    /// means no bounded accounting was available — never that there were none.
+    #[must_use]
+    pub const fn max_active_processes(self) -> Option<u32> {
+        self.max_active_processes
+    }
+
+    /// When ownership of this run's process tree was established, relative to
+    /// the backend executing anything.
+    ///
+    /// Published beside the counts because it is what decides whether they are
+    /// about the whole tree or only the part ownership happened to hold.
+    #[must_use]
+    pub const fn tree_ownership(self) -> TreeOwnership {
+        self.tree_ownership
+    }
 }
 
 impl From<&ProcessOutput> for BackendRunFacts {
@@ -1612,6 +1669,8 @@ impl From<&ProcessOutput> for BackendRunFacts {
             stdout_truncated: output.stdout_truncated,
             stderr_truncated: output.stderr_truncated,
             peak_job_memory_bytes: output.peak_job_memory_bytes,
+            max_active_processes: output.max_active_processes,
+            tree_ownership: output.tree_ownership,
         }
     }
 }
@@ -1950,6 +2009,87 @@ pub(crate) fn observe_staged_content(staging: &Path) -> Option<StagedContentObse
     })
 }
 
+/// What a stop established about the backend process tree of one attempt.
+///
+/// **This vocabulary is the single origin of every claim in this repository
+/// that a conversion-owned process tree is gone**, and a repository check keeps
+/// it that way. Nothing downstream re-decides it: the queue, the transfer
+/// object, the diagnostics payload and the interface all carry this judgement
+/// rather than reconstructing one.
+///
+/// Three members, because a boolean collapses two facts that are not the same
+/// and one of them is a claim about the user's machine. "No process was created,
+/// so there was no tree" and "a tree existed and is confirmed gone" answer
+/// different questions, and a reader told only `true` cannot tell which it was
+/// given. The route this milestone implements names that conflation explicitly
+/// as one the reconciliation must undo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnedTreeDisposition {
+    /// No backend process was created, so there was no tree to terminate.
+    ///
+    /// Not a confirmation and not an uncertainty. Nothing of this attempt's can
+    /// survive because nothing of this attempt's ever ran, and the absence of
+    /// job accounting here is the truthful shape of that.
+    NoneLaunched,
+    /// A tree existed, this run owned it before it could grow, and the owned
+    /// Job reported itself empty.
+    ///
+    /// Both halves are required. An empty Job under an open ownership window
+    /// would be an observation about the processes ownership happened to hold,
+    /// which says nothing about one it never held.
+    ConfirmedGone,
+    /// A tree existed and its disappearance could not be established.
+    ///
+    /// The state in which MSCanvas must not start further backend work, because
+    /// it cannot say whether a converter process of its own survives.
+    Unconfirmed,
+}
+
+impl OwnedTreeDisposition {
+    /// Derives the disposition from a supervised run. The only place it is
+    /// decided.
+    pub(crate) const fn of(output: &ProcessOutput) -> Self {
+        if !output.termination.launched() {
+            return Self::NoneLaunched;
+        }
+        if output.owned_tree_confirmed_gone() {
+            return Self::ConfirmedGone;
+        }
+        Self::Unconfirmed
+    }
+
+    /// The stable identifier a record or a transfer object writes.
+    #[must_use]
+    pub const fn stable_id(self) -> &'static str {
+        match self {
+            Self::NoneLaunched => "none_launched",
+            Self::ConfirmedGone => "confirmed_gone",
+            Self::Unconfirmed => "unconfirmed",
+        }
+    }
+
+    /// Whether MSCanvas can state that no backend process of this attempt
+    /// survives.
+    ///
+    /// True for both of the two ways that can be so, and deliberately not a
+    /// synonym for either: a caller asking this only wants to know whether it
+    /// may proceed, and a caller that must *describe* what happened reads the
+    /// member instead.
+    #[must_use]
+    pub const fn no_owned_process_survives(self) -> bool {
+        matches!(self, Self::NoneLaunched | Self::ConfirmedGone)
+    }
+
+    /// Whether this disposition asserts that a process tree that existed was
+    /// confirmed terminated.
+    ///
+    /// The narrow claim, true of exactly one member. `NoneLaunched` is not it.
+    #[must_use]
+    pub const fn confirms_a_terminated_tree(self) -> bool {
+        matches!(self, Self::ConfirmedGone)
+    }
+}
+
 /// What a confirmed cancellation established. Path-free, name-free and
 /// identifier-free by construction: no process identifier, job handle, source,
 /// staging or destination path, and no raw backend stream.
@@ -1961,6 +2101,7 @@ pub struct CancellationReport {
     observation: CancellationObservation,
     backend: Option<BackendRunFacts>,
     surviving_processes: Option<u32>,
+    owned_tree: OwnedTreeDisposition,
     staged: Option<StagedContentObservation>,
     residue: Option<StagingResidue>,
 }
@@ -1987,12 +2128,22 @@ impl CancellationReport {
     }
 
     /// Active processes the owned job reported once the run had finished with
-    /// it. `Some(0)` is the confirmation that no descendant survived; `None`
-    /// means the platform exposes no equivalent bounded accounting, or that no
-    /// process was launched.
+    /// it. `Some(0)` is what the Job said; `None` means the platform exposes no
+    /// equivalent bounded accounting, or that no process was launched. On its
+    /// own it is an observation about the Job, not about the tree — see
+    /// [`CancellationReport::tree_termination_confirmed`].
     #[must_use]
     pub const fn surviving_processes(&self) -> Option<u32> {
         self.surviving_processes
+    }
+
+    /// What this stop established about the backend process tree.
+    ///
+    /// **Callers read this rather than deciding it.** See
+    /// [`OwnedTreeDisposition`], which is the one origin of the judgement.
+    #[must_use]
+    pub const fn owned_tree(&self) -> OwnedTreeDisposition {
+        self.owned_tree
     }
 
     /// What the staging area held when the cancellation settled.
@@ -2409,6 +2560,7 @@ pub fn run_conversion_cancellable(
             observation: CancellationObservation::BeforeRun,
             backend: None,
             surviving_processes: None,
+            owned_tree: OwnedTreeDisposition::NoneLaunched,
             staged: None,
             residue: None,
         });
@@ -2574,6 +2726,7 @@ fn run_admitted(
             observation: CancellationObservation::DuringRun,
             backend: None,
             surviving_processes: None,
+            owned_tree: OwnedTreeDisposition::NoneLaunched,
             staged: None,
             residue: None,
         });
@@ -2614,11 +2767,13 @@ fn run_admitted(
         StagedResult::Cancelled {
             backend,
             surviving_processes,
+            owned_tree,
             staged,
         } => RunResult::Cancelled(CancellationReport {
             observation: CancellationObservation::DuringRun,
             backend,
             surviving_processes,
+            owned_tree,
             staged,
             residue,
         }),
@@ -2812,6 +2967,7 @@ enum StagedResult {
     Cancelled {
         backend: Option<BackendRunFacts>,
         surviving_processes: Option<u32>,
+        owned_tree: OwnedTreeDisposition,
         staged: Option<StagedContentObservation>,
     },
     CancellationFailed {
@@ -2969,6 +3125,9 @@ fn run_staged(
             };
         }
         let staged = observe_staged_content(staging);
+        // Decided once, by the one origin, and then carried rather than
+        // rediscovered by anything downstream.
+        let owned_tree = OwnedTreeDisposition::of(&output);
         return match output.termination {
             // No process was created, so there are no process facts to report
             // and no tree whose disappearance could be confirmed. The staging
@@ -2977,17 +3136,21 @@ fn run_staged(
             Termination::NotStarted => StagedResult::Cancelled {
                 backend: None,
                 surviving_processes: None,
+                owned_tree,
                 staged,
             },
             // A tree existed, so `Cancelled` is a claim that it is gone, and
-            // only the owned job saying so makes it one. `None` is not that
-            // claim: it means no bounded accounting was available, which is
-            // exactly the state in which a caller must not be told the
-            // conversion stopped while it may still be writing.
-            Termination::Cancelled if output.final_active_processes == Some(0) => {
+            // only the process boundary's own origin makes it one. That origin
+            // is a conjunction, not an emptiness reading: the owned Job said it
+            // was empty, *and* ownership covered the tree before it could grow.
+            // An empty Job under an open ownership window is an empty Job and
+            // nothing more, and a caller must not be told the conversion
+            // stopped while something it never counted may still be writing.
+            Termination::Cancelled if owned_tree.confirms_a_terminated_tree() => {
                 StagedResult::Cancelled {
                     backend,
-                    surviving_processes: Some(0),
+                    surviving_processes: output.final_active_processes,
+                    owned_tree,
                     staged,
                 }
             }

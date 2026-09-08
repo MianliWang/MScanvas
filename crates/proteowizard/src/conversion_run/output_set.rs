@@ -58,7 +58,8 @@ use crate::{ConversionCancellation, fs_guard};
 
 use super::{
     BackendExecutionFailure, BackendRunFacts, ConflictPolicy, ConversionSource,
-    ConversionSourceKind, OwnedStagingArea, StagedContentObservation, StagingResidue, finalize,
+    ConversionSourceKind, OwnedStagingArea, OwnedTreeDisposition, StagedContentObservation,
+    StagingResidue, finalize,
 };
 use crate::BackendDiagnosticText;
 use crate::diagnostics::Redactor;
@@ -584,8 +585,15 @@ pub enum MultiOutputFailure {
     BackendRejected { exit_code: Option<i32> },
     /// The backend ended without an ordinary exit and nobody asked it to stop.
     BackendDidNotComplete,
-    /// A stop was requested and the owned tree was confirmed gone.
-    Cancelled { surviving_processes: Option<u32> },
+    /// A stop was requested and no backend process of this attempt survives.
+    ///
+    /// `owned_tree` says which of the two ways that is so, because "nothing was
+    /// launched" and "a tree existed and is confirmed gone" are different facts
+    /// and the queue must be able to report the one that happened.
+    Cancelled {
+        surviving_processes: Option<u32>,
+        owned_tree: OwnedTreeDisposition,
+    },
     /// A stop was requested and this boundary cannot say the tree is gone.
     CancellationNotConfirmed(BackendExecutionFailure),
     /// The staged contents were not an acceptable output set.
@@ -676,6 +684,23 @@ impl MultiOutputFailure {
             Self::SampleCompletenessNotEstablished(refusal) => refusal.stable_id(),
         }
     }
+
+    /// What this failure establishes about the backend process tree, where it
+    /// is a stop at all.
+    ///
+    /// `None` means this failure is not a stop, so it makes no claim about a
+    /// process tree either way. A caller reads this rather than inferring a
+    /// disposition from [`MultiOutputFailure::stable_id`]: an identifier is a
+    /// label for a record, and deciding a claim about the user's machine from
+    /// one is how the two lifecycles drift apart.
+    #[must_use]
+    pub const fn owned_tree(&self) -> Option<OwnedTreeDisposition> {
+        match self {
+            Self::Cancelled { owned_tree, .. } => Some(*owned_tree),
+            Self::CancellationNotConfirmed(_) => Some(OwnedTreeDisposition::Unconfirmed),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Debug for MultiOutputFailure {
@@ -708,9 +733,11 @@ impl std::fmt::Debug for MultiOutputFailure {
                 .finish(),
             Self::Cancelled {
                 surviving_processes,
+                owned_tree,
             } => formatter
                 .debug_struct("Cancelled")
                 .field("surviving_processes", surviving_processes)
+                .field("owned_tree", owned_tree)
                 .finish(),
             Self::CancellationNotConfirmed(cause) => formatter
                 .debug_tuple("CancellationNotConfirmed")
@@ -1111,6 +1138,7 @@ pub fn run_multi_output_conversion_evidence(
         return refused(
             MultiOutputFailure::Cancelled {
                 surviving_processes: None,
+                owned_tree: OwnedTreeDisposition::NoneLaunched,
             },
             None,
             None,
@@ -1224,6 +1252,7 @@ pub fn run_admitted_multi_output_conversion_seamed(
         return refused(
             MultiOutputFailure::Cancelled {
                 surviving_processes: None,
+                owned_tree: OwnedTreeDisposition::NoneLaunched,
             },
             None,
             None,
@@ -1683,6 +1712,7 @@ fn run_set_backend(
             None,
             Some(MultiOutputFailure::Cancelled {
                 surviving_processes: None,
+                owned_tree: OwnedTreeDisposition::NoneLaunched,
             }),
             None,
         );
@@ -1713,13 +1743,19 @@ fn run_set_backend(
         let failure = if !requested {
             MultiOutputFailure::BackendDidNotComplete
         } else {
+            // The same origin the single-output lifecycle reads. What the
+            // queue records must not depend on which lifecycle ran the item,
+            // and it cannot if neither of them decides this for itself.
+            let owned_tree = OwnedTreeDisposition::of(&output);
             match output.termination {
                 Termination::NotStarted => MultiOutputFailure::Cancelled {
                     surviving_processes: None,
+                    owned_tree,
                 },
-                Termination::Cancelled if output.final_active_processes == Some(0) => {
+                Termination::Cancelled if owned_tree.confirms_a_terminated_tree() => {
                     MultiOutputFailure::Cancelled {
-                        surviving_processes: Some(0),
+                        surviving_processes: output.final_active_processes,
+                        owned_tree,
                     }
                 }
                 _ => MultiOutputFailure::CancellationNotConfirmed(

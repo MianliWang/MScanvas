@@ -25,8 +25,8 @@ use mscanvas_proteowizard::{
     CancellationReport, ConflictPolicy, ConversionAttempt, ConversionCancellation,
     ConversionIntent, ConversionPlan, ConversionPlanError, ConversionRunFailure,
     ConversionRunOutcome, ConversionRunReport, ConversionSource, ConversionSourceKind,
-    InstalledHelpCapabilities, IntegrityProperty, OpenFormat, OutputFormat, StagingResidue,
-    ValidationMode, conversion_output_file_name, provider_build_is_evidenced,
+    InstalledHelpCapabilities, IntegrityProperty, OpenFormat, OutputFormat, OwnedTreeDisposition,
+    StagingResidue, ValidationMode, conversion_output_file_name, provider_build_is_evidenced,
     run_conversion_cancellable,
 };
 // The private multi-output report is built only by the private coordinator,
@@ -278,6 +278,11 @@ pub(super) struct WorkspaceMultiOutputConversionReport {
     partial: Option<PartialFinalization>,
     /// The precise refusal, when the set was refused before anything published.
     refusal: Option<&'static str>,
+    /// What a stop established about the backend process tree, where the
+    /// refusal was a stop. Carried as the boundary's own typed judgement rather
+    /// than re-derived here from `refusal`, so both conversion lifecycles reach
+    /// the queue through the same origin.
+    owned_tree: Option<OwnedTreeDisposition>,
     /// Bounded facts about the backend process, when one ran.
     backend: Option<BackendRunFacts>,
     /// What the run could not reclaim of its own staging area.
@@ -330,6 +335,7 @@ impl std::fmt::Debug for WorkspaceMultiOutputConversionReport {
             .field("published", &self.published_count())
             .field("partial", &self.partial.is_some())
             .field("refusal", &self.refusal)
+            .field("owned_tree", &self.owned_tree)
             .field("residue", &self.residue)
             .field(
                 "completeness",
@@ -476,6 +482,10 @@ impl WorkspaceMultiOutputConversionReport {
                 .collect(),
             partial,
             refusal,
+            owned_tree: match run.outcome() {
+                MultiOutputOutcome::RefusedBeforePublication(failure) => failure.owned_tree(),
+                _ => None,
+            },
             backend: run.backend(),
             residue: run.residue(),
             authority,
@@ -564,6 +574,12 @@ impl WorkspaceMultiOutputConversionReport {
 
     pub(super) const fn refusal_id(&self) -> Option<&'static str> {
         self.refusal
+    }
+
+    /// What a stop established about the backend process tree, where this run
+    /// was stopped.
+    pub(super) const fn owned_tree(&self) -> Option<OwnedTreeDisposition> {
+        self.owned_tree
     }
 
     pub(super) const fn backend_facts(&self) -> Option<BackendRunFacts> {
@@ -865,6 +881,11 @@ fn outcome_is_retryable(outcome: &ConversionRunOutcome) -> bool {
                 | BackendExecutionFailure::NotSupervised
                 | BackendExecutionFailure::NotAwaited
                 | BackendExecutionFailure::OutputNotCaptured { .. }
+                // The owned root was created, executed nothing and was
+                // reclaimed. Nothing about the plan or the machine says the
+                // next attempt would start either, and this repository has no
+                // measurement saying it would.
+                | BackendExecutionFailure::RootNotStarted
                 | BackendExecutionFailure::NotTerminated,
             ) => false,
         },

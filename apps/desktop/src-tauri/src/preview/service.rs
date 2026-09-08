@@ -31,7 +31,9 @@ use mscanvas_proteowizard::{
     SetRunSeam, run_admitted_multi_output_conversion_seamed,
 };
 #[allow(clippy::wildcard_imports)]
-use mscanvas_proteowizard::{BackendRunFacts, ConversionAttempt, ConversionCancellation};
+use mscanvas_proteowizard::{
+    BackendRunFacts, ConversionAttempt, ConversionCancellation, OwnedTreeDisposition,
+};
 
 #[cfg(test)]
 use super::adoption::FinalizedOutputSetAdoptionTicket;
@@ -4458,21 +4460,36 @@ impl PreviewService {
         match attempt {
             QueueItemAttempt::Settled(outcome) => outcome,
             // The boundary produces this only where no owned process survives:
-            // either the tree was observed empty, or none was ever created. The
-            // two are told apart by process_launched, and neither is a state
-            // in which anything of this application's may still be running.
+            // either the tree was observed empty under ownership that covered
+            // it, or none was ever created. The two are told apart by the
+            // disposition, and neither is a state in which anything of this
+            // application's may still be running.
+            //
+            // The item state is derived from that disposition rather than
+            // assumed from the arm. The invariant it rests on lives in another
+            // module, and a `Cancelled` written here would keep compiling if
+            // that module ever widened what it sends.
             QueueItemAttempt::Cancelled(report) => ItemOutcome::Stopped {
-                state: ItemState::Cancelled,
+                state: if report.owned_tree().no_owned_process_survives() {
+                    ItemState::Cancelled
+                } else {
+                    ItemState::CancellationFailed
+                },
                 // The single-output boundary's own cancellation, so there is no
                 // set here to describe.
                 set: None,
-                // Nothing to diagnose. The user asked for it to stop and the
-                // owned tree is confirmed gone, so there is no failure here for
+                // Nothing to diagnose. The user asked for it to stop and no
+                // owned process survives, so there is no failure here for
                 // backend text to be an account of.
                 diagnostics: None,
                 facts: CancellationFacts {
                     process_launched: report.backend_was_run(),
-                    tree_termination_confirmed: true,
+                    // Read from the boundary that decided it. Writing `true`
+                    // here would be this side deciding a claim about the user's
+                    // machine from the shape of an enum arm, and it is how the
+                    // two ways a stop can leave nothing running came to wear
+                    // one word.
+                    owned_tree: report.owned_tree(),
                     elapsed,
                     termination: report.backend().map(BackendRunFacts::termination),
                     partial_output_observed: report
@@ -4487,7 +4504,7 @@ impl PreviewService {
             QueueItemAttempt::SetStopped(facts) => {
                 let facts = *facts;
                 ItemOutcome::Stopped {
-                    state: if facts.confirmed {
+                    state: if facts.owned_tree.no_owned_process_survives() {
                         ItemState::Cancelled
                     } else {
                         ItemState::CancellationFailed
@@ -4508,7 +4525,7 @@ impl PreviewService {
                     diagnostics: facts.diagnostics,
                     facts: CancellationFacts {
                         process_launched: facts.process_launched,
-                        tree_termination_confirmed: facts.confirmed,
+                        owned_tree: facts.owned_tree,
                         elapsed,
                         termination: facts.termination,
                         partial_output_observed: facts.partial_output_observed,
@@ -4526,7 +4543,10 @@ impl PreviewService {
                 diagnostics: failure.take_backend_text().map(Box::new),
                 facts: CancellationFacts {
                     process_launched: failure.backend().is_some(),
-                    tree_termination_confirmed: false,
+                    // This type exists only where the tree's disappearance could
+                    // not be established, so the disposition is not a reading
+                    // of anything: it is what the variant means.
+                    owned_tree: OwnedTreeDisposition::Unconfirmed,
                     elapsed,
                     termination: failure.backend().map(BackendRunFacts::termination),
                     partial_output_observed: failure
@@ -5877,15 +5897,14 @@ struct QueuedItemRun<'a> {
 /// backend at all.
 fn set_stop_facts(conversion: &mut SciexConversion) -> Option<SetStopFacts> {
     let report = conversion.report();
-    let confirmed = match report.refusal_id()? {
-        "multi_output_cancelled" => true,
-        "multi_output_cancellation_not_confirmed" => false,
-        _ => return None,
-    };
+    // The boundary's own judgement, not a reading of the refusal identifier.
+    // `None` is a refusal that was not a stop at all, which is the one case
+    // this translation does not apply to.
+    let owned_tree = report.owned_tree()?;
     let backend = report.backend_facts();
     Some(SetStopFacts {
         bound_source_objects: report.bound_source_objects(),
-        confirmed,
+        owned_tree,
         process_launched: backend.is_some(),
         termination: backend.map(BackendRunFacts::termination),
         partial_output_observed: report
@@ -5896,7 +5915,7 @@ fn set_stop_facts(conversion: &mut SciexConversion) -> Option<SetStopFacts> {
         // single-output path decides it: a confirmed cancellation is the user
         // getting what they asked for, and there is no failure for backend text
         // to be an account of.
-        diagnostics: (!confirmed)
+        diagnostics: (!owned_tree.no_owned_process_survives())
             .then(|| conversion.take_diagnostics())
             .flatten(),
     })

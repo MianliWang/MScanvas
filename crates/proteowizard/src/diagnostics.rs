@@ -1185,6 +1185,7 @@ mod tests {
             max_active_processes: None,
             final_active_processes: None,
             peak_job_memory_bytes: None,
+            tree_ownership: crate::process::TreeOwnership::EstablishedBeforeExecution,
         };
         let redactor =
             Redactor::default().with_path(Path::new(r"C:\private\sample.raw"), "<input>");

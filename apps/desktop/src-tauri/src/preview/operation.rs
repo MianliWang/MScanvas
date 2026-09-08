@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use mscanvas_proteowizard::{
     BackendDiagnosticText, CancellationFailure, CancellationReport, CancellationRequest,
-    ConversionIntent, FinalizedOutput, StagingResidue, Termination,
+    ConversionIntent, FinalizedOutput, OwnedTreeDisposition, StagingResidue, Termination,
 };
 
 use super::adoption::FinalizedOutputAdoptionTicket;
@@ -509,7 +509,14 @@ pub(super) struct QueueItem {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct CancellationFacts {
     pub(super) process_launched: bool,
-    pub(super) tree_termination_confirmed: bool,
+    /// What the stop established about this attempt's backend process tree.
+    ///
+    /// The conversion boundary's own judgement, carried rather than re-decided.
+    /// It replaced a boolean that answered `true` both for a tree confirmed
+    /// gone and for a run that launched nothing — two facts a reader given only
+    /// `true` could not tell apart, and only one of which is a claim about a
+    /// process that existed.
+    pub(super) owned_tree: OwnedTreeDisposition,
     /// From the moment the stop was accepted to the moment the attempt settled,
     // which is the interval the user actually waited. Not the interval the
     // process ran: an attempt that had been converting for a minute before the
@@ -527,7 +534,7 @@ impl CancellationFacts {
             // Always true here: this type exists only for an attempt a stop
             // reached. Carried rather than implied so a reader never infers it.
             termination_requested: true,
-            tree_termination_confirmed: self.tree_termination_confirmed,
+            owned_tree: self.owned_tree.stable_id().to_owned(),
             elapsed_milliseconds: u64::try_from(self.elapsed.as_millis()).unwrap_or(u64::MAX),
             termination: self
                 .termination
@@ -2373,10 +2380,10 @@ pub(super) struct SetStopFacts {
     // trace of that would leave a reader unable to tell one from a stopped
     /// single-output item.
     pub(super) bound_source_objects: usize,
-    /// Whether the owned process tree was confirmed gone. `false` is the
-    // admission that it was not, and it quarantines the backend exactly as the
-    /// single-output path's does.
-    pub(super) confirmed: bool,
+    /// What the stop established about the backend process tree, in the
+    // conversion boundary's own vocabulary. `Unconfirmed` quarantines the
+    /// backend exactly as the single-output path's does.
+    pub(super) owned_tree: OwnedTreeDisposition,
     pub(super) process_launched: bool,
     pub(super) termination: Option<Termination>,
     pub(super) partial_output_observed: bool,
