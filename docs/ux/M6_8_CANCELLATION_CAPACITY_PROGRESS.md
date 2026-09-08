@@ -126,7 +126,18 @@ a vendor run to obtain one. The synthetic parent-and-grandchild fixture proves
 the mechanism owns a tree; it is not vendor evidence, and the two are reported
 separately.
 
-Evidence: `D:/tmp/mscanvas-m68-20260908/cancellation-evidence-0{1,2}.log`.
+**Re-taken at the final head**, on the same rule the suites are held to: this
+measurement is produced through the launch path, so a changed launch path makes
+an older run describe a different boundary. Run 03 reproduces runs 01 and 02
+exactly — `provider.executable_sha256` still
+`9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD`, a kernel
+cumulative `total_owned_processes` of 1 in every scenario,
+`tree_ownership=established_before_execution` throughout,
+`owned_tree=confirmed_gone` for every launched run and `none_launched` for the
+request observed before the launch. It is a console harness rather than an
+interface one, so it does not need an unlocked interactive session.
+
+Evidence: `D:/tmp/mscanvas-m68-20260908/cancellation-evidence-0{1,2,3}.log`.
 The harness removed its own scratch directories; verified empty.
 
 ## The claim guard
@@ -466,13 +477,9 @@ tree; the diagnostics schema had moved from 1 to 2 with nothing recording it; an
 this document overstated what the compiler carries and contradicted itself about
 what the bypass proofs prove. All are repaired above.
 
-**The provider measurement is not carried either, and is named here rather
-than left to be assumed.** It is native evidence produced through this same
-launch path — its disposition column is what `process.rs` computed — so the rule
-below applies to it as it does to the suites: it was taken before the launch
-path changed, and it has to be re-taken on the candidate binary. It is a console
-harness rather than an interface one, so it does not need an unlocked session;
-it is listed with the native work because it is the same kind of claim.
+**The provider measurement was re-taken rather than carried**, for the reason
+below — it is produced through this same launch path. It reproduces exactly; see
+*The measurement*.
 
 **Native is NOT carried to this head, and the rerun is BLOCKED.**
 
