@@ -84,6 +84,7 @@ const PLAN = {
   intent: shippedIntent,
   conflictPolicy: "fail",
   receipt: SETTLED_RECEIPT,
+  destinationPolicy: { kind: "customFolder" },
 };
 
 /** The plan question's answer, as the boundary now shapes it. */

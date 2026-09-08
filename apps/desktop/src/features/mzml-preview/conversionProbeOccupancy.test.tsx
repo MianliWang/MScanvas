@@ -210,8 +210,10 @@ describe("an automatic read occupies the lane", () => {
     await waitFor(() => {
       expect(workspace.result.current.conversion.lane.configurationProbing).toBe(false);
     });
+    act(() => workspace.result.current.conversionPlan.describe([VENDOR.handle]));
+    await waitFor(() => expect(workspace.result.current.conversionPlan.current).not.toBeNull());
     act(() => {
-      workspace.result.current.conversion.convert(planIdentity([VENDOR.handle]));
+      workspace.result.current.conversion.convert(workspace.result.current.conversionPlan.current!.identity);
     });
     expect(api.beginRequests()).toHaveLength(1);
   });

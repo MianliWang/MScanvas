@@ -40,6 +40,7 @@ import type {
   ConversionConfiguration,
   ConversionConflictPolicy,
   ConversionQueuePlan,
+  DestinationPolicy,
   PreviewError,
 } from "./contracts";
 import { catalogRow } from "./conversionIntentSelection";
@@ -55,6 +56,7 @@ export interface ConversionPlanIdentity {
   readonly handles: readonly string[];
   readonly intentId: string;
   readonly conflictPolicy: ConversionConflictPolicy;
+  readonly destinationPolicy: DestinationPolicy;
   readonly receipt: BackendBindingReceipt;
 }
 
@@ -73,10 +75,17 @@ export function sameQuestion(
   return (
     left.intentId === right.intentId &&
     left.conflictPolicy === right.conflictPolicy &&
+    sameDestination(left.destinationPolicy, right.destinationPolicy) &&
     left.receipt === right.receipt &&
     left.handles.length === right.handles.length &&
     left.handles.every((handle, index) => handle === right.handles[index])
   );
+}
+
+export function sameDestination(left: DestinationPolicy, right: DestinationPolicy): boolean {
+  return left.kind === right.kind &&
+    (left.kind !== "namedSubfolder" ||
+      (right.kind === "namedSubfolder" && left.name === right.name));
 }
 
 /**
@@ -153,6 +162,7 @@ export interface ConversionPlanInputs {
   /** The admitted combination the reader has chosen. */
   readonly selectedIntentId: string | null;
   readonly conflictPolicy: ConversionConflictPolicy;
+  readonly destinationPolicy: DestinationPolicy;
 }
 
 /**
@@ -195,6 +205,7 @@ export function planQuestion(inputs: ConversionPlanInputs): ConversionPlanQuesti
       handles: inputs.handles,
       intentId: inputs.selectedIntentId,
       conflictPolicy: inputs.conflictPolicy,
+      destinationPolicy: inputs.destinationPolicy,
       receipt,
     },
   };
@@ -343,6 +354,24 @@ export function installReply(
 ): ConversionPlanState | null {
   if (!awaitsReply(current, identity, ordinal)) {
     return null;
+  }
+  if (reply.kind === "plan" && !sameQuestion(identity, {
+    handles: reply.plan.items.map((item) => item.datasetHandle),
+    intentId: reply.plan.intent.id,
+    conflictPolicy: reply.plan.conflictPolicy,
+    destinationPolicy: reply.plan.destinationPolicy,
+    receipt: reply.plan.receipt,
+  })) {
+    return {
+      status: "failed",
+      identity,
+      error: {
+        kind: "conversion_plan_mismatch",
+        summary: "The conversion description did not match this request. Describe it again.",
+        detail: null,
+        retryable: true,
+      },
+    };
   }
   return reply.kind === "plan"
     ? { status: "ready", identity, plan: reply.plan }

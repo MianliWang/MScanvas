@@ -52,6 +52,30 @@ export interface ConversionConfigurationView {
   readonly retry: () => void;
 }
 
+type ConfigurationSelection = Pick<ConversionConfigurationView,
+  "configuration" | "catalog" | "shippedIntentId" | "selectedIntentId">;
+
+export interface ConversionConfigurationController extends ConversionConfigurationView {
+  /** The same owner facts at dispatch, including a selection made in this batch. */
+  readonly readCurrent: (authority: RenderedAuthority | null) => ConfigurationSelection;
+}
+
+function resolveSelection(
+  held: ConfigurationHolding,
+  selectedIntentId: string | null,
+  authority: RenderedAuthority | null,
+): ConfigurationSelection {
+  const configuration = authority !== null && held.receipt !== null && held.receipt === receiptOf(authority)
+    ? held.configuration : null;
+  const ready = configuration?.configuration === "ready" ? configuration : null;
+  const catalog = ready?.catalog ?? [];
+  const shippedIntentId = ready?.shipped ?? null;
+  return {
+    configuration, catalog, shippedIntentId,
+    selectedIntentId: shippedIntentId === null ? null : reselect(catalog, shippedIntentId, selectedIntentId),
+  };
+}
+
 /**
  * Holds the conversion configuration for the binding this document is
  * rendering, and asks Rust for it when one is owed.
@@ -98,12 +122,17 @@ export function useConversionConfiguration(
   probeLane: ConversionProbeLane,
   /** Where the projection this read observes is delivered. */
   onAuthority: (authority: BackendAuthorityProjection) => void,
-): ConversionConfigurationView {
+): ConversionConfigurationController {
   const [held, setHeld] = useState<ConfigurationHolding>({
     receipt: null,
     configuration: null,
     lastAttemptRefused: false,
   });
+  const heldRef = useRef(held);
+  const commitHolding = useCallback((next: ConfigurationHolding) => {
+    heldRef.current = next;
+    setHeld(next);
+  }, []);
   // The probe occupancy, rendered and as it stands now. Both halves come from
   // the lane above: this hook holds no second copy of a fact two other
   // authorities read, and the ref is what stops a second read being issued from
@@ -134,6 +163,9 @@ export function useConversionConfiguration(
     facts: ProbeAdmissionFacts;
   } | null>(null);
   const [selectedIntentId, setSelectedIntentId] = useState<string | null>(null);
+  const selectedIntentRef = useRef(selectedIntentId);
+  const readCurrent = useCallback((currentAuthority: RenderedAuthority | null) =>
+    resolveSelection(heldRef.current, selectedIntentRef.current, currentAuthority), []);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -167,7 +199,7 @@ export function useConversionConfiguration(
         // the projection that arrived with it, which describes the same
         // instant -- Rust builds both from one reading of the authority, so a
         // catalog probed under A cannot travel under a projection of B.
-        setHeld({
+        commitHolding({
           receipt: receiptOf(snapshot.authority),
           configuration: snapshot.configuration,
           lastAttemptRefused: snapshot.outcome.outcome === "refused",
@@ -178,7 +210,7 @@ export function useConversionConfiguration(
         // nothing is written for it. It stays owed, and the next occasion
         // asks again.
         if (mounted.current) {
-          setHeld((previous) => ({ ...previous, lastAttemptRefused: true }));
+          commitHolding({ ...heldRef.current, lastAttemptRefused: true });
         }
       })
       .finally(() => {
@@ -190,7 +222,7 @@ export function useConversionConfiguration(
         // document would refuse every conversion for the rest of the session.
         releaseProbeLane(claim);
       });
-  }, [api, claimProbeLane, onAuthority, releaseProbeLane]);
+  }, [api, claimProbeLane, commitHolding, onAuthority, releaseProbeLane]);
 
   // Step three: issue what is owed, into a lane this document's projection says
   // is free.
@@ -254,28 +286,21 @@ export function useConversionConfiguration(
   // moved on, this document holds nothing for the binding on screen -- which is
   // the state that owes a read, and is never papered over with the previous
   // binding's answer.
-  const configuration =
-    authority !== null && held.receipt !== null && held.receipt === receiptOf(authority)
-      ? held.configuration
-      : null;
-  const ready = configuration?.configuration === "ready" ? configuration : null;
-  const catalog = ready?.catalog ?? [];
-  const shippedIntentId = ready?.shipped ?? null;
+  const selection = resolveSelection(held, selectedIntentId, authority);
+  const { catalog } = selection;
 
   // The reader's combination survives a catalog arriving for another
   // installation wherever the new catalog still holds it, and falls back only
   // where it does not. Derived rather than stored so a catalog and a selection
   // cannot come apart: there is no moment where one has been installed and the
   // other has not.
-  const selected =
-    shippedIntentId === null ? null : reselect(catalog, shippedIntentId, selectedIntentId);
-
   const select = useCallback(
     (intentId: string) => {
       // Refused where the catalog has no such row. A selection this side
       // invented would be a combination Rust never admitted, and the whole
       // point of choosing by identity is that the identity came from Rust.
       if (catalogRow(catalog, intentId) !== null) {
+        selectedIntentRef.current = intentId;
         setSelectedIntentId(intentId);
       }
     },
@@ -291,10 +316,8 @@ export function useConversionConfiguration(
   }, [facts, issue, retryOffered]);
 
   return {
-    configuration,
-    catalog,
-    shippedIntentId,
-    selectedIntentId: selected,
+    ...selection,
+    readCurrent,
     select,
     reading,
     refusal,

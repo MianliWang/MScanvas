@@ -264,11 +264,14 @@ describe("the conversion lane's one authority, as it ships", () => {
 
     // The slot advances past what this document holds, still terminal and still
     // without a queue of this dispatch's.
+    act(() => workspace.result.current.conversionPlan.describe([vendorRow.handle]));
+    await waitFor(() => expect(workspace.result.current.conversionPlan.current).not.toBeNull());
+    const identity = workspace.result.current.conversionPlan.current!.identity;
     act(() => {
       api.publishConversion(retryableQueue(2));
     });
     act(() => {
-      workspace.result.current.conversion.convert(planIdentity([vendorRow.handle]));
+      workspace.result.current.conversion.convert(identity);
     });
     expect(api.conversionRequests).toHaveLength(1);
 

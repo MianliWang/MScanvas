@@ -209,7 +209,7 @@ Where each of those is owned, and why, is fixed by
 | CNV-005 | Explicit centroid presets | P0 | MS2 or MS1+MS2 changes are visibly marked as lossy. |
 | CNV-006 | MS-level filter | P0 | All/MS1/MS2 intent maps predictably to the backend. |
 | CNV-007 | Compression | P0 | zlib on/off is explicit and reflected in the command summary. |
-| CNV-008 | Conflict policy | P0 | Default is fail/skip; overwrite requires explicit confirmation. |
+| CNV-008 | Conflict policy | P0 | Fail by default or Skip; automatic rename and explicit overwrite are refused by ADR 0043 CNV-D4. Internal batch claims and partially existing output sets are distinct conflicts. |
 | CNV-009 | Natural-language summary | P0 | Before running, state file count, format, processing and output root. |
 
 **A serial conversion queue is reachable: one to sixteen selected vendor rows
@@ -217,23 +217,44 @@ Where each of those is owned, and why, is fixed by
 mixed — to mzML, one after another, each family on the exact ProteoWizard build
 evidenced for it.** `Add files…` admits all three families alongside mzML;
 selecting vendor rows offers the ordered list that would run, which family each
-row is, what each item would write, and one Fail/Skip choice; and one
-Rust-owned local destination picker settles where all of them go. One
+row is, what each item would write, and one Fail/Skip choice. One
 acquisition is one item whatever it produces: a SCIEX acquisition converts to
 one to twenty-four backend-named mzML files and stays a single item, a single
 process and a single row of the plan. Items convert one at a time in
 the order shown. One file's failure marks that file and the queue continues,
 and `Retry N failed` reruns only the failures Rust marks retryable.
 
-Reachable that far and no further. CNV-001 and CNV-008's fail/skip half are
-reachable; CNV-009's batch summary is reachable as an item count, an ordered list
-and the planned output names, but not as processing options it does not have.
-CNV-003 exposes no location choice beyond the folder itself: **M6.5** gave its
-three policies a Rust authority — source sibling, named subfolder and custom
-folder, each resolved to admitted directory objects and bound per item — and the
-control that would let a reader choose between them is M6.6's. CNV-002 remains
-unplannable by type. CNV-004 to CNV-007 became reachable in **M6.4**, as four
-controls over one admitted combination rather than four independent settings.
+**M6.6 candidate continuation, publication pending:** CNV-003 exposes source
+sibling, named subfolder and custom local folder through M6.5's existing Rust
+authority. Custom folder preserves the shipped default and opens the existing
+Rust-owned picker. The compact summary states the requested policy, relevant
+folder name and conflict behavior; it distinguishes that request from resolved
+destination objects. A named subfolder is one Rust-validated folder name, and a
+refused name is preserved for correction rather than silently sanitized. Changes
+to a bound plan component make its earlier review unusable. Cancellation keeps
+the entered settings and settles the reservation without conversion.
+
+CNV-008's terminal decision is **`OVERWRITE_REFUSED`**: the Rust finalization
+boundary does not establish conditional replacement of a confirmed existing
+object with old-target preservation on failure. Fail remains the default, Skip
+remains available, and no overwrite checkbox or automatic rename is offered.
+For a backend-named output set, Fail refuses the entire set if any target is
+occupied. Skip skips the set only when every target is occupied; a strict subset
+is a mixed conflict and publishes nothing. The final names and their occupation
+are checked only after the backend produces and validates the staged set, so the
+review does not claim an all-clear conflict check. A collision between two items
+claiming the same `(destination identity, folded output name)` is a separate
+refusal that Fail/Skip cannot resolve. A late publication failure can leave an
+explicitly reported, non-retryable published prefix; it is never a complete
+acquisition or an adoptable complete set. See
+[ADR 0043, CNV-D4](../architecture/adr/0043-conversion-completion-route.md#cnv-d4--conflict-and-overwrite).
+
+CNV-001 and CNV-009 retain their output-format and truthful-plan contracts.
+CNV-002 remains unplannable by type. CNV-004 to CNV-007 became reachable in
+**M6.4**, as four controls over one admitted combination rather than four
+independent settings. This candidate does not change selected/all membership,
+source-family gates, scientific intent, receipt authority or viewer/export
+semantics.
 
 A terminal queue that has something to diagnose also offers **Export failure
 diagnostics…**: one local JSON file, saved where the user chooses, holding
@@ -310,6 +331,12 @@ local, a real directory, not a link, not remote, identified by volume serial and
 revalidated by a retry rather than re-resolved. Two items writing one file name
 into two different directories are no longer refused as a collision; the same two
 names in one directory still are.
+
+M6.6's reservation binds the logical acquisition anchors at `BEGIN`; subsequent
+resolution consumes those facts across the user pause. Before admission, policy
+text describes conditional destinations rather than a committed filesystem
+location. Retry uses the already bound per-item destinations and asks no picker
+for a replacement folder.
 
 CNV-003's vendor-dataset-root rule is stated, ordered ahead of the sibling
 admission and implemented, and remains **unexercisable** because no admitted

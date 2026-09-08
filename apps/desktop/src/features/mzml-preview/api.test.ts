@@ -1,8 +1,8 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { deferred } from "../../test/previewFixtures";
-import type { FolderIngestionResult } from "./contracts";
+import { deferred, settledAt, shippedIntent } from "../../test/previewFixtures";
+import type { AuthorityObserved, ConversionBeginOutcome, DestinationPolicy, FolderIngestionResult, WorkspaceConversionUpdate } from "./contracts";
 import { tauriPreviewApi } from "./api";
 
 interface FolderImportReservation {
@@ -133,6 +133,78 @@ describe("Tauri folder-import reservation boundary", () => {
     terminal.resolve(null);
     await expect(second).resolves.toBeNull();
     await expect(first).rejects.toEqual(replayFailure);
+  });
+});
+
+describe("the semantic conversion destination boundary", () => {
+  beforeEach(() => vi.stubGlobal("__MSCANVAS_DOCUMENT_AUTHORITY__", "0123456789abcdef0123456789abcdef"));
+  afterEach(() => { clearMocks(); vi.unstubAllGlobals(); });
+
+  it.each<DestinationPolicy>([
+    { kind: "customFolder" }, { kind: "sourceSibling" }, { kind: "namedSubfolder", name: "Results" },
+  ])("passes $kind as a complete question and claims only Rust's reservation", async (destinationPolicy) => {
+    const request = {
+      handles: ["source-1"], intentId: shippedIntent.id, conflictPolicy: "skip" as const,
+      destinationPolicy, expectedReceipt: 1,
+    };
+    const begun = deferred<AuthorityObserved<ConversionBeginOutcome>>();
+    const converted = deferred<WorkspaceConversionUpdate>();
+    const calls: { command: string; payload: unknown }[] = [];
+    const onReserved = vi.fn();
+    const planned = {
+      outcome: "planned", plan: {
+        items: [{ datasetHandle: "source-1", fileName: "source.raw", sourceKind: "thermo_raw",
+          output: { kind: "knownSingle", fileName: "source.mzML" } }],
+        outputFormat: "mzML", compression: "zlib", validationMode: "output_only", capacity: 16,
+        intent: shippedIntent, conflictPolicy: "skip", destinationPolicy, receipt: 1,
+      },
+    };
+    mockIPC((command, payload) => {
+      calls.push({ command, payload });
+      if (command === "describe_workspace_conversion_queue") return planned;
+      if (command === "begin_workspace_conversion_queue") return begun.promise;
+      if (command === "choose_workspace_conversion_destination") return converted.promise;
+      throw new Error(`unexpected command: ${command}`);
+    });
+    await expect(tauriPreviewApi.describeConversion(request)).resolves.toEqual(planned);
+    expect(calls).toEqual([{ command: "describe_workspace_conversion_queue", payload: { request } }]);
+    const start = tauriPreviewApi.convertDatasets(request, onReserved);
+    expect(calls[1]).toEqual({ command: "begin_workspace_conversion_queue", payload: { request } });
+    expect(calls).toHaveLength(2);
+    expect(onReserved).not.toHaveBeenCalled();
+    const beginAuthority = settledAt(1, 1);
+    begun.resolve({ authority: beginAuthority, outcome: {
+      outcome: "reserved", reservation: { reservationId: "conversion-17" },
+    } });
+    await flushPromiseTurns();
+    expect(calls[2]?.command).toBe("choose_workspace_conversion_destination");
+    exactClaim(calls[2]?.payload, "conversion-17");
+    expect(onReserved).toHaveBeenCalledTimes(1);
+    const update: WorkspaceConversionUpdate = {
+      sequence: 2, state: { status: "idle" }, backendQuarantined: false,
+      authority: settledAt(2, 2),
+      diagnostics: { eligibleItemCount: 0, available: false, exporting: false, lastExport: null },
+    };
+    converted.resolve(update);
+    await expect(start).resolves.toEqual({
+      authority: beginAuthority, outcome: { outcome: "converted", update },
+    });
+    expect(calls).toHaveLength(3);
+  });
+
+  it("does not resolve a destination after a refused BEGIN", async () => {
+    const calls: string[] = [];
+    const onReserved = vi.fn();
+    const refused = { authority: settledAt(2, 2), outcome: {
+      outcome: "refused", error: { kind: "conversion_binding_replaced", summary: "Describe again.", detail: null, retryable: true },
+    } };
+    mockIPC((command) => { calls.push(command); return refused; });
+    await expect(tauriPreviewApi.convertDatasets({
+      handles: ["source-1"], intentId: shippedIntent.id, conflictPolicy: "fail",
+      destinationPolicy: { kind: "sourceSibling" }, expectedReceipt: 1,
+    }, onReserved)).resolves.toEqual(refused);
+    expect(calls).toEqual(["begin_workspace_conversion_queue"]);
+    expect(onReserved).not.toHaveBeenCalled();
   });
 });
 

@@ -262,7 +262,15 @@ Normal mode provides semantic controls:
 - explicit centroid MS2 or centroid MS1+MS2 presets, marked lossy;
 - MS levels: all, MS1 only or MS2 only;
 - zlib compression;
-- output conflict policy: fail/skip/automatic rename; overwrite requires explicit confirmation.
+- output conflict policy: Fail by default, or Skip; automatic rename and explicit overwrite are refused by [ADR 0043, CNV-D4](docs/architecture/adr/0043-conversion-completion-route.md#cnv-d4--conflict-and-overwrite).
+
+The M6.6 decision supersedes this proposal's earlier automatic-rename and
+confirmed-overwrite promise. An existing destination remains untouched; a
+backend-named output set applies Fail/Skip to the whole set, and Skip refuses a
+partially existing set. An internal batch claim collision is a separate refusal
+that neither policy resolves. Explicit overwrite is `OVERWRITE_REFUSED` because
+the Rust finalization boundary has no tested conditional replacement of a
+confirmed existing object with preservation of the old target on failure.
 
 Before execution, show a natural-language summary such as file count, format, centroiding behavior and output root. An advanced section may show the resolved backend and argv, but the frontend never constructs backend syntax.
 

@@ -10967,7 +10967,8 @@ fn a_retry_refuses_when_its_destination_is_no_longer_the_same_object() {
     drop(writer);
 
     // The folder is replaced by a different directory of the same name.
-    fs::remove_dir_all(&destination).expect("remove the admitted folder");
+    fs::rename(&destination, fixture.directory.join("original-destination"))
+        .expect("move the leased original object away without recycling its identity");
     fs::create_dir_all(&destination).expect("and put a different one in its place");
 
     let error = service
@@ -11243,6 +11244,8 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "cancelledCount",
             "conflictPolicy",
             "currentIndex",
+            "destinationPolicy",
+            "destinationStatus",
             "error",
             "failedCount",
             "finalizedCount",
@@ -14168,7 +14171,7 @@ fn test_queue_item() -> QueueItem {
 fn test_queue_item_named(index: usize, file_name: &str) -> QueueItem {
     let handle = format!("file-{index}");
     QueueItem::new(
-        DatasetId::parse(&handle).expect("a dataset handle"),
+        subject(&handle, &PathBuf::from("sources").join(file_name), None),
         0,
         DatasetSourceKind::ThermoRaw,
         SelectedFileDto {
@@ -14748,7 +14751,11 @@ fn a_queue_reports_each_distinct_family_once_in_first_appearance_order() {
     };
     let item = |index: u64, name: &str, kind: DatasetSourceKind, wire: DatasetSourceKindDto| {
         QueueItem::new(
-            DatasetId::parse(&format!("file-{index}")).expect("a handle"),
+            subject(
+                &format!("file-{index}"),
+                &PathBuf::from("sources").join(name),
+                None,
+            ),
             0,
             kind,
             dto(name, wire),
@@ -15115,6 +15122,15 @@ fn a_replaced_queue_releases_its_tickets_without_touching_the_files() {
     let (service, destination, operation, document) = converted_queue(&fixture, &["one.raw"]);
     let output = destination.join("one.mzML");
     let before = fs::read(&output).expect("read the finalized output");
+    #[cfg(windows)]
+    let directory_leases = service.terminal_destination_leases_for_test();
+    #[cfg(windows)]
+    assert!(
+        directory_leases.len() == 1
+            && directory_leases
+                .iter()
+                .all(|lease| lease.upgrade().is_some())
+    );
 
     // A second queue replaces the terminal one, tickets and all.
     let next = add_one_acquisition(&service, &fixture.thermo_raw("three.raw"));
@@ -15138,6 +15154,38 @@ fn a_replaced_queue_releases_its_tickets_without_touching_the_files() {
         fs::read(&output).expect("the output survives its queue"),
         before
     );
+    #[cfg(windows)]
+    assert!(
+        directory_leases
+            .iter()
+            .all(|lease| lease.upgrade().is_none()),
+        "queue and adoption tickets release the directory lease together"
+    );
+}
+
+/// Preserve the finalized output's identity while substituting only its
+/// directory. Adoption must refuse based on destination authority itself.
+#[cfg(windows)]
+#[test]
+fn m66_adoption_refuses_the_same_output_object_in_a_replacement_destination() {
+    let fixture = TestFile::new("m66-adoption-directory");
+    let (service, destination, operation, document) = converted_queue(&fixture, &["one.raw"]);
+    let original = fixture.directory.join("parked-output-directory");
+    let parked_output = fixture.directory.join("parked-output.mzML");
+    fs::rename(destination.join("one.mzML"), &parked_output).unwrap();
+    fs::rename(&destination, &original).unwrap();
+    fs::create_dir(&destination).unwrap();
+    fs::rename(&parked_output, destination.join("one.mzML")).unwrap();
+    let before = service.roster();
+    let result = service
+        .adopt_conversion_outputs(&operation.to_string(), document)
+        .unwrap();
+    assert_eq!(
+        adoption_kinds(&result),
+        vec!["refused"],
+        "the old output object does not authorize a new directory"
+    );
+    assert_eq!(service.roster(), before);
 }
 
 // --- The receipt-bound plan, and the two gates before a queue ----------------
@@ -15154,6 +15202,7 @@ fn plan_request(
         intent_id: intent.stable_id(),
         conflict_policy: conflict,
         expected_receipt: receipt,
+        destination_policy: None,
     }
 }
 
@@ -15176,7 +15225,7 @@ fn begin_request(
 /// The plan a planned outcome carries, or a panic naming what it was instead.
 fn planned(outcome: ConversionPlanOutcomeDto) -> ConversionQueuePlanDto {
     match outcome {
-        ConversionPlanOutcomeDto::Planned { plan } => plan,
+        ConversionPlanOutcomeDto::Planned { plan } => *plan,
         other => panic!("expected a plan, found {other:?}"),
     }
 }
@@ -15345,6 +15394,7 @@ fn an_identity_no_admitted_row_carries_never_becomes_a_plan_or_a_queue() {
             intent_id: invented.clone(),
             conflict_policy: ConversionConflictPolicyDto::Fail,
             expected_receipt: receipt,
+            destination_policy: None,
         })
         .expect_err("an unmeasured combination is not a plan");
     assert_eq!(refusal.kind, "conversion_intent_not_admitted");
@@ -27130,7 +27180,7 @@ fn the_reclaim_refuses_a_path_that_is_no_longer_the_object_it_created() {
     .with_created(&child);
 
     // Somebody else replaces it: same name, different object.
-    fs::remove_dir(&child).expect("theirs removes ours");
+    fs::rename(&child, here.directory.join("created-moved")).expect("theirs moves ours");
     fs::create_dir(&child).expect("and puts its own there");
 
     bindings.reclaim_created();
@@ -27718,5 +27768,453 @@ fn the_destination_authority_never_renders_a_path_or_a_name() {
         assert!(!rendered.contains("study"), "{rendered}");
         assert!(!rendered.contains("escape"), "{rendered}");
         assert!(!rendered.contains("\\"), "{rendered}");
+    }
+}
+
+// M6.6: one review question, immutable logical anchors and non-destructive IPC.
+
+#[test]
+fn m66_describe_and_begin_validate_the_same_policy_without_creating_a_folder() {
+    use super::dto::DestinationPolicyDto;
+
+    let fixture = TestFile::new("m66-policy-question");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let provider = ConvertingProvider::faithful();
+    let launches = provider.runner.launches();
+    let service = PreviewService::new(Box::new(provider));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+    let before = entry_names(&fixture.directory);
+    let mut request = service.shipped_plan_request(std::slice::from_ref(&handle));
+    assert_eq!(
+        planned(
+            service
+                .conversion_queue_plan(&request)
+                .expect("default plan")
+        )
+        .destination_policy,
+        DestinationPolicyDto::CustomFolder,
+        "omission preserves the shipped custom-folder default"
+    );
+    for policy in [
+        DestinationPolicyDto::CustomFolder,
+        DestinationPolicyDto::SourceSibling,
+        DestinationPolicyDto::NamedSubfolder {
+            name: "mzML outputs".to_owned(),
+        },
+        DestinationPolicyDto::NamedSubfolder {
+            name: "COM0".to_owned(),
+        },
+        DestinationPolicyDto::NamedSubfolder {
+            name: "LPT0".to_owned(),
+        },
+    ] {
+        request.destination_policy = Some(policy.clone());
+        let plan = planned(
+            service
+                .conversion_queue_plan(&request)
+                .expect("a valid policy"),
+        );
+        assert_eq!(plan.destination_policy, policy);
+        let begin = ConversionBeginRequestDto {
+            handles: request.handles.clone(),
+            intent_id: plan.intent.id.clone(),
+            conflict_policy: plan.conflict_policy,
+            expected_receipt: plan.receipt,
+            destination_policy: Some(plan.destination_policy.clone()),
+        };
+        let outcome = service.begin_conversion_queue(&begin, document).outcome;
+        let ConversionBeginOutcomeDto::Reserved { reservation } = outcome else {
+            panic!("the same question reserves: {outcome:?}");
+        };
+        let state = service.conversion_state();
+        let WorkspaceConversionStateDto::AwaitingDestination { queue, .. } = state.state else {
+            panic!("BEGIN awaits resolution");
+        };
+        assert_eq!(queue.destination_policy, policy);
+        assert_eq!(
+            queue.destination_status,
+            super::dto::ConversionDestinationStatusDto::Unresolved
+        );
+        assert_eq!(entry_names(&fixture.directory), before);
+        let operation = service
+            .claim_conversion(&reservation.reservation_id, document)
+            .expect("the reservation is claimable");
+        assert!(matches!(
+            service.cancel_conversion(operation).state,
+            WorkspaceConversionStateDto::Idle
+        ));
+        assert_eq!(
+            entry_names(&fixture.directory),
+            before,
+            "cancel creates nothing"
+        );
+        assert_eq!(
+            launches.load(Ordering::SeqCst),
+            0,
+            "cancel launches no conversion"
+        );
+    }
+
+    for name in [
+        "",
+        "../escape",
+        r"a\b",
+        "C:\\other",
+        "trailing ",
+        "CON",
+        "aux.txt",
+        "LPT\u{b3}",
+        "CON .mzML",
+    ] {
+        request.destination_policy = Some(DestinationPolicyDto::NamedSubfolder {
+            name: name.to_owned(),
+        });
+        let error = service
+            .conversion_queue_plan(&request)
+            .expect_err("the real validator refuses this name");
+        assert_eq!(error.kind, "subfolder_name_unusable", "{name:?}");
+        let begin = ConversionBeginRequestDto {
+            handles: request.handles.clone(),
+            intent_id: request.intent_id.clone(),
+            conflict_policy: request.conflict_policy,
+            expected_receipt: request.expected_receipt,
+            destination_policy: request.destination_policy.clone(),
+        };
+        let ConversionBeginOutcomeDto::Refused { error } =
+            service.begin_conversion_queue(&begin, document).outcome
+        else {
+            panic!("an invalid name may not reserve a queue");
+        };
+        assert_eq!(error.kind, "subfolder_name_unusable");
+        assert!(matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Idle
+        ));
+        assert_eq!(
+            entry_names(&fixture.directory),
+            before,
+            "no sanitizing or creation"
+        );
+        assert_eq!(
+            launches.load(Ordering::SeqCst),
+            0,
+            "invalid policy launches no conversion"
+        );
+    }
+}
+
+#[test]
+fn m66_describe_defers_source_relative_name_collisions_until_objects_are_bound() {
+    use super::dto::DestinationPolicyDto;
+
+    let fixture = TestFile::new("m66-plan-names");
+    let first = fixture.thermo_raw("run.raw");
+    let second_parent = fixture.destination("second");
+    let second = second_parent.join("run.raw");
+    fs::write(&second, thermo_raw_bytes()).expect("a second acquisition");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handles = vec![
+        add_one_acquisition(&service, &first),
+        add_one_acquisition(&service, &second),
+    ];
+    let mut request = service.shipped_plan_request(&handles);
+    assert_eq!(
+        service
+            .conversion_queue_plan(&request)
+            .expect_err("custom proves a shared destination")
+            .kind,
+        "queue_output_name_collision"
+    );
+    for policy in [
+        DestinationPolicyDto::SourceSibling,
+        DestinationPolicyDto::NamedSubfolder {
+            name: "converted".to_owned(),
+        },
+    ] {
+        request.destination_policy = Some(policy.clone());
+        let plan = planned(
+            service
+                .conversion_queue_plan(&request)
+                .expect("the object pairs are unresolved"),
+        );
+        assert_eq!(plan.items.len(), 2);
+        assert_eq!(plan.destination_policy, policy);
+        assert!(!fixture.directory.join("converted").exists());
+        assert!(!second_parent.join("converted").exists());
+    }
+}
+
+/// A registry re-admission can retain a bundle's dataset ID and update its
+/// primary pathname when the same objects have new member digests. The queue
+/// must retain the logical anchor BEGIN saw across that pause, even then.
+#[cfg(windows)]
+#[test]
+fn m66_begin_pins_logical_anchors_across_a_registry_rebind() {
+    for policy in [
+        DestinationPolicy::SourceSibling,
+        DestinationPolicy::NamedSubfolder(SubfolderName::parse("converted").expect("one name")),
+    ] {
+        let fixture = TestFile::new("m66-anchor-pause");
+        let acquisition = fixture.sciex_bundle("acquisition");
+        let companion = fixture.companion_of("acquisition");
+        let alias_parent = fixture.destination("alias");
+        let alias = alias_parent.join("acquisition.wiff");
+        fs::hard_link(&acquisition, &alias).expect("same primary in a different logical parent");
+        fs::hard_link(&companion, alias_parent.join("acquisition.wiff.scan"))
+            .expect("same companion beside it");
+        let service =
+            output_set_service(FakeOutputSetRunner::writing(&["acquisition-Sample1.mzML"]));
+        let dataset = service
+            .add_sciex_wiff_dataset(&acquisition)
+            .expect("admit the original bundle");
+        let document = current_document(&service);
+        let reservation = service
+            .begin_conversion_under_now(
+                std::slice::from_ref(&dataset.handle),
+                ConversionConflictPolicyDto::Fail,
+                document,
+                policy.clone(),
+            )
+            .expect("BEGIN pins this logical acquisition");
+
+        // Deterministic user pause: the real registry re-admits the same object
+        // identities through another pathname, with a freshly validated digest.
+        // This uses the existing test admission seam; no new runtime command.
+        fs::write(
+            &companion,
+            scan_companion_bytes("new contents while the picker is pending"),
+        )
+        .expect("rewrite the same companion object");
+        let rebound = service
+            .add_sciex_wiff_dataset(&alias)
+            .expect("the registry accepts the updated bundle");
+        assert_eq!(
+            rebound.handle, dataset.handle,
+            "same dataset, a mutable registry record"
+        );
+
+        let operation = service
+            .claim_conversion(&reservation.reservation_id, document)
+            .expect("claim after the pause");
+        let update = service.resolve_claimed_conversion(operation);
+        let queue = terminal_queue(&update);
+        assert_eq!(queue.finalized_count, 1, "{update:?}");
+        assert_eq!(
+            queue.destination_status,
+            super::dto::ConversionDestinationStatusDto::Bound
+        );
+        let relative = if matches!(policy, DestinationPolicy::NamedSubfolder(_)) {
+            "converted/acquisition-Sample1.mzML"
+        } else {
+            "acquisition-Sample1.mzML"
+        };
+        assert!(
+            fixture.directory.join(relative).is_file(),
+            "resolution must use BEGIN's original logical anchor"
+        );
+        assert!(
+            !alias_parent.join(relative).exists(),
+            "the registry's later path cannot redirect this queue"
+        );
+    }
+}
+
+#[test]
+fn m66_wire_rejects_overwrite_and_automatic_rename_in_plan_and_begin() {
+    for conflict in ["overwrite", "automatic_rename", "rename", "replace"] {
+        let request = serde_json::json!({
+            "handles": ["file-0"],
+            "intentId": ConversionIntent::SHIPPED.stable_id(),
+            "conflictPolicy": conflict,
+            "expectedReceipt": 1,
+            "destinationPolicy": {"kind": "sourceSibling"}
+        });
+        assert!(serde_json::from_value::<ConversionPlanRequestDto>(request.clone()).is_err());
+        assert!(serde_json::from_value::<ConversionBeginRequestDto>(request).is_err());
+    }
+}
+
+/// All production policies retain directory object lifetime, including a
+/// pre-existing named child. This lease permits edits/rename, while a fresh
+/// admission of a replacement must fail the original binding's comparison.
+#[cfg(windows)]
+#[test]
+fn m66_every_resolved_policy_leases_its_object_until_the_last_binding_drops() {
+    for (label, policy, preexisting) in [
+        ("sibling", DestinationPolicy::SourceSibling, false),
+        ("custom", DestinationPolicy::CustomFolder, false),
+        (
+            "new-child",
+            DestinationPolicy::NamedSubfolder(SubfolderName::parse("converted").unwrap()),
+            false,
+        ),
+        (
+            "existing-child",
+            DestinationPolicy::NamedSubfolder(SubfolderName::parse("converted").unwrap()),
+            true,
+        ),
+    ] {
+        let fixture = TestFile::new(&format!("m66-destination-lease-{label}"));
+        let input = fixture.destination("input");
+        let source = input.join("one.raw");
+        fs::write(&source, thermo_raw_bytes()).unwrap();
+        let custom = fixture.destination("chosen");
+        if preexisting {
+            fs::create_dir(input.join("converted")).unwrap();
+        }
+        let chosen = matches!(policy, DestinationPolicy::CustomFolder).then_some(custom.as_path());
+        let bindings =
+            resolve_destinations(&policy, &[subject("file-0", &source, None)], chosen).unwrap();
+        let admitted = bindings
+            .destination_for(DatasetId::parse("file-0").unwrap())
+            .unwrap()
+            .admitted()
+            .clone();
+        let witness = admitted.lease_witness();
+        drop(bindings);
+        assert!(
+            witness.upgrade().is_some(),
+            "{label}: the retained binding must keep its original object alive"
+        );
+        let path = admitted.root().to_path_buf();
+        fs::write(path.join("allowed.txt"), b"ordinary writes remain allowed").unwrap();
+        fs::remove_file(path.join("allowed.txt")).unwrap();
+        let (root, identity, held) = super::destination::admit_destination_root(&path).unwrap();
+        assert!(
+            admitted.matches_current(&root, identity),
+            "{label}: normal admission remains compatible"
+        );
+        drop(held);
+        fs::rename(&path, fixture.directory.join("moved-original")).unwrap();
+        fs::create_dir(&path).unwrap();
+        let (root, identity, held) = super::destination::admit_destination_root(&path).unwrap();
+        assert!(
+            !admitted.matches_current(&root, identity),
+            "{label}: the same name now identifies a replacement"
+        );
+        drop(held);
+        let clone = admitted.clone();
+        drop(admitted);
+        assert!(
+            witness.upgrade().is_some(),
+            "{label}: clones carry object lifetime"
+        );
+        drop(clone);
+        assert!(
+            witness.upgrade().is_none(),
+            "{label}: the last binding releases object lifetime"
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn m66_stop_after_directory_admission_reclaims_only_new_untouched_children() {
+    for preexisting in [false, true] {
+        let fixture = TestFile::new("m66-stop-after-directory-admission");
+        let child = fixture.directory.join("converted");
+        if preexisting {
+            fs::create_dir(&child).unwrap();
+        }
+        let runner = FakeConversionRunner::new(BackendAct::Convert);
+        let launches = runner.launches();
+        let service = PreviewService::new(Box::new(ConvertingProvider::new(
+            evidenced_capabilities(),
+            runner,
+        )));
+        let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+        let document = current_document(&service);
+        let reservation = service
+            .begin_conversion_under_now(
+                &[handle],
+                ConversionConflictPolicyDto::Fail,
+                document,
+                DestinationPolicy::NamedSubfolder(SubfolderName::parse("converted").unwrap()),
+            )
+            .unwrap();
+        let operation = service
+            .claim_conversion(&reservation.reservation_id, document)
+            .unwrap();
+        assert!(service.start_resolved_for_test(operation, None));
+        let mut reached = false;
+        let update = service.drain_queue_before_item(operation, &mut || {
+            reached = true;
+            assert!(child.is_dir());
+            service
+                .stop_conversion_queue(&operation.to_string(), document)
+                .unwrap();
+        });
+        assert!(
+            reached,
+            "the stop must occur with the real directory admission hold alive"
+        );
+        assert_eq!(
+            terminal_reason(&update),
+            ConversionQueueTerminalReasonDto::Stopped
+        );
+        let queue = terminal_queue(&update);
+        assert!(queue.items.iter().all(|item| item.attempts == 0));
+        assert_eq!(launches.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            queue.destination_status,
+            super::dto::ConversionDestinationStatusDto::Unresolved
+        );
+        assert_eq!(
+            child.exists(),
+            preexisting,
+            "the still-live terminal slot must not postpone owned-child cleanup"
+        );
+        assert!(service.terminal_destination_leases_for_test().is_empty());
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn m66_retry_retains_the_bound_directory_lease_for_every_policy() {
+    for policy in [
+        DestinationPolicy::CustomFolder,
+        DestinationPolicy::SourceSibling,
+        DestinationPolicy::NamedSubfolder(SubfolderName::parse("converted").unwrap()),
+    ] {
+        let fixture = TestFile::new("m66-retry-directory-lease");
+        let custom = fixture.destination("chosen");
+        let source = fixture.thermo_raw("one.raw");
+        let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+        let handle = add_one_acquisition(&service, &source);
+        let document = current_document(&service);
+        let reservation = service
+            .begin_conversion_under_now(
+                &[handle],
+                ConversionConflictPolicyDto::Fail,
+                document,
+                policy.clone(),
+            )
+            .unwrap();
+        let operation = service
+            .claim_conversion(&reservation.reservation_id, document)
+            .unwrap();
+        let writer = hold_for_writing(&source);
+        let update = if matches!(policy, DestinationPolicy::CustomFolder) {
+            service.run_claimed_conversion(operation, &custom)
+        } else {
+            service.resolve_claimed_conversion(operation)
+        };
+        assert_eq!(terminal_queue(&update).retryable_failed_count, 1);
+        let leases = service.terminal_destination_leases_for_test();
+        assert!(leases.len() == 1 && leases[0].upgrade().is_some());
+        drop(writer);
+        let retried = service.retry_conversion_queue(document).unwrap();
+        assert_eq!(terminal_queue(&retried).finalized_count, 1);
+        assert_eq!(terminal_queue(&retried).retry_round, 1);
+        assert!(
+            leases[0].upgrade().is_some(),
+            "retry retains the same original lifetime"
+        );
+        drop(service);
+        assert!(
+            leases[0].upgrade().is_none(),
+            "the last queue/adoption owner releases it"
+        );
     }
 }

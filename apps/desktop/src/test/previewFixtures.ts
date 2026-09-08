@@ -261,6 +261,7 @@ export function planIdentity(
     intentId: shippedIntent.id,
     conflictPolicy: "fail",
     receipt: firstBindingReceipt,
+    destinationPolicy: { kind: "customFolder" },
     ...overrides,
   };
 }
@@ -1235,6 +1236,8 @@ export function queueOf(items: readonly ConversionQueueItem[]) {
     retryRound: 0,
     conflictPolicy: "fail" as const,
     finalizedCount: count("finalized"),
+    destinationPolicy: { kind: "customFolder" as const },
+    destinationStatus: "bound" as const,
     skippedCount: count("skipped"),
     failedCount: failed,
     retryableFailedCount: retryable,
@@ -1375,11 +1378,11 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   const quarantineBackend = (): void => {
     backendQuarantined = true;
   };
-  const defaultConversion = (request: ConversionRequest): WorkspaceConversionState => ({
+  const defaultConversion = (request: ConversionBeginRequest): WorkspaceConversionState => ({
     status: "terminal",
     reason: "completed",
     operationId: String(conversionSequence + 1),
-    queue: queueOf(
+    queue: { ...queueOf(
       request.handles.map((handle, index) =>
         queueItem(handle, `acquisition-${String(index)}.raw`, {
           state: "finalized",
@@ -1412,7 +1415,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           },
         }),
       ),
-    ),
+    ), destinationPolicy: request.destinationPolicy, conflictPolicy: request.conflictPolicy },
   });
 
   const planRequests: ConversionPlanRequest[] = [];
@@ -1804,6 +1807,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           intent: admitted.intent,
           conflictPolicy: request.conflictPolicy,
           receipt: request.expectedReceipt,
+          destinationPolicy: request.destinationPolicy,
         },
       });
     },
@@ -1857,7 +1861,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       // produced, not the one before it.
       const settling =
         options.conversion === undefined
-          ? Promise.resolve(defaultConversion(request))
+          ? Promise.resolve(defaultConversion(begun))
           : options.conversion(request, publishConversion);
       onReserved();
       const settled = await settling;

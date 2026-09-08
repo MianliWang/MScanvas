@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { useEffect, useRef, type ReactElement, type RefObject } from "react";
 
 import type {
   ConversionConflictPolicy,
@@ -8,6 +8,7 @@ import type {
   ConversionQueuePlanItem,
   ConversionReport,
   DatasetSourceKind,
+  DestinationPolicy,
 } from "./contracts";
 import { conversionJudgedAnyOutput, SOURCE_KIND_LABEL } from "./contracts";
 import type { ConversionAvailability } from "./conversionAvailability";
@@ -31,6 +32,23 @@ const CONFLICT_POLICY_LABEL: Record<ConversionConflictPolicy, string> = {
 };
 
 const CONFLICT_POLICIES: readonly ConversionConflictPolicy[] = ["fail", "skip"];
+
+const DESTINATION_LABEL: Record<DestinationPolicy["kind"], string> = {
+  customFolder: "Custom local folder",
+  sourceSibling: "Beside each source",
+  namedSubfolder: "Named subfolder beside each source",
+};
+const DESTINATIONS: readonly DestinationPolicy["kind"][] = [
+  "customFolder", "sourceSibling", "namedSubfolder",
+];
+
+function describeDestination(policy: DestinationPolicy): string {
+  switch (policy.kind) {
+    case "customFolder": return "One local folder, chosen after Convert";
+    case "sourceSibling": return "Beside each source, in its containing folder";
+    case "namedSubfolder": return `Subfolder “${policy.name}” in each source's containing folder`;
+  }
+}
 
 /**
  * The one sentence this workflow must always say about what it verified.
@@ -239,6 +257,14 @@ export function ConversionPanel({
 }: ConversionPanelProps): ReactElement | null {
   const { state } = conversion;
   const terminal = state.status === "terminal";
+  const convertButton = useRef<HTMLButtonElement | null>(null);
+  const restoreAfterPicker = useRef(false);
+  useEffect(() => {
+    if (conversion.busy || !restoreAfterPicker.current) return;
+    if (state.status === "idle" && plan.startPlan === "reading") return;
+    restoreAfterPicker.current = false;
+    if (state.status === "idle") convertButton.current?.focus();
+  }, [conversion.busy, plan.startPlan, state.status]);
 
   // The two decisions this panel offers, each projected from the one lane the
   // operation is guarded with. Not a boolean handed down from the workspace:
@@ -380,6 +406,8 @@ export function ConversionPanel({
           repeating={terminal}
           scope={scope}
           startAvailability={startAvailability}
+          convertButton={convertButton}
+          onCustomStart={() => { restoreAfterPicker.current = true; }}
         />
       )}
     </section>
@@ -655,11 +683,14 @@ function PlanState({
   handles,
   excludedSelectedCount,
   startAvailability,
-  repeating,
   scope,
+  convertButton,
+  onCustomStart,
 }: {
   readonly conversion: ConversionOperation;
   readonly plan: ConversionPlanView;
+  readonly convertButton: RefObject<HTMLButtonElement | null>;
+  readonly onCustomStart: () => void;
   /** The rows this panel would queue, for the control that names them. */
   readonly handles: readonly string[];
   readonly excludedSelectedCount: number;
@@ -677,14 +708,6 @@ function PlanState({
   // selected…" for the whole of the window a plan is being worked out -- a
   // count that was never true of anything.
   const count = summary === null ? handles.length : summary.items.length;
-  // With a result above it, silence is better than a second empty state --
-  // while one is momentarily being worked out. A plan that *failed* and one the
-  // settings make impossible are durable states with something for the reader
-  // to do, and hiding them would leave a finished queue on screen beside no
-  // explanation of why another cannot start.
-  if (repeating && summary === null && plan.startPlan === "reading") {
-    return null;
-  }
   return (
     <div className="conversion-plan">
       {summary === null ? (
@@ -764,8 +787,8 @@ function PlanState({
               <dd>{CONFLICT_POLICY_LABEL[summary.conflictPolicy]}</dd>
             </div>
             <div>
-              <dt>Destination</dt>
-              <dd>One folder, chosen next</dd>
+              <dt>Requested destination</dt>
+              <dd>{describeDestination(summary.destinationPolicy)}</dd>
             </div>
           </dl>
 
@@ -786,7 +809,50 @@ function PlanState({
         </>
       )}
 
-      <fieldset className="conversion-conflict">
+      <fieldset className="conversion-destination" aria-describedby="conversion-destination-scope">
+        <legend>Save converted files</legend>
+        {DESTINATIONS.map((kind) => (
+          <label key={kind}>
+            <input
+              checked={conversion.destinationPolicy.kind === kind}
+              name="conversion-destination-policy"
+              onChange={() => conversion.setDestinationPolicy(
+                kind === "namedSubfolder" ? { kind, name: conversion.subfolderName } : { kind },
+              )}
+              type="radio"
+              value={kind}
+            />
+            {DESTINATION_LABEL[kind]}
+          </label>
+        ))}
+        {conversion.destinationPolicy.kind === "namedSubfolder" ? (
+          <div className="conversion-subfolder">
+            <label htmlFor="conversion-subfolder-name">Subfolder name</label>
+            <input
+              id="conversion-subfolder-name"
+              aria-describedby={plan.error?.kind === "subfolder_name_unusable"
+                ? `conversion-subfolder-help ${PLAN_PENDING_ID}` : "conversion-subfolder-help"}
+              aria-invalid={plan.error?.kind === "subfolder_name_unusable" || undefined}
+              autoComplete="off"
+              type="text"
+              value={conversion.destinationPolicy.name}
+              onChange={(event) => {
+                const name = event.currentTarget.value;
+                conversion.setDestinationPolicy({ kind: "namedSubfolder", name });
+              }}
+            />
+            <p className="quiet-text" id="conversion-subfolder-help">
+              Use one folder name, without a path. MSCanvas checks the name before Convert is available.
+            </p>
+          </div>
+        ) : null}
+        <p className="quiet-text" id="conversion-destination-scope">
+          Destinations are resolved after Convert. Output names are checked as each item runs;
+          a queue can use different source folders.
+        </p>
+      </fieldset>
+
+      <fieldset className="conversion-conflict" aria-describedby="conversion-conflict-scope">
         <legend>If an output name is taken</legend>
         {CONFLICT_POLICIES.map((policy) => (
           <label key={policy}>
@@ -802,10 +868,16 @@ function PlanState({
             {CONFLICT_POLICY_LABEL[policy]}
           </label>
         ))}
+        <p className="quiet-text" id="conversion-conflict-scope">
+          Existing files are never overwritten or automatically renamed. For a multi-file output,
+          Skip applies only when all output names already exist; a partial collision fails that item.
+          Two queued outputs claiming the same destination name are refused.
+        </p>
       </fieldset>
 
       <div className="conversion-actions">
         <button
+          ref={convertButton}
           aria-describedby={describedBy(
             summary === null
               ? PLAN_PENDING_ID
@@ -825,6 +897,7 @@ function PlanState({
             // reaching for the question separately would be a second answer to
             // which conversion this is.
             if (current !== null) {
+              if (current.identity.destinationPolicy.kind === "customFolder") onCustomStart();
               conversion.convert(current.identity);
             }
           }}
@@ -941,7 +1014,9 @@ function QueueState({
           </p>
         </>
       ) : state.status === "awaitingDestination" ? (
-        <p>Choose where to save the converted mzML.</p>
+        <p>{queue.destinationPolicy.kind === "customFolder"
+          ? "Choose where to save the converted mzML."
+          : "Resolving destinations beside the sources…"}</p>
       ) : state.status === "stopping" || (state.status === "running" && conversion.stopping) ? (
         <>
           <p>Stopping queue…</p>
@@ -985,6 +1060,25 @@ function QueueState({
           {`${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed of ${String(queue.itemCount)}.`}
         </p>
       )}
+
+      <dl className="metadata-list" aria-label="Queue destination">
+        <div>
+          <dt>Queue destination</dt>
+          <dd>{queue.destinationPolicy.kind === "customFolder" && queue.destinationStatus === "bound"
+            ? "Chosen local folder"
+            : describeDestination(queue.destinationPolicy)}</dd>
+        </div>
+        <div>
+          <dt>Destination binding</dt>
+          <dd>{queue.destinationStatus === "bound"
+            ? "Bound when this queue started; revalidated before each attempt"
+            : "No destination bound"}</dd>
+        </div>
+        <div>
+          <dt>Queue conflict policy</dt>
+          <dd>{CONFLICT_POLICY_LABEL[queue.conflictPolicy]}</dd>
+        </div>
+      </dl>
 
       {state.status === "terminal" && state.reason === "stopFailed" ? (
         <p className="notice notice-danger" role="alert">

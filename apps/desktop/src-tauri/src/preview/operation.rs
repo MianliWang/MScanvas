@@ -33,8 +33,10 @@ use mscanvas_proteowizard::{
 
 use super::adoption::FinalizedOutputAdoptionTicket;
 use super::adoption::FinalizedOutputSetAdoptionTicket;
-use super::destination::DestinationIdentity;
-use super::destination_policy::{DestinationPolicy, ItemDestinationBindings};
+use super::destination::{
+    DestinationHold, DestinationIdentity, DestinationLease, lease_destination,
+};
+use super::destination_policy::{DestinationPolicy, ItemDestinationBindings, ResolutionSubject};
 use super::diagnostics::{
     ConversionFailureDiagnosticTicket, DiagnosticItemIdentity, DiagnosticsProviderFacts,
     DiagnosticsQueueFacts,
@@ -42,12 +44,13 @@ use super::diagnostics::{
 use super::dto::BackendAuthorityProjectionDto;
 use super::dto::{
     AdoptionCandidateIdentityDto, ConversionAttemptResultDto, ConversionCancellationDto,
-    ConversionConflictPolicyDto, ConversionDiagnosticsStateDto, ConversionOutputPlanDto,
-    ConversionQueueDto, ConversionQueueItemDto, ConversionQueueItemStateDto,
-    ConversionQueueTerminalReasonDto, MAX_CONVERSION_QUEUE_ITEMS, PreviewErrorDto, SelectedFileDto,
-    WorkspaceConversionReservationDto, WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
-    conversion_busy, conversion_not_stoppable, invalid_conversion_reservation,
-    queue_duplicate_dataset, queue_installation_changed, queue_is_empty, queue_too_large,
+    ConversionConflictPolicyDto, ConversionDestinationStatusDto, ConversionDiagnosticsStateDto,
+    ConversionOutputPlanDto, ConversionQueueDto, ConversionQueueItemDto,
+    ConversionQueueItemStateDto, ConversionQueueTerminalReasonDto, MAX_CONVERSION_QUEUE_ITEMS,
+    PreviewErrorDto, SelectedFileDto, WorkspaceConversionReservationDto,
+    WorkspaceConversionStateDto, WorkspaceConversionUpdateDto, conversion_busy,
+    conversion_not_stoppable, invalid_conversion_reservation, queue_duplicate_dataset,
+    queue_installation_changed, queue_is_empty, queue_too_large,
 };
 use super::installation::InstallationIdentity;
 use super::selection::{DatasetId, DatasetSourceKind};
@@ -90,7 +93,7 @@ impl fmt::Debug for ConversionReservationId {
 // Retained for the length of the queue so a retry runs against the same
 // directory without asking for it again — and so it can be *proved* to be the
 /// same directory rather than assumed. The path never leaves this module.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub(super) struct AdmittedDestination {
     root: PathBuf,
     /// The volume serial and file id the directory was admitted with, where the
@@ -98,11 +101,40 @@ pub(super) struct AdmittedDestination {
     // that retried on a name alone could write into whatever had since taken
     /// it.
     identity: Option<DestinationIdentity>,
+    /// Lifetime, not a path lock. Retry/adoption still revalidate the name.
+    _lease: Option<DestinationLease>,
 }
 
+impl PartialEq for AdmittedDestination {
+    fn eq(&self, other: &Self) -> bool {
+        self.root == other.root && self.identity == other.identity
+    }
+}
+
+impl Eq for AdmittedDestination {}
+
 impl AdmittedDestination {
+    /// Synthetic comparison facts are confined to tests. Production retained
+    /// destinations must transfer lifetime from the actual admission hold.
+    #[cfg(test)]
     pub(super) const fn new(root: PathBuf, identity: Option<DestinationIdentity>) -> Self {
-        Self { root, identity }
+        Self {
+            root,
+            identity,
+            _lease: None,
+        }
+    }
+
+    pub(super) fn from_held(
+        root: PathBuf,
+        held: &DestinationHold,
+    ) -> Result<Self, super::dto::PreviewErrorDto> {
+        let lease = lease_destination(&root, held)?;
+        Ok(Self {
+            root,
+            identity: super::destination::identity_of_hold(held),
+            _lease: Some(lease),
+        })
     }
 
     pub(super) fn root(&self) -> &Path {
@@ -115,7 +147,22 @@ impl AdmittedDestination {
     // caller here reads that as a refusal rather than as agreement: there is
     /// no weaker comparison to fall back to.
     pub(super) fn is_still(&self, other: &Self) -> bool {
-        self.root == other.root && self.identity.is_some() && self.identity == other.identity
+        self.matches_current(&other.root, other.identity)
+    }
+
+    pub(super) fn matches_current(
+        &self,
+        root: &Path,
+        identity: Option<DestinationIdentity>,
+    ) -> bool {
+        self.root == root && self.identity.is_some() && self.identity == identity
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn lease_witness(&self) -> std::sync::Weak<std::fs::File> {
+        self._lease
+            .as_ref()
+            .map_or_else(std::sync::Weak::new, std::sync::Arc::downgrade)
     }
 }
 
@@ -388,6 +435,10 @@ pub(super) fn item_output_topology(
 #[derive(Clone)]
 pub(super) struct QueueItem {
     dataset: DatasetId,
+    /// The logical acquisition anchor captured with this item at BEGIN, under
+    /// the workspace mutation gate. Resolution must not consult the registry
+    /// again after a user pause. Filesystem objects are admitted separately.
+    resolution_subject: ResolutionSubject,
     /// The dataset's request epoch as it stood when the queue was created, read
     // rather than claimed. Claiming would supersede whatever the user was
     /// already doing with the row merely by opening a picker they might cancel.
@@ -491,14 +542,15 @@ impl CancellationFacts {
 
 impl QueueItem {
     pub(super) const fn new(
-        dataset: DatasetId,
+        resolution_subject: ResolutionSubject,
         request_epoch: u64,
         kind: DatasetSourceKind,
         dataset_dto: SelectedFileDto,
         output: ItemOutputTopology,
     ) -> Self {
         Self {
-            dataset,
+            dataset: resolution_subject.dataset,
+            resolution_subject,
             request_epoch,
             kind,
             dataset_dto,
@@ -520,6 +572,10 @@ impl QueueItem {
 
     pub(super) const fn dataset(&self) -> DatasetId {
         self.dataset
+    }
+
+    pub(super) const fn resolution_subject(&self) -> &ResolutionSubject {
+        &self.resolution_subject
     }
 
     pub(super) const fn request_epoch(&self) -> u64 {
@@ -804,8 +860,8 @@ impl ConversionQueue {
         if self.items.iter().any(|item| item.attempts > 0) {
             return;
         }
-        if let Some(bindings) = self.bindings.as_mut() {
-            bindings.reclaim_created_now();
+        if let Some(bindings) = self.bindings.take() {
+            bindings.reclaim_created();
         }
     }
 
@@ -1078,6 +1134,12 @@ impl ConversionQueue {
             item_count: self.items.len(),
             retry_round: self.retry_round,
             conflict_policy: self.conflict,
+            destination_policy: self.policy.to_dto(),
+            destination_status: if self.bindings.is_some() {
+                ConversionDestinationStatusDto::Bound
+            } else {
+                ConversionDestinationStatusDto::Unresolved
+            },
             finalized_count: self.count(ItemState::Finalized),
             skipped_count: self.count(ItemState::Skipped),
             failed_count: failed,
