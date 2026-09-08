@@ -4412,12 +4412,30 @@ impl PreviewService {
                 drop(held);
                 drop(admitted);
                 drop(queue);
+                if self.conversion_slot().stop_requested(operation) {
+                    drop(running);
+                    return self.finish_queue(operation, TerminalReason::Stopped);
+                }
+                // The item stopped being pending and the queue was not stopped,
+                // which is a user's skip landing in the interval between this
+                // worker choosing the item and starting it. **The queue is
+                // still this worker's and may still have work**, so it picks up
+                // whatever is pending now; finding nothing is an ordinary
+                // completion, reached by the loop's own exit.
+                //
+                // Returning here instead would end the worker while the slot
+                // stayed `Running`: no later item would start, and every other
+                // workspace and backend operation would go on being refused
+                // with nothing left to move the queue on. The pass terminates
+                // because a refusal means the item is no longer pending, so the
+                // next `next_pending` cannot choose it again.
+                if self.conversion_slot().running(operation).is_some() {
+                    continue;
+                }
+                // The slot moved on -- a reload released it, or a newer queue
+                // replaced it. Nothing further is this worker's to finish.
                 drop(running);
-                return if self.conversion_slot().stop_requested(operation) {
-                    self.finish_queue(operation, TerminalReason::Stopped)
-                } else {
-                    self.conversion_state()
-                };
+                return self.conversion_state();
             };
             self.publish_conversion_busy(&self.conversion_slot());
 

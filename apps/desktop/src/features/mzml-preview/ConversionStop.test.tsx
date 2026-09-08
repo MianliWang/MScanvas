@@ -232,6 +232,55 @@ describe("stopping a running conversion queue", () => {
     expect(api.stopRequests).toEqual(["1"]);
   });
 
+  it("asks once for a skip however many times it is pressed", async () => {
+    /*
+     * The authoritative state cannot answer whether a skip is already under
+     * way: it is what the *reply* will say, and between the press and the reply
+     * it still reports the row as pending. Two presses in that window used to
+     * both pass, Rust would accept the first and refuse the second, and this
+     * document would show an error for a skip that had in fact succeeded.
+     */
+    let settle: (state: WorkspaceConversionState) => void = () => {};
+    const held = new Promise<WorkspaceConversionState>((resolve) => {
+      settle = resolve;
+    });
+    const api = apiWith(runningQueue(), { skipItem: () => held });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const skip = await within(panel).findByRole("button", { name: "Skip run-3.raw" });
+    fireEvent.click(skip);
+    fireEvent.click(skip);
+    fireEvent.click(skip);
+
+    // One request, whatever the pressing looked like.
+    await waitFor(() => {
+      expect(api.itemSkipRequests).toEqual([{ operationId: "1", itemIndex: 2 }]);
+    });
+    // And the control is withdrawn for the whole of that window rather than
+    // staying live at something already happening.
+    expect(within(panel).queryByRole("button", { name: "Skip run-3.raw" })).toBeNull();
+    // Nothing is reported as having gone wrong, because nothing did. The
+    // refusal this used to produce carries that exact sentence.
+    expect(panel.textContent ?? "").not.toContain("no longer waiting its turn");
+
+    settle({
+      status: "running",
+      operationId: "1",
+      queue: queueOf([
+        converted("file-1", "run-1.raw"),
+        queueItem("file-2", "run-2.raw", { state: "running", attempts: 1 }),
+        queueItem("file-3", "run-3.raw", { state: "skippedByRequest" }),
+      ]),
+    });
+    await waitFor(() => {
+      expect(
+        within(panel).getByText("Skipped — you chose not to convert this one"),
+      ).toBeVisible();
+    });
+    expect(api.itemSkipRequests).toEqual([{ operationId: "1", itemIndex: 2 }]);
+  });
+
   it("says nothing about how the current item will end while it is stopping", async () => {
     renderApp(
       apiWith(stoppingQueue()),

@@ -28492,6 +28492,94 @@ fn m66_every_resolved_policy_leases_its_object_until_the_last_binding_drops() {
     }
 }
 
+/// A skip that lands after the worker chose an item must not wedge the queue.
+///
+/// The worker picks the next pending item, admits its destination, and only
+/// then asks the slot to start it — and the slot refuses an item that is no
+/// longer pending. Before M6.8 the sole way that happened was a stop, which the
+/// refusal branch answers by ending the queue. A user's skip reaches the same
+/// refusal without a stop, and returning there would leave the slot `Running`
+/// with pending items nothing would ever start: no later item runs, and every
+/// other workspace and backend operation goes on being refused with nothing
+/// left to move the queue on.
+///
+/// The seam fires in exactly that interval, so this is the race itself rather
+/// than an approximation of it.
+#[cfg(windows)]
+#[test]
+fn a_skip_that_lands_after_the_worker_chose_the_item_still_drains_the_queue() {
+    let fixture = TestFile::new("m68-skip-after-worker-chose");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    )));
+    let first = add_one_acquisition(&service, &fixture.thermo_raw("first.raw"));
+    let second = add_one_acquisition(&service, &fixture.thermo_raw("second.raw"));
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_under_now(
+            &[first, second],
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::NamedSubfolder(SubfolderName::parse("converted").unwrap()),
+        )
+        .expect("two acquisitions are a queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim the reservation");
+    assert!(service.start_resolved_for_test(operation, None));
+
+    // Skip the item the worker has already chosen, once, in the one interval
+    // where the choice has been made and the start has not.
+    let mut skipped = false;
+    let update = service.drain_queue_before_item(operation, &mut || {
+        if skipped {
+            return;
+        }
+        skipped = true;
+        service
+            .skip_pending_conversion_item(&operation.to_string(), 0, document)
+            .expect("the item the worker chose is still pending");
+    });
+
+    assert!(skipped, "the seam never reached the chosen item");
+    // The queue ran to its own end rather than stalling: the second item
+    // converted, and the queue is terminal rather than still running.
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Completed
+    );
+    let queue = terminal_queue(&update);
+    assert_eq!(
+        queue
+            .items
+            .iter()
+            .map(|item| item.state)
+            .collect::<Vec<_>>(),
+        vec![
+            ConversionQueueItemStateDto::SkippedByRequest,
+            ConversionQueueItemStateDto::Finalized
+        ]
+    );
+    // The skipped item launched nothing; the one behind it did.
+    assert_eq!(queue.items[0].attempts, 0);
+    assert_eq!(launches.load(Ordering::SeqCst), 1);
+    assert_eq!(queue.skipped_by_request_count, 1);
+    assert_eq!(queue.finalized_count, 1);
+    assert_eq!(queue.not_run_count, 0);
+    // And the session is free again rather than held by a queue nothing would
+    // finish, which is the consequence the wedge would have had.
+    assert!(
+        matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Terminal { .. }
+        ),
+        "the slot must not be left running with pending items nothing will start"
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn m66_stop_after_directory_admission_reclaims_only_new_untouched_children() {

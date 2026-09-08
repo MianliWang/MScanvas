@@ -1146,14 +1146,31 @@ export function useConversionOperation(
       });
   }, [api, applyUpdate, readState, setError]);
 
+  // Which rows have a skip in flight, keyed by the exact item this document
+  // asked about.
+  //
+  // Synchronous, and read by the availability rule rather than only by the
+  // dispatch. The authoritative state cannot answer this: it is what the
+  // *reply* will say, and between the press and the reply it still reports the
+  // row as pending. Two presses in that window would both pass, Rust would
+  // accept the first and refuse the second, and the document would show an
+  // error for a skip that had in fact succeeded.
+  const [skipsInFlight, setSkipsInFlight] = useState<readonly string[]>([]);
+  // The rendered copy above is what the availability rule reads; this is what
+  // the dispatch reads. Two presses in one tick both see the same stale state,
+  // so the guard has to be the ref rather than the rendered value.
+  const skipsInFlightRef = useRef<readonly string[]>([]);
   const canSkipItem = useCallback(
     (index: number) => {
       if (state.status !== "running" || stopping) {
         return false;
       }
+      if (skipsInFlight.includes(`${state.operationId}:${String(index)}`)) {
+        return false;
+      }
       return state.queue.items[index]?.state === "pending";
     },
-    [state, stopping],
+    [skipsInFlight, state, stopping],
   );
 
   const skipItem = useCallback(
@@ -1169,16 +1186,33 @@ export function useConversionOperation(
       if (current.queue.items[index]?.state !== "pending") {
         return;
       }
+      const key = `${current.operationId}:${String(index)}`;
+      // Claimed before the request leaves, and lowered only by its own outcome.
+      // A second press inside that window is this document asking again for
+      // something already under way, not a new request.
+      if (skipsInFlightRef.current.includes(key)) {
+        return;
+      }
+      skipsInFlightRef.current = [...skipsInFlightRef.current, key];
+      setSkipsInFlight(skipsInFlightRef.current);
+      const release = (): void => {
+        skipsInFlightRef.current = skipsInFlightRef.current.filter((held) => held !== key);
+        setSkipsInFlight(skipsInFlightRef.current);
+      };
       setError(null);
       api
         .skipPendingConversionItem(current.operationId, index)
         .then((update) => {
+          if (mounted.current) {
+            release();
+          }
           applyUpdate(update);
         })
         .catch((cause: unknown) => {
           if (!mounted.current) {
             return;
           }
+          release();
           setError(toPreviewError(cause));
           readState();
         });
