@@ -1232,6 +1232,22 @@ review. Logical acquisition anchors are reservation facts at `BEGIN`, so a user
 pause cannot make resolution silently consult a different registry answer.
 Retry keeps the already bound per-item destination objects and revalidates them.
 
+The visible named-subfolder path also closes two M6.5 cleanup ownership windows:
+creation followed by reopening a name could record a replacement as ours, and
+identity comparison followed by pathname deletion could remove a replacement.
+The private Windows resolver now uses documented
+[NtCreateFile](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile)
+with `FILE_CREATE`, one validated component and the admitted parent handle.
+It records identity from the returned new-object handle; existing names fail
+creation rather than being opened or replaced. Reclaim opens without following
+reparse points, checks that held object's identity and applies
+[FileDispositionInfo](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle)
+to the same handle. It removes only an empty object, never traverses contents,
+and has no pathname-deletion fallback. Deterministic interleavings cover both
+replacement windows, late population and a replacement junction. This narrows
+existing Rust-owned creation/reclaim operations without changing the discovery
+API, dependency set, IPC surface or destructive-publication decision.
+
 **The destructive disposition is `OVERWRITE_REFUSED`.** The finalization audit
 below in CNV-D4 closes the architectural question before the conflict surface
 offers any destructive action. Fail remains the default and Skip remains

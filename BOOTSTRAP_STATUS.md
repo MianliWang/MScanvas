@@ -7637,3 +7637,16 @@ candidate's PR and external checkpoint/closeout. No new dependency, scientific
 intent, directory acquisition family, membership semantics or M7 foundation is
 introduced. M6.7 owns the next scope surface; M6.7 through M6.11 and M7 onward
 remain unstarted by this instruction.
+
+The first isolated Rust review found an inherited M6.5 cleanup defect in two
+windows now reachable from the named-subfolder control: ownership was recorded
+by reopening a name after creation, and reclaim deleted a name after checking
+its identity. Both are repaired in the same owner. Creation returns the exact
+new directory handle; reclaim removes the exact checked empty object through
+its handle. Five deterministic tests cover creation/name replacement, deletion
+after replacement, late population, existing file/directory refusal and junction
+preservation. No recursive deletion or replacement fallback is introduced.
+The records review also corrected WF-004's outdated statement that the already
+recorded local rendered/native evidence was still pending. Historical evidence
+is retained; the repaired native binary and final reviewed head are recorded in
+the later external checkpoint and PR.

@@ -605,7 +605,7 @@ fn resolve_or_partial(
                 // the sentence above true at the moment it is relied on: the
                 // container cannot be renamed or deleted out from under the
                 // child while this handle is open.
-                let (parent, _parent_held) =
+                let (parent, parent_held) =
                     admit_and_hold(&container, std::slice::from_ref(subject))?;
                 let child = parent.admitted().root().join(name.as_str());
                 // Existence decides ownership, and ownership decides what may
@@ -618,11 +618,7 @@ fn resolve_or_partial(
                 // child created and then refused is exactly the folder MSCanvas
                 // must not leave behind without ever mentioning again.
                 if matches!(ownership_of(&child), DestinationOwnership::CreatedHere) {
-                    std::fs::create_dir(&child).map_err(|_| subfolder_not_created())?;
-                    created.push(CreatedChild {
-                        identity: directory_identity_of(&child),
-                        path: child.clone(),
-                    });
+                    created.push(create_owned_child(&parent_held, name, &child)?);
                 }
                 // The created or existing child passes the same admission as
                 // any other destination. Creating it is not admitting it.
@@ -648,7 +644,7 @@ fn resolve_or_partial(
 /// **Ownership decides, and emptiness is the safety.** A folder that was
 /// already there is the user's whatever it contains, and is never touched; a
 /// child this attempt made is removed only while it is still empty, with
-/// `remove_dir` rather than anything recursive -- so a folder something else
+/// an empty-directory disposition rather than anything recursive -- so a folder something else
 /// has already written into is left exactly as it is rather than taken away
 /// with its contents.
 ///
@@ -657,24 +653,224 @@ fn resolve_or_partial(
 /// that case is an empty folder, which is visible and harmless, and it is not
 /// described as nothing having changed.
 fn reclaim_created(created: &[CreatedChild]) {
-    // Newest first, so a child is taken back before any parent this attempt
-    // also made -- `remove_dir` refuses a non-empty directory, and the reverse
-    // order is what keeps that refusal from being about our own work.
+    reclaim_created_after_open(created, &mut || {});
+}
+
+fn reclaim_created_after_open(created: &[CreatedChild], after_identity: &mut dyn FnMut()) {
+    // Every deletion consumes the same handle whose identity was checked.
+    // Comparing a path then removing that path would leave a replacement gap.
     for child in created.iter().rev() {
-        // **Still the object this attempt created, or it is not ours.** An
-        // identity that cannot be read now, or that names a different object,
-        // means whatever is at this path belongs to somebody else -- and
-        // leaving a folder behind is the safe half of that answer. Emptiness is
-        // still required underneath: `remove_dir` refuses a directory with
-        // anything in it, so a child something has already written into stays.
-        let Some(created_as) = child.identity else {
-            continue;
-        };
-        if directory_identity_of(&child.path) != Some(created_as) {
-            continue;
+        if let Some(held) = open_created_for_reclaim(child) {
+            after_identity();
+            let _ = remove_held_empty_child(held);
         }
-        let _ = std::fs::remove_dir(&child.path);
     }
+}
+
+#[cfg(windows)]
+fn create_owned_child(
+    parent: &DestinationHold,
+    name: &SubfolderName,
+    path: &Path,
+) -> Result<CreatedChild, PreviewErrorDto> {
+    let held = create_child_object(parent, name).map_err(|_| subfolder_not_created())?;
+    record_created_child(path, held)
+}
+
+#[cfg(windows)]
+fn record_created_child(path: &Path, held: std::fs::File) -> Result<CreatedChild, PreviewErrorDto> {
+    // The creation returned this object. Reopening its name here could record
+    // a replacement as ours before admission ever has a chance to refuse it.
+    let identity = super::destination::identity_of_hold(&held);
+    if identity.is_none() {
+        let _ = remove_held_empty_child(held);
+        return Err(destination_unprovable());
+    }
+    Ok(CreatedChild {
+        path: path.to_path_buf(),
+        identity,
+    })
+}
+
+#[cfg(not(windows))]
+fn create_owned_child(
+    _parent: &DestinationHold,
+    _name: &SubfolderName,
+    _path: &Path,
+) -> Result<CreatedChild, PreviewErrorDto> {
+    // No identity-backed destination is admitted on these platforms.
+    Err(destination_unprovable())
+}
+
+/// FILE_CREATE returns the new directory and refuses every existing name.
+/// The one validated component is relative to the admitted parent object, so
+/// creation neither traverses a path again nor follows an existing child link.
+/// https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile
+#[cfg(windows)]
+fn create_child_object(
+    parent: &DestinationHold,
+    name: &SubfolderName,
+) -> std::io::Result<std::fs::File> {
+    use std::ffi::c_void;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    #[repr(C)]
+    struct UnicodeString {
+        length: u16,
+        maximum_length: u16,
+        buffer: *mut u16,
+    }
+    #[repr(C)]
+    struct ObjectAttributes {
+        length: u32,
+        root_directory: *mut c_void,
+        object_name: *mut UnicodeString,
+        attributes: u32,
+        security_descriptor: *mut c_void,
+        security_quality_of_service: *mut c_void,
+    }
+    #[repr(C)]
+    struct IoStatusBlock {
+        status: usize,
+        information: usize,
+    }
+    #[cfg(target_pointer_width = "64")]
+    const _: [(); 48] = [(); std::mem::size_of::<ObjectAttributes>()];
+    #[cfg(target_pointer_width = "64")]
+    const _: [(); 16] = [(); std::mem::size_of::<IoStatusBlock>()];
+    #[cfg(target_pointer_width = "64")]
+    const _: [(); 16] = [(); std::mem::size_of::<UnicodeString>()];
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        #[link_name = "NtCreateFile"]
+        fn nt_create_file(
+            handle: *mut *mut c_void,
+            access: u32,
+            attributes: *mut ObjectAttributes,
+            status: *mut IoStatusBlock,
+            allocation: *mut i64,
+            file_attributes: u32,
+            share: u32,
+            disposition: u32,
+            options: u32,
+            ea_buffer: *mut c_void,
+            ea_length: u32,
+        ) -> i32;
+        #[link_name = "RtlNtStatusToDosError"]
+        fn rtl_nt_status_to_dos_error(status: i32) -> u32;
+    }
+    const FILE_READ_ATTRIBUTES: u32 = 0x80;
+    const DELETE: u32 = 0x1_0000;
+    const SYNCHRONIZE: u32 = 0x10_0000;
+    const FILE_CREATE: u32 = 2;
+    const FILE_DIRECTORY_FILE: u32 = 1;
+    const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x20;
+    const OBJ_CASE_INSENSITIVE: u32 = 0x40;
+    let mut units: Vec<u16> = name.as_str().encode_utf16().collect();
+    let bytes = u16::try_from(units.len() * 2).expect("validated child name fits UNICODE_STRING");
+    let mut unicode = UnicodeString {
+        length: bytes,
+        maximum_length: bytes,
+        buffer: units.as_mut_ptr(),
+    };
+    let mut attributes = ObjectAttributes {
+        length: u32::try_from(std::mem::size_of::<ObjectAttributes>())
+            .expect("OBJECT_ATTRIBUTES fits ULONG"),
+        root_directory: parent.as_raw_handle(),
+        object_name: &raw mut unicode,
+        attributes: OBJ_CASE_INSENSITIVE,
+        security_descriptor: std::ptr::null_mut(),
+        security_quality_of_service: std::ptr::null_mut(),
+    };
+    let mut status = IoStatusBlock {
+        status: 0,
+        information: 0,
+    };
+    let mut handle = std::ptr::null_mut();
+    // SAFETY: all repr(C) buffers and the length-delimited UTF-16 name remain
+    // live for this synchronous call. Parent owns a live directory handle.
+    // FILE_CREATE never opens or overwrites a pre-existing child.
+    let result = unsafe {
+        nt_create_file(
+            &raw mut handle,
+            FILE_READ_ATTRIBUTES | DELETE | SYNCHRONIZE,
+            &raw mut attributes,
+            &raw mut status,
+            std::ptr::null_mut(),
+            0,
+            7,
+            FILE_CREATE,
+            FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if result < 0 {
+        // SAFETY: this conversion accepts any NTSTATUS and has no pointers.
+        let error = unsafe { rtl_nt_status_to_dos_error(result) };
+        return Err(std::io::Error::from_raw_os_error(error.cast_signed()));
+    }
+    // SAFETY: synchronous success returns one newly owned handle; File closes
+    // it exactly once, including every error after identity acquisition.
+    Ok(unsafe { std::fs::File::from_raw_handle(handle) })
+}
+
+#[cfg(windows)]
+fn open_created_for_reclaim(child: &CreatedChild) -> Option<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let expected = child.identity?;
+    let held = std::fs::OpenOptions::new()
+        .access_mode(0x80 | 0x1_0000 | 0x10_0000) // READ_ATTRIBUTES | DELETE | SYNCHRONIZE
+        .share_mode(7)
+        .custom_flags(0x0200_0000 | 0x0020_0000) // BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+        .open(&child.path)
+        .ok()?;
+    let metadata = held.metadata().ok()?;
+    if !metadata.is_dir()
+        || mscanvas_proteowizard::is_reparse_point(&metadata)
+        || super::destination::identity_of_hold(&held) != Some(expected)
+    {
+        return None;
+    }
+    Some(held)
+}
+
+#[cfg(not(windows))]
+fn open_created_for_reclaim(_child: &CreatedChild) -> Option<std::fs::File> {
+    None
+}
+
+/// Marks only this object; Windows refuses a nonempty directory. There is no
+/// enumeration, recursion, path deletion or fallback when the operation fails.
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle
+#[cfg(windows)]
+fn remove_held_empty_child(held: std::fs::File) -> std::io::Result<()> {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "SetFileInformationByHandle"]
+        fn set_file_information_by_handle(
+            handle: *mut c_void,
+            class: i32,
+            information: *mut c_void,
+            size: u32,
+        ) -> i32;
+    }
+    let mut delete_file = 1_u8; // FILE_DISPOSITION_INFO contains one BOOLEAN.
+    // SAFETY: held owns the live object with DELETE access; class 4 expects
+    // exactly this one-byte FILE_DISPOSITION_INFO for the duration of the call.
+    if unsafe {
+        set_file_information_by_handle(held.as_raw_handle(), 4, (&raw mut delete_file).cast(), 1)
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(()) // CloseHandle completes deletion once other open handles close.
+}
+
+#[cfg(not(windows))]
+fn remove_held_empty_child(_held: std::fs::File) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
 }
 
 /// Whether this name is one Windows reserves for a device.
@@ -946,4 +1142,172 @@ fn destination_unprovable() -> PreviewErrorDto {
          another folder.",
         true,
     )
+}
+
+#[cfg(all(test, windows))]
+mod creation_cleanup_tests {
+    use super::*;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn fixture() -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "mscanvas-m66-object-cleanup-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&path).expect("a fresh disposable fixture, never an existing directory");
+        path
+    }
+
+    #[test]
+    fn creation_records_the_returned_object_after_its_name_is_replaced() {
+        let root = fixture();
+        let (_, _, parent) = admit_destination_root(&root).unwrap();
+        let name = SubfolderName::parse("Converted").unwrap();
+        let path = root.join(name.as_str());
+        let parked = root.join("original-moved");
+        let held = create_child_object(&parent, &name).unwrap();
+        let original = super::super::destination::identity_of_hold(&held).unwrap();
+        fs::rename(&path, &parked).unwrap();
+        fs::create_dir(&path).unwrap();
+        let replacement = directory_identity_of(&path).unwrap();
+        assert_ne!(original, replacement);
+        let recorded = record_created_child(&path, held).unwrap();
+        assert_eq!(
+            recorded.identity,
+            Some(original),
+            "creation must not claim the replacement"
+        );
+        reclaim_created(&[recorded]);
+        assert!(path.is_dir(), "the foreign replacement survives cleanup");
+        assert!(
+            parked.is_dir(),
+            "a moved object is not searched for by name"
+        );
+        drop(parent);
+        fs::remove_dir(path).unwrap();
+        fs::remove_dir(parked).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn reclaim_deletes_the_checked_object_after_its_name_is_replaced() {
+        let root = fixture();
+        let (_, _, parent) = admit_destination_root(&root).unwrap();
+        let name = SubfolderName::parse("Converted").unwrap();
+        let path = root.join(name.as_str());
+        let parked = root.join("original-moved");
+        let recorded = create_owned_child(&parent, &name, &path).unwrap();
+        let mut reached = false;
+        reclaim_created_after_open(&[recorded], &mut || {
+            reached = true;
+            fs::rename(&path, &parked).unwrap();
+            fs::create_dir(&path).unwrap();
+        });
+        assert!(reached, "the real identity check must admit our object");
+        assert!(
+            path.is_dir(),
+            "cleanup must not delete the replacement empty directory"
+        );
+        assert!(
+            !parked.exists(),
+            "the checked empty object is reclaimed through its handle"
+        );
+        drop(parent);
+        fs::remove_dir(path).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn reclaim_preserves_a_directory_populated_after_identity_check() {
+        let root = fixture();
+        let (_, _, parent) = admit_destination_root(&root).unwrap();
+        let name = SubfolderName::parse("Converted").unwrap();
+        let path = root.join(name.as_str());
+        let recorded = create_owned_child(&parent, &name, &path).unwrap();
+        let payload = path.join("user-file");
+        reclaim_created_after_open(&[recorded], &mut || {
+            fs::write(&payload, b"preserve me").unwrap()
+        });
+        assert_eq!(fs::read(&payload).unwrap(), b"preserve me");
+        drop(parent);
+        fs::remove_file(payload).unwrap();
+        fs::remove_dir(path).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn atomic_creation_refuses_existing_files_and_directories() {
+        let root = fixture();
+        let (_, _, parent) = admit_destination_root(&root).unwrap();
+        for directory in [false, true] {
+            let name = SubfolderName::parse(if directory {
+                "ExistingDir"
+            } else {
+                "ExistingFile"
+            })
+            .unwrap();
+            let path = root.join(name.as_str());
+            if directory {
+                fs::create_dir(&path).unwrap();
+            } else {
+                fs::write(&path, b"untouched").unwrap();
+            }
+            assert!(
+                create_child_object(&parent, &name).is_err(),
+                "FILE_CREATE must not open an existing name"
+            );
+            if directory {
+                fs::remove_dir(path).unwrap();
+            } else {
+                assert_eq!(fs::read(&path).unwrap(), b"untouched");
+                fs::remove_file(path).unwrap();
+            }
+        }
+        drop(parent);
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn creation_and_reclaim_never_follow_a_replacement_junction() {
+        let root = fixture();
+        let (_, _, parent) = admit_destination_root(&root).unwrap();
+        let name = SubfolderName::parse("Converted").unwrap();
+        let path = root.join(name.as_str());
+        let parked = root.join("original-moved");
+        let target = root.join("foreign-target");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("keep"), b"foreign contents").unwrap();
+        let recorded = create_owned_child(&parent, &name, &path).unwrap();
+        reclaim_created_after_open(&[recorded], &mut || {
+            fs::rename(&path, &parked).unwrap();
+            let made = std::process::Command::new("cmd.exe")
+                .args(["/C", "mklink", "/J"])
+                .arg(&path)
+                .arg(&target)
+                .output()
+                .unwrap();
+            assert!(
+                made.status.success(),
+                "the disposable junction must really exist"
+            );
+        });
+        assert!(!parked.exists());
+        assert!(
+            fs::symlink_metadata(&path).is_ok(),
+            "the replacement junction survives"
+        );
+        assert!(
+            create_child_object(&parent, &name).is_err(),
+            "FILE_CREATE refuses an existing junction"
+        );
+        assert_eq!(fs::read(target.join("keep")).unwrap(), b"foreign contents");
+        drop(parent);
+        fs::remove_dir(path).unwrap(); // Remove only the owned test junction, never its target tree.
+        fs::remove_file(target.join("keep")).unwrap();
+        fs::remove_dir(target).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
 }

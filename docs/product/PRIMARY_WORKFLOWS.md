@@ -196,7 +196,8 @@ See also
 **Partly built.** WF-004a below is the bounded serial queue for three evidenced
 vendor families, with semantic settings and explicit output adoption. M6.6's
 candidate adds visible destination policies and conflict explanations; its
-publication and current rendered/native proof remain pending. Step 1's
+local rendered/native proof is recorded in the usability test plan; review and
+publication remain pending. Step 1's
 selected/all scope decision remains M6.7's, the queue still holds at most 16
 items, and "Open file/folder" remains outside this slice. See
 [ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md) and
