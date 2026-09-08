@@ -1,6 +1,6 @@
 # ADR 0043 — Conversion Completion is the next milestone, and this is its route
 
-Status: accepted, amended 2026-09-04 and twice on 2026-09-06
+Status: accepted, amended 2026-09-04, twice on 2026-09-06, and 2026-09-08
 Date: 2026-09-01
 Related: [0002](0002-external-proteowizard.md),
 [0009](0009-mzml-conversion-execution-boundary.md),
@@ -1547,6 +1547,51 @@ queue stays finitely bounded whatever that basis is.
 *Non-goals:* no parallelism, no pause/resume, no persistence.
 
 *Downstream:* M6.9.
+
+**Outcome, 2026-09-08: `OWNERSHIP_STRUCTURALLY_CLOSED`.** The disjunction this
+route fixed is closed on the first branch rather than the second, and the
+reasoning is recorded here rather than only in the slice.
+
+The window was removed rather than narrowed. The root process is created
+suspended, ownership is established while it has executed no instruction of its
+own, and only then is its primary thread resumed — so every process the backend
+can create is created inside the Job, and breakaway is refused so ownership
+cannot be given up afterwards. Stable `std::process` does expose enough for
+this: `CommandExt::creation_flags` is stable, and the primary thread is
+identified by owner process id, which is sound because the caller still holds
+the process handle and a process that has executed nothing has exactly one
+thread. The repository's own comment that stable `std` exposed no
+suspended-create-and-resume was true of the job-list attribute and not of this
+route to the same guarantee.
+
+Both named paths close together. An assignment failure now terminates a root
+that has provably executed nothing, so the direct-child cleanup it degrades to
+is complete rather than a degradation — and it is complete because of how the
+child was created.
+
+The claim's scope is stated and not exceeded: it covers the provider's own
+process tree. Work brokered to a service or COM server that was already running
+is not a descendant and is not owned.
+
+**The measurement is separate and was taken.** Against release `3.0.26013`,
+revision `47b13cf`, `msconvert.exe` SHA-256 `9BB6F5D5…D590BD`, re-observed
+unchanged after the set: every case reports a cumulative total of one process,
+kernel-counted and therefore without the sampling gap a polled peak leaves. That
+is an honest result about this build and these inputs, not a claim that this
+provider never spawns children.
+
+**The reconciliation is a guard, not a list.** One typed origin, a three-member
+vocabulary replacing the boolean that answered `true` both for a terminated tree
+and for a run that launched nothing, and a `check_repo.py` validator that is
+structural over the semantic and proves itself against six deliberate bypasses
+on every run.
+
+With all three satisfied, an owned-Job-empty stop of a launched conversion
+settles as a successful `Cancelled`, and **cancel the current item and continue**
+and **skip a queued item** are both admitted. **Remove a queued item** stays
+refused on the contract. Capacity was re-decided after cancellation was
+understood and stays `16`, with the stale "no cancellation" premise replaced.
+The record is [the M6.8 evidence document](../../ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md).
 
 ### M6.9 — Output completion and adoption
 

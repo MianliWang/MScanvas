@@ -386,8 +386,9 @@ candidate set, what a conversion is asked to do is now a type, the ownership
 boundary the visible settings sit on is decided, those settings are on screen
 with a plan bound to the installation that answered them, and where output goes
 is now a bound policy resolved to admitted directory objects. M6.6's destination
-and conflict UX is published; M6.7 makes selected/all scope explicit. M6.8 is not
-started.**
+and conflict UX is published; M6.7 makes selected/all scope explicit; M6.8 closes
+the process-ownership window, measures the installed provider, and settles what a
+user may stop. M6.9 is not started.**
 
 The route, the live conversion gap audit it was decided from, the nine product
 decisions it surfaces, the twelve exit criteria and the M7/M8 seams are in
@@ -413,7 +414,14 @@ Twelve slices, plus one authority interlude:
   Scope, exclusion counts, complete roster ordering and the
   Rust-authored capacity are reviewed before BEGIN. Search never narrows all.
   See [the scope record](docs/ux/M6_7_CONVERSION_SCOPE.md).
-- M6.8 — cancellation, capacity, and truthful progress.
+- M6.8 — cancellation, capacity, and truthful progress. **Complete**;
+  `OWNERSHIP_STRUCTURALLY_CLOSED`. The backend root is created suspended and
+  owned before it executes, so an empty Job is an empty tree; the installed
+  build was measured and reports one process per run, kernel-counted; every
+  claim reads one typed origin behind a structural guard. Ending the file being
+  converted and skipping a waiting item are admitted, removing a queued item
+  stays refused, and capacity stays 16 with a current rationale. See
+  [the M6.8 record](docs/ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md).
 - M6.9 — output completion and adoption.
 - M6.10 — evidence-gated side routes.
 - M6.11 — closure.
@@ -549,16 +557,16 @@ guard had been unable to see.
 - Widen the typed conversion settings the interface can actually express:
   CNV-002's mzXML gate, CNV-004 to CNV-007's processing and compression choices,
   and CNV-003's output-location choices.
-- Queue work beyond the current bounds, **measurement-gated, and neither an exit
-  criterion nor a route requiring a disposition**: a re-evaluated queue bound and
-  per-item cancellation. Both are admitted only on M6.8's measurement of what an
-  `msconvert` run actually is **and on its ownership outcome** — a per-item cancel
-  is refused where the spawn-to-Job window stays open. Under that outcome a stop
-  of a launched conversion does not settle as a successful cancellation at all:
-  it settles `CancellationFailed` / `StopFailed` and quarantines the session,
-  because an empty Job is not an empty tree while a descendant can be created
-  before ownership exists. The queue stays finitely
-  bounded whatever that measurement says, and removing an item from a queue
+- Queue work beyond the current bounds, **settled by M6.8 and recorded here as
+  history rather than as outstanding work**: the queue bound was re-evaluated
+  and kept at 16 with a current rationale, and per-item cancellation was
+  admitted. Both were gated on M6.8's measurement of what an `msconvert` run
+  actually is **and on its ownership outcome**, and both conditions were met —
+  the outcome is `OWNERSHIP_STRUCTURALLY_CLOSED`, so an empty Job is an empty
+  tree and a stop of a launched conversion settles as a successful cancellation.
+  Had the window stayed open, that stop would have settled `CancellationFailed`
+  / `StopFailed` and quarantined the session instead. The queue stays finitely
+  bounded, and removing an item from a queue
   already running is refused outright: membership is bound when the queue is
   created. See
   [ADR 0043](docs/architecture/adr/0043-conversion-completion-route.md).

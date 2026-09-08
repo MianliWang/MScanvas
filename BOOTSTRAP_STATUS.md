@@ -5924,52 +5924,57 @@ rather than resolving it by preference. **Owner: M6.6**, and it waits on no
 provider measurement — only on whether the Rust finalization contract can justify
 a destructive publication.
 
-### Queue capacity, stated accurately
+### Queue capacity, re-decided and unchanged
 
-`MAX_CONVERSION_QUEUE_ITEMS = 16` is a **wait-time judgement, not a memory
-limit**, and the code says so. Nothing in the repository measures memory,
-throughput or scaling against queue length. Its stated premise has gone stale —
-the doc comment justifies 16 on the queue having "no cancellation", and a
-queue-level stop has existed since ADR 0015. The queue stays finitely bounded
-whatever value M6 lands on, and re-evaluating it is **M6.8's**, after
-cancellation is understood.
+`MAX_CONVERSION_QUEUE_ITEMS = 16` is a **judgement about how long a person
+should be asked to commit to, not a memory limit**, and the code says so.
+Nothing in the repository measures memory, throughput or scaling against queue
+length.
 
-### Cancellation: a strong mechanism, an unmade measurement, and an open window
+**M6.8 re-decided it after cancellation was understood and kept the number,
+replacing the premise.** The doc comment used to justify 16 on the queue having
+"no cancellation"; a queue-level stop has existed since ADR 0015, and M6.8 adds
+ending the file being converted and settling a waiting item. What that changes
+is the cost of getting the size wrong, not the size: items still run serially,
+so sixteen is still something like half an hour, but a wrong decision no longer
+has to be waited out. Rust stays the only authority, and the queue stays
+finitely bounded.
 
-Job Objects, `TerminateJobObject` and an emptiness check are implemented and
-correct in shape. What has **not** been established is that a real `msconvert`
-run is a *tree at all*: `surviving_processes == Some(0)` after termination is
-satisfied trivially by a one-process run, `max_active_processes` is printed by
-the M0 spike harness but recorded in no evidence document, absent from
-`BackendRunFacts` and not reported by the cancellation harness, and the only
-multi-process evidence is against a synthetic mock parent and grandchild — which
-[ADR 0014](docs/architecture/adr/0014-proteowizard-cancellation-evidence.md)
-states openly.
+### Cancellation: the window is closed, and the measurement was taken
 
-**And a measurement would not be enough on its own.** The child is spawned
-*before* `AssignProcessToJobObject`, so a descendant created in that window
-belongs to no Job — outside `TerminateJobObject` **and outside the count that
-reports the Job empty**. A sample cannot observe a process nothing was counting,
-so no number of representative runs closes it; the same holds for an assignment
-failure, which degrades to a direct-child kill without being reclassified as
-unconfirmed. The route therefore requires **three** things to agree — a
-representative measurement, a structural ownership answer, and an **exhaustive
-reconciliation of every claim** that asserts confirmed process-tree termination —
-ending on one of two outcomes: `OWNERSHIP_STRUCTURALLY_CLOSED`, or
-`OWNERSHIP_UNCONFIRMED` in which **a stop of a launched conversion does not
-settle as a successful `Cancelled` at all** — it settles `CancellationFailed`,
-the queue settles `StopFailed`, and the session is quarantined. An earlier draft
-kept the success state and withdrew only the wording, on the grounds that the
-alternative makes `Stop queue` less useful; that is a consequence, not evidence,
-and [ADR 0014](docs/architecture/adr/0014-proteowizard-cancellation-evidence.md)
-had already decided that a run which cannot establish the tree is gone gets
-`CancellationFailed`. `NotStarted` is unaffected. The third is a semantic
-contract with a repository guard behind it, not a list of symbols: the claim is
-propagated across item states, queue counts, cancellation facts, mirrored wire
-fields, diagnostics keys, set-stop facts and the quarantine reason, and an
-enumeration would be correct only until the next surface was added. No
-implementation is prescribed. **Owner: M6.8**, before any surface claims a tree
-was terminated.
+**Terminal outcome, M6.8: `OWNERSHIP_STRUCTURALLY_CLOSED`.** Job Objects,
+`TerminateJobObject` and an emptiness check were always implemented and correct
+in shape. Two things were missing and both are now supplied.
+
+**The window is gone rather than narrowed.** The child used to be spawned before
+`AssignProcessToJobObject`, so a descendant created in that interval belonged to
+no Job — outside termination *and* outside the count that reports the Job empty,
+which no number of samples could have closed. The root is now created suspended,
+assigned while it has executed no instruction of its own, and only then resumed;
+breakaway is refused, so ownership established before execution cannot be given
+up after it. The assignment-failure path closes with it: the direct-child kill
+it degrades to is complete, because the root has provably run nothing.
+
+**A real `msconvert` run was measured**, against release `3.0.26013`, revision
+`47b13cf`, `msconvert.exe` SHA-256 `9BB6F5D5…D590BD`, re-observed unchanged
+after the set. Every case reports a cumulative total of one process — counted by
+the kernel rather than polled, so without the gap a sampled peak leaves. That is
+an honest result about this build and these inputs, not a claim that this
+provider never spawns children.
+
+**And every claim reads one origin.** `ProcessOutput::owned_tree_confirmed_gone`
+is the conjunction of an empty owned Job and ownership that preceded execution;
+`OwnedTreeDisposition` carries the judgement with three members, replacing a
+boolean that said `true` both for a terminated tree and for a run that launched
+nothing. `check_repo.py` guards the semantic structurally rather than by a list,
+and proves itself against six deliberate bypasses on every run.
+
+With all three satisfied, a stop of a launched conversion settles as a
+successful `Cancelled`; `CancellationFailed` still quarantines the session, and
+an owned process whose disappearance cannot be stated still reaches it. The
+scope of the claim is the provider's own process tree — work brokered to a
+service that was already running is not a descendant and is not owned. The
+record is [the M6.8 evidence document](docs/ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md).
 
 ### XIC: no new identity at this baseline
 
@@ -7690,4 +7695,52 @@ closes current product/status wording. Final confirmation, protected merge
 and natural-main CI identities are in [PR #100](https://github.com/MianliWang/MScanvas/pull/100).
 The evidence and 36-path closure are in
 [the M6.7 record](docs/ux/M6_7_CONVERSION_SCOPE.md).
-M6.8 has not started.
+M6.8 is recorded below.
+
+## M6.8 cancellation, capacity and truthful progress, 2026-09-08
+
+Baseline live-verified before edits: local HEAD/main/origin-main and remote main
+all `735dfebac5d48db30b6d1802c208ccf05853b3d8`, with clean index/worktree, no
+untracked files, stash or active operation. PR #100 is the published M6.7 true
+merge.
+
+M6.8 ends on **`OWNERSHIP_STRUCTURALLY_CLOSED`**. The backend root is created
+suspended and assigned to its owned Job before it executes an instruction, so
+provider execution cannot produce an uncaptured descendant; breakaway is
+refused, and an assignment or resume failure terminates a root that has provably
+run nothing. The confirmed-cancellation claim becomes a conjunction with one
+origin, and `OwnedTreeDisposition` replaces the boolean that asserted a
+terminated tree for a run that never started one. A structural `check_repo.py`
+guard proves itself against six deliberate bypasses on every run.
+
+The exact installed build was measured: release `3.0.26013`, revision `47b13cf`,
+`msconvert.exe` SHA-256 `9BB6F5D5…D590BD`, re-observed unchanged after the set.
+Every case reports a cumulative total of one process, kernel-counted rather than
+sampled. That is a result about this build, not a claim about the provider.
+
+Under CNV-D7, ending the file being converted and skipping a waiting item are
+both admitted; removing a queued item stays refused on the bound-plan contract.
+Both commands bind to an exact operation/item/attempt identity checked under the
+lock that records the request, a queue stop takes precedence over both, and a
+skip that raced a start is refused rather than becoming a cancellation. Retry is
+not widened. Capacity stays 16 with a current rationale. Two progress defects
+are closed: a completed queue now accounts for every item it held, and the retry
+display no longer speaks for a rerun that is already done.
+
+Implementation and validation are complete: 1650 frontend tests, 1490 Rust tests
+across the workspace, all required local gates, browser 10/10 at four inner
+sizes, and native 3/3 on binary SHA-256
+`e311cc5b241b72911ce64a0fac73cc84028d0bc4da3dbe0f056729c178dc8c4d` — a stop that
+landed while the provider was executing settled `confirmed_gone` 33 ms after the
+request, with the queue completing and the session unquarantined. Affected
+regressions on the same binary: M6.6 native 5/5 including the real Escape
+cancellation, and M6.7 native 2/2.
+
+Two browser cases fail here and on the published baseline alike, verified in a
+separate worktree at `735dfeb`: `m4.1` "offers all three formats for a spectrum
+that loaded with no peaks" and `m5.2` "still reaches the plot by Tab where the
+range can move". They are pre-existing and are recorded rather than absorbed.
+
+The evidence and the 34-path closure are in
+[the M6.8 record](docs/ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md).
+M6.9 has not started.

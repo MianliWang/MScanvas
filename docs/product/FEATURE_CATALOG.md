@@ -271,8 +271,9 @@ of having written one. See
 [ADR 0017](../architecture/adr/0017-redacted-conversion-diagnostics-export.md).
 
 The named limits: at most **16** items per queue, three named vendor families,
-regular files only, one folder, no overwrite, one queue-level stop and no per-item
-cancellation, no percentage, no
+regular files only, one folder, no overwrite, three stop scopes — the whole
+queue, the file being converted, and a row still waiting — but no way to take a
+row out of a running queue, no percentage, no
 parallelism, and no queue that survives closing the application. A diagnostics
 export describes only the latest attempt of each item, holds at most 32 KiB per
 stream and 2 MiB in total, never replaces an existing file, and does not survive
@@ -353,7 +354,7 @@ route that owns closing these.
 
 | ID | Feature | Priority | Acceptance summary |
 |---|---|---:|---|
-| RUN-001 | Per-file queue | P0 | Ready/queued/running/completed/failed/cancelled/unsupported are distinct. |
+| RUN-001 | Per-file queue | P0 | Ready/queued/running/completed/failed/cancelled/skipped-by-you/never-run/unsupported are distinct. |
 | RUN-002 | Failure isolation | P0 | One failure does not stop independent queued items. |
 | RUN-003 | Queue stop | P0 | Stops the whole queue: terminates the running process tree, begins no later item, retains completed outputs, and never reports a partial output as valid. An unconfirmed termination is reported as such and quarantines the backend. |
 | RUN-004 | Retry failed | P0 | Retries only selected/failed items without rebuilding the workspace. |

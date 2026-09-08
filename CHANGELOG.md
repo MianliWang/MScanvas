@@ -6,6 +6,28 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- **Three scopes of stop, and one of them is new because the process boundary
+  earned it.** `Stop queue` still ends the whole run. `Stop this file` ends only
+  the acquisition being converted now and lets the rest of the queue carry on.
+  `Skip` on a row still waiting settles it without running it — the row keeps its
+  place and the queue still says what became of it. Taking a row out of a running
+  queue is deliberately not offered: what a queue was asked to do is fixed when
+  it starts.
+
+  The reason the middle one exists is not a feature decision on its own. The
+  backend process used to be started and *then* put under MSCanvas's ownership,
+  and anything it created in between belonged to nothing MSCanvas could see or
+  stop. It is now created suspended, owned before it runs a single instruction,
+  and only then released — so when MSCanvas says a converter stopped, that is
+  about every process it started rather than the ones it happened to be
+  counting. Where it cannot say that, it still says so and still refuses further
+  work until you restart it; that state is never dressed up as a stop that
+  worked.
+
+  What the queue tells you afterwards accounts for every item it held, including
+  the two kinds you decided about, and a rerun that has already finished no
+  longer says it is still retrying.
+
 - **SCIEX WIFF conversion, through `Add files…`.** Select a `.wiff` and MSCanvas
   admits it together with the required `.wiff.scan` beside it as **one**
   workspace row — the companion is never a row of its own, and selecting both

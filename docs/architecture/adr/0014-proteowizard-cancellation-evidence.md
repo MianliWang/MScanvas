@@ -315,6 +315,43 @@ for the request, and the `kernel32` declarations this crate has carried since M0
 for the Job.
 
 
+## Amendment, 2026-09-08 (M6.8) — the interval this ADR left open is closed
+
+This document recorded one interval as unavoidable and did not claim it was
+closed: "the interval that remains is the one stable `std::process` leaves
+between deciding to spawn and spawning, which is the same one the documented
+spawn-to-assignment race lives in and is not claimed to be closed."
+
+**It is closed now, and the rule this ADR set is what closed it.** The root is
+created suspended, assigned to the owned Job while it has executed no
+instruction of its own, and only then resumed, so a descendant created before
+assignment is not merely unlikely — it is not possible. Breakaway is refused, so
+ownership established before execution cannot be given up after it.
+
+Nothing in the decision above is withdrawn. "A confirmed cancellation is the
+only cancellation" stands, and what changed is that the confirmation now has a
+second half: `Some(0)` from the Job *and* ownership that preceded execution.
+Neither alone is the claim, and the conjunction has one origin —
+`ProcessOutput::owned_tree_confirmed_gone` — that everything downstream reads
+rather than re-decides.
+
+The one correction is to a spelling, not to a rule. The boolean this boundary
+handed upward answered `true` both for a tree confirmed gone and for a run that
+launched nothing, which is the conflation `Termination::NotStarted` exists to
+prevent — reintroduced one layer up. `OwnedTreeDisposition` replaces it with
+three members that say which of the two happened, and a repository check keeps
+the affirmative one from being asserted anywhere but at its origin.
+
+The scope of the claim is stated: the provider's own process tree. Work brokered
+to a service or COM server that was already running is not a descendant and is
+not owned by this boundary.
+
+**And the open question this ADR named is answered.** "Can `msconvert` be
+stopped on request, and what does it leave behind" was answered in M3.3; what a
+real run *is* was not. It is now, for this build: every measured case reports a
+cumulative total of one process, counted by the kernel rather than sampled. See
+[the M6.8 record](../../ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md).
+
 ## Amendment, 2026-08-12 — the same primitive, a second lifecycle
 
 [ADR 0026](0026-private-sciex-serial-queue-integration.md) put a multi-output
