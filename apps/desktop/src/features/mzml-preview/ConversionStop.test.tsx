@@ -281,6 +281,39 @@ describe("stopping a running conversion queue", () => {
     expect(api.itemSkipRequests).toEqual([{ operationId: "1", itemIndex: 2 }]);
   });
 
+  it("tells a listener about the two items a user decided, not only the three counts", async () => {
+    /*
+     * The panel's own summary grew for this: a completed queue can now hold a
+     * file the user ended and a row they skipped, and three counts would leave
+     * two of three items unaccounted for. The live region is the same claim to
+     * a different reader, and a region that named neither would give a listener
+     * less than the panel gives a sighted reader.
+     */
+    const api = apiWith({
+      status: "terminal",
+      operationId: "1",
+      reason: "completed",
+      queue: queueOf([
+        converted("file-1", "run-1.raw"),
+        cancelled("file-2", "run-2.raw"),
+        queueItem("file-3", "run-3.raw", { state: "skippedByRequest" }),
+      ]),
+    });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(
+        within(panel).getByText("1 converted, 0 skipped, 0 failed, 1 cancelled, 1 skipped by you of 3."),
+      ).toBeVisible();
+    });
+    await waitFor(() => {
+      expect(liveRegion()).toContain(
+        "1 converted, 0 skipped, 0 failed, 1 cancelled, 1 skipped by you.",
+      );
+    });
+  });
+
   it("says nothing about how the current item will end while it is stopping", async () => {
     renderApp(
       apiWith(stoppingQueue()),
@@ -536,7 +569,7 @@ describe("stopping a running conversion queue", () => {
     expect(within(panel).getByText("MSCanvas cannot write to that folder.")).toBeVisible();
     await waitFor(() => {
       expect(liveRegion()).toContain(
-        "Queue stopped. 1 converted, 0 skipped, 0 failed, 1 cancelled, 1 not run.",
+        "Queue stopped. 1 converted, 0 skipped, 0 failed, 1 cancelled, 1 not run, 0 skipped by you.",
       );
     });
     expect(liveRegion()).toContain("MSCanvas cannot write to that folder.");

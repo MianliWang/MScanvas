@@ -28,7 +28,7 @@ use crate::preview::selection::DatasetSourceKind;
 const SCHEMA: &str = "mscanvas.conversion-diagnostics";
 
 /// Incremented when a field changes meaning or leaves, never for an addition.
-const SCHEMA_VERSION: u64 = 1;
+const SCHEMA_VERSION: u64 = 2;
 
 /// The redaction contract this file's excerpts were produced under.
 const REDACTION_SCHEMA: &str = "mscanvas.path-redaction";

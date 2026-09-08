@@ -1300,6 +1300,21 @@ impl fmt::Debug for CurrentAttempt {
     }
 }
 
+/// What becomes of items still waiting when a refusal ends a queue.
+///
+/// The caller decides, because only the caller knows whether anything of this
+/// session's can still run. A refusal the session can recover from leaves a
+/// waiting item waiting, so a retry that reaches it still does; a refusal that
+/// quarantines the backend cannot be recovered from at all, and a row rendered
+/// as "Waiting" in a queue that is over describes work that will never happen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PendingDisposition {
+    /// Leave them pending: this queue may yet be retried.
+    Keep,
+    /// Settle them as never run: nothing further of this session's will start.
+    Strand,
+}
+
 /// What a stop request produced, for the caller that made it.
 #[derive(Debug)]
 pub(super) enum StopAccepted {
@@ -2081,7 +2096,12 @@ impl ConversionSlot {
     // refused for a reason they can fix would have lost the failures they
     // meant to fix. A pass that never started cannot have moved anything, so
     /// on a first pass this restores nothing.
-    pub(super) fn refuse(&mut self, operation: u64, error: PreviewErrorDto) {
+    pub(super) fn refuse(
+        &mut self,
+        operation: u64,
+        error: PreviewErrorDto,
+        pending: PendingDisposition,
+    ) {
         if self.operation != operation {
             return;
         }
@@ -2101,10 +2121,19 @@ impl ConversionSlot {
         let reason = if self.stop_requested {
             queue.strand_pending();
             TerminalReason::Stopped
+        } else if pending == PendingDisposition::Strand {
+            // The session cannot run anything further, so an item still waiting
+            // its turn is an item that never ran -- not one waiting for a turn
+            // that will not come. A `Pending` row in a terminal queue is
+            // rendered as "Waiting" and counted nowhere, which describes a
+            // queue that is still going.
+            queue.strand_pending();
+            TerminalReason::Completed
         } else {
-            // Not a stop, so nothing is stranded. What a retry moved back to
-            // pending still keeps the result it earned: an item this pass never
-            // reached did run in the one before, and what it carries says so.
+            // Not a stop, and the queue could still be retried. What a retry
+            // moved back to pending keeps the result it earned: an item this
+            // pass never reached did run in the one before, and what it carries
+            // says so.
             for item in &mut queue.items {
                 if !item.state.is_pending() {
                     continue;

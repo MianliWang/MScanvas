@@ -153,8 +153,8 @@ use super::figure::{
 use super::installation::InstallationIdentity;
 use super::operation::{
     AdmittedDestination, CancellationFacts, ConversionQueue, ConversionSlot, ItemOutcome,
-    QueueItem, QueueItemAttempt, StopAccepted, TerminalReason, folded_output_name,
-    item_output_topology, item_state_of,
+    PendingDisposition, QueueItem, QueueItemAttempt, StopAccepted, TerminalReason,
+    folded_output_name, item_output_topology, item_state_of,
 };
 use super::operation::{ItemOutputTopology, SetStopFacts};
 use super::projection::{self, ProjectionRefusal};
@@ -550,10 +550,12 @@ pub struct PreviewService {
     conversion_busy: AtomicBool,
     /// Whether this session has stopped trusting the backend.
     //
-    // Set once, by a stop whose owned process tree could not be confirmed
-    // gone, and never cleared. Nothing in this session can establish that the
-    // process it lost track of has ended, so there is no observation a reset
-    // could be conditioned on -- and a flag that cleared itself would be
+    // Set once, where a converter process this session owned could not be
+    // accounted for -- by a stop that could not be confirmed, or by a root that
+    // was created and could neither be started nor reclaimed with nothing in
+    // flight -- and never cleared. Nothing in this session can establish that
+    // the process it lost track of has ended, so there is no observation a
+    // reset could be conditioned on, and a flag that cleared itself would be
     // telling the user something MSCanvas does not know.
     //
     // Read without a lock for the same reason the busy mirror is: every
@@ -1461,10 +1463,10 @@ impl PreviewService {
 
     /// Whether this session has stopped trusting the backend.
     //
-    // Set exactly once, by a stop whose process-tree termination could not be
-    // confirmed, and never cleared: nothing in this session can establish that
-    // the process it lost track of has ended, and a flag that could be cleared
-    /// would need something that can.
+    // Set exactly once, where a converter process this session owned could not
+    // be accounted for, and never cleared: nothing in this session can
+    // establish that the process it lost track of has ended, and a flag that
+    /// could be cleared would need something that can.
     pub(super) fn backend_is_quarantined(&self) -> bool {
         self.backend_quarantined.load(Ordering::Acquire)
     }
@@ -4936,8 +4938,16 @@ impl PreviewService {
     }
 
     fn refuse_queue(&self, operation: u64, error: PreviewErrorDto) -> WorkspaceConversionUpdateDto {
+        // Whether a waiting item is still waiting depends on whether anything
+        // of this session's can still run, and a quarantined backend is the one
+        // state where nothing can.
+        let pending = if self.backend_is_quarantined() {
+            PendingDisposition::Strand
+        } else {
+            PendingDisposition::Keep
+        };
         let mut slot = self.conversion_slot();
-        slot.refuse(operation, error);
+        slot.refuse(operation, error, pending);
         self.publish_conversion_busy(&slot);
         slot.read(
             self.backend_is_quarantined(),

@@ -2141,13 +2141,20 @@ pub fn conversion_item_not_skippable() -> PreviewErrorDto {
     )
 }
 
-/// What every backend operation answers with once a stop could not be
-/// confirmed.
+/// What every backend operation answers with once a converter process this
+/// session owned cannot be accounted for.
+///
+/// **Not "once a stop could not be confirmed."** That was true while a stop was
+/// the only way to reach this state; M6.8 added a second, where a root was
+/// created and could neither be started nor reclaimed with nothing in flight.
+/// The consequence is the same because the fact is the same — a process of this
+/// application's that it cannot say is gone — and naming a stop here would name
+/// an action the user may never have taken.
 pub fn backend_quarantined() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "backend_quarantined",
-        "MSCanvas could not confirm that the converter process stopped. Restart MSCanvas before \
-         starting another preview or conversion.",
+        "MSCanvas could not confirm that a converter process it started has ended. Restart \
+         MSCanvas before starting another preview or conversion.",
         false,
     )
 }

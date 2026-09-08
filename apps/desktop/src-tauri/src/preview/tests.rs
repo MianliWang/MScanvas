@@ -7079,6 +7079,29 @@ impl FakeConversionRunner {
         (self, observe_start, release)
     }
 
+    /// Announces the start and waits, where a test armed the handshake.
+    ///
+    /// One-shot: the channels are taken, so whichever entry point reaches it
+    /// first performs it and the other passes straight through.
+    fn park(&self) {
+        let Some(started) = self.started.lock().expect("started channel").take() else {
+            return;
+        };
+        started.send(()).expect("announce the started conversion");
+        let parked = self
+            .release
+            .lock()
+            .expect("release channel")
+            .take()
+            .expect("a blocking runner is released exactly once");
+        // Deliberately not ignored. A test that timed out here would go on to
+        // pass a little late, and the thing it is watching for -- a lock held
+        // where it should not be -- looks exactly like that.
+        parked
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the parked conversion is released");
+    }
+
     /// How many processes this runner has launched, readable after the runner
     /// itself has been moved into the provider.
     fn launches(&self) -> Arc<AtomicUsize> {
@@ -7087,7 +7110,58 @@ impl FakeConversionRunner {
 }
 
 impl ProcessRunner for FakeConversionRunner {
+    /// Models a supervised cancellation that lands while the process runs.
+    ///
+    /// The default this overrides checks the request once, before it delegates,
+    /// which cannot see a request made *during* a run — and that is the only
+    /// interval a per-item stop exists for. This does the parked handshake
+    /// first, so the request has somewhere to land, and then answers as the
+    /// real boundary answers: the owned job empty, ownership established before
+    /// execution, and the termination the request produced.
+    fn run_cancellable(
+        &self,
+        spec: &CommandSpec,
+        cancellation: &mscanvas_proteowizard::CancellationToken,
+    ) -> Result<ProcessOutput, ProcessError> {
+        if cancellation.is_cancelled() {
+            return self.run(spec);
+        }
+        // Recorded before the park, exactly as `run` records before its own, so
+        // a test observing a parked process counts the same launch through
+        // either entry point.
+        self.record(spec);
+        self.park();
+        if !cancellation.is_cancelled() {
+            return self.complete(spec);
+        }
+        Ok(ProcessOutput {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            stdout_total_bytes: 0,
+            stderr_total_bytes: 0,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(-1_073_741_510),
+            elapsed: Duration::from_millis(4),
+            termination: mscanvas_proteowizard::Termination::Cancelled,
+            max_active_processes: Some(1),
+            final_active_processes: Some(0),
+            total_owned_processes: Some(1),
+            peak_job_memory_bytes: None,
+            tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
+        })
+    }
+
     fn run(&self, spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
+        self.record(spec);
+        self.park();
+        self.complete(spec)
+    }
+}
+
+impl FakeConversionRunner {
+    /// Counts the launch and keeps what it was asked to launch.
+    fn record(&self, spec: &CommandSpec) {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.arguments
             .lock()
@@ -7098,21 +7172,11 @@ impl ProcessRunner for FakeConversionRunner {
                     .map(|argument| argument.to_string_lossy().into_owned())
                     .collect(),
             );
-        if let Some(started) = self.started.lock().expect("started channel").take() {
-            started.send(()).expect("announce the started conversion");
-            let parked = self
-                .release
-                .lock()
-                .expect("release channel")
-                .take()
-                .expect("a blocking runner is released exactly once");
-            // Deliberately not ignored. A test that timed out here would go on
-            // to pass a little late, and the thing it is watching for -- a lock
-            // held where it should not be -- looks exactly like that.
-            parked
-                .recv_timeout(Duration::from_secs(10))
-                .expect("the parked conversion is released");
-        }
+    }
+
+    /// What the act does and what the process reports, with no handshake and no
+    /// accounting: both entry points have done those before they arrive here.
+    fn complete(&self, spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
         let destination = spec
             .output_destination()
             .expect("a conversion plan carries an output destination")
@@ -28716,9 +28780,123 @@ fn an_owned_process_this_run_cannot_account_for_stops_the_queue_without_a_stop()
         ConversionQueueTerminalReasonDto::StopFailed,
         "no stop was requested, so this is not a stop that failed"
     );
-    // The second acquisition kept its place and was never converted.
+    // The second acquisition kept its place and was never converted -- and it
+    // says so rather than reading as still waiting in a queue that is over.
     assert_eq!(queue.item_count, 2);
     assert_eq!(queue.finalized_count, 0);
+    assert_eq!(
+        queue.items[1].state,
+        ConversionQueueItemStateDto::NotRun,
+        "an item nothing will ever start is not waiting its turn"
+    );
+    assert_eq!(queue.not_run_count, 1);
+}
+
+/// The admitted per-item stop, end to end through the command the interface
+/// calls.
+///
+/// Every other test of this control drives `ConversionSlot` directly, which
+/// proves the identity check and nothing about what the queue then does. This
+/// takes the command: it names the exact operation, item and attempt Rust
+/// reports as running, dispatches while the process is genuinely in flight, and
+/// then asserts the two halves of the promise together — that item settles as a
+/// cancellation whose owned tree was confirmed gone, and the queue carries on
+/// and converts the one behind it.
+#[cfg(windows)]
+#[test]
+fn ending_the_running_item_settles_it_and_lets_the_queue_convert_the_next() {
+    let fixture = TestFile::new("m68-cancel-current-through-the-command");
+    let (runner, observe_start, release) =
+        FakeConversionRunner::new(BackendAct::Convert).blocking();
+    let launches = runner.launches();
+    let service = Arc::new(PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    ))));
+    let first = add_one_acquisition(&service, &fixture.thermo_raw("first.raw"));
+    let second = add_one_acquisition(&service, &fixture.thermo_raw("second.raw"));
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_under_now(
+            &[first, second],
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::NamedSubfolder(SubfolderName::parse("converted").unwrap()),
+        )
+        .expect("two acquisitions are a queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim the reservation");
+    assert!(service.start_resolved_for_test(operation, None));
+
+    let worker = {
+        let service = Arc::clone(&service);
+        std::thread::spawn(move || service.drain_queue_for_test(operation))
+    };
+
+    // Observed, not assumed: the first item is in its process.
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the first conversion started");
+    let running = service.conversion_state().state;
+    let WorkspaceConversionStateDto::Running { queue, .. } = &running else {
+        panic!("the queue is not running: {running:?}");
+    };
+    let index = queue
+        .items
+        .iter()
+        .position(|item| item.state == ConversionQueueItemStateDto::Running)
+        .expect("an item is converting");
+    let attempt = queue.items[index].attempts;
+
+    // The command the interface calls, with the exact identity it would name.
+    service
+        .cancel_current_conversion_item(&operation.to_string(), index, attempt, document)
+        .expect("the attempt in flight is cancellable");
+    // Every neighbouring identity is refused rather than redirected.
+    for (wrong_index, wrong_attempt) in [(index + 1, attempt), (index, attempt + 1)] {
+        assert_eq!(
+            service
+                .cancel_current_conversion_item(
+                    &operation.to_string(),
+                    wrong_index,
+                    wrong_attempt,
+                    document,
+                )
+                .expect_err("a mismatched identity is refused")
+                .kind,
+            "conversion_item_not_cancellable"
+        );
+    }
+    release.send(()).expect("release the parked conversion");
+    let update = worker.join().expect("the worker thread");
+
+    let queue = terminal_queue(&update);
+    // The item the command named settled as a cancellation, and says which of
+    // the two ways no process of it survives.
+    assert_eq!(
+        queue.items[index].state,
+        ConversionQueueItemStateDto::Cancelled
+    );
+    let facts = queue.items[index]
+        .cancellation
+        .as_ref()
+        .expect("a reached stop reports what it established");
+    assert_eq!(facts.owned_tree, "confirmed_gone");
+    assert!(facts.process_launched);
+    assert!(facts.termination_requested);
+    // And the queue carried on: the item behind it really converted, the queue
+    // ran to its own end, and the session is not quarantined.
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Completed
+    );
+    assert_eq!(queue.cancelled_count, 1);
+    assert_eq!(queue.finalized_count, 1);
+    assert_eq!(queue.not_run_count, 0);
+    assert_eq!(launches.load(Ordering::SeqCst), 2, "the next item launched");
+    assert!(!service.backend_is_quarantined());
+    assert!(!update.backend_quarantined);
 }
 
 /// A skip that lands after the worker chose an item must not wedge the queue.

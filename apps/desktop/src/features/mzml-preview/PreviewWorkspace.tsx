@@ -898,7 +898,7 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
     // The refusal that ended it, where there was one, said alongside rather
     // than instead of the counts. The visible panel shows both, and a region
     // that dropped one of them would describe a different queue.
-    return `Queue stopped. ${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed, ${String(queue.cancelledCount)} cancelled, ${String(queue.notRunCount)} not run.${
+    return `Queue stopped. ${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed, ${String(queue.cancelledCount)} cancelled, ${String(queue.notRunCount)} not run, ${String(queue.skippedByRequestCount)} skipped by you.${
       queue.error === null ? "" : ` ${queue.error.summary}`
     }`;
   }
@@ -909,9 +909,20 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
   // A queue whose items were all skipped judged nothing, and a skipped item's
   // existing file was explicitly not inspected.
   const judged = queue.items.some(conversionJudgedAnyOutput);
-  return `${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed.${
-    judged ? " Output-only validation." : ""
-  }`;
+  // Every item the queue held, including the two a user decides about. Three
+  // counts were complete only while a cancelled item required a queue stop; a
+  // completed queue can now hold a file the user ended and a row they skipped,
+  // and a region that named neither would leave a listener two of three items
+  // short of what the panel shows a sighted reader.
+  const decided = [
+    queue.cancelledCount > 0 ? `${String(queue.cancelledCount)} cancelled` : null,
+    queue.skippedByRequestCount > 0
+      ? `${String(queue.skippedByRequestCount)} skipped by you`
+      : null,
+  ].filter((part): part is string => part !== null);
+  return `${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed${
+    decided.length === 0 ? "" : `, ${decided.join(", ")}`
+  }.${judged ? " Output-only validation." : ""}`;
 }
 
 function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>): string {
