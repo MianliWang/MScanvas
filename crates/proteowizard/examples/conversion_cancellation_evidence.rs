@@ -604,10 +604,16 @@ fn scenario(
             println!("{label}.observation={}", report.observation().stable_id());
             println!("{label}.backend_was_run={}", report.backend_was_run());
             print_backend(label, report.backend());
+            // The final active count, which is a different quantity again from
+            // the sampled peak: what the owned Job held once the run had
+            // finished with it.
             println!(
-                "{label}.surviving_processes={}",
+                "{label}.final_active_processes={}",
                 report.surviving_processes().map_or(-1, i64::from)
             );
+            // And the judgement itself, so a reader never has to reconstruct it
+            // from the two counts above.
+            println!("{label}.owned_tree={}", report.owned_tree().stable_id());
             match report.staged_content() {
                 Some(staged) => {
                     println!("{label}.staged_entry_count={}", staged.entry_count());
@@ -799,6 +805,29 @@ fn print_backend(label: &str, backend: Option<BackendRunFacts>) {
     println!(
         "{label}.backend_peak_job_memory_bytes={}",
         facts.peak_job_memory_bytes().map_or(-1, cast_bytes)
+    );
+    // Three quantities that are easy to read as one, printed under names that
+    // keep them apart. This is the *sampled maximum concurrently active* count
+    // in the owned Job: a floor on the real peak, because a process that began
+    // and ended between two polls was never sampled. It is not how many
+    // processes the run created in total, and it is not what was left at the
+    // end. `-1` is "no bounded accounting was available", never zero.
+    println!(
+        "{label}.backend_sampled_max_active_processes={}",
+        facts.max_active_processes().map_or(-1, i64::from)
+    );
+    // The cumulative count, which answers the same question without the
+    // sampling gap: every process the owned Job ever held. Where this is 1 the
+    // run created exactly one process, whatever the polling caught.
+    println!(
+        "{label}.backend_total_owned_processes={}",
+        facts.total_owned_processes().map_or(-1, i64::from)
+    );
+    // What decides whether the counts above are about the whole tree or only
+    // the part ownership happened to hold.
+    println!(
+        "{label}.backend_tree_ownership={}",
+        facts.tree_ownership().stable_id()
     );
 }
 

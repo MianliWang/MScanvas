@@ -1063,17 +1063,32 @@ export type ConversionQueueItemState =
  * Path-free like everything else on this wire: no process identifier, no job
  * handle, no staging location and no backend text.
  */
+export type ConversionOwnedTreeDisposition =
+  /** No process was created, so there was no tree. Not a confirmation and not an uncertainty. */
+  | "none_launched"
+  /**
+   * A tree existed, the run owned it before it could grow, and the owned job
+   * reported itself empty. The one member that asserts a terminated tree.
+   */
+  | "confirmed_gone"
+  /**
+   * A tree existed and its disappearance could not be established. The one
+   * member that quarantines the session.
+   */
+  | "unconfirmed";
+
 export interface ConversionCancellation {
   readonly processLaunched: boolean;
   readonly terminationRequested: boolean;
   /**
-   * Whether MSCanvas knows no converter process of this attempt survives.
+   * What the stop established about this attempt's backend process tree.
    *
-   * True when the owned tree was observed empty, and true when no process was
-   * created for there to be one. False is the whole reason
-   * `cancellationFailed` exists.
+   * Three members rather than a boolean. The boolean this replaced said `true`
+   * both for a tree confirmed gone and for a run that launched nothing, so a
+   * reader given only `true` could not tell a claim about a process that
+   * existed from a statement that none did.
    */
-  readonly treeTerminationConfirmed: boolean;
+  readonly ownedTree: ConversionOwnedTreeDisposition;
   readonly elapsedMilliseconds: number;
   readonly termination: string | null;
   readonly partialOutputObserved: boolean;

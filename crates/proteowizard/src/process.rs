@@ -169,6 +169,16 @@ pub struct ProcessOutput {
     /// Active processes observed after the root process and its owned tree were
     /// fully reaped. A successful supervised Windows execution reports `Some(0)`.
     pub final_active_processes: Option<u32>,
+    /// Every process the owned Windows Job Object has ever held, counted by the
+    /// kernel rather than sampled.
+    ///
+    /// The complement to `max_active_processes`, and a stronger measurement
+    /// than it: polling can miss a process that started and exited between two
+    /// observations, so the sampled peak is a floor. This is cumulative and has
+    /// no such gap -- a run reporting `Some(1)` created exactly one process,
+    /// whatever the sampling happened to catch. `None` means no bounded
+    /// accounting was available, never that there were none.
+    pub total_owned_processes: Option<u32>,
     /// Peak committed memory charged to the owned Windows Job Object across the
     /// whole supervised process tree. `None` means the platform exposed no
     /// equivalent bounded accounting or the query itself failed; this is an
@@ -236,6 +246,7 @@ impl ProcessOutput {
             termination: Termination::NotStarted,
             max_active_processes: None,
             final_active_processes: None,
+            total_owned_processes: None,
             peak_job_memory_bytes: None,
             // No process was created, so nothing was owned and there is no
             // ownership establishment to report. The launched-tree claim is
@@ -499,6 +510,13 @@ fn execute_command_after_assignment(
         .as_ref()
         .and_then(|job| ProcessJob::peak_memory_bytes(job).ok())
         .flatten();
+    // The cumulative count, taken here for the same reason and answering a
+    // different question from the sampled peak: how many processes this run
+    // ever owned, with no interval it could have missed one in.
+    let total_owned_processes = owned_job
+        .as_ref()
+        .and_then(|job| ProcessJob::total_process_count(job).ok())
+        .flatten();
     let cleanup = if execution.is_err() {
         force_owned_cleanup(&mut child, &mut owned_job)
     } else {
@@ -525,6 +543,7 @@ fn execute_command_after_assignment(
         termination,
         max_active_processes,
         final_active_processes,
+        total_owned_processes,
         peak_job_memory_bytes,
         tree_ownership: ROOT_TREE_OWNERSHIP,
     })
@@ -1068,6 +1087,7 @@ use windows_job::OwnedProcessJob;
 trait ProcessJob {
     fn terminate(&self) -> io::Result<()>;
     fn active_process_count(&self) -> io::Result<Option<u32>>;
+    fn total_process_count(&self) -> io::Result<Option<u32>>;
     fn peak_memory_bytes(&self) -> io::Result<Option<u64>>;
 }
 
@@ -1078,6 +1098,10 @@ impl ProcessJob for OwnedProcessJob {
 
     fn active_process_count(&self) -> io::Result<Option<u32>> {
         Self::active_process_count(self)
+    }
+
+    fn total_process_count(&self) -> io::Result<Option<u32>> {
+        Self::total_process_count(self)
     }
 
     fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {
@@ -1102,6 +1126,10 @@ impl OwnedProcessJob {
     }
 
     fn active_process_count(&self) -> io::Result<Option<u32>> {
+        Ok(None)
+    }
+
+    fn total_process_count(&self) -> io::Result<Option<u32>> {
         Ok(None)
     }
 
@@ -1388,6 +1416,11 @@ mod windows_job {
         }
 
         pub(super) fn active_process_count(&self) -> io::Result<Option<u32>> {
+            Ok(Some(self.accounting()?.active_processes))
+        }
+
+        /// One bounded accounting query, read by both counts.
+        fn accounting(&self) -> io::Result<BasicAccountingInformation> {
             let mut information = BasicAccountingInformation::default();
             let information_length = structure_size::<BasicAccountingInformation>()?;
             // SAFETY: The handle is live and the mutable repr(C) buffer and byte size
@@ -1404,7 +1437,16 @@ mod windows_job {
             if queried == 0 {
                 return Err(io::Error::last_os_error());
             }
-            Ok(Some(information.active_processes))
+            Ok(information)
+        }
+
+        /// Every process this Job has ever held, cumulative and kernel-counted.
+        ///
+        /// The same bounded query as the active count, reading the other field
+        /// of it. Sampling the active count can miss a process that lived
+        /// entirely between two observations; this cannot.
+        pub(super) fn total_process_count(&self) -> io::Result<Option<u32>> {
+            Ok(Some(self.accounting()?.total_processes))
         }
 
         /// Peak committed memory charged to every process this Job has owned.
@@ -2422,6 +2464,7 @@ mod tests {
             termination,
             max_active_processes: Some(1),
             final_active_processes,
+            total_owned_processes: Some(1),
             peak_job_memory_bytes: None,
             tree_ownership,
         }
@@ -2665,6 +2708,10 @@ mod tests {
             }
 
             fn active_process_count(&self) -> io::Result<Option<u32>> {
+                Ok(Some(1))
+            }
+
+            fn total_process_count(&self) -> io::Result<Option<u32>> {
                 Ok(Some(1))
             }
 
@@ -3053,6 +3100,10 @@ mod tests {
                 1 => Ok(Some(1)),
                 _ => Ok(Some(0)),
             }
+        }
+
+        fn total_process_count(&self) -> io::Result<Option<u32>> {
+            Ok(Some(1))
         }
 
         fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {

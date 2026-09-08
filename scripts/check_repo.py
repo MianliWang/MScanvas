@@ -3228,6 +3228,338 @@ def validate_current_status_documents_describe_the_shipped_product(
         )
 
 
+
+# The one place a confirmed process tree may be decided, and the one place the
+# vocabulary that expresses it may be defined. Both are checked to exist rather
+# than assumed, so a rename that moved them somewhere else fails here instead of
+# silently disabling this validator.
+CLAIM_ORIGIN = "crates/proteowizard/src/process.rs"
+CLAIM_VOCABULARY = "crates/proteowizard/src/conversion_run.rs"
+CLAIM_WIRE = "apps/desktop/src/features/mzml-preview/contracts.ts"
+CLAIM_DISPOSITIONS = ("none_launched", "confirmed_gone", "unconfirmed")
+# The boolean this milestone removed. It answered `true` both for a tree that
+# was confirmed gone and for a run that launched nothing, so a reader given only
+# `true` could not tell a claim about a process that existed from a statement
+# that none did.
+RETIRED_CLAIM_SPELLINGS = ("tree_termination_confirmed", "treeTerminationConfirmed")
+
+CLAIM_SOURCE_GLOBS = (
+    "crates/**/*.rs",
+    "apps/desktop/src-tauri/src/**/*.rs",
+    "apps/desktop/src/**/*.ts",
+    "apps/desktop/src/**/*.tsx",
+    "e2e/**/*.ts",
+)
+CLAIM_RUST_GLOBS = ("crates/**/*.rs", "apps/desktop/src-tauri/src/**/*.rs")
+
+
+def _is_test_source(path: Path) -> bool:
+    """Whether this file exists to test the boundary rather than to be it.
+
+    Negative fixtures have to be able to build a disposition production code may
+    not, and a guard that refused them would be a guard against testing the
+    claim at all.
+    """
+    return "tests" in path.parts or path.stem in {"tests", "e2e_seed"}
+
+
+def _non_test_lines(text: str) -> list[tuple[int, str]]:
+    """Lines outside `#[cfg(test)]` modules and `#[test]` functions.
+
+    Brace-counted rather than parsed, which is enough for this repository's
+    formatting and errs towards checking more rather than less.
+    """
+    kept: list[tuple[int, str]] = []
+    skip_depth = None
+    depth = 0
+    armed = False
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith("#[cfg(test)]") or stripped.startswith("#[test]"):
+            armed = True
+        opened = line.count("{")
+        closed = line.count("}")
+        if skip_depth is None and armed and opened:
+            skip_depth = depth
+            armed = False
+        if skip_depth is None:
+            kept.append((number, line))
+        depth += opened - closed
+        if skip_depth is not None and depth <= skip_depth:
+            skip_depth = None
+    return kept
+
+
+def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
+    """The claim guard itself, against any tree.
+
+    Taking the root as an argument is what lets the guard be proved: the
+    bypasses below run it against copies that deliberately break it.
+    """
+    origin = root / CLAIM_ORIGIN
+    vocabulary = root / CLAIM_VOCABULARY
+    if not origin.is_file() or not vocabulary.is_file():
+        errors.append(
+            f"{CLAIM_ORIGIN} or {CLAIM_VOCABULARY} is missing; the cancellation "
+            "claim guard cannot establish where the judgement is made"
+        )
+        return
+
+    origin_text = origin.read_text(encoding="utf-8")
+    vocabulary_text = vocabulary.read_text(encoding="utf-8")
+
+    # 1. One conjunction, and it reads both halves.
+    definitions = origin_text.count("fn owned_tree_confirmed_gone")
+    if definitions != 1:
+        errors.append(
+            f"{CLAIM_ORIGIN} defines owned_tree_confirmed_gone {definitions} times; "
+            "the claim that an owned process tree is gone has exactly one origin"
+        )
+    else:
+        body = origin_text.partition("fn owned_tree_confirmed_gone")[2]
+        body = body.split("\n    }", 1)[0]
+        if "covers_every_descendant" not in body or "final_active_processes" not in body:
+            errors.append(
+                f"{CLAIM_ORIGIN} decides owned_tree_confirmed_gone without reading both "
+                "an empty owned job and ownership established before execution; an empty "
+                "job is an empty tree only where ownership preceded execution"
+            )
+
+    derivations = vocabulary_text.count("const fn of(output: &ProcessOutput)")
+    if derivations != 1:
+        errors.append(
+            f"{CLAIM_VOCABULARY} derives OwnedTreeDisposition from a run {derivations} "
+            "times; both conversion lifecycles must read one judgement rather than each "
+            "deciding for itself"
+        )
+
+    # 2. Nothing else in production constructs the affirmative member, or states
+    #    when ownership began.
+    for glob in CLAIM_RUST_GLOBS:
+        for path in sorted(root.glob(glob)):
+            relative = path.relative_to(root).as_posix()
+            if _is_test_source(path):
+                continue
+            for number, line in _non_test_lines(path.read_text(encoding="utf-8")):
+                if (
+                    "OwnedTreeDisposition::ConfirmedGone" in line
+                    and relative != CLAIM_VOCABULARY
+                ):
+                    errors.append(
+                        f"{relative}:{number} constructs "
+                        "OwnedTreeDisposition::ConfirmedGone; only the process boundary's "
+                        "own derivation may assert that a conversion-owned process tree "
+                        "was terminated"
+                    )
+                if (
+                    "TreeOwnership::EstablishedBeforeExecution" in line
+                    and relative != CLAIM_ORIGIN
+                ):
+                    errors.append(
+                        f"{relative}:{number} asserts "
+                        "TreeOwnership::EstablishedBeforeExecution; only the launch path "
+                        "that created the process suspended may state when ownership began"
+                    )
+
+    # 3. One vocabulary, agreed across the layers that carry it.
+    rust_members = {
+        member for member in CLAIM_DISPOSITIONS if f'"{member}"' in vocabulary_text
+    }
+    if rust_members != set(CLAIM_DISPOSITIONS):
+        missing = ", ".join(sorted(set(CLAIM_DISPOSITIONS) - rust_members))
+        errors.append(
+            f"{CLAIM_VOCABULARY} no longer publishes the identifiers {missing}; the three "
+            "dispositions a stop can reach are a contract, not a convenience"
+        )
+
+    contract = root / CLAIM_WIRE
+    if not contract.is_file():
+        errors.append(
+            f"{CLAIM_WIRE} is missing; the wire side of the cancellation claim "
+            "cannot be checked"
+        )
+    else:
+        contract_text = contract.read_text(encoding="utf-8")
+        wire_members = {
+            member for member in CLAIM_DISPOSITIONS if f'"{member}"' in contract_text
+        }
+        if wire_members != rust_members:
+            errors.append(
+                f"{CLAIM_WIRE} carries {sorted(wire_members)} where Rust publishes "
+                f"{sorted(rust_members)}; a consumer that knows only some of the "
+                "dispositions has re-created the conflation the three replaced"
+            )
+
+    # 4. The retired boolean stays retired in code. Documents may quote it as
+    #    history; a source file that reintroduces it reintroduces the defect.
+    for glob in CLAIM_SOURCE_GLOBS:
+        for path in sorted(root.glob(glob)):
+            relative = path.relative_to(root).as_posix()
+            text = path.read_text(encoding="utf-8")
+            for spelling in RETIRED_CLAIM_SPELLINGS:
+                if spelling not in text:
+                    continue
+                for number, line in enumerate(text.splitlines(), start=1):
+                    if spelling in line:
+                        errors.append(
+                            f"{relative}:{number} reintroduces {spelling}; it asserted a "
+                            "terminated process tree for a run that never started one, "
+                            "and the three-member disposition replaced it"
+                        )
+
+
+def validate_the_cancellation_claim_has_one_origin(errors: list[str]) -> None:
+    """A confirmed process tree is decided once, and nothing else may assert it.
+
+    The claim this guards is not a spelling. It is the assertion that every
+    backend process a conversion owned is gone -- the one claim in this
+    repository that is about the user's machine rather than about MSCanvas's own
+    record-keeping. A stop that reports it wrongly invites the user to start
+    more work beside a converter process nobody can account for.
+
+    An earlier draft of the route named three sites and called them the list to
+    check. That is the wrong instrument: the same semantic reaches item states,
+    queue counts, cancellation facts, their mirrored wire fields, the
+    diagnostics payload key and the session quarantine reason, so a slice could
+    reword three of them, pass an enumerated check, and leave the rest asserting
+    a confirmed tree. What follows is structural instead, and holds for a site
+    nobody has written yet.
+
+    Four properties:
+
+    1. The conjunction that decides the claim is defined exactly once, at the
+       process boundary, and it reads both halves -- an owned Job observed empty
+       *and* ownership established before the backend executed. Either half
+       alone is an observation, not the claim.
+    2. `ConfirmedGone` -- the one member that asserts a terminated tree -- is
+       constructed nowhere in production outside the vocabulary that derives it,
+       and no production file outside the launch path states when ownership
+       began. Producing the fail-closed member stays unrestricted: refusing to
+       claim needs no permission.
+    3. Every layer that carries the judgement carries all three members. A
+       consumer that knows two of them has re-created the conflation this
+       replaced, and the Rust identifiers and the TypeScript union are compared
+       against each other rather than each against a copy of the list.
+    4. The retired boolean does not come back in code.
+
+    The guard is then proved against deliberate bypasses, because a check that
+    has never been seen to fail is not yet evidence of anything.
+    """
+    _check_the_cancellation_claim(ROOT, errors)
+    _validate_the_claim_guard_detects_bypasses(errors)
+
+
+# Each bypass is a real way the claim could outgrow its evidence, written as the
+# smallest edit that would do it. The guard must reject every one.
+CLAIM_BYPASSES: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "a second producer asserts the claim",
+        "apps/desktop/src-tauri/src/preview/service.rs",
+        "owned_tree: OwnedTreeDisposition::Unconfirmed,",
+        "owned_tree: OwnedTreeDisposition::ConfirmedGone,",
+    ),
+    (
+        "the conjunction drops its ownership half",
+        CLAIM_ORIGIN,
+        "self.tree_ownership.covers_every_descendant()\n            && matches!",
+        "matches!",
+    ),
+    (
+        "a second lifecycle derives the judgement for itself",
+        CLAIM_VOCABULARY,
+        "    pub(crate) const fn of(output: &ProcessOutput) -> Self {",
+        "    pub(crate) const fn of(output: &ProcessOutput) -> Self { Self::ConfirmedGone }\n"
+        "    pub(crate) const fn of(output: &ProcessOutput) -> Self {",
+    ),
+    (
+        "a consumer knows only some of the dispositions",
+        CLAIM_WIRE,
+        '  | "unconfirmed";',
+        "  ;",
+    ),
+    (
+        "the retired boolean returns",
+        CLAIM_WIRE,
+        "  readonly ownedTree: ConversionOwnedTreeDisposition;",
+        "  readonly treeTerminationConfirmed: boolean;",
+    ),
+    (
+        "a production file states when ownership began",
+        "apps/desktop/src-tauri/src/preview/conversion.rs",
+        "use super::backend::ConversionBackend;",
+        "use super::backend::ConversionBackend;\n"
+        "const _CLAIMED: mscanvas_proteowizard::TreeOwnership =\n"
+        "    mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution;",
+    ),
+)
+
+
+def _validate_the_claim_guard_detects_bypasses(errors: list[str]) -> None:
+    """Runs the guard against copies that break it, one bypass at a time.
+
+    A temporary tree, never the worktree: a validation that edited the sources
+    it was validating could leave the repository changed by having been checked.
+    Only the handful of files the guard reads are copied, and each bypass gets
+    its own tree so one cannot mask another.
+    """
+    import shutil
+    import tempfile
+
+    sources: list[Path] = []
+    for glob in CLAIM_SOURCE_GLOBS:
+        sources.extend(sorted(ROOT.glob(glob)))
+    if not sources:
+        errors.append(
+            "the cancellation claim guard found no sources to check; its globs no "
+            "longer match this repository"
+        )
+        return
+
+    with tempfile.TemporaryDirectory(prefix="mscanvas-claim-guard-") as scratch:
+        pristine = Path(scratch) / "pristine"
+        for source in sources:
+            target = pristine / source.relative_to(ROOT)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+
+        # The copy must pass, or every failure below would prove nothing about
+        # the bypass and only that the copy was incomplete.
+        control: list[str] = []
+        _check_the_cancellation_claim(pristine, control)
+        if control:
+            errors.append(
+                "the cancellation claim guard fails against an unmodified copy of the "
+                f"sources it checks, so its bypass proofs are meaningless: {control[0]}"
+            )
+            return
+
+        for index, (name, relative, before, after) in enumerate(CLAIM_BYPASSES):
+            tree = Path(scratch) / f"bypass-{index}"
+            shutil.copytree(pristine, tree)
+            target = tree / relative
+            if not target.is_file():
+                errors.append(
+                    f"the cancellation claim guard cannot prove it detects "
+                    f"'{name}': {relative} is not among the files it reads"
+                )
+                continue
+            text = target.read_text(encoding="utf-8")
+            if text.count(before) != 1:
+                errors.append(
+                    f"the cancellation claim guard cannot prove it detects "
+                    f"'{name}': its anchor no longer appears exactly once in {relative}"
+                )
+                continue
+            target.write_text(text.replace(before, after), encoding="utf-8")
+            detected: list[str] = []
+            _check_the_cancellation_claim(tree, detected)
+            if not detected:
+                errors.append(
+                    f"the cancellation claim guard does not detect '{name}'; a check "
+                    "that cannot fail is not evidence that the claim has one origin"
+                )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_required(errors)
@@ -3253,6 +3585,7 @@ def main() -> int:
         validate_one_candidate_evidence_dimension_vocabulary(errors)
         validate_the_msconvert_capability_evidence_is_closed(errors)
         validate_the_admitted_intent_table_cites_measurements_that_support_it(errors)
+        validate_the_cancellation_claim_has_one_origin(errors)
         validate_current_status_documents_describe_the_shipped_product(errors)
 
     if errors:

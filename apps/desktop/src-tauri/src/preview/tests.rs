@@ -257,6 +257,7 @@ fn completed_process(stdout: &str) -> ProcessOutput {
         max_active_processes: None,
         final_active_processes: None,
         peak_job_memory_bytes: None,
+        total_owned_processes: Some(1),
         tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
     }
 }
@@ -7122,6 +7123,7 @@ impl ProcessRunner for FakeConversionRunner {
             max_active_processes: Some(1),
             final_active_processes: Some(0),
             peak_job_memory_bytes: Some(2_048),
+            total_owned_processes: Some(1),
             tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         })
     }
@@ -12070,6 +12072,7 @@ impl ProcessRunner for StopAwareRunner {
             max_active_processes: Some(1),
             final_active_processes: Some(0),
             peak_job_memory_bytes: Some(2_048),
+            total_owned_processes: Some(1),
             tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         })
     }
@@ -12095,6 +12098,7 @@ impl ProcessRunner for StopAwareRunner {
                 stdout_truncated: false,
                 stderr_truncated: false,
                 peak_job_memory_bytes: None,
+                total_owned_processes: Some(1),
                 tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
             });
         }
@@ -12134,6 +12138,7 @@ impl ProcessRunner for StopAwareRunner {
                 max_active_processes: Some(1),
                 final_active_processes: Some(0),
                 peak_job_memory_bytes: Some(2_048),
+                total_owned_processes: Some(1),
                 tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
             });
         }
@@ -12160,6 +12165,7 @@ impl ProcessRunner for StopAwareRunner {
                 Some(0)
             },
             peak_job_memory_bytes: Some(2_048),
+            total_owned_processes: Some(1),
             tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         })
     }
@@ -16437,6 +16443,7 @@ impl ProcessRunner for NoisyFailingRunner {
             max_active_processes: Some(1),
             final_active_processes: Some(0),
             peak_job_memory_bytes: Some(4_096),
+            total_owned_processes: Some(1),
             tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         })
     }
@@ -17180,6 +17187,7 @@ impl ProcessRunner for VerboseFailingRunner {
             max_active_processes: Some(1),
             final_active_processes: Some(0),
             peak_job_memory_bytes: Some(1_024),
+            total_owned_processes: Some(1),
             tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         })
     }
@@ -17927,6 +17935,7 @@ impl ProcessRunner for FakeOutputSetRunner {
                 max_active_processes: Some(1),
                 final_active_processes: Some(0),
                 peak_job_memory_bytes: Some(2_048),
+                total_owned_processes: Some(1),
                 tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
             });
         }
@@ -17978,6 +17987,7 @@ impl ProcessRunner for FakeOutputSetRunner {
             max_active_processes: Some(1),
             final_active_processes: Some(0),
             peak_job_memory_bytes: Some(2_048),
+            total_owned_processes: Some(1),
             tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         })
     }
@@ -18008,6 +18018,7 @@ impl ProcessRunner for FakeOutputSetRunner {
                 stdout_truncated: false,
                 stderr_truncated: false,
                 peak_job_memory_bytes: None,
+                total_owned_processes: Some(1),
                 tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
             });
         }
@@ -18060,6 +18071,7 @@ impl ProcessRunner for FakeOutputSetRunner {
                 max_active_processes: Some(1),
                 final_active_processes: Some(0),
                 peak_job_memory_bytes: Some(2_048),
+                total_owned_processes: Some(1),
                 tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
             });
         }
@@ -18091,6 +18103,7 @@ impl ProcessRunner for FakeOutputSetRunner {
                 Some(0)
             },
             peak_job_memory_bytes: Some(2_048),
+            total_owned_processes: Some(1),
             tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         })
     }

@@ -795,7 +795,7 @@ pub fn process_error(error: ProcessError) -> PreviewErrorDto {
             ..
         } => PreviewErrorDto::new(
             "backend_not_started",
-            "MSCanvas prepared the ProteoWizard program under its own supervision              but could not start it.",
+            "MSCanvas prepared the ProteoWizard program under its own supervision but could not start it.",
             owned_root_reclaimed,
         ),
         ProcessError::Wait { .. } => PreviewErrorDto::new(

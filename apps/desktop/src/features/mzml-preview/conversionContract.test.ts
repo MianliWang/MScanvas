@@ -201,7 +201,7 @@ const QUEUE = {
 const CANCELLATION = {
   processLaunched: true,
   terminationRequested: true,
-  treeTerminationConfirmed: true,
+  ownedTree: "confirmed_gone",
   elapsedMilliseconds: 71,
   termination: "cancelled",
   partialOutputObserved: true,
@@ -488,12 +488,12 @@ describe("the conversion wire contract", () => {
     expect(Object.keys(CANCELLATION).sort()).toEqual(
       [
         "elapsedMilliseconds",
+        "ownedTree",
         "partialOutputObserved",
         "processLaunched",
         "stagingResidue",
         "termination",
         "terminationRequested",
-        "treeTerminationConfirmed",
       ].sort(),
     );
     // A cancelled item finalized nothing, so it names no output file and

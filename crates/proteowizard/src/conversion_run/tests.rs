@@ -263,6 +263,7 @@ impl ProcessRunner for FakeRunner<'_> {
             max_active_processes: Some(1),
             final_active_processes: Some(0),
             peak_job_memory_bytes: Some(1_024),
+            total_owned_processes: Some(1),
             tree_ownership: crate::process::TreeOwnership::EstablishedBeforeExecution,
         })
     }
@@ -5985,6 +5986,7 @@ impl ProcessRunner for CancellingRunner<'_> {
             max_active_processes: Some(1),
             final_active_processes: self.final_active_processes,
             peak_job_memory_bytes: Some(2_048),
+            total_owned_processes: Some(1),
             tree_ownership: crate::process::TreeOwnership::EstablishedBeforeExecution,
         })
     }

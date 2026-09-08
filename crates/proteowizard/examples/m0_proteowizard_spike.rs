@@ -2062,6 +2062,7 @@ mod tests {
             max_active_processes: None,
             final_active_processes: None,
             peak_job_memory_bytes: None,
+            total_owned_processes: Some(1),
             tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         };
 
@@ -2087,6 +2088,7 @@ mod tests {
             max_active_processes: None,
             final_active_processes: None,
             peak_job_memory_bytes: None,
+            total_owned_processes: Some(1),
             tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         };
 
@@ -2123,6 +2125,7 @@ mod tests {
             max_active_processes: None,
             final_active_processes: None,
             peak_job_memory_bytes: None,
+            total_owned_processes: Some(1),
             tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         };
         let failure = classify_process_failure(BackendTool::MsAccess, Ok(&output), false)
@@ -2440,6 +2443,7 @@ mod tests {
             max_active_processes: None,
             final_active_processes: None,
             peak_job_memory_bytes: None,
+            total_owned_processes: Some(1),
             tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         };
 

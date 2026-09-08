@@ -113,6 +113,7 @@ fn completed_process() -> ProcessOutput {
         max_active_processes: None,
         final_active_processes: None,
         peak_job_memory_bytes: None,
+        total_owned_processes: Some(1),
         tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
     }
 }

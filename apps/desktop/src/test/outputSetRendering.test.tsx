@@ -344,7 +344,7 @@ describe("rendered QA for the one-to-many output topology", () => {
             cancellation: {
               processLaunched: true,
               terminationRequested: true,
-              treeTerminationConfirmed: true,
+              ownedTree: "confirmed_gone",
               elapsedMilliseconds: 42,
               termination: "terminated",
               partialOutputObserved: true,
@@ -382,7 +382,7 @@ describe("rendered QA for the one-to-many output topology", () => {
           cancellation: {
             processLaunched: true,
             terminationRequested: true,
-            treeTerminationConfirmed: false,
+            ownedTree: "unconfirmed",
             elapsedMilliseconds: 5_000,
             termination: null,
             partialOutputObserved: false,

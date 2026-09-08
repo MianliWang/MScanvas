@@ -103,7 +103,7 @@ function cancelled(handle: string, name: string): ConversionQueueItem {
     cancellation: {
       processLaunched: true,
       terminationRequested: true,
-      treeTerminationConfirmed: true,
+      ownedTree: "confirmed_gone",
       elapsedMilliseconds: 71,
       termination: "cancelled",
       partialOutputObserved: true,
@@ -290,7 +290,7 @@ describe("stopping a running conversion queue", () => {
             cancellation: {
               processLaunched: true,
               terminationRequested: true,
-              treeTerminationConfirmed: true,
+              ownedTree: "confirmed_gone",
               elapsedMilliseconds: 64,
               termination: "cancelled",
               partialOutputObserved: true,
@@ -558,7 +558,7 @@ describe("stopping a running conversion queue", () => {
             cancellation: {
               processLaunched: true,
               terminationRequested: true,
-              treeTerminationConfirmed: false,
+              ownedTree: "unconfirmed",
               elapsedMilliseconds: 5_000,
               termination: null,
               partialOutputObserved: true,

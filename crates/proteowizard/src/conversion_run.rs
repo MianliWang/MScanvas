@@ -1591,6 +1591,7 @@ pub struct BackendRunFacts {
     stderr_truncated: bool,
     peak_job_memory_bytes: Option<u64>,
     max_active_processes: Option<u32>,
+    total_owned_processes: Option<u32>,
     tree_ownership: TreeOwnership,
 }
 
@@ -1649,6 +1650,18 @@ impl BackendRunFacts {
         self.max_active_processes
     }
 
+    /// Every process the owned job ever held, counted by the kernel rather
+    /// than sampled.
+    ///
+    /// The quantity to read when the question is what the provider *does*
+    /// rather than what a poll caught it doing: unlike the sampled peak it has
+    /// no interval it could have missed a process in. `None` is the absence of
+    /// bounded accounting, not a count of zero.
+    #[must_use]
+    pub const fn total_owned_processes(self) -> Option<u32> {
+        self.total_owned_processes
+    }
+
     /// When ownership of this run's process tree was established, relative to
     /// the backend executing anything.
     ///
@@ -1670,6 +1683,7 @@ impl From<&ProcessOutput> for BackendRunFacts {
             stderr_truncated: output.stderr_truncated,
             peak_job_memory_bytes: output.peak_job_memory_bytes,
             max_active_processes: output.max_active_processes,
+            total_owned_processes: output.total_owned_processes,
             tree_ownership: output.tree_ownership,
         }
     }
@@ -2131,7 +2145,7 @@ impl CancellationReport {
     /// it. `Some(0)` is what the Job said; `None` means the platform exposes no
     /// equivalent bounded accounting, or that no process was launched. On its
     /// own it is an observation about the Job, not about the tree — see
-    /// [`CancellationReport::tree_termination_confirmed`].
+    /// [`CancellationReport::owned_tree`].
     #[must_use]
     pub const fn surviving_processes(&self) -> Option<u32> {
         self.surviving_processes
