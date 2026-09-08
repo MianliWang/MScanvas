@@ -3372,15 +3372,24 @@ NARROW_CLAIM_SYMBOLS = (
 )
 # How far a description runs above the line it describes.
 DESCRIPTION_LINES = 16
-# How far either way a sentence in a document may wrap.
-MARKDOWN_CONTEXT_LINES = 3
 
-CLAIM_SOURCE_GLOBS = (
+# Everything the guard reads, and therefore everything a bypass proof has to be
+# able to edit. The document globs are here because the description rule reads
+# state tables in documents: without them the pristine copy held no markdown at
+# all, every bypass proof passed, and deleting the document rule outright would
+# have left the suite green. A rule the self-proof cannot exercise is a rule
+# nothing is checking.
+CLAIM_CODE_GLOBS = (
     "crates/**/*.rs",
     "apps/desktop/src-tauri/src/**/*.rs",
     "apps/desktop/src/**/*.ts",
     "apps/desktop/src/**/*.tsx",
     "e2e/**/*.ts",
+)
+CLAIM_SOURCE_GLOBS = CLAIM_CODE_GLOBS + (
+    "docs/architecture/adr/*.md",
+    "docs/product/*.md",
+    "docs/ux/*.md",
 )
 CLAIM_RUST_GLOBS = ("crates/**/*.rs", "apps/desktop/src-tauri/src/**/*.rs")
 
@@ -3416,37 +3425,64 @@ def _declared_test_modules(root: Path) -> frozenset[Path]:
     Only the *declaration* is read. A file that merely contains tests is still
     production if nothing declares it as a test module, and a `#[cfg(test)] mod
     hostile;` naming a file that does not exist exempts nothing.
+
+    **And a module declared for production stays production, whatever else
+    declares it.** The scan reads text, not syntax, so a raw string literal
+    holding `#[cfg(test)]\nmod service;` reads as a declaration — a reviewer
+    demonstrated exactly that, six lines in a file this guard already reads,
+    exempting all 8,303 lines of `service.rs`. Every module that is compiled at
+    all is declared somewhere without `#[cfg(test)]`, so subtracting the plain
+    declarations answers it without parsing Rust: a file the crate builds into
+    the product cannot become a test by being named again.
     """
     cached = _DECLARED_TEST_MODULES.get(root)
     if cached is not None:
         return cached
     declared: set[Path] = set()
+    plain: set[Path] = set()
     for glob in CLAIM_RUST_GLOBS:
         for path in sorted(root.glob(glob)):
             lines = path.read_text(encoding="utf-8").splitlines()
+            owner = (
+                path.parent
+                if path.stem in ("mod", "lib", "main")
+                else path.parent / path.stem
+            )
+
+            def files_for(name: str, owner: Path = owner) -> list[Path]:
+                return [
+                    candidate
+                    for candidate in (owner / f"{name}.rs", owner / name / "mod.rs")
+                    if candidate.is_file()
+                ]
+
+            # The attribute sits on its own line above the declaration, so
+            # which declarations it covers is found first and the rest are the
+            # plain ones. Reading each line on its own would have made every
+            # `#[cfg(test)] mod tests;` its own plain declaration too, and the
+            # subtraction below would then have cancelled every exemption.
+            attributed: set[int] = set()
             for index, line in enumerate(lines):
                 if _TEST_CFG.match(line) is None:
                     continue
-                for follower in lines[index + 1 : index + 4]:
+                for offset, follower in enumerate(lines[index + 1 : index + 4]):
                     stripped = follower.strip()
                     if not stripped or stripped.startswith(("//", "#[")):
                         continue
-                    found = _TEST_MODULE_DECLARATION.match(follower)
-                    if found is not None:
-                        owner = (
-                            path.parent
-                            if path.stem in ("mod", "lib", "main")
-                            else path.parent / path.stem
-                        )
-                        name = found.group(1)
-                        for candidate in (
-                            owner / f"{name}.rs",
-                            owner / name / "mod.rs",
-                        ):
-                            if candidate.is_file():
-                                declared.add(candidate)
+                    if _TEST_MODULE_DECLARATION.match(follower) is not None:
+                        attributed.add(index + 1 + offset)
                     break
-    frozen = frozenset(declared)
+            for index, line in enumerate(lines):
+                found = _TEST_MODULE_DECLARATION.match(line)
+                if found is None:
+                    continue
+                if index in attributed:
+                    declared.update(files_for(found.group(1)))
+                else:
+                    # Declared without the attribute: this module is part of the
+                    # product wherever else its name appears.
+                    plain.update(files_for(found.group(1)))
+    frozen = frozenset(declared - plain)
     _DECLARED_TEST_MODULES[root] = frozen
     return frozen
 
@@ -3467,6 +3503,16 @@ def _test_only_lines(path: Path) -> frozenset[int]:
     makes the region exact without a tokenizer, and a tokenizer is the kind of
     thing that is wrong in one file a year after it is written.
 
+    **Whether the item opens a region at all is decided by the first terminator,
+    not by the first brace.** An earlier version looked for `{` before it looked
+    for `;`, so `#[cfg(test)] use a::{B, C};` — an ordinary braced import, and
+    what rustfmt produces the moment a second name is imported — armed a region
+    that ran to the next column-zero `}`. A reviewer demonstrated it against
+    `service.rs`, where that one-line edit hid 158 lines of production code from
+    rules 5, 6 and 7 at once. A statement that closes its own braces and ends in
+    `;` is a statement; only an item still holding a brace open at the end of a
+    line has a body.
+
     A `#[cfg(test)] mod tests;` opens no region here — it names another file, and
     `_declared_test_modules` is what reads that.
 
@@ -3484,21 +3530,40 @@ def _test_only_lines(path: Path) -> frozenset[int]:
         if not lines[index].startswith(("#[cfg(test)]", "#[cfg(all(test")):
             index += 1
             continue
-        item = index
-        opens = False
-        while item < len(lines):
-            if "{" in lines[item]:
-                opens = True
+        item = index + 1
+        depth = 0
+        opened = False
+        outcome = None
+        while item < len(lines) and outcome is None:
+            for character in lines[item]:
+                if character == "{":
+                    depth += 1
+                    opened = True
+                elif character == "}":
+                    depth -= 1
+                elif character == ";" and depth == 0:
+                    # The item ends here. It is a region only if it carried a
+                    # body of its own, and a balanced one is contained in the
+                    # lines already read.
+                    outcome = "contained" if opened else "none"
+                    break
+            if outcome is not None:
                 break
-            if lines[item].rstrip().endswith(";"):
-                break
-            item += 1
-        if not opens:
+            if depth > 0:
+                outcome = "open"
+            elif opened:
+                outcome = "contained"
+            else:
+                item += 1
+        if outcome is None or outcome == "none":
             index += 1
             continue
-        close = item + 1
-        while close < len(lines) and lines[close] != "}":
-            close += 1
+        if outcome == "contained":
+            close = item
+        else:
+            close = item + 1
+            while close < len(lines) and lines[close] != "}":
+                close += 1
         inside.update(range(index + 1, min(close, len(lines) - 1) + 2))
         index = close + 1
     frozen = frozenset(inside)
@@ -3649,11 +3714,16 @@ def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
             if markdown:
                 if not stripped.startswith("|"):
                     continue
-                # A row wraps into its neighbours: the amendment under a table
-                # and the row above it are part of the same definition.
-                window = lines[max(0, number - 1 - MARKDOWN_CONTEXT_LINES) : number
-                    + MARKDOWN_CONTEXT_LINES]
-                described = " ".join(" ".join(window).lower().split())
+                # **The row alone, and no neighbours.** A window was read at
+                # first, so that an amendment under a table could qualify the
+                # row above it. What it actually did was let one row's honest
+                # qualification exempt every row within three lines: with
+                # `cancelled` naming both senses, a reviewer rewrote the
+                # `notRun` and `cancellationFailed` rows beside it into
+                # confirmed-tree claims and neither was detected. A definition
+                # has to carry its own meaning, because a reader who quotes one
+                # row quotes one row.
+                described = " ".join(stripped.lower().split())
                 block_at = number
             elif (
                 stripped.startswith("///")
@@ -3775,8 +3845,9 @@ def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
                     )
 
     # 4. The retired boolean stays retired in code. Documents may quote it as
-    #    history; a source file that reintroduces it reintroduces the defect.
-    for glob in CLAIM_SOURCE_GLOBS:
+    #    history -- ADR 0017 and the M6.8 record both have to name the field
+    #    that left in order to say it left -- so this rule reads code alone.
+    for glob in CLAIM_CODE_GLOBS:
         for path in sorted(root.glob(glob)):
             relative = path.relative_to(root).as_posix()
             text = path.read_text(encoding="utf-8")
@@ -3939,6 +4010,55 @@ CLAIM_BYPASSES: tuple[tuple[str, str, str, str], ...] = (
         "use super::destination::admit_destination_root;\n"
         "use mscanvas_proteowizard::OwnedTreeDisposition::ConfirmedGone;",
     ),
+    # The two the fourth review demonstrated, each as the edit that won.
+    #
+    # A braced import under `#[cfg(test)]` -- what rustfmt writes the moment a
+    # second name is imported -- armed a skip region that ran to the next
+    # left-margin `}`, hiding 158 lines of production `service.rs` from three
+    # rules at once.
+    (
+        "a braced test import arms a region over production code",
+        "apps/desktop/src-tauri/src/preview/service.rs",
+        "#[cfg(test)]\nuse mscanvas_proteowizard::ConflictPolicy;",
+        "#[cfg(test)]\nuse mscanvas_proteowizard::{ConflictPolicy, OpenFormat};\n"
+        "const _FORGED: mscanvas_proteowizard::OwnedTreeDisposition =\n"
+        "    mscanvas_proteowizard::OwnedTreeDisposition::ConfirmedGone;",
+    ),
+    # And a module declaration written inside a raw string, which made the
+    # whole of production `service.rs` a test source.
+    (
+        "a module declaration inside a string exempts a production file",
+        "apps/desktop/src-tauri/src/preview/mod.rs",
+        "#[cfg(test)]\nmod tests;",
+        '#[allow(dead_code)]\nconst _NOTE: &str = r#"\n#[cfg(test)]\nmod service;\n"#;\n\n'
+        "#[cfg(test)]\nmod tests;",
+        (
+            "apps/desktop/src-tauri/src/preview/service.rs",
+            "use super::conversion::conversion_source_kind;",
+            "use super::conversion::conversion_source_kind;\n"
+            "const _FORGED: mscanvas_proteowizard::OwnedTreeDisposition =\n"
+            "    mscanvas_proteowizard::OwnedTreeDisposition::ConfirmedGone;",
+        ),
+    ),
+    # The document rule, proved on the live defect that motivated it: the
+    # shipping definition of an item state, narrowed back to the confirmed tree
+    # alone. Without this the markdown branch was never exercised by a proof.
+    (
+        "a state table narrows a definition to a confirmed tree",
+        "docs/architecture/adr/0015-user-visible-queue-stop.md",
+        "| `cancelled` | Stopped with nothing finalized: either the owned tree was "
+        "confirmed gone, or nothing was launched to be a tree |",
+        "| `cancelled` | Stopped while running, owned tree confirmed gone, nothing "
+        "finalized |",
+    ),
+    # And a row beside it, which the window this replaced exempted for having a
+    # truthful neighbour.
+    (
+        "a neighbouring row inherits an exemption it did not earn",
+        "docs/architecture/adr/0015-user-visible-queue-stop.md",
+        "| `cancellationFailed` | Stopped while running, termination not confirmed |",
+        "| `cancellationFailed` | Stopped while running, owned tree confirmed gone |",
+    ),
     # The two rules M6.8 added, each with the edit it exists to refuse.
     (
         "a consumer derives the disposition for itself",
@@ -4007,24 +4127,35 @@ def _validate_the_claim_guard_detects_bypasses(errors: list[str]) -> None:
             )
             return
 
-        for index, (name, relative, before, after) in enumerate(CLAIM_BYPASSES):
+        for index, bypass in enumerate(CLAIM_BYPASSES):
+            name = bypass[0]
+            # One bypass is one *edit* except where it cannot be: exempting a
+            # file and forging a claim inside it are two files, and a proof that
+            # could only touch one could not exercise that rule at all.
+            edits = [bypass[1:4]] + ([bypass[4]] if len(bypass) > 4 else [])
             tree = Path(scratch) / f"bypass-{index}"
             shutil.copytree(pristine, tree)
-            target = tree / relative
-            if not target.is_file():
-                errors.append(
-                    f"the cancellation claim guard cannot prove it detects "
-                    f"'{name}': {relative} is not among the files it reads"
-                )
+            applied = True
+            for relative, before, after in edits:
+                target = tree / relative
+                if not target.is_file():
+                    errors.append(
+                        f"the cancellation claim guard cannot prove it detects "
+                        f"'{name}': {relative} is not among the files it reads"
+                    )
+                    applied = False
+                    break
+                text = target.read_text(encoding="utf-8")
+                if text.count(before) != 1:
+                    errors.append(
+                        f"the cancellation claim guard cannot prove it detects "
+                        f"'{name}': its anchor no longer appears exactly once in {relative}"
+                    )
+                    applied = False
+                    break
+                target.write_text(text.replace(before, after), encoding="utf-8")
+            if not applied:
                 continue
-            text = target.read_text(encoding="utf-8")
-            if text.count(before) != 1:
-                errors.append(
-                    f"the cancellation claim guard cannot prove it detects "
-                    f"'{name}': its anchor no longer appears exactly once in {relative}"
-                )
-                continue
-            target.write_text(text.replace(before, after), encoding="utf-8")
             detected: list[str] = []
             _check_the_cancellation_claim(tree, detected)
             if not detected:

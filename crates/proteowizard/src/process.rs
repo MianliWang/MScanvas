@@ -479,8 +479,16 @@ fn execute_command_after_assignment(
         capture_stream(child.stderr.take().expect("stderr was configured as piped"));
 
     // Ownership exists; only now may the backend execute.
+    //
+    // The Job is passed in rather than merely existing, so this ordering is a
+    // compile-time fact. `OwnedProcessJob` is obtainable only from `assign`, so
+    // a resume moved above it does not build — which matters because the two
+    // tests that watch this interval construct their own suspended child, and a
+    // swapped order here would have left them green while the root ran before
+    // it was owned. `ROOT_TREE_OWNERSHIP` can therefore stay a constant: what
+    // makes it true is the signature below, not a convention.
     let mut owned_job = Some(owned_job);
-    if let Err(error) = resume_owned_root(&child) {
+    if let Err(error) = resume_owned_root(&child, owned_job.as_ref().expect("just assigned")) {
         let cleanup = force_owned_cleanup(&mut child, &mut owned_job);
         let owned_root_reclaimed = cleanup.is_ok();
         let captures = join_captures(stdout_reader, stderr_reader);
@@ -615,12 +623,12 @@ fn suspend_root_creation(_command: &mut Command) {}
 /// Called only after [`OwnedProcessJob::assign`] has succeeded, so what it
 /// releases is a process this run already owns.
 #[cfg(windows)]
-fn resume_owned_root(child: &Child) -> io::Result<()> {
+fn resume_owned_root(child: &Child, _owned: &OwnedProcessJob) -> io::Result<()> {
     windows_job::resume_primary_thread(child)
 }
 
 #[cfg(not(windows))]
-fn resume_owned_root(_child: &Child) -> io::Result<()> {
+fn resume_owned_root(_child: &Child, _owned: &OwnedProcessJob) -> io::Result<()> {
     Ok(())
 }
 
@@ -1329,6 +1337,14 @@ mod windows_job {
     /// is the primary thread exactly as it was created and before it ran.
     /// Resuming a thread that was not suspended does nothing at all, so the
     /// others cost only the call.
+    ///
+    /// **And every thread must have been reachable.** A thread this run cannot
+    /// open or resume is one it cannot say anything about, and "some thread
+    /// reported one" would then be satisfied by a thread another product
+    /// created suspended while the primary stayed exactly as it was — a root
+    /// that never runs and a wait that never ends. Failing closed with the
+    /// operating system's own reason is worse for nobody and better than a
+    /// launch that hangs.
     pub(super) fn resume_primary_thread(child: &Child) -> io::Result<()> {
         let process_id = child.id();
         let threads = threads_of_owned_root(process_id)?;
@@ -1359,15 +1375,14 @@ mod windows_job {
                 resumed_one_created_suspended = true;
             }
         }
-        if resumed_one_created_suspended {
-            return Ok(());
-        }
-        Err(refusal.unwrap_or_else(|| {
-            io::Error::other(
+        match refusal {
+            Some(error) => Err(error),
+            None if resumed_one_created_suspended => Ok(()),
+            None => Err(io::Error::other(
                 "no thread of the owned root was still suspended as it was created, so \
                  this run cannot say the image had executed nothing when it took ownership",
-            )
-        }))
+            )),
+        }
     }
 
     /// Every thread the system reports for a process.
@@ -2551,7 +2566,7 @@ mod tests {
 
         // Released, and only then does it run — which is what proves the
         // absence above was suspension.
-        resume_owned_root(&child).expect("resume the owned root");
+        resume_owned_root(&child, &owned_job).expect("resume the owned root");
         assert!(
             wait_for_paths(&[&marker], Duration::from_secs(10)),
             "the resumed root never executed"

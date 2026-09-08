@@ -123,8 +123,8 @@ surface, not about building the boundary.
 | G9 | No admitted acquisition family is **directory-shaped**, so the vendor-dataset-root rule CNV-003 states has never been exercisable. `ProcessError::OutputDirectoryInsideDirectoryInput` and `BackendExecutionFailure::OutputInsideSource` exist and are unreachable for conversion today | latent safety rule | **M6.5** |
 | G10 | CNV-008's overwrite half is unimplemented, and what is missing is a **destructive-finalization contract on the Rust side** — how an already-validated new object replaces an existing destination object without a failure losing the old one. The backend's own overwrite behaviour is *not* the gap: ADR 0009 sends the provider only into private staging and refuses before launch where the final target exists | product and architecture gap | **M6.6** |
 | G11 | No `Convert all`. `scope` is derived — `selection` where any convertible row is selected, else `focused` — and there is no scope control; WSP-008 is recorded as partially implemented for exactly this reason | product surface | **M6.7** |
-| G12 | Queue capacity is `16` with a **wait-time** rationale whose stated premise is stale: the doc comment justifies it on the queue having "no cancellation", and a queue-level stop has existed since ADR 0015 | stale rationale | **M6.7** surfaces it, **M6.8** re-decides it |
-| G13 | No per-item cancel and no queued-item **skip**. `request_stop` takes an operation id and no index, and the module records the omission as deliberate. Queued-item *removal* is a different request and is refused — see CNV-D7 | product surface | **M6.8** |
+| G12 | Queue capacity is `16` with a **wait-time** rationale whose stated premise is stale: the doc comment justifies it on the queue having "no cancellation", and a queue-level stop has existed since ADR 0015 | stale rationale | **M6.7** surfaces it, **M6.8** re-decides it — *closed: the number stands and the doc comment now states what a bound actually limits* |
+| G13 | No per-item cancel and no queued-item **skip**. `request_stop` takes an operation id and no index, and the module records the omission as deliberate. Queued-item *removal* is a different request and is refused — see CNV-D7 | product surface | **M6.8** — *closed: `request_item_stop` and `skip_pending_item` both take an index; removal stays refused* |
 | G14 | Capacity is never surfaced proactively — a seventeen-row selection learns the limit from a failed plan read | product surface | **M6.7** |
 | G15 | No conversion result carries an identity that outlives its queue. `SlotState::Terminal` holds exactly one queue and is "not a history" | M8 readiness seam | **M6.9** |
 | G16 | The staging-ownership marker is **forgeable** by anything that can write into the destination root | `DEFERRED_WITH_OWNER` | **M6.5** records it where the destination contract lives; closing it is **M8's**, with the artifact-identity work — it is an authenticated-ownership question, not a conversion-surface one |
@@ -333,9 +333,10 @@ judgement is the same collapse in a different direction.
 **Multi-output and partial sets are first class.** A SCIEX acquisition is one
 item, one process and one row producing a backend-named set; three of five
 members landing is a *partial finalization report*, not a failure and not a
-success. `ItemState` has eight members for this reason — `Pending`, `Running`,
-`Finalized`, `Skipped`, `Failed`, `Cancelled`, `NotRun`, `CancellationFailed` —
-and the interface renders eight distinct labels.
+success. `ItemState` has nine members for this reason — `Pending`, `Running`,
+`Finalized`, `Skipped`, `Failed`, `Cancelled`, `NotRun`, `CancellationFailed`
+and, since M6.8, `SkippedByRequest` — and the interface renders nine distinct
+labels. *(This audit was written when there were eight.)*
 
 **Two things this audit found and M6.9 owns.** The judgements are separated in
 the crate's vocabulary but the item's own visible state does not carry them; and
@@ -1361,6 +1362,10 @@ through `ReportableProcessOutput`, but it appears in **no evidence document**, i
 is **absent from `BackendRunFacts`** so no product or diagnostics surface can see
 it, and the **cancellation** evidence harness does not report it at all. So M6.8
 must publish the peak count and observe it on a real vendor conversion.
+*(Closed by M6.8: `BackendRunFacts` carries `max_active_processes`, the
+diagnostics payload writes it as `sampledMaxActiveProcesses`, and the
+cancellation harness reports it beside the kernel's cumulative total. The
+paragraph above is the audit as it stood.)*
 
 **But measurement alone cannot license the claim, and this is the part the route
 states as a contract rather than as a task.** The child is spawned *before* it is
@@ -1584,8 +1589,10 @@ provider never spawns children.
 guard where it cannot — and the line between them is exactly where the member's
 *name* ends and its *value* begins.** `OwnedTreeDisposition::ConfirmedGone` is
 `non_exhaustive`: outside the crate that decides it, the affirmative member
-cannot be constructed or matched at all — not by production code, not by a
-fixture, not under an alias or a braced import. Four independent reviews across
+cannot be constructed — not by production code, not by a fixture, not under an
+alias or a braced import. The bare spelling is refused in a pattern as well; a
+struct pattern `ConfirmedGone { .. }` still reads it, which is the half that
+carries nothing, because reading a judgement is not making one. Four independent reviews across
 two rounds each defeated the string-matching versions that preceded this, and
 none of those bypasses compiles now. The item state is derived from the
 disposition rather than supplied, so the wrong pairing is not expressible
@@ -2315,7 +2322,10 @@ process nobody can account for.
 
 ### CNV-D8 — progress
 
-**Status: `LOCKED`.**
+**Status: `LOCKED`. Amended 2026-09-08 by M6.8**, which added the ninth item
+state and the count beside it. The vocabulary below is what M6 may show and the
+addition is listed in it; what stays locked is the shape — counts and a named
+state, never a percentage, a fraction of an item or an estimate.
 
 What M6 may show:
 
@@ -2323,8 +2333,8 @@ What M6 may show:
 item N of M                     current_index and item_count
 per-state counts                finalized, skipped, failed, retryable-failed,
                                 non-retryable-failed, cancelled, not-run,
-                                cancellation-failed
-the current item's state        one of the eight ItemState members
+                                cancellation-failed, skipped-by-request
+the current item's state        one of the nine ItemState members
 ```
 
 **No percentage, no fraction of an item, no estimate and no remaining-time.** The

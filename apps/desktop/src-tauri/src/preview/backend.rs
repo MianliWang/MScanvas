@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use mscanvas_proteowizard::{
     AvailabilityState, ConfiguredLocation, DiscoveryRequest, DiscoveryResult,
@@ -73,6 +74,15 @@ pub trait PreviewProvider: Send + Sync {
     /// bound and not previewable, and one fact must not be able to erase the
     /// other.
     fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>);
+
+    /// Whether any discovery this provider has run left a process it started
+    /// unaccounted for.
+    ///
+    /// Defaulted to `false` so a substituted provider that starts no process
+    /// says the only true thing it can. The production provider overrides it.
+    fn discovery_lost_a_process(&self) -> bool {
+        false
+    }
 
     /// Runs one preview operation against one already-validated source file.
     ///
@@ -343,6 +353,15 @@ pub struct ProteoWizardProvider {
     /// Making the user say so again next time is what keeps it narrower than
     /// either, and is the cost of that.
     chosen: RwLock<Option<PathBuf>>,
+    /// Whether any discovery this provider has run left a process it started
+    /// unaccounted for.
+    ///
+    /// A latch, never lowered, because the thing it records cannot become
+    /// untrue: a process nothing could account for is not accounted for later.
+    /// It is set here rather than returned because discovery happens inside
+    /// every entry point this provider has, and a session that must stop
+    /// starting processes must stop whichever one noticed.
+    discovery_lost_a_process: AtomicBool,
 }
 
 impl ProteoWizardProvider {
@@ -350,7 +369,20 @@ impl ProteoWizardProvider {
     pub const fn new() -> Self {
         Self {
             chosen: RwLock::new(None),
+            discovery_lost_a_process: AtomicBool::new(false),
         }
+    }
+
+    /// Runs discovery and records what it says about processes it started.
+    ///
+    /// Every discovery in this provider goes through here, so there is one
+    /// place the question is asked rather than one per entry point.
+    fn discover_and_observe(&self, request: &DiscoveryRequest) -> DiscoveryResult {
+        let discovery = discover(request);
+        if discovery.leaves_an_owned_process_unaccounted() {
+            self.discovery_lost_a_process.store(true, Ordering::Release);
+        }
+        discovery
     }
 
     /// What to hand discovery: the chosen folder, or nothing at all.
@@ -424,7 +456,7 @@ impl ProteoWizardProvider {
     fn resolve(&self, tool: BoundTool) -> ToolResolution {
         let request = self.request();
         let configured = configured_home(&request);
-        let discovery = discover(&request);
+        let discovery = self.discover_and_observe(&request);
         // Minted from `Available` and from nothing else, exactly as
         // `availability` mints it: `InstallationIdentity::of` answers for a
         // `Partial` folder too, and admitting one here would bind the session
@@ -534,6 +566,10 @@ impl ProteoWizardProvider {
 }
 
 impl PreviewProvider for ProteoWizardProvider {
+    fn discovery_lost_a_process(&self) -> bool {
+        self.discovery_lost_a_process.load(Ordering::Acquire)
+    }
+
     fn use_installation(&self, home: Option<PathBuf>) {
         if let Ok(mut chosen) = self.chosen.write() {
             *chosen = home;
@@ -541,7 +577,7 @@ impl PreviewProvider for ProteoWizardProvider {
     }
 
     fn read_conversion_configuration(&self) -> ConfigurationReading {
-        let discovery = discover(self.request());
+        let discovery = self.discover_and_observe(&self.request());
         let preview_availability = preview_verdict(&discovery);
         // Both halves of "there is an installation" are decided here, together.
         // `AvailabilityState::Available` is the authority's rule for minting an
@@ -618,7 +654,7 @@ impl PreviewProvider for ProteoWizardProvider {
         let request = self.request();
         let configured = configured_home(&request);
         let chosen = configured.is_some();
-        let discovery = discover(&request);
+        let discovery = self.discover_and_observe(&request);
         let discovered = discovery.availability == AvailabilityState::Available;
         // Availability answers "can this installation produce a preview", not
         // "does an executable exist" and not "does its help parse". Reading the

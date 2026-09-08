@@ -93,6 +93,7 @@ first item had finalized, and that output stayed.
 | `cancelled` | Stopped with nothing finalized: either the owned tree was confirmed gone, or nothing was launched to be a tree |
 | `notRun` | The stopped queue never began it — no process, nothing created |
 | `cancellationFailed` | Stopped while running, termination not confirmed |
+| `skippedByRequest` | The user settled it without running it, and the queue carried on (M6.8) |
 
 > **Amended 2026-09-08 by M6.8: the `cancelled` row above widened.** It read
 > "Stopped while running, owned tree confirmed gone, nothing finalized", and
@@ -300,9 +301,9 @@ already offers the honest way to convert those rows again.
 A stopped queue and a stop-failed queue both retain whatever they finalized
 before the stop, and [ADR 0016](0016-explicit-converted-output-adoption.md)
 makes those outputs adoptable like any other. Only `finalized` items are:
-`cancelled`, `notRun` and `cancellationFailed` produced nothing to offer, and
-the eligibility rule asks the item state rather than inferring it from what a
-queue reached.
+`cancelled`, `notRun`, `cancellationFailed` and — since M6.8 — `skippedByRequest`
+produced nothing to offer, and the eligibility rule asks the item state rather
+than inferring it from what a queue reached.
 
 Backend quarantine does not block adoption, because adoption launches no
 process. It does not clear it either. An adopted mzML row may enter a

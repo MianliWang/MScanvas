@@ -68,6 +68,14 @@ The reasoning, because a bound chosen silently is a bound nobody can argue with:
 - The queue is **serial** and **cannot be cancelled**. Whatever a user starts,
   they wait out. That is the constraint that decides the number — not memory,
   not the registry, not any limit of the boundary beneath.
+
+  > **Amended 2026-09-08 by M6.8: the premise is gone and the number stays.**
+  > A queue can be stopped whole (ADR 0015), by the file being converted, or by
+  > the row still waiting, so "wait it out" is no longer what sixteen limits.
+  > What it limits now is the cost of getting the *size* wrong: items still run
+  > one at a time, so a queue too large is still an hour of serial work, and
+  > every way out of it costs the user a deliberate action. The number was
+  > re-decided rather than inherited — see ADR 0043's CNV-D6.
 - The M3.0.3 fixture converts in about half a second, but it is a derived
   single-scan file. A real acquisition is minutes. At one to three minutes each,
   sixteen is roughly sixteen to fifty minutes of unstoppable work — long, and

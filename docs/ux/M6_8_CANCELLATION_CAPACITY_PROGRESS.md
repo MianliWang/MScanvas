@@ -1,6 +1,9 @@
 # M6.8 cancellation, capacity, and truthful progress
 
-Status: implemented and validated.
+Status: implemented; local gates and rendered QA pass; **native validation
+outstanding and blocked by a locked interactive session.** Not publishable until
+the native suites pass on a build attributable to the final head. See
+*Validation* below.
 Baseline: `735dfebac5d48db30b6d1802c208ccf05853b3d8` (published M6.7).
 
 This is the single owning record for M6.8. It states the terminal route
@@ -30,11 +33,18 @@ second process runner beside the one production launch authority.
 The primary thread is identified by asking which threads belong to the child's
 process id. That is sound rather than a lookup that could hit a stranger,
 because the caller still holds the child's process handle — so the process
-cannot have exited and its id cannot have been reused — and a process that has
-executed nothing has exactly the one thread it was created with. Any other
-count refuses rather than resumes, and `ResumeThread` returning a previous
-suspend count of one is the confirmation that the thread really was the
-suspended primary thread.
+cannot have exited and its id cannot have been reused. Every thread it reports
+is resumed. A process created suspended has one thread of its own, but a second
+one need not be a stranger's process — it can be one another product injected,
+which endpoint security software does routinely — and this boundary is the one
+conversion, discovery and preview all use, so refusing on the count would have
+failed every lane on such a machine over something that is not about ownership.
+What the count stood in for is checked directly instead: `ResumeThread` must
+report a previous suspend count of one for some thread, which is the primary
+thread as created and before it ran, and every thread must have been reachable —
+a thread this run cannot open is one it cannot say anything about, so the launch
+fails closed with the operating system's reason rather than proceeding on a
+thread it did not identify.
 
 Breakaway stays refused: the Job sets neither `JOB_OBJECT_LIMIT_BREAKAWAY_OK`
 nor its silent variant, so ownership established before execution cannot be
@@ -71,7 +81,7 @@ discriminates the interval, and both say so.
 | Job accounting unavailable | `None`, never zero. Unknown surviving-process state is not zero, and the claim is unreachable without a bounded count. |
 | Emptiness times out | The Job would not empty. `NotTerminated`. |
 | Any of the above **with no stop in flight** | The same uncertainty, and the same consequence. The invariant is about the machine rather than about anything the user pressed, so the run is asked a typed question about its own failure and the queue ends on the quarantine that is then in force. Before this, quarantine fired only on the stop path and the queue went on to launch the next converter beside a process nothing could account for. |
-| Any of the above **on a lane that is not the queue** | The same again. A preview is a process too, and the sentence the quarantine shows had always named preview and conversion both while only the queue could raise it — so a preview that lost track of a process left the session trusting the backend and the next conversion started a converter beside it. Both lanes now ask `ProcessError::leaves_an_owned_process_unaccounted`, which is *derived from* the queue's own classification rather than restated beside it, so the two cannot answer differently. |
+| Any of the above **on a lane that is not the queue** | The same again, on all three. A preview is a process and so is a discovery help probe, and the sentence the quarantine shows had always named preview and conversion both while only the queue could raise it — so a preview that lost track of a process left the session trusting the backend and the next conversion started a converter beside it. Every lane now asks `ProcessError::leaves_an_owned_process_unaccounted`, which is *derived from* the queue's own classification rather than restated beside it, so they cannot answer differently. Discovery needed one more step: its typed error was reduced to an `io::ErrorKind` and a string, so the question could not be asked of it at all. The typed error is kept as the `io::Error`'s source, `DiscoveryResult` answers the question, and the provider latches it — a probe is not an operation anyone asked for, so there is no attempt for it to report through. |
 | A wait that failed after its owned teardown succeeded | `NotAwaited`, and **not** a quarantine. This run cannot report how its process ended; it can say the owned Job was emptied. Quarantining here would refuse every later operation, for the rest of a session, on a fact that is not true — and a Job that would not empty is already classified `NotTerminated` at the boundary rather than folded into this. |
 | The thread snapshot the launch takes fails | Retried a bounded four times. It is documented to fail transiently while the system's thread list changes, and the process being asked about is suspended and cannot move under the retry. |
 | The suspended root reports more than one thread | Every one of them is resumed, and the launch continues. A process created suspended has one thread of its own, but a second can be one another product injected — which endpoint security software does routinely — and refusing there would have failed conversion, discovery and preview alike on such a machine over something that is not about ownership. Ownership comes from the suspended creation and the Job assignment that precede the resume. What is still required is checked directly: some thread must report a previous suspend count of one, which is the primary thread as created and before it ran. |
@@ -152,10 +162,18 @@ of it.
 difference is written down because this record overstated it once.**
 
 `OwnedTreeDisposition::ConfirmedGone` is `non_exhaustive`, so outside the crate
-that decides it the affirmative member cannot be constructed *or* matched — by
-production code, by a fixture, under an alias, through a braced import, or under
-a renamed import. Two independent reviewers each demonstrated bypasses of the
+that decides it the affirmative member cannot be **constructed** — not by
+production code, not by a fixture, not under an alias, a braced import or a
+renamed import. Two independent reviewers each demonstrated bypasses of the
 string-matching version that preceded this, and none of them compiles now.
+
+It cannot be *named* either, in the form anyone would write:
+`Disposition::ConfirmedGone` is rejected in an expression and in a pattern
+alike. What is still permitted is the struct pattern `ConfirmedGone { .. }`,
+which matches — measured against a two-crate probe rather than assumed. This
+record said "constructed *or* matched"; the second half was wrong, and it is
+not the half that carries anything, because a consumer able to branch on the
+member is still unable to make one.
 
 What that does **not** do is put the judgement out of reach.
 `OwnedTreeDisposition::of` is public, and its input is a `ProcessOutput` — the
@@ -220,7 +238,7 @@ buys is narrower and worth stating exactly: a wrong *description* cannot become
 a wrong *claim in code*. The words can drift; the member cannot be written by
 the code that reads them.
 
-**The guard proves itself.** On every run it applies fifteen deliberate bypasses
+**The guard proves itself.** On every run it applies nineteen deliberate bypasses
 to isolated copies and requires each to be detected, including all six the two
 reviewers demonstrated: the alias import, the braced member import, the braced
 ownership import, a production claim hidden behind a file-based test module, the
@@ -230,20 +248,36 @@ tree.
 That last one is written in words the rule already lists. It proves the rule
 fires; it does **not** prove an unlisted synonym would be caught, and this record
 previously called it a synonym proof — which contradicted the paragraph above it.
-Two of the fifteen are the rules added after the third review: a consumer
-deriving the disposition for itself, and the claim written out as a string. The
-proofs also fail if the guard has stopped checking at all, and they never edit
-the worktree.
+Two of the nineteen are the rules added after the third review: a consumer
+deriving the disposition for itself, and the claim written out as a string. Four
+more came from the fourth, and two of those are edits reviewers demonstrated
+against this guard rather than defects imagined for it — a braced `#[cfg(test)]`
+import arming a skip region over 158 lines of production `service.rs`, and a
+module declaration written inside a raw string literal that made all 8,303 lines
+of it a test source. The other two prove the document rule, which until then no
+proof exercised at all: the pristine copy held no markdown, so deleting that
+rule outright would have left the suite green. The proofs also fail if the guard
+has stopped checking at all, and they never edit the worktree.
 
 An earlier version walked each file to skip `#[cfg(test)]` regions and read only
 what was left. It twice turned out to be skipping production code instead —
 first when an attribute inside a skipped region survived its closing brace, then
 when an attribute on a brace-less item armed a skip the next item's brace
 consumed — and the check written to catch the first was a tautology, searching
-the same window with the same condition that had armed the skip. The walk is
-gone. The member rule reads whole files, and the only places that may name a
-member are the two that own them and files that are tests outright, both named
-rather than inferred.
+the same window with the same condition that had armed the skip.
+
+**A region walk exists again, and this time it is proved rather than argued.**
+Removing it entirely would have meant either exempting nothing — which flags
+every fixture that builds a supervised `ProcessOutput` — or exempting whole
+files, which is the naming hole the same review found. What decides a region is
+the first *terminator*, not the first brace: `#[cfg(test)] use a::{B, C};` is a
+statement that closes its own braces, and reading the brace first made that
+one-line edit — what rustfmt writes the moment a second name is imported — hide
+158 lines of production `service.rs` from three rules at once. A reviewer
+demonstrated it, and it is now one of the guard's own bypass proofs, as is the
+module declaration written inside a raw string literal that made all 8,303
+lines of `service.rs` a test source. A module the product declares stays
+production whatever else declares it, which is what answers the second.
 
 ## The four operations under CNV-D7
 
@@ -378,10 +412,10 @@ them documents.
 
 ## Validation
 
-Local gates: frontend lint, typecheck, 1652 tests across 69 files, build;
+Local gates: frontend lint, typecheck, 1654 tests across 69 files, build;
 `cargo fmt --all --check`; `cargo clippy --locked --workspace --all-targets
 --all-features -- -D warnings`; `cargo test --locked --workspace --all-targets`
-(1507 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
+(1511 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
 E2E typecheck.
 
 **Rendered QA**: 10/10 in `m6.8-cancellation-controls.browser`, including every
@@ -426,6 +460,14 @@ removed; ADR 0015's shipping definition of `cancelled` still asserted a confirme
 tree; the diagnostics schema had moved from 1 to 2 with nothing recording it; and
 this document overstated what the compiler carries and contradicted itself about
 what the bypass proofs prove. All are repaired above.
+
+**The provider measurement is not carried either, and is named here rather
+than left to be assumed.** It is native evidence produced through this same
+launch path — its disposition column is what `process.rs` computed — so the rule
+below applies to it as it does to the suites: it was taken before the launch
+path changed, and it has to be re-taken on the candidate binary. It is a console
+harness rather than an interface one, so it does not need an unlocked session;
+it is listed with the native work because it is the same kind of claim.
 
 **Native is NOT carried to this head, and the rerun is BLOCKED.**
 
@@ -492,13 +534,15 @@ Evidence: `D:/tmp/mscanvas-m68-20260908/m68-native-ng3n5k/`,
 - Whether a *different* `msconvert` build spawns children is not established by
   this measurement, and the re-observation gate is what would catch a changed
   executable identity.
-- **The suspended launch has no degradation path.** It refuses unless the child
-  presents exactly the one thread a process that has executed nothing has, and
-  unless `ResumeThread` reports it was suspended. A security product that
-  injects a thread at process creation would meet that deterministically, and
-  every conversion on that installation would fail — fail-closed and now
-  retryable, but permanently. The honest degradation exists and is not taken:
-  fall back to assigning after spawn and publish
+- **The suspended launch still has no degradation path, on a much narrower
+  condition than this entry used to state.** It said the launch refuses unless
+  the child presents exactly one thread — which was true of the first candidate
+  and was removed in round three, precisely because an injected thread would
+  then have failed every conversion on that installation. Every thread is
+  resumed now. What remains fail-closed is a thread that cannot be *opened* or
+  resumed, and a root none of whose threads reports the suspend count it was
+  created with. The honest degradation exists and is not taken: fall back to
+  assigning after spawn and publish
   `TreeOwnership::NotEstablishedBeforeExecution`, which downgrades the *claim*
   rather than the *function* and is exactly what the disposition vocabulary was
   built to express. Not attempted here because it restructures the launch path,

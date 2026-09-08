@@ -916,10 +916,11 @@ fn outcome_is_retryable(outcome: &ConversionRunOutcome) -> bool {
             //
             // Retryable, and it is the one execution failure here that is,
             // because what refuses it is a condition of the environment at that
-            // instant rather than of the plan: the root is refused when it does
-            // not present exactly the one thread a process that has executed
-            // nothing has, which is what a security product injecting a remote
-            // thread produces. The next attempt creates a different process.
+            // instant rather than of the plan: a thread of the root that could
+            // not be opened or resumed, or none reporting the suspend count it
+            // was created with. Both are about the state of one process on one
+            // machine at one moment, and the next attempt creates a different
+            // process.
             // Classifying it permanent would turn a transient condition into a
             // conversion the user can never run, and the preview surface
             // already reports the same underlying error as retryable.

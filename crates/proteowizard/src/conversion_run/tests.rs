@@ -6295,6 +6295,52 @@ fn a_cancelled_run_removes_a_nested_tree_the_backend_left_behind() {
     );
 }
 
+/// A wait that failed after its owned teardown succeeded is not a cancellation
+/// failure, whether or not a stop was in flight.
+///
+/// `NotAwaited` used to be reclassified alongside `NotTerminated` whenever a
+/// stop had been requested, which made the identical machine state quarantine
+/// the session when the user had pressed something and not when they had not --
+/// against the whole basis of this invariant, which is that it is about the
+/// machine. What `NotAwaited` means is that the Job emptied and how the process
+/// ended was lost; a Job that would not empty is classified `NotTerminated` at
+/// the boundary and never reaches here.
+#[test]
+fn a_wait_failure_whose_teardown_succeeded_is_not_a_cancellation_failure() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let request = cancellation.request_handle();
+    let act = |spec: &CommandSpec| {
+        write_partial_output(spec)?;
+        request.request();
+        Err(ProcessError::Wait {
+            detail: "the supervision loop lost its answer".to_owned(),
+        })
+    };
+    let runner = CancellingRunner::new(&act);
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    assert!(
+        !matches!(attempt, ConversionAttempt::CancellationFailed(_)),
+        "a wait whose teardown succeeded leaves no process to be uncertain about: {attempt:?}"
+    );
+    let ConversionAttempt::Completed(report) = &attempt else {
+        panic!("it is an ordinary backend failure of the run: {attempt:?}");
+    };
+    let ConversionRunOutcome::Failed(failure) = report.outcome() else {
+        panic!("the run failed: {report:?}");
+    };
+    assert_eq!(
+        failure,
+        &ConversionRunFailure::Backend(BackendExecutionFailure::NotAwaited)
+    );
+    assert!(
+        !failure.leaves_an_owned_process_unaccounted(),
+        "nothing of this run survives it, so it must not quarantine the session"
+    );
+}
+
 /// A request the boundary cannot confirm is never reported as a cancellation.
 #[test]
 fn a_termination_that_could_not_be_confirmed_is_a_distinct_failure() {

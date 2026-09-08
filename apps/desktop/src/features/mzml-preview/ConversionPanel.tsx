@@ -156,17 +156,33 @@ const STOP_EXPLANATION =
  * now, and the queue keeps going.
  */
 const CANCEL_ITEM_EXPLANATION =
-  "Its output is not written. Files already converted are kept, and the items after it still run.";
+  "Files already converted are kept, and the items after it still run. It may finish on its own first, and then it keeps its result.";
 
 /**
  * Why the control is unavailable, at the control.
  *
- * One sentence for the three ways there is nothing to end -- between items, a
- * stop already asked for, or the whole queue ending -- because a reader does
- * not need the session's internal state to know that pressing would do nothing.
+ * One sentence for the two ways there is nothing to end -- between items, or
+ * the whole queue ending -- because a reader does not need the session's
+ * internal state to know that pressing would do nothing.
+ *
+ * **Not for the third way**, which is this document having already asked. That
+ * one is a different fact and gets its own sentence below: a note saying the
+ * control is "available while a file is being converted" would appear exactly
+ * while a file is being converted, which is when a reader is least able to
+ * believe it.
  */
 const CANCEL_ITEM_UNAVAILABLE =
   "Available while a file is being converted, and not once the whole queue is stopping.";
+
+/**
+ * What is true while *this file's* stop is in flight.
+ *
+ * The per-item counterpart of `STOP_IN_FLIGHT_EXPLANATION`, and silent about
+ * the outcome for the same reason: which of ending and finishing happens is
+ * decided by what the process boundary observes first.
+ */
+const CANCEL_ITEM_IN_FLIGHT_EXPLANATION =
+  "The queue keeps going either way. This file may still finish on its own, and then it keeps its result.";
 
 /**
  * What is true while a stop is in flight.
@@ -817,8 +833,9 @@ function PlanState({
           </dl>
 
           <p className="quiet-text" id="conversion-validation-disclosure" role="note">
-            {OUTPUT_ONLY_DISCLOSURE} They run one at a time, and Stop queue ends the whole queue
-            rather than one item.
+            {OUTPUT_ONLY_DISCLOSURE} They run one at a time. Stop queue ends the whole
+            queue; Stop this file ends only the one being converted, and Skip settles a row
+            that has not started.
           </p>
 
           {/* What this combination reduces, and only that. A combination that
@@ -1090,9 +1107,11 @@ function QueueState({
             {STOP_EXPLANATION}
           </p>
           <p className="quiet-text" id="conversion-cancel-item-scope" role="note">
-            {conversion.cancellableItem === null
-              ? CANCEL_ITEM_UNAVAILABLE
-              : `Stop this file ends ${conversion.cancellableItem.fileName} and carries on with the rest of the queue. ${CANCEL_ITEM_EXPLANATION}`}
+            {conversion.cancellingItem
+              ? CANCEL_ITEM_IN_FLIGHT_EXPLANATION
+              : conversion.cancellableItem === null
+                ? CANCEL_ITEM_UNAVAILABLE
+                : `Stop this file ends ${conversion.cancellableItem.fileName} and carries on with the rest of the queue. ${CANCEL_ITEM_EXPLANATION}`}
           </p>
         </>
       ) : state.reason === "stopFailed" ? (
@@ -1374,7 +1393,15 @@ function QueueState({
  * can now hold either -- and a three-count sentence would report two of three
  * items as unaccounted for.
  *
- * The two are named only when they happened. Unlike the stopped summary, where
+ * **And two more that only a completed queue was assumed never to hold.** A
+ * session that loses track of a converter process refuses the rest of the queue
+ * without the user having pressed anything, so the terminal reason is
+ * `completed` while the items left behind are `notRun` and the item that lost
+ * the process is `cancellationFailed`. Naming only the first five would have
+ * reported those rows nowhere -- the same defect this function was widened to
+ * fix, reached by the path this milestone added.
+ *
+ * All four are named only when they happened. Unlike the stopped summary, where
  * every count is named including the zeroes because the reader is auditing what
  * a stop left behind, an ordinary completion has no such question to answer and
  * a row of zeroes for actions nobody took would be noise.
@@ -1390,6 +1417,12 @@ function completedSummary(queue: ConversionQueue): string {
   }
   if (queue.skippedByRequestCount > 0) {
     parts.push(`${String(queue.skippedByRequestCount)} skipped by you`);
+  }
+  if (queue.notRunCount > 0) {
+    parts.push(`${String(queue.notRunCount)} not run`);
+  }
+  if (queue.cancellationFailedCount > 0) {
+    parts.push(`${String(queue.cancellationFailedCount)} stop could not be confirmed`);
   }
   return `${parts.join(", ")} of ${String(queue.itemCount)}.`;
 }

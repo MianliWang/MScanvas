@@ -1706,11 +1706,35 @@ impl ConversionSlot {
         if item.state != ItemState::Pending {
             return Err(conversion_item_not_skippable());
         }
-        item.state = ItemState::SkippedByRequest;
-        // Not retryable, and for the reason a cancelled item is not: there is
-        // no failure to correct. A user who wants it converted after all starts
-        // a queue that includes it.
-        item.retryable = false;
+        // **Pending is not the same as never run.** `begin_retry` moves every
+        // retryable failure back to pending, so a skip during a rerun can land
+        // on a row that did run in the pass before. Calling that one "you chose
+        // not to convert this" would delete a failure the user has already
+        // seen, hide its reason, take it out of the failure count, drop its
+        // diagnostic ticket -- `diagnostic_tickets` keeps only tickets whose
+        // state still matches the item's -- and leave the label sitting beside
+        // an attempt count that contradicts it.
+        //
+        // This is the rule `strand_pending` applies to a stop, applied to one
+        // item: what already ran keeps the result it earned, and the skip does
+        // the part that was actually asked for, which is to take the row out of
+        // this pass.
+        match item.earned_state() {
+            Some(earned) => item.state = earned,
+            None => {
+                item.state = ItemState::SkippedByRequest;
+                // Not retryable, and for the reason a cancelled item is not:
+                // there is no failure to correct. A user who wants it converted
+                // after all starts a queue that includes it.
+                //
+                // Only on this branch. A row that kept an earned failure keeps
+                // its own retryability, because that is a fact about the
+                // failure rather than about this decision -- and a later
+                // `Retry` is a fresh request of the user's, not this one
+                // being undone.
+                item.retryable = false;
+            }
+        }
         // Only where nothing is running. The position means "which item is
         // running" while one is, and "how many are done" only when none is --
         // and `recount` answers the second. Recounting here would publish a

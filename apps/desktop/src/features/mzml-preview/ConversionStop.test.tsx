@@ -51,7 +51,13 @@ const STOP_EXPLANATION =
 // asserting the rendered sentence against a constant imported from the panel
 // would pass whatever the panel happened to say.
 const CANCEL_ITEM_EXPLANATION =
-  "Its output is not written. Files already converted are kept, and the items after it still run.";
+  "Files already converted are kept, and the items after it still run. It may finish on its own first, and then it keeps its result.";
+
+// What the same control says once this document has asked. Its own sentence,
+// because the unavailable one -- "available while a file is being converted" --
+// would be shown exactly while a file is being converted.
+const CANCEL_ITEM_IN_FLIGHT_EXPLANATION =
+  "The queue keeps going either way. This file may still finish on its own, and then it keeps its result.";
 
 function renderApp(api: FakePreviewApi): void {
   render(
@@ -320,6 +326,87 @@ describe("stopping a running conversion queue", () => {
     await waitFor(() => {
       expect(liveRegion()).toContain(
         "1 converted, 0 skipped, 0 failed, 1 cancelled, 1 skipped by you.",
+      );
+    });
+  });
+
+  it("stops saying the control is available once this document has asked", async () => {
+    /*
+     * Between the press and Rust's reply the panel is still on the running
+     * branch, the button reads "Stopping this file…", and the note beside it
+     * used to read "Available while a file is being converted, and not once the
+     * whole queue is stopping" -- shown exactly while a file was being
+     * converted and the queue was not stopping. The in-flight sentence is also
+     * silent about the outcome, for the same reason the queue-level one is.
+     */
+    let settle: (state: WorkspaceConversionState) => void = () => {};
+    const held = new Promise<WorkspaceConversionState>((resolve) => {
+      settle = resolve;
+    });
+    const api = apiWith(runningQueue(), { cancelItem: () => held });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const cancelItem = await within(panel).findByRole("button", {
+      name: "Stop this file",
+    });
+    fireEvent.click(cancelItem);
+
+    await waitFor(() => {
+      expect(within(panel).getByText("Stopping this file…")).toBeVisible();
+    });
+    expect(within(panel).getByText(CANCEL_ITEM_IN_FLIGHT_EXPLANATION)).toBeVisible();
+    expect(panel.textContent ?? "").not.toContain(
+      "Available while a file is being converted",
+    );
+
+    settle({
+      status: "running",
+      operationId: "1",
+      queue: queueOf([
+        converted("file-1", "run-1.raw"),
+        cancelled("file-2", "run-2.raw"),
+        queueItem("file-3", "run-3.raw", { state: "running", attempts: 1 }),
+      ]),
+    });
+    await waitFor(() => {
+      expect(within(panel).getByRole("button", { name: "Stop this file" })).toBeEnabled();
+    });
+  });
+
+  it("names the items a lost converter process left behind, in a completed queue", async () => {
+    /*
+     * The refusal this milestone added ends the queue *without* a stop: a
+     * session that cannot account for a converter process refuses the rest, so
+     * the terminal reason is `completed` while the items left behind are
+     * `notRun` and the one that lost the process is `cancellationFailed`. Those
+     * two were the only states a completed queue was assumed never to hold, and
+     * naming five counts would report them nowhere -- the same defect the
+     * summary was widened to fix, reached by the path this slice added.
+     */
+    const api = apiWith({
+      status: "terminal",
+      operationId: "1",
+      reason: "completed",
+      queue: queueOf([
+        converted("file-1", "run-1.raw"),
+        queueItem("file-2", "run-2.raw", { state: "cancellationFailed", attempts: 1 }),
+        queueItem("file-3", "run-3.raw", { state: "notRun" }),
+      ]),
+    });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(
+        within(panel).getByText(
+          "1 converted, 0 skipped, 0 failed, 1 not run, 1 stop could not be confirmed of 3.",
+        ),
+      ).toBeVisible();
+    });
+    await waitFor(() => {
+      expect(liveRegion()).toContain(
+        "1 converted, 0 skipped, 0 failed, 1 not run, 1 stop could not be confirmed.",
       );
     });
   });

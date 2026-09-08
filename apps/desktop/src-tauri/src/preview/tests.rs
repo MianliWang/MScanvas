@@ -375,6 +375,12 @@ struct FakeWorld {
     resolved: Arc<Mutex<Option<InstallationIdentity>>>,
     requested: Arc<Mutex<Vec<PreviewOperation>>>,
     looks: Arc<Mutex<usize>>,
+    /// Whether a discovery on this machine lost a process it started.
+    ///
+    /// Modelled on the world rather than on a response, because discovery is
+    /// not an operation a test asks for: it happens inside every entry point,
+    /// and what it leaves behind is a fact about the machine.
+    discovery_lost_a_process: Arc<AtomicBool>,
 }
 
 impl FakeWorld {
@@ -383,7 +389,13 @@ impl FakeWorld {
             resolved: Arc::new(Mutex::new(resolved)),
             requested: Arc::new(Mutex::new(Vec::new())),
             looks: Arc::new(Mutex::new(0)),
+            discovery_lost_a_process: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// A help probe on this machine could not account for a process it started.
+    fn discovery_loses_a_process(&self) {
+        self.discovery_lost_a_process.store(true, Ordering::Release);
     }
 
     /// Points this world at a different backend, or at none. Models the machine
@@ -558,6 +570,10 @@ impl FakeProvider {
 }
 
 impl PreviewProvider for FakeProvider {
+    fn discovery_lost_a_process(&self) -> bool {
+        self.world.discovery_lost_a_process.load(Ordering::Acquire)
+    }
+
     fn use_installation(&self, home: Option<PathBuf>) {
         *self.chosen.lock().expect("test lock") = home;
     }
@@ -2179,6 +2195,39 @@ fn launch_failure_leaving_a_process_unaccounted() -> Response {
         "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
         false,
     ))
+}
+
+/// Discovery is a lane too, and it could not say this at all.
+///
+/// A help probe is a process: created suspended, owned before it executes, torn
+/// down through the same Job. Its failure used to reach the session as an
+/// `io::ErrorKind::Other` and a string, so a probe whose owned Job would not
+/// empty was an ordinary launch failure and the session went on starting
+/// converters beside whatever was still there.
+#[test]
+fn a_discovery_that_could_not_account_for_its_process_quarantines_the_session() {
+    let file = TestFile::new("discovery-lost-a-process");
+    let provider = Box::new(FakeProvider::available(vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+    ]));
+    let world = provider.clone_world();
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+    assert!(!service.backend_is_quarantined());
+
+    // The machine loses a probe's process. Nothing the user did causes this and
+    // no operation reports it: it is what discovery found.
+    world.discovery_loses_a_process();
+
+    let refused = service
+        .open_preview(&selected.handle)
+        .expect_err("a session that lost a process starts no further one");
+
+    assert_eq!(refused.kind, "backend_quarantined");
+    assert!(service.backend_is_quarantined());
+    assert!(service.conversion_state().backend_quarantined);
 }
 
 /// A preview is a process, and one it could not account for stops the session.
@@ -13679,6 +13728,91 @@ fn a_retry_leaves_a_user_skipped_item_where_it_is() {
         "only the retryable failure goes back to pending"
     );
     assert_eq!(dto.skipped_by_request_count, 1);
+}
+
+/// A skip during a rerun does not erase the failure it lands on.
+///
+/// `begin_retry` moves retryable failures back to `Pending` while leaving the
+/// error, the report, the attempt count and the diagnostic ticket in place, and
+/// the interface offers `Skip` on any pending row of a running queue. So a skip
+/// in the second pass can reach a row that failed in the first. Publishing
+/// `SkippedByRequest` for it would say "no conversion ran and no output was
+/// written" about a row with an attempt behind it, drop it out of the failure
+/// count, and take its diagnostics out of the export.
+#[test]
+fn a_skip_during_a_rerun_keeps_the_failure_the_row_already_earned() {
+    let cancellation = ConversionCancellation::new();
+    let (mut slot, operation, attempt) = running_two_item_slot(cancellation.request_handle());
+
+    // The first pass: item 0 fails in a way another attempt could change, item
+    // 1 is never reached and stays pending.
+    slot.release_attempt(operation, 0, attempt);
+    assert!(slot.settle_item(
+        operation,
+        0,
+        ItemOutcome::Refused {
+            retryable: true,
+            error: PreviewErrorDto::new("backend_wait_failed", "lost track", true),
+        },
+    ));
+    slot.finish(operation, None, TerminalReason::Completed);
+
+    // The rerun puts that failure back to pending, error and attempt intact.
+    let retried = slot.begin_retry().expect("a retryable failure is rerun");
+    assert_eq!(retried, operation);
+    let during = running_queue_dto(&slot);
+    assert_eq!(during.items[0].state, ConversionQueueItemStateDto::Pending);
+    assert_eq!(during.items[0].attempts, 1, "it ran in the pass before");
+
+    // The user skips it rather than letting it run again.
+    slot.skip_pending_item(operation, 0)
+        .expect("a pending row is skippable");
+
+    let dto = running_queue_dto(&slot);
+    assert_eq!(
+        dto.items[0].state,
+        ConversionQueueItemStateDto::Failed,
+        "a row that already ran keeps what it earned rather than claiming nothing ran"
+    );
+    assert_eq!(
+        dto.items[0].attempts, 1,
+        "and the attempt count still agrees"
+    );
+    assert_eq!(dto.failed_count, 1);
+    assert_eq!(
+        dto.skipped_by_request_count, 0,
+        "nothing was settled without running"
+    );
+    assert!(
+        dto.items[0].error.is_some(),
+        "the reason the user has already seen is still there"
+    );
+
+    // And the row is out of this pass: it is no longer pending, so the drain
+    // will not reach it.
+    assert_ne!(dto.items[0].state, ConversionQueueItemStateDto::Pending);
+}
+
+/// A row that has never run is still settled as the user's decision.
+///
+/// The companion to the test above: without this, "keep what it earned" could
+/// be satisfied by refusing every skip, and the control would do nothing.
+#[test]
+fn a_skip_of_a_row_that_never_ran_is_the_users_decision() {
+    let cancellation = ConversionCancellation::new();
+    let (mut slot, operation, _attempt) = running_two_item_slot(cancellation.request_handle());
+
+    slot.skip_pending_item(operation, 1)
+        .expect("a waiting row is skippable");
+
+    let dto = running_queue_dto(&slot);
+    assert_eq!(
+        dto.items[1].state,
+        ConversionQueueItemStateDto::SkippedByRequest
+    );
+    assert_eq!(dto.items[1].attempts, 0);
+    assert_eq!(dto.skipped_by_request_count, 1);
+    assert_eq!(dto.failed_count, 0);
 }
 
 /// The stop handle belongs to one exact attempt.

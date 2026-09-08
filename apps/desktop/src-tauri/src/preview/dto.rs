@@ -1242,9 +1242,14 @@ pub struct ConversionQueueDto {
     /// cannot carry that distinction without inventing a second number for a
     /// question nobody asked.
     pub cancelled_count: usize,
-    /// Items a stopped queue never began. They did not fail and launched no
-    /// process, and counting them as failures would report work that was never
-    /// attempted as work that went wrong.
+    /// Items the queue never began. They did not fail and launched no process,
+    /// and counting them as failures would report work that was never attempted
+    /// as work that went wrong.
+    ///
+    /// **Not only a stopped queue's.** A session that loses track of a converter
+    /// process refuses the rest of the queue without the user having pressed
+    /// anything, and that queue is `completed` with the rows it never started
+    /// counted here.
     pub not_run_count: usize,
     /// Items the user settled without running, while the queue carried on.
     /// Counted apart from `not_run_count` because a decision the user made is
@@ -2121,7 +2126,17 @@ pub fn conversion_not_stoppable() -> PreviewErrorDto {
 pub fn conversion_item_not_cancellable() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "conversion_item_not_cancellable",
-        "That conversion is no longer the one running, so it was not stopped.",
+        // Deliberately about the *request* rather than about the item. The
+        // named conversion may well still be running: a queue-level stop
+        // accepted first outranks this, and an attempt that has started but is
+        // not yet bound cannot be addressed by an attempt number. Saying "no
+        // longer the one running" claimed something this boundary does not
+        // know, in two states it can actually be in.
+        concat!(
+            "MSCanvas could not act on that request, so nothing was stopped. ",
+            "The queue may have moved on, or a stop of the whole queue may already be ",
+            "under way."
+        ),
         true,
     )
 }

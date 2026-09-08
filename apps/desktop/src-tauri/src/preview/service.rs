@@ -1478,6 +1478,14 @@ impl PreviewService {
     // exit; what quarantine changes is not who may take the gate but whether
     /// MSCanvas is willing to start another process at all.
     fn require_usable_backend(&self) -> Result<(), PreviewErrorDto> {
+        // Asked before the flag, because discovery is the one lane that cannot
+        // report through an attempt: it happens inside every other entry point
+        // and answers with an installation rather than with a run. A help probe
+        // whose owned Job would not empty is the same uncertainty a conversion's
+        // is, and a session that started one must not start another.
+        if self.provider.discovery_lost_a_process() {
+            self.quarantine_backend();
+        }
         if self.backend_is_quarantined() {
             return Err(backend_quarantined());
         }

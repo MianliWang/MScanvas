@@ -349,7 +349,8 @@ availability, queue, adoption and export contracts.
    the policy nor asks for a replacement folder. Converted
    and skipped files are left exactly as they are. A queue that was stopped is
    over instead: it reports how many converted, were skipped, failed, were
-   cancelled and were never run, and converting those rows again is a new queue.
+   cancelled, were never run and were skipped by you — every count including the
+   zeroes — and converting those rows again is a new queue.
    A file you stopped and a row you skipped are not offered a rerun either:
    neither has a failure to correct, and converting them after all is a new
    queue that includes them.

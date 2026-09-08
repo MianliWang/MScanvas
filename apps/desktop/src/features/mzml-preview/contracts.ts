@@ -1261,7 +1261,13 @@ export interface ConversionQueue {
    * item was is on its own cancellation facts.
    */
   readonly cancelledCount: number;
-  /** Items a stopped queue never began. Not failures. */
+  /**
+   * Items the queue never began. Not failures.
+   *
+   * A stop is one way that happens and not the only one: a session that loses
+   * track of a converter process refuses the rest of the queue on its own, and
+   * that queue is `completed`.
+   */
   readonly notRunCount: number;
   /**
    * Items the user settled without running, while the queue carried on.

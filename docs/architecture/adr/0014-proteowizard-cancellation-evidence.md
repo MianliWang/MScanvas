@@ -1,7 +1,10 @@
 # ADR 0014: private ProteoWizard conversion cancellation
 
 - **Status:** Accepted for the private boundary. No user-visible cancellation
-  exists, and none may be added on this ADR alone.
+  existed when this was decided, and none could be added on this ADR alone —
+  each of the three that exist now was admitted by a later decision on evidence
+  of its own: the queue stop by [ADR 0015](0015-user-visible-queue-stop.md), the
+  per-item stop and the queued-item skip by M6.8.
 - **Date:** 2026-08-08
 - **Supersedes:** the *Cancellation* section of
   [ADR 0009](0009-mzml-conversion-execution-boundary.md), which put it out of
@@ -239,7 +242,10 @@ and the only one the harness will run against.
 
 - The queue is still uncancellable and still says so. No `Cancel` button, no
   Tauri command, no transfer object, no queue state and no frontend change is
-  part of this.
+  part of this. *(True of this ADR alone. [ADR 0015](0015-user-visible-queue-stop.md)
+  made the queue stoppable and M6.8 added a per-item stop and a queued-item
+  skip, each on evidence of its own; the consequence recorded here is what
+  **this** decision left, not what the product does now.)*
 - `ConversionRunOutcome` is deliberately not widened. The queue and the desktop
   boundary match it exhaustively, and a cancellation state added to it would
   become a state they must classify before any product decision about

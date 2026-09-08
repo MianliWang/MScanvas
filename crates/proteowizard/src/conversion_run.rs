@@ -2135,9 +2135,12 @@ pub enum OwnedTreeDisposition {
     /// which says nothing about one it never held.
     ///
     /// **`non_exhaustive` is load-bearing, not a compatibility hedge.** It is
-    /// what makes this member unconstructible — and unmatchable — outside this
-    /// crate, so the one claim in this repository that is about the user's
-    /// machine cannot be *written* by a caller. Every consumer reaches it
+    /// what makes this member unconstructible outside this crate, so the one
+    /// claim in this repository that is about the user's machine cannot be
+    /// *written* by a caller. The spelling everyone would reach for is refused
+    /// in a pattern too; what stays legal is the struct pattern
+    /// `ConfirmedGone { .. }`, which reads the judgement without being able to
+    /// make one. Every consumer reaches it
     /// through [`OwnedTreeDisposition::of`], or asks one of the predicates
     /// below.
     ///
@@ -3222,15 +3225,20 @@ fn run_staged(
             // A request that was made and whose teardown could not be completed
             // is neither a cancellation nor an ordinary backend failure: what
             // it means is that this boundary cannot say the tree is gone. Only
-            // the two failures that describe exactly that are reclassified, so
-            // a launch or capture failure that happens to coincide with a
-            // request keeps the reason that is true of it.
-            if requested
-                && matches!(
-                    cause,
-                    BackendExecutionFailure::NotTerminated | BackendExecutionFailure::NotAwaited
-                )
-            {
+            // the failure that describes exactly that is reclassified, so a
+            // launch or capture failure that happens to coincide with a request
+            // keeps the reason that is true of it.
+            //
+            // **`NotAwaited` is not one of them, and used to be.** It is a wait
+            // whose owned teardown then *succeeded*: the Job emptied, so nothing
+            // of this run survives, and the only thing lost is how the process
+            // ended. Reclassifying it made the same machine state quarantine the
+            // session when a stop was in flight and not when one was not —
+            // against the whole basis of this invariant, which is that it is
+            // about the machine rather than about anything the user pressed. A
+            // Job that would not empty is not this: the boundary classifies that
+            // as `NotTerminated` before it ever reaches here.
+            if requested && matches!(cause, BackendExecutionFailure::NotTerminated) {
                 return StagedResult::CancellationFailed {
                     cause,
                     // The runner returned an error rather than a result, so

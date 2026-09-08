@@ -237,8 +237,9 @@ a closed identifier saying which of the three things happened to the process
 tree, because a `false` could not tell "a tree existed and its end could not be
 confirmed" from "no process was ever created". A field leaving is exactly what
 the rule beside the constant reserves the version for, so the number moved; the
-three additions beside it — `sampledMaxActiveProcesses`, `totalOwnedProcesses`
-and `treeOwnership` — would not have moved it on their own. A reader written
+additions beside it — `sampledMaxActiveProcesses`, `totalOwnedProcesses` and
+`treeOwnership` on an item, `skippedByRequestCount` on the queue, and the item
+state identifier `skipped_by_request` — would not have moved it on their own. A reader written
 against version 1 must not read a version 2 file as though the boolean were
 merely absent, which is what the version exists to tell it.
 

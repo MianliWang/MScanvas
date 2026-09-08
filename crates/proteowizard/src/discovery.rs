@@ -203,6 +203,15 @@ pub enum DiscoveryFailure {
         executable: String,
         path: PathBuf,
         detail: String,
+        /// Whether the probe left a process it started unaccounted for.
+        ///
+        /// Discovery runs the installed tools' help, and a help probe is a
+        /// process like any other: it is created suspended, owned before it
+        /// executes, and torn down through the same Job. When that teardown
+        /// cannot be confirmed, this lane has the same uncertainty the queue
+        /// has, and the session must stop starting backend work for the same
+        /// reason. The bare `detail` string it used to carry could not say so.
+        owned_process_unaccounted: bool,
     },
     ProbeExecutableInspectionFailed {
         executable: String,
@@ -459,6 +468,35 @@ pub struct DiscoveryResult {
 }
 
 impl DiscoveryResult {
+    /// Whether this discovery left a process it started unaccounted for.
+    ///
+    /// Discovery is the third lane that starts backend processes, and for a
+    /// while it was the one that could not say this. The queue quarantined the
+    /// session, then the preview and spectrum lanes did, while a help probe
+    /// whose Job would not empty was reported as an ordinary launch failure and
+    /// the session went on starting converters beside whatever was still there.
+    /// One question, asked of every lane, or the invariant is about which code
+    /// path ran rather than about the machine.
+    #[must_use]
+    pub fn leaves_an_owned_process_unaccounted(&self) -> bool {
+        [
+            self.failure.as_ref(),
+            self.msconvert.failure.as_ref(),
+            self.msaccess.failure.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|failure| {
+            matches!(
+                failure,
+                DiscoveryFailure::ProbeLaunchFailed {
+                    owned_process_unaccounted: true,
+                    ..
+                }
+            )
+        })
+    }
+
     fn unavailable(source: Option<DiscoverySource>, failure: DiscoveryFailure) -> Self {
         Self {
             availability: AvailabilityState::Unavailable,
@@ -527,6 +565,13 @@ fn backend_tool(executable: &Path) -> io::Result<BackendTool> {
     }
 }
 
+/// The probe's failure as an `io::Error`, with the typed error kept as its
+/// source.
+///
+/// The kind is what the discovery code branches on; the source is what lets the
+/// one question about an unaccounted process still be asked. Reducing the error
+/// to a kind and a string is what made discovery the lane that could not answer
+/// it.
 fn process_error_as_io(error: ProcessError) -> io::Error {
     let kind = match &error {
         ProcessError::Launch {
@@ -930,6 +975,14 @@ fn probe_tool(backend_tool: BackendTool, tool: &mut DiscoveredTool, executor: &d
                     executable: executable_name.to_owned(),
                     path: path.clone(),
                     detail: error.to_string(),
+                    // The typed error is carried inside the `io::Error` rather
+                    // than reduced to its kind, so the one question every lane
+                    // asks can still be asked here. `process_error_as_io` keeps
+                    // it as the source for exactly this.
+                    owned_process_unaccounted: error
+                        .get_ref()
+                        .and_then(|inner| inner.downcast_ref::<ProcessError>())
+                        .is_some_and(ProcessError::leaves_an_owned_process_unaccounted),
                 }
             });
         }

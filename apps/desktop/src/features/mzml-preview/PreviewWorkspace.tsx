@@ -888,7 +888,10 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
   if (state.status === "terminal" && state.reason === "stopFailed") {
     // Not "Queue stopped" either. The one thing this state does not establish
     // is that the queue's converter stopped.
-    return `Stop could not be confirmed. MSCanvas could not confirm that the backend process stopped.${
+    // The counts, as the panel shows them. A listener auditing the one terminal
+    // state that most needs auditing was getting strictly less than a sighted
+    // reader: the sentence, and none of what the queue actually did.
+    return `Stop could not be confirmed. MSCanvas could not confirm that the backend process stopped. ${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed, ${String(queue.cancelledCount)} cancelled, ${String(queue.notRunCount)} not run, ${String(queue.skippedByRequestCount)} skipped by you, ${String(queue.cancellationFailedCount)} stop could not be confirmed.${
       workspace.conversion.backendQuarantined
         ? " Restart MSCanvas before starting another preview or conversion."
         : ""
@@ -909,15 +912,21 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
   // A queue whose items were all skipped judged nothing, and a skipped item's
   // existing file was explicitly not inspected.
   const judged = queue.items.some(conversionJudgedAnyOutput);
-  // Every item the queue held, including the two a user decides about. Three
-  // counts were complete only while a cancelled item required a queue stop; a
-  // completed queue can now hold a file the user ended and a row they skipped,
-  // and a region that named neither would leave a listener two of three items
-  // short of what the panel shows a sighted reader.
+  // Every item the queue held, including the two a user decides about and the
+  // two a lost converter process leaves behind. Three counts were complete only
+  // while a cancelled item required a queue stop; a completed queue can now hold
+  // a file the user ended, a row they skipped, an item whose stop could not be
+  // confirmed, and the rows the session then refused to start. A region that
+  // named any of them short would tell a listener less than the panel tells a
+  // sighted reader, which is the one thing it exists not to do.
   const decided = [
     queue.cancelledCount > 0 ? `${String(queue.cancelledCount)} cancelled` : null,
     queue.skippedByRequestCount > 0
       ? `${String(queue.skippedByRequestCount)} skipped by you`
+      : null,
+    queue.notRunCount > 0 ? `${String(queue.notRunCount)} not run` : null,
+    queue.cancellationFailedCount > 0
+      ? `${String(queue.cancellationFailedCount)} stop could not be confirmed`
       : null,
   ].filter((part): part is string => part !== null);
   return `${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed${

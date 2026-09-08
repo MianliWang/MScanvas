@@ -37,7 +37,10 @@ table remains the target, including the unsupported portions called out below:
   complete roster's chosen sort, with added order breaking ties, and show every
   resolved queue member in order. Rust's current capacity is displayed and an
   oversized eligible scope is refused before queue creation, picker, staging or
-  provider work. The number is unchanged; M6.8 owns its re-evaluation.
+  provider work. **M6.8 re-evaluated it and it stays sixteen**, on a rationale
+  that no longer rests on the queue being uninterruptible: what a bound now
+  limits is the cost of getting the *size* wrong, because items still run one at
+  a time and a queue can be stopped whole, by the file, or by the row.
   Membership/order bind at BEGIN and survive search, sort, selection, later
   workspace changes and retry. Only the three evidenced
   vendor families — Thermo Scientific RAW, Shimadzu LabSolutions LCD and SCIEX

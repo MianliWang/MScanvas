@@ -71,8 +71,9 @@ All notable changes will be documented here once versioned releases begin.
   tree, and a `false` could not tell an end that could not be confirmed from a
   run that never started a process at all. It is replaced by `ownedTree`, which
   names which of the three actually happened, alongside three new measurements of
-  what the run owned. Nothing else about the file changed, and the version moved
-  because a field left rather than because fields were added — a reader written
+  what the run owned, a count of the rows you skipped, and one more item-state
+  name. The version moved because a field left rather than because fields were
+  added — a reader written
   for version 1 will see the number and know not to read the boolean's absence as
   a `false`.
 
