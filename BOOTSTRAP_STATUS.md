@@ -7740,11 +7740,11 @@ not widened. Capacity stays 16 with a current rationale. Two progress defects
 are closed: a completed queue now accounts for every item it held, and the retry
 display no longer speaks for a rerun that is already done.
 
-Implementation and validation are complete: 1650 frontend tests, 1490 Rust tests
+Implementation and validation are complete: 1651 frontend tests, 1490 Rust tests
 across the workspace, all required local gates, browser 10/10 at four inner
 sizes, and native 3/3 on binary SHA-256
-`e311cc5b241b72911ce64a0fac73cc84028d0bc4da3dbe0f056729c178dc8c4d` — a stop that
-landed while the provider was executing settled `confirmed_gone` 33 ms after the
+`0a0cfd29129d48ee47f084de1cb3b366d62031b19c41e6a197911eabf1f90ea2` — a stop that
+landed while the provider was executing settled `confirmed_gone` 34 ms after the
 request, with the queue completing and the session unquarantined. Affected
 regressions on the same binary: M6.6 native 5/5 including the real Escape
 cancellation, and M6.7 native 2/2.

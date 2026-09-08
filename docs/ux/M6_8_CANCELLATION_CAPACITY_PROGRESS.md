@@ -294,7 +294,7 @@ them: `conversionContract.test.ts`, `ConversionStop.test.tsx`,
 
 ## Validation
 
-Local gates: frontend lint, typecheck, 1650 tests across 69 files, build;
+Local gates: frontend lint, typecheck, 1651 tests across 69 files, build;
 `cargo fmt --all --check`; `cargo clippy --locked --workspace --all-targets
 --all-features -- -D warnings`; `cargo test --locked --workspace --all-targets`
 (1490 passed, 22 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
@@ -302,7 +302,8 @@ E2E typecheck.
 
 **Rendered QA**: 10/10 in `m6.8-cancellation-controls.browser`, including every
 control reachable with no horizontal overflow at 1366x768, 1920x1080, 1200x800
-and 960x640. Screenshots and console records inspected; console empty.
+and 960x640, plus M6.6 8/8 and M6.7 7/7 unchanged on the same head. Screenshots
+and console records inspected; console empty.
 
 Two independent reviews rejected the first candidate. Both were right, and every
 finding was verified against the code before it was acted on: a skip landing
@@ -314,14 +315,15 @@ three ownership tests did not discriminate what they were named for. Each repair
 is proved by reverting it and watching a test report the defect.
 
 **Native**, on the build attributable to the final candidate — binary SHA-256
-`e311cc5b241b72911ce64a0fac73cc84028d0bc4da3dbe0f056729c178dc8c4d`, WebView2 and
-driver 152.0.4191.66:
+`0a0cfd29129d48ee47f084de1cb3b366d62031b19c41e6a197911eabf1f90ea2`, WebView2 and
+driver 152.0.4191.66. Rebuilt and rerun after the review repairs: no native
+evidence is inherited across a changed process implementation.
 
 | Scenario | Result |
 | --- | --- |
-| A stop while the provider is genuinely executing | Item 3, attempt 1, settled `ownedTree: confirmed_gone`, `processLaunched: true`, 33 ms from request to settle; queue `completed` with 7 finalized, 0 not run, session unquarantined |
+| A stop while the provider is genuinely executing | Item 2, attempt 1, settled `ownedTree: confirmed_gone`, `processLaunched: true`, 34 ms from request to settle; queue `completed` with 7 finalized, 0 not run, session unquarantined |
 | A waiting item settled without launching it | 0 attempts, keeps its place and its planned output name, counted apart, queue `completed` with 7 finalized |
-| The whole queue stopped mid-execution | `stopped`, 3 attempted of 8, 2 finalized, 1 cancelled, 0 unconfirmed, 5 not run |
+| The whole queue stopped mid-execution | `stopped`, 1 attempted of 8, 1 cancelled, 0 unconfirmed, 7 not run |
 
 The phase is observed, never assumed: the suite reads Rust's own authoritative
 state until an item reports running, dispatches against that exact item and
@@ -331,8 +333,8 @@ counted as a stop.
 Affected regressions on the same binary: **M6.6 native 5/5**, including the real
 Escape cancellation through the exact foreground guard, and **M6.7 native 2/2**.
 
-Evidence: `D:/tmp/mscanvas-m68-20260908/m68-native-PzoXqz/`,
-`m66-native-n97OZx/`, `m67-native-3Q2xnK/`.
+Evidence: `D:/tmp/mscanvas-m68-20260908/m68-native-UnWUBC/`,
+`m66-native-SwVrmE/`, `m67-native-mwLPtY/`.
 
 ## Residuals
 
