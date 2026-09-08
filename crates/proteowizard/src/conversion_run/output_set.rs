@@ -685,6 +685,21 @@ impl MultiOutputFailure {
         }
     }
 
+    /// Whether this failure leaves a backend process the run owned unaccounted
+    /// for.
+    ///
+    /// The same question the single-output boundary answers, and for the same
+    /// reason: the uncertainty is about the machine, not about whether anyone
+    /// asked for a stop.
+    #[must_use]
+    pub const fn leaves_an_owned_process_unaccounted(&self) -> bool {
+        matches!(
+            self,
+            Self::Backend(BackendExecutionFailure::NotTerminated)
+                | Self::CancellationNotConfirmed(BackendExecutionFailure::NotTerminated)
+        )
+    }
+
     /// What this failure establishes about the backend process tree, where it
     /// is a stop at all.
     ///

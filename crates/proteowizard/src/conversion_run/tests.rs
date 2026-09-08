@@ -291,6 +291,31 @@ fn entry_names(directory: &Path) -> Vec<OsString> {
     names
 }
 
+/// The two halves of a resume failure classify differently, and only one of
+/// them is an ordinary backend failure.
+///
+/// A reclaimed root executed nothing and is gone. One teardown could not
+/// reclaim is an owned process whose disappearance cannot be stated, and it
+/// takes the identifier that already means exactly that — so a stop reaching it
+/// settles `CancellationFailed` and quarantines rather than reporting a clean
+/// end.
+#[test]
+fn a_resume_failure_classifies_by_whether_the_owned_root_was_reclaimed() {
+    let reclaimed = BackendExecutionFailure::from(&ProcessError::ResumeOwnedRoot {
+        detail: "no".to_owned(),
+        owned_root_reclaimed: true,
+    });
+    let stranded = BackendExecutionFailure::from(&ProcessError::ResumeOwnedRoot {
+        detail: "no".to_owned(),
+        owned_root_reclaimed: false,
+    });
+
+    assert_eq!(reclaimed, BackendExecutionFailure::RootNotStarted);
+    assert_eq!(stranded, BackendExecutionFailure::NotTerminated);
+    assert_ne!(reclaimed.stable_id(), stranded.stable_id());
+    assert_eq!(reclaimed.stable_id(), "backend_root_not_started");
+}
+
 #[test]
 fn a_plan_derives_a_deterministic_mzml_name_and_fixes_every_other_decision() {
     let directory = TestDirectory::new();

@@ -1232,9 +1232,15 @@ pub struct ConversionQueueDto {
     /// source, destination, policy and build.
     pub retryable_failed_count: usize,
     pub non_retryable_failed_count: usize,
-    /// Items whose running conversion was stopped with the process tree
-    /// confirmed gone. Counted apart from failures: a cancelled item is
-    /// something the user asked for, not something that went wrong.
+    /// Items a stop settled with no backend process of them surviving —
+    /// whether a tree was confirmed gone or nothing was launched for there to
+    /// be one. Counted apart from failures: a cancelled item is something the
+    /// user asked for, not something that went wrong.
+    ///
+    /// It is deliberately **not** a count of confirmed process trees. Which of
+    /// the two each item was is on its own cancellation facts, because a count
+    /// cannot carry that distinction without inventing a second number for a
+    /// question nobody asked.
     pub cancelled_count: usize,
     /// Items a stopped queue never began. They did not fail and launched no
     /// process, and counting them as failures would report work that was never
@@ -1322,8 +1328,13 @@ pub enum ConversionQueueItemStateDto {
     /// inspected and nothing was written.
     Skipped,
     Failed,
-    /// The running conversion was stopped and its owned process tree was
-    /// confirmed gone. No output was finalized.
+    /// A stop settled this item and no backend process of it survives. No
+    /// output was finalized.
+    ///
+    /// **Two ways that is so, and this state is both**: a tree existed and was
+    /// confirmed gone, or nothing was launched for there to be one. The
+    /// cancellation facts' `ownedTree` says which. Describing this state as a
+    /// confirmed tree would claim one for a run that never started a process.
     Cancelled,
     /// A stopped queue never began this item. Not a failure: no process was
     /// launched and nothing was created.

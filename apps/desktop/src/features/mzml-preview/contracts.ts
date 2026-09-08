@@ -1050,7 +1050,14 @@ export type ConversionQueueItemState =
   | "finalized"
   | "skipped"
   | "failed"
-  /** Stopped while running, with the owned process tree confirmed gone. */
+  /**
+   * A stop settled it and no backend process of it survives.
+   *
+   * Two ways that is so, and this state is both: a tree existed and was
+   * confirmed gone, or nothing was launched for there to be one. The
+   * cancellation facts' `ownedTree` says which; this state does not, and must
+   * not be described as a confirmed tree.
+   */
   | "cancelled"
   /** A stopped queue never began it. Not a failure and not an attempt. */
   | "notRun"
@@ -1246,7 +1253,13 @@ export interface ConversionQueue {
   readonly failedCount: number;
   readonly retryableFailedCount: number;
   readonly nonRetryableFailedCount: number;
-  /** Items whose running conversion was stopped, tree confirmed gone. */
+  /**
+   * Items a stop settled with no backend process of them surviving — whether a
+   * tree was confirmed gone or nothing was launched for there to be one.
+   *
+   * Deliberately not a count of confirmed process trees: which of the two each
+   * item was is on its own cancellation facts.
+   */
   readonly cancelledCount: number;
   /** Items a stopped queue never began. Not failures. */
   readonly notRunCount: number;

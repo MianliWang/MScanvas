@@ -351,7 +351,14 @@ pub(super) enum ItemState {
     Finalized,
     Skipped,
     Failed,
-    /// Stopped while running, with the owned process tree confirmed gone.
+    /// A stop settled this item and no backend process of it survives.
+    ///
+    /// **Two ways that is so, and this state is both.** A tree existed and was
+    /// confirmed gone, or nothing was launched for there to be one. Which one
+    /// happened is on the item's cancellation facts as `owned_tree`; describing
+    /// this state as a confirmed tree would assert one for a run that never
+    /// started a process, which is the conflation the disposition exists to
+    /// undo.
     Cancelled,
     /// A stopped queue never began it. Not a failure and not an attempt.
     NotRun,
@@ -1686,7 +1693,19 @@ impl ConversionSlot {
         // no failure to correct. A user who wants it converted after all starts
         // a queue that includes it.
         item.retryable = false;
-        queue.recount();
+        // Only where nothing is running. The position means "which item is
+        // running" while one is, and "how many are done" only when none is --
+        // and `recount` answers the second. Recounting here would publish a
+        // number naming a different acquisition than the one being converted,
+        // and in a two-item queue with one running and one skipped it names a
+        // row past the end of the list.
+        if !queue
+            .items
+            .iter()
+            .any(|item| item.state == ItemState::Running)
+        {
+            queue.recount();
+        }
         self.advance();
         Ok(())
     }
@@ -1963,11 +1982,19 @@ impl ConversionSlot {
                 item.error = Some(error);
             }
             ItemOutcome::Stopped {
-                state,
                 facts,
                 set: stopped_set,
                 diagnostics,
             } => {
+                // Derived here, from the conversion boundary's own judgement,
+                // and nowhere else. `Cancelled` is reachable only where no
+                // owned process survives -- true both of a tree confirmed gone
+                // and of a run that launched nothing, and of nothing else.
+                let state = if facts.owned_tree.no_owned_process_survives() {
+                    ItemState::Cancelled
+                } else {
+                    ItemState::CancellationFailed
+                };
                 item.state = state;
                 // Never retryable, whichever of the two states this is. A
                 // cancelled item has nothing to correct, and one whose stop
@@ -2560,8 +2587,16 @@ pub(super) enum ItemOutcome {
     // Carries no conversion report by construction: a stopped attempt produced
     // no output, so there is nothing for a report to describe, and an item in
     /// this state can never name an output file.
+    ///
+    /// **It carries no item state either.** The state is derived from the
+    /// disposition in `settle_item`, so pairing a confirmed-sounding state with
+    /// an unconfirmed disposition is not something a caller can express. It was
+    /// a field, and a caller writing the wrong one there would have rendered an
+    /// unconfirmed stop as a success and skipped the quarantine that exists to
+    /// keep the next conversion from starting beside a process nobody can
+    /// account for. A repository check can only guard the spellings it knows;
+    /// this removes the state a wrong spelling would have named.
     Stopped {
-        state: ItemState,
         facts: CancellationFacts,
         /// Present exactly when the attempt was a backend-named set's.
         //

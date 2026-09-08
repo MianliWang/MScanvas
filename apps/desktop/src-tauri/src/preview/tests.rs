@@ -6976,6 +6976,13 @@ enum BackendAct {
     ConvertChromatogramsOnly,
     /// Fails, as a backend that could not read its input would.
     Fail,
+    /// Leaves a process the run owned unaccounted for, with no stop in flight.
+    ///
+    /// The shape a root that was created and could neither be started nor
+    /// reclaimed produces: the boundary can say what went wrong and cannot say
+    /// that the process it owned is gone. Labelled as injected, because no
+    /// vendor run was observed doing this.
+    StrandAnOwnedProcess,
 }
 
 /// A hook a test can run inside a provider's backend resolution, shared so it
@@ -7111,6 +7118,12 @@ impl ProcessRunner for FakeConversionRunner {
             }
             BackendAct::WriteNothing => 0,
             BackendAct::Fail => 1,
+            BackendAct::StrandAnOwnedProcess => {
+                return Err(ProcessError::ResumeOwnedRoot {
+                    detail: "injected: the owned root could not be started or reclaimed".to_owned(),
+                    owned_root_reclaimed: false,
+                });
+            }
         };
         Ok(ProcessOutput {
             stdout: Vec::new(),
@@ -13368,6 +13381,11 @@ fn a_skip_settles_one_pending_item_without_launching_it() {
     assert_eq!(dto.item_count, 2);
     assert_eq!(dto.items[1].file_name, "second.raw");
     assert_eq!(dto.items[1].attempts, 0);
+    // The position still names the item being converted. `recount` answers
+    // "how many are done", which is the other question, and running it here
+    // would publish 2 for a two-item queue -- a row past the end of the list,
+    // while item 1 is the one converting.
+    assert_eq!(dto.current_index, 0);
     // Counted apart from every neighbouring state, and not as a failure.
     assert_eq!(dto.skipped_by_request_count, 1);
     assert_eq!(dto.not_run_count, 0);
@@ -17346,7 +17364,6 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
         1,
         ItemOutcome::Stopped {
             set: None,
-            state: ItemState::Cancelled,
             facts: CancellationFacts {
                 process_launched: true,
                 owned_tree: mscanvas_proteowizard::OwnedTreeDisposition::ConfirmedGone,
@@ -17405,7 +17422,6 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
         0,
         ItemOutcome::Stopped {
             set: None,
-            state: ItemState::CancellationFailed,
             facts: CancellationFacts {
                 process_launched: true,
                 owned_tree: mscanvas_proteowizard::OwnedTreeDisposition::Unconfirmed,
@@ -28490,6 +28506,199 @@ fn m66_every_resolved_policy_leases_its_object_until_the_last_binding_drops() {
             "{label}: the last binding releases object lifetime"
         );
     }
+}
+
+/// A stop accepted before the backend launched says so, and claims no tree.
+///
+/// `Cancelled` is reached two ways and the item state cannot tell them apart —
+/// deliberately, because both mean no backend process of this attempt survives.
+/// The disposition is what keeps them apart, and this is the member whose whole
+/// purpose is the distinction: a run that launched nothing has no tree, so
+/// reporting `confirmed_gone` for it would assert a terminated process tree
+/// where none existed.
+#[cfg(windows)]
+#[test]
+fn a_stop_before_the_launch_reports_that_nothing_was_launched() {
+    let fixture = TestFile::new("m68-stop-before-launch");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_under_now(
+            &[handle],
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::NamedSubfolder(SubfolderName::parse("converted").unwrap()),
+        )
+        .expect("one acquisition is a queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim the reservation");
+    assert!(service.start_resolved_for_test(operation, None));
+
+    // Accepted in the interval before the item is started, so the run refuses
+    // to launch rather than being terminated.
+    let update = service.drain_queue_before_item(operation, &mut || {
+        service
+            .stop_conversion_queue(&operation.to_string(), document)
+            .expect("the running queue is stoppable");
+    });
+
+    assert_eq!(launches.load(Ordering::SeqCst), 0, "nothing was launched");
+    let queue = terminal_queue(&update);
+    // The item is cancelled, and every layer says which of the two ways.
+    assert_eq!(queue.items[0].state, ConversionQueueItemStateDto::NotRun);
+    assert_eq!(queue.cancelled_count, 0);
+    assert_eq!(queue.not_run_count, 1);
+    // A queue stopped before its first item never began it, so there is no
+    // attempt for a stop to have established anything about.
+    assert!(queue.items[0].cancellation.is_none());
+    assert_eq!(queue.items[0].attempts, 0);
+}
+
+/// The same distinction where a stop *did* reach an attempt that never launched.
+///
+/// The boundary refuses to launch for a request it observes first, and the
+/// attempt settles `Cancelled` carrying `none_launched` — not `confirmed_gone`,
+/// because there was no tree, and not `unconfirmed`, because nothing of this
+/// attempt's can survive.
+#[test]
+fn a_cancelled_item_that_launched_nothing_says_so_rather_than_claiming_a_tree() {
+    let mut slot = ConversionSlot::default();
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        ConversionIntent::SHIPPED,
+        DestinationPolicy::CustomFolder,
+        vec![test_queue_item()],
+    )
+    .expect("one item is a queue");
+    let _ = slot
+        .begin(queue)
+        .expect("an idle slot issues a reservation");
+    let operation = slot
+        .claim(&reservation_handle(&slot), 0)
+        .expect("claim the reservation");
+    assert!(
+        slot.start_running(operation, test_bindings(&["file-0"]))
+            .is_ok()
+    );
+    let attempt = slot.start_item(operation, 0).expect("the item starts");
+    slot.release_attempt(operation, 0, attempt);
+    assert!(slot.settle_item(
+        operation,
+        0,
+        ItemOutcome::Stopped {
+            set: None,
+            facts: CancellationFacts {
+                process_launched: false,
+                owned_tree: mscanvas_proteowizard::OwnedTreeDisposition::NoneLaunched,
+                elapsed: Duration::from_millis(1),
+                termination: Some(mscanvas_proteowizard::Termination::NotStarted),
+                partial_output_observed: false,
+                staging_residue: None,
+            },
+            diagnostics: None,
+        },
+    ));
+    slot.finish(operation, None, TerminalReason::Stopped);
+
+    let update = slot.read(
+        false,
+        ConversionDiagnosticsStateDto::default(),
+        BackendAuthorityProjectionDto::unresolved(),
+    );
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
+        panic!("the queue is terminal");
+    };
+    // No owned process survives, so the item is cancelled -- and the wire says
+    // which of the two ways, rather than asserting a tree that never existed.
+    assert_eq!(queue.items[0].state, ConversionQueueItemStateDto::Cancelled);
+    let facts = queue.items[0]
+        .cancellation
+        .as_ref()
+        .expect("a reached stop reports what it established");
+    assert_eq!(facts.owned_tree, "none_launched");
+    assert!(!facts.process_launched);
+    assert_eq!(facts.termination.as_deref(), Some("not_started"));
+    // And the session is not quarantined: nothing of this attempt's can survive.
+    assert!(!update.backend_quarantined);
+}
+
+/// A process this run owned and cannot account for stops the queue, stop or no
+/// stop.
+///
+/// The invariant is about the machine rather than about anything the user
+/// pressed: no new backend work may begin while MSCanvas cannot say whether a
+/// conversion-owned process survives. A root that was created and could neither
+/// be started nor reclaimed leaves exactly that with nothing in flight, and
+/// before this the queue went on to launch the next item's converter beside it.
+///
+/// The failure is injected — deliberately, and labelled as such. No vendor run
+/// was observed producing it; what is under test is the consequence, which is a
+/// rule of this boundary rather than an observation about a provider.
+#[cfg(windows)]
+#[test]
+fn an_owned_process_this_run_cannot_account_for_stops_the_queue_without_a_stop() {
+    let fixture = TestFile::new("m68-stranded-owned-process");
+    let runner = FakeConversionRunner::new(BackendAct::StrandAnOwnedProcess);
+    let launches = runner.launches();
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    )));
+    let first = add_one_acquisition(&service, &fixture.thermo_raw("first.raw"));
+    let second = add_one_acquisition(&service, &fixture.thermo_raw("second.raw"));
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_under_now(
+            &[first, second],
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::NamedSubfolder(SubfolderName::parse("converted").unwrap()),
+        )
+        .expect("two acquisitions are a queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim the reservation");
+    assert!(service.start_resolved_for_test(operation, None));
+
+    let update = service.drain_queue_for_test(operation);
+
+    // One launch, not two: the queue stopped rather than starting a converter
+    // beside a process it could not account for.
+    assert_eq!(
+        launches.load(Ordering::SeqCst),
+        1,
+        "no new backend work may begin while an owned process is unaccounted for"
+    );
+    // The session refuses everything afterwards, which is what makes that
+    // stick beyond this one queue.
+    assert!(service.backend_is_quarantined());
+    assert!(update.backend_quarantined);
+    // And the queue says why, carrying the refusal that ended it. It is not
+    // reported as a failed stop, because no stop was asked for: this takes the
+    // ordinary queue-level refusal path every other refusal takes, and what
+    // distinguishes it is the error it carries rather than a fourth terminal
+    // reason invented for one cause.
+    let queue = terminal_queue(&update);
+    assert_eq!(
+        queue.error.as_ref().map(|error| error.kind.as_str()),
+        Some("backend_quarantined")
+    );
+    assert_ne!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::StopFailed,
+        "no stop was requested, so this is not a stop that failed"
+    );
+    // The second acquisition kept its place and was never converted.
+    assert_eq!(queue.item_count, 2);
+    assert_eq!(queue.finalized_count, 0);
 }
 
 /// A skip that lands after the worker chose an item must not wedge the queue.

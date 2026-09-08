@@ -3243,6 +3243,37 @@ CLAIM_DISPOSITIONS = ("none_launched", "confirmed_gone", "unconfirmed")
 # that none did.
 RETIRED_CLAIM_SPELLINGS = ("tree_termination_confirmed", "treeTerminationConfirmed")
 
+# The symbols whose meaning covers **both** ways a stop can leave nothing
+# running: a tree confirmed gone, and a run that launched nothing. Their
+# descriptions may not assert the first, because they are also the second.
+#
+# These are the two families ADR 0043's audit baseline names first, and the
+# reason it says a hand-maintained list is the wrong instrument: an earlier pass
+# reconciled the field names and left these describing a confirmed process tree
+# on the lines directly above and below the ones it edited.
+BOTH_SENSE_CLAIM_SITES = (
+    ("crates/proteowizard/src/conversion_run.rs", "pub struct CancellationReport"),
+    ("apps/desktop/src-tauri/src/preview/operation.rs", "    Cancelled,"),
+    ("apps/desktop/src-tauri/src/preview/dto.rs", "    Cancelled,"),
+    ("apps/desktop/src-tauri/src/preview/dto.rs", "    pub cancelled_count: usize,"),
+    ("apps/desktop/src/features/mzml-preview/contracts.ts", '  | "cancelled"'),
+    ("apps/desktop/src/features/mzml-preview/contracts.ts", "  readonly cancelledCount: number;"),
+)
+# What such a description may not say on its own. Each is a way of asserting
+# that a process tree that existed was observed gone.
+CONFIRMED_TREE_PHRASES = (
+    "tree confirmed gone",
+    "tree was confirmed gone",
+    "process tree confirmed",
+    "owned process tree was confirmed",
+    "with the process tree confirmed",
+)
+# What makes such a phrase admissible: the same description also names the other
+# sense, so a reader is given both rather than one presented as the whole.
+BOTH_SENSE_PHRASES = ("nothing was launched", "launched nothing", "none_launched")
+# How far above a symbol its description runs.
+DESCRIPTION_LINES = 14
+
 CLAIM_SOURCE_GLOBS = (
     "crates/**/*.rs",
     "apps/desktop/src-tauri/src/**/*.rs",
@@ -3259,35 +3290,105 @@ def _is_test_source(path: Path) -> bool:
     Negative fixtures have to be able to build a disposition production code may
     not, and a guard that refused them would be a guard against testing the
     claim at all.
+
+    **Only files that are tests, and not files that merely serve them.** The
+    rendered-QA seed used to be exempt by name; it is compiled under a feature
+    rather than under `cfg(test)`, so exempting it made the guard's own
+    statement — that no production file outside the launch path says when
+    ownership began — untrue as checked.
     """
-    return "tests" in path.parts or path.stem in {"tests", "e2e_seed"}
+    return "tests" in path.parts or path.stem == "tests"
+
+
+# How far a test attribute may sit above the body it is on: the attribute
+# itself, further attributes, doc comments and a wrapped signature. Beyond it
+# the two are unrelated, and the block is checked rather than skipped.
+ATTRIBUTE_TO_BODY_LINES = 12
 
 
 def _non_test_lines(text: str) -> list[tuple[int, str]]:
     """Lines outside `#[cfg(test)]` modules and `#[test]` functions.
 
-    Brace-counted rather than parsed, which is enough for this repository's
-    formatting and errs towards checking more rather than less.
+    Brace-counted rather than parsed. **Every ambiguity resolves towards
+    checking more**, because the two failure directions are not alike: a test
+    fixture wrongly checked fails the build and is seen, while production code
+    wrongly skipped is invisible and silently disarms the guard.
+
+    Two rules keep it in that direction, and both exist because the obvious
+    version had the bug they prevent. An attribute *inside* a region already
+    being skipped says nothing about what follows that region, so it does not
+    arm one — the first version armed on every attribute, so a `#[cfg(test)]`
+    inside a test module left the flag set past the module's closing brace and
+    swallowed the next block, which was production code. And an armed
+    attribute reaches only the item it is actually on: a flag that could
+    survive to a distant brace would do the same thing by a different route.
     """
     kept: list[tuple[int, str]] = []
     skip_depth = None
     depth = 0
-    armed = False
+    armed_at = None
     for number, line in enumerate(text.splitlines(), start=1):
         stripped = line.strip()
-        if stripped.startswith("#[cfg(test)]") or stripped.startswith("#[test]"):
-            armed = True
+        if skip_depth is None and (
+            stripped.startswith("#[cfg(test)]") or stripped.startswith("#[test]")
+        ):
+            armed_at = number
         opened = line.count("{")
         closed = line.count("}")
-        if skip_depth is None and armed and opened:
-            skip_depth = depth
-            armed = False
+        if skip_depth is None and armed_at is not None and opened:
+            if number - armed_at <= ATTRIBUTE_TO_BODY_LINES:
+                skip_depth = depth
+            armed_at = None
         if skip_depth is None:
             kept.append((number, line))
         depth += opened - closed
         if skip_depth is not None and depth <= skip_depth:
             skip_depth = None
     return kept
+
+
+def _validate_the_walk_skips_only_test_regions(errors: list[str]) -> None:
+    """Every region the guard declines to read must be a test region.
+
+    Checked against the walk's **output** rather than by rebuilding its logic,
+    because the defect this exists to catch was in the logic. The first version
+    armed on every test attribute, including ones inside a region it was already
+    skipping, so the flag survived that region's closing brace and swallowed the
+    next block — 650 contiguous lines of production `service.rs` among them. The
+    bypass proofs could not see it: each plants its edit where the walk happened
+    to be looking.
+
+    The property is intrinsic and does not drift with the files: a skipped
+    region begins at a body, and that body carries a test attribute directly
+    above it. A region that begins anywhere else is production code the guard
+    has stopped reading.
+    """
+    for glob in CLAIM_RUST_GLOBS:
+        for path in sorted(ROOT.glob(glob)):
+            if _is_test_source(path):
+                continue
+            relative = path.relative_to(ROOT).as_posix()
+            lines = path.read_text(encoding="utf-8").splitlines()
+            read = {number for number, _ in _non_test_lines("\n".join(lines))}
+            skipped = sorted(set(range(1, len(lines) + 1)) - read)
+            starts = [
+                number
+                for index, number in enumerate(skipped)
+                if index == 0 or skipped[index - 1] != number - 1
+            ]
+            for start in starts:
+                window = lines[max(0, start - 1 - ATTRIBUTE_TO_BODY_LINES) : start]
+                if any(
+                    line.strip().startswith("#[cfg(test)]")
+                    or line.strip().startswith("#[test]")
+                    for line in window
+                ):
+                    continue
+                errors.append(
+                    f"{relative}:{start} is skipped by the cancellation claim guard without a "
+                    "test attribute above it; the guard has stopped reading production code "
+                    "and would not see a claim asserted there"
+                )
 
 
 def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
@@ -3390,6 +3491,70 @@ def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
                 "dispositions has re-created the conflation the three replaced"
             )
 
+    # 5. A symbol that means both senses may not be described as only the
+    #    narrow one. This is the class a check over constructors cannot see: the
+    #    claim is in the prose attached to the name, not in a call.
+    for relative, symbol in BOTH_SENSE_CLAIM_SITES:
+        target = root / relative
+        if not target.is_file():
+            errors.append(
+                f"{relative} is missing; the cancellation claim guard cannot check the "
+                f"description of {symbol.strip()}"
+            )
+            continue
+        lines = target.read_text(encoding="utf-8").splitlines()
+        for number, line in enumerate(lines, start=1):
+            if line.rstrip() != symbol.rstrip():
+                continue
+            # Flattened before matching: a description is wrapped across
+            # lines and prefixed with comment markers, so the phrase it
+            # asserts is rarely a substring of the raw text. Matching the
+            # raw text is how a check like this passes while the claim it
+            # looks for sits right there.
+            description = " ".join(
+                line.strip().lstrip("/*").strip()
+                for line in lines[max(0, number - 1 - DESCRIPTION_LINES) : number - 1]
+            ).lower()
+            description = " ".join(description.split())
+            asserted = [
+                phrase for phrase in CONFIRMED_TREE_PHRASES if phrase in description
+            ]
+            if not asserted:
+                continue
+            if any(phrase in description for phrase in BOTH_SENSE_PHRASES):
+                continue
+            errors.append(
+                f"{relative}:{number} describes {symbol.strip()} as {asserted[0]!r} without "
+                "naming the other sense it also covers; this symbol is reached both by a "
+                "tree confirmed gone and by a run that launched nothing, and describing it "
+                "as the first asserts a terminated process tree for a run that never "
+                "started one"
+            )
+
+    # 6. Neither claim-bearing member may be reached under another name. A
+    #    substring check over the qualified spelling is defeated by an import,
+    #    so the bare member and the aliased type are refused too.
+    for glob in CLAIM_RUST_GLOBS:
+        for path in sorted(root.glob(glob)):
+            relative = path.relative_to(root).as_posix()
+            if _is_test_source(path):
+                continue
+            for number, line in _non_test_lines(path.read_text(encoding="utf-8")):
+                stripped = line.strip()
+                if stripped.startswith("//") or stripped.startswith("///"):
+                    continue
+                if "use " in stripped and "OwnedTreeDisposition::ConfirmedGone" in stripped:
+                    errors.append(
+                        f"{relative}:{number} imports OwnedTreeDisposition::ConfirmedGone; "
+                        "importing the member puts the claim behind a bare name the guard "
+                        "cannot follow"
+                    )
+                if "use " in stripped and "TreeOwnership as " in stripped:
+                    errors.append(
+                        f"{relative}:{number} aliases TreeOwnership; an alias puts the "
+                        "ownership assertion behind a name the guard cannot follow"
+                    )
+
     # 4. The retired boolean stays retired in code. Documents may quote it as
     #    history; a source file that reintroduces it reintroduces the defect.
     for glob in CLAIM_SOURCE_GLOBS:
@@ -3446,6 +3611,7 @@ def validate_the_cancellation_claim_has_one_origin(errors: list[str]) -> None:
     has never been seen to fail is not yet evidence of anything.
     """
     _check_the_cancellation_claim(ROOT, errors)
+    _validate_the_walk_skips_only_test_regions(errors)
     _validate_the_claim_guard_detects_bypasses(errors)
 
 
@@ -3482,6 +3648,28 @@ CLAIM_BYPASSES: tuple[tuple[str, str, str, str], ...] = (
         CLAIM_WIRE,
         "  readonly ownedTree: ConversionOwnedTreeDisposition;",
         "  readonly treeTerminationConfirmed: boolean;",
+    ),
+    (
+        "a both-sense description claims only a confirmed tree",
+        "apps/desktop/src-tauri/src/preview/dto.rs",
+        "    /// A stop settled this item and no backend process of it survives. No\n"
+        "    /// output was finalized.\n"
+        "    ///\n"
+        "    /// **Two ways that is so, and this state is both**: a tree existed and was\n"
+        "    /// confirmed gone, or nothing was launched for there to be one. The\n"
+        "    /// cancellation facts' `ownedTree` says which. Describing this state as a\n"
+        "    /// confirmed tree would claim one for a run that never started a process.\n"
+        "    Cancelled,",
+        "    /// The running conversion was stopped and its owned process tree was\n"
+        "    /// confirmed gone. No output was finalized.\n"
+        "    Cancelled,",
+    ),
+    (
+        "the claim is reached through an import",
+        "apps/desktop/src-tauri/src/preview/service.rs",
+        "use super::destination::admit_destination_root;",
+        "use super::destination::admit_destination_root;\n"
+        "use mscanvas_proteowizard::OwnedTreeDisposition::ConfirmedGone;",
     ),
     (
         "a production file states when ownership began",

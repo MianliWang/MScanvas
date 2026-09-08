@@ -113,8 +113,11 @@ fn completed_process() -> ProcessOutput {
         max_active_processes: None,
         final_active_processes: None,
         peak_job_memory_bytes: None,
-        total_owned_processes: Some(1),
-        tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
+        total_owned_processes: None,
+        // Nothing was supervised, so nothing was owned. Saying otherwise would
+        // be this fixture stating when ownership began for a process that never
+        // existed -- and it is the launch path's alone to say that.
+        tree_ownership: mscanvas_proteowizard::TreeOwnership::NotEstablishedBeforeExecution,
     }
 }
 

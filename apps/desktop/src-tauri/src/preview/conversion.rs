@@ -68,6 +68,12 @@ pub(super) struct WorkspaceConversionReport {
     source_kind: DatasetSourceKind,
     /// What the run did, by the crate's own identifier.
     outcome: &'static str,
+    /// Whether this run left a backend process it owned unaccounted for.
+    ///
+    /// Carried rather than re-derived from `detailed_outcome`, because reading
+    /// a claim about the user's machine out of an identifier string is how the
+    /// two drift apart.
+    owned_process_unaccounted: bool,
     /// The name a finalized output took in the destination root. A display
     /// name, not a location.
     output_file_name: Option<String>,
@@ -149,6 +155,7 @@ impl WorkspaceConversionReport {
             dataset,
             source_kind,
             outcome: run.outcome().stable_id(),
+            owned_process_unaccounted: run.leaves_an_owned_process_unaccounted(),
             // The two are not one answer. `outcome` groups -- a caller tells
             // finalized from skipped from failed by it -- and this one
             // explains, which is what a reader needs when the group is
@@ -201,6 +208,15 @@ impl WorkspaceConversionReport {
     /// are the same safe values `to_dto` forwards -- stable identifiers, closed
     /// enumerations and measurements -- so a diagnostic built from them can
     /// carry no more than the panel already shows.
+    /// Whether this run left a backend process it owned unaccounted for.
+    ///
+    /// MSCanvas must not begin new backend work while it cannot say whether an
+    /// earlier conversion-owned process survives, and that is true whether or
+    /// not a stop was asked for.
+    pub(super) const fn owned_process_unaccounted(&self) -> bool {
+        self.owned_process_unaccounted
+    }
+
     pub(super) const fn outcome_id(&self) -> &'static str {
         self.outcome
     }
@@ -278,6 +294,8 @@ pub(super) struct WorkspaceMultiOutputConversionReport {
     partial: Option<PartialFinalization>,
     /// The precise refusal, when the set was refused before anything published.
     refusal: Option<&'static str>,
+    /// Whether this run left a backend process it owned unaccounted for.
+    owned_process_unaccounted: bool,
     /// What a stop established about the backend process tree, where the
     /// refusal was a stop. Carried as the boundary's own typed judgement rather
     /// than re-derived here from `refusal`, so both conversion lifecycles reach
@@ -482,6 +500,12 @@ impl WorkspaceMultiOutputConversionReport {
                 .collect(),
             partial,
             refusal,
+            owned_process_unaccounted: match run.outcome() {
+                MultiOutputOutcome::RefusedBeforePublication(failure) => {
+                    failure.leaves_an_owned_process_unaccounted()
+                }
+                _ => false,
+            },
             owned_tree: match run.outcome() {
                 MultiOutputOutcome::RefusedBeforePublication(failure) => failure.owned_tree(),
                 _ => None,
@@ -580,6 +604,11 @@ impl WorkspaceMultiOutputConversionReport {
     /// was stopped.
     pub(super) const fn owned_tree(&self) -> Option<OwnedTreeDisposition> {
         self.owned_tree
+    }
+
+    /// Whether this run left a backend process it owned unaccounted for.
+    pub(super) const fn owned_process_unaccounted(&self) -> bool {
+        self.owned_process_unaccounted
     }
 
     pub(super) const fn backend_facts(&self) -> Option<BackendRunFacts> {
@@ -881,13 +910,20 @@ fn outcome_is_retryable(outcome: &ConversionRunOutcome) -> bool {
                 | BackendExecutionFailure::NotSupervised
                 | BackendExecutionFailure::NotAwaited
                 | BackendExecutionFailure::OutputNotCaptured { .. }
-                // The owned root was created, executed nothing and was
-                // reclaimed. Nothing about the plan or the machine says the
-                // next attempt would start either, and this repository has no
-                // measurement saying it would.
-                | BackendExecutionFailure::RootNotStarted
                 | BackendExecutionFailure::NotTerminated,
             ) => false,
+            // The owned root was created, executed nothing, and was reclaimed.
+            //
+            // Retryable, and it is the one execution failure here that is,
+            // because what refuses it is a condition of the environment at that
+            // instant rather than of the plan: the root is refused when it does
+            // not present exactly the one thread a process that has executed
+            // nothing has, which is what a security product injecting a remote
+            // thread produces. The next attempt creates a different process.
+            // Classifying it permanent would turn a transient condition into a
+            // conversion the user can never run, and the preview surface
+            // already reports the same underlying error as retryable.
+            ConversionRunFailure::Backend(BackendExecutionFailure::RootNotStarted) => true,
         },
     }
 }

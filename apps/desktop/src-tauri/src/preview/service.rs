@@ -153,7 +153,7 @@ use super::figure::{
 use super::installation::InstallationIdentity;
 use super::operation::{
     AdmittedDestination, CancellationFacts, ConversionQueue, ConversionSlot, ItemOutcome,
-    ItemState, QueueItem, QueueItemAttempt, StopAccepted, TerminalReason, folded_output_name,
+    QueueItem, QueueItemAttempt, StopAccepted, TerminalReason, folded_output_name,
     item_output_topology, item_state_of,
 };
 use super::operation::{ItemOutputTopology, SetStopFacts};
@@ -4481,20 +4481,39 @@ impl PreviewService {
             self.conversion_slot()
                 .release_attempt(operation, index, attempt);
             let outcome = self.classify_attempt(outcome, elapsed);
+            // Read from the disposition, not from an item state derived from
+            // it. Quarantine is the consequence of not being able to say a
+            // conversion-owned process is gone, so it asks the judgement that
+            // decides that rather than a rendering of it.
             let unconfirmed = matches!(
-                outcome,
-                ItemOutcome::Stopped {
-                    state: ItemState::CancellationFailed,
-                    ..
-                }
+                &outcome,
+                ItemOutcome::Stopped { facts, .. } if !facts.owned_tree.no_owned_process_survives()
             );
+            // **And the same uncertainty without a stop.** The invariant is
+            // about the machine, not about whether anyone pressed anything: no
+            // new backend work may begin while MSCanvas cannot say whether a
+            // conversion-owned process survives. A root that was created and
+            // could neither be started nor reclaimed leaves exactly that, with
+            // no stop in flight, and the queue would otherwise have launched
+            // the next item's converter beside it.
+            //
+            // Asked of the run's own typed answer rather than of a failure
+            // identifier, because reading a claim about the user's machine out
+            // of a string is how the two come apart.
+            let unaccounted = match &outcome {
+                ItemOutcome::Reported { report, .. } => report.owned_process_unaccounted(),
+                ItemOutcome::ReportedSet(settlement) => {
+                    settlement.report().owned_process_unaccounted()
+                }
+                ItemOutcome::Stopped { .. } | ItemOutcome::Refused { .. } => false,
+            };
             // Before the queue state moves, not after. Quarantine is a fact
             // about a process this session may have lost, and it must not
             // depend on the slot still being this worker's -- the one path
             // where settling fails is exactly a slot that moved on, and
             // skipping the quarantine there would leave a possibly-surviving
             // converter with nothing refusing the next one.
-            if unconfirmed {
+            if unconfirmed || unaccounted {
                 self.quarantine_backend();
             }
             let settled = self
@@ -4509,6 +4528,14 @@ impl PreviewService {
             if unconfirmed {
                 drop(running);
                 return self.finish_queue(operation, TerminalReason::StopFailed);
+            }
+            // The same consequence, under the reason it actually has. No stop
+            // was asked for, so calling this a failed stop would name an action
+            // the user never took; the queue ends on the quarantine that is
+            // now in force, which is the refusal every later operation gets.
+            if unaccounted {
+                drop(running);
+                return self.refuse_queue(operation, backend_quarantined());
             }
             // After the item settles, and before the next one is constructed.
             if self.conversion_slot().stop_requested(operation) {
@@ -4566,11 +4593,6 @@ impl PreviewService {
             // module, and a `Cancelled` written here would keep compiling if
             // that module ever widened what it sends.
             QueueItemAttempt::Cancelled(report) => ItemOutcome::Stopped {
-                state: if report.owned_tree().no_owned_process_survives() {
-                    ItemState::Cancelled
-                } else {
-                    ItemState::CancellationFailed
-                },
                 // The single-output boundary's own cancellation, so there is no
                 // set here to describe.
                 set: None,
@@ -4600,11 +4622,6 @@ impl PreviewService {
             QueueItemAttempt::SetStopped(facts) => {
                 let facts = *facts;
                 ItemOutcome::Stopped {
-                    state: if facts.owned_tree.no_owned_process_survives() {
-                        ItemState::Cancelled
-                    } else {
-                        ItemState::CancellationFailed
-                    },
                     // Zero counts, and they are true: the two cancellation
                     // refusals this was translated from publish nothing.
                     set: Some(OutputSetDiagnosticFacts {
@@ -4630,7 +4647,6 @@ impl PreviewService {
                 }
             }
             QueueItemAttempt::CancellationFailed(mut failure) => ItemOutcome::Stopped {
-                state: ItemState::CancellationFailed,
                 set: None,
                 // Taken here, at the one place this failure is turned into what
                 // the queue records. It is already redacted and already bounded;

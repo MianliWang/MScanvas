@@ -28,7 +28,8 @@
 //! Cancellation is opt-in and private. [`run_conversion`] requests none and
 //! behaves exactly as it always has; [`run_conversion_cancellable`] takes one
 //! [`ConversionCancellation`] bound to that single attempt and reports a
-//! distinct result when the owned process tree was confirmed gone. Nothing here
+//! distinct result when no backend process of that attempt survives — whether
+//! its tree was confirmed gone or nothing was launched. Nothing here
 //! is reachable from the product: there is no command, transfer object, queue
 //! semantics or surface for it.
 
@@ -1539,6 +1540,22 @@ impl ConversionRunFailure {
             other => other.stable_id(),
         }
     }
+
+    /// Whether this failure leaves a backend process this run owned
+    /// unaccounted for.
+    ///
+    /// **Asked of the failure rather than of a request.** MSCanvas must not
+    /// begin new backend work while it cannot say whether an earlier
+    /// conversion-owned process survives, and that is true of the machine
+    /// whether or not anyone asked for a stop. `NotTerminated` is exactly that
+    /// state: an owned process whose disappearance this boundary could not
+    /// establish. A run that reaches it without a stop in flight — a root that
+    /// was created and could neither be started nor reclaimed — leaves the same
+    /// uncertainty as one that reaches it with a stop.
+    #[must_use]
+    pub const fn leaves_an_owned_process_unaccounted(&self) -> bool {
+        matches!(self, Self::Backend(BackendExecutionFailure::NotTerminated))
+    }
 }
 
 /// What one planned conversion did.
@@ -1897,7 +1914,19 @@ pub struct ConversionRunReport {
 }
 
 impl ConversionRunReport {
+    /// Whether this run leaves a backend process it owned unaccounted for.
+    ///
+    /// A caller reads this before it starts anything else. See
+    /// [`ConversionRunFailure::leaves_an_owned_process_unaccounted`].
     #[must_use]
+    pub const fn leaves_an_owned_process_unaccounted(&self) -> bool {
+        match &self.outcome {
+            ConversionRunOutcome::Failed(failure) => failure.leaves_an_owned_process_unaccounted(),
+            ConversionRunOutcome::Finalized(_)
+            | ConversionRunOutcome::SkippedExistingDestination => false,
+        }
+    }
+
     pub const fn outcome(&self) -> &ConversionRunOutcome {
         &self.outcome
     }
@@ -2108,8 +2137,11 @@ impl OwnedTreeDisposition {
 /// identifier-free by construction: no process identifier, job handle, source,
 /// staging or destination path, and no raw backend stream.
 ///
-/// This type exists only where the owned process tree was confirmed gone. A
-/// request that could not be confirmed is [`CancellationFailure`], never this.
+/// This type exists only where **no backend process of the attempt survives**,
+/// which is true in two ways: a tree existed and was confirmed gone, or nothing
+/// was launched for there to be one. [`CancellationReport::owned_tree`] says
+/// which, and this type does not assert the first on its own. A request whose
+/// tree could not be established is [`CancellationFailure`], never this.
 #[derive(Debug, PartialEq)]
 pub struct CancellationReport {
     observation: CancellationObservation,

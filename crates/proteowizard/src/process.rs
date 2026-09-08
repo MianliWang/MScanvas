@@ -2324,6 +2324,30 @@ mod tests {
         assert_eq!(refused.exit_code, None);
     }
 
+    /// A root that was created and could not be started is two different facts,
+    /// and which one it is depends on teardown rather than on the failure.
+    ///
+    /// Reclaimed, it ran nothing and is gone. Unreclaimed, it is an owned
+    /// process whose disappearance this boundary cannot state — which is what
+    /// `NotTerminated` already means, and the state a stop must never be
+    /// allowed to call clean.
+    #[test]
+    fn a_root_that_could_not_be_started_says_whether_it_was_reclaimed() {
+        let reclaimed = ProcessError::ResumeOwnedRoot {
+            detail: "the owned root thread had a suspend count of 0".to_owned(),
+            owned_root_reclaimed: true,
+        };
+        let stranded = ProcessError::ResumeOwnedRoot {
+            detail: "the owned root thread had a suspend count of 0".to_owned(),
+            owned_root_reclaimed: false,
+        };
+
+        assert_ne!(reclaimed, stranded);
+        // The detail is identical, so nothing but the reclamation tells them
+        // apart -- which is the point of carrying it.
+        assert_eq!(reclaimed.to_string(), stranded.to_string());
+    }
+
     #[test]
     fn every_tree_ownership_has_its_own_stable_identifier() {
         let ownerships = [
@@ -2336,16 +2360,92 @@ mod tests {
         assert!(!TreeOwnership::NotEstablishedBeforeExecution.covers_every_descendant());
     }
 
-    /// The escape the published boundary could not rule out, asked directly.
+    /// The root has executed nothing at the moment ownership is taken.
     ///
-    /// This child creates a descendant as the first thing it does, with no
-    /// release file to wait for -- the shape that, against a running child
-    /// assigned to a Job afterwards, could produce a process outside the Job.
-    /// Suspended creation makes the interval it would need not exist, so the
-    /// descendant is inside the accounting and inside the termination.
+    /// **This is the test that discriminates**, and it is the only one that
+    /// can. The interval the published boundary left between `spawn()` and
+    /// `AssignProcessToJobObject` is instructions wide; no child can be made to
+    /// create a descendant reliably inside it, so no behavioural test of a
+    /// descendant proves the interval is gone. What proves it is that the
+    /// process exists, is owned, and has run none of its own image — which is
+    /// observable directly.
+    ///
+    /// The marker's absence is the assertion, and resuming afterwards is what
+    /// makes that absence mean suspension rather than a fixture that never
+    /// worked. Against a boundary that did not create the root suspended, the
+    /// child writes its marker immediately and the first assertion fails.
     #[cfg(windows)]
     #[test]
-    fn a_descendant_created_at_once_is_still_owned() {
+    fn the_root_has_executed_nothing_when_ownership_is_taken() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        );
+        // The production command, built the production way, suspended the
+        // production way. Nothing here is a parallel launch path.
+        let mut command = process_command(&spec).expect("construct the controlled command");
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        suspend_root_creation(&mut command);
+        let mut child = command.spawn().expect("spawn the suspended root");
+
+        // Ownership, taken exactly where the production path takes it.
+        let owned_job = OwnedProcessJob::assign(&child).expect("assign the suspended root");
+
+        // It has run nothing of its own: no marker, and it has not exited. A
+        // running child writes the marker in milliseconds, so this window is
+        // far longer than the one it would need.
+        assert!(
+            !wait_for_paths(&[&marker], Duration::from_millis(750)),
+            "the root executed before ownership was established"
+        );
+        assert!(
+            child.try_wait().expect("poll the suspended root").is_none(),
+            "the root ran to an end before it was resumed"
+        );
+        // And the Job already holds it, which is what makes the absence above a
+        // statement about an owned process rather than about any process.
+        assert_eq!(
+            ProcessJob::active_process_count(&owned_job).expect("query the owned job"),
+            Some(1)
+        );
+
+        // Released, and only then does it run — which is what proves the
+        // absence above was suspension.
+        resume_owned_root(&child).expect("resume the owned root");
+        assert!(
+            wait_for_paths(&[&marker], Duration::from_secs(10)),
+            "the resumed root never executed"
+        );
+        child.wait().expect("reap the controlled child");
+        drop(owned_job);
+    }
+
+    /// A descendant created as early as the operating system allows is owned.
+    ///
+    /// **What this does not prove**, and the previous test does: that the
+    /// escape interval is gone. This child starts a descendant as its first
+    /// action, but "first action" is still an image load, a harness start and
+    /// an argument filter later — tens of milliseconds, against an interval of
+    /// instructions. A boundary that assigned a *running* child to its Job
+    /// would own this descendant too.
+    ///
+    /// What it does prove is the other half, which the structural test does not
+    /// reach: that ownership taken before execution actually holds a descendant
+    /// the backend goes on to create, that the Job's accounting sees it, and
+    /// that terminating the Job takes it with the root.
+    #[cfg(windows)]
+    #[test]
+    fn a_descendant_created_at_startup_is_owned_and_terminated_with_the_root() {
         let test_directory = TestDirectory::new();
         let grandchild_ready = test_directory.path().join("grandchild-ready");
         let spec = CommandSpec::new(
@@ -2390,11 +2490,17 @@ mod tests {
         assert!(output.owned_tree_confirmed_gone());
     }
 
-    /// A root that exits the instant it has spawned still leaves the run owning
-    /// the descendant, and the run does not call that an empty tree.
+    /// A root that exits the instant it has spawned leaves the run waiting on
+    /// the Job rather than on the handle it happens to hold.
+    ///
+    /// The claim is about the *tree*, so the run cannot settle when the root
+    /// goes: its descendant is still in the Job, and the emptiness the claim
+    /// rests on is the Job's. This asserts the run reaches `Some(0)` only after
+    /// that descendant is gone too, and that the disposition it publishes is
+    /// the confirmed one rather than an admission.
     #[cfg(windows)]
     #[test]
-    fn an_immediate_root_exit_does_not_confirm_a_tree_its_descendant_is_still_in() {
+    fn an_immediate_root_exit_still_waits_for_the_owned_job_to_empty() {
         let test_directory = TestDirectory::new();
         let release = test_directory.path().join("release");
         let grandchild_ready = test_directory.path().join("grandchild-ready");
@@ -2439,9 +2545,19 @@ mod tests {
         assert!(ready, "the descendant of the exiting root never started");
         // The root left, the descendant did not, and the run kept waiting on
         // the Job rather than on the process it happened to have a handle for.
-        assert!(output.max_active_processes.unwrap_or(0) >= 1);
+        // Two processes were owned across the run, and the root's own exit did
+        // not settle it.
+        assert!(
+            output.max_active_processes.unwrap_or(0) >= 1,
+            "the run never observed the owned job holding anything"
+        );
+        assert_eq!(output.termination, Termination::Cancelled);
         assert_eq!(output.final_active_processes, Some(0));
         assert!(output.owned_tree_confirmed_gone());
+        assert!(
+            output.termination.launched(),
+            "a tree existed, so this is not the no-launch sense of the claim"
+        );
     }
 
     /// Builds a supervised result for the conjunction tests above. Deliberately
