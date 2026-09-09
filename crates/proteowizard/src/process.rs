@@ -587,12 +587,16 @@ fn execute_command_after_assignment(
     drop(owned_job);
 
     let (status, termination, final_active_processes) = execution.map_err(|error| {
-        // A failure whose owned Job was never observed empty is an unaccounted
-        // process, whatever it failed at. `NotAwaited` claims the Job emptied
-        // and how the process ended was lost; without the observation it claims
-        // the first half on nothing.
-        let error = failure_after_teardown(error, owned_job_observed_empty);
-        add_process_cleanup_context(error, cleanup.as_ref().err(), captures.as_ref().err())
+        // Decorate first, decide last. The fold may only raise, and it raises
+        // on a teardown *request* that returned an error; the Job's accounting
+        // is what says whether anything of this run survived, so it is read
+        // after the text is complete and it is what the kind follows. A failure
+        // whose Job was never observed empty is an unaccounted process whatever
+        // it failed at; one whose Job was observed empty is not, whatever the
+        // requests returned.
+        let error =
+            add_process_cleanup_context(error, cleanup.as_ref().err(), captures.as_ref().err());
+        failure_after_teardown(error, owned_job_observed_empty)
     })?;
     cleanup?;
     let (stdout, stderr) = captures?;
@@ -698,9 +702,24 @@ impl ResumeRefusal {
 /// suspended reports the same one — so this is the strongest statement the
 /// observation supports, and the docs say so rather than claiming the root is
 /// certainly running.
+///
+/// **An empty set is its own answer.** A count is pushed only by a `ResumeThread`
+/// that returned one, so nothing here means every handle failed to open or every
+/// resume failed — this run released no thread, and a suspended root that was
+/// never released has executed nothing. Folding that into the refusal below said
+/// the opposite of what the run observed: an environment that denies
+/// `THREAD_SUSPEND_RESUME` on the root's threads would report a root that might
+/// have run, and the session was quarantined for the rest of its life over a
+/// process whose image never started.
 fn resume_verdict(previous_suspend_counts: &[u32]) -> Result<(), ResumeRefusal> {
     if previous_suspend_counts.contains(&1) {
         return Ok(());
+    }
+    if previous_suspend_counts.is_empty() {
+        return Err(ResumeRefusal::before_resuming(io::Error::other(
+            "no thread of the owned root could be resumed, so this run released \
+             nothing and the image had executed nothing when it took ownership",
+        )));
     }
     Err(ResumeRefusal::after_resuming(io::Error::other(
         "no thread of the owned root was still suspended as it was created, so this \
@@ -954,15 +973,49 @@ fn force_owned_cleanup(
         if let Err(error) = job.terminate() {
             failures.push(format!("owned-job termination failed: {error}"));
         }
-        // Asked after the request, and only `Some(0)` counts. `None` is an
-        // accounting answer this platform could not give, which is not zero.
-        observed_empty = matches!(job.active_process_count(), Ok(Some(0)));
+        // Asked after the request, and asked until it can be answered.
+        // `TerminateJobObject` returns once the signal is delivered, not once
+        // the processes it signalled have finished exiting, so a single read
+        // taken here is a read of a teardown still in progress: it reported the
+        // Job populated, the run recorded "not observed empty", and the session
+        // was quarantined for the rest of its life over a race it had won
+        // milliseconds later. Only `Some(0)` counts. `None` is an accounting
+        // answer this platform could not give, which is not zero and will not
+        // become zero by asking again.
+        observed_empty = observe_owned_job_emptied(&job, JOB_EMPTY_TIMEOUT);
         // KILL_ON_JOB_CLOSE is a final process-tree safety net even when the
         // explicit TerminateJobObject call itself failed.
         drop(job);
     }
     collect_direct_child_cleanup(child, &mut failures);
     (cleanup_result(failures), observed_empty)
+}
+
+/// Waits, boundedly, for an owned Job to report itself empty.
+///
+/// The counterpart of [`wait_for_job_empty_with_timeout`] for the teardown path,
+/// and deliberately smaller: there is no cancellation to observe here and no
+/// second termination to escalate to, because the caller has already made the
+/// one request there is. All this adds to a single read is the willingness to
+/// wait for the answer.
+///
+/// `false` for every answer that is not `Some(0)` — an expired window, an
+/// accounting this platform will not give, or a query that failed. None of them
+/// is an observation that the tree is gone, and this returns only that.
+fn observe_owned_job_emptied(owned_job: &impl ProcessJob, empty_timeout: Duration) -> bool {
+    let deadline = Instant::now() + empty_timeout;
+    loop {
+        match owned_job.active_process_count() {
+            Ok(Some(0)) => return true,
+            Ok(None) | Err(_) => return false,
+            Ok(Some(_)) => {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                thread::sleep(POLL_INTERVAL);
+            }
+        }
+    }
 }
 
 fn force_unowned_cleanup(child: &mut Child) -> Result<(), ProcessError> {
@@ -1005,18 +1058,46 @@ fn add_cleanup_context(
     detail
 }
 
-/// What a failing run's error means once teardown has been observed.
+/// What a failing run's error means once its owned Job has been read.
+///
+/// **The observation decides, in both directions, and it decides last.**
 ///
 /// A failure whose owned Job was never *observed* empty is an unaccounted
 /// process, whatever it failed at: `NotAwaited` claims the Job emptied and that
 /// only how the process ended was lost, and without the observation it claims
 /// the first half on nothing.
+///
+/// A failure whose owned Job *was* observed empty is not an unaccounted process,
+/// whatever a teardown *request* returned. `Some(0)` is the Job's own accounting
+/// of processes this run owns, breakaway is refused, so nothing it started is
+/// running — and that is the same evidence a confirmed stop rests on. Keeping an
+/// earlier "could not confirm" beside it ended sessions permanently, because
+/// quarantine is never lifted, on an uncertainty the run itself had already
+/// resolved: a first `TerminateJobObject` that reported failure before the
+/// second emptied the Job, an emptiness window that expired before the final
+/// teardown, a redundant `kill` of a process that had already gone.
+///
+/// This is not the fold lowering a kind. [`add_process_cleanup_context`] may
+/// only ever raise, and it runs before this; what happens here is a later and
+/// stronger reading of the same Job replacing an earlier one, which is the only
+/// thing entitled to.
 fn failure_after_teardown(error: ProcessError, owned_job_observed_empty: bool) -> ProcessError {
-    if owned_job_observed_empty || error.leaves_an_owned_process_unaccounted() {
-        return error;
+    if !owned_job_observed_empty {
+        if error.leaves_an_owned_process_unaccounted() {
+            return error;
+        }
+        return ProcessError::OwnedJobNotEmptied {
+            detail: error.to_string(),
+        };
     }
-    ProcessError::OwnedJobNotEmptied {
-        detail: error.to_string(),
+    // The detail is carried across rather than restated, so what the run failed
+    // at and what its teardown reported are still readable in the text; only
+    // the claim about surviving processes is withdrawn.
+    match error {
+        ProcessError::OwnedJobNotEmptied { detail } | ProcessError::Terminate { detail } => {
+            ProcessError::Wait { detail }
+        }
+        error => error,
     }
 }
 
@@ -1035,6 +1116,13 @@ fn failure_after_teardown(error: ProcessError, owned_job_observed_empty: bool) -
 /// quarantine — while a converter this run owned was positively observed to
 /// have survived. A coincident failure of a stdout pipe may add text; it may
 /// not lower what the run already established about the machine.
+///
+/// **Raising is not the last word, and this is not where the last word is.**
+/// Because it may only raise, it raises on the teardown *request* alone: a
+/// redundant `kill` of a process that had already exited is a cleanup error,
+/// and this makes an unaccounted process of it. That is right for what this
+/// function can see and wrong about the machine, so [`failure_after_teardown`]
+/// runs after it and lets the Job's own accounting settle the kind.
 fn add_process_cleanup_context(
     primary: ProcessError,
     cleanup: Option<&ProcessError>,
@@ -2632,15 +2720,41 @@ mod tests {
                 classified: BackendExecutionFailure::NotAwaited,
                 refuses_further_work: false,
             },
-            // Observed empty, so the promotion does not fire and the fold's
-            // own branch is what decides. Written `false` at first, which made
-            // this row a copy of the one above it: the primary was already
-            // `OwnedJobNotEmptied` before `add_process_cleanup_context` saw it,
-            // so the branch this row exists for never ran.
+            // The fold raises on a cleanup error alone, and it is right to:
+            // from where it stands a teardown that returned an error is a
+            // teardown that may have left something. This row is the case
+            // where the run knows better — the Job it owns reported itself
+            // empty — and it asserted the opposite until the eighth review,
+            // which is how a redundant `kill` of a process that had already
+            // exited quarantined a session for the rest of its life.
             Step {
-                name: "an emptied Job whose teardown request itself failed",
+                name: "an emptied Job whose redundant teardown request failed",
                 primary: wait(),
                 owned_job_observed_empty: true,
+                cleanup: Some(&teardown),
+                capture: None,
+                classified: BackendExecutionFailure::NotAwaited,
+                refuses_further_work: false,
+            },
+            // The same law reached from the other side: the primary is itself
+            // the unaccounted kind, raised when the supervised window closed on
+            // a populated Job, and the final teardown then emptied it.
+            Step {
+                name: "an emptiness window that expired before the final teardown emptied it",
+                primary: job_held_processes(),
+                owned_job_observed_empty: true,
+                cleanup: None,
+                capture: Some(&capture),
+                classified: BackendExecutionFailure::NotAwaited,
+                refuses_further_work: false,
+            },
+            // And the row that proves the downgrade is the observation's and
+            // not the teardown's: the same primary, the same requests, and no
+            // observation of an empty Job.
+            Step {
+                name: "an emptiness window that expired and a teardown that observed nothing",
+                primary: job_held_processes(),
+                owned_job_observed_empty: false,
                 cleanup: Some(&teardown),
                 capture: None,
                 classified: BackendExecutionFailure::NotTerminated,
@@ -2650,9 +2764,9 @@ mod tests {
 
         for step in chain {
             let name = step.name;
-            let after_teardown =
-                failure_after_teardown(step.primary, step.owned_job_observed_empty);
-            let folded = add_process_cleanup_context(after_teardown, step.cleanup, step.capture);
+            // The production order: decorate, then let the observation decide.
+            let folded = add_process_cleanup_context(step.primary, step.cleanup, step.capture);
+            let folded = failure_after_teardown(folded, step.owned_job_observed_empty);
             let classified = BackendExecutionFailure::from(&folded);
             assert_eq!(
                 classified, step.classified,
@@ -2748,6 +2862,119 @@ mod tests {
             detail: "the owned job would not terminate".to_owned(),
         };
         assert_eq!(failure_after_teardown(terminate.clone(), false), terminate);
+
+        // The other direction, which is the same law: an observation of an
+        // empty Job is the end of the question, and the kinds that exist to
+        // say "this run cannot state its tree is gone" are exactly the ones it
+        // withdraws. Quarantine is never lifted, so a session ended on an
+        // uncertainty the run had itself resolved is ended for good.
+        for unaccounted in [
+            terminate,
+            ProcessError::OwnedJobNotEmptied {
+                detail: "the owned job would not empty".to_owned(),
+            },
+        ] {
+            let settled = failure_after_teardown(unaccounted.clone(), true);
+            assert!(
+                !settled.leaves_an_owned_process_unaccounted(),
+                "{unaccounted:?} outlived the observation that emptied its Job"
+            );
+            assert!(
+                settled.to_string().contains("would not"),
+                "what the run failed at is still readable: {settled}"
+            );
+        }
+    }
+
+    /// A teardown is asked until it can answer, not once while it is running.
+    ///
+    /// `TerminateJobObject` returns when the signal is delivered. A count read
+    /// on the next instruction is a count of a teardown in progress, and the
+    /// run recorded that as "the Job was not observed empty" -- the one fact
+    /// that quarantines a session permanently.
+    #[test]
+    fn an_emptying_job_is_observed_rather_than_sampled_once() {
+        /// Populated for the first reads, then empty: an ordinary asynchronous
+        /// exit, which is the only thing a single sample gets wrong.
+        struct EmptyingJob {
+            reads: AtomicUsize,
+            empty_from: usize,
+        }
+
+        impl ProcessJob for EmptyingJob {
+            fn terminate(&self) -> io::Result<()> {
+                Ok(())
+            }
+
+            fn active_process_count(&self) -> io::Result<Option<u32>> {
+                let read = self.reads.fetch_add(1, Ordering::AcqRel);
+                Ok(Some(if read >= self.empty_from { 0 } else { 1 }))
+            }
+
+            fn total_process_count(&self) -> io::Result<Option<u32>> {
+                Ok(Some(1))
+            }
+
+            fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {
+                Ok(None)
+            }
+        }
+
+        let emptying = EmptyingJob {
+            reads: AtomicUsize::new(0),
+            empty_from: 2,
+        };
+        assert!(
+            observe_owned_job_emptied(&emptying, Duration::from_secs(5)),
+            "a Job that emptied on the third read was observed empty"
+        );
+        assert!(emptying.reads.load(Ordering::Acquire) >= 3);
+
+        // A Job that never empties still ends the wait, and still says the one
+        // thing that is true of it.
+        let populated = EmptyingJob {
+            reads: AtomicUsize::new(0),
+            empty_from: usize::MAX,
+        };
+        assert!(!observe_owned_job_emptied(
+            &populated,
+            Duration::from_millis(60)
+        ));
+
+        /// Every answer that is not `Some(0)`, none of which becomes one by
+        /// being asked again.
+        struct UnansweredJob(io::ErrorKind);
+
+        impl ProcessJob for UnansweredJob {
+            fn terminate(&self) -> io::Result<()> {
+                Ok(())
+            }
+
+            fn active_process_count(&self) -> io::Result<Option<u32>> {
+                if self.0 == io::ErrorKind::Other {
+                    return Ok(None);
+                }
+                Err(io::Error::from(self.0))
+            }
+
+            fn total_process_count(&self) -> io::Result<Option<u32>> {
+                Ok(None)
+            }
+
+            fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {
+                Ok(None)
+            }
+        }
+
+        for unanswered in [
+            UnansweredJob(io::ErrorKind::Other),
+            UnansweredJob(io::ErrorKind::PermissionDenied),
+        ] {
+            assert!(
+                !observe_owned_job_emptied(&unanswered, Duration::from_secs(5)),
+                "an accounting that was not given is not an observation of zero"
+            );
+        }
     }
 
     /// The verdict follows the observation, and only the observation.
@@ -2770,7 +2997,6 @@ mod tests {
         // and three, so a mutant reading `len() > 2` needs a three-count
         // refusal to catch it.
         for counts in [
-            &[][..],
             &[0][..],
             &[0, 0][..],
             &[2, 0][..],
@@ -2783,6 +3009,20 @@ mod tests {
                 "this run had already resumed what it opened: {counts:?}"
             );
         }
+
+        // No count at all is not the same observation and must not take the
+        // same answer. A count is pushed only by a resume that returned one, so
+        // an empty set is a run that released nothing -- every handle refused,
+        // or every resume refused -- and a root that was never released has
+        // executed nothing. Said the other way, this run's own two-phase
+        // ordering is what makes it true, and it was reported as a root that
+        // might have run: a permanent quarantine over a process that never
+        // started.
+        let released_nothing = resume_verdict(&[]).expect_err("nothing was resumed");
+        assert!(
+            released_nothing.refused_before_resuming,
+            "a run that resumed no thread had not resumed anything"
+        );
 
         // And a refusal taken before any resume says so, which is the only
         // case an ordinary classification is allowed to follow from.

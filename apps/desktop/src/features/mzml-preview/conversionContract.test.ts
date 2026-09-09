@@ -157,6 +157,7 @@ const CONVERTED_ITEM = {
   result: { kind: "single", report: FINALIZED_REPORT },
   error: null,
   cancellation: null,
+  stopRequested: false,
 } as const satisfies ConversionQueueItem;
 
 const FAILED_ITEM = {
@@ -175,6 +176,7 @@ const FAILED_ITEM = {
     retryable: true,
   },
   cancellation: null,
+  stopRequested: false,
 } as const satisfies ConversionQueueItem;
 
 const QUEUE = {
@@ -221,6 +223,7 @@ const CANCELLED_ITEM = {
   result: null,
   error: null,
   cancellation: CANCELLATION,
+  stopRequested: false,
 } as const satisfies ConversionQueueItem;
 
 const NOT_RUN_ITEM = {
@@ -234,6 +237,7 @@ const NOT_RUN_ITEM = {
   result: null,
   error: null,
   cancellation: null,
+  stopRequested: false,
 } as const satisfies ConversionQueueItem;
 
 const STOPPED_QUEUE = {
@@ -484,6 +488,7 @@ describe("the conversion wire contract", () => {
         "retryable",
         "sourceKind",
         "state",
+        "stopRequested",
       ].sort(),
     );
     // What a stop is allowed to say about an attempt: whether a process ran,

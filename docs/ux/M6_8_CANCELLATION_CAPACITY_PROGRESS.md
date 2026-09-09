@@ -75,10 +75,14 @@ discriminates the interval, and both say so.
 | Failure | What is known, and what follows |
 | --- | --- |
 | Job creation or assignment fails | The root has executed nothing, so it has no descendants. Terminating the direct child is complete here rather than a degradation, and it is complete *because of how the child was created*. |
-| Resume fails, teardown reclaimed the root | The owned root ran nothing and is gone. `BackendExecutionFailure::RootNotStarted`, an ordinary backend failure. |
+| Resume fails, teardown reclaimed the root | The owned root ran nothing and is gone. `BackendExecutionFailure::RootNotStarted`, an ordinary backend failure. Both halves are required: the Job was observed empty **and** the refusal was taken before this run released anything. |
+| Resume fails, and nothing was released at all | The same. A previous suspend count is recorded only by a `ResumeThread` that returned one, so an empty set of them is every handle refusing to open or every resume refusing — this run released no thread, and a root that was never released has executed nothing. Reported as a root that might have run until the ninth round, which quarantined a session over an image that never started. |
 | Resume fails, teardown could not reclaim it | An owned process whose disappearance cannot be stated. Classified as `NotTerminated`, which is what that already means, so a stop reaching it settles `CancellationFailed` and quarantines. |
 | Job accounting unavailable | `None`, never zero. Unknown surviving-process state is not zero, and the claim is unreachable without a bounded count. |
-| Emptiness times out | The Job would not empty. `NotTerminated`. |
+| Emptiness times out **and the final teardown then observed the Job empty** | Ordinary. `Some(0)` is the Job's own accounting of processes this run owns and breakaway is refused, so nothing it started is running — the same evidence a confirmed stop rests on. The earlier window closing on a populated Job is superseded by the later reading of the same Job, and only a later reading may supersede it. |
+| Emptiness times out and nothing afterwards observed it empty | The Job would not empty. `NotTerminated`. |
+| A teardown *request* returned an error beside a Job observed empty | Ordinary. The request's return code is not an observation, in either direction: a redundant `kill` of a process that had already exited is a cleanup error and not a surviving process. `add_process_cleanup_context` may only raise, and it runs first; the observation runs last and decides. |
+| A discovery probe leaves a process unaccounted | The rest of that discovery does not run. The result that quarantines the session is not read until every probe has returned, so `msconvert --help` losing a process was followed by `msaccess --help` inside the same discovery, before anything had a result to read. |
 | Any of the above **with no stop in flight** | The same uncertainty, and the same consequence. The invariant is about the machine rather than about anything the user pressed, so the run is asked a typed question about its own failure and the queue ends on the quarantine that is then in force. Before this, quarantine fired only on the stop path and the queue went on to launch the next converter beside a process nothing could account for. |
 | Any of the above **on a lane that is not the queue** | The same again, on all three. A preview is a process and so is a discovery help probe, and the sentence the quarantine shows had always named preview and conversion both while only the queue could raise it — so a preview that lost track of a process left the session trusting the backend and the next conversion started a converter beside it. Every lane now asks `ProcessError::leaves_an_owned_process_unaccounted`, which is *derived from* the queue's own classification rather than restated beside it, so they cannot answer differently. Discovery needed one more step: its typed error was reduced to an `io::ErrorKind` and a string, so the question could not be asked of it at all. The typed error is kept as the `io::Error`'s source, `DiscoveryResult` answers the question, and the provider latches it — a probe is not an operation anyone asked for, so there is no attempt for it to report through. |
 | A wait that failed after its owned teardown succeeded | `NotAwaited`, and **not** a quarantine. This run cannot report how its process ended, and it *did* observe the owned Job empty afterwards — `failure_after_teardown` reads the count on every failure path and promotes anything not observed empty to `OwnedJobNotEmptied` before it is classified, so a failure still carrying `NotAwaited` is one the kernel said held nothing of this run's. Quarantining here would refuse every later operation, for the rest of a session, on a fact that is not true — and a Job that would not empty is already classified `NotTerminated` at the boundary rather than folded into this. |
@@ -552,10 +556,10 @@ open) and this record. Fifteen, and the count is checkable: `git diff
 
 ## Validation
 
-Local gates: frontend lint, typecheck, 1659 tests across 69 files, build;
+Local gates: frontend lint, typecheck, 1661 tests across 69 files, build;
 `cargo fmt --all --check`; `cargo clippy --locked --workspace --all-targets
 --all-features -- -D warnings`; `cargo test --locked --workspace --all-targets`
-(1519 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
+(1523 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
 E2E typecheck.
 
 **Rendered QA**: 10/10 in `m6.8-cancellation-controls.browser`, including every
@@ -668,6 +672,64 @@ general path kept the success of the teardown *request* and discarded the Job's
 own count, which is the reasoning `force_owned_cleanup`'s own docstring exists
 to refuse. Both are repaired, and both now have tests over the decision rather
 than over a hand-built value.
+
+**Round 9 — the repository's release review on the pull request**, which is a
+required check rather than an extra pass. Nineteen threads. Seven were against
+earlier heads and describe defects the rounds above repaired. Of the twelve
+against this one, nine were real; the other three describe code an earlier round
+had already changed — the skip guard is a synchronous ref claimed before the
+request leaves, the diagnostics schema moved to 2 in the round that changed the
+field, and `force_owned_cleanup` does read the Job's own count.
+
+**Three of the nine are one law seen from three sides, and the law is that an
+observation outranks a request.** `force_owned_cleanup` read the count once, on
+the instruction after `TerminateJobObject` — which returns when the signal is
+delivered, not when the processes it signalled have exited. A teardown still in
+progress reported the Job populated, the run recorded "not observed empty", and
+the session was quarantined for the rest of its life over a race it won
+milliseconds later; it waits for the answer now, inside the same bounded window
+the supervised wait uses. `add_process_cleanup_context` raises on a cleanup
+*request* that returned an error, and a redundant `kill` of a process that had
+already gone is one — it made an unaccounted process out of a Job this run had
+watched empty. And `failure_after_teardown` itself only ever raised, so an
+emptiness window that expired before the final teardown emptied the Job kept
+`NotTerminated` beside an observation of `Some(0)`. The fold still only raises;
+the observation now runs after it and settles the kind. The chain test had
+pinned the second of these as correct, which is how it survived round 8.
+
+The fourth is the two-phase resume, and it is the same shape: `resume_verdict`
+treated an empty set of observed suspend counts as "this run released what it
+could and cannot say what the image did". A count is recorded only by a resume
+that returned one, so empty means nothing was released at all.
+
+The fifth is the round's only P1 and the only one that could start a process:
+discovery runs two help probes and the result that quarantines the session is
+not read until both have returned, so a `msconvert --help` whose owned Job would
+not empty was followed immediately, in the same discovery, by an `msaccess
+--help` launched beside whatever the first one left. The remaining probes are
+short-circuited, and the tool that was never asked is given no answer of its own
+rather than a failure it did not have.
+
+Three on the product side, all in the per-item stop this milestone adds. The
+control is enabled by the queue saying an item is converting, which it does from
+the transition that starts the item and before the worker binds that attempt's
+cancellation handle — so a press landing in that interval was refused by the
+same authority whose state had offered the control; it is held now and asked in
+the same lock acquisition that stores the handle, exactly as the whole-queue
+stop already was. What the press starts is an asynchronous operation of
+unbounded length that lived only in the pressing document, so a view remounting
+inside it read the item back as plainly running and offered the control again;
+the queue item now carries `stopRequested`, and the interface reads the
+authority first and its own memory second. And the note beside the button while
+the stop is in flight said the queue "keeps going either way" — true of two of
+the three outcomes, and silent about the one that ends the queue and the
+session's backend work, which the sentence *before* the press has always stated
+plainly. The same half-promise was in the live region.
+
+The ninth is arithmetic in copy: between two items the panel published
+`currentIndex` as a count of conversions, and it is a count of items that are no
+longer pending — so a queue whose first file failed announced "Converted 1 of 2"
+with nothing converted at all.
 
 Round 7: four more demonstrated bypasses, listed above, and one substantive
 overclaim. `RootNotStarted` — an ordinary, retryable failure that raises no

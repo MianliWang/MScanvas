@@ -1107,7 +1107,12 @@ export function useConversionOperation(
           const item = state.queue.items[index];
           return item === undefined
             ? null
-            : { index, fileName: item.fileName, attempt: item.attempts };
+            : {
+                index,
+                fileName: item.fileName,
+                attempt: item.attempts,
+                stopRequested: item.stopRequested,
+              };
         })()
       : null;
   const runningItemKey =
@@ -1116,7 +1121,15 @@ export function useConversionOperation(
       : `${state.status === "idle" ? "" : state.operationId}:${String(runningItem.index)}:${String(
           runningItem.attempt,
         )}`;
-  const cancellingItem = runningItemKey !== null && itemStopRequested === runningItemKey;
+  // The authority first, this document's memory second. They answer the same
+  // question at different moments: Rust knows a request is outstanding from the
+  // moment it accepts one and goes on knowing it across a remount of this
+  // document, and the local key covers the interval before the reply that
+  // carries the new snapshot installs. Reading only the local one is what made
+  // a reloaded view offer to stop a file whose stop was already under way.
+  const cancellingItem =
+    runningItem !== null &&
+    (runningItem.stopRequested || (runningItemKey !== null && itemStopRequested === runningItemKey));
   const cancellableItem =
     runningItem === null || cancellingItem
       ? null

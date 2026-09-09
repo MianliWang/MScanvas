@@ -11593,6 +11593,7 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "retryable",
             "sourceKind",
             "state",
+            "stopRequested",
         ],
         "one latest attempt per item, never a history of them"
     );
@@ -13993,6 +13994,146 @@ fn a_stop_arriving_before_the_handle_is_bound_still_reaches_that_attempt() {
     assert!(
         cancellation.request_handle().is_requested(),
         "the attempt about to run has already been asked to stop"
+    );
+}
+
+/// The per-item counterpart of the same interval, and the state that survives
+/// a reload of the document that asked.
+///
+/// Two findings of the eighth review, and one mechanism, because they are one
+/// fact seen from either side. *Stop this file* is enabled by the queue saying
+/// an item is converting -- which it does from `start_item`, before the worker
+/// has bound that attempt's handle -- so a press landing there was refused, by
+/// the same authority whose state had offered the control. And what a press
+/// starts is an asynchronous operation of unbounded length that lived only in
+/// the pressing document, so a webview that remounted inside it read `running`
+/// with nothing said about the request and offered the control again.
+#[test]
+fn an_item_stop_before_its_handle_is_bound_reaches_the_attempt_and_is_readable() {
+    let mut slot = ConversionSlot::default();
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        ConversionIntent::SHIPPED,
+        DestinationPolicy::CustomFolder,
+        vec![test_queue_item()],
+    )
+    .expect("one item is a queue");
+    let _ = slot.begin(queue).expect("reservation");
+    let operation = slot
+        .claim(&reservation_handle(&slot), 0)
+        .expect("claim the reservation");
+    assert!(
+        slot.start_running(operation, test_bindings(&["file-0"]))
+            .is_ok()
+    );
+
+    // The item is running and its handle is not bound: the interval the
+    // interface can see into and the worker cannot close by checking.
+    let attempt = slot.start_item(operation, 0).expect("the item starts");
+    assert!(
+        !running_queue_dto(&slot).items[0].stop_requested,
+        "nothing has been asked of this attempt yet"
+    );
+
+    match slot
+        .request_item_stop(operation, 0, attempt)
+        .expect("the state that enabled the control accepts the request")
+    {
+        StopAccepted::Requested(handle) => assert!(
+            handle.is_none(),
+            "there is no handle yet, which is the whole point of this window"
+        ),
+        StopAccepted::AlreadyRequested => panic!("the first request is not a repeat"),
+    }
+
+    // Readable from the authority, so a document that remounts here draws the
+    // stop it did not make and does not offer the control again.
+    assert!(running_queue_dto(&slot).items[0].stop_requested);
+    assert!(
+        slot.stop_requested_ago_for(operation, 0, attempt).is_some(),
+        "the wait is measured from the request, not from the binding"
+    );
+    assert!(matches!(
+        slot.request_item_stop(operation, 0, attempt),
+        Ok(StopAccepted::AlreadyRequested)
+    ));
+
+    // Binding carries the request the stop could not make, and the fact stays
+    // readable across the transition rather than blinking off at it.
+    let cancellation = ConversionCancellation::new();
+    slot.bind_attempt(operation, 0, attempt, cancellation.request_handle());
+    assert!(
+        cancellation.request_handle().is_requested(),
+        "the attempt about to run has already been asked to stop"
+    );
+    assert!(running_queue_dto(&slot).items[0].stop_requested);
+}
+
+/// A held request belongs to the attempt it named and to no later one.
+///
+/// The stop of one item must never slide onto the next: the user asked about a
+/// file, and an attempt that ended before its handle existed took the question
+/// with it.
+#[test]
+fn an_unbound_item_stop_is_not_carried_to_a_different_attempt() {
+    let mut slot = ConversionSlot::default();
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        ConversionIntent::SHIPPED,
+        DestinationPolicy::CustomFolder,
+        vec![test_queue_item()],
+    )
+    .expect("one item is a queue");
+    let _ = slot.begin(queue).expect("reservation");
+    let operation = slot
+        .claim(&reservation_handle(&slot), 0)
+        .expect("claim the reservation");
+    assert!(
+        slot.start_running(operation, test_bindings(&["file-0"]))
+            .is_ok()
+    );
+    let attempt = slot.start_item(operation, 0).expect("the item starts");
+    assert!(slot.request_item_stop(operation, 0, attempt).is_ok());
+
+    // A different attempt of the same item is not the one that was asked.
+    let cancellation = ConversionCancellation::new();
+    slot.bind_attempt(operation, 0, attempt + 1, cancellation.request_handle());
+    assert!(
+        !cancellation.request_handle().is_requested(),
+        "a request for one attempt reached another"
+    );
+    assert!(
+        !running_queue_dto(&slot).items[0].stop_requested,
+        "and nothing of it is left to be read as this attempt's"
+    );
+
+    // And an attempt that settles before it is ever bound takes the request
+    // with it rather than leaving one for a later stop to find.
+    let mut slot = ConversionSlot::default();
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        ConversionIntent::SHIPPED,
+        DestinationPolicy::CustomFolder,
+        vec![test_queue_item()],
+    )
+    .expect("one item is a queue");
+    let _ = slot.begin(queue).expect("reservation");
+    let operation = slot
+        .claim(&reservation_handle(&slot), 0)
+        .expect("claim the reservation");
+    assert!(
+        slot.start_running(operation, test_bindings(&["file-0"]))
+            .is_ok()
+    );
+    let attempt = slot.start_item(operation, 0).expect("the item starts");
+    assert!(slot.request_item_stop(operation, 0, attempt).is_ok());
+    slot.release_attempt(operation, 0, attempt);
+    assert!(
+        !running_queue_dto(&slot).items[0].stop_requested,
+        "a settled attempt leaves no request behind"
     );
 }
 

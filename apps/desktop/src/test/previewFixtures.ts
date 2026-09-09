@@ -1175,6 +1175,7 @@ export function queueItem(
     result: null,
     error: null,
     cancellation: null,
+    stopRequested: false,
     ...overrides,
   };
 }

@@ -57,7 +57,7 @@ const CANCEL_ITEM_EXPLANATION =
 // because the unavailable one -- "available while a file is being converted" --
 // would be shown exactly while a file is being converted.
 const CANCEL_ITEM_IN_FLIGHT_EXPLANATION =
-  "The queue keeps going either way. This file may still finish on its own, and then it keeps its result.";
+  "This file may still finish on its own, and then it keeps its result. The items after it still run. If MSCanvas cannot confirm that its converter ended, the whole queue stops and the session needs a restart.";
 
 function renderApp(api: FakePreviewApi): void {
   render(
@@ -371,6 +371,63 @@ describe("stopping a running conversion queue", () => {
         "Rerunning an earlier failure — it keeps that result if it is not run again.",
       ),
     ).toHaveLength(2);
+  });
+
+  it("draws a stop this document did not make, from the queue Rust serialises", async () => {
+    /*
+     * Stopping one file takes as long as the converter takes, and for a while
+     * that request lived only in the React state of the document that pressed
+     * the button. A view mounting inside the window -- a reload, or this pane
+     * being reached again -- read the item back as plainly `running` and drew
+     * "Converting" with the control live, offering to ask for something the
+     * authority had already accepted. Rust holds the request; this asserts the
+     * interface reads it rather than only remembering it.
+     */
+    const stopping = queueOf([
+      converted("file-1", "run-1.raw"),
+      queueItem("file-2", "run-2.raw", {
+        state: "running",
+        attempts: 1,
+        stopRequested: true,
+      }),
+      queueItem("file-3", "run-3.raw"),
+    ]);
+    const api = apiWith({ status: "running", operationId: "1", queue: stopping });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const control = await within(panel).findByRole("button", {
+      name: "Stopping this file…",
+    });
+    expect(control).toBeDisabled();
+    expect(within(panel).queryByRole("button", { name: "Stop this file" })).toBeNull();
+    expect(within(panel).getByText(CANCEL_ITEM_IN_FLIGHT_EXPLANATION)).toBeVisible();
+  });
+
+  it("counts what was converted between items, not what is no longer pending", async () => {
+    /*
+     * The panel published `currentIndex` as a success count. It is how many
+     * items are no longer pending, so a first file that failed, was skipped by
+     * the conflict policy, was skipped by the user or was cancelled all read as
+     * one converted -- announced in the interval after an item settles and
+     * before the next one starts, which directory re-admission widens.
+     */
+    const afterAFailure = queueOf([
+      queueItem("file-1", "run-1.raw", {
+        state: "failed",
+        attempts: 1,
+        retryable: true,
+        error: previewError(),
+      }),
+      queueItem("file-2", "run-2.raw"),
+    ]);
+    const api = apiWith({ status: "running", operationId: "1", queue: afterAFailure });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    expect(
+      within(panel).getByText("Converted 0 of 2, starting the next…"),
+    ).toBeVisible();
   });
 
   it("stops saying the control is available once this document has asked", async () => {

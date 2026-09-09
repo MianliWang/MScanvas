@@ -890,7 +890,12 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
     // adds had been accepted at all -- while the queue-level stop two lines
     // above has had one since M3.4.
     if (workspace.conversion.cancellingItem) {
-      return `Stopping ${current.fileName}. The queue keeps going either way, and this file may still finish on its own.`;
+      // The same three outcomes the panel's note carries, for the same reason:
+      // "the queue keeps going either way" is a promise about two of them, and
+      // the third -- a converter whose end cannot be confirmed -- ends the
+      // queue and the session's backend work. A listener heard only the
+      // reassuring half.
+      return `Stopping ${current.fileName}. This file may still finish on its own, and the items after it still run unless MSCanvas cannot confirm that its converter ended.`;
     }
     // A skip this document asked for, said the same way. Without it the string
     // is byte-identical either side of the press -- the row stays pending and

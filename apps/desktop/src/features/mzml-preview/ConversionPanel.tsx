@@ -178,11 +178,19 @@ const CANCEL_ITEM_UNAVAILABLE =
  * What is true while *this file's* stop is in flight.
  *
  * The per-item counterpart of `STOP_IN_FLIGHT_EXPLANATION`, and silent about
- * the outcome for the same reason: which of ending and finishing happens is
- * decided by what the process boundary observes first.
+ * which of ending and finishing happens for the same reason: that is decided
+ * by what the process boundary observes first.
+ *
+ * **Not silent about the third outcome.** "The queue keeps going either way"
+ * described two of the three. A stop whose process tree cannot be confirmed
+ * gone ends the whole queue and quarantines the session, which is the branch a
+ * reader most needs said and the only one they cannot undo -- and this sentence
+ * is on screen exactly while it is undecided. `CANCEL_ITEM_EXPLANATION` says it
+ * before the press; dropping it afterwards left the promise standing at the one
+ * moment it was in doubt.
  */
 const CANCEL_ITEM_IN_FLIGHT_EXPLANATION =
-  "The queue keeps going either way. This file may still finish on its own, and then it keeps its result.";
+  "This file may still finish on its own, and then it keeps its result. The items after it still run. If MSCanvas cannot confirm that its converter ended, the whole queue stops and the session needs a restart.";
 
 /**
  * What is true while a stop is in flight.
@@ -1077,9 +1085,15 @@ function QueueState({
       ) : state.status === "running" ? (
         <>
           <p>
+            {/* `finalizedCount`, not `currentIndex`. The second is how many
+                items are no longer pending, which between two items counts
+                every failure, conflict skip, user skip and cancellation as
+                well -- so a queue whose first file failed announced
+                "Converted 1 of 2" while nothing had been converted at all.
+                Directory re-admission widens the window this is read in. */}
             {(queue.items.some((item) => item.state === "running")
                     ? `Converting item ${String(runningPosition(queue))} of ${String(queue.itemCount)}…`
-                    : `Converted ${String(queue.currentIndex)} of ${String(queue.itemCount)}, starting the next…`)}
+                    : `Converted ${String(queue.finalizedCount)} of ${String(queue.itemCount)}, starting the next…`)}
           </p>
           <div className="conversion-actions">
             <button

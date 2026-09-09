@@ -1321,6 +1321,20 @@ pub struct ConversionQueueItemDto {
     /// item a stop actually reached; a `notRun` item has none, because nothing
     /// ran for it to establish anything about.
     pub cancellation: Option<ConversionCancellationDto>,
+    /// Whether *this* attempt has been asked to end while the queue runs on.
+    ///
+    /// The stop of one item is an asynchronous operation of unbounded length --
+    /// a converter decides when it goes -- and it lived only in the document
+    /// that pressed the button. A webview that remounted inside that window
+    /// read this item back as `running` with nothing said about the request,
+    /// so it drew "Converting" and offered the control again for a stop the
+    /// authority had already accepted. What is in flight is the authority's to
+    /// say, like every other thing about this queue.
+    ///
+    /// False for every other item, including one whose stop has settled: this
+    /// says a request is outstanding, not that one was ever made. What a
+    /// settled stop established is `cancellation`.
+    pub stop_requested: bool,
 }
 
 /// Where one item is.

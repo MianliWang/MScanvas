@@ -1241,6 +1241,18 @@ export interface ConversionQueueItem {
    * none, because nothing ran for it to establish anything about.
    */
   readonly cancellation: ConversionCancellation | null;
+  /**
+   * Whether *this* attempt has been asked to end while the queue runs on.
+   *
+   * The authority's own answer, so it survives this document: stopping one file
+   * takes as long as the converter takes, and a view that remounted inside that
+   * window used to read the item back as plainly `running` and offer the
+   * control again for a request already accepted.
+   *
+   * False for an item whose stop has settled. This says a request is
+   * outstanding; what a settled one established is `cancellation`.
+   */
+  readonly stopRequested: boolean;
 }
 
 /** One queue, in facts that name no location. */
