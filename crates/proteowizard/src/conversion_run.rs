@@ -1446,25 +1446,25 @@ impl From<&ProcessError> for BackendExecutionFailure {
             }
             ProcessError::OwnedJobNotEmptied { .. } => Self::NotTerminated,
             // Two different facts wear one variant here, and it takes **both**
-            // halves to tell them apart. A root that was reclaimed *and had
-            // executed nothing* ran nothing and is gone; anything else is an
-            // owned process whose disappearance this boundary cannot state,
+            // halves to tell them apart: the owned Job *observed* empty, and
+            // this run having released nothing. Together they say no process of
+            // this run's survives and none of the image ran. Anything else is
+            // an owned process whose disappearance this boundary cannot state,
             // which is exactly what `NotTerminated` already means and exactly
             // the state a stop must not be allowed to call clean.
             //
-            // Reclamation alone is not enough, and reading it alone was a
-            // defect: teardown is `TerminateJobObject` plus a kill and a wait,
-            // which is a *request* rather than an observation of an empty Job.
-            // A root that was already executing when the resume was refused may
-            // have created descendants, so calling that "never started" —
-            // retryable, and no quarantine — would offer another converter
-            // beside processes nothing had accounted for.
+            // **An observation, not a request.** This read the *success of
+            // teardown* at first, which is `TerminateJobObject` plus a kill and
+            // a wait — a request. The Job's own process count, read after it,
+            // is the only statement about what survived; without it, "the root
+            // never ran and is gone" was being concluded from two facts that
+            // support neither half.
             ProcessError::ResumeOwnedRoot {
-                owned_root_reclaimed,
+                owned_job_observed_empty,
                 refused_before_resuming,
                 ..
             } => {
-                if *owned_root_reclaimed && *refused_before_resuming {
+                if *owned_job_observed_empty && *refused_before_resuming {
                     Self::RootNotStarted
                 } else {
                     Self::NotTerminated

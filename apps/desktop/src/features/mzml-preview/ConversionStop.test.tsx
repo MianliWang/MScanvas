@@ -346,11 +346,13 @@ describe("stopping a running conversion queue", () => {
       operationId: "1",
       queue: queueOf([
         queueItem("file-1", "run-1.raw", { state: "running", attempts: 2 }),
-        // Failed in the first pass, moved back to waiting by the retry. Two
-        // attempts, not one: `attempts === 0` is the rule, and a test that only
-        // used one would pass for `attempts !== 1` as well.
-        queueItem("file-2", "run-2.raw", { state: "pending", attempts: 2 }),
-        // Never reached in either pass.
+        // Both counts, because the rule is `attempts === 0` and a test that
+        // used only one of them would pass for `attempts !== 1` -- or, having
+        // moved to two, for `attempts !== 2`. One failed pass is also the
+        // common case, and it was the one the single-count version dropped.
+        queueItem("file-2", "run-2.raw", { state: "pending", attempts: 1 }),
+        queueItem("file-4", "run-4.raw", { state: "pending", attempts: 2 }),
+        // Never reached in any pass.
         queueItem("file-3", "run-3.raw", { state: "pending" }),
       ]),
     });
@@ -361,13 +363,14 @@ describe("stopping a running conversion queue", () => {
       expect(within(panel).getByRole("button", { name: "Skip run-3.raw" })).toBeEnabled();
     });
     expect(within(panel).queryByRole("button", { name: "Skip run-2.raw" })).toBeNull();
+    expect(within(panel).queryByRole("button", { name: "Skip run-4.raw" })).toBeNull();
     // And the row says why, rather than being a "Waiting" row that silently
     // lacks a control its neighbour has.
     expect(
-      within(panel).getByText(
+      within(panel).getAllByText(
         "Rerunning an earlier failure — it keeps that result if it is not run again.",
       ),
-    ).toBeVisible();
+    ).toHaveLength(2);
   });
 
   it("stops saying the control is available once this document has asked", async () => {

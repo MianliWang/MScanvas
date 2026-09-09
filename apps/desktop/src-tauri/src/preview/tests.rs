@@ -2212,12 +2212,12 @@ fn a_preview_process_failure_says_whether_it_left_a_process_unaccounted_for() {
     }));
     assert!(unaccounted_by(&ProcessError::ResumeOwnedRoot {
         detail: String::from("refused after resuming"),
-        owned_root_reclaimed: true,
+        owned_job_observed_empty: true,
         refused_before_resuming: false,
     }));
     assert!(!unaccounted_by(&ProcessError::ResumeOwnedRoot {
         detail: String::from("refused before resuming"),
-        owned_root_reclaimed: true,
+        owned_job_observed_empty: true,
         refused_before_resuming: true,
     }));
     assert!(!unaccounted_by(&ProcessError::ExecutableIdentityChanged));
@@ -7410,7 +7410,7 @@ impl FakeConversionRunner {
             BackendAct::StrandAnOwnedProcess => {
                 return Err(ProcessError::ResumeOwnedRoot {
                     detail: "injected: the owned root could not be started or reclaimed".to_owned(),
-                    owned_root_reclaimed: false,
+                    owned_job_observed_empty: false,
                     refused_before_resuming: true,
                 });
             }

@@ -374,7 +374,7 @@ fn a_process_failure_answers_the_same_way_to_every_lane() {
         },
         ProcessError::ResumeOwnedRoot {
             detail: String::from("the root could not be resumed"),
-            owned_root_reclaimed: false,
+            owned_job_observed_empty: false,
             refused_before_resuming: true,
         },
         // Reclaimed, but the image had already started: terminating it is a
@@ -382,7 +382,7 @@ fn a_process_failure_answers_the_same_way_to_every_lane() {
         // for.
         ProcessError::ResumeOwnedRoot {
             detail: String::from("the root was refused after it had been resumed"),
-            owned_root_reclaimed: true,
+            owned_job_observed_empty: true,
             refused_before_resuming: false,
         },
     ];
@@ -410,7 +410,7 @@ fn a_process_failure_answers_the_same_way_to_every_lane() {
         },
         ProcessError::ResumeOwnedRoot {
             detail: String::from("the root could not be resumed"),
-            owned_root_reclaimed: true,
+            owned_job_observed_empty: true,
             refused_before_resuming: true,
         },
         ProcessError::Wait {
@@ -444,12 +444,12 @@ fn a_process_failure_answers_the_same_way_to_every_lane() {
 fn a_resume_failure_classifies_by_whether_the_owned_root_was_reclaimed() {
     let reclaimed = BackendExecutionFailure::from(&ProcessError::ResumeOwnedRoot {
         detail: "no".to_owned(),
-        owned_root_reclaimed: true,
+        owned_job_observed_empty: true,
         refused_before_resuming: true,
     });
     let stranded = BackendExecutionFailure::from(&ProcessError::ResumeOwnedRoot {
         detail: "no".to_owned(),
-        owned_root_reclaimed: false,
+        owned_job_observed_empty: false,
         refused_before_resuming: true,
     });
     // Reclaimed, and *not* an ordinary failure: the image had already started,
@@ -457,7 +457,7 @@ fn a_resume_failure_classifies_by_whether_the_owned_root_was_reclaimed() {
     // what it may have created.
     let started = BackendExecutionFailure::from(&ProcessError::ResumeOwnedRoot {
         detail: "no".to_owned(),
-        owned_root_reclaimed: true,
+        owned_job_observed_empty: true,
         refused_before_resuming: false,
     });
 

@@ -249,7 +249,7 @@ buys is narrower and worth stating exactly: a wrong *description* cannot become
 a wrong *claim in code*. The words can drift; the member cannot be written by
 the code that reads them.
 
-**The guard proves itself.** On every run it applies twenty-six deliberate bypasses
+**The guard proves itself.** On every run it applies thirty deliberate bypasses
 to isolated copies and requires each to be detected, including all six the two
 reviewers demonstrated: the alias import, the braced member import, the braced
 ownership import, a production claim hidden behind a file-based test module, the
@@ -278,7 +278,14 @@ answered at the root: comments, strings, chars and raw strings are scrubbed out
 before anything is counted or matched, and the region now ends where its own
 depth returns to zero rather than at the first left-margin `}`.
 
-Three more came from the sixth, one for each of the bypasses above.
+Three more came from the sixth, one for each of the bypasses above, and four
+from the seventh: a *nested* block comment, which Rust allows and the scanner
+closed at the first `*/`, so commented-out text read as live source; an ordinary
+string literal continued across a line break, which forged the attribute and the
+declaration at once, aimed at a module no other proof anchors in; the
+qualified-type spelling `<Path::Type>::of(x)`, which is not a substring of the
+unqualified one; and a narrow symbol named in passing on a line, which exempted
+the description above it.
 
 The other two of the fifth's proofs are for rules that could not fail at all.
 Neutralising the conjunction's one-definition count, or the comparison of the
@@ -498,7 +505,7 @@ bundle and is not inherited. The bundle these cases exercised is
 The suite is headless, so it does not need an unlocked session — which is why
 it could be re-run at this head when the native suites could not.
 
-**Six rounds of two independent reviews rejected six candidates, and every
+**Seven rounds of two independent reviews rejected seven candidates, and every
 finding was verified against the code before it was acted on.** Each repair is
 proved by reverting it and watching a test, or the guard's own bypass suite,
 report the defect. Reviewers demonstrated working bypasses of the claim guard in
@@ -567,6 +574,17 @@ spelling a qualified-path check cannot see — the lesson rule 6 already carried
 about members, arriving a round late at rule 7. The attribute is read as code
 now, declarations are matched over the file as one text, and the derivation is
 matched under every name the type can be reached by in that file.
+
+Round 7: four more demonstrated bypasses, listed above, and one substantive
+overclaim. `RootNotStarted` — an ordinary, retryable failure that raises no
+quarantine — was concluded from the *success of teardown*, which is
+`TerminateJobObject` plus a kill and a wait: a request, not an observation. The
+boundary refuses that reasoning everywhere else and relied on it here. The Job's
+own process count is now read after the request, and only `Some(0)` earns the
+ordinary classification. Round 7 also found ADR 0015's `notRun` and `completed`
+rows still describing a stopped queue, this record's review history saying three
+rounds while listing six, and a test whose stated premise was a queue state Rust
+cannot emit.
 
 Round 6, on the product side: the screen-reader region returned the refusal
 *instead of* the counts
@@ -645,6 +663,22 @@ Evidence: `D:/tmp/mscanvas-m68-20260908/m68-native-ng3n5k/`,
   running both specs at `735dfebac5d48db30b6d1802c208ccf05853b3d8` in a separate
   worktree, where they fail identically. Pre-existing and outside this slice.
   Owner: the spectrum-export and viewport owners respectively.
+- **Three call sites are covered only by the functions extracted out of them.**
+  `execute_bound`'s question about a failed preview process, `probe_tool`'s about
+  a failed help probe, and the resume loop's collection of suspend counts each
+  call a function that is tested directly; nothing drives the site itself,
+  because doing so needs a real process failure rather than a substituted
+  provider. Replacing any of the three call expressions with a constant would
+  keep the suite green. Extracting them was still worth doing — the decision was
+  untestable before — but the wiring is asserted by reading, not by a test.
+  Owner: the process boundary, whenever a fault-injecting `ProcessRunner` exists.
+- **The guard's bypass suite defends the files its anchors sit in.** Thirty
+  proofs cover the rules; the *files* they edit are the handful the claim lives
+  in. A reviewer showed that the same attack aimed at a module no anchor touches
+  is stopped by no rule but by the coincidence that eleven proofs anchor in
+  `service.rs`. Two of the thirty now deliberately target unanchored files for
+  that reason, and the residual is that a rule can only be proved where a proof
+  is written. Owner: this guard, on every rule it gains.
 - Native output validation remains `output_only`, not full-source scientific
   fidelity. Owner: the scientific-fidelity owner, unchanged by this slice.
 - The e2e runner's existing Tauri browser-mode and forced dev-server shutdown

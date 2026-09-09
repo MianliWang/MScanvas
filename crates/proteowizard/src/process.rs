@@ -314,12 +314,16 @@ pub enum ProcessError {
     #[error("failed to start the owned backend process: {detail}")]
     ResumeOwnedRoot {
         detail: String,
-        /// Whether teardown observed the owned root reclaimed.
+        /// Whether the owned Job reported itself empty after teardown.
         ///
-        /// `false` is not "probably fine": it is a process this run owns whose
-        /// disappearance it cannot state, and callers classify it exactly as
-        /// they classify a Job that would not terminate.
-        owned_root_reclaimed: bool,
+        /// **An observation, not a request.** This was `owned_root_reclaimed`,
+        /// which said only that terminating and killing returned success —
+        /// and a caller then classified the run as an ordinary failure on the
+        /// strength of it, which is the reasoning this boundary refuses
+        /// everywhere else. `false` is not "probably fine": it is a process
+        /// this run owns whose disappearance it cannot state, and callers
+        /// classify it exactly as they classify a Job that would not terminate.
+        owned_job_observed_empty: bool,
         /// Whether this run refused before it resumed anything.
         ///
         /// **Named for what it observed, not for what it would like to
@@ -508,13 +512,12 @@ fn execute_command_after_assignment(
     // makes it true is the signature below, not a convention.
     let mut owned_job = Some(owned_job);
     if let Err(refusal) = resume_owned_root(&child, owned_job.as_ref().expect("just assigned")) {
-        let cleanup = force_owned_cleanup(&mut child, &mut owned_job);
-        let owned_root_reclaimed = cleanup.is_ok();
+        let (cleanup, owned_job_observed_empty) = force_owned_cleanup(&mut child, &mut owned_job);
         let captures = join_captures(stdout_reader, stderr_reader);
         let detail = add_cleanup_context(refusal.error.to_string(), cleanup, captures.err());
         return Err(ProcessError::ResumeOwnedRoot {
             detail,
-            owned_root_reclaimed,
+            owned_job_observed_empty,
             refused_before_resuming: refusal.refused_before_resuming,
         });
     }
@@ -570,7 +573,7 @@ fn execute_command_after_assignment(
         .and_then(|job| ProcessJob::total_process_count(job).ok())
         .flatten();
     let cleanup = if execution.is_err() {
-        force_owned_cleanup(&mut child, &mut owned_job)
+        force_owned_cleanup(&mut child, &mut owned_job).0
     } else {
         Ok(())
     };
@@ -923,21 +926,32 @@ fn wait_for_job_empty_with_timeout(
     }
 }
 
+/// Tears the owned tree down, and says whether it was *observed* gone.
+///
+/// **The second half is the point.** Terminating a Job is a request; the only
+/// statement about what survived it is the Job's own process count, read after
+/// the request. This used to return success or failure of the request alone,
+/// and a caller then classified a run as an ordinary failure on the strength of
+/// it — "teardown observed it gone" about a teardown that observed nothing.
 fn force_owned_cleanup(
     child: &mut Child,
     owned_job: &mut Option<OwnedProcessJob>,
-) -> Result<(), ProcessError> {
+) -> (Result<(), ProcessError>, bool) {
     let mut failures = Vec::new();
+    let mut observed_empty = false;
     if let Some(job) = owned_job.take() {
         if let Err(error) = job.terminate() {
             failures.push(format!("owned-job termination failed: {error}"));
         }
+        // Asked after the request, and only `Some(0)` counts. `None` is an
+        // accounting answer this platform could not give, which is not zero.
+        observed_empty = matches!(job.active_process_count(), Ok(Some(0)));
         // KILL_ON_JOB_CLOSE is a final process-tree safety net even when the
         // explicit TerminateJobObject call itself failed.
         drop(job);
     }
     collect_direct_child_cleanup(child, &mut failures);
-    cleanup_result(failures)
+    (cleanup_result(failures), observed_empty)
 }
 
 fn force_unowned_cleanup(child: &mut Child) -> Result<(), ProcessError> {
@@ -2521,8 +2535,19 @@ mod tests {
         assert!(resume_verdict(&[0, 1, 0]).is_ok());
 
         // None did. This run released what it could and cannot say what the
-        // image did, so it must not claim it never started.
-        for counts in [&[][..], &[0][..], &[0, 0][..], &[2, 0][..]] {
+        // image did, so it must not claim it never started. Several lengths,
+        // because a rule keyed on how many threads were seen rather than on
+        // what they reported would otherwise pass: the `Ok` cases above are one
+        // and three, so a mutant reading `len() > 2` needs a three-count
+        // refusal to catch it.
+        for counts in [
+            &[][..],
+            &[0][..],
+            &[0, 0][..],
+            &[2, 0][..],
+            &[0, 0, 0][..],
+            &[2, 0, 2, 0][..],
+        ] {
             let refusal = resume_verdict(counts).expect_err("nothing was created suspended");
             assert!(
                 !refusal.refused_before_resuming,
@@ -2549,7 +2574,7 @@ mod tests {
         let combinations = [(true, true), (true, false), (false, true), (false, false)];
         let errors = combinations.map(|(reclaimed, never_ran)| ProcessError::ResumeOwnedRoot {
             detail: "the owned root could not be resumed".to_owned(),
-            owned_root_reclaimed: reclaimed,
+            owned_job_observed_empty: reclaimed,
             refused_before_resuming: never_ran,
         });
 

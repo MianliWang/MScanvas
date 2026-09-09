@@ -3323,12 +3323,39 @@ _DERIVATION_ALIASES = (
 )
 
 
-def _derivation_names(text: str) -> set[str]:
-    """Every name `OwnedTreeDisposition::of` can be written under in one file."""
+_DERIVATION_NAMES: dict[Path, frozenset[str]] = {}
+
+
+def _derivation_names(root: Path) -> frozenset[str]:
+    """Every name `OwnedTreeDisposition::of` can be written under, crate-wide.
+
+    Computed over every Rust source rather than per file, because a re-export
+    renames the type somewhere else entirely: `pub use ... as Judgement;` in a
+    crate root lets a consumer write `Judgement::of(output)` in a file that
+    never contains the original name at all.
+    """
+    cached = _DERIVATION_NAMES.get(root)
+    if cached is not None:
+        return cached
     names = {CLAIM_VOCABULARY_TYPE}
-    for pattern in _DERIVATION_ALIASES:
-        names.update(pattern.findall(text))
-    return names
+    for glob in CLAIM_RUST_GLOBS:
+        for path in sorted(root.glob(glob)):
+            text = path.read_text(encoding="utf-8")
+            for pattern in _DERIVATION_ALIASES:
+                names.update(pattern.findall(text))
+    frozen = frozenset(names)
+    _DERIVATION_NAMES[root] = frozen
+    return frozen
+
+
+def _derivation_call(name: str) -> re.Pattern[str]:
+    """A call to `of` on this name, however the path is written.
+
+    Tolerant of the qualified-type form `<Path::Name>::of(..)` and of newlines
+    inside the path, which is how two compiling spellings walked past a
+    substring test on one stripped line.
+    """
+    return re.compile(r"\b" + re.escape(name) + r"\s*>?\s*::\s*of\s*\(")
 # The crate that creates the process and watches it end. Two lifecycles inside
 # it derive the judgement, and both supervise a real run; nothing outside it may.
 CLAIM_DERIVATION_SCOPE = "crates/proteowizard/src/"
@@ -3548,6 +3575,27 @@ def _declared_test_modules(root: Path) -> frozenset[Path]:
     return frozen
 
 
+def _consume_string(line: str, index: int) -> tuple[int, bool]:
+    """Walk an open ordinary string literal, saying whether it is still open.
+
+    A `\\` at the end of a line continues the literal onto the next one, which
+    is how `"\\` + newline + `#[cfg(test)]` reads as code to a scanner that
+    forgets at the line break.
+    """
+    length = len(line)
+    while index < length:
+        if line[index] == "\\":
+            if index + 1 >= length:
+                # The line ends inside an escape: the literal continues.
+                return length, True
+            index += 2
+            continue
+        if line[index] == '"':
+            return index + 1, False
+        index += 1
+    return length, True
+
+
 def _code_only(lines: list[str]) -> list[str]:
     """Each line with its comments, strings, chars and raw strings removed.
 
@@ -3561,16 +3609,30 @@ def _code_only(lines: list[str]) -> list[str]:
     original line numbers; only the contents that are not code are dropped.
     """
     scrubbed: list[str] = []
-    in_block_comment = False
+    # Rust nests block comments, so a depth is required rather than a flag: the
+    # first `*/` need not close the outer one, and a scanner that stops there
+    # reads commented-out text as live source. `_rust_string_literals` in this
+    # file already counts depth for the same reason; the claim guard's scanner
+    # did not, and a reviewer armed a skip region with `/*/**/#[cfg(test)]*/`
+    # on one line.
+    comment_depth = 0
+    # An ordinary string stays open across lines -- a `\` at the end of a line
+    # continues it. Only raw strings carried state at first, so a literal
+    # holding `#[cfg(test)]` on its own line forged both halves of the
+    # declaration test at once.
+    in_string = False
     raw_hashes: int | None = None
     for line in lines:
         kept: list[str] = []
         index = 0
         length = len(line)
         while index < length:
-            if in_block_comment:
-                if line.startswith("*/", index):
-                    in_block_comment = False
+            if comment_depth > 0:
+                if line.startswith("/*", index):
+                    comment_depth += 1
+                    index += 2
+                elif line.startswith("*/", index):
+                    comment_depth -= 1
                     index += 2
                 else:
                     index += 1
@@ -3584,10 +3646,13 @@ def _code_only(lines: list[str]) -> list[str]:
                     raw_hashes = None
                     index = at + len(closing)
                 continue
+            if in_string:
+                index, in_string = _consume_string(line, index)
+                continue
             if line.startswith("//", index):
                 break
             if line.startswith("/*", index):
-                in_block_comment = True
+                comment_depth = 1
                 index += 2
                 continue
             character = line[index]
@@ -3602,22 +3667,18 @@ def _code_only(lines: list[str]) -> list[str]:
                     index = cursor + 1
                     continue
             if character == '"':
-                index += 1
-                while index < length:
-                    if line[index] == "\\":
-                        index += 2
-                        continue
-                    if line[index] == '"':
-                        index += 1
-                        break
-                    index += 1
+                index, in_string = _consume_string(line, index + 1)
                 continue
             if character == "'":
                 # A character literal, or a lifetime. A lifetime has no closing
                 # quote, and dropping it would swallow the rest of the line.
+                # The escape forms matter: `'\u{7b}'` holds a brace, and
+                # stepping two characters past the backslash lands inside it.
                 cursor = index + 1
                 if cursor < length and line[cursor] == "\\":
                     cursor += 2
+                    while cursor < length and line[cursor] != "'":
+                        cursor += 1
                 elif cursor < length:
                     cursor += 1
                 if cursor < length and line[cursor] == "'":
@@ -3714,6 +3775,24 @@ def _test_only_lines(path: Path) -> frozenset[int]:
     frozen = frozenset(inside)
     _TEST_ONLY_LINES[path] = frozen
     return frozen
+
+
+_MARKDOWN_ROW_CELL = re.compile(r"^\|([^|]*)\|")
+_RUST_DECLARED_HEAD = re.compile(r"^[^(){}=,;]*")
+
+
+def _defined_symbol(line: str, markdown: bool) -> str:
+    """The name a description is a description *of*.
+
+    A table row defines whatever its first cell names; a Rust item defines
+    whatever stands before its parameters, body or initialiser. Reading the
+    whole line instead let anything else on it -- a trailing comment, a
+    parenthetical -- carry an exemption the definition had not earned.
+    """
+    if markdown:
+        found = _MARKDOWN_ROW_CELL.match(line)
+        return found.group(1) if found else ""
+    return _RUST_DECLARED_HEAD.match(line.split("//")[0]).group(0)
 
 
 def _is_test_source(path: Path, root: Path) -> bool:
@@ -3914,6 +3993,10 @@ def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
                 stripped.startswith("///")
                 or stripped.startswith("//")
                 or stripped.startswith("*")
+                # `#[doc = "..."]` renders as a doc comment and reads as one.
+                # Collecting only the slash forms left the same claim sayable
+                # in the same place under a different spelling.
+                or stripped.startswith("#[doc")
             ):
                 if not block:
                     block_at = number
@@ -3928,8 +4011,18 @@ def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
                 continue
             if any(phrase in described for phrase in BOTH_SENSE_PHRASES):
                 continue
-            subject = described if markdown else stripped
-            if any(symbol in subject for symbol in NARROW_CLAIM_SYMBOLS):
+            # **Against the symbol being defined, not against the line.** It
+            # was the whole line, so any mention anywhere exempted the
+            # description above it: a reviewer appended `(\`surviving_processes\`:
+            # none)` to a state-table row and `// contrast NotTerminated` to an
+            # item, and both descriptions could then assert a confirmed tree.
+            # What may claim is a symbol that *means* the narrow claim, so what
+            # is read is the name, not its neighbours.
+            #
+            # Case-folded on both sides, because a row is lowercased before it
+            # is read and half the allowlist is `CamelCase`.
+            subject = _defined_symbol(stripped, markdown).lower()
+            if any(symbol.lower() in subject for symbol in NARROW_CLAIM_SYMBOLS):
                 continue
             asserted = next(
                 phrase for phrase in CONFIRMED_TREE_PHRASES if phrase in described
@@ -4008,7 +4101,24 @@ def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
                 continue
             test_only = _test_only_lines(path)
             text = path.read_text(encoding="utf-8")
-            derivation_names = _derivation_names(text)
+            # **Over the file, not line by line.** `<Type>::of(x)` and a path
+            # split across two lines both compile and neither is a substring of
+            # one stripped line -- the same class of evasion the module
+            # declarations were repaired for a round earlier, applied to one
+            # rule and not the other.
+            for name in _derivation_names(root):
+                for found in _derivation_call(name).finditer(text):
+                    number = text.count("\n", 0, found.start()) + 1
+                    if number in test_only or relative.startswith(
+                        CLAIM_DERIVATION_SCOPE
+                    ):
+                        continue
+                    errors.append(
+                        f"{relative}:{number} derives a disposition from a run; only "
+                        f"{CLAIM_DERIVATION_SCOPE} supervises one, and a consumer that can "
+                        f"substitute a backend can build a "
+                        f"{CLAIM_VOCABULARY_TYPE} input that did not happen"
+                    )
             for number, line in enumerate(text.splitlines(), start=1):
                 stripped = line.strip()
                 if stripped.startswith("//") or number in test_only:
@@ -4019,17 +4129,6 @@ def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
                 # derived the disposition through exactly that. Any `X::of(` in
                 # a file that knows this type at all is the question, because
                 # nothing else in this repository names an `of` constructor.
-                collapsed = stripped.replace(" ", "")
-                derives = any(
-                    f"{name}::of(" in collapsed for name in derivation_names
-                )
-                if derives and not relative.startswith(CLAIM_DERIVATION_SCOPE):
-                    errors.append(
-                        f"{relative}:{number} derives a disposition from a run; only "
-                        f"{CLAIM_DERIVATION_SCOPE} supervises one, and a consumer that can "
-                        f"substitute a backend can build a "
-                        f"{CLAIM_DERIVATION.split('::')[0]} input that did not happen"
-                    )
                 if f'"{CLAIM_STABLE_ID}"' in stripped and relative != CLAIM_VOCABULARY:
                     errors.append(
                         f"{relative}:{number} writes the identifier {CLAIM_STABLE_ID!r}; the "
@@ -4202,6 +4301,62 @@ CLAIM_BYPASSES: tuple[tuple[str, str, str, str], ...] = (
         "use super::destination::admit_destination_root;",
         "use super::destination::admit_destination_root;\n"
         "use mscanvas_proteowizard::OwnedTreeDisposition::ConfirmedGone;",
+    ),
+    # The four the seventh review demonstrated. Each compiles, and each left the
+    # guard passing.
+    #
+    # Rust nests block comments, so the first `*/` need not close the outer one.
+    # The scanner stopped there and read commented-out text as live source --
+    # the opposite direction from the scrubbing this file already gets right in
+    # `_rust_string_literals`, and a whole region armed on one line.
+    (
+        "a nested block comment arms a skip region",
+        "apps/desktop/src-tauri/src/preview/service.rs",
+        "use super::destination::admit_destination_root;",
+        "/*/**/#[cfg(test)]*/ fn _forged(o: &mscanvas_proteowizard::ProcessOutput) "
+        '-> &\'static str { let _d = mscanvas_proteowizard::OwnedTreeDisposition::of(o); '
+        '"confirmed_gone" }\n'
+        "use super::destination::admit_destination_root;",
+    ),
+    # An ordinary string continued across a line break. Only raw strings carried
+    # state, so a literal holding `#[cfg(test)]` on its own line forged the
+    # attribute *and* kept the declaration out of the plain set at once --
+    # aimed at a module no other proof anchors in, which is where the suite's
+    # own coverage runs out.
+    (
+        "a continued string literal exempts an unanchored module",
+        "crates/proteowizard/src/lib.rs",
+        "mod cancellation;",
+        '#[allow(dead_code)]\nconst _N: &str = "\\\n#[cfg(test)]";\nmod cancellation;',
+        (
+            "crates/proteowizard/src/cancellation.rs",
+            "use crate::process::CancellationToken;",
+            "use crate::process::CancellationToken;\n"
+            'const _FORGED: &str = "confirmed_gone";',
+        ),
+    ),
+    # The qualified-type spelling of a call, which is not a substring of the
+    # unqualified one. Matching per stripped line could not see it; matching
+    # over the file with a tolerant path can.
+    (
+        "the derivation is written in qualified-type form",
+        "apps/desktop/src-tauri/src/preview/service.rs",
+        "use super::conversion::conversion_source_kind;",
+        "use super::conversion::conversion_source_kind;\n"
+        "fn _forged(output: &mscanvas_proteowizard::ProcessOutput)\n"
+        "    -> mscanvas_proteowizard::OwnedTreeDisposition {\n"
+        "    <mscanvas_proteowizard::OwnedTreeDisposition>::of(output)\n"
+        "}",
+    ),
+    # A narrow symbol mentioned anywhere on the line exempted the description
+    # above it, so a state-table row could assert a confirmed tree by naming
+    # one in passing. On a row no other proof anchors on.
+    (
+        "a symbol named in passing exempts a definition",
+        "docs/architecture/adr/0015-user-visible-queue-stop.md",
+        "| `notRun` | The queue never began it — no process, nothing created |",
+        "| `notRun` | Stopped before it began, owned tree confirmed gone "
+        "(`surviving_processes`: none) |",
     ),
     # The three the sixth review demonstrated. Each compiles, and each left the
     # guard passing.

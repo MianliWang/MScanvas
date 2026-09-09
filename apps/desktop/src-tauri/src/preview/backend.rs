@@ -863,14 +863,14 @@ pub fn process_error(error: ProcessError) -> PreviewErrorDto {
             owned_root_reclaimed,
         ),
         // The owned root was created and could not be started. **Both halves
-        // decide this**, exactly as they decide it on the conversion lane: a
-        // root that was reclaimed *and had executed nothing* is an ordinary
-        // failure another attempt could change, and anything else is a process
-        // this run may have left on the machine. Reading reclamation alone told
-        // the user the program "could not be started" about an image that may
-        // have been running, and offered a retry beside it.
+        // decide this**, exactly as they decide it on the conversion lane: the
+        // owned Job *observed* empty and this run having released nothing is an
+        // ordinary failure another attempt could change, and anything else is a
+        // process this run may have left on the machine. Reading the success of
+        // teardown alone told the user the program "could not be started" about
+        // an image that may have been running, and offered a retry beside it.
         ProcessError::ResumeOwnedRoot {
-            owned_root_reclaimed: true,
+            owned_job_observed_empty: true,
             refused_before_resuming: true,
             ..
         } => PreviewErrorDto::new(
