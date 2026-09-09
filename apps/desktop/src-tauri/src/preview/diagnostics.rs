@@ -315,6 +315,9 @@ impl ConversionFailureDiagnosticTicket {
         let outcome = report.group_outcome();
         let detailed_outcome = report.refusal_id();
         let backend = report.backend_facts();
+        // Read here, while the report is still borrowed, for the same reason
+        // the counts below are: the settlement is taken mutably further down.
+        let validation_mode = report.validation_mode();
         let facts = OutputSetDiagnosticFacts {
             max_members: MAX_CONVERSION_OUTPUTS_PER_SOURCE,
             member_count: report.members().len(),
@@ -348,7 +351,9 @@ impl ConversionFailureDiagnosticTicket {
             detailed_outcome,
             refusal: None,
             refusal_detail: None,
-            validation_mode: None,
+            // The set report states it in its own right, so a refused member's
+            // diagnostic says what contract it was refused under.
+            validation_mode: Some(validation_mode),
             validation: None,
             backend,
             cancellation: None,

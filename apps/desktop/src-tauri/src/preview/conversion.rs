@@ -506,6 +506,21 @@ impl PartialFinalization {
 }
 
 impl WorkspaceMultiOutputConversionReport {
+    /// The judgement this family's outputs are read under.
+    ///
+    /// Stated rather than read from a member, so a run with no validated member
+    /// still says what kind of judgement it got -- which is exactly the run a
+    /// reader most needs it for. It is a constant because a backend-named set
+    /// is admitted only for a bundle acquisition, and a bundle has no mzML
+    /// reading to compare an output against.
+    ///
+    /// One origin, because the wire and the saved diagnostic must not answer
+    /// this differently: the export used to write `null` here while the queue
+    /// row said `output_only`.
+    pub(super) const fn validation_mode(&self) -> ValidationMode {
+        ValidationMode::OutputOnly
+    }
+
     /// Builds a report from the lifecycle's own, adding only what the session
     /// knows and the crate cannot: which dataset this was, what family it was
     /// admitted as, how many objects that acquisition was bound to, and which
@@ -740,9 +755,7 @@ impl WorkspaceMultiOutputConversionReport {
                     .unwrap_or(u64::MAX),
             }),
             staging_residue: self.residue.map(|residue| residue.stable_id().to_owned()),
-            // Stated rather than read from a member, so a run with no validated
-            // member still says what kind of judgement this family gets.
-            validation_mode: ValidationModeDto::OutputOnly,
+            validation_mode: validation_mode_dto(self.validation_mode()),
             completeness: match self.completeness.as_ref() {
                 None => ConversionSampleCompletenessDto::NotPosed,
                 Some(SciexSampleCompleteness::Established(evidence)) => {

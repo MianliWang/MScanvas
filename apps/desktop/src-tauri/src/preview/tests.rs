@@ -22997,6 +22997,14 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
             "{}: the member states partition the set",
             case.label
         );
+        // Every set failure says what contract its outputs were read under, so a
+        // refused member's diagnostic is not a check of unstated scope. The
+        // export used to write `null` here while the queue row said the mode.
+        assert_eq!(
+            item["validationMode"], "output_only",
+            "{}: the scope of the check reaches the document",
+            case.label
+        );
         if case.detail == Some("multi_output_member_rejected") {
             assert_eq!(
                 set["rejectedCount"], 1,

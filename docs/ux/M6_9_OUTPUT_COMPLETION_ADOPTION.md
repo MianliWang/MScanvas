@@ -274,6 +274,11 @@ and the sentence still does not become "nothing was checked".
 The mode reaches the saved diagnostic beside the record for the same reason. A
 document a user sends on would otherwise say a check failed without saying what
 the output was checked against, on exactly the item where that matters most.
+Both lifecycles answer it from one place each: the single-output report from the
+plan's source, and the set report from a stated constant, because a
+backend-named set is admitted only for a bundle acquisition and a bundle has no
+mzML reading to compare against. The projection and the export read the same
+function, so they cannot say different things.
 
 **A refused output is not an unchecked one.** A run whose output failed the
 contract retains no validation record — the record travels with a finalization,
@@ -417,7 +422,7 @@ and the M7/M8 seams it freezes), `0016` (the adoption relation this records),
 
 ## Validation
 
-Local gates at this head: frontend lint, typecheck, 1677 tests
+Local gates at this head: frontend lint, typecheck, 1678 tests
 across 70 files, build; `cargo fmt --all --check`; `cargo clippy
 --locked --workspace --all-targets --all-features -- -D warnings`; `cargo test
 --locked --workspace --all-targets` (1554 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.

@@ -525,6 +525,37 @@ describe("the five judgements of one queue item", () => {
     ).toBeVisible();
   });
 
+  it("states the scope for a set that discovered one member and refused it", async () => {
+    // One discovered member means one output, so the item takes the singular
+    // sentence rather than the set one. The scope has to survive that branch
+    // too: it comes from the set report, which states it whatever became of
+    // its members.
+    const refused = refusedSet("file-13", ["rejected"]);
+    const api = terminalApi(
+      [
+        sciexQueueItem("file-13", "Enolase_single.wiff", {
+          state: "failed",
+          attempts: 1,
+          retryable: false,
+          result: { kind: "outputSet", report: refused },
+          ...failedAttemptFacts(true, "000000000000000100000000000000e2"),
+        }),
+      ],
+      [bundle],
+    );
+    renderApp(api);
+    const result = await queueResult();
+
+    const details = openDetails(rowFor(result, "Enolase_single.wiff"));
+    expect(details.textContent).toContain("Output-only.");
+    expect(
+      within(details).getByText(
+        /The output did not pass this contract and was discarded rather than published\./,
+      ),
+    ).toBeVisible();
+    expect(details.textContent).not.toContain("Nothing was checked");
+  });
+
   it("never calls a refused member \"the output\" when the item had three", async () => {
     // The ordinary refusal: the *first* member is the one that fails, so no
     // member has a validation record at all. The mode is therefore unavailable
