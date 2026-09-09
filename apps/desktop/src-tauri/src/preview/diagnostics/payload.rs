@@ -29,14 +29,21 @@ const SCHEMA: &str = "mscanvas.conversion-diagnostics";
 
 /// Incremented when a field changes meaning or leaves, never for an addition.
 ///
-/// Three since M6.9, and the increment is earned rather than decorative:
+/// **Four since M6.9's release review**, for a second field that changed
+/// meaning: `cancellation.processLaunched` became nullable. It was derived from
+/// whether process facts came back, so a stop the boundary could not confirm
+/// reported `false` -- no process launched -- beside a `process` judgement of
+/// `indeterminate`, which says exactly that this was not established. A boolean
+/// cannot hold "unknown", so the field now holds `null` there.
+///
+/// Three before that, and that increment was earned too:
 /// `cancellation.partialOutputObserved` **left**. It was a boolean over an
 /// optional observation, so it answered `false` both for a staging area read
 /// and found empty and for one that could not be read at all -- and a reader
 /// given `false` could not tell the two apart. What replaced it is the item's
 /// own `stagedOutput`, which is a typed four-way answer and is present for
 /// every item rather than only for the ones a stop reached.
-const SCHEMA_VERSION: u64 = 3;
+const SCHEMA_VERSION: u64 = 4;
 
 /// The redaction contract this file's excerpts were produced under.
 const REDACTION_SCHEMA: &str = "mscanvas.path-redaction";
@@ -145,7 +152,13 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
     }
     match ticket.cancellation {
         Some(cancellation) => item.object("cancellation", |written| {
-            written.boolean("processLaunched", cancellation.process_launched);
+            // `null` where the boundary could not say, exactly as the wire
+            // carries it. A `false` here would be the export asserting what the
+            // stop itself refused to assert.
+            match cancellation.process_launched {
+                Some(launched) => written.boolean("processLaunched", launched),
+                None => written.null("processLaunched"),
+            }
             written.boolean("terminationRequested", true);
             written.string("ownedTree", cancellation.owned_tree.stable_id());
             written.number(

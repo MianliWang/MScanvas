@@ -277,7 +277,7 @@ fn stopped_attempt_facts() -> AttemptFacts {
     AttemptFacts {
         process: mscanvas_proteowizard::ProcessAttemptOutcome::Indeterminate,
         staged: mscanvas_proteowizard::StagedOutputEvidence::Observed(
-            mscanvas_proteowizard::StagedObservationPhase::BackendSettled,
+            mscanvas_proteowizard::StagedObservationPhase::ProviderReturned,
             mscanvas_proteowizard::StagedContentObservation::observed_for_test(1, 0, true),
         ),
         // A fixture cannot mint one: the constructor is crate-private, which is
@@ -12644,7 +12644,7 @@ fn a_confirmed_stop_cancels_the_running_item_and_runs_no_other() {
         .cancellation
         .as_ref()
         .expect("a stop that reached an attempt says what it established");
-    assert!(facts.process_launched);
+    assert_eq!(facts.process_launched, Some(true));
     assert!(facts.termination_requested);
     assert_eq!(facts.owned_tree, "confirmed_gone");
     // The staged evidence is the item's own, not the stop's: it is answered
@@ -13115,7 +13115,7 @@ fn a_real_queue_stops_the_running_item_and_starts_no_other() {
         .as_ref()
         .expect("a stop that reached a real attempt says what it established");
     println!("cancellation: {facts:?}");
-    assert!(facts.process_launched);
+    assert_eq!(facts.process_launched, Some(true));
     assert_eq!(facts.owned_tree, "confirmed_gone");
     assert_eq!(facts.staging_residue, None, "no staging was left behind");
     // Nothing was finalized and nothing was left in the folder the user chose,
@@ -17956,7 +17956,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
             attempt: stopped_attempt_facts(),
             set: None,
             facts: CancellationFacts {
-                process_launched: true,
+                process_launched: Some(true),
                 // Earned rather than written. The affirmative member cannot be
                 // named outside the crate that decides it, so even a fixture
                 // has to present a run that reaches it -- which is the whole
@@ -18019,7 +18019,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
             attempt: stopped_attempt_facts(),
             set: None,
             facts: CancellationFacts {
-                process_launched: true,
+                process_launched: Some(true),
                 owned_tree: mscanvas_proteowizard::OwnedTreeDisposition::Unconfirmed,
                 elapsed: Duration::from_millis(7),
                 termination: None,
@@ -22134,7 +22134,7 @@ fn a_confirmed_stop_cancels_the_running_set_item() {
         .cancellation
         .as_ref()
         .expect("the cancelled item says what the stop established");
-    assert!(cancellation.process_launched);
+    assert_eq!(cancellation.process_launched, Some(true));
     assert_eq!(cancellation.owned_tree, "confirmed_gone");
     assert!(
         matches!(
@@ -29263,7 +29263,7 @@ fn a_cancelled_item_that_launched_nothing_says_so_rather_than_claiming_a_tree() 
             attempt: stopped_attempt_facts(),
             set: None,
             facts: CancellationFacts {
-                process_launched: false,
+                process_launched: Some(false),
                 owned_tree: mscanvas_proteowizard::OwnedTreeDisposition::NoneLaunched,
                 elapsed: Duration::from_millis(1),
                 termination: Some(mscanvas_proteowizard::Termination::NotStarted),
@@ -29290,7 +29290,7 @@ fn a_cancelled_item_that_launched_nothing_says_so_rather_than_claiming_a_tree() 
         .as_ref()
         .expect("a reached stop reports what it established");
     assert_eq!(facts.owned_tree, "none_launched");
-    assert!(!facts.process_launched);
+    assert_eq!(facts.process_launched, Some(false));
     assert_eq!(facts.termination.as_deref(), Some("not_started"));
     // And the session is not quarantined: nothing of this attempt's can survive.
     assert!(!update.backend_quarantined);
@@ -29465,7 +29465,7 @@ fn ending_the_running_item_settles_it_and_lets_the_queue_convert_the_next() {
         .as_ref()
         .expect("a reached stop reports what it established");
     assert_eq!(facts.owned_tree, "confirmed_gone");
-    assert!(facts.process_launched);
+    assert_eq!(facts.process_launched, Some(true));
     assert!(facts.termination_requested);
     // And the queue carried on: the item behind it really converted, the queue
     // ran to its own end, and the session is not quarantined.
@@ -29740,7 +29740,7 @@ fn two_failed_items_differ_on_the_wire_by_what_they_staged() {
             staged_item.staged
         );
     };
-    assert_eq!(phase, "backend_settled");
+    assert_eq!(phase, "provider_returned");
     assert_eq!(entry_count, 1);
     assert!(non_empty_file_observed);
     let ConversionStagedOutputDto::Observed {
@@ -30154,14 +30154,14 @@ fn the_exported_diagnostics_are_version_three_and_say_what_was_staged() {
     export_diagnostics(&service, &operation, &saved).expect("a failed item is diagnosable");
     let document = read_export(&saved);
 
-    assert_eq!(document["version"], 3);
+    assert_eq!(document["version"], 4);
     assert_eq!(document["schema"], "mscanvas.conversion-diagnostics");
     let item = &document["items"][0];
 
     // The judgement the increment is about, written for every item rather than
     // only for one a stop reached.
     assert_eq!(item["stagedOutput"]["kind"], "observed");
-    assert_eq!(item["stagedOutput"]["phase"], "backend_settled");
+    assert_eq!(item["stagedOutput"]["phase"], "provider_returned");
     assert_eq!(item["stagedOutput"]["entryCount"], 1);
     assert_eq!(item["stagedOutput"]["nonEmptyFileObserved"], true);
     // The process, read from the boundary rather than from whether facts came

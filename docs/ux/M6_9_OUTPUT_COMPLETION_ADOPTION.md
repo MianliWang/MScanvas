@@ -47,21 +47,36 @@ moved out and says nothing about what the converter produced. Four phases:
 
 | Phase | When the reading was taken |
 | --- | --- |
-| `provider_not_invoked` | The attempt settled without the provider being invoked at all. The folder exists and nothing was ever handed it. |
-| `backend_settled` | As soon as the backend's own execution settled. The phase at which "did the provider write anything" is answerable. |
+| `provider_not_invoked` | The attempt settled without the converter being called at all. The folder exists and nothing was ever handed it. |
+| `provider_returned` | As soon as the call on the process boundary handed control back — however it handed it back. The earliest point at which "did the provider write anything" is answerable. |
 | `output_refused` | After the output was judged and refused. Validation reads and removes nothing. |
-| `publication_settled` | After publication ran and stopped partway. |
+| `publication_settled` | After publication ran, whether it succeeded, failed outright or stopped partway. |
 
-**A phase never asserts an event that did not happen.** An unplannable command
-and a stop that arrives between creating the working folder and launching are
-both read at `provider_not_invoked`, not at `backend_settled`; a skipped set and
-a set refused after discovery published nothing, so neither is read at
-`publication_settled`.
+**A phase names when the reading was taken, never an event that did not
+happen.** The middle one is called `provider_returned` and not "the backend
+settled" for exactly that reason: a launch that may have created nothing and a
+capture that failed both reach it, and those are the paths where the process
+judgement deliberately refuses to name an execution. Naming one there would put
+the claim back a field away.
+
+An unplannable command is read at `provider_not_invoked`. A skipped set and a
+set refused after discovery published nothing, so neither is read at
+`publication_settled`; a member the integrity judgement refused is read at
+`output_refused`, the same word the single-output lifecycle uses for the same
+event.
 
 **A zero-byte staged file is an entry and is not an output document.** It counts
 in `entryCount` and does not earn `nonEmptyFileObserved`, which is the only
 content claim a run makes about itself. An entry that is neither a file nor a
 directory is counted the same way and is never given a byte length.
+
+**The reading is bounded.** A backend that filled the working folder must not
+make a *failure* pay for enumerating all of it — discovery already refuses an
+over-large set without walking it, and an observation taken on that very refusal
+that read the whole directory would hand the bound straight back. So the
+enumeration stops at twice the lifecycle's output bound and says so: the counts
+become lower bounds, and the row reads "held more than N entries… MSCanvas
+stopped counting rather than reading all of them."
 
 **Observation is evidence and only evidence.** It decides nothing removed,
 replaces no primary failure, changes no termination judgement and authorises no
@@ -95,11 +110,16 @@ process boundary**, and nowhere else. Not on first read, not on completion, and
 never derived from the output's filename or the queue position — two runs of one
 plan into one folder produce one filename and are two runs.
 
-An attempt that settles ahead of the launch has none. That is the whole of what
-keeps a refusal, a skip, a not-run row or a stop that beat the process from
-reading as a run that happened, and it is enforced by construction: the
-constructor is crate-private, so no consumer can stamp one onto an attempt that
-never reached a provider.
+**An attempt has one exactly when the command reached the process boundary**,
+and the line is stated precisely because it is easy to state loosely. A skip, a
+refusal that never built a command and a stop observed before the call all carry
+none. A stop the boundary answered by creating nothing does carry one: the call
+was made and returned, and what it returned — that no process was created — is
+the process judgement's to say rather than this one's. So the identity names the
+attempt, not the process.
+
+It is enforced by construction: the constructor is crate-private, so no consumer
+can stamp one onto an attempt that never reached the boundary.
 
 The form is a fixed-width 32-character lowercase hex value: a per-process nonce
 beside a monotonic counter, rendered through a bijection so the low half is not
@@ -171,6 +191,13 @@ Output-only stays output-only however many properties passed. `inapplicable`
 stays distinct from `unverified`. Nothing on this surface says fully verified,
 lossless or vendor-faithful.
 
+**A publication failure is not an unchecked run either.** A rename that did not
+land, and a name something else took during the run, both happen strictly after
+the judgement returned a valid output — and neither retains the record, because
+the record travels with a finalization. The row says the output was checked and
+passed and that giving it its final name is what failed, rather than reporting a
+run nobody checked.
+
 **A refused output is not an unchecked one.** A run whose output failed the
 contract retains no validation record — the record travels with a finalization,
 and there was none — so the naive reading of an absent record is "nothing was
@@ -234,8 +261,17 @@ uselessness.
 
 ## Diagnostics schema
 
-`SCHEMA_VERSION` moves from 2 to 3, and the increment is earned rather than
-decorative: `cancellation.partialOutputObserved` **left**. It was a boolean over
+`SCHEMA_VERSION` moves from 2 to 4, and both increments are earned rather than
+decorative.
+
+**3 → 4**: `cancellation.processLaunched` became nullable. It was derived from
+whether process facts came back, so a stop the boundary could not confirm
+reported `false` — no process launched — beside a `process` judgement of
+`indeterminate`, which says exactly that this was not established. Two fields of
+one item answering the same question in opposite directions is the defect the
+five judgements exist to prevent, and a boolean cannot hold "unknown".
+
+**2 → 3**: `cancellation.partialOutputObserved` **left**. It was a boolean over
 an optional observation, so it answered `false` both for a working folder read
 and found empty and for one that could not be read at all. What replaced it is
 the item's own `stagedOutput`, present for every item rather than only for the
@@ -300,7 +336,7 @@ and the M7/M8 seams it freezes), `0016` (the adoption relation this records),
 Local gates at this head: frontend lint, typecheck, 1672 tests
 across 70 files, build; `cargo fmt --all --check`; `cargo clippy
 --locked --workspace --all-targets --all-features -- -D warnings`; `cargo test
---locked --workspace --all-targets` (1548 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.
+--locked --workspace --all-targets` (1549 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.
 
 ### Rendered QA
 

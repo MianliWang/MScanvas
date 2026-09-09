@@ -1598,7 +1598,7 @@ fn run_bound_multi_output(
         // launching settles here with no identity and nothing attempted, and
         // naming a backend that settled would assert an execution.
         let phase = if identity.is_some() {
-            StagedObservationPhase::BackendSettled
+            StagedObservationPhase::ProviderReturned
         } else {
             StagedObservationPhase::ProviderNotInvoked
         };
@@ -1624,7 +1624,7 @@ fn run_bound_multi_output(
             // to be removed, so this is the last place the fact exists.
             let evidence = SetAttemptEvidence {
                 staged: StagedOutputEvidence::of(
-                    StagedObservationPhase::BackendSettled,
+                    StagedObservationPhase::ProviderReturned,
                     super::observe_staged_content(&staging_output),
                 ),
                 identity,
@@ -1695,6 +1695,15 @@ fn run_bound_multi_output(
             StagedObservationPhase::PublicationSettled,
             super::observe_staged_content(&staging_output),
         ),
+        // A member was judged and refused. The same event as the single-output
+        // lifecycle's rejection, so it carries the same phase word: two rows
+        // describing one thing must not describe it differently.
+        MultiOutputOutcome::RefusedBeforePublication(MultiOutputFailure::MemberRejected {
+            ..
+        }) => StagedOutputEvidence::of(
+            StagedObservationPhase::OutputRefused,
+            super::observe_staged_content(&staging_output),
+        ),
         // Nothing was published: the set stepped aside because every one of its
         // names was occupied, or it was refused after discovery and before any
         // name was taken. Naming a publication phase would assert one that did
@@ -1702,7 +1711,7 @@ fn run_bound_multi_output(
         // left in the directory.
         MultiOutputOutcome::SkippedExistingDestinations
         | MultiOutputOutcome::RefusedBeforePublication(_) => StagedOutputEvidence::of(
-            StagedObservationPhase::BackendSettled,
+            StagedObservationPhase::ProviderReturned,
             super::observe_staged_content(&staging_output),
         ),
     };

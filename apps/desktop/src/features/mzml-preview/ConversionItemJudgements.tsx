@@ -52,17 +52,20 @@ const TERMINATION_LABEL: Record<string, string> = {
  */
 const STAGED_PHASE_LABEL: Record<string, string> = {
   provider_not_invoked: "before any converter was invoked",
-  backend_settled: "when the converter finished",
+  provider_returned: "when MSCanvas got control back from the converter",
   output_refused: "after the output was checked and refused",
   publication_settled: "after publication finished",
 };
 
 /** Why one adoption refusal happened, in the user's terms. */
 const ADOPTION_REFUSAL_LABEL: Record<string, string> = {
-  output_missing: "no longer in the destination folder",
-  output_changed: "changed since it was converted",
-  output_unreadable: "could not be read",
-  output_not_mzml: "is no longer a readable mzML file",
+  output_missing: "it is no longer in the destination folder",
+  output_changed: "it changed since it was converted",
+  output_unreadable: "it could not be read",
+  output_not_mzml: "it is no longer a readable mzML file",
+  // The one reason that is not about the file. It is why the sentence carries
+  // its own subject: "each the workspace is full" is what a shared prefix
+  // produced, and it shipped.
   workspace_full: "the workspace is full",
 };
 
@@ -79,7 +82,10 @@ export function processSentence(process: ConversionProcessOutcome): string {
     case "notAttempted":
       return "No converter was started for this item.";
     case "indeterminate":
-      return "A converter was started and MSCanvas could not establish how it ended.";
+      // Not "a converter was started". This arm covers a launch that may have
+      // created nothing at all, so asserting one would manufacture the very
+      // process fact the arm exists to withhold.
+      return "MSCanvas asked for a converter and could not establish whether one ran or how it ended.";
     case "settled": {
       const ending = TERMINATION_LABEL[process.termination] ?? process.termination;
       if (process.termination === "not_started") {
@@ -96,8 +102,9 @@ export function processSentence(process: ConversionProcessOutcome): string {
  * What the private staging area held.
  *
  * Four answers and not a boolean. "Could not be read" is unknown rather than
- * empty, and "never created" is a third thing again — an item refused before a
- * staging area existed never gave the converter anywhere to write.
+ * empty, and "no folder was available" is a third thing again — an item that
+ * never gave the converter anywhere to write, whether because none was made or
+ * because one was made and torn down before anything was invoked.
  */
 export function stagedSentence(staged: ConversionStagedOutput): string {
   switch (staged.kind) {
@@ -117,14 +124,33 @@ export function stagedSentence(staged: ConversionStagedOutput): string {
       if (staged.entryCount === 0) {
         return `The temporary working folder was empty ${when}.`;
       }
+      // A reading that stopped at its bound counted at least this many and did
+      // not walk the rest. Saying the exact number would be a total this
+      // observation deliberately did not take.
+      if (staged.bounded) {
+        return `The temporary working folder held more than ${formatCount(
+          staged.entryCount - 1,
+        )} entries ${when}. MSCanvas stopped counting rather than reading all of them.`;
+      }
       const entries = `${formatCount(staged.entryCount)} ${
         staged.entryCount === 1 ? "entry" : "entries"
       }`;
+      // The directory count is part of the observed shape and was being
+      // dropped: a folder holding one subdirectory read exactly like one
+      // holding one zero-byte file. What kind of thing was left behind is
+      // something the reader has to go and look at.
+      const directories =
+        staged.directoryCount === 0
+          ? ""
+          : ` ${formatCount(staged.directoryCount)} of them ${
+              staged.directoryCount === 1 ? "is a folder" : "are folders"
+            }.`;
       // "Held bytes" rather than "an output": a staged file with content is not
       // a valid document, and this surface has no judgement that says it is.
-      return staged.nonEmptyFileObserved
-        ? `The temporary working folder held ${entries} ${when}, at least one of them a file with content.`
-        : `The temporary working folder held ${entries} ${when}, none of them a file with content.`;
+      const content = staged.nonEmptyFileObserved
+        ? "at least one of them a file with content"
+        : "none of them a file with content";
+      return `The temporary working folder held ${entries} ${when}, ${content}.${directories}`;
     }
     case "published":
       return "What was written to the temporary working folder took its final name.";
@@ -181,15 +207,24 @@ export function integritySentence(
   validation: ConversionValidation | null,
   perOutput = false,
   refused = false,
+  passedThenUnpublished = false,
 ): string {
   if (validation === null) {
     // The one failure the integrity judgement *causes* must not report that no
     // judgement happened. A refused output was read, judged and discarded, and
     // saying nothing was checked there is the collapse this whole surface
     // exists to undo.
-    return refused
-      ? "The output was checked against this source posture's contract, did not pass, and was discarded rather than published."
-      : "Nothing was checked, because nothing was validated.";
+    if (refused) {
+      return "The output was checked against this source posture's contract, did not pass, and was discarded rather than published.";
+    }
+    // Nor may a publication that failed *after* the check report that no check
+    // happened. The record travels with a finalization and there was none, so
+    // the properties are gone — but the judgement ran and passed, and the
+    // surface says which of the two happened rather than denying both.
+    if (passedThenUnpublished) {
+      return "The output was checked and passed. What failed was giving it its final name, so its detailed result was not kept.";
+    }
+    return "Nothing was checked, because nothing was validated.";
   }
   const scope =
     validation.mode === "source_comparison"
@@ -224,8 +259,15 @@ export function adoptionSentence(
       // An item that finalized files and is still not offered was refused by a
       // policy, not by having produced nothing. Attributing the refusal to
       // production would contradict the finalized line directly above it.
+      // Three different things make a finalized item unofferable — a set that
+      // published only part of itself, one whose sample completeness was never
+      // established, and one whose retained objects could not be paired with
+      // its members — and only the first is "incomplete". Saying so of all
+      // three would answer an unestablished question with a negative, which is
+      // the collapse this whole surface exists to undo. What is true of all
+      // three is that no complete output set is available to add.
       return finalizedSomething
-        ? "Not offered. What this item finalized is not a complete output set, and MSCanvas will not add a partial one as though it were the acquisition's. Those files remain in the destination folder."
+        ? "Not offered: MSCanvas has no complete output set to add for this item. What it did finalize remains in the destination folder and can be added later with Add files…."
         : "This item produced nothing that could be added to the workspace.";
     case "notRequested":
       return "Not added yet. Adding outputs to the workspace is something you ask for.";
@@ -239,24 +281,18 @@ export function adoptionSentence(
       // identity check and a full workspace are independent answers — so the
       // reasons are named as the set they are rather than the first one being
       // spoken for all of them.
+      // Each reason carries its own subject, so a list of them reads whether
+      // there is one or several and whether or not the reason is about the
+      // file. An identifier this surface has no sentence for is shown as
+      // itself: inventing one would name a reason MSCanvas did not give.
       const reasons: string[] = [];
       for (const refusal of adoption.refusals) {
-        // An identifier this surface has no sentence for is shown as itself.
-        // Inventing "could not be verified" would name a reason MSCanvas did
-        // not give, which is the one thing a refusal must not do.
-        const said = ADOPTION_REFUSAL_LABEL[refusal] ?? `was refused: ${refusal}`;
+        const said = ADOPTION_REFUSAL_LABEL[refusal] ?? `it was refused: ${refusal}`;
         if (!reasons.includes(said)) {
           reasons.push(said);
         }
       }
-      const why =
-        reasons.length === 0
-          ? ""
-          : reasons.length === 1
-            ? ` Not added because ${
-                adoption.refusals.length === 1 ? "it" : "each"
-              } ${reasons[0] ?? ""}.`
-            : ` Not added because: ${reasons.join("; ")}.`;
+      const why = reasons.length === 0 ? "" : ` Not added because ${reasons.join("; and ")}.`;
       return `When outputs were last added: ${parts.join(", ")}.${why}`;
     }
   }
@@ -303,6 +339,23 @@ function integrityRefused(item: ConversionQueueItem): boolean {
     return item.result.report.detailedOutcome === "multi_output_member_rejected";
   }
   return false;
+}
+
+/**
+ * Whether this item's output passed its check and then failed to be published.
+ *
+ * Both identifiers name a failure that happens strictly after the integrity
+ * judgement returned a valid output: the rename did not land, or something
+ * appeared at the final name during the run. The validation record travels with
+ * a finalization, so neither retains one — and neither may be reported as a run
+ * that was never checked.
+ */
+function passedThenUnpublished(item: ConversionQueueItem): boolean {
+  if (item.result?.kind !== "single") {
+    return false;
+  }
+  const { outcome } = item.result.report;
+  return outcome === "output_not_finalized" || outcome === "destination_appeared_during_run";
 }
 
 /** The validation an item's own judgement sentence is about. */
@@ -406,13 +459,18 @@ export function ConversionItemJudgements({
         <div>
           <dt>Integrity</dt>
           <dd data-testid={`${id}-integrity`}>
-            {integritySentence(validationOf(item), manifest.length > 1, integrityRefused(item))}
+            {integritySentence(
+              validationOf(item),
+              manifest.length > 1,
+              integrityRefused(item),
+              passedThenUnpublished(item),
+            )}
             {advisories.length === 0 ? null : (
               <>
                 {" "}
                 <span className="conversion-item-advisories">
                   {advisories.length === 1
-                    ? `One advisory observation, which fails nothing: ${advisories[0] ?? ""}.`
+                    ? `One kind of advisory observation, which fails nothing: ${advisories[0] ?? ""}.`
                     : `${formatCount(advisories.length)} kinds of advisory observation, which fail nothing: ${advisories.join(", ")}.`}
                 </span>
               </>

@@ -549,7 +549,15 @@ pub(super) struct QueueItem {
 /// What a stop established about one attempt, path-free.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct CancellationFacts {
-    pub(super) process_launched: bool,
+    /// Whether a converter process was created, where the boundary could say.
+    ///
+    /// `None` is not a third shade of `false`: it is the answer for a stop the
+    /// boundary could not confirm, where no process facts came back and the
+    /// process judgement beside this one is `indeterminate`. Reporting `false`
+    /// there said no process launched while the judgement said the opposite was
+    /// unestablished, and a claim about the user's machine may not be produced
+    /// by an absence.
+    pub(super) process_launched: Option<bool>,
     /// What the stop established about this attempt's backend process tree.
     ///
     /// The conversion boundary's own judgement, carried rather than re-decided.
@@ -571,6 +579,7 @@ impl CancellationFacts {
     fn to_dto(self) -> ConversionCancellationDto {
         ConversionCancellationDto {
             process_launched: self.process_launched,
+
             // Always true here: this type exists only for an attempt a stop
             // reached. Carried rather than implied so a reader never infers it.
             termination_requested: true,
@@ -2896,7 +2905,9 @@ pub(super) struct SetStopFacts {
     // conversion boundary's own vocabulary. `Unconfirmed` quarantines the
     /// backend exactly as the single-output path's does.
     pub(super) owned_tree: OwnedTreeDisposition,
-    pub(super) process_launched: bool,
+    /// Whether a converter process was created, where the boundary could say.
+    /// `None` where it could not, which a boolean cannot hold.
+    pub(super) process_launched: Option<bool>,
     pub(super) termination: Option<Termination>,
     pub(super) staging_residue: Option<StagingResidue>,
     pub(super) diagnostics: Option<Box<BackendDiagnosticText>>,

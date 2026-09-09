@@ -7826,7 +7826,7 @@ fn two_ordinary_failures_differ_by_what_they_staged() {
     assert!(observed.non_empty_file_observed());
     assert_eq!(
         staged_something.staged_content().phase(),
-        Some(StagedObservationPhase::BackendSettled),
+        Some(StagedObservationPhase::ProviderReturned),
         "the observation is taken where the evidence exists, not after teardown"
     );
     let empty = staged_nothing
@@ -8085,12 +8085,12 @@ fn an_unreadable_staging_area_is_unknown_rather_than_empty() {
     );
 
     let unknown = StagedOutputEvidence::of(
-        StagedObservationPhase::BackendSettled,
+        StagedObservationPhase::ProviderReturned,
         observe_staged_content(&missing),
     );
     assert_eq!(
         unknown,
-        StagedOutputEvidence::Unobserved(StagedObservationPhase::BackendSettled)
+        StagedOutputEvidence::Unobserved(StagedObservationPhase::ProviderReturned)
     );
     assert_eq!(
         unknown.observation(),
@@ -8104,7 +8104,7 @@ fn an_unreadable_staging_area_is_unknown_rather_than_empty() {
     let empty = directory.path().join("empty");
     fs::create_dir(&empty).expect("create an empty staging area");
     let observed = StagedOutputEvidence::of(
-        StagedObservationPhase::BackendSettled,
+        StagedObservationPhase::ProviderReturned,
         observe_staged_content(&empty),
     );
     assert_eq!(

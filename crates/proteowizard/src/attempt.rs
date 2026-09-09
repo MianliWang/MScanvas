@@ -35,11 +35,16 @@ use crate::process::Termination;
 /// spelling of a fact that already exists, and would change when a retry
 /// produced a different file or when the queue was re-sorted.
 ///
-/// An attempt that settles *before* the provider is invoked has none. That is
-/// the whole of what keeps "a run happened" from being manufactured by a skip,
-/// a pre-launch refusal or a stop that arrived before the launch: those
-/// attempts carry `None`, and no downstream reader can invent one because
-/// nothing outside this module can construct the value.
+/// **An attempt has one exactly when the command reached the process
+/// boundary**, and the line is stated precisely because it is easy to state
+/// loosely. A skip, a refusal that never built a command, and a stop observed
+/// before the call all carry `None`. A stop the boundary answered by creating
+/// nothing does carry one: the call was made and returned, and what it returned
+/// -- that no process was created -- is the process judgement's to say, not
+/// this one's.
+///
+/// So this names the attempt rather than the process, and no downstream reader
+/// can invent one: the constructor is crate-private.
 ///
 /// **The form is persistable and M6 keeps no store of it.** It is a fixed-width
 /// value that renders to a stable 32-character lowercase hex string, so a later
@@ -161,14 +166,22 @@ pub enum StagedObservationPhase {
     ///
     /// The staging area exists -- this run created it -- and nothing was ever
     /// handed it, so a reading here says what was in a directory the converter
-    /// never saw. Distinct from `BackendSettled` because that one names an
+    /// never saw. Distinct from `ProviderReturned` because that one names an
     /// execution that happened, and stamping it on an attempt that reached no
     /// provider would assert one.
     ProviderNotInvoked,
-    /// Taken as soon as the backend's own execution settled, before anything
-    /// was validated, published or removed. The phase at which "did the
-    /// provider write anything" is actually answerable.
-    BackendSettled,
+    /// Taken as soon as the process boundary handed control back, before
+    /// anything was validated, published or removed.
+    ///
+    /// **However it handed control back.** A run that completed and a call that
+    /// returned an error both reach this phase, and the second is why it is not
+    /// called "the backend settled": a launch that may have created nothing and
+    /// a capture that failed are exactly where the process judgement refuses to
+    /// name an execution, and a phase that named one there would put the claim
+    /// back a field away. What it says is when the reading was taken, which is
+    /// the earliest point at which "did the provider write anything" is
+    /// answerable at all.
+    ProviderReturned,
     /// Taken after the staged output was judged and refused. Validation reads
     /// and removes nothing, so this sees what the backend left.
     OutputRefused,
@@ -183,7 +196,7 @@ impl StagedObservationPhase {
     pub const fn stable_id(self) -> &'static str {
         match self {
             Self::ProviderNotInvoked => "provider_not_invoked",
-            Self::BackendSettled => "backend_settled",
+            Self::ProviderReturned => "provider_returned",
             Self::OutputRefused => "output_refused",
             Self::PublicationSettled => "publication_settled",
         }
@@ -209,9 +222,12 @@ pub enum StagedOutputEvidence {
     ///
     /// Two ways that is so, and both mean the same thing to a reader: the
     /// attempt settled before a staging area was created at all, or one was
-    /// created and its own setup failed, in which case teardown removed what it
-    /// had built before anything was invoked. Neither gave a provider anywhere
-    /// to write.
+    /// created and its own setup failed, in which case the area was torn down
+    /// before anything was invoked. Neither gave a provider anywhere to write.
+    ///
+    /// The second case is why this is not "none existed". A directory may have
+    /// been made and removed again; what is established is that no provider was
+    /// ever given one, which is the question this judgement answers.
     ///
     /// Distinct from an observed empty one, and the distinction is real: this
     /// says no provider was ever given a directory, while an observed empty one
@@ -366,6 +382,40 @@ mod tests {
         assert_ne!(first.to_hex(), second.to_hex());
     }
 
+    /// `mix` is a bijection, which is the whole of why rendering the counter
+    /// through it costs no uniqueness.
+    ///
+    /// Each `x ^= x >> k` with `k >= 1` is invertible, and both multipliers are
+    /// odd, so each multiplication is invertible modulo 2^64. Proved here by
+    /// exhaustively checking that no two of a large, structured set of inputs
+    /// collide -- including the consecutive values a session's counter actually
+    /// produces, which is where a non-injective mixer would show first.
+    ///
+    /// The rendering test above cannot stand in for this: the counter is
+    /// process-global and this binary runs its tests in parallel, so two
+    /// identities minted by one test are not adjacent counter values and a
+    /// difference of more than one proves nothing.
+    #[test]
+    fn the_counter_is_rendered_through_a_bijection() {
+        let inputs: std::collections::BTreeSet<u64> = (0..4096u64)
+            .chain((0..64).map(|shift| 1u64 << shift))
+            .chain((0..64).map(|shift| u64::MAX >> shift))
+            .chain((0..1024).map(|step| u64::MAX - step))
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        for value in inputs {
+            assert!(
+                seen.insert(mix(value)),
+                "mix collided at {value}, so rendering the counter through it \
+                 would let two attempts share an identity"
+            );
+        }
+        // Consecutive counter values do not render as consecutive halves, which
+        // is the property that stops the low half being read as a launch
+        // ordinal.
+        assert_ne!(mix(2), mix(1).wrapping_add(1));
+    }
+
     #[test]
     fn every_identity_of_one_session_shares_its_nonce() {
         let first = OperationRunIdentity::mint();
@@ -376,12 +426,12 @@ mod tests {
 
     #[test]
     fn a_failed_observation_is_unknown_rather_than_empty() {
-        let unknown = StagedOutputEvidence::of(StagedObservationPhase::BackendSettled, None);
+        let unknown = StagedOutputEvidence::of(StagedObservationPhase::ProviderReturned, None);
         assert_eq!(unknown.stable_id(), "unobserved");
         assert_eq!(unknown.observation(), None);
         assert_eq!(
             unknown.phase(),
-            Some(StagedObservationPhase::BackendSettled)
+            Some(StagedObservationPhase::ProviderReturned)
         );
         assert_ne!(unknown, StagedOutputEvidence::NotCreated);
     }

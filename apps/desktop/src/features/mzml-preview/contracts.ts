@@ -1037,7 +1037,11 @@ export interface ConversionValidation {
  * read, and read and found empty are three different facts.
  */
 export type ConversionStagedOutput =
-  /** No staging area existed, so there was nothing to observe. */
+  /**
+   * No staging area was available to observe: the converter was never given
+   * anywhere to write, whether because none was made or because one was made
+   * and torn down before anything was invoked.
+   */
   | { readonly kind: "notCreated" }
   /** It existed and could not be read. Unknown, and never empty. */
   | { readonly kind: "unobserved"; readonly phase: string }
@@ -1053,6 +1057,15 @@ export type ConversionStagedOutput =
        * `entryCount` and are deliberately not called output documents.
        */
       readonly nonEmptyFileObserved: boolean;
+      /**
+       * Whether the enumeration stopped at its bound, so the counts are lower
+       * bounds rather than totals.
+       *
+       * `directoryCount` and `nonEmptyFileObserved` are zero and false there
+       * because nothing was classified, not because nothing of that kind was
+       * present.
+       */
+      readonly bounded: boolean;
     }
   /** The staged output took its final name. Not an observation. */
   | { readonly kind: "published" };
@@ -1195,7 +1208,14 @@ export type ConversionOwnedTreeDisposition =
   | "unconfirmed";
 
 export interface ConversionCancellation {
-  readonly processLaunched: boolean;
+  /**
+   * Whether a converter process was created, where the boundary could say.
+   *
+   * `null` for a stop it could not confirm — the item's own `process` judgement
+   * reports `indeterminate` there, and `false` would say no process launched
+   * while that judgement says the opposite is unestablished.
+   */
+  readonly processLaunched: boolean | null;
   readonly terminationRequested: boolean;
   /**
    * What the stop established about this attempt's backend process tree.

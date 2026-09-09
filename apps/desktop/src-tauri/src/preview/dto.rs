@@ -1462,8 +1462,13 @@ pub enum ConversionQueueItemStateDto {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversionCancellationDto {
-    /// Whether a converter process was handed to the process boundary at all.
-    pub process_launched: bool,
+    /// Whether a converter process was created, where the boundary could say.
+    ///
+    /// `null` for a stop it could not confirm: no process facts came back, and
+    /// the item's own `process` judgement reports `indeterminate` there. A
+    /// boolean cannot hold "unknown", and `false` said no process launched
+    /// while the judgement beside it said that was unestablished.
+    pub process_launched: Option<bool>,
     /// Always true for an item a stop reached; carried rather than implied so a
     /// reader never has to infer it from the item state.
     pub termination_requested: bool,
@@ -1786,6 +1791,15 @@ pub enum ConversionStagedOutputDto {
         /// files and entries that are neither a file nor a directory are counted
         /// in `entryCount` and are deliberately not called output documents.
         non_empty_file_observed: bool,
+        /// Whether the enumeration stopped at its bound, so the counts above
+        /// are lower bounds rather than totals.
+        ///
+        /// A directory nothing should have filled is not walked: what a reader
+        /// needs from one is that it was over-full, and the bound answers that
+        /// without the walk. `directoryCount` and `nonEmptyFileObserved` are
+        /// zero and false there because nothing was classified, not because
+        /// nothing of that kind was present.
+        bounded: bool,
     },
     /// The staged output took its final name. Not an observation, and stated as
     /// such: publication is what establishes it.

@@ -5,8 +5,10 @@
 - **Date:** 2026-08-09
 - Amended: 2026-09-08 (M6.8) — the schema moved to **version 2**. A field left,
   so the version moved by the rule this ADR already states.
-- Amended: 2026-09-09 (M6.9) — the schema is at **version 3**, for the same
-  reason a second time. See *One versioned schema* below.
+- Amended: 2026-09-09 (M6.9) — the schema moved to **version 3**, for the same
+  reason a second time.
+- Amended: 2026-09-09 (M6.9's release review) — the schema is at **version 4**.
+  A third field changed meaning. See *One versioned schema* below.
 - **Builds on:** [ADR 0009](0009-mzml-conversion-execution-boundary.md) (the
   execution boundary and its bounded process capture),
   [ADR 0013](0013-serial-conversion-queue.md) (the serial queue),
@@ -215,7 +217,7 @@ different facts.
 ```json
 {
   "schema": "mscanvas.conversion-diagnostics",
-  "version": 3,
+  "version": 4,
   "application": { "name": "MSCanvas", "version": "…" },
   "queue": { "operationId": "…", "terminalReason": "…", "…": "counts" },
   "provider": { "release": "…", "buildDate": "…", "sourceRevision": "…",
@@ -243,6 +245,17 @@ additions beside it — `sampledMaxActiveProcesses`, `totalOwnedProcesses` and
 state identifier `skipped_by_request` — would not have moved it on their own. A reader written
 against version 1 must not read a version 2 file as though the boolean were
 merely absent, which is what the version exists to tell it.
+
+**Amended 2026-09-09 (M6.9's release review): version 3 became version 4.** An
+item's `cancellation.processLaunched` became nullable. It was derived from
+whether `BackendRunFacts` came back, so a stop the boundary could not confirm
+reported `false` -- no process launched -- directly beside the same item's
+`process` judgement of `indeterminate`, which says that this is exactly what was
+not established. Two fields of one item answering one question in opposite
+directions is the defect the five judgements exist to prevent, and a boolean
+cannot hold "unknown", so the field holds `null` there. A reader written against
+version 3 must not read a version 4 file as though the field were always
+present.
 
 **Amended 2026-09-09 (M6.9): version 2 became version 3.** An item's
 `cancellation.partialOutputObserved` boolean was removed. It was a boolean over

@@ -1130,6 +1130,7 @@ pub(super) const fn staged_output_dto(evidence: StagedOutputEvidence) -> Convers
             entry_count: observation.entry_count(),
             directory_count: observation.directory_count(),
             non_empty_file_observed: observation.non_empty_file_observed(),
+            bounded: observation.bounded(),
         },
         StagedOutputEvidence::Published => ConversionStagedOutputDto::Published,
     }

@@ -242,10 +242,11 @@ const CANCELLED_ITEM = {
   process: { kind: "settled", termination: "cancelled", exitCode: null },
   staged: {
     kind: "observed",
-    phase: "backend_settled",
+    phase: "provider_returned",
     entryCount: 1,
     directoryCount: 0,
     nonEmptyFileObserved: true,
+    bounded: false,
   },
   runIdentity: "6f1d3c2b9a480000000000000000002b",
   adoption: { kind: "nothingToAdopt" },

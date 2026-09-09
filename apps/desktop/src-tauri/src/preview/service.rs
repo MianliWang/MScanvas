@@ -4682,7 +4682,10 @@ impl PreviewService {
                 // backend text to be an account of.
                 diagnostics: None,
                 facts: CancellationFacts {
-                    process_launched: report.backend_was_run(),
+                    // A confirmed stop's boundary answered, so this is settled
+                    // either way: a tree existed, or the runner reported that
+                    // no process was created.
+                    process_launched: Some(report.backend_was_run()),
                     // Read from the boundary that decided it. Writing `true`
                     // here would be this side deciding a claim about the user's
                     // machine from the shape of an enum arm, and it is how the
@@ -4718,6 +4721,7 @@ impl PreviewService {
                     diagnostics: facts.diagnostics,
                     facts: CancellationFacts {
                         process_launched: facts.process_launched,
+
                         owned_tree: facts.owned_tree,
                         elapsed,
                         termination: facts.termination,
@@ -4738,7 +4742,13 @@ impl PreviewService {
                 // which to redact them.
                 diagnostics: failure.take_backend_text().map(Box::new),
                 facts: CancellationFacts {
-                    process_launched: failure.backend().is_some(),
+                    // **Unknown, not false.** The boundary could not confirm
+                    // the stop and returned no process facts, so whether a
+                    // process was created is exactly what it could not
+                    // establish — which is what `process` reports beside this
+                    // as `indeterminate`. Deriving `false` from the absent
+                    // facts is the inference this whole judgement refuses.
+                    process_launched: None,
                     // This type exists only where the tree's disappearance could
                     // not be established, so the disposition is not a reading
                     // of anything: it is what the variant means.
@@ -6125,7 +6135,14 @@ fn set_stop_facts(conversion: &mut SciexConversion) -> Option<SetStopFacts> {
     Some(SetStopFacts {
         bound_source_objects: report.bound_source_objects(),
         owned_tree,
-        process_launched: backend.is_some(),
+        // Read from the boundary's own judgement rather than from whether facts
+        // came back: `Indeterminate` is the one answer a boolean cannot hold,
+        // and it is the one this used to render as "no process launched".
+        process_launched: match report.process_outcome() {
+            mscanvas_proteowizard::ProcessAttemptOutcome::NotAttempted => Some(false),
+            mscanvas_proteowizard::ProcessAttemptOutcome::Indeterminate => None,
+            mscanvas_proteowizard::ProcessAttemptOutcome::Settled { .. } => Some(backend.is_some()),
+        },
         termination: backend.map(BackendRunFacts::termination),
         staging_residue: report.residue(),
         // Carried from the lifecycle's own report rather than rebuilt from the

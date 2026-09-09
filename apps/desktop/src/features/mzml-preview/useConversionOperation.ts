@@ -503,6 +503,10 @@ export function useConversionOperation(
   // replacing it: the token decides which reply may install, and this decides
   // that there is only ever one to choose between.
   const stateReadInFlight = useRef(false);
+  /** A read whose news must not be coalesced away, deferred until the current one settles. */
+  const stateReadRequired = useRef(false);
+  /** The re-entry point for that deferred read, assigned once `readState` exists. */
+  const readAgain = useRef<(() => void) | null>(null);
   // Paired with the state below it, and read by every guard: a click handler
   // that read the rendered value could start a second conversion inside the
   // render that has not committed the first one yet.
@@ -711,14 +715,25 @@ export function useConversionOperation(
     // binding in use, and nothing here reads them for currency.
   }, [claimLane, onAuthority, onBackendQuarantined]);
 
-  const readState = useCallback(() => {
+  const readState = useCallback((required = false) => {
     // One at a time. The token below lets only the newest read install, so two
     // reads overlapping would leave the older one stale on arrival -- and a
     // poll faster than the round trip would then install nothing at all,
     // sitting for ever on a state Rust has already moved past while adding an
     // outstanding read every tick. A read already in flight is about to answer
     // this same question, so there is nothing for a second one to learn.
+    //
+    // **Unless it was issued before the thing being read about happened.** A
+    // required read is one whose caller has just made Rust move -- an adoption
+    // recording its answer on the queue -- and the in-flight read may have been
+    // issued before that and will carry the state as it was. Coalescing into it
+    // would drop the news, and for a terminal queue nothing polls afterwards,
+    // so the row would stay wrong until a remount. So a required read that
+    // meets one in flight asks again when that one settles.
     if (stateReadInFlight.current) {
+      if (required) {
+        stateReadRequired.current = true;
+      }
       return;
     }
     stateReadInFlight.current = true;
@@ -745,8 +760,20 @@ export function useConversionOperation(
       })
       .finally(() => {
         stateReadInFlight.current = false;
+        // A read the caller could not afford to lose, deferred until this one
+        // was out of the way.
+        if (stateReadRequired.current && mounted.current) {
+          stateReadRequired.current = false;
+          readAgain.current?.();
+        }
       });
   }, [api, applyUpdate]);
+
+  // The same function, reachable from inside its own `finally` without making
+  // it depend on itself.
+  readAgain.current = () => {
+    readState(true);
+  };
 
   // On mount, and again after a read that failed. This is what recovers a
   // conversion the replaced document started: the reply to the command that
@@ -1405,8 +1432,10 @@ export function useConversionOperation(
           // Rust held the answer.
           //
           // One read, and it launches nothing: reading the slot starts no
-          // process, opens no file and reruns no conversion.
-          readState();
+          // process, opens no file and reruns no conversion. Required, because
+          // a poll issued before Rust recorded the answer would otherwise
+          // swallow it and a terminal queue is not polled again.
+          readState(true);
         }
         // Handed on even when this document is gone. The rows were committed by
         // Rust either way, and the replacement reads the roster on mount.

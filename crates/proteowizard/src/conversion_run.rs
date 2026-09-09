@@ -63,7 +63,9 @@ use crate::conversion::{
 };
 use crate::diagnostics::{BackendTextExcerpt, Redactor};
 use crate::finalized_output::FinalizedOutput;
-use crate::fs_guard::{self, OutputEntryKind, RegularFileError, snapshot_output_directory};
+use crate::fs_guard::{
+    self, BoundedSnapshot, OutputEntryKind, RegularFileError, snapshot_output_directory_bounded,
+};
 use crate::intent::ConversionIntent;
 use crate::mzml::{MzmlFacts, MzmlScanError, MzmlScanLimits};
 use crate::process::{
@@ -2132,6 +2134,16 @@ pub struct StagedContentObservation {
     entry_count: usize,
     directory_count: usize,
     non_empty_file_observed: bool,
+    /// Whether the enumeration stopped at its bound, so the counts above are
+    /// lower bounds rather than totals.
+    ///
+    /// A backend that fills the staging area must not make a *failure* pay for
+    /// reading all of it. Discovery already refuses an over-large set without
+    /// enumerating it, and an observation taken on that very refusal that read
+    /// the whole directory would hand the bound straight back. What a reader
+    /// needs from an over-full directory is that it was over-full, and the
+    /// bound answers that without the walk.
+    bounded: bool,
 }
 
 impl StagedContentObservation {
@@ -2152,6 +2164,15 @@ impl StagedContentObservation {
         self.non_empty_file_observed
     }
 
+    /// Whether the enumeration stopped at its bound.
+    ///
+    /// `true` means the counts are lower bounds: there were at least this many
+    /// entries and the reading stopped rather than walking the rest.
+    #[must_use]
+    pub const fn bounded(self) -> bool {
+        self.bounded
+    }
+
     /// Builds one observation directly, for a fixture that must state what a
     /// staging area held without running a backend.
     ///
@@ -2170,6 +2191,7 @@ impl StagedContentObservation {
             entry_count,
             directory_count,
             non_empty_file_observed,
+            bounded: false,
         }
     }
 }
@@ -2180,7 +2202,25 @@ impl StagedContentObservation {
 /// already confirmed its process tree is gone does not become a different
 /// outcome because an observation for the record could not be taken.
 pub(crate) fn observe_staged_content(staging: &Path) -> Option<StagedContentObservation> {
-    let snapshot = snapshot_output_directory(staging).ok()?;
+    // Bounded, and the bound is the lifecycle's own output bound with room for
+    // the entries a run may legitimately leave beside its outputs. A faulty
+    // backend that filled the staging area would otherwise make every failure
+    // settlement pay for the whole listing -- including the over-limit refusal,
+    // which discovery reaches precisely by *not* enumerating it.
+    let snapshot = match snapshot_output_directory_bounded(staging, OBSERVED_STAGED_ENTRY_BOUND) {
+        Ok(BoundedSnapshot::Within(snapshot)) => snapshot,
+        // Over the bound: what the reader needs is that there were more than
+        // this many, and the counts say so by being marked as lower bounds.
+        Ok(BoundedSnapshot::OverBound { observed }) => {
+            return Some(StagedContentObservation {
+                entry_count: observed,
+                directory_count: 0,
+                non_empty_file_observed: false,
+                bounded: true,
+            });
+        }
+        Err(_) => return None,
+    };
     let mut directory_count = 0;
     let mut non_empty_file_observed = false;
     for entry in snapshot.entries() {
@@ -2201,8 +2241,16 @@ pub(crate) fn observe_staged_content(staging: &Path) -> Option<StagedContentObse
         entry_count: snapshot.len(),
         directory_count,
         non_empty_file_observed,
+        bounded: false,
     })
 }
+
+/// How many staging entries one observation will enumerate.
+///
+/// The lifecycle's output bound, doubled, so a run that legitimately produced
+/// its maximum set beside a few incidental entries is still counted exactly
+/// while a directory nothing should have filled is not walked.
+const OBSERVED_STAGED_ENTRY_BOUND: usize = output_set::MAX_CONVERSION_OUTPUTS_PER_SOURCE * 2;
 
 /// What a stop established about the backend process tree of one attempt.
 ///
@@ -3491,7 +3539,7 @@ fn run_staged(
                     // report.
                     backend: None,
                     staged: StagedOutputEvidence::of(
-                        StagedObservationPhase::BackendSettled,
+                        StagedObservationPhase::ProviderReturned,
                         observe_staged_content(staging),
                     ),
                     diagnostics: None,
@@ -3506,7 +3554,7 @@ fn run_staged(
             return StagedResult::failed(
                 ConversionRunFailure::Backend(cause),
                 staging,
-                StagedObservationPhase::BackendSettled,
+                StagedObservationPhase::ProviderReturned,
                 identity,
                 ProcessAttemptOutcome::Indeterminate,
             );
@@ -3532,7 +3580,7 @@ fn run_staged(
                 // document, and that is not readable from the outcome, the
                 // destination or a clean teardown.
                 staged: StagedOutputEvidence::of(
-                    StagedObservationPhase::BackendSettled,
+                    StagedObservationPhase::ProviderReturned,
                     observe_staged_content(staging),
                 ),
                 identity,
@@ -3543,7 +3591,7 @@ fn run_staged(
             };
         }
         let staged = StagedOutputEvidence::of(
-            StagedObservationPhase::BackendSettled,
+            StagedObservationPhase::ProviderReturned,
             observe_staged_content(staging),
         );
         let process = backend.map_or(
@@ -3609,7 +3657,7 @@ fn run_staged(
             // until this observation the two were indistinguishable
             // everywhere downstream.
             staged: StagedOutputEvidence::of(
-                StagedObservationPhase::BackendSettled,
+                StagedObservationPhase::ProviderReturned,
                 observe_staged_content(staging),
             ),
             identity,

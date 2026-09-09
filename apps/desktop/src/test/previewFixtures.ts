@@ -1228,10 +1228,11 @@ export function failedAttemptFacts(
     process: { kind: "settled", termination: "exited", exitCode: 3 },
     staged: {
       kind: "observed",
-      phase: "backend_settled",
+      phase: "provider_returned",
       entryCount: stagedSomething ? 1 : 0,
       directoryCount: 0,
       nonEmptyFileObserved: stagedSomething,
+      bounded: false,
     },
     runIdentity,
   };
