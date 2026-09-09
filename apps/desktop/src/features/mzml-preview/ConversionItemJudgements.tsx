@@ -233,14 +233,18 @@ export function integritySentence(
   perOutput = false,
   refused = false,
   passedThenUnpublished = false,
+  reportedMode: string | null = null,
 ): string {
-  // What was checked, where a surviving record says so. A refusal keeps none,
-  // and an item whose first output was the refused one therefore has no record
-  // at all -- which is an absent mode, not an absent judgement.
+  // A refusal keeps no member record, so an item whose first output was the
+  // refused one has none at all -- but the mode is a property of the source
+  // posture rather than of any one member, and a set report states it in its
+  // own right. Reading it from there keeps a refused set's scope as legible as
+  // every other integrity result's.
+  const mode = validation?.mode ?? reportedMode;
   const scope =
-    validation === null
+    mode === null
       ? null
-      : validation.mode === "source_comparison"
+      : mode === "source_comparison"
         ? "Compared against the source document"
         : "Output-only. The converted data was not compared against a readable vendor-source model";
   // The one failure the integrity judgement *causes* must not report that no
@@ -396,6 +400,17 @@ function passedThenUnpublished(item: ConversionQueueItem): boolean {
   return outcome === "output_not_finalized" || outcome === "destination_appeared_during_run";
 }
 
+/**
+ * The mode the item's own report states, whatever became of its members.
+ *
+ * A set carries it at the top level, so it survives a refusal that leaves no
+ * member record behind. A single-output item has it only through its
+ * validation, which is the same place the sentence already reads it from.
+ */
+function reportedValidationMode(item: ConversionQueueItem): string | null {
+  return item.result?.kind === "outputSet" ? item.result.report.validationMode : null;
+}
+
 /** The validation an item's own judgement sentence is about. */
 function validationOf(item: ConversionQueueItem): ConversionValidation | null {
   if (item.result?.kind === "single") {
@@ -502,6 +517,7 @@ export function ConversionItemJudgements({
               manifest.length > 1,
               integrityRefused(item),
               passedThenUnpublished(item),
+              reportedValidationMode(item),
             )}
             {advisories.length === 0 ? null : (
               <>

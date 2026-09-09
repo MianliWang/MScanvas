@@ -265,9 +265,10 @@ outputs never says "the output" of a refusal: the set is judged one member at a
 time and stops at the first that fails, so the members after it were never
 examined, and a singular sentence would claim a check for files the manifest
 directly below it calls unexamined. Where the refused member is the *first* one
--- the ordinary case -- no validation record survives at all, so the mode is
-unavailable and the sentence states only what happened. It still does not become
-"nothing was checked".
+-- the ordinary case -- no member record survives at all, but the mode does: it
+is a property of the source posture rather than of any one member, and the set
+report states it in its own right. So the scope of the claim is as legible there
+as anywhere else, and the sentence still does not become "nothing was checked".
 
 **A refused output is not an unchecked one.** A run whose output failed the
 contract retains no validation record — the record travels with a finalization,

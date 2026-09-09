@@ -504,6 +504,10 @@ describe("the five judgements of one queue item", () => {
         /Outputs are judged one at a time and the set stopped at the one that did not pass/,
       ),
     ).toBeVisible();
+    // The mode is a property of the source posture, not of any one member, and
+    // the set report states it in its own right. A refusal that leaves no
+    // member record must not take the scope of the claim down with it.
+    expect(details.textContent).toContain("Output-only.");
     // The singular sentence belongs to an item that produced one output. Here
     // it would claim a check for two files the manifest calls unexamined.
     expect(details.textContent).not.toContain(
