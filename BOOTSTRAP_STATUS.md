@@ -7756,18 +7756,16 @@ claim guard's thirty-three self-proved bypasses. Rendered QA is browser 10/10 at
 inner sizes plus M6.6 8/8 and M6.7 7/7, re-run at this head against the bundle
 this head builds. That suite is headless, so a locked session does not block it.
 
-**Native validation is outstanding and blocked by the environment.** Three M6.8
-scenarios, M6.7's two and four of M6.6's five passed on binary SHA-256
-`6db463738e80f37156b3ea6b92c0a195df3d452c4c0eca43de6cc98262414e17` — a stop that
-landed while the provider was executing settled `confirmed_gone` 34 ms after the
-request, with the queue completing and the session unquarantined. The process
-implementation changed after that, so those results are not inherited; the
-candidate binary is now `f3aaf1e1…` and the suites have to run again on it. They
-need an unlocked interactive Windows session, and `LockApp` has held the
-foreground across every sample taken. The fifth M6.6 scenario is blocked by the
-same fact: it presses a real Escape at the exact owned picker and the foreground
-guard refuses to send a key to anything else. Nothing was weakened to get past
-it, and this milestone is not published until the rerun passes.
+**Native validation is complete on the build attributable to this head.** One
+build, three suites, one binary: `target/e2e/release/mscanvas-desktop.exe`,
+SHA-256 `a7e0cdb0b12aa84c8430605e5a1d19f75cc591eb98eb4a1d4c22409210380073`,
+WebView2 and driver 152.0.4191.66. M6.8 3/3 — a stop that reached a genuinely
+executing provider settled `confirmed_gone` 22 ms after the request with no
+partial output and no residue, and the queue carried on to `completed` with 7
+finalized. M6.6 5/5, including the real Escape at the exact owned folder picker
+through the foreground guard that had refused it while the session was locked.
+M6.7 2/2. The provider measurement was re-taken at this head and reproduces the
+earlier runs exactly. Nothing was weakened at any point to reach any of it.
 
 Two browser cases fail here and on the published baseline alike, verified in a
 separate worktree at `735dfeb`: `m4.1` "offers all three formats for a spectrum

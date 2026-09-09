@@ -1,9 +1,8 @@
 # M6.8 cancellation, capacity, and truthful progress
 
-Status: implemented; local gates and rendered QA pass; **native validation
-outstanding and blocked by a locked interactive session.** Not publishable until
-the native suites pass on a build attributable to the final head. See
-*Validation* below.
+Status: implemented and validated. Local gates, rendered QA, the provider
+measurement and all three native suites pass on the build attributable to this
+head. See *Validation* below.
 Baseline: `735dfebac5d48db30b6d1802c208ccf05853b3d8` (published M6.7).
 
 This is the single owning record for M6.8. It states the terminal route
@@ -128,8 +127,8 @@ separately.
 
 **Re-taken at the final head**, on the same rule the suites are held to: this
 measurement is produced through the launch path, so a changed launch path makes
-an older run describe a different boundary. Run 03 reproduces runs 01 and 02
-exactly — `provider.executable_sha256` still
+an older run describe a different boundary. Run 04, taken at head `d0da14d`,
+reproduces runs 01 to 03 exactly — `provider.executable_sha256` still
 `9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD`, a kernel
 cumulative `total_owned_processes` of 1 in every scenario,
 `tree_ownership=established_before_execution` throughout,
@@ -137,7 +136,7 @@ cumulative `total_owned_processes` of 1 in every scenario,
 request observed before the launch. It is a console harness rather than an
 interface one, so it does not need an unlocked interactive session.
 
-Evidence: `D:/tmp/mscanvas-m68-20260908/cancellation-evidence-0{1,2,3}.log`.
+Evidence: `D:/tmp/mscanvas-m68-20260908/cancellation-evidence-0{1,2,3,4}.log`; run 04 is the one taken at this head.
 The harness removed its own scratch directories; verified empty.
 
 ## The claim guard
@@ -686,59 +685,50 @@ still cited a 34-path closure, and `ROADMAP.md` said a stop of a launched
 conversion now settles as a successful cancellation, which is the claim the whole
 `stopFailed` surface exists because it cannot make.
 
-**The provider measurement was re-taken rather than carried**, for the reason
-below — it is produced through this same launch path. It reproduces exactly; see
+**The provider measurement was re-taken at this head**, for the reason below —
+it is produced through this same launch path, so a changed launch path makes an
+older run describe a different boundary. It reproduces exactly; see
 *The measurement*.
 
-**Native is NOT carried to this head, and the rerun is BLOCKED.**
+**Native, on the build attributable to this head.** One build, and all three
+suites on that one binary — no rebuild between them.
 
-The process implementation changed after the results below were taken: the
-launch now resumes every thread of the owned root rather than refusing a count
-other than one, and both lanes now ask one question about an unaccounted
-process. No native evidence is inherited across a changed process
-implementation, so these results describe the binary they were taken on and not
-this candidate. The candidate binary at this head is SHA-256
-`f3aaf1e1109e5a5250cc489cfc4e96043e75c72d93d53c3da5a7c2829336a0a4`.
-
-Rerunning needs an unlocked interactive Windows session. At 16:36 local time on
-2026-09-08, `LockApp` held the foreground across six consecutive samples, which
-is the same environment fact that blocks the fifth M6.6 scenario below. Nothing
-was weakened to get past it: no guard relaxed, no Cancel substituted for Escape,
-no focus scripted after cancellation, and no browser result counted as native
-evidence.
-
-**What follows was measured at `4104680`** — binary SHA-256
-`6db463738e80f37156b3ea6b92c0a195df3d452c4c0eca43de6cc98262414e17`, WebView2 and
-driver 152.0.4191.66 — and is recorded as the shape the rerun must reproduce,
-not as this candidate's evidence.
+- Head `d0da14d`, binary `target/e2e/release/mscanvas-desktop.exe`, SHA-256
+  `a7e0cdb0b12aa84c8430605e5a1d19f75cc591eb98eb4a1d4c22409210380073`,
+  16,044,032 bytes.
+- WebView2 and msedgedriver 152.0.4191.66; approved Thermo fixture SHA-256
+  `b3d97b38…2bd6dd7b`, as recorded in each run's own identity entry.
 
 | Scenario | Result |
 | --- | --- |
-| A stop while the provider is genuinely executing | Item 2, attempt 1, settled `ownedTree: confirmed_gone`, `processLaunched: true`, 34 ms from request to settle; queue `completed` with 7 finalized, 0 not run, session unquarantined |
-| A waiting item settled without launching it | 0 attempts, keeps its place and its planned output name, counted apart, queue `completed` with 7 finalized |
-| The whole queue stopped mid-execution | `stopped`, 2 attempted of 8, 1 finalized, 1 cancelled, 0 unconfirmed, 6 not run |
+| A stop while the provider is genuinely executing | `ownedTree: confirmed_gone`, `processLaunched: true`, `termination: cancelled`, 22 ms from request to settle, no partial output and no staging residue; the queue carried on to `completed` with 7 finalized, 1 cancelled, 0 not run |
+| A waiting item settled without launching it | index 7, 0 attempts, counted as 1 skipped by request, queue `completed` with 7 finalized |
+| The whole queue stopped mid-execution | `stopped`, 2 attempted of 8, 1 finalized, 1 cancelled, **0** whose stop could not be confirmed, 6 not run |
 
 The phase is observed, never assumed: the suite reads Rust's own authoritative
 state until an item reports running, dispatches against that exact item and
 attempt, and asks again if the queue moved on. A request Rust refused is not
 counted as a stop.
 
-Affected regressions on the same binary: **M6.7 native 2/2**, and **M6.6 native
-4/5**.
+**Affected regressions on the same binary: M6.6 native 5/5 and M6.7 native
+2/2.** M6.6's fifth scenario is the one that was blocked for the whole of this
+milestone's review: it presses a real Escape at the exact owned folder picker,
+and the guard in `e2e/native/choose-workspace-files.ps1` refuses to send a key
+unless that exact dialog holds the foreground. It passes here on an unlocked
+session — *"preserves editable drafts and keyboard focus after Escape cancels the
+real custom picker"*. Nothing was weakened to reach it at any point: no guard
+relaxed, no Cancel substituted for Escape, no focus scripted after cancellation,
+and no browser result counted as native evidence.
 
-**The fifth M6.6 scenario is BLOCKED by the interactive environment, not by this
-candidate.** It presses a real Escape at the exact owned folder picker, and the
-guard in `e2e/native/choose-workspace-files.ps1` refuses to send a key unless
-that exact dialog holds the foreground. The Windows session was locked when this
-ran: `LockApp` held the foreground across six consecutive samples, and the guard
-did what it exists to do rather than typing into whatever was active. The four
-scenarios that do not need foreground ownership pass on this binary, and the
-same suite passed 5/5 earlier the same day on an unlocked session at an earlier
-head. No guard was weakened, no Cancel was substituted for Escape, and no focus
-was scripted after cancellation.
+Evidence: `D:/tmp/mscanvas-m68-20260908/m68-native-uaR5i8/`,
+`m66-native-KggtJv/`, `m67-native-qAlccG/`, and
+`final-binary-identity.log`.
 
-Evidence: `D:/tmp/mscanvas-m68-20260908/m68-native-ng3n5k/`,
-`m66-native-JNkICd/`, `m67-native-9Dkfz5/`.
+**What the earlier runs were.** They are kept as history and belong to the heads
+they were taken on, not to this one: M6.8 3/3, M6.7 2/2 and M6.6 4/5 at head
+`4104680` on binary `6db46373…62414e17`, and M6.6 5/5 at head `9279f19` on
+binary `0a0cfd29…`. The process and classification boundary changed after both,
+and no native evidence is inherited across that.
 
 ## Residuals
 

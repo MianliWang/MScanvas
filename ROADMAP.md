@@ -414,9 +414,7 @@ Twelve slices, plus one authority interlude:
   Scope, exclusion counts, complete roster ordering and the
   Rust-authored capacity are reviewed before BEGIN. Search never narrows all.
   See [the scope record](docs/ux/M6_7_CONVERSION_SCOPE.md).
-- M6.8 — cancellation, capacity, and truthful progress. **Implemented; native
-  validation outstanding**, blocked by a locked interactive session and not
-  publishable until it passes;
+- M6.8 — cancellation, capacity, and truthful progress. **Complete**;
   `OWNERSHIP_STRUCTURALLY_CLOSED`. The backend root is created suspended and
   owned before it executes, so an empty Job is an empty tree; the installed
   build was measured and reports one process per run, kernel-counted; every
