@@ -32,7 +32,10 @@ function converted(index: number): ConversionQueueItem {
         validation: {
           mode: "output_only", fullyVerified: false,
           verified: ["output_is_well_formed_mzml"], unverified: [],
-          inapplicable: ["source_spectrum_count_preserved"], advisory: ["byte_length_differs"],
+          // Empty, and it has to be: an advisory observation is recorded only
+          // by the source comparison, and no family the visible queue accepts
+          // is read under one.
+          inapplicable: ["source_spectrum_count_preserved"], advisory: [],
         },
         backend: { exitCode: 0, elapsedMilliseconds: 568 }, stagingResidue: null, receipt: 1,
       },
@@ -228,7 +231,7 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
     await capture("staging-unknown", LIST);
   });
 
-  it("keeps output-only output-only, names advisories apart and shows the manifest", async () => {
+  it("keeps output-only output-only and shows the manifest", async () => {
     await start(terminal([converted(1)], 1, 1));
 
     const text = await details(1);
@@ -236,6 +239,16 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
     expect(text).toContain("1 checked, 0 not established, 1 not applicable.");
     // Output-only records no advisory observation, so none is rendered.
     expect(text).not.toContain("advisory observation");
+    // And the manifest carries each output's own dispositions, so a set's
+    // sentence can name the mode and leave the counts here.
+    const headings = await browser.execute((list: string) =>
+      [...document.querySelectorAll(`${list} .conversion-item-manifest thead th`)].map(
+        (cell) => cell.textContent,
+      ), LIST);
+    expect(headings).toEqual([
+      "File", "State", "Size", "Spectra", "Chromatograms",
+      "Checked", "Not established", "Not applicable", "SHA-256",
+    ]);
     expect(text).not.toMatch(/fully verified/i);
     expect(text).not.toMatch(/lossless/i);
     // Publication is stated as publication, not as an observation of an empty

@@ -1,6 +1,7 @@
 # M6.9 output completion and adoption
 
-Status: implemented and validated.
+Status: implemented; local, rendered and review validation complete; native
+evidence `BLOCKED`.
 Baseline: `96351b2adc0f668f12c26a3ca1ee471ca991f284` (published M6.8), tree
 `7383517e022de64faf90d05340ac2484f8467852`.
 
@@ -245,9 +246,12 @@ basename.
 
 ## Changed-path closure
 
-28 paths at this head: 25 of code and evidence, 3 new files, plus the documents
-listed at the end. Re-derived at every head with `git diff --name-only` against
-the baseline rather than hand-maintained.
+41 paths at this head: 31 of code and evidence and
+10 documents, 6 of them new. Re-derived at every head
+with `git diff --name-status` against the baseline rather than hand-maintained.
+It was wrong once and it is worth saying why: it was written before the rendered
+and native evidence existed, and it went on saying twenty-eight while the diff
+said 41. A reviewer found it by running the command this section names.
 
 **The attempt's own facts** — `crates/proteowizard/src/attempt.rs` (new): the
 identity, the observation phase, the four-way staged evidence and the process
@@ -278,6 +282,12 @@ wire and the existing surfaces: `conversionContract.test.ts`,
 `ConversionStop.test.tsx`, `viewerSelectionAuthority.test.tsx`,
 `src/test/previewFixtures.ts`, `src/test/outputSetRendering.test.tsx`.
 
+**Rendered and native evidence** — `e2e/specs/m6.9-output-completion.browser.e2e.ts`
+(new) and `e2e/specs/m6.9-output-completion.tauri.e2e.ts` (new), plus
+`e2e/specs/m6.8-cancellation-controls.browser.e2e.ts`, whose hand-built fixture
+had to state the three attempt facts and the adoption judgement because a
+settled row renders them.
+
 **Documents** — `README.md`, `CHANGELOG.md`, `ROADMAP.md`, `BOOTSTRAP_STATUS.md`,
 `docs/product/FEATURE_CATALOG.md`, `docs/product/PRIMARY_WORKFLOWS.md`,
 `docs/architecture/adr/0043-conversion-completion-route.md` (M6.9's acceptance
@@ -286,11 +296,30 @@ and the M7/M8 seams it freezes), `0016` (the adoption relation this records),
 
 ## Validation
 
-Local gates at this head: frontend lint, typecheck, 1670 tests across 70 files,
-build; `cargo fmt --all --check`; `cargo clippy --locked --workspace
---all-targets --all-features -- -D warnings`; `cargo test --locked --workspace
---all-targets`; `python -B scripts/check_repo.py`; `git diff --check`; E2E
-typecheck.
+Local gates at this head: frontend lint, typecheck, 1671 tests
+across 70 files, build; `cargo fmt --all --check`; `cargo clippy
+--locked --workspace --all-targets --all-features -- -D warnings`; `cargo test
+--locked --workspace --all-targets` (1547 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.
+
+### Rendered QA
+
+7/7 in `m6.9-output-completion.browser`, at 1920x1080, 1366x768, 1200x800 and
+960x640, with every judgement reachable by keyboard, one live region for the
+adoption result, no duplicate ids and no horizontal overflow at any of the four.
+Plus M6.8 10/10, M6.7 7/7 and M6.6 8/8 on the same head. Screenshots and console
+records inspected; console empty.
+
+Run at this head against the bundle this head builds: `index-CSn6z4bh.js`, SHA-256
+prefix `0ec221fd0ca39da7`, beside `index-Cq2IHovW.css` (`683071bfc1a0e39d`) and `index.html`
+(`19eeddea7c4e8138`). The suite is headless, so it does not need an unlocked session.
+
+**Two browser cases fail here and on the published baseline alike**: `m4.1`
+"offers all three formats for a spectrum that loaded with no peaks" and `m5.2`
+"still reaches the plot by Tab where the range can move". M6.8's record already
+carries both as pre-existing, verified in a separate worktree at `735dfeb`. This
+diff cannot be their cause: it changes no viewer or spectrum production file,
+and every stylesheet rule it adds is scoped to a class name this slice
+introduces. They are recorded rather than absorbed.
 
 ### Mechanism reversions
 
@@ -303,6 +332,32 @@ decision exists for and each failing by assertion rather than by not compiling:
 | A failed read mapped to `NotCreated` instead of `Unobserved` | `an_unreadable_staging_area_is_unknown_rather_than_empty` |
 | A launch failure reported as `NotAttempted` | `a_failed_launch_is_indeterminate_rather_than_no_process` |
 | The identity not minted before execution | `each_attempt_that_reaches_the_provider_mints_its_own_identity` |
+
+### Native evidence
+
+**`BLOCKED` at this head.** The interactive Windows session was locked for the
+whole of this slice's execution: `LockApp` was running and the foreground window
+was not one this application or its owned picker could take. The native suites
+drive the real owned pickers through `e2e/native/choose-workspace-files.ps1` and
+`choose-conversion-folder.ps1`, which refuse when the exact owned dialog is not
+foreground — and that refusal is the guard working. It was not weakened, no
+`Cancel` was substituted for an `Escape`, no post-cancel focus was scripted, and
+no security policy was changed to get past it.
+
+`e2e/specs/m6.9-output-completion.tauri.e2e.ts` is written, typechecked and
+committed, and it is what the proof will run. It drives the real picker, the
+real queue and the installed ProteoWizard to a real output-only completion,
+checks the digest on the wire against the file on disk, inspects the manifest,
+adopts explicitly, and covers a real duplicate and a real changed-output
+refusal — the changed file being one the suite itself wrote inside its own
+scratch directory, with every source copy's digest re-checked afterwards. It
+skips explicitly without its fixture environment rather than reporting a pass.
+
+The environment it needs is present and was verified: ProteoWizard
+3.0.26013.47b13cf 64-bit, `msconvert.exe` SHA-256 prefix `9bb6f5d5033bb8ea`, and
+the approved hash-pinned `FT-HCD-MSX.raw` whose digest matches the value the
+suites pin. What is missing is an interactive session, which is not something
+this execution may manufacture.
 
 ## Residuals
 
@@ -317,6 +372,17 @@ decision exists for and each failing by assertion rather than by not compiling:
   mints one; the launched-attempt case is proved at the conversion boundary.
   Owner: M6.11 to record, if a transient conversion failure is ever measured.
 - **Advisory identifiers are shown as their stable identifiers**, not as
-  sentences. They are rare, they fail nothing, and inventing five sentences for
-  observations nobody has been observed acting on would be copy without a
-  reader. Owner: M7, with the rest of the evidence surface.
+  sentences. Nothing this release converts can produce one, so writing five
+  sentences for observations no shipped configuration emits would be copy
+  without a reader. Owner: M7, with the rest of the evidence surface, or
+  whichever slice first admits a family that is compared against its source.
+- **The staged observation now runs on every failure path of both lifecycles**,
+  and it is an unbounded directory enumeration with a metadata read per entry.
+  That work used to be paid only on a stop. A backend that filled the working
+  folder therefore makes each failure settlement pay for the whole listing. It
+  is bounded by what one conversion may write and it is off the success path, so
+  nothing here measures a cost worth trading the judgement for — but it is a
+  real change in where that work happens and is recorded rather than left to be
+  discovered. Owner: M6.11 to carry, or the first slice that measures it.
+- **The native proof is written and unrun.** See *Native evidence* above. Owner:
+  this slice, on the first interactive session.
