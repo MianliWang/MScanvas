@@ -199,8 +199,13 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
       [...document.querySelectorAll(`${list} > li`)].map((node) => node.getAttribute("data-item-state")), LIST);
     expect(states).toEqual(["failed", "failed"]);
 
+    const before = (await ipcCalls()).length;
     const withContent = await details(1);
     const withoutContent = await details(2);
+    // Opening a disclosure asks the boundary for nothing. Everything it shows
+    // was already on the wire, so reading it cannot rerun a conversion or
+    // re-hash an output.
+    expect((await ipcCalls()).length).toBe(before);
     for (const text of [withContent, withoutContent]) {
       expect(text).toContain("The converter ran to its own end, exit code 3.");
       expect(text).toContain("No output obtained a final name.");
