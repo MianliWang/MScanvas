@@ -135,6 +135,15 @@ export function stagedSentence(staged: ConversionStagedOutput): string {
 export function finalizedSentence(item: ConversionQueueItem): string {
   const single = item.result?.kind === "single" ? item.result.report : null;
   const set = item.result?.kind === "outputSet" ? item.result.report : null;
+  // The conflict policy's own skip is answered first, and for both
+  // cardinalities. A set reaches it only when *every* one of its names was
+  // occupied, so a count of zero finalized would be arithmetically true and
+  // would say nothing about why nothing was written.
+  if (item.state === "skipped") {
+    return set === null
+      ? "Nothing was written. A file of that name was already there and was left alone."
+      : "Nothing was written. Files of all of its output names were already there and were left alone.";
+  }
   if (set !== null) {
     if (set.memberCount === 0) {
       return "No output files were produced, so none obtained a final name.";
@@ -146,9 +155,6 @@ export function finalizedSentence(item: ConversionQueueItem): string {
   if (single?.outputFileName != null) {
     return `One output obtained its final name: ${single.outputFileName}.`;
   }
-  if (item.state === "skipped") {
-    return "Nothing was written. A file of that name was already there and was left alone.";
-  }
   return "No output obtained a final name.";
 }
 
@@ -159,17 +165,24 @@ export function finalizedSentence(item: ConversionQueueItem): string {
  * separately from the three dispositions because none of them is a check that
  * could have been made and was not.
  */
-export function integritySentence(validation: ConversionValidation | null): string {
+export function integritySentence(
+  validation: ConversionValidation | null,
+  perOutput = false,
+): string {
   if (validation === null) {
-    return "Nothing was checked, because nothing was finalized.";
+    return "Nothing was checked, because nothing was validated.";
   }
   const scope =
     validation.mode === "source_comparison"
       ? "Compared against the source document"
       : "Output-only. The converted data was not compared against a readable vendor-source model";
+  // A set is judged member by member under one mode. The counts here are one
+  // member's, so where there are several the sentence sends the reader to the
+  // manifest rather than presenting one member's answer as the item's.
+  const each = perOutput ? " Each output is judged on its own; the manifest below has all of them." : "";
   return `${scope}. ${formatCount(validation.verified.length)} checked, ${formatCount(
     validation.unverified.length,
-  )} not established, ${formatCount(validation.inapplicable.length)} not applicable.`;
+  )} not established, ${formatCount(validation.inapplicable.length)} not applicable.${each}`;
 }
 
 /**
@@ -317,7 +330,7 @@ export function ConversionItemJudgements({
         <div>
           <dt>Integrity</dt>
           <dd data-testid={`${id}-integrity`}>
-            {integritySentence(validationOf(item))}
+            {integritySentence(validationOf(item), manifest.length > 1)}
             {advisories.length === 0 ? null : (
               <>
                 {" "}

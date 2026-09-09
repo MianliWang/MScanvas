@@ -215,7 +215,7 @@ describe("the five judgements of one queue item", () => {
     for (const details of [withContent, withoutContent]) {
       expect(within(details).getByText("No output obtained a final name.")).toBeVisible();
       expect(
-        within(details).getByText("Nothing was checked, because nothing was finalized."),
+        within(details).getByText("Nothing was checked, because nothing was validated."),
       ).toBeVisible();
     }
   });

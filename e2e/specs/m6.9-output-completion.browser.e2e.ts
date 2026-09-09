@@ -209,7 +209,7 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
     for (const text of [withContent, withoutContent]) {
       expect(text).toContain("The converter ran to its own end, exit code 3.");
       expect(text).toContain("No output obtained a final name.");
-      expect(text).toContain("Nothing was checked, because nothing was finalized.");
+      expect(text).toContain("Nothing was checked, because nothing was validated.");
     }
     expect(withContent).toContain(
       "The temporary working folder held 1 entry when the converter finished, at least one of them a file with content.");
