@@ -5387,8 +5387,11 @@ fn one_bad_member_publishes_nothing() {
         entry_names(&fixture.destination_root).is_empty(),
         "nothing was published"
     );
-    // The member that had already validated says so; the bad one and the one
-    // never reached say they were not published.
+    // Three members, three different things that became of them. The one that
+    // had already validated says so, the bad one says it was read and refused,
+    // and the one the set never reached says only that it was not published --
+    // because nobody looked at it. Spelling the last two the same way is what
+    // made a manifest unable to name which member was the problem.
     let states: Vec<OutputMemberState> = settled
         .members
         .iter()
@@ -5398,7 +5401,7 @@ fn one_bad_member_publishes_nothing() {
         states,
         vec![
             OutputMemberState::ValidatedNotPublished,
-            OutputMemberState::NotPublished,
+            OutputMemberState::Rejected,
             OutputMemberState::NotPublished,
         ]
     );

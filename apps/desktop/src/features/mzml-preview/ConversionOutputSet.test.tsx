@@ -380,7 +380,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     for (const member of TEN_MEMBERS.slice(0, 3)) {
       expect(within(manifest as HTMLElement).getByText(member)).toBeInTheDocument();
     }
-    expect(within(manifest as HTMLElement).getAllByText("Not published")).toHaveLength(2);
+    expect(within(manifest as HTMLElement).getAllByText("Checked, not published")).toHaveLength(2);
   });
 
   it("keeps other complete items in the same queue adoptable", async () => {

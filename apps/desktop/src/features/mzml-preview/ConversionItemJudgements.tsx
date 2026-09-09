@@ -57,6 +57,19 @@ const STAGED_PHASE_LABEL: Record<string, string> = {
   publication_settled: "after publication finished",
 };
 
+/**
+ * What became of one member of a backend-named set.
+ *
+ * Four answers, because a refused member and one nobody examined are opposite
+ * facts and shared a word until they did not.
+ */
+const MEMBER_STATE_LABEL: Record<string, string> = {
+  finalized: "Finalized",
+  validated_not_published: "Checked, not published",
+  rejected: "Checked and refused",
+  not_published: "Not published",
+};
+
 /** Why one adoption refusal happened, in the user's terms. */
 const ADOPTION_REFUSAL_LABEL: Record<string, string> = {
   output_missing: "it is no longer in the destination folder",
@@ -517,15 +530,24 @@ export function ConversionItemJudgements({
               </tr>
             </thead>
             <tbody>
-              {manifest.map((member) => (
-                <tr key={member.fileName}>
+              {/* Keyed by position as well as name. Two members can share a
+                  display string -- the lifecycle matches their facts on the
+                  native name precisely because of that -- and two rows with one
+                  key are two rows React may reconcile the wrong way round,
+                  putting one output's digest beside another's name. */}
+              {manifest.map((member, position) => (
+                <tr key={`${String(position)}-${member.fileName}`}>
                   {/* `title` as well as the cell, because a backend-chosen
                       basename can be long and the cell wraps rather than
                       clipping. */}
                   <th scope="row" title={member.fileName}>
                     {member.fileName}
                   </th>
-                  <td>{member.state === "finalized" ? "Finalized" : "Not published"}</td>
+                  {/* "Refused" is its own word. A set stops at the first
+                      member that fails, so the refused one and every member
+                      after it were both unpublished — and only one of them was
+                      looked at. */}
+                  <td>{MEMBER_STATE_LABEL[member.state] ?? "Not published"}</td>
                   {/* Nothing measured is nothing shown. A zero here would read
                       as a measured empty document. */}
                   <td>{member.output === null ? "—" : formatByteLength(member.output.byteLength)}</td>

@@ -66,8 +66,22 @@ function failed(index: number, stagedSomething: boolean): ConversionQueueItem {
     },
     process: { kind: "settled", termination: "exited", exitCode: 3 },
     staged: stagedSomething
-      ? { kind: "observed", phase: "provider_returned", entryCount: 1, directoryCount: 0, nonEmptyFileObserved: true }
-      : { kind: "observed", phase: "provider_returned", entryCount: 0, directoryCount: 0, nonEmptyFileObserved: false },
+      ? {
+          kind: "observed",
+          phase: "provider_returned",
+          entryCount: 1,
+          directoryCount: 0,
+          nonEmptyFileObserved: true,
+          bounded: false,
+        }
+      : {
+          kind: "observed",
+          phase: "provider_returned",
+          entryCount: 0,
+          directoryCount: 0,
+          nonEmptyFileObserved: false,
+          bounded: false,
+        },
     runIdentity: `6f1d3c2b9a48000000000000000000${index}1`.slice(0, 32),
     adoption: { kind: "nothingToAdopt" },
   } as ConversionQueueItem;
@@ -113,7 +127,14 @@ function partialSet(): ConversionQueueItem {
       },
     },
     process: { kind: "settled", termination: "exited", exitCode: 0 },
-    staged: { kind: "observed", phase: "publication_settled", entryCount: 2, directoryCount: 0, nonEmptyFileObserved: true },
+    staged: {
+      kind: "observed",
+      phase: "publication_settled",
+      entryCount: 2,
+      directoryCount: 0,
+      nonEmptyFileObserved: true,
+      bounded: false,
+    },
     runIdentity: "6f1d3c2b9a4800000000000000000c10",
     adoption: { kind: "nothingToAdopt" },
   } as ConversionQueueItem;

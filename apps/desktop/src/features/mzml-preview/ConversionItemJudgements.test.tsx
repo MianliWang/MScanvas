@@ -375,11 +375,59 @@ describe("the five judgements of one queue item", () => {
     // What landed and what did not, without collapsing either way.
     const manifest = details.querySelector(".conversion-item-manifest");
     expect(manifest).not.toBeNull();
-    expect(within(manifest as HTMLElement).getAllByText("Not published")).toHaveLength(2);
+    expect(within(manifest as HTMLElement).getAllByText("Checked, not published")).toHaveLength(2);
     expect(within(manifest as HTMLElement).getAllByText("Finalized")).toHaveLength(1);
     // An incomplete set keeps the existing adoption refusal.
     expect(
       screen.getByText("No complete output set is available to add to this workspace."),
+    ).toBeVisible();
+  });
+
+  it("separates the member that was refused from the ones nobody looked at", async () => {
+    const members = ["b-S1.mzML", "b-S2.mzML", "b-S3.mzML"];
+    // What a real refusal produces: the set is judged member by member and
+    // stops at the first that fails, so one member has a validation record, one
+    // was read and refused, and one was never examined at all.
+    const refused = outputSetReport("file-11", members, {
+      groupOutcome: "refused_before_publication",
+      detailedOutcome: "multi_output_member_rejected",
+      finalizedCount: 0,
+      validatedNotPublishedCount: 1,
+      notPublishedCount: 2,
+      members: setMembers(members, ["validated_not_published", "rejected", "not_published"]),
+      completeness: { kind: "notPosed" },
+      completeSetAdoptable: false,
+    });
+    const api = terminalApi(
+      [
+        sciexQueueItem("file-11", "Enolase_refused.wiff", {
+          state: "failed",
+          attempts: 1,
+          retryable: false,
+          result: { kind: "outputSet", report: refused },
+          ...failedAttemptFacts(true, "000000000000000100000000000000d1"),
+        }),
+      ],
+      [bundle],
+    );
+    renderApp(api);
+    const result = await queueResult();
+
+    const details = openDetails(rowFor(result, "Enolase_refused.wiff"));
+    const manifest = details.querySelector(".conversion-item-manifest");
+    expect(manifest).not.toBeNull();
+    // Three members, three different things that became of them. "Checked and
+    // refused" and "Not published" are opposite facts about a file, and a
+    // manifest that spelled them the same way could not say which member was
+    // the problem.
+    expect(within(manifest as HTMLElement).getByText("Checked and refused")).toBeVisible();
+    expect(within(manifest as HTMLElement).getByText("Checked, not published")).toBeVisible();
+    expect(within(manifest as HTMLElement).getByText("Not published")).toBeVisible();
+    // The item's own integrity line states the mode and hands the per-member
+    // answers to the manifest, rather than presenting one member's result as
+    // the item's. That is where "which one failed" is answerable at all.
+    expect(
+      within(details).getByText(/Each output is judged on its own; the manifest below has every one\./),
     ).toBeVisible();
   });
 

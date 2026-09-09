@@ -161,10 +161,24 @@ index. One entry per discovered member now carries its own name, its own state
 and its own measurements, and measurements are present exactly where the member
 was validated. Zeroes there would read as a measured empty document.
 
+**A member state says what became of that member, and there are four.** A set is
+validated member by member and stops at the first that fails, so a refused
+member and every member after it are all unpublished — and only one of them was
+looked at. `rejected` is therefore its own state beside `finalized`,
+`validated_not_published` and `not_published`: "it was checked and refused" and
+"nobody examined it" are opposite facts, and while they shared a word the
+manifest could not name which member was the problem. The refusal is asked
+before the validation record, because a refused member has none.
+
 **Denominators name the population that is known.** A partial set reads *n* of
 the members this run actually produced. The lifecycle's maximum output bound is
 neither the number expected nor the number produced and is never the second
 number in that sentence.
+
+**Rows are keyed by position as well as name.** Two members can share a display
+string — the lifecycle matches their facts on the native name precisely because
+of that — and two rows under one key are two rows the renderer may reconcile the
+wrong way round, putting one output's digest beside another's name.
 
 ## Integrity, and what it still may not claim
 

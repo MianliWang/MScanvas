@@ -436,6 +436,16 @@ pub enum OutputMemberState {
     /// Never validated, or its publication never began. Nothing exists for it
     /// at the destination.
     NotPublished,
+    /// Validated and **refused**: the integrity contract read it and did not
+    /// pass it.
+    ///
+    /// Its own member because the alternative collapses two opposite facts. A
+    /// set stops at the first member that fails, so the failed one and every
+    /// member after it -- which were never examined at all -- previously shared
+    /// `NotPublished`, and a manifest listing them could not say which file was
+    /// the problem. "It was checked and refused" and "nobody looked at it" are
+    /// not degrees of one answer.
+    Rejected,
 }
 
 impl OutputMemberState {
@@ -445,6 +455,7 @@ impl OutputMemberState {
             Self::ValidatedNotPublished => "validated_not_published",
             Self::Finalized => "finalized",
             Self::NotPublished => "not_published",
+            Self::Rejected => "rejected",
         }
     }
 }
@@ -2194,7 +2205,7 @@ pub(crate) fn settle_staged_output_set_seamed(
                             rejection,
                         },
                     ),
-                    members: build_member_reports(&discovered, &facts, &[]),
+                    members: build_member_reports(&discovered, &facts, &[], Some(member.name())),
                     retained: Vec::new(),
                 };
             }
@@ -2225,7 +2236,7 @@ pub(crate) fn settle_staged_output_set_seamed(
             outcome: MultiOutputOutcome::RefusedBeforePublication(
                 MultiOutputFailure::OutputNameClaimedElsewhere { name },
             ),
-            members: build_member_reports(&discovered, &facts, &[]),
+            members: build_member_reports(&discovered, &facts, &[], None),
             retained: Vec::new(),
         };
     }
@@ -2245,7 +2256,7 @@ pub(crate) fn settle_staged_output_set_seamed(
                     outcome: MultiOutputOutcome::RefusedBeforePublication(
                         MultiOutputFailure::DestinationNotInspectable { kind: error.kind() },
                     ),
-                    members: build_member_reports(&discovered, &facts, &[]),
+                    members: build_member_reports(&discovered, &facts, &[], None),
                     retained: Vec::new(),
                 };
             }
@@ -2275,7 +2286,7 @@ pub(crate) fn settle_staged_output_set_seamed(
         };
         return SettledOutputSet {
             outcome,
-            members: build_member_reports(&discovered, &facts, &[]),
+            members: build_member_reports(&discovered, &facts, &[], None),
             retained: Vec::new(),
         };
     }
@@ -2329,7 +2340,7 @@ pub(crate) fn settle_staged_output_set_seamed(
                     }
                 };
                 return SettledOutputSet {
-                    members: build_member_reports(&discovered, &facts, &finalized),
+                    members: build_member_reports(&discovered, &facts, &finalized, None),
                     outcome,
                     retained,
                 };
@@ -2339,7 +2350,7 @@ pub(crate) fn settle_staged_output_set_seamed(
 
     SettledOutputSet {
         outcome: MultiOutputOutcome::FullyFinalized,
-        members: build_member_reports(&discovered, &facts, &finalized),
+        members: build_member_reports(&discovered, &facts, &finalized, None),
         retained,
     }
 }
@@ -2352,6 +2363,7 @@ fn build_member_reports(
     discovered: &[DiscoveredMember],
     facts: &[(OsString, OutputMemberValidation)],
     finalized: &[OsString],
+    rejected: Option<&OsStr>,
 ) -> Vec<OutputMemberReport> {
     discovered
         .iter()
@@ -2368,6 +2380,11 @@ fn build_member_reports(
                 .any(|name| name.as_os_str() == member.name())
             {
                 OutputMemberState::Finalized
+            } else if rejected == Some(member.name()) {
+                // Asked before the validation record, because a refused member
+                // has none: the judgement read it and did not pass it, which is
+                // the opposite of never having been looked at.
+                OutputMemberState::Rejected
             } else if validation.is_some() {
                 OutputMemberState::ValidatedNotPublished
             } else {
