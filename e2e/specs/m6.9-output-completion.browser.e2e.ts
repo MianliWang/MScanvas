@@ -236,8 +236,8 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
       expect(text).toContain("Nothing was checked, because nothing was validated.");
     }
     expect(withContent).toContain(
-      "The temporary working folder held 1 entry when MSCanvas got control back from the converter, at least one of them a file with content.");
-    expect(withoutContent).toContain("The temporary working folder was empty when MSCanvas got control back from the converter.");
+      "The temporary working folder held 1 entry when the attempt to run a converter returned, at least one of them a file with content.");
+    expect(withoutContent).toContain("The temporary working folder was empty when the attempt to run a converter returned.");
     await capture("staged-pair", LIST);
   });
 
@@ -246,7 +246,7 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
 
     const text = await details(1);
     expect(text).toContain(
-      "MSCanvas could not read its temporary working folder when MSCanvas got control back from the converter, so what it held is unknown.");
+      "MSCanvas could not read its temporary working folder when the attempt to run a converter returned, so what it held is unknown.");
     expect(text).not.toContain("was empty");
     expect(text).not.toContain("No temporary working folder was created");
     await capture("staging-unknown", LIST);

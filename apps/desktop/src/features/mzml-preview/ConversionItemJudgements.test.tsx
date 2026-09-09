@@ -221,12 +221,12 @@ describe("the five judgements of one queue item", () => {
     // And the staged judgement is not.
     expect(
       within(withContent).getByText(
-        "The temporary working folder held 1 entry when MSCanvas got control back from the converter, at least one of them a file with content.",
+        "The temporary working folder held 1 entry when the attempt to run a converter returned, at least one of them a file with content.",
       ),
     ).toBeVisible();
     expect(
       within(withoutContent).getByText(
-        "The temporary working folder was empty when MSCanvas got control back from the converter.",
+        "The temporary working folder was empty when the attempt to run a converter returned.",
       ),
     ).toBeVisible();
 
@@ -291,7 +291,7 @@ describe("the five judgements of one queue item", () => {
     const details = openDetails(rowFor(result, "run-1.raw"));
     expect(
       within(details).getByText(
-        "MSCanvas could not read its temporary working folder when MSCanvas got control back from the converter, so what it held is unknown.",
+        "MSCanvas could not read its temporary working folder when the attempt to run a converter returned, so what it held is unknown.",
       ),
     ).toBeVisible();
     // The two sentences it must not produce.

@@ -52,7 +52,13 @@ const TERMINATION_LABEL: Record<string, string> = {
  */
 const STAGED_PHASE_LABEL: Record<string, string> = {
   provider_not_invoked: "before any converter was invoked",
-  provider_returned: "when MSCanvas got control back from the converter",
+  // Names the call returning, never a converter returning. This phase also
+  // covers a launch that created no process at all and one whose result could
+  // not be captured -- the two cases where the process judgement beside it
+  // deliberately refuses to say a converter ran. A phrase like "got control
+  // back from the converter" would have this line assert what that judgement
+  // withholds, in the same panel.
+  provider_returned: "when the attempt to run a converter returned",
   output_refused: "after the output was checked and refused",
   publication_settled: "after publication finished",
 };

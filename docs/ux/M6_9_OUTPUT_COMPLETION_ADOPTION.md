@@ -59,6 +59,15 @@ capture that failed both reach it, and those are the paths where the process
 judgement deliberately refuses to name an execution. Naming one there would put
 the claim back a field away.
 
+**And the sentence on screen holds the same line as the identifier.** It reads
+*"when the attempt to run a converter returned"* — the call returning, not a
+converter returning. The earlier wording said MSCanvas got control back *from
+the converter*, which asserted an execution in the same panel as a process
+judgement reading `not_started` or `indeterminate`. Two lines of one item
+answering the same question in opposite directions is the defect these five
+judgements exist to prevent, and it does not stop being one because the
+contradiction is in prose.
+
 An unplannable command is read at `provider_not_invoked`. A skipped set and a
 set refused after discovery published nothing, so neither is read at
 `publication_settled`; a member the integrity judgement refused is read at
