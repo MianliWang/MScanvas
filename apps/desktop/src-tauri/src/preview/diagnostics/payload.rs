@@ -153,6 +153,11 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
             written.string_array("verified", &validation.verified);
             written.string_array("unverified", &validation.unverified);
             written.string_array("inapplicable", &validation.inapplicable);
+            // The fourth list, and it is a list rather than a disposition: an
+            // advisory observation is not a check that could have been made and
+            // was not. Dropping it here left a saved diagnostic carrying three
+            // quarters of a judgement the application shows in full.
+            written.string_array("advisory", &validation.advisory);
         }),
         None => item.null("validation"),
     }
@@ -609,6 +614,90 @@ mod tests {
             out,
             "\"a\\\"b\\\\c\\nd\\te\\rf\\u0000g\\u001bh\\u007fi 样本\""
         );
+    }
+
+    /// Every list of the integrity judgement reaches the document.
+    ///
+    /// Written through `write_item`, the function the export actually calls,
+    /// rather than through a second copy of its body -- a test that spells out
+    /// the writer it is checking would pass whatever the writer does.
+    ///
+    /// The advisory list was modelled, projected to the queue and rendered, and
+    /// then dropped here, so a saved diagnostic carried three quarters of
+    /// judgement four while the application showed all of it. No configuration
+    /// this release converts records an advisory, which is exactly why nothing
+    /// noticed.
+    #[test]
+    fn a_validation_reaches_the_document_with_all_four_of_its_lists() {
+        use crate::preview::conversion::ValidationFacts;
+        use crate::preview::diagnostics::DiagnosticItemIdentity;
+        use crate::preview::operation::{AttemptFacts, ItemOutputTopology};
+        use mscanvas_proteowizard::ValidationMode;
+
+        let ticket = ConversionFailureDiagnosticTicket {
+            identity: DiagnosticItemIdentity {
+                operation: 1,
+                item_index: 0,
+                source_file_name: "sample.raw".to_owned(),
+                output: ItemOutputTopology::KnownSingle {
+                    basename: "sample.mzML".to_owned(),
+                },
+                source_kind: DatasetSourceKind::ThermoRaw,
+                attempt: 1,
+            },
+            state: ItemState::Failed,
+            retryable: false,
+            outcome: Some("output_rejected"),
+            detailed_outcome: None,
+            refusal: None,
+            refusal_detail: None,
+            validation: Some(ValidationFacts {
+                mode: ValidationMode::SourceComparison,
+                verified: vec!["output_is_well_formed_mzml"],
+                unverified: vec!["source_spectrum_count_preserved"],
+                inapplicable: vec!["source_chromatogram_count_preserved"],
+                advisory: vec!["source_reported_no_chromatograms"],
+                fully_verified: false,
+            }),
+            backend: None,
+            cancellation: None,
+            residue: None,
+            attempt: AttemptFacts::NOTHING_RAN,
+            text: None,
+            output_set: None,
+        };
+
+        let mut out = String::new();
+        let mut root = Members::new(&mut out);
+        root.object("item", |written| write_item(written, &ticket));
+        root.end();
+
+        let document: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        let validation = &document["item"]["validation"];
+        let mut keys: Vec<&str> = validation
+            .as_object()
+            .expect("a validation object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "advisory",
+                "fullyVerified",
+                "inapplicable",
+                "mode",
+                "unverified",
+                "verified"
+            ],
+            "every list the judgement records reaches the saved document"
+        );
+        assert_eq!(
+            validation["advisory"][0],
+            "source_reported_no_chromatograms"
+        );
+        assert_eq!(validation["mode"], "source_comparison");
     }
 
     /// An empty object and an empty array are still valid documents.

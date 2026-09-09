@@ -205,6 +205,13 @@ disposition: none of them is a check that could have been made and was not, and
 folding them into `unverified` would report expected behaviour as an unanswered
 question.
 
+**The saved diagnostic carries it too.** The export wrote three of the four
+lists and dropped the advisories, so a document a user sends on would have
+carried three quarters of judgement 4 while the panel showed all of it. Nothing
+noticed because nothing this release converts records one — which is the reason
+the list is projected and rendered at all, and the same reason it has to be
+exported.
+
 **And the list is empty on every conversion this release can run.** An advisory
 observation is recorded only by the source comparison, and no family the visible
 queue accepts is read under one — `is_convertible` refuses mzML, so every queued
@@ -400,7 +407,7 @@ and the M7/M8 seams it freezes), `0016` (the adoption relation this records),
 Local gates at this head: frontend lint, typecheck, 1674 tests
 across 70 files, build; `cargo fmt --all --check`; `cargo clippy
 --locked --workspace --all-targets --all-features -- -D warnings`; `cargo test
---locked --workspace --all-targets` (1551 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.
+--locked --workspace --all-targets` (1552 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.
 
 ### Rendered QA
 
