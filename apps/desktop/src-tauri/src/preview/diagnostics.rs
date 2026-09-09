@@ -360,6 +360,7 @@ impl ConversionFailureDiagnosticTicket {
         identity: DiagnosticItemIdentity,
         retryable: bool,
         error: &PreviewErrorDto,
+        attempt: AttemptFacts,
     ) -> Self {
         let output_set = identity.output.diagnostic_shape();
         Self {
@@ -374,9 +375,13 @@ impl ConversionFailureDiagnosticTicket {
             backend: None,
             cancellation: None,
             residue: None,
-            // Nothing was launched and nothing was created, and both are said
-            // rather than left to be inferred from the empty fields above.
-            attempt: AttemptFacts::NOTHING_RAN,
+            // Carried from the outcome rather than assumed here. Every refusal
+            // this application makes today settles before a provider is
+            // invoked, so this is `NOTHING_RAN` at every call site -- but the
+            // row keeps a real field, and a constant here would let the saved
+            // document and the queue row answer judgements one to three
+            // differently the moment a refusal does reach the boundary.
+            attempt,
             text: None,
             // A refusal reaches every family, so the shape comes from the item
             // rather than from the run it never made.

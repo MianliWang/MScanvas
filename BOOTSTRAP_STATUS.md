@@ -7816,12 +7816,17 @@ ran". A set's manifest carries each discovered member's own name, state,
 measurements and integrity dispositions, and a partial set is counted against
 the population it produced rather than against the lifecycle's bound. Adoption
 is unchanged and its result is now recorded on the queue it was about, under the
-queue and its settling. The diagnostics schema moves 2 → 3: a boolean over an
-optional observation left, and the item's own staged evidence, process and run
-identity arrived.
+queue and its settling. A set's members have four states rather than three,
+because a refused member and one nobody examined are opposite facts, and the
+four member counts partition the set. The diagnostics schema moves 2 → 5: a
+boolean over an optional observation left, `cancellation.processLaunched` became
+nullable because a boolean cannot hold "not established", and
+`outputSet.notPublishedCount` narrowed when refusal became its own state. The
+item's own staged evidence, process, run identity, advisory list and rejected
+count arrived beside them.
 
 Implementation is complete and every local gate passes at the reviewed head:
-1672 frontend tests across 70 files, 1549 Rust tests across the workspace with
+1675 frontend tests across 70 files, 1554 Rust tests across the workspace with
 23 ignored, lint, both typechecks, the build, `cargo fmt --check`, clippy with
 warnings denied, `check_repo.py` and `git diff --check`.
 

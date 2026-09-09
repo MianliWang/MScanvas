@@ -1214,6 +1214,62 @@ export function finalizedAttemptFacts(
 }
 
 /**
+ * What an attempt a stop reached established about itself.
+ *
+ * A row whose `cancellation` says a process was launched must not carry the
+ * default facts of a row that never ran one: `stop_process_facts` produces
+ * `processLaunched: true` only from a *settled* process result, and a settled
+ * result always carries the termination it settled with. A fixture pairing a
+ * launched stop with `notAttempted` describes a wire Rust cannot produce, and
+ * renders "No converter was started for this item" beside it.
+ */
+export function stoppedAttemptFacts(
+  termination = "cancelled",
+  runIdentity = "0000000000000001000000000000000d",
+): Pick<ConversionQueueItem, "process" | "staged" | "runIdentity"> {
+  return {
+    process: { kind: "settled", termination, exitCode: null },
+    staged: {
+      kind: "observed",
+      phase: "provider_returned",
+      entryCount: 1,
+      directoryCount: 0,
+      nonEmptyFileObserved: true,
+      bounded: false,
+    },
+    runIdentity,
+  };
+}
+
+/**
+ * What a failure established where the reading stopped at its bound.
+ *
+ * The counts are floors. A fixture that spelled them as exact totals would
+ * describe a wire Rust does not produce, and would let the "held more than N"
+ * sentence pass while rendering an invented total.
+ */
+export function boundedAttemptFacts(
+  entryCount: number,
+  runIdentity = "0000000000000001000000000000000c",
+): Pick<ConversionQueueItem, "process" | "staged" | "runIdentity"> {
+  return {
+    process: { kind: "settled", termination: "exited", exitCode: 3 },
+    staged: {
+      kind: "observed",
+      phase: "provider_returned",
+      // A floor, and the two fields the reading did not classify are the
+      // defaults the wire carries for a bounded observation rather than
+      // measurements. Rust nulls them in the export for the same reason.
+      entryCount,
+      directoryCount: 0,
+      nonEmptyFileObserved: false,
+      bounded: true,
+    },
+    runIdentity,
+  };
+}
+
+/**
  * What an ordinary failure established, with or without staged content.
  *
  * The decisive pair: same process outcome, same clean teardown, different

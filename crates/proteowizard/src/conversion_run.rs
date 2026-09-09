@@ -2194,6 +2194,22 @@ impl StagedContentObservation {
             bounded: false,
         }
     }
+
+    /// A reading that stopped at its bound, for the consumers of one.
+    ///
+    /// Separate from the constructor above rather than a flag on it, because a
+    /// bounded reading is not an exact one with an extra field: its counts are
+    /// lower bounds and the shape it reports is deliberately unread.
+    #[cfg(feature = "test-support")]
+    #[must_use]
+    pub const fn bounded_for_test(entry_count: usize) -> Self {
+        Self {
+            entry_count,
+            directory_count: 0,
+            non_empty_file_observed: false,
+            bounded: true,
+        }
+    }
 }
 
 /// Records the shape of the staging output directory without judging it.

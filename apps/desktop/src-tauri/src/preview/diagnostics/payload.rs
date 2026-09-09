@@ -700,6 +700,78 @@ mod tests {
         assert_eq!(validation["mode"], "source_comparison");
     }
 
+    /// A bounded reading is exported as a floor, with what it did not read
+    /// written as absent rather than as measured zeroes.
+    ///
+    /// Three facts hang on one flag. Without it the document would carry a
+    /// lower bound as an exact total, and "no directories, no file with
+    /// content" for a reading that classified nothing.
+    #[test]
+    fn a_bounded_reading_is_exported_as_a_floor_and_not_as_measured_zeroes() {
+        use crate::preview::diagnostics::DiagnosticItemIdentity;
+        use crate::preview::operation::{AttemptFacts, ItemOutputTopology};
+        use mscanvas_proteowizard::{
+            ProcessAttemptOutcome, StagedContentObservation, StagedObservationPhase,
+            StagedOutputEvidence,
+        };
+
+        let bounded = StagedOutputEvidence::Observed(
+            StagedObservationPhase::ProviderReturned,
+            StagedContentObservation::bounded_for_test(49),
+        );
+        let ticket = ConversionFailureDiagnosticTicket {
+            identity: DiagnosticItemIdentity {
+                operation: 1,
+                item_index: 0,
+                source_file_name: "sample.raw".to_owned(),
+                output: ItemOutputTopology::KnownSingle {
+                    basename: "sample.mzML".to_owned(),
+                },
+                source_kind: DatasetSourceKind::ThermoRaw,
+                attempt: 1,
+            },
+            state: ItemState::Failed,
+            retryable: false,
+            outcome: Some("backend_rejected"),
+            detailed_outcome: None,
+            refusal: None,
+            refusal_detail: None,
+            validation: None,
+            backend: None,
+            cancellation: None,
+            residue: None,
+            attempt: AttemptFacts {
+                process: ProcessAttemptOutcome::Indeterminate,
+                staged: bounded,
+                identity: None,
+            },
+            text: None,
+            output_set: None,
+        };
+
+        let mut out = String::new();
+        let mut root = Members::new(&mut out);
+        root.object("item", |written| write_item(written, &ticket));
+        root.end();
+
+        let document: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        let staged = &document["item"]["stagedOutput"];
+        assert_eq!(staged["kind"], "observed");
+        assert_eq!(staged["entryCount"], 49);
+        assert_eq!(
+            staged["countsAreLowerBounds"], true,
+            "the reader is told the count is a floor"
+        );
+        assert!(
+            staged["directoryCount"].is_null(),
+            "unread, and absent rather than zero"
+        );
+        assert!(
+            staged["nonEmptyFileObserved"].is_null(),
+            "unclassified, and absent rather than false"
+        );
+    }
+
     /// An empty object and an empty array are still valid documents.
     #[test]
     fn empty_structures_render_as_themselves() {

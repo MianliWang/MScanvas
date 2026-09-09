@@ -79,6 +79,13 @@ in `entryCount` and does not earn `nonEmptyFileObserved`, which is the only
 content claim a run makes about itself. An entry that is neither a file nor a
 directory is counted the same way and is never given a byte length.
 
+**A bounded reading is pinned at every layer it crosses.** The crate proves the
+floor and the two shapes it deliberately does not classify; the export proves
+they are written as `null` rather than as measured zeroes beside
+`countsAreLowerBounds`; the rendered test proves the sentence says "more than N"
+and never prints the exact count or "none of them a file with content". Three
+facts hang on one flag, and it was previously asserted nowhere.
+
 **The reading is bounded.** A backend that filled the working folder must not
 make a *failure* pay for enumerating all of it — discovery already refuses an
 over-large set without walking it, and an observation taken on that very refusal
@@ -404,10 +411,10 @@ and the M7/M8 seams it freezes), `0016` (the adoption relation this records),
 
 ## Validation
 
-Local gates at this head: frontend lint, typecheck, 1674 tests
+Local gates at this head: frontend lint, typecheck, 1675 tests
 across 70 files, build; `cargo fmt --all --check`; `cargo clippy
 --locked --workspace --all-targets --all-features -- -D warnings`; `cargo test
---locked --workspace --all-targets` (1552 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.
+--locked --workspace --all-targets` (1554 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.
 
 ### Rendered QA
 

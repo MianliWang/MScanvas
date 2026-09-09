@@ -217,7 +217,7 @@ different facts.
 ```json
 {
   "schema": "mscanvas.conversion-diagnostics",
-  "version": 4,
+  "version": 5,
   "application": { "name": "MSCanvas", "version": "…" },
   "queue": { "operationId": "…", "terminalReason": "…", "…": "counts" },
   "provider": { "release": "…", "buildDate": "…", "sourceRevision": "…",

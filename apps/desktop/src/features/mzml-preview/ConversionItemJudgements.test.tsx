@@ -8,6 +8,7 @@ import {
   availableBackend,
   createFakePreviewApi,
   createFakeWorkspaceDropTransport,
+  boundedAttemptFacts,
   failedAttemptFacts,
   finalizedAttemptFacts,
   outputSetReport,
@@ -62,7 +63,12 @@ function renderApp(api: FakePreviewApi): void {
 }
 
 /** A failed item whose converter exited non-zero, with or without staged bytes. */
-function failed(handle: string, name: string, stagedSomething: boolean): ConversionQueueItem {
+function failed(
+  handle: string,
+  name: string,
+  stagedSomething: boolean,
+  attempt?: Partial<ConversionQueueItem>,
+): ConversionQueueItem {
   return queueItem(handle, name, {
     state: "failed",
     attempts: 1,
@@ -83,6 +89,7 @@ function failed(handle: string, name: string, stagedSomething: boolean): Convers
       },
     },
     ...failedAttemptFacts(stagedSomething, `000000000000000100000000000000${stagedSomething ? "1a" : "1b"}`),
+    ...attempt,
   });
 }
 
@@ -276,6 +283,31 @@ describe("the five judgements of one queue item", () => {
     expect((integrity as HTMLElement).textContent).not.toContain("2 not established");
   });
 
+  it("says a reading stopped at its bound rather than inventing a total", async () => {
+    // What Rust hands back when the enumeration stops: a floor, and the two
+    // fields it did not classify carried as the defaults of an unread shape.
+    const api = terminalApi(
+      [failed("file-1", "run-1.raw", true, boundedAttemptFacts(49))],
+      [acquisition(1)],
+    );
+    renderApp(api);
+    const result = await queueResult();
+
+    const details = openDetails(rowFor(result, "run-1.raw"));
+    expect(
+      within(details).getByText(
+        "The temporary working folder held more than 48 entries when the attempt to run a converter returned. MSCanvas stopped counting rather than reading all of them.",
+      ),
+    ).toBeVisible();
+    // The exact count the reading did not take never appears, and neither do
+    // the two shapes it did not classify -- a bounded reading that printed
+    // "none of them a file with content" would report an unread folder as an
+    // examined one.
+    expect(details.textContent).not.toContain("held 49 entries");
+    expect(details.textContent).not.toContain("none of them a file with content");
+    expect(details.textContent).not.toContain("is a folder");
+  });
+
   it("says a staging area was unreadable rather than empty", async () => {
     const unknown = queueItem("file-1", "run-1.raw", {
       state: "failed",
@@ -320,7 +352,7 @@ describe("the five judgements of one queue item", () => {
     // directory.
     expect(
       within(details).getByText(
-        "What was written to the temporary working folder took its final name.",
+        "The output was written to the temporary working folder and took its final name.",
       ),
     ).toBeVisible();
     // And the manifest carries the facts that sit beside the five.

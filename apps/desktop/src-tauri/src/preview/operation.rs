@@ -2275,6 +2275,10 @@ impl ConversionSlot {
                     item.diagnostic_identity(operation, index),
                     retryable,
                     &error,
+                    // The same facts the row just recorded. One origin, so the
+                    // saved document cannot describe an attempt the queue is
+                    // describing differently.
+                    attempt,
                 )));
                 item.report = None;
                 item.error = Some(error);

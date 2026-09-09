@@ -8077,6 +8077,50 @@ fn a_stop_before_the_launch_manufactures_no_run() {
 /// can do deterministically, and for a good reason: the staging area is held
 /// open as an object for the whole run, so nothing can take it away. What is
 /// provable is the mapping, and the mapping is where the conflation would live.
+/// A folder past the bound reports a lower bound, and says that it is one.
+///
+/// The reading stops so that a backend which filled the staging area cannot
+/// make a failure settlement pay for the whole listing -- the same reason
+/// discovery refuses an over-large set by *not* enumerating it. What matters
+/// downstream is that the counts it hands back are not totals: the entry count
+/// is a floor, the shape it did not read is not reported as zero, and the flag
+/// that says so is the only thing standing between "held more than 48 entries"
+/// and a fabricated exact count.
+#[test]
+fn a_reading_that_stopped_at_its_bound_reports_a_floor_rather_than_a_total() {
+    let directory = TestDirectory::new();
+    let crowded = directory.path().join("crowded");
+    fs::create_dir(&crowded).expect("create a staging area");
+    // One past what the reading will walk, so the bound is crossed rather than
+    // exactly met. Every entry is a file with content, which is precisely what
+    // the bounded arm must *not* claim to have seen.
+    for index in 0..=super::OBSERVED_STAGED_ENTRY_BOUND {
+        fs::write(crowded.join(format!("member-{index:03}.mzML")), b"content")
+            .expect("write a staged entry");
+    }
+
+    let observed = observe_staged_content(&crowded).expect("a readable directory is observed");
+    assert!(observed.bounded(), "the reading stopped at its bound");
+    assert!(
+        observed.entry_count() > super::OBSERVED_STAGED_ENTRY_BOUND,
+        "the count is a floor above the bound, not the bound itself"
+    );
+    // Deliberately not read, and deliberately not reported as measured zeroes:
+    // the consumer nulls both rather than printing them.
+    assert_eq!(observed.directory_count(), 0);
+    assert!(!observed.non_empty_file_observed());
+
+    // A folder inside the bound is the other answer, taken the same way and
+    // through the same constructor, so the two cannot converge.
+    let small = directory.path().join("small");
+    fs::create_dir(&small).expect("create a small staging area");
+    fs::write(small.join("one.mzML"), b"content").expect("write a staged entry");
+    let exact = observe_staged_content(&small).expect("a readable directory is observed");
+    assert!(!exact.bounded());
+    assert_eq!(exact.entry_count(), 1);
+    assert!(exact.non_empty_file_observed());
+}
+
 #[test]
 fn an_unreadable_staging_area_is_unknown_rather_than_empty() {
     let directory = TestDirectory::new();

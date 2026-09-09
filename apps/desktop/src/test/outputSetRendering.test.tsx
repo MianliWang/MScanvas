@@ -30,6 +30,7 @@ import {
   queueOf,
   sciexQueueItem,
   setMembers,
+  stoppedAttemptFacts,
 } from "./previewFixtures";
 import { awaitPlan } from "./conversionPanelInteractions";
 import type { FakePreviewApi } from "./previewFixtures";
@@ -353,9 +354,13 @@ describe("rendered QA for the one-to-many output topology", () => {
               terminationRequested: true,
               ownedTree: "confirmed_gone",
               elapsedMilliseconds: 42,
-              termination: "terminated",
+              termination: "cancelled",
               stagingResidue: null,
             },
+            // A launched stop's own attempt facts. `processLaunched: true`
+            // comes only from a settled process result, so a row carrying one
+            // beside `notAttempted` would contradict itself in its own panel.
+            ...stoppedAttemptFacts(),
           }),
           queueItem("file-1", "run-1.raw", { state: "notRun" }),
         ]),
@@ -390,9 +395,12 @@ describe("rendered QA for the one-to-many output topology", () => {
             terminationRequested: true,
             ownedTree: "unconfirmed",
             elapsedMilliseconds: 5_000,
-            termination: null,
+            // A settled result always carries the ending it settled with. The
+            // unconfirmed part is the *tree*, not the process's own ending.
+            termination: "cancelled",
             stagingResidue: "staging_not_removed",
           },
+          ...stoppedAttemptFacts(),
         }),
       ]),
     });

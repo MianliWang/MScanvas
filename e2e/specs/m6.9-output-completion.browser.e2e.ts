@@ -274,7 +274,7 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
     expect(text).not.toMatch(/lossless/i);
     // Publication is stated as publication, not as an observation of an empty
     // directory, and the identity names the attempt rather than the file.
-    expect(text).toContain("What was written to the temporary working folder took its final name.");
+    expect(text).toContain("The output was written to the temporary working folder and took its final name.");
     expect(text).toMatch(/[0-9a-f]{32}/);
     // The manifest carries what sits beside the five.
     expect(text).toContain(DIGEST);

@@ -263,7 +263,7 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
 
     // The manifest is on screen, with the digest and the size.
     const shown = await details(1);
-    expect(shown).toContain("What was written to the temporary working folder took its final name.");
+    expect(shown).toContain("The output was written to the temporary working folder and took its final name.");
     expect(shown).toContain("Output-only.");
     expect(shown).toContain(firstName);
     expect(shown).not.toMatch(/fully verified/i);

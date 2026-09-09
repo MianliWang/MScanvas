@@ -11,6 +11,7 @@ import {
   previewError,
   queueItem,
   queueOf,
+  stoppedAttemptFacts,
 } from "../../test/previewFixtures";
 import type { FakePreviewApi } from "../../test/previewFixtures";
 import type {
@@ -113,6 +114,9 @@ function cancelled(handle: string, name: string): ConversionQueueItem {
   return queueItem(handle, name, {
     state: "cancelled",
     attempts: 1,
+    // A launched stop's own attempt facts, so the row's five judgements agree
+    // with the cancellation beside them.
+    ...stoppedAttemptFacts(),
     cancellation: {
       processLaunched: true,
       terminationRequested: true,
@@ -766,6 +770,7 @@ describe("stopping a running conversion queue", () => {
           queueItem("file-2", "run-2.raw", {
             state: "cancelled",
             attempts: 1,
+            ...stoppedAttemptFacts(),
             cancellation: {
               processLaunched: true,
               terminationRequested: true,
@@ -1033,12 +1038,16 @@ describe("stopping a running conversion queue", () => {
           queueItem("file-2", "run-2.raw", {
             state: "cancellationFailed",
             attempts: 1,
+            ...stoppedAttemptFacts(),
             cancellation: {
               processLaunched: true,
               terminationRequested: true,
               ownedTree: "unconfirmed",
               elapsedMilliseconds: 5_000,
-              termination: null,
+              // The tree is what could not be confirmed. The process's own
+              // ending came back settled, which is why the launch answer is
+              // `true` rather than unknown.
+              termination: "cancelled",
               stagingResidue: null,
             },
           }),

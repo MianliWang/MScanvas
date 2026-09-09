@@ -172,7 +172,13 @@ export function stagedSentence(staged: ConversionStagedOutput): string {
       return `The temporary working folder held ${entries} ${when}, ${content}.${directories}`;
     }
     case "published":
-      return "What was written to the temporary working folder took its final name.";
+      // "The output", not "what was written". A single-output run validates and
+      // renames the one document it planned and takes no listing, so it never
+      // establishes that its output was the only thing in the folder. The set
+      // lifecycle does -- discovery refuses a staging area holding anything
+      // that is not a member -- but one sentence serves both, and it may only
+      // claim what the narrower of the two knows.
+      return "The output was written to the temporary working folder and took its final name.";
   }
 }
 
