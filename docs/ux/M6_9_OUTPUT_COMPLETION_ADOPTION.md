@@ -227,12 +227,17 @@ lossless or vendor-faithful.
 
 **A stop's two answers come from one place.** Whether a process was created and
 how it ended are both read from the boundary's own judgement, never from whether
-`BackendRunFacts` came back beside it. A stop that lands after the item starts
-and before the process exists settles as `not_started` and carries no facts,
-because there was no process to have facts about; deriving from that absence
-dropped the ending on one path and reported an established ending as
-unestablished on another. One helper answers both, for the single-output stop,
-the stop that could not be confirmed and the set stop alike.
+`BackendRunFacts` came back beside it.
+
+The single-output lifecycle is where that mattered. A stop that lands after the
+item starts and before the process exists settles as `not_started`, and that
+lifecycle deliberately reports no process facts beside it, because there was no
+process to have facts about. Reading the facts rather than the judgement went
+wrong in both directions: the ending vanished on the confirmed path, and on the
+unconfirmed one an unknown launch was reported for a stop whose boundary had
+returned a real ending. The set lifecycle keeps its facts through the same
+event, which is why it was already right — and it now reads the same helper
+anyway, so the two cannot drift apart again.
 
 **A publication failure is not an unchecked run either.** A rename that did not
 land, and a name something else took during the run, both happen strictly after
@@ -395,7 +400,7 @@ and the M7/M8 seams it freezes), `0016` (the adoption relation this records),
 Local gates at this head: frontend lint, typecheck, 1674 tests
 across 70 files, build; `cargo fmt --all --check`; `cargo clippy
 --locked --workspace --all-targets --all-features -- -D warnings`; `cargo test
---locked --workspace --all-targets` (1550 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.
+--locked --workspace --all-targets` (1551 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.
 
 ### Rendered QA
 
@@ -431,7 +436,7 @@ assertion** rather than by not compiling:
 | The identity minted after the provider ran rather than before | `a_failed_launch_is_indeterminate_rather_than_no_process` |
 | A refused member left without its own state | `one_bad_member_publishes_nothing` |
 | The export not counting refused members | `every_private_sciex_failure_is_diagnosable_and_path_free` |
-| A stop's ending read from the facts beside it | `a_stop_reports_the_ending_the_boundary_decided_rather_than_the_facts_beside_it` |
+| A stop's ending read from the facts beside it | `a_stop_reports_the_ending_the_boundary_decided_rather_than_the_facts_beside_it`, `a_stop_that_beat_the_process_still_says_how_the_attempt_ended` |
 
 They were run serially in an **isolated copy of this head**, extracted with `git
 archive` into a scratch directory with its own `CARGO_TARGET_DIR` — no symlink

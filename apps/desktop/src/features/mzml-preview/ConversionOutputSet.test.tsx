@@ -293,7 +293,8 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     const partial = outputSetReport("file-9", TEN_MEMBERS.slice(0, 3), {
       groupOutcome: "partially_finalized",
       finalizedCount: 1,
-      notPublishedCount: 2,
+      validatedNotPublishedCount: 2,
+      notPublishedCount: 0,
       members: setMembers(TEN_MEMBERS.slice(0, 3), [
         "finalized",
         "validated_not_published",
@@ -387,7 +388,8 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     const partial = outputSetReport("file-9", TEN_MEMBERS.slice(0, 3), {
       groupOutcome: "partially_finalized",
       finalizedCount: 1,
-      notPublishedCount: 2,
+      validatedNotPublishedCount: 2,
+      notPublishedCount: 0,
       members: setMembers(TEN_MEMBERS.slice(0, 3), [
         "finalized",
         "validated_not_published",

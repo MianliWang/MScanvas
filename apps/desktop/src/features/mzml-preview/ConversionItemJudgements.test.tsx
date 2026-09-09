@@ -339,7 +339,8 @@ describe("the five judgements of one queue item", () => {
     const partial = outputSetReport("file-9", members, {
       groupOutcome: "partially_finalized",
       finalizedCount: 1,
-      notPublishedCount: 2,
+      validatedNotPublishedCount: 2,
+      notPublishedCount: 0,
       members: setMembers(members, [
         "finalized",
         "validated_not_published",

@@ -12374,6 +12374,11 @@ enum StopEnding {
     Unterminated,
     /// The process finished on its own before the request was observed.
     NaturalSuccess,
+    /// The request reached the boundary before it created a process, which the
+    /// production runner answers by not spawning one. A *settled* result whose
+    /// termination is `NotStarted`, with no process facts beside it -- there was
+    /// no process to have facts about.
+    BeforeSpawn,
 }
 
 /// A `msconvert` stand-in that answers a cancellation request.
@@ -12501,6 +12506,26 @@ impl ProcessRunner for StopAwareRunner {
                 tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
             });
         }
+        if self.ending == StopEnding::BeforeSpawn {
+            // Nothing is written, because nothing ran. The staging area exists
+            // -- the run made it before it asked -- and is empty.
+            return Ok(ProcessOutput {
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                stdout_total_bytes: 0,
+                stderr_total_bytes: 0,
+                stdout_truncated: false,
+                stderr_truncated: false,
+                exit_code: None,
+                elapsed: Duration::ZERO,
+                termination: Termination::NotStarted,
+                max_active_processes: None,
+                final_active_processes: None,
+                peak_job_memory_bytes: None,
+                total_owned_processes: Some(1),
+                tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
+            });
+        }
         fs::write(&destination, b"<indexedmzML><mzML").expect("write a partial staged output");
         if self.ending == StopEnding::Unterminated {
             return Err(ProcessError::Terminate {
@@ -12595,6 +12620,54 @@ fn stop_mid_item(
     release.send(()).expect("release the parked conversion");
     let update = worker.join().expect("the queue worker finishes");
     (fixture, destination, service, update, launches)
+}
+
+/// A stop the boundary answered by creating nothing keeps the ending it decided.
+///
+/// The one path where a *settled* process result comes back with no
+/// `BackendRunFacts` beside it. Both of the row's stop answers used to be read
+/// from those absent facts, so the queue and the export said nothing at all
+/// about how the attempt ended while the item's own process judgement said
+/// `not_started` -- one item answering one question two ways.
+#[test]
+fn a_stop_that_beat_the_process_still_says_how_the_attempt_ended() {
+    let (_fixture, _destination, _service, update, launches) =
+        stop_mid_item(StopEnding::BeforeSpawn);
+
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    let queue = terminal_queue(&update);
+    assert_eq!(queue.items[0].state, ConversionQueueItemStateDto::Cancelled);
+    // The call was made -- that is what `launches` counts -- and it created
+    // nothing, which is a different fact and the one under test.
+    assert_eq!(launches.load(Ordering::SeqCst), 1);
+
+    let facts = queue.items[0]
+        .cancellation
+        .as_ref()
+        .expect("a reached stop reports what it established");
+    assert_eq!(
+        facts.process_launched,
+        Some(false),
+        "the boundary said no process was created, which is settled rather than unknown"
+    );
+    assert_eq!(
+        facts.termination.as_deref(),
+        Some("not_started"),
+        "the ending the boundary decided, not the absence of facts beside it"
+    );
+    assert_eq!(facts.owned_tree, "none_launched");
+    // And the item's own process judgement agrees with both, which is the whole
+    // point: these are one machine event described once.
+    assert!(matches!(
+        queue.items[0].process,
+        ConversionProcessDto::Settled {
+            termination: "not_started",
+            exit_code: None,
+        }
+    ));
 }
 
 /// A stop reaching a running item cancels it, runs nothing after it, and keeps
@@ -12783,6 +12856,25 @@ fn an_unconfirmed_stop_quarantines_the_backend_and_refuses_every_operation() {
             facts.owned_tree, "unconfirmed",
             "the whole reason this state exists"
         );
+        // The two endings reach here differently and must not be described the
+        // same way. A job that survived termination returned a real result, so
+        // the launch and the ending are both settled; a boundary that could not
+        // complete the teardown returned an error, and establishes neither. The
+        // absence of `BackendRunFacts` used to answer for both.
+        match ending {
+            StopEnding::Survivors => {
+                assert_eq!(facts.process_launched, Some(true), "{ending:?}");
+                assert_eq!(
+                    facts.termination.as_deref(),
+                    Some("cancelled"),
+                    "{ending:?}"
+                );
+            }
+            _ => {
+                assert_eq!(facts.process_launched, None, "{ending:?}");
+                assert_eq!(facts.termination, None, "{ending:?}");
+            }
+        }
         // No later item ran.
         assert_eq!(launches.load(Ordering::SeqCst), 1);
         assert!(

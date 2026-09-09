@@ -136,7 +136,8 @@ const fullSet = outputSetReport("file-9", TEN_MEMBERS);
 const partialSet = outputSetReport("file-9", TEN_MEMBERS.slice(0, 4), {
   groupOutcome: "partially_finalized",
   finalizedCount: 2,
-  notPublishedCount: 2,
+  validatedNotPublishedCount: 2,
+  notPublishedCount: 0,
   members: setMembers(TEN_MEMBERS.slice(0, 4), [
     "finalized",
     "finalized",

@@ -29,8 +29,18 @@ const SCHEMA: &str = "mscanvas.conversion-diagnostics";
 
 /// Incremented when a field changes meaning or leaves, never for an addition.
 ///
-/// **Four since M6.9's release review**, for a second field that changed
-/// meaning: `cancellation.processLaunched` became nullable. It was derived from
+/// **Five since M6.9's release review**, for a count that narrowed:
+/// `outputSet.notPublishedCount` counts members in the state `not_published`,
+/// and a member the integrity judgement read and refused used to be one of
+/// them. Once refusal became its own state such a member fell out of that count
+/// and into none of the others, so the export accounted for fewer members than
+/// the `memberCount` beside it. `rejectedCount` is new and holds it -- an
+/// addition -- but the older field's population is smaller than it was, and a
+/// reader written against version 4 must not read a version 5 file as though it
+/// still included refused members. The four member counts partition the set.
+///
+/// Four before that, for a field that changed meaning:
+/// `cancellation.processLaunched` became nullable. It was derived from
 /// whether process facts came back, so a stop the boundary could not confirm
 /// reported `false` -- no process launched -- beside a `process` judgement of
 /// `indeterminate`, which says exactly that this was not established. A boolean

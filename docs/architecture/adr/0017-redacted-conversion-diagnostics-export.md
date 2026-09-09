@@ -262,8 +262,19 @@ members than the `memberCount` beside it. `rejectedCount` is new and holds it,
 which is an addition -- but the older field's population is smaller than it was,
 and a reader written against version 4 must not read a version 5 file as though
 `notPublishedCount` still included refused members. The four counts partition
-the set and sum to `memberCount`; a test asserts that sum for every set class
-the export can produce.
+the set and sum to `memberCount`, and a test asserts that sum over every refusal
+class the private-failure export produces -- the classes where a member can be
+refused at all.
+
+Two of a stop's exported values were corrected under this same version, and
+deliberately without a further increment: `cancellation.termination` now carries
+the ending a stop that beat process creation settled with, and
+`cancellation.processLaunched` is no longer `null` for an unconfirmed stop whose
+boundary did return one. Neither field changed its meaning or its type; both had
+been derived from whether `BackendRunFacts` came back beside them rather than
+from the boundary's own judgement, and were wrong for those two events. Version
+5 had not left this branch when they were repaired, so no document exists that
+carries the old values under it.
 
 **Amended 2026-09-09 (M6.9's release review): version 3 became version 4.** An
 item's `cancellation.processLaunched` became nullable. It was derived from
