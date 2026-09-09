@@ -268,8 +268,10 @@ none of them into success or failure: whether a converter ran and how it ended;
 what the private working folder held, answered whether or not anything was
 published; what obtained a final name, including part of a backend-named set;
 how the output was judged, with validation mode, the three property
-dispositions and advisory observations kept apart; and what an adoption did with
-that item's outputs. Beside the five, never in place of one, a per-output
+dispositions and advisory observations kept apart — advisories are recorded only
+where a source comparison runs, and no family this release converts is read
+under one, so today that list is empty on every conversion; and what an adoption
+did with that item's outputs. Beside the five, never in place of one, a per-output
 manifest carries each file's name, byte length, SHA-256 digest and observed
 spectrum and chromatogram counts, and an opaque run identity names the attempt
 that produced them.

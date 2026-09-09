@@ -10,7 +10,16 @@
 //! Everything here is minted or observed by the boundary that invoked the
 //! provider, because that is the only place the answers exist. A later reader
 //! looking at a destination folder, a log line or a queue row cannot
-//! reconstruct any of them, and this module exists so that nothing tries.
+//! reconstruct any of them.
+//!
+//! **What the types enforce, exactly.** Minting is `pub(crate)`, so no consumer
+//! can name an attempt that never reached a provider. An observation's payload
+//! can only be built by taking one, so no consumer can describe a directory it
+//! did not read. The two evidence arms that carry no payload -- nothing was
+//! given a directory, and what was staged took its final name -- are ordinary
+//! public variants, and a consumer that constructed one would be stating a fact
+//! about a run rather than reading it. Nothing stops that but the fact that
+//! every value a caller receives comes from a report.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -32,17 +41,29 @@ use crate::process::Termination;
 /// attempts carry `None`, and no downstream reader can invent one because
 /// nothing outside this module can construct the value.
 ///
-/// **The form is persistable and M6 does not persist it.** It is a fixed-width
-/// opaque value that renders to a stable 32-character lowercase hex string, so
-/// a later milestone that builds a run store can keep it unchanged. This
-/// milestone neither writes it to disk nor resolves one across sessions, and
+/// **The form is persistable and M6 keeps no store of it.** It is a fixed-width
+/// value that renders to a stable 32-character lowercase hex string, so a later
+/// milestone that builds a run store can keep it unchanged. This milestone
+/// holds no record of one between sessions and resolves none across them, and
 /// there is deliberately no parser: a value that cannot be read back cannot be
 /// compared against one from another session by accident.
 ///
-/// Uniqueness is session-local and non-reuse is by construction: the low half
-/// is a monotonic counter that never repeats within a process, and the high
-/// half is a per-process nonce so two sessions do not mint the same identity
-/// for their first attempts.
+/// It does reach a file: the redacted diagnostics export the user chooses to
+/// save carries it, exactly as it carries every other stable identifier about
+/// an attempt. That is a document the user asked for rather than session state,
+/// and saying it is "never written to disk" would be false of it.
+///
+/// **Uniqueness within a session is by construction**: the low half is a
+/// monotonic counter that never repeats within a process, rendered through a
+/// bijection, so two attempts of one session cannot collide.
+///
+/// **Across sessions it is an argument, not a proof.** The high half is a
+/// 64-bit per-process nonce mixed from the wall clock, the process id and the
+/// address of a static; two sessions colliding is improbable rather than
+/// impossible. That is the right strength for what this is -- nothing
+/// authorizes anything on an identity, and M6 does not resolve one across
+/// sessions at all -- but a summary that called it certain would be claiming
+/// more than the derivation gives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OperationRunIdentity {
     nonce: u64,
@@ -112,11 +133,18 @@ impl OperationRunIdentity {
     /// The stable, persistable rendering: 32 lowercase hex characters.
     ///
     /// Fixed width, so a reader can tell a truncated one from a whole one, and
-    /// carrying nothing a filename, a path or a queue position could be read
-    /// out of.
+    /// carrying nothing a filename or a path could be read out of.
+    ///
+    /// The counter is mixed rather than printed. `mix` is a bijection, so
+    /// uniqueness and non-reuse are exactly as strong as the counter's -- what
+    /// changes is that the low half stops being this session's launch ordinal
+    /// in plain hexadecimal. An identity that ends `…0001`, `…0002`, `…0003`
+    /// down a queue is one whose "opaque" is a word rather than a property, and
+    /// a reader who learns to count from it is relying on something no
+    /// milestone promised.
     #[must_use]
     pub fn to_hex(self) -> String {
-        format!("{:016x}{:016x}", self.nonce, self.sequence)
+        format!("{:016x}{:016x}", self.nonce, mix(self.sequence))
     }
 }
 
@@ -129,6 +157,14 @@ impl OperationRunIdentity {
 /// produced nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StagedObservationPhase {
+    /// Taken after the attempt settled **without the provider being invoked**.
+    ///
+    /// The staging area exists -- this run created it -- and nothing was ever
+    /// handed it, so a reading here says what was in a directory the converter
+    /// never saw. Distinct from `BackendSettled` because that one names an
+    /// execution that happened, and stamping it on an attempt that reached no
+    /// provider would assert one.
+    ProviderNotInvoked,
     /// Taken as soon as the backend's own execution settled, before anything
     /// was validated, published or removed. The phase at which "did the
     /// provider write anything" is actually answerable.
@@ -146,6 +182,7 @@ impl StagedObservationPhase {
     #[must_use]
     pub const fn stable_id(self) -> &'static str {
         match self {
+            Self::ProviderNotInvoked => "provider_not_invoked",
             Self::BackendSettled => "backend_settled",
             Self::OutputRefused => "output_refused",
             Self::PublicationSettled => "publication_settled",
@@ -167,13 +204,18 @@ impl StagedObservationPhase {
 /// produces [`Self::Unobserved`] and changes nothing else about the attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StagedOutputEvidence {
-    /// No staging area existed for this attempt, so there was nothing to
-    /// observe.
+    /// No staging area was available to observe, because none survived to be
+    /// handed to a provider.
     ///
-    /// Distinct from an observed empty one, and the distinction is real: an
-    /// attempt refused before staging was created never gave the provider
-    /// anywhere to write, while an attempt observed empty gave it one and it
-    /// stayed empty.
+    /// Two ways that is so, and both mean the same thing to a reader: the
+    /// attempt settled before a staging area was created at all, or one was
+    /// created and its own setup failed, in which case teardown removed what it
+    /// had built before anything was invoked. Neither gave a provider anywhere
+    /// to write.
+    ///
+    /// Distinct from an observed empty one, and the distinction is real: this
+    /// says no provider was ever given a directory, while an observed empty one
+    /// says a provider had one and it stayed empty.
     NotCreated,
     /// A staging area existed and could not be read when the observation was
     /// attempted.

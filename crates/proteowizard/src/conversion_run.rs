@@ -3436,7 +3436,10 @@ fn run_staged(
             return StagedResult::failed(
                 ConversionRunFailure::NotPlannable(error),
                 staging,
-                StagedObservationPhase::BackendSettled,
+                // The provider was never invoked, so the reading is stamped
+                // with the phase that says so rather than with one that names
+                // an execution.
+                StagedObservationPhase::ProviderNotInvoked,
                 None,
                 ProcessAttemptOutcome::NotAttempted,
             );

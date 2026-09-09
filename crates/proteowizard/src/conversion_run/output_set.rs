@@ -1537,7 +1537,7 @@ fn run_bound_multi_output(
             // than reasoning that nothing can have been.
             let evidence = SetAttemptEvidence::staged_without_launch(
                 &staging_output,
-                StagedObservationPhase::BackendSettled,
+                StagedObservationPhase::ProviderNotInvoked,
             );
             let residue = staging.discard();
             return refused(
@@ -1556,7 +1556,7 @@ fn run_bound_multi_output(
         None => {
             let evidence = SetAttemptEvidence::staged_without_launch(
                 &staging_output,
-                StagedObservationPhase::BackendSettled,
+                StagedObservationPhase::ProviderNotInvoked,
             );
             let residue = staging.discard();
             return refused(
@@ -1593,16 +1593,22 @@ fn run_bound_multi_output(
         // four of its six documents was previously indistinguishable from one
         // that wrote none: both settled with the same outcome, the same absent
         // publication and the same clean teardown.
+        // The phase follows whether the provider was actually invoked. A stop
+        // that arrived in the window between creating the staging area and
+        // launching settles here with no identity and nothing attempted, and
+        // naming a backend that settled would assert an execution.
+        let phase = if identity.is_some() {
+            StagedObservationPhase::BackendSettled
+        } else {
+            StagedObservationPhase::ProviderNotInvoked
+        };
         let evidence = SetAttemptEvidence {
-            staged: StagedOutputEvidence::of(
-                StagedObservationPhase::BackendSettled,
-                super::observe_staged_content(&staging_output),
-            ),
+            staged: StagedOutputEvidence::of(phase, super::observe_staged_content(&staging_output)),
             identity,
             process,
         };
         let residue = staging.discard();
-        return refused_after_stop(failure, backend, residue, diagnostics, evidence);
+        return refused_diagnosable(failure, backend, residue, diagnostics, evidence);
     }
 
     // Before discovery, before validation, before any destination name is
@@ -1679,13 +1685,26 @@ fn run_bound_multi_output(
     // after discovery -- leaves the question open and is observed, at the
     // phase that says the answer is about what remained after publication
     // rather than about what the backend wrote.
-    let staged = if matches!(settled.outcome, MultiOutputOutcome::FullyFinalized) {
-        StagedOutputEvidence::Published
-    } else {
-        StagedOutputEvidence::of(
+    let staged = match &settled.outcome {
+        // Every discovered member moved out under its final name, which settles
+        // the judgement without a listing.
+        MultiOutputOutcome::FullyFinalized => StagedOutputEvidence::Published,
+        // Publication ran and stopped partway. The reading is about what it
+        // left, which is why the phase says so.
+        MultiOutputOutcome::PartiallyFinalized { .. } => StagedOutputEvidence::of(
             StagedObservationPhase::PublicationSettled,
             super::observe_staged_content(&staging_output),
-        )
+        ),
+        // Nothing was published: the set stepped aside because every one of its
+        // names was occupied, or it was refused after discovery and before any
+        // name was taken. Naming a publication phase would assert one that did
+        // not happen, and what these readings are about is what the backend
+        // left in the directory.
+        MultiOutputOutcome::SkippedExistingDestinations
+        | MultiOutputOutcome::RefusedBeforePublication(_) => StagedOutputEvidence::of(
+            StagedObservationPhase::BackendSettled,
+            super::observe_staged_content(&staging_output),
+        ),
     };
     let residue = staging.discard();
     MultiOutputConversionRun {
@@ -1750,11 +1769,6 @@ fn refused_diagnosable(
     run
 }
 
-/// The same refusal, carrying what was staged when a stop reached the run.
-///
-/// Only the cancellation paths take this observation, and only they should: it
-/// is the one partial-output claim a run makes about itself, and a run that
-/// reached its own end has already said what it published.
 /// What one set attempt established about itself, beside its outcome.
 ///
 /// Carried as one value rather than three parameters, and required by every
@@ -1788,16 +1802,6 @@ impl SetAttemptEvidence {
             process: ProcessAttemptOutcome::NotAttempted,
         }
     }
-}
-
-fn refused_after_stop(
-    failure: MultiOutputFailure,
-    backend: Option<BackendRunFacts>,
-    residue: Option<StagingResidue>,
-    diagnostics: Option<Box<BackendDiagnosticText>>,
-    evidence: SetAttemptEvidence,
-) -> MultiOutputConversionRun {
-    refused_diagnosable(failure, backend, residue, diagnostics, evidence)
 }
 
 /// A refusal that produced no members.

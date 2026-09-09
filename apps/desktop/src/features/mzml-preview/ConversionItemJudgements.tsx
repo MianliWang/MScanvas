@@ -51,6 +51,7 @@ const TERMINATION_LABEL: Record<string, string> = {
  * are looking at has been given a fact without its scope.
  */
 const STAGED_PHASE_LABEL: Record<string, string> = {
+  provider_not_invoked: "before any converter was invoked",
   backend_settled: "when the converter finished",
   output_refused: "after the output was checked and refused",
   publication_settled: "after publication finished",
@@ -101,7 +102,12 @@ export function processSentence(process: ConversionProcessOutcome): string {
 export function stagedSentence(staged: ConversionStagedOutput): string {
   switch (staged.kind) {
     case "notCreated":
-      return "No temporary working folder was created, so nothing could have been written there.";
+      // What this establishes is that no converter was given a folder — which
+      // covers an attempt that settled before one was made and one whose own
+      // setup failed and was torn down. Saying "none was created" would be
+      // wrong in the second case and would be claiming more than the boundary
+      // reports.
+      return "No converter was given a temporary working folder, so nothing could have been written there.";
     case "unobserved":
       return `MSCanvas could not read its temporary working folder ${
         STAGED_PHASE_LABEL[staged.phase] ?? "at that point"
@@ -145,12 +151,18 @@ export function finalizedSentence(item: ConversionQueueItem): string {
       : "Nothing was written. Files of all of its output names were already there and were left alone.";
   }
   if (set !== null) {
+    // What this surface knows is what the run *discovered* and published, not
+    // what the converter wrote. A set refused before discovery reports no
+    // members, and the converter may still have written documents — the staged
+    // judgement beside this one is what says whether it did. So the empty case
+    // says nothing obtained a final name, and does not say nothing was
+    // produced.
     if (set.memberCount === 0) {
-      return "No output files were produced, so none obtained a final name.";
+      return "No output file obtained a final name.";
     }
     return `${formatCount(set.finalizedCount)} of ${formatCount(
       set.memberCount,
-    )} produced output files obtained a final name.`;
+    )} discovered output files obtained a final name.`;
   }
   if (single?.outputFileName != null) {
     return `One output obtained its final name: ${single.outputFileName}.`;
@@ -168,21 +180,32 @@ export function finalizedSentence(item: ConversionQueueItem): string {
 export function integritySentence(
   validation: ConversionValidation | null,
   perOutput = false,
+  refused = false,
 ): string {
   if (validation === null) {
-    return "Nothing was checked, because nothing was validated.";
+    // The one failure the integrity judgement *causes* must not report that no
+    // judgement happened. A refused output was read, judged and discarded, and
+    // saying nothing was checked there is the collapse this whole surface
+    // exists to undo.
+    return refused
+      ? "The output was checked against this source posture's contract, did not pass, and was discarded rather than published."
+      : "Nothing was checked, because nothing was validated.";
   }
   const scope =
     validation.mode === "source_comparison"
       ? "Compared against the source document"
       : "Output-only. The converted data was not compared against a readable vendor-source model";
-  // A set is judged member by member under one mode. The counts here are one
-  // member's, so where there are several the sentence sends the reader to the
-  // manifest rather than presenting one member's answer as the item's.
-  const each = perOutput ? " Each output is judged on its own; the manifest below has all of them." : "";
+  // A set is judged member by member. Printing one member's counts as the
+  // item's would be presenting a sample as a total, so where there is more than
+  // one output this states the mode — which is a property of the source posture
+  // and is therefore the same for all of them — and leaves the counts to the
+  // manifest, which carries each member's own.
+  if (perOutput) {
+    return `${scope}. Each output is judged on its own; the manifest below has every one.`;
+  }
   return `${scope}. ${formatCount(validation.verified.length)} checked, ${formatCount(
     validation.unverified.length,
-  )} not established, ${formatCount(validation.inapplicable.length)} not applicable.${each}`;
+  )} not established, ${formatCount(validation.inapplicable.length)} not applicable.`;
 }
 
 /**
@@ -192,10 +215,18 @@ export function integritySentence(
  * the workspace holds now. A row removed afterwards leaves this unchanged,
  * because removing a row deletes no file and undoes no past process outcome.
  */
-export function adoptionSentence(adoption: ConversionItemAdoption): string {
+export function adoptionSentence(
+  adoption: ConversionItemAdoption,
+  finalizedSomething = false,
+): string {
   switch (adoption.kind) {
     case "nothingToAdopt":
-      return "This item produced nothing that could be added to the workspace.";
+      // An item that finalized files and is still not offered was refused by a
+      // policy, not by having produced nothing. Attributing the refusal to
+      // production would contradict the finalized line directly above it.
+      return finalizedSomething
+        ? "Not offered. What this item finalized is not a complete output set, and MSCanvas will not add a partial one as though it were the acquisition's. Those files remain in the destination folder."
+        : "This item produced nothing that could be added to the workspace.";
     case "notRequested":
       return "Not added yet. Adding outputs to the workspace is something you ask for.";
     case "settled": {
@@ -204,12 +235,28 @@ export function adoptionSentence(adoption: ConversionItemAdoption): string {
         `${formatCount(adoption.alreadyInWorkspace)} already in the workspace`,
         `${formatCount(adoption.refused)} not added`,
       ];
+      // One item can hold many outputs and their refusals can differ — an
+      // identity check and a full workspace are independent answers — so the
+      // reasons are named as the set they are rather than the first one being
+      // spoken for all of them.
+      const reasons: string[] = [];
+      for (const refusal of adoption.refusals) {
+        // An identifier this surface has no sentence for is shown as itself.
+        // Inventing "could not be verified" would name a reason MSCanvas did
+        // not give, which is the one thing a refusal must not do.
+        const said = ADOPTION_REFUSAL_LABEL[refusal] ?? `was refused: ${refusal}`;
+        if (!reasons.includes(said)) {
+          reasons.push(said);
+        }
+      }
       const why =
-        adoption.refusals.length === 0
+        reasons.length === 0
           ? ""
-          : ` Not added because each ${
-              ADOPTION_REFUSAL_LABEL[adoption.refusals[0] ?? ""] ?? "could not be verified"
-            }.`;
+          : reasons.length === 1
+            ? ` Not added because ${
+                adoption.refusals.length === 1 ? "it" : "each"
+              } ${reasons[0] ?? ""}.`
+            : ` Not added because: ${reasons.join("; ")}.`;
       return `When outputs were last added: ${parts.join(", ")}.${why}`;
     }
   }
@@ -241,6 +288,23 @@ function manifestOf(item: ConversionQueueItem): readonly ConversionOutputMember[
   return [];
 }
 
+/**
+ * Whether this item's own failure was the integrity judgement refusing.
+ *
+ * Read from the boundary's identifiers rather than from the absence of a
+ * validation record: a refused output carries none, and so does a run that
+ * never produced one, and those are opposite answers to "was it checked".
+ */
+function integrityRefused(item: ConversionQueueItem): boolean {
+  if (item.result?.kind === "single") {
+    return item.result.report.outcome === "output_rejected";
+  }
+  if (item.result?.kind === "outputSet") {
+    return item.result.report.detailedOutcome === "multi_output_member_rejected";
+  }
+  return false;
+}
+
 /** The validation an item's own judgement sentence is about. */
 function validationOf(item: ConversionQueueItem): ConversionValidation | null {
   if (item.result?.kind === "single") {
@@ -253,6 +317,17 @@ function validationOf(item: ConversionQueueItem): ConversionValidation | null {
     return item.result.report.members.find((member) => member.validation !== null)?.validation ?? null;
   }
   return null;
+}
+
+/** Whether this item gave any output a final name. */
+function finalizedAnyOutput(item: ConversionQueueItem): boolean {
+  if (item.result?.kind === "single") {
+    return item.result.report.outputFileName !== null;
+  }
+  if (item.result?.kind === "outputSet") {
+    return item.result.report.finalizedCount > 0;
+  }
+  return false;
 }
 
 /** Advisories across every output of this item, de-duplicated and in order. */
@@ -288,9 +363,10 @@ export interface ConversionItemJudgementsProps {
 /**
  * The disclosure itself.
  *
- * Ids are derived from the position so two items cannot share one, which is
- * what an `aria-describedby` on a static id would have produced the moment a
- * queue held two rows.
+ * The test hooks are derived from the row's position so two rows cannot share
+ * one. The component emits no `id` and no `aria-describedby`: the disclosure's
+ * accessible name is its own summary text, which names the row, so there is
+ * nothing here for a static id to be duplicated by.
  */
 export function ConversionItemJudgements({
   item,
@@ -330,14 +406,14 @@ export function ConversionItemJudgements({
         <div>
           <dt>Integrity</dt>
           <dd data-testid={`${id}-integrity`}>
-            {integritySentence(validationOf(item), manifest.length > 1)}
+            {integritySentence(validationOf(item), manifest.length > 1, integrityRefused(item))}
             {advisories.length === 0 ? null : (
               <>
                 {" "}
                 <span className="conversion-item-advisories">
-                  {`${formatCount(advisories.length)} advisory ${
-                    advisories.length === 1 ? "observation" : "observations"
-                  }, which fail nothing: ${advisories.join(", ")}.`}
+                  {advisories.length === 1
+                    ? `One advisory observation, which fails nothing: ${advisories[0] ?? ""}.`
+                    : `${formatCount(advisories.length)} kinds of advisory observation, which fail nothing: ${advisories.join(", ")}.`}
                 </span>
               </>
             )}
@@ -345,7 +421,9 @@ export function ConversionItemJudgements({
         </div>
         <div>
           <dt>Adoption</dt>
-          <dd data-testid={`${id}-adoption`}>{adoptionSentence(item.adoption)}</dd>
+          <dd data-testid={`${id}-adoption`}>
+            {adoptionSentence(item.adoption, finalizedAnyOutput(item))}
+          </dd>
         </div>
         <div>
           <dt>Run identity</dt>
@@ -372,6 +450,11 @@ export function ConversionItemJudgements({
                 <th scope="col">Size</th>
                 <th scope="col">Spectra</th>
                 <th scope="col">Chromatograms</th>
+                {/* Per member, because a set is judged member by member and the
+                    sentence above states only the mode. */}
+                <th scope="col">Checked</th>
+                <th scope="col">Not established</th>
+                <th scope="col">Not applicable</th>
                 <th scope="col">SHA-256</th>
               </tr>
             </thead>
@@ -391,6 +474,21 @@ export function ConversionItemJudgements({
                   <td>{member.output === null ? "—" : formatCount(member.output.spectrumCount)}</td>
                   <td>
                     {member.output === null ? "—" : formatCount(member.output.chromatogramCount)}
+                  </td>
+                  <td>
+                    {member.validation === null
+                      ? "—"
+                      : formatCount(member.validation.verified.length)}
+                  </td>
+                  <td>
+                    {member.validation === null
+                      ? "—"
+                      : formatCount(member.validation.unverified.length)}
+                  </td>
+                  <td>
+                    {member.validation === null
+                      ? "—"
+                      : formatCount(member.validation.inapplicable.length)}
                   </td>
                   <td>
                     {member.output === null ? (

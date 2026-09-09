@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { PreviewApiProvider } from "./api";
@@ -17,7 +17,7 @@ import {
   setMembers,
 } from "../../test/previewFixtures";
 import type { FakePreviewApi } from "../../test/previewFixtures";
-import type { ConversionQueueItem, SelectedFile } from "./contracts";
+import type { ConversionQueueItem, ConversionReport, SelectedFile } from "./contracts";
 
 /**
  * The five judgements on screen, per item.
@@ -106,12 +106,16 @@ function converted(handle: string, name: string): ConversionQueueItem {
           chromatogramCount: 3,
         },
         validation: {
+          // Output-only, which is what every family the visible queue accepts
+          // is judged under, and which records no advisory observations. The
+          // advisory rendering is exercised separately, against the mode that
+          // does produce them.
           mode: "output_only",
           fullyVerified: false,
           verified: ["output_is_well_formed_mzml"],
           unverified: [],
           inapplicable: ["source_spectrum_count_preserved"],
-          advisory: ["byte_length_differs"],
+          advisory: [],
         },
         backend: { exitCode: 0, elapsedMilliseconds: 568 },
         stagingResidue: null,
@@ -138,11 +142,16 @@ function terminalApi(items: readonly ConversionQueueItem[], datasets: readonly S
 /** The panel's rendered queue block. */
 async function queueResult(): Promise<HTMLElement> {
   await screen.findByRole("region", { name: "Convert" });
-  const node = document.querySelector(".conversion-running");
-  if (node === null) {
-    throw new Error("expected a queue result on screen");
-  }
-  return node as HTMLElement;
+  // Waited for rather than read once. The panel renders the region before the
+  // queue read it dispatched has been answered, so a synchronous query here is
+  // a race that only loses under load.
+  return waitFor(() => {
+    const node = document.querySelector(".conversion-running");
+    if (node === null) {
+      throw new Error("expected a queue result on screen");
+    }
+    return node as HTMLElement;
+  });
 }
 
 /** The `<li>` a named row is rendered as. */
@@ -220,6 +229,43 @@ describe("the five judgements of one queue item", () => {
     }
   });
 
+  it("names advisory observations apart from the three dispositions", async () => {
+    // A source comparison is the only judgement that records an advisory, and
+    // no family the visible queue accepts is read under one today — so this
+    // pins the rendering against the shape the wire permits and the mode that
+    // produces it, rather than against a pairing Rust cannot emit.
+    const compared = queueItem("file-1", "run-1.raw", {
+      ...converted("file-1", "run-1.raw"),
+      result: {
+        kind: "single" as const,
+        report: {
+          ...(converted("file-1", "run-1.raw").result as { kind: "single"; report: ConversionReport })
+            .report,
+          validation: {
+            mode: "source_comparison" as const,
+            fullyVerified: false,
+            verified: ["output_is_well_formed_mzml"],
+            unverified: ["source_spectrum_count_preserved"],
+            inapplicable: [],
+            advisory: ["byte_length_differs", "root_wrapper_differs"],
+          },
+        },
+      },
+    });
+    const api = terminalApi([compared], [acquisition(1)]);
+    renderApp(api);
+    const result = await queueResult();
+
+    const details = openDetails(rowFor(result, "run-1.raw"));
+    const integrity = details.querySelector('[data-testid="conversion-item-0-integrity"]');
+    expect((integrity as HTMLElement).textContent).toBe(
+      "Compared against the source document. 1 checked, 1 not established, 0 not applicable. " +
+        "2 kinds of advisory observation, which fail nothing: byte_length_differs, root_wrapper_differs.",
+    );
+    // Advisories are named apart and are never counted as unestablished.
+    expect((integrity as HTMLElement).textContent).not.toContain("2 not established");
+  });
+
   it("says a staging area was unreadable rather than empty", async () => {
     const unknown = queueItem("file-1", "run-1.raw", {
       state: "failed",
@@ -243,7 +289,7 @@ describe("the five judgements of one queue item", () => {
     expect(details.textContent).not.toContain("No temporary working folder was created");
   });
 
-  it("keeps output-only validation output-only and names advisories apart", async () => {
+  it("keeps output-only validation output-only", async () => {
     const api = terminalApi([converted("file-1", "run-1.raw")], [acquisition(1)]);
     renderApp(api);
     const result = await queueResult();
@@ -253,9 +299,10 @@ describe("the five judgements of one queue item", () => {
     expect(integrity).not.toBeNull();
     expect((integrity as HTMLElement).textContent).toBe(
       "Output-only. The converted data was not compared against a readable vendor-source model. " +
-        "1 checked, 0 not established, 1 not applicable. " +
-        "1 advisory observation, which fail nothing: byte_length_differs.",
+        "1 checked, 0 not established, 1 not applicable.",
     );
+    // No advisory sentence, because an output-only judgement records none.
+    expect(details.querySelector(".conversion-item-advisories")).toBeNull();
     // The claim this surface may never make.
     expect(details.textContent).not.toMatch(/fully verified/i);
     expect(details.textContent).not.toMatch(/lossless/i);
@@ -312,7 +359,7 @@ describe("the five judgements of one queue item", () => {
     // lifecycle's maximum bound is neither the number expected nor the number
     // produced, so it never appears here.
     expect(
-      within(details).getByText(/1 of 3 produced output files obtained a final name\./),
+      within(details).getByText(/1 of 3 discovered output files obtained a final name\./),
     ).toBeVisible();
     expect(details.textContent).not.toContain("of 24");
     // What landed and what did not, without collapsing either way.
@@ -343,7 +390,7 @@ describe("the five judgements of one queue item", () => {
     expect(within(details).getByText("No converter was started for this item.")).toBeVisible();
     expect(
       within(details).getByText(
-        "No temporary working folder was created, so nothing could have been written there.",
+        "No converter was given a temporary working folder, so nothing could have been written there.",
       ),
     ).toBeVisible();
     expect(
@@ -392,7 +439,7 @@ describe("the five judgements of one queue item", () => {
     const refused = openDetails(rowFor(result, "run-2.raw"));
     expect(
       within(refused).getByText(
-        "When outputs were last added: 0 added, 0 already in the workspace, 1 not added. Not added because each changed since it was converted.",
+        "When outputs were last added: 0 added, 0 already in the workspace, 1 not added. Not added because it changed since it was converted.",
       ),
     ).toBeVisible();
     // A refusal erases neither the finalization nor what the check established.

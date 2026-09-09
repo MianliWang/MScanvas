@@ -2574,8 +2574,18 @@ impl PreviewService {
         // reason for this write to hold both at once, and not holding both is
         // one fewer ordering to keep true. The gate is still held, which is
         // what serializes this against another workspace mutation.
-        self.conversion_slot()
+        // Answered rather than discarded. A `false` here means the slot no
+        // longer holds this settling -- a retry landed between the halves --
+        // and the row it would have been written onto describes different
+        // files. The commit above has already been refused in that case, so
+        // this cannot be the first to notice; it is read so that a future
+        // reordering which made it the first would not do so silently.
+        let recorded = self
+            .conversion_slot()
             .record_adoption(operation, retry_round, &per_item);
+        if !recorded {
+            return Err(adoption_superseded());
+        }
         // Cleared under the gate this commit still holds, not at the end of the
         // function. Between the two a drop or a queued mutation could take the
         // gate, see a flag for an adoption that has already finished, and be
@@ -8307,15 +8317,15 @@ fn per_item_adoption(
     outcomes: &[WorkspaceOutputAdoptionOutcomeDto],
 ) -> Vec<(usize, SettledItemAdoption)> {
     let mut per_item: Vec<(usize, SettledItemAdoption)> = Vec::new();
+    // One exhaustive match over the closed set, counted where it is matched.
+    // Re-tagging the arms as integers and matching those again would put a
+    // wildcard between the enumeration and the count, so a variant added later
+    // would be counted as a refusal rather than failing to compile.
     for outcome in outcomes {
-        let (index, kind) = match outcome {
-            WorkspaceOutputAdoptionOutcomeDto::Added { candidate, .. } => (candidate.item_index, 0),
-            WorkspaceOutputAdoptionOutcomeDto::AlreadyInWorkspace { candidate, .. } => {
-                (candidate.item_index, 1)
-            }
-            WorkspaceOutputAdoptionOutcomeDto::Refused { candidate, .. } => {
-                (candidate.item_index, 2)
-            }
+        let index = match outcome {
+            WorkspaceOutputAdoptionOutcomeDto::Added { candidate, .. }
+            | WorkspaceOutputAdoptionOutcomeDto::AlreadyInWorkspace { candidate, .. }
+            | WorkspaceOutputAdoptionOutcomeDto::Refused { candidate, .. } => candidate.item_index,
         };
         let entry = match per_item.iter_mut().find(|(at, _)| *at == index) {
             Some(entry) => entry,
@@ -8324,13 +8334,13 @@ fn per_item_adoption(
                 per_item.last_mut().expect("the entry was just pushed")
             }
         };
-        match kind {
-            0 => entry.1.added += 1,
-            1 => entry.1.already_in_workspace += 1,
-            _ => {
-                if let WorkspaceOutputAdoptionOutcomeDto::Refused { reason, .. } = outcome {
-                    entry.1.refusals.push(reason.clone());
-                }
+        match outcome {
+            WorkspaceOutputAdoptionOutcomeDto::Added { .. } => entry.1.added += 1,
+            WorkspaceOutputAdoptionOutcomeDto::AlreadyInWorkspace { .. } => {
+                entry.1.already_in_workspace += 1;
+            }
+            WorkspaceOutputAdoptionOutcomeDto::Refused { reason, .. } => {
+                entry.1.refusals.push(reason.clone());
             }
         }
     }

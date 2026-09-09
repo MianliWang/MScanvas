@@ -1180,6 +1180,11 @@ export function queueItem(
     // A row nothing has run for: no provider was invoked, nothing was created,
     // and no identity exists. Stated rather than left out, so a fixture that
     // means to describe a run has to say so.
+    //
+    // `nothingToAdopt` is what Rust reports for such a row: it produced no
+    // finalized output, so it was never an adoption candidate. A fixture that
+    // sets `state: "finalized"` must override this to `notRequested`, which is
+    // what Rust reports for a row that holds a ticket nobody has asked about.
     process: { kind: "notAttempted" },
     staged: { kind: "notCreated" },
     runIdentity: null,
@@ -1197,11 +1202,14 @@ export function queueItem(
  */
 export function finalizedAttemptFacts(
   runIdentity = "0000000000000001000000000000000a",
-): Pick<ConversionQueueItem, "process" | "staged" | "runIdentity"> {
+): Pick<ConversionQueueItem, "process" | "staged" | "runIdentity" | "adoption"> {
   return {
     process: { kind: "settled", termination: "exited", exitCode: 0 },
     staged: { kind: "published" },
     runIdentity,
+    // A row that finalized holds an adoption ticket, so Rust reports that
+    // nobody has asked rather than that there is nothing to ask about.
+    adoption: { kind: "notRequested" },
   };
 }
 
@@ -1284,6 +1292,10 @@ export function setMembers(
             verified: ["output_is_well_formed_mzml"],
             unverified: [],
             inapplicable: ["source_spectrum_count_preserved"],
+            // Empty, and it has to be: advisory observations are recorded only
+            // by the source comparison, and no family the visible queue accepts
+            // is read under one. A fixture pairing `output_only` with an
+            // advisory would describe a wire Rust cannot produce.
             advisory: [],
           }
         : null,

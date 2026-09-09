@@ -70,6 +70,7 @@ use super::dto::{
 };
 use super::dto::{MAX_SPECTRUM_POINTS, SpectrumDomainRefusalDto, SpectrumViewportDomainDto};
 use super::installation::InstallationIdentity;
+use super::operation::SettledItemAdoption;
 use super::operation::{
     AdmittedDestination, AttemptFacts, CancellationFacts, ClaimedOutputName, ConversionQueue,
     ConversionSlot, ItemOutcome, ItemState, QueueItem, StopAccepted, TerminalReason,
@@ -29944,6 +29945,33 @@ fn every_bound_item_is_counted_exactly_once_in_the_primary_totals() {
         primary, queue.item_count,
         "the primary state totals must account for every bound item exactly once"
     );
+    // The sum above is over seven fields; this is over the states the items
+    // actually report. A terminal state that no count names would make the two
+    // disagree, which is what this test is for -- the sum alone would go on
+    // being right about a queue whose items never reached the missing state.
+    let counted = |state: ConversionQueueItemStateDto| -> usize {
+        match state {
+            ConversionQueueItemStateDto::Finalized => queue.finalized_count,
+            ConversionQueueItemStateDto::Skipped => queue.skipped_count,
+            ConversionQueueItemStateDto::Failed => queue.failed_count,
+            ConversionQueueItemStateDto::Cancelled => queue.cancelled_count,
+            ConversionQueueItemStateDto::NotRun => queue.not_run_count,
+            ConversionQueueItemStateDto::SkippedByRequest => queue.skipped_by_request_count,
+            ConversionQueueItemStateDto::CancellationFailed => queue.cancellation_failed_count,
+            // Neither is a terminal state, so neither has a count and neither
+            // may appear on a terminal queue. Reaching this arm is the defect.
+            ConversionQueueItemStateDto::Pending | ConversionQueueItemStateDto::Running => {
+                panic!("a terminal queue reported {state:?}, which no count names")
+            }
+        }
+    };
+    for item in &queue.items {
+        assert!(
+            counted(item.state) > 0,
+            "a terminal item is in a state its own queue counts as zero: {:?}",
+            item.state
+        );
+    }
     // A retryable failure is a subset of the failures, never an extra item.
     assert!(queue.retryable_failed_count <= queue.failed_count);
     assert_eq!(
@@ -30006,4 +30034,191 @@ fn an_adoption_records_what_it_did_on_each_item_it_was_about() {
             refusals: Vec::new(),
         }
     );
+}
+
+/// A rerun drops what an earlier adoption said about the rows it replaced.
+///
+/// A retry converts the same acquisition again into the same folder, so the
+/// files an earlier adoption reported on are not the files the row now
+/// describes. Carrying the answer forward would attribute an adoption to
+/// outputs that no longer exist.
+#[test]
+fn a_rerun_drops_the_adoption_answer_for_the_rows_it_replaced() {
+    let fixture = TestFile::new("queue-adoption-rerun");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let done = add_one_acquisition(&service, &fixture.thermo_raw("done.raw"));
+    let held = fixture.thermo_raw("held.raw");
+    let blocked = add_one_acquisition(&service, &held);
+
+    let writer = hold_for_writing(&held);
+    let update = queue_and_run(&service, &[done, blocked], &destination);
+    let operation = operation_of(&update);
+    adopt_visible(&service, operation).expect("the finalized row is adoptable");
+
+    let adopted = service.conversion_state();
+    assert_eq!(
+        terminal_queue(&adopted).items[0].adoption,
+        ConversionItemAdoptionDto::Settled {
+            added: 1,
+            already_in_workspace: 0,
+            refused: 0,
+            refusals: Vec::new(),
+        }
+    );
+
+    drop(writer);
+    let retried = service
+        .retry_conversion_queue(current_document(&service))
+        .expect("a retryable refusal can be rerun");
+    let queue = terminal_queue(&retried);
+    // The row that was rerun says nobody has asked about *these* outputs.
+    assert_eq!(
+        queue.items[1].adoption,
+        ConversionItemAdoptionDto::NotRequested,
+        "a rerun row kept an answer about the files it replaced"
+    );
+    // The row that was not rerun keeps the answer that is still true of it: a
+    // retry reruns only the failures, so its outputs are the same objects.
+    assert_eq!(
+        queue.items[0].adoption,
+        ConversionItemAdoptionDto::Settled {
+            added: 1,
+            already_in_workspace: 0,
+            refused: 0,
+            refusals: Vec::new(),
+        }
+    );
+}
+
+/// An answer stamped against one settling is refused by another.
+///
+/// The pairing is what keeps a retry that lands between the two halves of an
+/// adoption from being given the earlier round's answers. Exercised directly,
+/// because the commit refuses first in production and a later reordering that
+/// made this the first check must not do so silently.
+#[test]
+fn an_adoption_answer_is_refused_against_a_different_settling() {
+    let cancellation = ConversionCancellation::new();
+    let (mut slot, operation, attempt) = running_two_item_slot(cancellation.request_handle());
+    slot.release_attempt(operation, 0, attempt);
+    slot.skip_pending_item(operation, 1)
+        .expect("a waiting item is skippable");
+    slot.finish(operation, None, TerminalReason::Completed);
+
+    let settled = [(
+        0_usize,
+        SettledItemAdoption {
+            added: 1,
+            already_in_workspace: 0,
+            refusals: Vec::new(),
+        },
+    )];
+    let round = slot
+        .terminal_retry_round(operation)
+        .expect("a terminal queue names its settling");
+    assert!(
+        slot.record_adoption(operation, round, &settled),
+        "the settling this queue is on accepts its own answer"
+    );
+    assert!(
+        !slot.record_adoption(operation, round.wrapping_add(1), &settled),
+        "an answer from another settling was written onto this one"
+    );
+    assert!(
+        !slot.record_adoption(operation.wrapping_add(1), round, &settled),
+        "an answer from another queue was written onto this one"
+    );
+}
+
+/// The exported document is at version three, and carries the three fields the
+/// increment was earned by.
+///
+/// Nothing pinned the payload's own version or its new members, so the schema
+/// increment ADR 0017 records was documented and unproved. It matters most for
+/// the field that **left**: a reader written against version two must not read
+/// a version three file as though `partialOutputObserved` were merely absent.
+#[test]
+fn the_exported_diagnostics_are_version_three_and_say_what_was_staged() {
+    let fixture = TestFile::new("queue-export-schema");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::FailAfterStaging),
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("staged.raw"));
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = terminal_operation(&update);
+
+    let saved = fixture.directory.join("diagnostics.json");
+    export_diagnostics(&service, &operation, &saved).expect("a failed item is diagnosable");
+    let document = read_export(&saved);
+
+    assert_eq!(document["version"], 3);
+    assert_eq!(document["schema"], "mscanvas.conversion-diagnostics");
+    let item = &document["items"][0];
+
+    // The judgement the increment is about, written for every item rather than
+    // only for one a stop reached.
+    assert_eq!(item["stagedOutput"]["kind"], "observed");
+    assert_eq!(item["stagedOutput"]["phase"], "backend_settled");
+    assert_eq!(item["stagedOutput"]["entryCount"], 1);
+    assert_eq!(item["stagedOutput"]["nonEmptyFileObserved"], true);
+    // The process, read from the boundary rather than from whether facts came
+    // back, and the identity of the attempt that produced it.
+    assert_eq!(item["process"]["kind"], "settled");
+    assert_eq!(item["process"]["termination"], "exited");
+    assert_eq!(item["process"]["exitCode"], 1);
+    let identity = item["runIdentity"]
+        .as_str()
+        .expect("a launched attempt names itself");
+    assert_eq!(identity.len(), 32);
+    assert!(
+        identity
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    );
+
+    // And the boolean that left. Its absence is what the version says.
+    assert!(
+        !std::fs::read_to_string(&saved)
+            .expect("read the export")
+            .contains("partialOutputObserved"),
+        "the field the version increment was earned by is still in the payload"
+    );
+}
+
+/// An item whose staging area was never read reports no counts, not zeroes.
+///
+/// A zero there would be the one reading this field exists to prevent: an
+/// unread directory described as an empty one. Exercised through a refusal that
+/// creates no staging area at all, which is the reachable half of the same rule.
+#[test]
+fn an_export_reports_no_staged_counts_where_nothing_was_observed() {
+    let fixture = TestFile::new("queue-export-not-created");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let held = fixture.thermo_raw("held.raw");
+    let blocked = add_one_acquisition(&service, &held);
+
+    let writer = hold_for_writing(&held);
+    let update = queue_and_run(&service, &[blocked], &destination);
+    let operation = terminal_operation(&update);
+
+    let saved = fixture.directory.join("diagnostics.json");
+    export_diagnostics(&service, &operation, &saved).expect("a refused item is diagnosable");
+    let document = read_export(&saved);
+    drop(writer);
+
+    let item = &document["items"][0];
+    assert_eq!(item["stagedOutput"]["kind"], "not_created");
+    assert!(item["stagedOutput"]["phase"].is_null());
+    assert!(
+        item["stagedOutput"]["entryCount"].is_null(),
+        "an unobserved directory reported a count"
+    );
+    assert!(item["stagedOutput"]["nonEmptyFileObserved"].is_null());
+    // Nothing was launched, so nothing is named.
+    assert_eq!(item["process"]["kind"], "not_attempted");
+    assert!(item["runIdentity"].is_null());
 }

@@ -234,7 +234,8 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
     const text = await details(1);
     expect(text).toContain("Output-only. The converted data was not compared against a readable vendor-source model.");
     expect(text).toContain("1 checked, 0 not established, 1 not applicable.");
-    expect(text).toContain("1 advisory observation, which fail nothing: byte_length_differs.");
+    // Output-only records no advisory observation, so none is rendered.
+    expect(text).not.toContain("advisory observation");
     expect(text).not.toMatch(/fully verified/i);
     expect(text).not.toMatch(/lossless/i);
     // Publication is stated as publication, not as an observation of an empty
@@ -251,7 +252,7 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
     await start(terminal([partialSet()], 1), [{ handle: "wiff-1", fileName: "Enolase_repeats.wiff", byteLength: 3_944_804, sourceKind: "sciex_wiff", relativeContext: null }]);
 
     const text = await details(1);
-    expect(text).toContain("1 of 3 produced output files obtained a final name.");
+    expect(text).toContain("1 of 3 discovered output files obtained a final name.");
     expect(text).not.toContain("of 24");
     // What landed and what did not, in one manifest.
     // The state cell is the first `td`; the name is a row header, which is what
@@ -300,7 +301,7 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
       "When outputs were last added: 1 added, 0 already in the workspace, 0 not added.");
     const refusedRow = await details(2);
     expect(refusedRow).toContain(
-      "When outputs were last added: 0 added, 0 already in the workspace, 1 not added. Not added because each changed since it was converted.");
+      "When outputs were last added: 0 added, 0 already in the workspace, 1 not added. Not added because it changed since it was converted.");
     // A refusal erases neither the finalization nor what the check established.
     expect(refusedRow).toContain("One output obtained its final name: sample-2.mzML.");
     expect(refusedRow).toContain("Output-only.");

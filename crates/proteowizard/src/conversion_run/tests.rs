@@ -123,6 +123,30 @@ fn output_document() -> String {
 }
 
 fn capabilities() -> InstalledHelpCapabilities {
+    capabilities_from(MSCONVERT_HELP)
+}
+
+/// The same capabilities, from a build whose help omits the output-format
+/// option the shipped intent needs.
+///
+/// A plan cannot be expressed against it, so a run reaches `NotPlannable`
+/// *after* it has created its staging area and *before* it invokes anything --
+/// which is the one interval where a reading has a directory to describe and no
+/// execution to name.
+fn capabilities_without_mzml_output() -> InstalledHelpCapabilities {
+    capabilities_from(
+        "Usage: msconvert [options] [filemasks]
+Convert mass spec data file formats.
+
+Options:
+  -o [ --outdir ] arg (=.)           : set output directory
+  --outfile arg                      : Override the name of output file.
+  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
+",
+    )
+}
+
+fn capabilities_from(help: &str) -> InstalledHelpCapabilities {
     let executable = fs::canonicalize(std::env::current_exe().expect("test executable"))
         .expect("canonical test executable");
     InstalledHelpCapabilities::parse_unbound_capture_for_tests(
@@ -130,12 +154,7 @@ fn capabilities() -> InstalledHelpCapabilities {
         executable,
         EXECUTABLE_SHA256,
         CompleteHelpCapture::new(
-            CapturedHelpStream::new(
-                MSCONVERT_HELP.as_bytes(),
-                MSCONVERT_HELP.len() as u64,
-                false,
-                FIXTURE_SHA256,
-            ),
+            CapturedHelpStream::new(help.as_bytes(), help.len() as u64, false, FIXTURE_SHA256),
             CapturedHelpStream::new(&[], 0, false, EMPTY_SHA256),
         ),
     )
@@ -7976,11 +7995,49 @@ fn each_attempt_that_reaches_the_provider_mints_its_own_identity() {
             .identity()
             .expect("a launched attempt has an identity")
     };
+    // Two attempts of one plan, into one folder, producing one filename. The
+    // filename cannot tell them apart and the identity must, which is the whole
+    // of what "not derived from the output's name" has to mean here. Asserting
+    // that a hexadecimal string does not contain "sample" would be true of
+    // every hexadecimal string and would prove nothing.
     assert_ne!(first, second);
     assert_eq!(first.to_hex().len(), 32);
     assert_ne!(first.to_hex(), second.to_hex());
-    // Not derived from the output's name, which both attempts share.
-    assert!(!first.to_hex().contains("sample"));
+    assert!(first.to_hex().chars().all(|c| c.is_ascii_hexdigit()));
+    // And the rendering is not this session's launch ordinal in plain
+    // hexadecimal: two consecutive attempts do not differ by one.
+    let low = |identity: OperationRunIdentity| {
+        u64::from_str_radix(&identity.to_hex()[16..], 16).expect("the low half is hexadecimal")
+    };
+    assert_ne!(low(second), low(first).wrapping_add(1));
+}
+
+/// A reading taken where no provider was invoked says so, rather than naming
+/// an execution that did not happen.
+///
+/// The phase is part of the answer, and the wrong one here would put "the
+/// temporary working folder was empty when the converter finished" directly
+/// beside "no converter was started for this item".
+#[test]
+fn a_reading_without_a_launch_does_not_name_a_backend_that_settled() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    // A plan this installation cannot express: the command is never built, so
+    // the provider is never invoked, and the staging area already exists.
+    let capabilities = capabilities_without_mzml_output();
+    let act = |_: &CommandSpec| Ok(0);
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&fixture.plan, &capabilities, &runner);
+
+    assert_eq!(runner.calls(), 0, "the provider was invoked after all");
+    assert_eq!(report.process(), ProcessAttemptOutcome::NotAttempted);
+    assert_eq!(report.identity(), None);
+    assert_eq!(
+        report.staged_content().phase(),
+        Some(StagedObservationPhase::ProviderNotInvoked),
+        "a reading taken with no provider invoked named one that settled"
+    );
+    // Still a reading, not an absence: the directory existed and was observed.
+    assert!(report.staged_content().observation().is_some());
 }
 
 /// A stop observed before the launch mints nothing and stages nothing.

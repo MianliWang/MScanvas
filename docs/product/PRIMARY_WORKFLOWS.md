@@ -362,14 +362,19 @@ availability, queue, adoption and export contracts.
    many of the files it actually produced did. **Integrity**: whether the output
    was compared against a readable source or judged on its own, how many
    properties were checked, how many were not established and how many could not
-   apply, with advisory observations named apart because they fail nothing.
+   apply, with advisory observations named apart because they fail nothing —
+   those are recorded only by a source comparison, and no family this release
+   converts is read under one, so the list is empty on every conversion it can
+   currently run.
    **Adoption**: what an adoption did with that item's outputs, which is history
    rather than a statement about what the workspace holds now.
 
    Beside those five, a manifest lists each output file with its byte length,
    its SHA-256 and its observed spectrum and chromatogram counts, and the row
-   names the attempt that produced them. That name is opaque, belongs to this
-   session only and is never written to disk.
+   names the attempt that produced them. That name belongs to this session only:
+   nothing keeps it between runs and nothing resolves one from an earlier
+   session. It does appear in a diagnostics file the user chooses to save, which
+   is the only place it leaves the session.
 9. `Retry N failed` reruns only the failures another attempt could change, in
    their original places, into their bound per-item destination objects under
    the same policy. Every destination is revalidated; retry neither re-resolves
