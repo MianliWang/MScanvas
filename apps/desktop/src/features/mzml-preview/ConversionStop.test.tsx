@@ -462,6 +462,64 @@ describe("stopping a running conversion queue", () => {
     });
   });
 
+  it("keeps the skip control on screen while it is unanswered, and says so", async () => {
+    /*
+     * Two rules this milestone's other controls already follow and this one did
+     * not. The button was unmounted the moment the skip was dispatched, which
+     * drops focus to the document for a keyboard user; and nothing was
+     * announced, because a successful skip leaves the running item where it was
+     * and the region's string byte-identical either side of the press.
+     */
+    let settle: (state: WorkspaceConversionState) => void = () => {};
+    const held = new Promise<WorkspaceConversionState>((resolve) => {
+      settle = resolve;
+    });
+    const api = apiWith(runningQueue(), { skipItem: () => held });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const skip = await within(panel).findByRole("button", { name: "Skip run-3.raw" });
+    fireEvent.click(skip);
+
+    const skipping = await within(panel).findByRole("button", {
+      name: "Skipping run-3.raw…",
+    });
+    expect(skipping).toBeDisabled();
+    await waitFor(() => {
+      expect(liveRegion()).toContain("Skipping run-3.raw.");
+    });
+    expect(liveRegion()).toContain("the queue carries on");
+
+    settle(runningQueue());
+  });
+
+  it("speaks the output-only claim for a queue whose stop was not confirmed", async () => {
+    /*
+     * The panel shows it for every terminal reason. The region showed it for
+     * two of the three, and the one it withheld is the state in which what was
+     * and was not verified most needs saying.
+     */
+    const api = apiWith({
+      status: "terminal",
+      operationId: "1",
+      reason: "stopFailed",
+      queue: queueOf([
+        converted("file-1", "run-1.raw"),
+        queueItem("file-2", "run-2.raw", { state: "cancellationFailed", attempts: 1 }),
+        queueItem("file-3", "run-3.raw", { state: "notRun" }),
+      ]),
+    });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(within(panel).getByText(/Output-only validation\./)).toBeVisible();
+    });
+    await waitFor(() => {
+      expect(liveRegion()).toContain("Output-only validation.");
+    });
+  });
+
   it("tells a listener that this file's stop was accepted", async () => {
     /*
      * The queue-level stop has been announced since M3.4. The per-item one had
@@ -677,7 +735,7 @@ describe("stopping a running conversion queue", () => {
     const banner = (await screen.findByText("ProteoWizard is not available"))
       .parentElement as HTMLElement;
     expect(banner.textContent ?? "").toContain(
-      "MSCanvas could not confirm that the converter process stopped.",
+      "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
     );
     expect(banner.textContent ?? "").toContain(
       "Restart MSCanvas before starting another preview or conversion.",
@@ -937,7 +995,7 @@ describe("stopping a running conversion queue", () => {
     const banner = (await screen.findByText("ProteoWizard is not available"))
       .parentElement as HTMLElement;
     expect(banner.textContent ?? "").toContain(
-      "MSCanvas could not confirm that the converter process stopped.",
+      "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
     );
     expect(banner.textContent ?? "").toContain(
       "Restart MSCanvas before starting another preview or conversion.",

@@ -892,6 +892,17 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
     if (workspace.conversion.cancellingItem) {
       return `Stopping ${current.fileName}. The queue keeps going either way, and this file may still finish on its own.`;
     }
+    // A skip this document asked for, said the same way. Without it the string
+    // is byte-identical either side of the press -- the row stays pending and
+    // the running item does not move -- so nothing is announced at all, which
+    // is the defect repaired one sentence above for the other new control.
+    const skipping = queue.items.findIndex((_, index) =>
+      workspace.conversion.skippingItem(index),
+    );
+    if (skipping !== -1) {
+      const name = queue.items[skipping]?.fileName ?? "that file";
+      return `Skipping ${name}. It will not be converted, and the queue carries on.`;
+    }
     return `Converting item ${String(position + 1)} of ${String(queue.itemCount)}, ${current.fileName}.`;
   }
   if (state.status === "terminal" && state.reason === "stopFailed") {
@@ -904,6 +915,11 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
       workspace.conversion.backendQuarantined
         ? " Restart MSCanvas before starting another preview or conversion."
         : ""
+    }${
+      // The same rule the two branches below follow: wherever the panel shows
+      // it. This branch withheld it, and `stopFailed` is the terminal state in
+      // which what was and was not verified most needs saying.
+      queue.items.some(conversionJudgedAnyOutput) ? " Output-only validation." : ""
     }${queue.error === null ? "" : ` ${queue.error.summary}`}`;
   }
   if (state.status === "terminal" && state.reason === "stopped") {

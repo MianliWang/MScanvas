@@ -481,7 +481,7 @@ open) and this record. Fifteen, and the count is checkable: `git diff
 
 ## Validation
 
-Local gates: frontend lint, typecheck, 1657 tests across 69 files, build;
+Local gates: frontend lint, typecheck, 1659 tests across 69 files, build;
 `cargo fmt --all --check`; `cargo clippy --locked --workspace --all-targets
 --all-features -- -D warnings`; `cargo test --locked --workspace --all-targets`
 (1514 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
@@ -675,8 +675,8 @@ Evidence: `D:/tmp/mscanvas-m68-20260908/m68-native-ng3n5k/`,
 - **The guard's bypass suite defends the files its anchors sit in.** Thirty
   proofs cover the rules; the *files* they edit are the handful the claim lives
   in. A reviewer showed that the same attack aimed at a module no anchor touches
-  is stopped by no rule but by the coincidence that eleven proofs anchor in
-  `service.rs`. Two of the thirty now deliberately target unanchored files for
+  is stopped by no rule but by the coincidence that twelve proofs edit
+  `service.rs` and two more touch it. Two of the thirty now deliberately target unanchored files for
   that reason, and the residual is that a rule can only be proved where a proof
   is written. Owner: this guard, on every rule it gains.
 - Native output validation remains `output_only`, not full-source scientific

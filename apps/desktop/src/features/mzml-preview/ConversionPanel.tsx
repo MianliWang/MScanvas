@@ -1077,7 +1077,9 @@ function QueueState({
       ) : state.status === "running" ? (
         <>
           <p>
-            {`Converting item ${String(runningPosition(queue))} of ${String(queue.itemCount)}…`}
+            {(queue.items.some((item) => item.state === "running")
+                    ? `Converting item ${String(runningPosition(queue))} of ${String(queue.itemCount)}…`
+                    : `Converted ${String(queue.currentIndex)} of ${String(queue.itemCount)}, starting the next…`)}
           </p>
           <div className="conversion-actions">
             <button
@@ -1194,15 +1196,22 @@ function QueueState({
                   ended by Stop this file, which says so. The same authoritative
                   state decides this and the dispatch, so the interface never
                   offers what Rust would refuse. */}
-              {conversion.canSkipItem(index) ? (
+              {/* Left mounted and disabled while the skip is unanswered, for
+                  the reason the queue stop and the adoption are: removing the
+                  control a keyboard user just activated drops focus to the
+                  document and announces nothing. */}
+              {conversion.canSkipItem(index) || conversion.skippingItem(index) ? (
                 <button
                   type="button"
                   className="link-button conversion-queue-skip"
+                  disabled={conversion.skippingItem(index)}
                   onClick={() => {
                     conversion.skipItem(index);
                   }}
                 >
-                  {`Skip ${item.fileName}`}
+                  {conversion.skippingItem(index)
+                    ? `Skipping ${item.fileName}…`
+                    : `Skip ${item.fileName}`}
                 </button>
               ) : null}
               {/* Why there is no Skip here, at the row that does not have one.

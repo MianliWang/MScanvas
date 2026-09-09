@@ -298,7 +298,7 @@ describe("mzML preview workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
     expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
     expect(
-      screen.getByText("MSCanvas could not confirm that the converter process stopped."),
+      screen.getByText("MSCanvas could not confirm that a ProteoWizard process it started has ended."),
     ).toBeVisible();
 
     // The table is still on screen, and clicking it launches nothing.

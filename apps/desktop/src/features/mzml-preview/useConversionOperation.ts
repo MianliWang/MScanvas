@@ -220,6 +220,15 @@ export interface ConversionOperation {
    */
   readonly canSkipItem: (index: number) => boolean;
   /**
+   * Whether a skip this document asked for is still unanswered for that item.
+   *
+   * Separate from `canSkipItem` because the control has to stay on screen while
+   * it is true: withdrawing the button a keyboard user just activated drops
+   * focus to the document and announces nothing, which is the rule the queue
+   * stop and the adoption already follow.
+   */
+  readonly skippingItem: (index: number) => boolean;
+  /**
    * Whether this session has stopped trusting the backend.
    *
    * Read from the authoritative slot rather than derived from the terminal
@@ -1184,6 +1193,13 @@ export function useConversionOperation(
     [skipsInFlight, state, stopping],
   );
 
+  const skippingItem = useCallback(
+    (index: number) =>
+      state.status === "running" &&
+      skipsInFlight.includes(`${state.operationId}:${String(index)}`),
+    [skipsInFlight, state],
+  );
+
   const skipItem = useCallback(
     (index: number) => {
       const current = stateRef.current;
@@ -1438,6 +1454,7 @@ export function useConversionOperation(
     cancellingItem,
     skipItem,
     canSkipItem,
+    skippingItem,
     backendQuarantined,
     adopt,
     canAdopt,

@@ -175,7 +175,10 @@ const CONVERSION_MESSAGES: Record<ConversionUnavailableReason, string> = {
   // flight -- so naming a stop names an action the user may never have taken.
   "backend-quarantined":
     "MSCanvas could not confirm that a ProteoWizard process it started has ended. " +
-    "Restart MSCanvas before starting another conversion.",
+    // Not "before starting another conversion": the refusal is over every lane
+    // that starts a process, and this control is only where the reader happens
+    // to be standing.
+    "Restart MSCanvas before starting another preview or conversion.",
   "backend-changing":
     "Converting is unavailable while the installed ProteoWizard backend is being checked.",
   "backend-unavailable":

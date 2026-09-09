@@ -14307,6 +14307,15 @@ fn a_quarantined_session_rechecks_without_launching_anything() {
         .clone()
         .expect("a quarantined session says why");
     assert_eq!(failure.kind, "backend_quarantined");
+    // The sentence itself, not only its identifier. It was corrected -- this
+    // state is reached from a preview, a spectrum read and a discovery probe as
+    // well as from a conversion, and by a failure with no stop in flight -- and
+    // nothing owned the wording, so reverting the correction left every suite
+    // green.
+    assert_eq!(
+        failure.summary,
+        "MSCanvas could not confirm that a ProteoWizard process it started has ended."
+    );
     assert_eq!(
         failure.corrective_action,
         "Restart MSCanvas before starting another preview or conversion."

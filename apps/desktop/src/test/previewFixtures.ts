@@ -291,7 +291,10 @@ export const quarantinedBackend: BackendAvailability = {
   sameInstallation: true,
   failure: {
     kind: "backend_quarantined",
-    summary: "MSCanvas could not confirm that the converter process stopped.",
+    // The sentence the boundary actually sends. It was the pre-M6.8 wording --
+  // naming a converter and a stop -- so the repair that corrected production
+  // was pinned by nothing, and reverting it left the whole suite green.
+  summary: "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
     correctiveAction: "Restart MSCanvas before starting another preview or conversion.",
   },
 };

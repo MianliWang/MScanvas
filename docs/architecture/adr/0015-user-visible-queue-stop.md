@@ -86,7 +86,7 @@ first item had finalized, and that output stayed.
 | `stopping` | A stop was accepted; no further item will start |
 | `terminal` + `completed` | Every item reached an outcome of its own, or the queue was refused |
 | `terminal` + `stopped` | The user stopped it, and no converter process survives |
-| `terminal` + `stopFailed` | The user stopped it, and termination could not be confirmed |
+| `terminal` + `stopFailed` | A stop of the queue or of one file could not be confirmed to have ended the converter |
 
 | Item | Meaning |
 | --- | --- |
@@ -114,6 +114,13 @@ first item had finalized, and that output stayed.
 > is `completed` while the rows behind it were never begun. A stop is one way
 > into `notRun` and is no longer the only one, and a `completed` queue no longer
 > implies that every row reached an outcome of its own.
+>
+> **And `stopFailed` no longer implies the user stopped the queue.** It read
+> "The user stopped it, and termination could not be confirmed". M6.8's per-item
+> stop reaches it too: an item stopped while running whose owned tree cannot be
+> said to be gone settles `cancellationFailed`, and the queue then ends
+> `stopFailed` with no queue-level stop ever requested. What the reason means is
+> that a stop could not be confirmed, not which scope was pressed.
 
 `stopping` is a state rather than a flag beside `running`, so nothing can read
 "running" and conclude another item may start. The terminal reason is carried
