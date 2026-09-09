@@ -3348,6 +3348,36 @@ def _derivation_names(root: Path) -> frozenset[str]:
     return frozen
 
 
+_UNICODE_ESCAPE = re.compile(r"\\u\{([0-9A-Fa-f]{1,6})\}")
+_HEX_ESCAPE = re.compile(r"\\x([0-9A-Fa-f]{2})")
+
+
+def _writes_the_identifier(line: str) -> bool:
+    """Whether this line writes the claim's identifier, however it is spelled.
+
+    Compared as a *value*. It was compared as the raw substring `"confirmed_gone"`,
+    and Rust has several spellings of that same `&str` which contain no such
+    text: `"confirmed_gon\\u{65}"`, a literal split by a line continuation, and
+    `concat!("confirmed", "_gone")`. Each is the guard's own bypass proof in a
+    different alphabet.
+    """
+    decoded = CONTINUATION_RE.sub("", line)
+    decoded = _UNICODE_ESCAPE.sub(
+        lambda found: chr(int(found.group(1), 16)), decoded
+    )
+    decoded = _HEX_ESCAPE.sub(lambda found: chr(int(found.group(1), 16)), decoded)
+    # A `concat!` of adjacent pieces is one string to the compiler, so the
+    # quotes and separators between them are not part of the value.
+    joined = re.sub(r'"\s*,?\s*"', "", decoded)
+    # Inside a literal, not anywhere on the line: `owned_tree_confirmed_gone`
+    # is the conjunction's own name and says nothing on the wire.
+    return any(
+        CLAIM_STABLE_ID in literal
+        for candidate in (decoded, joined)
+        for literal in re.findall(r'"([^"]*)"', candidate)
+    )
+
+
 def _derivation_call(name: str) -> re.Pattern[str]:
     """A call to `of` on this name, however the path is written.
 
@@ -3460,6 +3490,9 @@ _TEST_MODULE_DECLARATION = re.compile(
 _ANY_MODULE_DECLARATION = re.compile(
     r"\bmod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;"
 )
+# The two ways a file becomes part of the product without its name saying so.
+_PATH_ATTRIBUTE = re.compile(r'#\[\s*path\s*=\s*"([^"]+)"\s*\]')
+_INCLUDE = re.compile(r'\binclude!\s*\(\s*"([^"]+)"\s*\)')
 _DECLARED_TEST_MODULES: dict[Path, frozenset[Path]] = {}
 
 
@@ -3504,7 +3537,8 @@ def _declared_test_modules(root: Path) -> frozenset[Path]:
             # Read as code. A declaration written inside a raw string is not
             # a declaration, and a reviewer exempted all 8,303 lines of
             # `service.rs` by writing one there.
-            lines = _code_only(path.read_text(encoding="utf-8").splitlines())
+            source = path.read_text(encoding="utf-8")
+            lines = _code_only(source.splitlines())
             owner = (
                 path.parent
                 if path.stem in ("mod", "lib", "main")
@@ -3551,6 +3585,16 @@ def _declared_test_modules(root: Path) -> frozenset[Path]:
             # a production module out of this set. What is being decided is
             # whether a module is part of the product, and a shape nobody
             # anticipated must not answer "no".
+            # A module compiled under a name the filesystem does not carry.
+            # `files_for` resolves by convention, so `#[path = "forged.rs"] mod
+            # forged_impl;` left `plain` empty while a `#[cfg(test)] mod
+            # forged;` beside it exempted the very file the product compiles.
+            # The same for `include!`, which has no module name at all.
+            for reference in _PATH_ATTRIBUTE.findall(source) + _INCLUDE.findall(source):
+                for base in (owner, path.parent):
+                    candidate = base / reference
+                    if candidate.is_file():
+                        plain.add(candidate.resolve())
             joined = "\n".join(lines)
             for match in _ANY_MODULE_DECLARATION.finditer(joined):
                 at = joined.count("\n", 0, match.start())
@@ -3570,7 +3614,8 @@ def _declared_test_modules(root: Path) -> frozenset[Path]:
                         back -= 1
                 if not governed:
                     plain.update(files_for(match.group(1)))
-    frozen = frozenset(declared - plain)
+    frozen = frozenset({path for path in declared if path.resolve() not in plain}
+                       - plain)
     _DECLARED_TEST_MODULES[root] = frozen
     return frozen
 
@@ -3749,8 +3794,15 @@ def _test_only_lines(path: Path) -> frozenset[int]:
         depth = 0
         opened = False
         finished = False
+        # Where the balancing brace sits on its line, so what follows it can be
+        # looked at. A region is line-granular and a Rust item ends at a
+        # *column*: everything written after the closing brace on the same line
+        # is production code, and exempting the whole line handed it away. A
+        # reviewer replaced one existing `}` with `} pub(super) const FORGED:
+        # ... = ConfirmedGone;` and nothing read it.
+        trailing = ""
         while cursor < len(code) and not finished:
-            for character in code[cursor]:
+            for position, character in enumerate(code[cursor]):
                 if character == "{":
                     depth += 1
                     opened = True
@@ -3758,6 +3810,7 @@ def _test_only_lines(path: Path) -> frozenset[int]:
                     depth -= 1
                     if opened and depth == 0:
                         finished = True
+                        trailing = code[cursor][position + 1 :]
                         break
                 elif character == ";" and depth == 0 and not opened:
                     # A statement, not an item with a body. `#[cfg(test)] mod
@@ -3770,7 +3823,9 @@ def _test_only_lines(path: Path) -> frozenset[int]:
         if not opened or cursor >= len(code):
             index += 1
             continue
-        inside.update(range(index + 1, cursor + 2))
+        # The closing line is exempt only when the brace is the last code on it.
+        last = cursor + 2 if trailing.strip() == "" else cursor + 1
+        inside.update(range(index + 1, last))
         index = max(cursor, index) + 1
     frozen = frozenset(inside)
     _TEST_ONLY_LINES[path] = frozen
@@ -4129,7 +4184,7 @@ def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
                 # derived the disposition through exactly that. Any `X::of(` in
                 # a file that knows this type at all is the question, because
                 # nothing else in this repository names an `of` constructor.
-                if f'"{CLAIM_STABLE_ID}"' in stripped and relative != CLAIM_VOCABULARY:
+                if _writes_the_identifier(stripped) and relative != CLAIM_VOCABULARY:
                     errors.append(
                         f"{relative}:{number} writes the identifier {CLAIM_STABLE_ID!r}; the "
                         "claim leaves the type as a string, and a string written by hand is "
@@ -4301,6 +4356,45 @@ CLAIM_BYPASSES: tuple[tuple[str, str, str, str], ...] = (
         "use super::destination::admit_destination_root;",
         "use super::destination::admit_destination_root;\n"
         "use mscanvas_proteowizard::OwnedTreeDisposition::ConfirmedGone;",
+    ),
+    # The three the eighth review demonstrated. The first is smaller than any
+    # other proof here: one existing line changed, no line added.
+    #
+    # A region is line-granular and a Rust item ends at a *column*. Everything
+    # written after the closing brace on the same line was exempt.
+    (
+        "a claim written after a region's closing brace",
+        "apps/desktop/src-tauri/src/preview/conversion.rs",
+        "    run_conversion(plan, &backend.capabilities, backend.runner)\n}",
+        "    run_conversion(plan, &backend.capabilities, backend.runner)\n"
+        "} pub(super) const FORGED: mscanvas_proteowizard::OwnedTreeDisposition = "
+        "mscanvas_proteowizard::OwnedTreeDisposition::ConfirmedGone;",
+    ),
+    # A module the crate compiles under a name the filesystem does not carry.
+    # `files_for` resolves by convention, so the plain-declaration subtraction
+    # saw nothing and a `#[cfg(test)] mod` beside it exempted the file the
+    # product actually builds.
+    (
+        "a path attribute compiles an exempted file into the product",
+        "apps/desktop/src-tauri/src/preview/mod.rs",
+        "pub mod service;",
+        "#[cfg(test)]\nmod forged;\n"
+        '#[path = "forged.rs"]\nmod forged_impl;\n'
+        "pub mod service;",
+        (
+            "apps/desktop/src-tauri/src/preview/forged.rs",
+            None,
+            'pub(super) const FORGED: &str = "confirmed_gone";\n',
+        ),
+    ),
+    # The identifier written as the same `&str` under an escape. Compared as raw
+    # text, `"confirmed_gon\u{65}"` is not a substring of anything.
+    (
+        "the claim's identifier is written under an escape",
+        "apps/desktop/src-tauri/src/preview/service.rs",
+        "use super::destination::admit_destination_root;",
+        "use super::destination::admit_destination_root;\n"
+        'const _FORGED: &str = "confirmed_gon\\u{65}";',
     ),
     # The four the seventh review demonstrated. Each compiles, and each left the
     # guard passing.
@@ -4594,6 +4688,13 @@ def _validate_the_claim_guard_detects_bypasses(errors: list[str]) -> None:
             applied = True
             for relative, before, after in edits:
                 target = tree / relative
+                if before is None:
+                    # A proof that needs a file the tree does not have: the
+                    # module a `#[path]` attribute compiles is one nothing else
+                    # references, so it has to be created rather than edited.
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(after, encoding="utf-8")
+                    continue
                 if not target.is_file():
                     errors.append(
                         f"the cancellation claim guard cannot prove it detects "

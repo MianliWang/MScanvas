@@ -572,15 +572,26 @@ fn execute_command_after_assignment(
         .as_ref()
         .and_then(|job| ProcessJob::total_process_count(job).ok())
         .flatten();
-    let cleanup = if execution.is_err() {
-        force_owned_cleanup(&mut child, &mut owned_job).0
+    // **The observation is read, not dropped.** `force_owned_cleanup` says both
+    // whether the requests succeeded and whether the Job then reported itself
+    // empty, and this call kept only the first -- which is exactly the reasoning
+    // its own docstring refuses. A failing run whose Job was not *observed*
+    // empty is a run that cannot say its processes are gone, whatever the
+    // teardown requests returned.
+    let (cleanup, owned_job_observed_empty) = if execution.is_err() {
+        force_owned_cleanup(&mut child, &mut owned_job)
     } else {
-        Ok(())
+        (Ok(()), true)
     };
     let captures = join_captures(stdout_reader, stderr_reader);
     drop(owned_job);
 
     let (status, termination, final_active_processes) = execution.map_err(|error| {
+        // A failure whose owned Job was never observed empty is an unaccounted
+        // process, whatever it failed at. `NotAwaited` claims the Job emptied
+        // and how the process ended was lost; without the observation it claims
+        // the first half on nothing.
+        let error = failure_after_teardown(error, owned_job_observed_empty);
         add_process_cleanup_context(error, cleanup.as_ref().err(), captures.as_ref().err())
     })?;
     cleanup?;
@@ -994,6 +1005,21 @@ fn add_cleanup_context(
     detail
 }
 
+/// What a failing run's error means once teardown has been observed.
+///
+/// A failure whose owned Job was never *observed* empty is an unaccounted
+/// process, whatever it failed at: `NotAwaited` claims the Job emptied and that
+/// only how the process ended was lost, and without the observation it claims
+/// the first half on nothing.
+fn failure_after_teardown(error: ProcessError, owned_job_observed_empty: bool) -> ProcessError {
+    if owned_job_observed_empty || error.leaves_an_owned_process_unaccounted() {
+        return error;
+    }
+    ProcessError::OwnedJobNotEmptied {
+        detail: error.to_string(),
+    }
+}
+
 /// Folds what teardown and capture reported into the error a run returns.
 ///
 /// **A failed owned teardown changes the kind, not only the text.** The
@@ -1001,6 +1027,14 @@ fn add_cleanup_context(
 /// run failed and its Job would not go" is the whole of what decides whether
 /// anything of this session's may start next, and folding the second into a
 /// detail string is how it stopped being decidable.
+///
+/// **And it only ever raises.** This used to *replace* the primary kind: a
+/// capture thread that returned an error beside a Job that had already said it
+/// still held processes turned `OwnedJobNotEmptied` into `Wait`, which
+/// classifies as `NotAwaited` — an ordinary broken conversion, retryable, no
+/// quarantine — while a converter this run owned was positively observed to
+/// have survived. A coincident failure of a stdout pipe may add text; it may
+/// not lower what the run already established about the machine.
 fn add_process_cleanup_context(
     primary: ProcessError,
     cleanup: Option<&ProcessError>,
@@ -1016,6 +1050,14 @@ fn add_process_cleanup_context(
     }
     if let Some(error) = capture {
         detail.push_str(&format!("; capture cleanup error: {error}"));
+    }
+    // A primary that already names an unaccounted process keeps its kind and
+    // gains the text. Nothing here can make that fact smaller.
+    if primary.leaves_an_owned_process_unaccounted() {
+        return match primary {
+            ProcessError::Terminate { .. } => ProcessError::Terminate { detail },
+            _ => ProcessError::OwnedJobNotEmptied { detail },
+        };
     }
     if cleanup.is_some() {
         return ProcessError::OwnedJobNotEmptied { detail };
@@ -2521,6 +2563,84 @@ mod tests {
     /// process whose disappearance this boundary cannot state — which is what
     /// `NotTerminated` already means, and the state a stop must never be
     /// allowed to call clean.
+    /// A coincident capture failure may add text; it may not lower a kind.
+    ///
+    /// The fold *replaced* the primary, so a stdout pipe that returned an error
+    /// beside a Job that had already said it still held processes produced
+    /// `Wait` — which classifies as an ordinary broken conversion, retryable,
+    /// with no quarantine — for a run that had positively observed a surviving
+    /// tree.
+    #[test]
+    fn a_coincident_capture_failure_never_lowers_what_a_run_established() {
+        let capture = ProcessError::Capture {
+            stream: "stdout",
+            detail: "the pipe broke".to_owned(),
+        };
+
+        for primary in [
+            ProcessError::OwnedJobNotEmptied {
+                detail: "the owned job would not empty".to_owned(),
+            },
+            ProcessError::Terminate {
+                detail: "the owned job would not terminate".to_owned(),
+            },
+        ] {
+            let folded = add_process_cleanup_context(primary.clone(), None, Some(&capture));
+            assert!(
+                folded.leaves_an_owned_process_unaccounted(),
+                "{primary:?} was lowered to {folded:?}"
+            );
+            assert!(
+                folded.to_string().contains("capture cleanup error"),
+                "the text is still added: {folded}"
+            );
+        }
+
+        // And a primary that established nothing about the machine still takes
+        // the kind its teardown reported.
+        let wait = ProcessError::Wait {
+            detail: "the wait was interrupted".to_owned(),
+        };
+        assert!(
+            !add_process_cleanup_context(wait.clone(), None, Some(&capture))
+                .leaves_an_owned_process_unaccounted()
+        );
+        let cleanup = ProcessError::Terminate {
+            detail: "teardown failed".to_owned(),
+        };
+        assert!(
+            add_process_cleanup_context(wait, Some(&cleanup), None)
+                .leaves_an_owned_process_unaccounted()
+        );
+    }
+
+    /// A run whose Job was never observed empty cannot say its processes ended.
+    ///
+    /// The observation was computed and thrown away on every failure path but
+    /// one, so `NotAwaited` — "the Job emptied and only the ending was lost" —
+    /// was reached with nothing having read the count.
+    #[test]
+    fn a_failure_without_an_emptiness_observation_says_so() {
+        let wait = ProcessError::Wait {
+            detail: "the wait was interrupted".to_owned(),
+        };
+
+        assert!(
+            !failure_after_teardown(wait.clone(), true).leaves_an_owned_process_unaccounted(),
+            "an observed-empty Job leaves nothing of this run's behind"
+        );
+        assert!(
+            failure_after_teardown(wait, false).leaves_an_owned_process_unaccounted(),
+            "without the observation the run cannot say its processes ended"
+        );
+
+        // And what already names an unaccounted process keeps its own kind.
+        let terminate = ProcessError::Terminate {
+            detail: "the owned job would not terminate".to_owned(),
+        };
+        assert_eq!(failure_after_teardown(terminate.clone(), false), terminate);
+    }
+
     /// The verdict follows the observation, and only the observation.
     ///
     /// The whole point of the two-phase resume is which answer follows which

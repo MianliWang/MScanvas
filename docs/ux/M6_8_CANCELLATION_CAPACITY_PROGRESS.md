@@ -249,7 +249,7 @@ buys is narrower and worth stating exactly: a wrong *description* cannot become
 a wrong *claim in code*. The words can drift; the member cannot be written by
 the code that reads them.
 
-**The guard proves itself.** On every run it applies thirty deliberate bypasses
+**The guard proves itself.** On every run it applies thirty-three deliberate bypasses
 to isolated copies and requires each to be detected, including all six the two
 reviewers demonstrated: the alias import, the braced member import, the braced
 ownership import, a production claim hidden behind a file-based test module, the
@@ -278,8 +278,9 @@ answered at the root: comments, strings, chars and raw strings are scrubbed out
 before anything is counted or matched, and the region now ends where its own
 depth returns to zero rather than at the first left-margin `}`.
 
-Three more came from the sixth, one for each of the bypasses above, and four
-from the seventh: a *nested* block comment, which Rust allows and the scanner
+Three more came from the sixth, one for each of the bypasses above; three from
+the eighth, one of which needs a file the tree does not have, so a proof may
+create one; and four from the seventh: a *nested* block comment, which Rust allows and the scanner
 closed at the first `*/`, so commented-out text read as live source; an ordinary
 string literal continued across a line break, which forged the attribute and the
 declaration at once, aimed at a module no other proof anchors in; the
@@ -484,7 +485,7 @@ open) and this record. Fifteen, and the count is checkable: `git diff
 Local gates: frontend lint, typecheck, 1659 tests across 69 files, build;
 `cargo fmt --all --check`; `cargo clippy --locked --workspace --all-targets
 --all-features -- -D warnings`; `cargo test --locked --workspace --all-targets`
-(1514 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
+(1516 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
 E2E typecheck.
 
 **Rendered QA**: 10/10 in `m6.8-cancellation-controls.browser`, including every
@@ -505,7 +506,7 @@ bundle and is not inherited. The bundle these cases exercised is
 The suite is headless, so it does not need an unlocked session — which is why
 it could be re-run at this head when the native suites could not.
 
-**Seven rounds of two independent reviews rejected seven candidates, and every
+**Eight rounds of two independent reviews rejected eight candidates, and every
 finding was verified against the code before it was acted on.** Each repair is
 proved by reverting it and watching a test, or the guard's own bypass suite,
 report the defect. Reviewers demonstrated working bypasses of the claim guard in
@@ -574,6 +575,28 @@ spelling a qualified-path check cannot see — the lesson rule 6 already carried
 about members, arriving a round late at rule 7. The attribute is read as code
 now, declarations are matched over the file as one text, and the derivation is
 matched under every name the type can be reached by in that file.
+
+Round 8: three more demonstrated bypasses, one of them smaller than any proof
+the guard held — a single existing line changed. A `#[cfg(test)]` region is
+line-granular and a Rust item ends at a *column*, so anything written after the
+closing brace on the same line was production code the guard never read. A
+module compiled under `#[path = "..."]` is one `files_for` cannot resolve by
+name, so the plain-declaration subtraction saw nothing and a `#[cfg(test)] mod`
+beside it exempted the file the product actually builds. And the claim's
+identifier was compared as raw text, so `"confirmed_gon\u{65}"` and a literal
+split by a line continuation are the same `&str` the compiler sees and not the
+one the rule looked for.
+
+**Two things about the process boundary in the same round, and they are the
+more serious half.** A coincident capture failure *replaced* the primary error's
+kind, so a Job that had positively said it still held processes became a plain
+`Wait` — classified `NotAwaited`, retryable, no quarantine — because a stdout
+pipe happened to break at the same moment. And the emptiness observation this
+milestone added was computed and thrown away on every failure path but one: the
+general path kept the success of the teardown *request* and discarded the Job's
+own count, which is the reasoning `force_owned_cleanup`'s own docstring exists
+to refuse. Both are repaired, and both now have tests over the decision rather
+than over a hand-built value.
 
 Round 7: four more demonstrated bypasses, listed above, and one substantive
 overclaim. `RootNotStarted` — an ordinary, retryable failure that raises no
@@ -663,6 +686,11 @@ Evidence: `D:/tmp/mscanvas-m68-20260908/m68-native-ng3n5k/`,
   running both specs at `735dfebac5d48db30b6d1802c208ccf05853b3d8` in a separate
   worktree, where they fail identically. Pre-existing and outside this slice.
   Owner: the spectrum-export and viewport owners respectively.
+- **A rule can only be proved where a proof is written, and the proofs' *files*
+  are not the guard's coverage.** The eighth round's first bypass changed one
+  existing line in a file with no proof anchored on it, and no rule read what
+  followed the brace on it. Two proofs now target unanchored files deliberately;
+  the residual is that the next hole will be found the same way this one was.
 - **Three call sites are covered only by the functions extracted out of them.**
   `execute_bound`'s question about a failed preview process, `probe_tool`'s about
   a failed help probe, and the resume loop's collection of suspend counts each
