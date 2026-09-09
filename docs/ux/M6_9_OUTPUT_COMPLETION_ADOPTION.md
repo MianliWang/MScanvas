@@ -341,7 +341,7 @@ basename.
 ## Changed-path closure
 
 42 paths at this head: 32 of code and evidence and
-10 documents, 6 of them new. Re-derived at every head
+10 documents. Six of the forty-two are new. Re-derived at every head
 with `git diff --name-status` against the baseline rather than hand-maintained.
 It was wrong once and it is worth saying why: it was written before the rendered
 and native evidence existed, and it went on saying twenty-eight while the diff
@@ -392,10 +392,10 @@ and the M7/M8 seams it freezes), `0016` (the adoption relation this records),
 
 ## Validation
 
-Local gates at this head: frontend lint, typecheck, 1672 tests
+Local gates at this head: frontend lint, typecheck, 1674 tests
 across 70 files, build; `cargo fmt --all --check`; `cargo clippy
 --locked --workspace --all-targets --all-features -- -D warnings`; `cargo test
---locked --workspace --all-targets` (1549 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.
+--locked --workspace --all-targets` (1550 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.
 
 ### Rendered QA
 
@@ -405,9 +405,9 @@ adoption result, no duplicate ids and no horizontal overflow at any of the four.
 Plus M6.8 10/10, M6.7 7/7 and M6.6 8/8 on the same head. Screenshots and console
 records inspected; console empty.
 
-Run at this head against the bundle this head builds: `index-k2BvQVBj.js`,
-SHA-256 prefix `ced44436fc40dbfa`, beside `index-Cq2IHovW.css`
-(`683071bfc1a0e39d`) and `index.html` (`65c788b50ea7aaa8`). The suite is
+Run at this head against the bundle this head builds: `index-BxU7P6a4.js`,
+SHA-256 prefix `fa6ec1da64e6cd74`, beside `index-Cq2IHovW.css`
+(`683071bfc1a0e39d`) and `index.html` (`6b13704ea4bf3a3d`). The suite is
 headless, so it does not need an unlocked session.
 
 **Two browser cases fail here and on the published baseline alike**: `m4.1`
@@ -420,15 +420,34 @@ introduces. They are recorded rather than absorbed.
 
 ### Mechanism reversions
 
-Four, run serially in place and restored exactly, each failing the test its
-decision exists for and each failing by assertion rather than by not compiling:
+Seven, each failing the test its decision exists for and each failing **by
+assertion** rather than by not compiling:
 
 | Reversion | Test that caught it |
 | --- | --- |
 | The observation on the non-zero-exit path removed | `two_ordinary_failures_differ_by_what_they_staged` |
-| A failed read mapped to `NotCreated` instead of `Unobserved` | `an_unreadable_staging_area_is_unknown_rather_than_empty` |
+| A failed read mapped to an empty reading instead of `Unobserved` | `an_unreadable_staging_area_is_unknown_rather_than_empty` |
 | A launch failure reported as `NotAttempted` | `a_failed_launch_is_indeterminate_rather_than_no_process` |
-| The identity not minted before execution | `each_attempt_that_reaches_the_provider_mints_its_own_identity` |
+| The identity minted after the provider ran rather than before | `a_failed_launch_is_indeterminate_rather_than_no_process` |
+| A refused member left without its own state | `one_bad_member_publishes_nothing` |
+| The export not counting refused members | `every_private_sciex_failure_is_diagnosable_and_path_free` |
+| A stop's ending read from the facts beside it | `a_stop_reports_the_ending_the_boundary_decided_rather_than_the_facts_beside_it` |
+
+They were run serially in an **isolated copy of this head**, extracted with `git
+archive` into a scratch directory with its own `CARGO_TARGET_DIR` — no symlink
+and no junction to this worktree's `node_modules` or build outputs. Each mutated
+file was restored by writing back the exact bytes read before it, verified by
+comparing SHA-256 before and after, and the test was re-run and passed again
+after every restore.
+
+**One of them was mis-aimed the first time and is recorded as such.** Minting
+the identity after execution was originally pointed at
+`each_attempt_that_reaches_the_provider_mints_its_own_identity`, which only ever
+runs attempts that succeed and therefore passed under the mutation. The decision
+this protects is that an attempt reaching the provider has an identity *whatever
+came back*, and the test that holds that line is the launch-failure one, where
+the mutation does fail. A reversion that passes is a statement about the tests,
+not about the code, and it is reported rather than re-aimed silently.
 
 ### Native evidence
 
