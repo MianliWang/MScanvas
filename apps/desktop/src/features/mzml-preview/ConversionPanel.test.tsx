@@ -96,6 +96,36 @@ describe("destination request and queue truth", () => {
     expect(within(panel).getByLabelText("Subfolder name")).toHaveValue("Native QA");
   });
 
+  it("restores Convert focus even when the plan is momentarily gone", async () => {
+    // The commit a cancelled picker returns into does not always have a
+    // pressable button in it. With nothing selected the control reads "Convert
+    // 0 selected…" and is disabled, `focus()` on a disabled button does
+    // nothing, and a restoration that spent itself there left the focus on the
+    // document body for the rest of the session.
+    const picker = deferred<WorkspaceConversionState>();
+    const api = createFakePreviewApi({
+      initialDatasets: [first], availability: availableBackend, conversion: () => picker.promise,
+    });
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const row = await screen.findByRole("option", { name: /run-1\.raw/ });
+    fireEvent.click(row);
+    fireEvent.click(within(panel).getByRole("radio", { name: "Custom local folder" }));
+    await pressConvert(panel, "Convert 1 selected…");
+
+    // The scope empties while the picker is open, so the plan has no question
+    // to answer and the button is not rendered at all.
+    fireEvent.click(row, { ctrlKey: true });
+    await act(async () => picker.resolve({ status: "idle" }));
+    expect(within(panel).getByRole("button", { name: "Convert 0 selected…" })).toBeDisabled();
+
+    // And when the scope comes back, so does the focus.
+    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    await waitFor(() =>
+      expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toHaveFocus(),
+    );
+  });
+
   it.each(["unresolved", "bound"] as const)("renders the queue's %s destination independently of the next request", async (destinationStatus) => {
     const api = createFakePreviewApi({
       initialDatasets: [first], availability: availableBackend,

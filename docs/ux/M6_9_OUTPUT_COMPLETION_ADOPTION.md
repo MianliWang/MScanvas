@@ -417,7 +417,7 @@ and the M7/M8 seams it freezes), `0016` (the adoption relation this records),
 
 ## Validation
 
-Local gates at this head: frontend lint, typecheck, 1675 tests
+Local gates at this head: frontend lint, typecheck, 1677 tests
 across 70 files, build; `cargo fmt --all --check`; `cargo clippy
 --locked --workspace --all-targets --all-features -- -D warnings`; `cargo test
 --locked --workspace --all-targets` (1554 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.
@@ -446,6 +446,24 @@ carries both as pre-existing, verified in a separate worktree at `735dfeb`. This
 diff cannot be their cause: it changes no viewer or spectrum production file,
 and every stylesheet rule it adds is scoped to a class name this slice
 introduces. They are recorded rather than absorbed.
+
+### One inherited guarantee repaired
+
+M6.6's *"Convert takes the focus back when the picker is cancelled"* was
+unreliable, and CI is what showed it. The restoration spent itself on whichever
+commit ran next: if the plan had no question to answer at that moment the
+control reads "Convert 0 selected…" and is **disabled**, `focus()` on a disabled
+button does nothing, and the flag was already cleared — so focus stayed on the
+document body for the rest of the session and no later commit tried again.
+
+The flag now survives until the focus actually lands, and the effect runs after
+every commit rather than on three named values, because the commit where the
+button becomes pressable is not one of them. A rendered case empties the scope
+while the picker is open and fails on the old code for exactly this reason.
+
+It is repaired here rather than left for M6.11 because it is an inherited
+guarantee this slice must not weaken, and because it was blocking a required
+check.
 
 ### Mechanism reversions
 
