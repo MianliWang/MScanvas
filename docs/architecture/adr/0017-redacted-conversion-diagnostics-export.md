@@ -3,9 +3,10 @@
 - **Status:** Accepted. A terminal queue's diagnosable attempts can be saved to
   one local JSON file when the user asks, and never otherwise.
 - **Date:** 2026-08-09
-- Amended: 2026-09-08 (M6.8) — the schema is at **version 2**. A field left, so
-  the version moved by the rule this ADR already states. See *One versioned
-  schema* below.
+- Amended: 2026-09-08 (M6.8) — the schema moved to **version 2**. A field left,
+  so the version moved by the rule this ADR already states.
+- Amended: 2026-09-09 (M6.9) — the schema is at **version 3**, for the same
+  reason a second time. See *One versioned schema* below.
 - **Builds on:** [ADR 0009](0009-mzml-conversion-execution-boundary.md) (the
   execution boundary and its bounded process capture),
   [ADR 0013](0013-serial-conversion-queue.md) (the serial queue),
@@ -214,7 +215,7 @@ different facts.
 ```json
 {
   "schema": "mscanvas.conversion-diagnostics",
-  "version": 2,
+  "version": 3,
   "application": { "name": "MSCanvas", "version": "…" },
   "queue": { "operationId": "…", "terminalReason": "…", "…": "counts" },
   "provider": { "release": "…", "buildDate": "…", "sourceRevision": "…",
@@ -242,6 +243,23 @@ additions beside it — `sampledMaxActiveProcesses`, `totalOwnedProcesses` and
 state identifier `skipped_by_request` — would not have moved it on their own. A reader written
 against version 1 must not read a version 2 file as though the boolean were
 merely absent, which is what the version exists to tell it.
+
+**Amended 2026-09-09 (M6.9): version 2 became version 3.** An item's
+`cancellation.partialOutputObserved` boolean was removed. It was a boolean over
+an *optional* observation, so it answered `false` both for a staging area read
+and found empty and for one that could not be read at all — the same conflation
+`ownedTree` was introduced to undo one field over. What took its place is the
+item's own `stagedOutput`: a closed four-way answer — never created, unobserved
+at a stated phase, observed at a stated phase with its counts, or published
+under its final name — and it is written for **every** item rather than only for
+one a stop reached, because an ordinary failure is exactly where the question
+matters. `process` and `runIdentity` arrive beside it, and would not have moved
+the version on their own. A reader written against version 2 must not read a
+version 3 file as though the boolean were merely absent.
+
+The counts inside `stagedOutput` are `null` rather than zero where nothing was
+observed. A zero there would be the one reading this field exists to prevent: an
+unread directory described as an empty one.
 
 Serialized by hand rather than through a format crate. Nothing in this
 application's production dependencies renders JSON — `serde` describes shapes and

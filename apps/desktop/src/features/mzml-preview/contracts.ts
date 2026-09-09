@@ -1014,6 +1014,101 @@ export interface ConversionValidation {
   readonly verified: readonly string[];
   readonly unverified: readonly string[];
   readonly inapplicable: readonly string[];
+  /**
+   * Recorded differences that fail nothing.
+   *
+   * A fourth list and not a fourth disposition. Each is a difference the
+   * measured evidence already shows a faithful run can legitimately produce,
+   * so folding them into `unverified` would report expected behaviour as an
+   * unanswered question.
+   */
+  readonly advisory: readonly string[];
+}
+
+/**
+ * What one attempt established about its private staging area.
+ *
+ * The second of the five judgements, and the one nothing else answers. A clean
+ * teardown reports no residue whether the directory held a half-written
+ * document or nothing at all; the destination says only what was published;
+ * exit status says neither.
+ *
+ * Four arms, because "empty" is not one answer. Never created, could not be
+ * read, and read and found empty are three different facts.
+ */
+export type ConversionStagedOutput =
+  /** No staging area existed, so there was nothing to observe. */
+  | { readonly kind: "notCreated" }
+  /** It existed and could not be read. Unknown, and never empty. */
+  | { readonly kind: "unobserved"; readonly phase: string }
+  | {
+      readonly kind: "observed";
+      /** When the read was taken. An empty snapshot is empty at that moment. */
+      readonly phase: string;
+      readonly entryCount: number;
+      readonly directoryCount: number;
+      /**
+       * Whether any ordinary staged file held bytes then. Zero-byte files and
+       * entries that are neither a file nor a directory are counted in
+       * `entryCount` and are deliberately not called output documents.
+       */
+      readonly nonEmptyFileObserved: boolean;
+    }
+  /** The staged output took its final name. Not an observation. */
+  | { readonly kind: "published" };
+
+/**
+ * What the execution boundary established about one attempt's own process.
+ *
+ * Read from the boundary rather than from whether backend facts came back: a
+ * run whose streams could not be captured reports none and may well have
+ * created a process.
+ */
+export type ConversionProcessOutcome =
+  /** The attempt settled before the provider was invoked at all. */
+  | { readonly kind: "notAttempted" }
+  /** It was invoked, and what became of the process could not be established. */
+  | { readonly kind: "indeterminate" }
+  | {
+      readonly kind: "settled";
+      readonly termination: string;
+      readonly exitCode: number | null;
+    };
+
+/**
+ * What an adoption did with one item's finalized outputs.
+ *
+ * Historical, and about this settling of this queue: it says what an adoption
+ * did, not what the workspace holds now. Removing a row afterwards leaves this
+ * unchanged, because removing a row deletes no file and undoes no past process
+ * outcome.
+ */
+export type ConversionItemAdoption =
+  /** Nobody has asked yet, which is not the same as having been refused. */
+  | { readonly kind: "notRequested" }
+  /** This item holds no finalized output an adoption could offer. */
+  | { readonly kind: "nothingToAdopt" }
+  | {
+      readonly kind: "settled";
+      readonly added: number;
+      readonly alreadyInWorkspace: number;
+      readonly refused: number;
+      /** Why each refusal happened, by stable identifier, in offer order. */
+      readonly refusals: readonly string[];
+    };
+
+/**
+ * One output of a backend-named set, with what was established about it.
+ *
+ * One entry per member rather than parallel arrays of names and states, so a
+ * member cannot acquire another member's digest by an off-by-one. `output` and
+ * `validation` are present exactly for a member that was validated.
+ */
+export interface ConversionOutputMember {
+  readonly fileName: string;
+  readonly state: string;
+  readonly output: ConversionOutput | null;
+  readonly validation: ConversionValidation | null;
 }
 
 /** Bounded facts about the backend process. No raw output crosses. */
@@ -1113,7 +1208,6 @@ export interface ConversionCancellation {
   readonly ownedTree: ConversionOwnedTreeDisposition;
   readonly elapsedMilliseconds: number;
   readonly termination: string | null;
-  readonly partialOutputObserved: boolean;
   readonly stagingResidue: string | null;
 }
 
@@ -1185,10 +1279,13 @@ export interface ConversionOutputSetReport {
   readonly notPublishedCount: number;
   /** `null` where the acquisition was never bound — not zero, which is a claim. */
   readonly boundSourceObjects: number | null;
-  /** Basenames in publication order. Never a directory, never a path. */
-  readonly memberFileNames: readonly string[];
-  /** How each member ended, positionally matched to `memberFileNames`. */
-  readonly memberStates: readonly string[];
+  /**
+   * The set's manifest: one entry per discovered member, in publication order.
+   *
+   * Bounded by `maxMembers`. It replaced two positional arrays whose pairing
+   * nothing enforced.
+   */
+  readonly members: readonly ConversionOutputMember[];
   readonly backend: ConversionBackendFacts | null;
   readonly stagingResidue: string | null;
   readonly validationMode: ValidationMode;
@@ -1253,6 +1350,32 @@ export interface ConversionQueueItem {
    * outstanding; what a settled one established is `cancellation`.
    */
   readonly stopRequested: boolean;
+  /**
+   * The first judgement: what the execution boundary established about this
+   * attempt's own process.
+   *
+   * On the item rather than on the report, because a cancelled row has no
+   * report and is exactly the row a reader most needs this for.
+   */
+  readonly process: ConversionProcessOutcome;
+  /**
+   * The second judgement: what the private staging area held.
+   *
+   * Answerable whether or not anything was published, and independent of what
+   * teardown reclaimed.
+   */
+  readonly staged: ConversionStagedOutput;
+  /**
+   * The identity minted for this attempt before the provider was invoked.
+   *
+   * `null` for an item that settled ahead of the launch — a refusal, a skip, a
+   * stop that beat the process — which is what keeps any of them from reading
+   * as a run that happened. Opaque, session-local, stable across re-reads of
+   * the same attempt, and different for a retry.
+   */
+  readonly runIdentity: string | null;
+  /** The fifth judgement: what an adoption did with this item's outputs. */
+  readonly adoption: ConversionItemAdoption;
 }
 
 /** One queue, in facts that name no location. */

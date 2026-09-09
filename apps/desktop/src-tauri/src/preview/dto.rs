@@ -1335,6 +1335,78 @@ pub struct ConversionQueueItemDto {
     /// says a request is outstanding, not that one was ever made. What a
     /// settled stop established is `cancellation`.
     pub stop_requested: bool,
+    /// The first judgement, per item: what the execution boundary established
+    /// about this attempt's own process.
+    ///
+    /// On the item rather than on the report, because a cancelled row has no
+    /// report and is exactly the row a reader most needs this for. Read from
+    /// the boundary rather than from whether backend facts came back: a run
+    /// whose streams could not be captured reports none and may well have
+    /// launched one.
+    pub process: ConversionProcessDto,
+    /// The second judgement, per item: what the private staging area held.
+    ///
+    /// Answerable whether or not anything was published, and independent of
+    /// what teardown reclaimed. Two ordinary failures with the same process
+    /// outcome and the same clean teardown differ here when one of them staged
+    /// something.
+    pub staged: ConversionStagedOutputDto,
+    /// The identity minted for this attempt before the provider was invoked.
+    ///
+    /// `null` for an item that settled ahead of the launch -- a refusal, a
+    /// skip, a stop that beat the process -- which is what keeps any of them
+    /// from reading as a run that happened. Opaque, session-local, stable
+    /// across re-reads of the same attempt, and different for a retry.
+    pub run_identity: Option<String>,
+    /// The fifth judgement, per item: what an adoption did with this item's
+    /// finalized outputs.
+    ///
+    /// Answered by Rust and carried on the queue rather than derived in the
+    /// interface from the adoption reply, because the reply is one message and
+    /// the queue is read again on every poll and every remount. A judgement
+    /// that lived only in the reply would disappear from the row the moment the
+    /// document was re-read, which is exactly when a user goes looking for it.
+    pub adoption: ConversionItemAdoptionDto,
+}
+
+/// What an adoption did with one item's finalized outputs.
+///
+/// **Historical, and about this settling of this queue.** It says what an
+/// adoption did, not what the workspace holds now: a row the user removes
+/// afterwards leaves this unchanged, because removing a row deletes no file and
+/// undoes no past process outcome. Current membership is the roster's answer
+/// and is read there.
+///
+/// Nothing here is persisted. It lives as long as the terminal queue that
+/// produced it and is dropped with it, exactly as the adoption tickets are.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ConversionItemAdoptionDto {
+    /// No adoption has been asked for since this item settled.
+    ///
+    /// Deliberately not "refused" and deliberately not "not adopted": nobody
+    /// has asked yet, which is a different answer from having asked and been
+    /// told no.
+    NotRequested,
+    /// This item holds no finalized output an adoption could offer.
+    ///
+    /// A failure, a skip, a cancellation, or a set whose publication is
+    /// incomplete. It is the item's own state that explains which.
+    NothingToAdopt,
+    /// An adoption ran, and this is what it did to this item's outputs.
+    ///
+    /// The three counts are different answers, not degrees of one. A duplicate
+    /// is not a newly added output, and a refusal erases neither the
+    /// finalization that happened nor what its integrity check established.
+    #[serde(rename_all = "camelCase")]
+    Settled {
+        added: usize,
+        already_in_workspace: usize,
+        refused: usize,
+        /// Why each refusal happened, by stable identifier, in the order the
+        /// outputs were offered. Bounded by the item's own output bound.
+        refusals: Vec<String>,
+    },
 }
 
 /// Where one item is.
@@ -1416,9 +1488,6 @@ pub struct ConversionCancellationDto {
     pub elapsed_milliseconds: u64,
     /// How the process ended, by the process boundary's own identifier.
     pub termination: Option<String>,
-    /// Whether the private staging area held anything when the stop settled.
-    /// A shape, never a name.
-    pub partial_output_observed: bool,
     /// What identity-bound cleanup could not remove, by stable identifier.
     pub staging_residue: Option<String>,
 }
@@ -1682,6 +1751,105 @@ pub struct ConversionReportDto {
     pub receipt: Option<BackendBindingReceiptDto>,
 }
 
+/// What one attempt established about its private staging area.
+///
+/// The second of the five judgements, and the one nothing else answers. A
+/// clean teardown reports no residue whether the directory held a half-written
+/// document or nothing at all; the destination says only what was published;
+/// exit status says neither.
+///
+/// Four arms, because "empty" is not one answer. An area that was never
+/// created, one that could not be read and one that was read and found empty
+/// are three different facts, and a reader given a boolean cannot tell which
+/// they were handed.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ConversionStagedOutputDto {
+    /// No staging area existed for this attempt, so there was nothing to
+    /// observe. The provider was never given anywhere to write.
+    NotCreated,
+    /// A staging area existed and could not be read when the observation was
+    /// attempted. **Unknown, and never empty.**
+    #[serde(rename_all = "camelCase")]
+    Unobserved {
+        /// When the read was attempted, by the boundary's stable identifier.
+        phase: &'static str,
+    },
+    /// Read, at the stated phase. The counts are a shape and never a name: a
+    /// staged output's basename is derived from the acquisition.
+    #[serde(rename_all = "camelCase")]
+    Observed {
+        phase: &'static str,
+        entry_count: usize,
+        directory_count: usize,
+        /// Whether any ordinary staged file held bytes at that moment. Zero-byte
+        /// files and entries that are neither a file nor a directory are counted
+        /// in `entryCount` and are deliberately not called output documents.
+        non_empty_file_observed: bool,
+    },
+    /// The staged output took its final name. Not an observation, and stated as
+    /// such: publication is what establishes it.
+    Published,
+}
+
+/// What the execution boundary established about one attempt's own process.
+///
+/// Read from the boundary that invoked the provider, and deliberately not from
+/// whether process facts came back. A run whose streams could not be captured
+/// has no facts to report and may well have created a process, so the absence
+/// of `backend` is not evidence that nothing launched.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ConversionProcessDto {
+    /// The attempt settled before the provider was invoked at all.
+    NotAttempted,
+    /// The provider was invoked and the boundary could not establish what
+    /// became of the process.
+    Indeterminate,
+    /// A process ran and this is how it ended. The two facts are carried
+    /// together because they can disagree.
+    #[serde(rename_all = "camelCase")]
+    Settled {
+        termination: &'static str,
+        exit_code: Option<i32>,
+    },
+}
+
+/// One output of a backend-named set, with what was established about it.
+///
+/// Replaces two positional arrays -- names beside states -- which is a pairing
+/// nothing enforced and which a reader had to maintain by index. A manifest
+/// entry carries its own name, its own state and its own measurements, so a
+/// member cannot acquire another member's digest by an off-by-one.
+///
+/// `output` and `validation` are present exactly for a member that was
+/// validated. A member that was never validated has neither, rather than
+/// zeroes that would read as a measured empty document.
+#[derive(Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionOutputMemberDto {
+    /// The basename the backend chose. Never a directory and never a path.
+    pub file_name: String,
+    /// How this member ended, by the lifecycle's own identifier.
+    pub state: &'static str,
+    pub output: Option<ConversionOutputDto>,
+    pub validation: Option<ConversionValidationDto>,
+}
+
+impl std::fmt::Debug for ConversionOutputMemberDto {
+    /// State and shape, with the backend-chosen name redacted, exactly as the
+    /// crate's own member report does it. A derived `Debug` would print every
+    /// member basename into any log that rendered a queue.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ConversionOutputMemberDto")
+            .field("file_name", &"<redacted>")
+            .field("state", &self.state)
+            .field("validated", &self.validation.is_some())
+            .finish()
+    }
+}
+
 /// What was measured of a finalized output.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -1710,6 +1878,14 @@ pub struct ConversionValidationDto {
     pub verified: Vec<String>,
     pub unverified: Vec<String>,
     pub inapplicable: Vec<String>,
+    /// Recorded differences that fail nothing.
+    ///
+    /// A fourth list rather than a fourth disposition. None of these is a check
+    /// that could have been made and was not: each is a difference the measured
+    /// evidence already shows a faithful run can legitimately produce, so
+    /// folding them into `unverified` would report expected behaviour as an
+    /// unanswered question.
+    pub advisory: Vec<String>,
 }
 
 /// Bounded facts about the backend process. Raw stdout and stderr are
@@ -1802,12 +1978,12 @@ pub struct ConversionOutputSetReportDto {
     /// `None` where it never was, which is every refusal that happened before
     /// the source was opened. Zero would say it was bound to nothing.
     pub bound_source_objects: Option<usize>,
-    /// The basenames the backend chose, in publication order. Never a
-    /// directory, never a path, and bounded by `max_members`.
-    pub member_file_names: Vec<String>,
-    /// How each member ended, by the boundary's own identifier, positionally
-    /// matched to `member_file_names`.
-    pub member_states: Vec<String>,
+    /// The set's manifest: one entry per discovered member, in publication
+    /// order, each carrying its own name, state and measurements.
+    ///
+    /// Bounded by `max_members`. It replaced two positional arrays -- names
+    /// beside states -- whose pairing nothing enforced.
+    pub members: Vec<ConversionOutputMemberDto>,
     pub backend: Option<ConversionBackendFactsDto>,
     pub staging_residue: Option<String>,
     /// Always `output_only` for this family, carried rather than implied: a
@@ -1850,9 +2026,10 @@ impl std::fmt::Debug for ConversionOutputSetReportDto {
             )
             .field("not_published_count", &self.not_published_count)
             .field("bound_source_objects", &self.bound_source_objects)
-            // States, not names. Which member ended how is a fact about the
-            // run; what it is called is a fact about the acquisition.
-            .field("member_states", &self.member_states)
+            // The manifest, whose own `Debug` redacts every basename. Which
+            // member ended how is a fact about the run; what it is called is a
+            // fact about the acquisition.
+            .field("members", &self.members)
             .field("staging_residue", &self.staging_residue)
             .field("completeness", &self.completeness)
             .field("partial", &self.partial)

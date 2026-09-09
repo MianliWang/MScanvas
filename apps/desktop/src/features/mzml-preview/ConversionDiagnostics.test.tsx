@@ -108,6 +108,7 @@ function converted(handle: string, name: string): ConversionQueueItem {
           verified: [],
           unverified: [],
           inapplicable: [],
+          advisory: [],
           fullyVerified: false,
         },
         backend: null,
@@ -151,7 +152,6 @@ function unconfirmed(handle: string, name: string): ConversionQueueItem {
       ownedTree: "unconfirmed",
       elapsedMilliseconds: 5_200,
       termination: null,
-      partialOutputObserved: true,
       stagingResidue: null,
     },
   });

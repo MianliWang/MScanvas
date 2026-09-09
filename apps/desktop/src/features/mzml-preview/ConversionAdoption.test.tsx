@@ -82,6 +82,7 @@ function converted(handle: string, name: string): ConversionQueueItem {
           verified: [],
           unverified: [],
           inapplicable: [],
+          advisory: [],
           fullyVerified: false,
         },
         backend: null,

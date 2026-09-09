@@ -29,6 +29,7 @@ import {
   queueItem,
   queueOf,
   sciexQueueItem,
+  setMembers,
 } from "./previewFixtures";
 import { awaitPlan } from "./conversionPanelInteractions";
 import type { FakePreviewApi } from "./previewFixtures";
@@ -136,7 +137,12 @@ const partialSet = outputSetReport("file-9", TEN_MEMBERS.slice(0, 4), {
   groupOutcome: "partially_finalized",
   finalizedCount: 2,
   notPublishedCount: 2,
-  memberStates: ["finalized", "finalized", "validated", "validated"],
+  members: setMembers(TEN_MEMBERS.slice(0, 4), [
+    "finalized",
+    "finalized",
+    "validated_not_published",
+    "validated_not_published",
+  ]),
   completeness: { kind: "notPosed" },
   partial: { finalizedCount: 2, notPublishedCount: 2, failureKind: "already_exists" },
   completeSetAdoptable: false,
@@ -347,7 +353,6 @@ describe("rendered QA for the one-to-many output topology", () => {
               ownedTree: "confirmed_gone",
               elapsedMilliseconds: 42,
               termination: "terminated",
-              partialOutputObserved: true,
               stagingResidue: null,
             },
           }),
@@ -385,7 +390,6 @@ describe("rendered QA for the one-to-many output topology", () => {
             ownedTree: "unconfirmed",
             elapsedMilliseconds: 5_000,
             termination: null,
-            partialOutputObserved: false,
             stagingResidue: "staging_not_removed",
           },
         }),

@@ -13,6 +13,7 @@ import {
   queueOf,
   sciexQueueItem,
   selectedFile,
+  setMembers,
 } from "../../test/previewFixtures";
 import { pressConvert } from "../../test/conversionPanelInteractions";
 import type { FakePreviewApi } from "../../test/previewFixtures";
@@ -212,8 +213,14 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
 
     // Which ten, not only how many. A count alone leaves the user unable to
     // tell one of these files from another in the folder they chose.
+    //
+    // Scoped to the row's own list. The item's manifest names the same ten
+    // again, deliberately: this list says what landed, and the manifest says
+    // what each one measured.
+    const landed = result.querySelector(".conversion-queue-set-members");
+    expect(landed).not.toBeNull();
     for (const member of TEN_MEMBERS) {
-      expect(within(result).getByText(member)).toBeVisible();
+      expect(within(landed as HTMLElement).getByText(member)).toBeVisible();
     }
 
     // The offer is a count of files, not of items.
@@ -287,7 +294,11 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
       groupOutcome: "partially_finalized",
       finalizedCount: 1,
       notPublishedCount: 2,
-      memberStates: ["finalized", "validated", "validated"],
+      members: setMembers(TEN_MEMBERS.slice(0, 3), [
+        "finalized",
+        "validated_not_published",
+        "validated_not_published",
+      ]),
       completeness: { kind: "notPosed" },
       partial: { finalizedCount: 1, notPublishedCount: 2, failureKind: "already_exists" },
       completeSetAdoptable: false,
@@ -353,9 +364,23 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     // files individually, which is not something anyone can act on without
     // their names -- and the members that were *not* published must not be
     // listed, because they are not in the folder.
-    expect(within(result).getByText(TEN_MEMBERS[0])).toBeVisible();
-    expect(within(result).queryByText(TEN_MEMBERS[1])).toBeNull();
-    expect(within(result).queryByText(TEN_MEMBERS[2])).toBeNull();
+    const landed = result.querySelector(".conversion-queue-set-members");
+    expect(landed).not.toBeNull();
+    expect(within(landed as HTMLElement).getByText(TEN_MEMBERS[0])).toBeVisible();
+    expect(within(landed as HTMLElement).queryByText(TEN_MEMBERS[1])).toBeNull();
+    expect(within(landed as HTMLElement).queryByText(TEN_MEMBERS[2])).toBeNull();
+    // The manifest is the other half of the same truth and answers a different
+    // question: which members the run discovered, and what became of each. An
+    // unpublished member appears there marked as such, which is what keeps a
+    // partial set from collapsing into either a success or a failure — and it
+    // cannot be read as a file in the folder, because its own row says it is
+    // not one.
+    const manifest = result.querySelector(".conversion-item-manifest");
+    expect(manifest).not.toBeNull();
+    for (const member of TEN_MEMBERS.slice(0, 3)) {
+      expect(within(manifest as HTMLElement).getByText(member)).toBeInTheDocument();
+    }
+    expect(within(manifest as HTMLElement).getAllByText("Not published")).toHaveLength(2);
   });
 
   it("keeps other complete items in the same queue adoptable", async () => {
@@ -363,7 +388,11 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
       groupOutcome: "partially_finalized",
       finalizedCount: 1,
       notPublishedCount: 2,
-      memberStates: ["finalized", "validated", "validated"],
+      members: setMembers(TEN_MEMBERS.slice(0, 3), [
+        "finalized",
+        "validated_not_published",
+        "validated_not_published",
+      ]),
       completeness: { kind: "notPosed" },
       partial: { finalizedCount: 1, notPublishedCount: 2, failureKind: "already_exists" },
       completeSetAdoptable: false,
@@ -413,7 +442,6 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
       finalizedCount: 0,
       validatedNotPublishedCount: 0,
       notPublishedCount: 0,
-      memberStates: [],
       completeness: { kind: "notPosed" },
       completeSetAdoptable: false,
     });
@@ -459,7 +487,6 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
       finalizedCount: 0,
       validatedNotPublishedCount: 0,
       notPublishedCount: 0,
-      memberStates: [],
       completeness: { kind: "notPosed" },
       completeSetAdoptable: false,
     });
@@ -522,8 +549,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
         finalizedCount: 0,
         validatedNotPublishedCount: 0,
         notPublishedCount: 0,
-        memberStates: [],
-        completeness: { kind: "notPosed" },
+          completeness: { kind: "notPosed" },
         completeSetAdoptable: false,
       });
       const api = createFakePreviewApi({
@@ -574,7 +600,6 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
       finalizedCount: 0,
       validatedNotPublishedCount: 0,
       notPublishedCount: 0,
-      memberStates: [],
       completeness: { kind: "notPosed" },
       completeSetAdoptable: false,
     });

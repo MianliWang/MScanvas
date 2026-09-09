@@ -18,6 +18,7 @@ compile_error!(
      an optimized build; it exists for tests, which are not optimized"
 );
 
+mod attempt;
 mod cancellation;
 mod capability;
 mod command;
@@ -37,6 +38,9 @@ mod sciex_completeness;
 mod sciex_wiff;
 mod sha256;
 
+pub use attempt::{
+    OperationRunIdentity, ProcessAttemptOutcome, StagedObservationPhase, StagedOutputEvidence,
+};
 pub use cancellation::{CancellationObservation, CancellationRequest, ConversionCancellation};
 pub use capability::{
     CapabilityRequirementError, CapturedHelpStream, CompleteHelpCapture, DeclarationKind,

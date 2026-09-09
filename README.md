@@ -221,6 +221,22 @@ in your folder and are yours, MSCanvas says how many there were, and it will not
 offer them as the acquisition's complete output set. You can add them
 individually later with `Add files…`.
 
+Every settled row in a finished queue offers `Details`, and it answers five
+questions separately rather than folding them into one word. Whether a converter
+ran and how it ended. What MSCanvas's own temporary working folder held —
+answered whether or not anything was published, so a conversion that failed
+after writing part of a document reads differently from one that wrote nothing,
+which the failure and the empty destination folder cannot tell apart. What
+obtained a final name. How the output was checked, with what could not be
+checked kept apart from what was not, and observations that fail nothing named
+apart again. And what an adoption did with that item's files, which is a record
+of what happened rather than a claim about what the workspace holds now.
+
+Beside those, a manifest lists each output file with its size, its SHA-256 and
+how many spectra and chromatograms are actually in it, and the row names the
+attempt that produced them. That name is opaque, belongs to this session only,
+and is never written to disk.
+
 When a queue is over and something in it went wrong, you can save one local JSON
 file describing it: which items failed, what the boundary called each failure,
 and a bounded excerpt of what the converter printed. Known filesystem paths and

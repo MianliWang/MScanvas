@@ -42,7 +42,7 @@ use super::dto::{
     ConversionConflictPolicyDto, ConversionDiagnosticsExportDto, MAX_ERROR_DETAIL_CHARS,
     PreviewErrorDto, bounded_text, invalid_diagnostics_reservation, redact_absolute_paths,
 };
-use super::operation::{CancellationFacts, ItemOutputTopology, ItemState};
+use super::operation::{AttemptFacts, CancellationFacts, ItemOutputTopology, ItemState};
 use super::selection::DatasetSourceKind;
 
 pub(super) mod payload;
@@ -136,6 +136,13 @@ pub(super) struct ConversionFailureDiagnosticTicket {
     backend: Option<BackendRunFacts>,
     cancellation: Option<CancellationFacts>,
     residue: Option<StagingResidue>,
+    /// What the attempt established about itself, beside its outcome.
+    ///
+    /// The staged half is what makes a diagnosis of an ordinary failure worth
+    /// reading: it says whether the backend had written anything when the run
+    /// ended, which residue cannot answer and which the destination cannot
+    /// either. Counts, never a name.
+    attempt: AttemptFacts,
     /// Redacted where the run knew its own paths, bounded, and possibly
     /// withheld. Absent for an attempt that launched nothing, and absent for a
     /// finalized item whose only trouble was cleanup — the backend succeeded
@@ -263,6 +270,11 @@ impl ConversionFailureDiagnosticTicket {
             backend: report.backend_facts(),
             cancellation: None,
             residue,
+            attempt: AttemptFacts {
+                process: report.process_outcome(),
+                staged: report.staged_content(),
+                identity: report.run_identity(),
+            },
             // Kept only where it describes something that went wrong. A
             // finalized item with cleanup residue is a run whose backend did
             // its job, and the run itself already declined to retain its text.
@@ -309,6 +321,7 @@ impl ConversionFailureDiagnosticTicket {
                 }),
             not_adoptable: settlement.not_adoptable(),
         };
+        let attempt = settlement.attempt_facts();
         // Taken here rather than borrowed, for the reason the single path takes
         // it: the redacted text is the largest thing on the attempt and two
         // copies of it would be two things to bound.
@@ -325,6 +338,7 @@ impl ConversionFailureDiagnosticTicket {
             backend,
             cancellation: None,
             residue,
+            attempt,
             text: (state == ItemState::Failed).then_some(text).flatten(),
             output_set: Some(facts),
         })
@@ -353,6 +367,9 @@ impl ConversionFailureDiagnosticTicket {
             backend: None,
             cancellation: None,
             residue: None,
+            // Nothing was launched and nothing was created, and both are said
+            // rather than left to be inferred from the empty fields above.
+            attempt: AttemptFacts::NOTHING_RAN,
             text: None,
             // A refusal reaches every family, so the shape comes from the item
             // rather than from the run it never made.
@@ -371,6 +388,7 @@ impl ConversionFailureDiagnosticTicket {
         identity: DiagnosticItemIdentity,
         state: ItemState,
         facts: CancellationFacts,
+        attempt: AttemptFacts,
         text: Option<Box<BackendDiagnosticText>>,
         output_set: Option<OutputSetDiagnosticFacts>,
     ) -> Option<Self> {
@@ -394,6 +412,7 @@ impl ConversionFailureDiagnosticTicket {
             backend: None,
             cancellation: Some(facts),
             residue: facts.staging_residue,
+            attempt,
             text: (state == ItemState::CancellationFailed)
                 .then_some(text)
                 .flatten(),

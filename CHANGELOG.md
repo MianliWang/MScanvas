@@ -6,6 +6,31 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- **What a conversion produced, said in five separate answers.** Every settled
+  row in the queue offers `Details`. It says whether a converter ran and how it
+  ended; what MSCanvas's own temporary working folder held; what obtained a
+  final name; how the output was checked; and what an adoption did with it.
+  Beside those, a manifest lists each output file with its size, its SHA-256 and
+  how many spectra and chromatograms are actually in it.
+
+  The second of those is the one that was missing. A conversion that failed
+  after writing part of a document and one that failed having written nothing
+  used to look identical: the same failure, the same empty destination folder,
+  and the same clean removal of the temporary folder afterwards. MSCanvas now
+  looks at that folder while the evidence is still there, and the two read
+  differently. A folder it could not read is reported as unknown rather than as
+  empty, because those are not the same thing.
+
+  An acquisition that produced several files reports how many of the files it
+  actually produced obtained final names — never a fraction of some maximum —
+  and lists each of them with its own measurements. A partly published
+  acquisition is still not offered as a complete output set.
+
+  Adding outputs to the workspace is still something you ask for, and each row
+  now says what the last request did with its own files. That is a record of
+  what happened rather than a claim about what the workspace holds now: removing
+  a row deletes no file and undoes nothing the conversion established.
+
 - **Three scopes of stop, and one of them is new because the process boundary
   earned it.** `Stop queue` still ends the whole run. `Stop this file` ends only
   the acquisition being converted now and lets the rest of the queue carry on.

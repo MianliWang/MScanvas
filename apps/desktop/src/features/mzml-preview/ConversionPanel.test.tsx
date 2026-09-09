@@ -241,6 +241,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
                   verified: ["source_unchanged"],
                   unverified: [],
                   inapplicable: ["spectrum_count"],
+                  advisory: [],
                 },
                 backend: { exitCode: 0, elapsedMilliseconds: 592 },
                 stagingResidue: null,
@@ -568,6 +569,7 @@ describe("queueing selected Thermo RAW conversions", () => {
                   verified: ["source_unchanged"],
                   unverified: [],
                   inapplicable: [],
+                  advisory: [],
                 },
                 backend: { exitCode: 0, elapsedMilliseconds: 568 },
                 // Cleanup failed, and what it left behind is in the folder the
@@ -585,7 +587,12 @@ describe("queueing selected Thermo RAW conversions", () => {
     await screen.findByRole("region", { name: "Convert" });
     // Scoped to the result: the plan beneath it names the same output, because
     // it is offering to convert the same row again.
-    const item = within(queueResult()).getByText("run-1.mzML").closest("li");
+    // Scoped to the row's own output cell. The item's manifest names the same
+    // file, deliberately: the row says what it is called and how large it is,
+    // and the manifest is where its digest lives.
+    const item = within(queueResult())
+      .getByText("run-1.mzML", { selector: ".conversion-queue-output" })
+      .closest("li");
     expect(item).not.toBeNull();
     expect(item).toHaveTextContent("12 spectra");
     expect(item).toHaveTextContent("3 chromatograms");

@@ -28,7 +28,15 @@ use crate::preview::selection::DatasetSourceKind;
 const SCHEMA: &str = "mscanvas.conversion-diagnostics";
 
 /// Incremented when a field changes meaning or leaves, never for an addition.
-const SCHEMA_VERSION: u64 = 2;
+///
+/// Three since M6.9, and the increment is earned rather than decorative:
+/// `cancellation.partialOutputObserved` **left**. It was a boolean over an
+/// optional observation, so it answered `false` both for a staging area read
+/// and found empty and for one that could not be read at all -- and a reader
+/// given `false` could not tell the two apart. What replaced it is the item's
+/// own `stagedOutput`, which is a typed four-way answer and is present for
+/// every item rather than only for the ones a stop reached.
+const SCHEMA_VERSION: u64 = 3;
 
 /// The redaction contract this file's excerpts were produced under.
 const REDACTION_SCHEMA: &str = "mscanvas.path-redaction";
@@ -150,13 +158,68 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
                     .termination
                     .map(mscanvas_proteowizard::Termination::stable_id),
             );
-            written.boolean(
-                "partialOutputObserved",
-                cancellation.partial_output_observed,
-            );
         }),
         None => item.null("cancellation"),
     }
+    // The two judgements an ordinary failure's diagnosis most needs, and the
+    // two an export could not previously carry for one. Written for every item
+    // rather than only for a stopped one: a run that exited non-zero after
+    // writing half a document and one that wrote nothing are the pair this
+    // whole record exists to tell apart.
+    item.object("process", |written| {
+        written.string("kind", ticket.attempt.process.stable_id());
+        written.optional_string(
+            "termination",
+            ticket
+                .attempt
+                .process
+                .termination()
+                .map(mscanvas_proteowizard::Termination::stable_id),
+        );
+        match ticket.attempt.process.exit_code() {
+            Some(code) => written.signed("exitCode", i64::from(code)),
+            None => written.null("exitCode"),
+        }
+    });
+    item.object("stagedOutput", |written| {
+        written.string("kind", ticket.attempt.staged.stable_id());
+        written.optional_string(
+            "phase",
+            ticket
+                .attempt
+                .staged
+                .phase()
+                .map(mscanvas_proteowizard::StagedObservationPhase::stable_id),
+        );
+        match ticket.attempt.staged.observation() {
+            Some(observation) => {
+                written.count("entryCount", observation.entry_count());
+                written.count("directoryCount", observation.directory_count());
+                written.boolean(
+                    "nonEmptyFileObserved",
+                    observation.non_empty_file_observed(),
+                );
+            }
+            // Absent rather than zero. A zero here would be the one reading
+            // this field must never produce: an unread directory described as
+            // an empty one.
+            None => {
+                written.null("entryCount");
+                written.null("directoryCount");
+                written.null("nonEmptyFileObserved");
+            }
+        }
+    });
+    // Opaque, session-local, and absent for an attempt that never reached the
+    // provider -- which is what keeps a refusal from reading as a run.
+    item.optional_string(
+        "runIdentity",
+        ticket
+            .attempt
+            .identity
+            .map(mscanvas_proteowizard::OperationRunIdentity::to_hex)
+            .as_deref(),
+    );
     item.optional_string(
         "stagingResidue",
         ticket

@@ -33,6 +33,7 @@ import type {
   ConversionConflictPolicy,
   ConversionDiagnosticsExport,
   ConversionDiagnosticsState,
+  ConversionOutputMember,
   ConversionOutputSetReport,
   ConversionBeginRequest,
   ConversionPlanOutcome,
@@ -1176,7 +1177,55 @@ export function queueItem(
     error: null,
     cancellation: null,
     stopRequested: false,
+    // A row nothing has run for: no provider was invoked, nothing was created,
+    // and no identity exists. Stated rather than left out, so a fixture that
+    // means to describe a run has to say so.
+    process: { kind: "notAttempted" },
+    staged: { kind: "notCreated" },
+    runIdentity: null,
+    adoption: { kind: "nothingToAdopt" },
     ...overrides,
+  };
+}
+
+/**
+ * What an attempt that ran to a clean finish established about itself.
+ *
+ * The staged half is `published` rather than an observation: finalization moved
+ * the validated document out of staging under its final name, which settles the
+ * judgement without a directory listing.
+ */
+export function finalizedAttemptFacts(
+  runIdentity = "0000000000000001000000000000000a",
+): Pick<ConversionQueueItem, "process" | "staged" | "runIdentity"> {
+  return {
+    process: { kind: "settled", termination: "exited", exitCode: 0 },
+    staged: { kind: "published" },
+    runIdentity,
+  };
+}
+
+/**
+ * What an ordinary failure established, with or without staged content.
+ *
+ * The decisive pair: same process outcome, same clean teardown, different
+ * staged facts. A fixture that could not express both would not be able to
+ * describe the case this milestone exists to make legible.
+ */
+export function failedAttemptFacts(
+  stagedSomething: boolean,
+  runIdentity = "0000000000000001000000000000000b",
+): Pick<ConversionQueueItem, "process" | "staged" | "runIdentity"> {
+  return {
+    process: { kind: "settled", termination: "exited", exitCode: 3 },
+    staged: {
+      kind: "observed",
+      phase: "backend_settled",
+      entryCount: stagedSomething ? 1 : 0,
+      directoryCount: 0,
+      nonEmptyFileObserved: stagedSomething,
+    },
+    runIdentity,
   };
 }
 
@@ -1199,6 +1248,49 @@ export function sciexQueueItem(
   });
 }
 
+/**
+ * A manifest whose members ended in the given states, in publication order.
+ *
+ * Measurements are attached exactly to the members that reached a validated
+ * state, because that is the rule Rust applies: an unvalidated member has no
+ * byte length and no digest, and zeroes there would read as a measured empty
+ * document.
+ *
+ * The state strings are the lifecycle's own identifiers. A fixture spelling one
+ * differently would be describing a wire Rust does not produce.
+ */
+export function setMembers(
+  fileNames: readonly string[],
+  states: readonly string[],
+): readonly ConversionOutputMember[] {
+  return fileNames.map((fileName, index) => {
+    const state = states[index] ?? "finalized";
+    const validated = state === "finalized" || state === "validated_not_published";
+    return {
+      fileName,
+      state,
+      output: validated
+        ? {
+            byteLength: 1_048_576 + index,
+            sha256: String(index).repeat(64).slice(0, 64),
+            spectrumCount: 1_200,
+            chromatogramCount: 1,
+          }
+        : null,
+      validation: validated
+        ? {
+            mode: "output_only" as const,
+            fullyVerified: false,
+            verified: ["output_is_well_formed_mzml"],
+            unverified: [],
+            inapplicable: ["source_spectrum_count_preserved"],
+            advisory: [],
+          }
+        : null,
+    };
+  });
+}
+
 /** A finalized group report over `memberFileNames`, sample-complete. */
 export function outputSetReport(
   handle: string,
@@ -1216,8 +1308,10 @@ export function outputSetReport(
     validatedNotPublishedCount: 0,
     notPublishedCount: 0,
     boundSourceObjects: 2,
-    memberFileNames,
-    memberStates: memberFileNames.map(() => "finalized"),
+    members: setMembers(
+      memberFileNames,
+      memberFileNames.map(() => "finalized"),
+    ),
     backend: { exitCode: 0, elapsedMilliseconds: 4_200 },
     stagingResidue: null,
     validationMode: "output_only",
@@ -1245,10 +1339,9 @@ export function outputFileNamesOf(
 ): readonly string[] {
   if (item.result?.kind === "outputSet") {
     return item.result.report.completeSetAdoptable
-      ? item.result.report.memberFileNames.filter(
-          (_, index) => item.result?.kind === "outputSet" &&
-            item.result.report.memberStates[index] === "finalized",
-        )
+      ? item.result.report.members
+          .filter((member) => member.state === "finalized")
+          .map((member) => member.fileName)
       : [];
   }
   return item.output.kind === "knownSingle" ? [item.output.fileName] : [];
@@ -1456,6 +1549,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
               verified: ["source_unchanged"],
               unverified: [],
               inapplicable: ["spectrum_count"],
+              advisory: [],
             },
             backend: { exitCode: 0, elapsedMilliseconds: 663 },
             stagingResidue: null,

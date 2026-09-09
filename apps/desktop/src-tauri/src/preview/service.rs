@@ -152,9 +152,9 @@ use super::figure::{
 };
 use super::installation::InstallationIdentity;
 use super::operation::{
-    AdmittedDestination, CancellationFacts, ConversionQueue, ConversionSlot, ItemOutcome,
-    PendingDisposition, QueueItem, QueueItemAttempt, StopAccepted, TerminalReason,
-    folded_output_name, item_output_topology, item_state_of,
+    AdmittedDestination, AttemptFacts, CancellationFacts, ConversionQueue, ConversionSlot,
+    ItemOutcome, PendingDisposition, QueueItem, QueueItemAttempt, SettledItemAdoption,
+    StopAccepted, TerminalReason, folded_output_name, item_output_topology, item_state_of,
 };
 use super::operation::{ItemOutputTopology, SetStopFacts};
 use super::projection::{self, ProjectionRefusal};
@@ -2550,11 +2550,25 @@ impl PreviewService {
 
         let mut workspace = self.workspace();
         let outcomes = commit_adoption_candidates(&mut workspace, inspected);
+        let described = describe_adoptions(&workspace, outcomes);
+        // The fifth judgement, written back onto the queue that produced these
+        // outputs before the reply leaves. The reply is one message and the
+        // queue is read again on every poll and every remount, so an answer
+        // that lived only in the reply would vanish from the row the moment the
+        // document re-read it. The settling is named so a retry that landed
+        // between the two halves cannot be given this round's answers -- and
+        // the same check has already refused the commit above, so this is the
+        // last of three rather than the first.
+        self.conversion_slot().record_adoption(
+            operation,
+            retry_round,
+            &per_item_adoption(&described),
+        );
         let result = WorkspaceOutputAdoptionResultDto {
             operation_id: operation.to_string(),
             retry_round,
             roster: roster_of(&workspace),
-            outcomes: describe_adoptions(&workspace, outcomes),
+            outcomes: described,
         };
         drop(workspace);
         // Cleared under the gate this commit still holds, not at the end of the
@@ -4637,6 +4651,14 @@ impl PreviewService {
             // module, and a `Cancelled` written here would keep compiling if
             // that module ever widened what it sends.
             QueueItemAttempt::Cancelled(report) => ItemOutcome::Stopped {
+                // Read off the boundary's own report, so a stopped item
+                // answers judgements one and two from the same origin an
+                // ordinary one does.
+                attempt: AttemptFacts {
+                    process: report.process(),
+                    staged: report.staged_content(),
+                    identity: report.identity(),
+                },
                 // The single-output boundary's own cancellation, so there is no
                 // set here to describe.
                 set: None,
@@ -4654,9 +4676,6 @@ impl PreviewService {
                     owned_tree: report.owned_tree(),
                     elapsed,
                     termination: report.backend().map(BackendRunFacts::termination),
-                    partial_output_observed: report
-                        .staged_content()
-                        .is_some_and(|staged| staged.entry_count() > 0),
                     staging_residue: report.residue(),
                 },
             },
@@ -4665,7 +4684,9 @@ impl PreviewService {
             // lifecycle ran the item.
             QueueItemAttempt::SetStopped(facts) => {
                 let facts = *facts;
+                let attempt = facts.attempt;
                 ItemOutcome::Stopped {
+                    attempt,
                     // Zero counts, and they are true: the two cancellation
                     // refusals this was translated from publish nothing.
                     set: Some(OutputSetDiagnosticFacts {
@@ -4685,12 +4706,16 @@ impl PreviewService {
                         owned_tree: facts.owned_tree,
                         elapsed,
                         termination: facts.termination,
-                        partial_output_observed: facts.partial_output_observed,
                         staging_residue: facts.staging_residue,
                     },
                 }
             }
             QueueItemAttempt::CancellationFailed(mut failure) => ItemOutcome::Stopped {
+                attempt: AttemptFacts {
+                    process: failure.process(),
+                    staged: failure.staged_content(),
+                    identity: failure.identity(),
+                },
                 set: None,
                 // Taken here, at the one place this failure is turned into what
                 // the queue records. It is already redacted and already bounded;
@@ -4705,9 +4730,6 @@ impl PreviewService {
                     owned_tree: OwnedTreeDisposition::Unconfirmed,
                     elapsed,
                     termination: failure.backend().map(BackendRunFacts::termination),
-                    partial_output_observed: failure
-                        .staged_content()
-                        .is_some_and(|staged| staged.entry_count() > 0),
                     staging_residue: failure.residue(),
                 },
             },
@@ -4744,6 +4766,7 @@ impl PreviewService {
         drop(workspace);
         if !still_bound {
             return QueueItemAttempt::Settled(ItemOutcome::Refused {
+                attempt: AttemptFacts::NOTHING_RAN,
                 // The row moved on under the queue. Another attempt against the
                 // same plan would find the same thing.
                 retryable: false,
@@ -4752,6 +4775,7 @@ impl PreviewService {
         }
         let Some(remembered) = remembered else {
             return QueueItemAttempt::Settled(ItemOutcome::Refused {
+                attempt: AttemptFacts::NOTHING_RAN,
                 retryable: false,
                 error: unknown_dataset(),
             });
@@ -4785,6 +4809,7 @@ impl PreviewService {
                 .name_claimed_by_another(run.index, &[planned.to_owned()])
         {
             return QueueItemAttempt::Settled(ItemOutcome::Refused {
+                attempt: AttemptFacts::NOTHING_RAN,
                 retryable: false,
                 error: queue_output_name_claimed(&owner.display),
             });
@@ -4835,6 +4860,14 @@ impl PreviewService {
                 QueueItemAttempt::Settled(ItemOutcome::Reported {
                     state: item_state_of(report.outcome_class()),
                     retryable: report.is_retryable(),
+                    // Read off the report the boundary produced, so the
+                    // identity, the process outcome and the staged evidence
+                    // travel with the result they belong to.
+                    attempt: AttemptFacts {
+                        process: report.process_outcome(),
+                        staged: report.staged_content(),
+                        identity: report.run_identity(),
+                    },
                     report: Box::new(report),
                     finalized,
                     diagnostics,
@@ -4846,7 +4879,11 @@ impl PreviewService {
             }
             Err(error) => {
                 let retryable = refusal_is_retryable(&error.kind);
-                QueueItemAttempt::Settled(ItemOutcome::Refused { retryable, error })
+                QueueItemAttempt::Settled(ItemOutcome::Refused {
+                    retryable,
+                    error,
+                    attempt: AttemptFacts::NOTHING_RAN,
+                })
             }
         }
     }
@@ -4952,7 +4989,11 @@ impl PreviewService {
             Ok(conversion) => conversion,
             Err(error) => {
                 let retryable = refusal_is_retryable(&error.kind);
-                return QueueItemAttempt::Settled(ItemOutcome::Refused { retryable, error });
+                return QueueItemAttempt::Settled(ItemOutcome::Refused {
+                    attempt: AttemptFacts::NOTHING_RAN,
+                    retryable,
+                    error,
+                });
             }
         };
         // A stop that reached the backend is a stop, whichever lifecycle ran
@@ -6071,10 +6112,15 @@ fn set_stop_facts(conversion: &mut SciexConversion) -> Option<SetStopFacts> {
         owned_tree,
         process_launched: backend.is_some(),
         termination: backend.map(BackendRunFacts::termination),
-        partial_output_observed: report
-            .staged_content()
-            .is_some_and(|staged| staged.entry_count() > 0),
         staging_residue: report.residue(),
+        // Carried from the lifecycle's own report rather than rebuilt from the
+        // stop's shape, so a stopped set answers judgements one and two the
+        // same way every other row does.
+        attempt: AttemptFacts {
+            process: report.process_outcome(),
+            staged: report.staged_content(),
+            identity: report.run_identity(),
+        },
         // Only where the stop could not be confirmed, exactly as the
         // single-output path decides it: a confirmed cancellation is the user
         // getting what they asked for, and there is no failure for backend text
@@ -8240,6 +8286,50 @@ fn commit_adoption_candidates(
             }
         })
         .collect()
+}
+
+/// What one adoption did, gathered per queue item.
+///
+/// The outcomes arrive per output, because an item can hold ten of them, and
+/// the row a user reads is the item. Counted here rather than in the interface
+/// so that the visible summary and the screen-reader one consume the same
+/// numbers, and so the answer survives a re-read of the queue.
+///
+/// The three counts are different answers and not degrees of one: a duplicate
+/// is not a newly added output, and a refusal leaves the finalization that
+/// happened, and what its integrity check established, exactly as they were.
+fn per_item_adoption(
+    outcomes: &[WorkspaceOutputAdoptionOutcomeDto],
+) -> Vec<(usize, SettledItemAdoption)> {
+    let mut per_item: Vec<(usize, SettledItemAdoption)> = Vec::new();
+    for outcome in outcomes {
+        let (index, kind) = match outcome {
+            WorkspaceOutputAdoptionOutcomeDto::Added { candidate, .. } => (candidate.item_index, 0),
+            WorkspaceOutputAdoptionOutcomeDto::AlreadyInWorkspace { candidate, .. } => {
+                (candidate.item_index, 1)
+            }
+            WorkspaceOutputAdoptionOutcomeDto::Refused { candidate, .. } => {
+                (candidate.item_index, 2)
+            }
+        };
+        let entry = match per_item.iter_mut().find(|(at, _)| *at == index) {
+            Some(entry) => entry,
+            None => {
+                per_item.push((index, SettledItemAdoption::default()));
+                per_item.last_mut().expect("the entry was just pushed")
+            }
+        };
+        match kind {
+            0 => entry.1.added += 1,
+            1 => entry.1.already_in_workspace += 1,
+            _ => {
+                if let WorkspaceOutputAdoptionOutcomeDto::Refused { reason, .. } = outcome {
+                    entry.1.refusals.push(reason.clone());
+                }
+            }
+        }
+    }
+    per_item
 }
 
 /// One output's adoption, before the roster it produced exists.

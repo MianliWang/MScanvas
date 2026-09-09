@@ -14,6 +14,7 @@ import { conversionJudgedAnyOutput, SOURCE_KIND_LABEL } from "./contracts";
 import type { ConversionAvailability } from "./conversionAvailability";
 import { ConversionSettings, conversionIntentDisclosures, CONVERSION_VALUE_LABEL } from "./ConversionSettings";
 import { conversionAvailability } from "./conversionAvailability";
+import { ConversionItemJudgements } from "./ConversionItemJudgements";
 import type { ConversionRefusal } from "./conversionNoticeRegistry";
 import { conversionNotices, conversionRefusalNoticeId } from "./conversionNoticeRegistry";
 import { formatByteLength, formatCount, formatDuration } from "./format";
@@ -1326,6 +1327,18 @@ function QueueState({
                   <span className="conversion-queue-residue">{RESIDUE_EXPLANATION}</span>
                 </>
               )}
+              {/* Where the row's one word stops being the whole answer. The
+                  label above is a projection and is lossy on purpose; the five
+                  judgements it projects from stay inspectable here rather than
+                  being spelled out five times per row on screen.
+
+                  Not offered for a row that has not been attempted: a waiting
+                  item has one honest answer to every one of the five, and a
+                  disclosure that only ever says "nothing yet" teaches its own
+                  uselessness. */}
+              {item.state === "pending" || item.state === "running" ? null : (
+                <ConversionItemJudgements index={index} item={item} />
+              )}
             </li>
           );
         })}
@@ -1591,7 +1604,9 @@ function itemOutputSummary(
  * finalized, and this says *which* — which is the prefix that is on disk.
  */
 function finalizedMemberNames(report: ConversionOutputSetReport): readonly string[] {
-  return report.memberFileNames.filter((_, index) => report.memberStates[index] === "finalized");
+  return report.members
+    .filter((member) => member.state === "finalized")
+    .map((member) => member.fileName);
 }
 
 /** What one settled set produced, counted rather than claimed. */

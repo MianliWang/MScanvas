@@ -31,11 +31,13 @@ use std::time::{Duration, Instant};
 
 use mscanvas_proteowizard::{
     BackendDiagnosticText, CancellationFailure, CancellationReport, CancellationRequest,
-    ConversionIntent, FinalizedOutput, OwnedTreeDisposition, StagingResidue, Termination,
+    ConversionIntent, FinalizedOutput, OperationRunIdentity, OwnedTreeDisposition,
+    ProcessAttemptOutcome, StagedOutputEvidence, StagingResidue, Termination,
 };
 
 use super::adoption::FinalizedOutputAdoptionTicket;
 use super::adoption::FinalizedOutputSetAdoptionTicket;
+use super::conversion::{process_dto, staged_output_dto};
 use super::destination::{
     DestinationHold, DestinationIdentity, DestinationLease, lease_destination,
 };
@@ -48,7 +50,7 @@ use super::dto::BackendAuthorityProjectionDto;
 use super::dto::{
     AdoptionCandidateIdentityDto, ConversionAttemptResultDto, ConversionCancellationDto,
     ConversionConflictPolicyDto, ConversionDestinationStatusDto, ConversionDiagnosticsStateDto,
-    ConversionOutputPlanDto, ConversionQueueDto, ConversionQueueItemDto,
+    ConversionItemAdoptionDto, ConversionOutputPlanDto, ConversionQueueDto, ConversionQueueItemDto,
     ConversionQueueItemStateDto, ConversionQueueTerminalReasonDto, MAX_CONVERSION_QUEUE_ITEMS,
     PreviewErrorDto, SelectedFileDto, WorkspaceConversionReservationDto,
     WorkspaceConversionStateDto, WorkspaceConversionUpdateDto, conversion_busy,
@@ -507,6 +509,19 @@ pub(super) struct QueueItem {
     retryable: bool,
     /// What a stop established about this item's attempt, when one reached it.
     cancellation: Option<CancellationFacts>,
+    /// What the latest attempt established about itself, beside its outcome.
+    //
+    // On the item rather than on either report, because the two reports are
+    // two shapes and a cancelled item has neither. This is the one place every
+    /// settled row answers judgements one and two from.
+    attempt: AttemptFacts,
+    /// What an adoption did with this item's finalized outputs.
+    //
+    // Recorded when an adoption settles, and read back on every poll and every
+    // remount. Deriving it in the interface from the adoption reply would put
+    // the fifth judgement in a message rather than in the queue, and it would
+    /// vanish from the row the moment the document was re-read.
+    adopted: ItemAdoption,
     /// The authority to admit this item's output into the workspace later.
     //
     // Shared rather than owned, because the queue this sits in is cloned on
@@ -549,7 +564,6 @@ pub(super) struct CancellationFacts {
     /// request would otherwise report a minute as the cost of stopping it.
     pub(super) elapsed: Duration,
     pub(super) termination: Option<Termination>,
-    pub(super) partial_output_observed: bool,
     pub(super) staging_residue: Option<StagingResidue>,
 }
 
@@ -565,7 +579,6 @@ impl CancellationFacts {
             termination: self
                 .termination
                 .map(|termination| termination.stable_id().to_owned()),
-            partial_output_observed: self.partial_output_observed,
             staging_residue: self
                 .staging_residue
                 .map(|residue| residue.stable_id().to_owned()),
@@ -597,6 +610,8 @@ impl QueueItem {
             error: None,
             retryable: false,
             cancellation: None,
+            attempt: AttemptFacts::NOTHING_RAN,
+            adopted: ItemAdoption::NotRequested,
             adoption: None,
             published: Vec::new(),
             diagnostic: None,
@@ -732,8 +747,104 @@ impl QueueItem {
             error: self.error.clone(),
             cancellation: self.cancellation.map(CancellationFacts::to_dto),
             stop_requested,
+            process: process_dto(self.attempt.process),
+            staged: staged_output_dto(self.attempt.staged),
+            run_identity: self.attempt.identity.map(OperationRunIdentity::to_hex),
+            adoption: self.adoption_dto(),
         }
     }
+
+    /// The fifth judgement, as the wire carries it.
+    ///
+    /// Three answers that are not degrees of one another. Nobody has asked yet
+    /// is not the same as having asked and been refused, and an item that never
+    /// produced an adoptable output was never a candidate at all.
+    fn adoption_dto(&self) -> ConversionItemAdoptionDto {
+        match &self.adopted {
+            ItemAdoption::NotRequested => {
+                if self.adoptable_output_count() == 0 {
+                    ConversionItemAdoptionDto::NothingToAdopt
+                } else {
+                    ConversionItemAdoptionDto::NotRequested
+                }
+            }
+            ItemAdoption::Settled(settled) => ConversionItemAdoptionDto::Settled {
+                added: settled.added,
+                already_in_workspace: settled.already_in_workspace,
+                refused: settled.refusals.len(),
+                refusals: settled.refusals.clone(),
+            },
+        }
+    }
+
+    /// Records what one attempt established about itself.
+    pub(super) const fn record_attempt_facts(&mut self, facts: AttemptFacts) {
+        self.attempt = facts;
+    }
+
+    /// Records what an adoption did with this item's outputs.
+    //
+    // Replaced whole rather than accumulated. An adoption may be asked for
+    // again -- a duplicate today is a row the user removes tomorrow -- and the
+    /// answer a reader needs is what the latest one did.
+    pub(super) fn record_adoption(&mut self, settled: SettledItemAdoption) {
+        self.adopted = ItemAdoption::Settled(settled);
+    }
+
+    /// Forgets any adoption result, because a new attempt produced new outputs.
+    //
+    // A retry replaces the very files an earlier adoption reported on, so
+    /// carrying its answer forward would describe outputs that no longer exist.
+    pub(super) fn forget_adoption(&mut self) {
+        self.adopted = ItemAdoption::NotRequested;
+    }
+}
+
+/// What one attempt established about itself, beside its outcome.
+///
+/// The three facts the conversion boundary mints or observes and nothing
+/// downstream can reconstruct: whether the provider was invoked, what the
+/// staging area held, and which attempt this was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct AttemptFacts {
+    pub(super) process: ProcessAttemptOutcome,
+    pub(super) staged: StagedOutputEvidence,
+    pub(super) identity: Option<OperationRunIdentity>,
+}
+
+impl AttemptFacts {
+    /// An item nothing has been run for.
+    ///
+    /// Pending, never reached, skipped by the user, or settled by a refusal
+    /// that never created anything. No identity, because no provider was
+    /// invoked -- which is what keeps a skip from manufacturing a launched run.
+    pub(super) const NOTHING_RAN: Self = Self {
+        process: ProcessAttemptOutcome::NotAttempted,
+        staged: StagedOutputEvidence::NotCreated,
+        identity: None,
+    };
+}
+
+/// What an adoption did with one item's outputs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ItemAdoption {
+    /// No adoption has been asked for since this item settled.
+    NotRequested,
+    Settled(SettledItemAdoption),
+}
+
+/// The counted result of one adoption over one item's outputs.
+///
+/// Bounded by the item's own output bound, and dropped with the queue. Nothing
+/// here is persisted, and it is deliberately not an adoption history: it is
+/// what the latest adoption did, which is the question a row can answer.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(super) struct SettledItemAdoption {
+    pub(super) added: usize,
+    pub(super) already_in_workspace: usize,
+    /// Why each refusal happened, by stable identifier, in the order the
+    /// outputs were offered.
+    pub(super) refusals: Vec<String>,
 }
 
 impl fmt::Debug for QueueItem {
@@ -2063,12 +2174,14 @@ impl ConversionSlot {
             ItemOutcome::Reported {
                 state,
                 retryable,
+                attempt,
                 report,
                 finalized,
                 diagnostics,
             } => {
                 item.state = state;
                 item.retryable = retryable;
+                item.record_attempt_facts(attempt);
                 // Replaced whole, including with `None`. A rerun that succeeded
                 // removes the failure this item used to carry, which is the
                 // whole meaning of "the latest attempt": an export after a
@@ -2113,6 +2226,7 @@ impl ConversionSlot {
                 let settlement = *settlement;
                 item.state = settlement.state();
                 item.retryable = settlement.is_retryable();
+                item.record_attempt_facts(settlement.attempt_facts());
                 item.published = settlement.published_names();
                 let mut settlement = settlement;
                 item.diagnostic = ConversionFailureDiagnosticTicket::of_set(
@@ -2129,9 +2243,14 @@ impl ConversionSlot {
                 item.adoption =
                     adoption.map(|ticket| QueueAdoptionAuthority::Set(Arc::new(ticket)));
             }
-            ItemOutcome::Refused { retryable, error } => {
+            ItemOutcome::Refused {
+                retryable,
+                error,
+                attempt,
+            } => {
                 item.state = ItemState::Failed;
                 item.retryable = retryable;
+                item.record_attempt_facts(attempt);
                 // A refusal published nothing, so it releases whatever the
                 // previous attempt of this item had claimed.
                 item.published.clear();
@@ -2153,9 +2272,11 @@ impl ConversionSlot {
             }
             ItemOutcome::Stopped {
                 facts,
+                attempt,
                 set: stopped_set,
                 diagnostics,
             } => {
+                item.record_attempt_facts(attempt);
                 // Derived here, from the conversion boundary's own judgement,
                 // and nowhere else. `Cancelled` is reachable only where no
                 // owned process survives -- true both of a tree confirmed gone
@@ -2174,6 +2295,7 @@ impl ConversionSlot {
                     item.diagnostic_identity(operation, index),
                     state,
                     facts,
+                    attempt,
                     diagnostics,
                     stopped_set,
                 )
@@ -2189,10 +2311,49 @@ impl ConversionSlot {
                 item.cancellation = Some(facts);
             }
         }
+        // A settled attempt replaces the outputs any earlier adoption reported
+        // on, so its answer is dropped rather than carried forward onto files
+        // that no longer exist. Written once, after every arm, because every
+        // arm is a new attempt.
+        item.forget_adoption();
         // Counted rather than incremented: the queue's own position is "how
         // many are done", and after the last item that is the item count.
         queue.recount();
         self.advance();
+        true
+    }
+
+    /// Records what one adoption did with each item's outputs.
+    ///
+    /// Guarded by the queue **and** its settling. A retry settles the same
+    /// operation a second time with different files, so an answer stamped
+    /// against the earlier round would describe outputs that no longer exist.
+    /// Both are checked here rather than at the caller, because this is the one
+    /// place that can see which settling the slot is actually holding.
+    ///
+    /// Answers arrive as one entry per item that was offered; an item nobody
+    /// offered keeps whatever it had, which for a fresh settlement is
+    /// `NotRequested`.
+    pub(super) fn record_adoption(
+        &mut self,
+        operation: u64,
+        retry_round: u64,
+        settled: &[(usize, SettledItemAdoption)],
+    ) -> bool {
+        if self.operation != operation {
+            return false;
+        }
+        let SlotState::Terminal { queue, .. } = &mut self.state else {
+            return false;
+        };
+        if queue.retry_round != retry_round {
+            return false;
+        }
+        for (index, adoption) in settled {
+            if let Some(item) = queue.items.get_mut(*index) {
+                item.record_adoption(adoption.clone());
+            }
+        }
         true
     }
 
@@ -2731,9 +2892,11 @@ pub(super) struct SetStopFacts {
     pub(super) owned_tree: OwnedTreeDisposition,
     pub(super) process_launched: bool,
     pub(super) termination: Option<Termination>,
-    pub(super) partial_output_observed: bool,
     pub(super) staging_residue: Option<StagingResidue>,
     pub(super) diagnostics: Option<Box<BackendDiagnosticText>>,
+    /// What this attempt established about itself, carried from the lifecycle
+    /// that ran it rather than rebuilt from the stop's own shape.
+    pub(super) attempt: AttemptFacts,
 }
 
 /// What one item's attempt produced.
@@ -2743,6 +2906,8 @@ pub(super) enum ItemOutcome {
     Reported {
         state: ItemState,
         retryable: bool,
+        /// What the attempt established about itself, read off the same report.
+        attempt: AttemptFacts,
         report: Box<super::conversion::WorkspaceConversionReport>,
         /// The retained output, present exactly when the run finalized one.
         // Everything a later adoption needs beyond this is already on the
@@ -2761,6 +2926,15 @@ pub(super) enum ItemOutcome {
     Refused {
         retryable: bool,
         error: PreviewErrorDto,
+        /// What the attempt established about itself.
+        ///
+        /// [`AttemptFacts::NOTHING_RAN`] for every refusal this application
+        /// makes on its own -- a row that moved, a source that could not be
+        /// revalidated, a name another item claimed -- because none of them
+        /// reaches the conversion boundary at all. Carried rather than assumed
+        /// so a refusal that one day does reach it has somewhere truthful to
+        /// say so.
+        attempt: AttemptFacts,
     },
     /// One backend-named set attempt, settled.
     //
@@ -2785,6 +2959,8 @@ pub(super) enum ItemOutcome {
     /// this removes the state a wrong spelling would have named.
     Stopped {
         facts: CancellationFacts,
+        /// What the stopped attempt established about itself.
+        attempt: AttemptFacts,
         /// Present exactly when the attempt was a backend-named set's.
         //
         // A stop reaches the run before it settles, so there are no member
