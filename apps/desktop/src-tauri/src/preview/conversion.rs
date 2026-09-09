@@ -83,6 +83,11 @@ pub(super) struct WorkspaceConversionReport {
     output: Option<OutputFacts>,
     /// How a finalized output was judged.
     validation: Option<ValidationFacts>,
+    /// The judgement this source posture is read under, whatever became of the
+    /// run. Separate from `validation` because that record travels with a
+    /// finalization: a refused output keeps none, and reporting its check with
+    /// no stated scope is the same collapse in a different field.
+    validation_mode: ValidationMode,
     /// The precise failure, reaching into the plan or integrity error where one
     /// exists. Absent unless the run failed.
     detailed_outcome: Option<&'static str>,
@@ -191,6 +196,8 @@ impl WorkspaceConversionReport {
                 spectra: valid.output().facts().observed_spectrum_count(),
                 chromatograms: valid.output().facts().observed_chromatogram_count(),
             }),
+            // From the plan's source, which decided it before anything ran.
+            validation_mode: plan.source().validation_mode(),
             validation: finalized.map(|valid| ValidationFacts {
                 mode: valid.validation_mode(),
                 verified: property_ids(valid.verified()),
@@ -253,6 +260,10 @@ impl WorkspaceConversionReport {
 
     pub(super) const fn residue(&self) -> Option<StagingResidue> {
         self.residue
+    }
+
+    pub(super) const fn validation_mode(&self) -> ValidationMode {
+        self.validation_mode
     }
 
     pub(super) const fn validation_facts(&self) -> Option<&ValidationFacts> {
@@ -1092,6 +1103,7 @@ impl WorkspaceConversionReport {
                 spectrum_count: output.spectra,
                 chromatogram_count: output.chromatograms,
             }),
+            validation_mode: validation_mode_dto(self.validation_mode),
             validation: self
                 .validation
                 .as_ref()

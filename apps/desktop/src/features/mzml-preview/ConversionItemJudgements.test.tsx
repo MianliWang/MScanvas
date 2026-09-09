@@ -82,6 +82,7 @@ function failed(
         detailedOutcome: "backend_rejected",
         outputFileName: null,
         output: null,
+        validationMode: "output_only",
         validation: null,
         backend: { exitCode: 3, elapsedMilliseconds: 412 },
         stagingResidue: null,
@@ -112,6 +113,7 @@ function converted(handle: string, name: string): ConversionQueueItem {
           spectrumCount: 12,
           chromatogramCount: 3,
         },
+        validationMode: "output_only",
         validation: {
           // Output-only, which is what every family the visible queue accepts
           // is judged under, and which records no advisory observations. The
@@ -432,6 +434,52 @@ describe("the five judgements of one queue item", () => {
       completeSetAdoptable: false,
     });
   }
+
+  it("states the scope of a check that refused the one output there was", async () => {
+    // A refused single output keeps no validation record -- the record travels
+    // with a finalization -- but the mode was decided by the source posture
+    // before anything ran, and the report carries it in its own right.
+    const api = terminalApi(
+      [
+        queueItem("file-7", "run-7.raw", {
+          state: "failed",
+          attempts: 1,
+          retryable: false,
+          result: {
+            kind: "single" as const,
+            report: {
+              datasetHandle: "file-7",
+              sourceKind: "thermo_raw",
+              outcome: "output_rejected",
+              detailedOutcome: "output_rejected",
+              outputFileName: null,
+              output: null,
+              validationMode: "output_only",
+              validation: null,
+              backend: { exitCode: 0, elapsedMilliseconds: 900 },
+              stagingResidue: null,
+              receipt: 1,
+            },
+          },
+          ...failedAttemptFacts(true, "000000000000000100000000000000f1"),
+        }),
+      ],
+      [acquisition(7)],
+    );
+    renderApp(api);
+    const result = await queueResult();
+
+    const details = openDetails(rowFor(result, "run-7.raw"));
+    // The judgement ran and refused, which is the opposite of never having
+    // looked -- and the sentence says under which contract it ran.
+    expect(
+      within(details).getByText(
+        /The output did not pass this contract and was discarded rather than published\./,
+      ),
+    ).toBeVisible();
+    expect(details.textContent).toContain("Output-only.");
+    expect(details.textContent).not.toContain("Nothing was checked");
+  });
 
   it("separates the member that was refused from the ones nobody looked at", async () => {
     // What a refusal at the second member produces: the set is judged member by

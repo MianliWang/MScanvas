@@ -134,6 +134,7 @@ const FINALIZED_REPORT = {
     spectrumCount: 1,
     chromatogramCount: 1,
   },
+  validationMode: "output_only",
   validation: {
     mode: "output_only",
     fullyVerified: false,
@@ -568,6 +569,10 @@ describe("the conversion wire contract", () => {
         "sourceKind",
         "stagingResidue",
         "validation",
+        // Stated beside the record rather than inside it: the record travels
+        // with a finalization and a refused output keeps none, but the scope of
+        // the check is a property of the source posture either way.
+        "validationMode",
       ].sort(),
     );
     expect(Object.keys(FINALIZED_REPORT.backend)).toEqual(["exitCode", "elapsedMilliseconds"]);

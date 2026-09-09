@@ -101,6 +101,7 @@ function adoptable(handle: string, name: string): ConversionQueueItem {
           spectrumCount: 1,
           chromatogramCount: 1,
         },
+        validationMode: "output_only",
         validation: {
           mode: "output_only",
           verified: [],

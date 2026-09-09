@@ -146,6 +146,13 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
     item.optional_string("refusal", ticket.refusal.as_deref());
     item.optional_string("refusalDetail", ticket.refusal_detail.as_deref());
     item.boolean("retryable", ticket.retryable);
+    // Beside the record rather than inside it. A refused output keeps no
+    // record, and a check reported without its scope says less than the
+    // boundary established. `null` only where no conversion was reached.
+    match ticket.validation_mode {
+        Some(mode) => item.string("validationMode", validation_mode_id(mode)),
+        None => item.null("validationMode"),
+    }
     match ticket.validation.as_ref() {
         Some(validation) => item.object("validation", |written| {
             written.string("mode", validation_mode_id(validation.mode));
@@ -651,6 +658,7 @@ mod tests {
             detailed_outcome: None,
             refusal: None,
             refusal_detail: None,
+            validation_mode: Some(ValidationMode::SourceComparison),
             validation: Some(ValidationFacts {
                 mode: ValidationMode::SourceComparison,
                 verified: vec!["output_is_well_formed_mzml"],
@@ -673,6 +681,9 @@ mod tests {
         root.end();
 
         let document: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        // Stated beside the record, so a refused output -- which keeps no
+        // record at all -- still says what it was checked against.
+        assert_eq!(document["item"]["validationMode"], "source_comparison");
         let validation = &document["item"]["validation"];
         let mut keys: Vec<&str> = validation
             .as_object()
@@ -712,7 +723,7 @@ mod tests {
         use crate::preview::operation::{AttemptFacts, ItemOutputTopology};
         use mscanvas_proteowizard::{
             ProcessAttemptOutcome, StagedContentObservation, StagedObservationPhase,
-            StagedOutputEvidence,
+            StagedOutputEvidence, ValidationMode,
         };
 
         let bounded = StagedOutputEvidence::Observed(
@@ -736,6 +747,7 @@ mod tests {
             detailed_outcome: None,
             refusal: None,
             refusal_detail: None,
+            validation_mode: Some(ValidationMode::OutputOnly),
             validation: None,
             backend: None,
             cancellation: None,

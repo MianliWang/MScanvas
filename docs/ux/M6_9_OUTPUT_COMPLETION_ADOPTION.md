@@ -266,9 +266,14 @@ time and stops at the first that fails, so the members after it were never
 examined, and a singular sentence would claim a check for files the manifest
 directly below it calls unexamined. Where the refused member is the *first* one
 -- the ordinary case -- no member record survives at all, but the mode does: it
-is a property of the source posture rather than of any one member, and the set
-report states it in its own right. So the scope of the claim is as legible there
-as anywhere else, and the sentence still does not become "nothing was checked".
+is a property of the source posture, decided before anything ran, and both
+report shapes now state it in their own right. A single refused output says its
+scope the same way. So a refusal is as legible as any other integrity result,
+and the sentence still does not become "nothing was checked".
+
+The mode reaches the saved diagnostic beside the record for the same reason. A
+document a user sends on would otherwise say a check failed without saying what
+the output was checked against, on exactly the item where that matters most.
 
 **A refused output is not an unchecked one.** A run whose output failed the
 contract retains no validation record — the record travels with a finalization,

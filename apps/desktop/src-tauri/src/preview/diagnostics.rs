@@ -132,6 +132,12 @@ pub(super) struct ConversionFailureDiagnosticTicket {
     refusal: Option<String>,
     /// A bounded, redacted excerpt of whatever detail that refusal carried.
     refusal_detail: Option<String>,
+    /// The scope of the check, stated whether or not a record of one survived.
+    ///
+    /// `None` where the item never reached a conversion at all. A refusal by
+    /// this application names no source posture; a refusal by the *integrity
+    /// judgement* does, and that is the case this exists for.
+    validation_mode: Option<ValidationMode>,
     validation: Option<ValidationFacts>,
     backend: Option<BackendRunFacts>,
     cancellation: Option<CancellationFacts>,
@@ -272,6 +278,7 @@ impl ConversionFailureDiagnosticTicket {
             detailed_outcome: report.detailed_outcome_id(),
             refusal: None,
             refusal_detail: None,
+            validation_mode: Some(report.validation_mode()),
             validation: report.validation_facts().cloned(),
             backend: report.backend_facts(),
             cancellation: None,
@@ -341,6 +348,7 @@ impl ConversionFailureDiagnosticTicket {
             detailed_outcome,
             refusal: None,
             refusal_detail: None,
+            validation_mode: None,
             validation: None,
             backend,
             cancellation: None,
@@ -371,6 +379,7 @@ impl ConversionFailureDiagnosticTicket {
             detailed_outcome: None,
             refusal: Some(error.kind.clone()),
             refusal_detail: error.detail.as_deref().map(safe_detail),
+            validation_mode: None,
             validation: None,
             backend: None,
             cancellation: None,
@@ -417,6 +426,7 @@ impl ConversionFailureDiagnosticTicket {
             detailed_outcome: None,
             refusal: None,
             refusal_detail: None,
+            validation_mode: None,
             validation: None,
             // A stopped attempt reports its process through the cancellation
             // facts below rather than through a run report, which it never

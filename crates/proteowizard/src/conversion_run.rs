@@ -58,8 +58,9 @@ use crate::command::{
 use crate::compound_file;
 use crate::conversion::{
     ConversionIntegrityOutcome, ConversionSourceError, ConversionSourceFacts, SourceObjectFacts,
-    ValidConversion, VerifiedConversion, capture_conversion_source, conversion_output_file_name,
-    verify_mzml_conversion_retaining_output, verify_vendor_conversion_retaining_output,
+    ValidConversion, ValidationMode, VerifiedConversion, capture_conversion_source,
+    conversion_output_file_name, verify_mzml_conversion_retaining_output,
+    verify_vendor_conversion_retaining_output,
 };
 use crate::diagnostics::{BackendTextExcerpt, Redactor};
 use crate::finalized_output::FinalizedOutput;
@@ -558,6 +559,20 @@ struct SourceBundleFacts {
 }
 
 impl ConversionSource {
+    /// The judgement this source posture is read under.
+    ///
+    /// Decided by the posture rather than by any result: a source read as mzML
+    /// is compared against, and one that never was is judged on its output
+    /// alone. So a run that produced nothing has one too, which is what keeps a
+    /// refused output from being reported as a check of unstated scope.
+    #[must_use]
+    pub const fn validation_mode(&self) -> ValidationMode {
+        match self.baseline {
+            SourceBaseline::Mzml(_) => ValidationMode::SourceComparison,
+            SourceBaseline::ObjectOnly(_) | SourceBaseline::Bundle(_) => ValidationMode::OutputOnly,
+        }
+    }
+
     /// Opens a regular-file mzML acquisition as a conversion source.
     ///
     /// The file is inspected for posture, canonicalized, bound to its

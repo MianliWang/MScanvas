@@ -1741,6 +1741,13 @@ pub struct ConversionReportDto {
     /// absent unless a file was actually finalized.
     pub output_file_name: Option<String>,
     pub output: Option<ConversionOutputDto>,
+    /// The judgement this item's source posture is read under.
+    ///
+    /// Stated in its own right, because `validation` travels with a
+    /// finalization: a refused output keeps no record, and a check reported
+    /// without its scope says less than the boundary established. A set report
+    /// has carried this from the start, for the same reason.
+    pub validation_mode: ValidationModeDto,
     pub validation: Option<ConversionValidationDto>,
     pub backend: Option<ConversionBackendFactsDto>,
     /// What the run could not reclaim of its own staging area, by stable

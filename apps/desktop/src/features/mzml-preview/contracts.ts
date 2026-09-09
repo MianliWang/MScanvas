@@ -1138,6 +1138,14 @@ export interface ConversionReport {
   readonly detailedOutcome: string | null;
   readonly outputFileName: string | null;
   readonly output: ConversionOutput | null;
+  /**
+   * The judgement this item's source posture is read under.
+   *
+   * Stated in its own right, because `validation` travels with a finalization:
+   * a refused output keeps no record, and a check reported without its scope
+   * says less than the boundary established.
+   */
+  readonly validationMode: ValidationMode;
   readonly validation: ConversionValidation | null;
   readonly backend: ConversionBackendFacts | null;
   readonly stagingResidue: string | null;

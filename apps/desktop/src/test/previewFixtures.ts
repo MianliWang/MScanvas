@@ -1613,6 +1613,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
               spectrumCount: 1,
               chromatogramCount: 1,
             },
+            validationMode: "output_only",
             validation: {
               mode: "output_only",
               fullyVerified: false,

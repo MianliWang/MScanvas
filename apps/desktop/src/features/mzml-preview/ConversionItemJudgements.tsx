@@ -260,7 +260,13 @@ export function integritySentence(
       const mode = scope === null ? "" : `${scope}. `;
       return `${mode}Outputs are judged one at a time and the set stopped at the one that did not pass, so nothing was published. The manifest below says which output was refused and which were never examined.`;
     }
-    return "The output was checked against this source posture's contract, did not pass, and was discarded rather than published.";
+    // The scope belongs here too. A refusal is the one failure this judgement
+    // causes, and reporting it without saying what the output was checked
+    // *against* states less than the boundary established -- the same gap the
+    // set sentence above had.
+    return scope === null
+      ? "The output was checked against this source posture's contract, did not pass, and was discarded rather than published."
+      : `${scope}. The output did not pass this contract and was discarded rather than published.`;
   }
   if (validation === null) {
     // Nor may a publication that failed *after* the check report that no check
@@ -401,14 +407,21 @@ function passedThenUnpublished(item: ConversionQueueItem): boolean {
 }
 
 /**
- * The mode the item's own report states, whatever became of its members.
+ * The mode the item's own report states, whatever became of its outputs.
  *
- * A set carries it at the top level, so it survives a refusal that leaves no
- * member record behind. A single-output item has it only through its
- * validation, which is the same place the sentence already reads it from.
+ * Both report shapes carry it at the top level, so it survives a refusal that
+ * leaves no validation record behind. It is a property of the source posture,
+ * decided before anything ran, which is why a run that produced nothing still
+ * has one.
  */
 function reportedValidationMode(item: ConversionQueueItem): string | null {
-  return item.result?.kind === "outputSet" ? item.result.report.validationMode : null;
+  if (item.result?.kind === "outputSet") {
+    return item.result.report.validationMode;
+  }
+  if (item.result?.kind === "single") {
+    return item.result.report.validationMode;
+  }
+  return null;
 }
 
 /** The validation an item's own judgement sentence is about. */

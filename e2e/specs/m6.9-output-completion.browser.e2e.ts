@@ -29,6 +29,7 @@ function converted(index: number): ConversionQueueItem {
         datasetHandle: row(index).handle, sourceKind: "thermo_raw", outcome: "finalized", detailedOutcome: null,
         outputFileName: `sample-${index}.mzML`,
         output: { byteLength: 28_655, sha256: DIGEST, spectrumCount: 12, chromatogramCount: 3 },
+        validationMode: "output_only",
         validation: {
           mode: "output_only", fullyVerified: false,
           verified: ["output_is_well_formed_mzml"], unverified: [],
@@ -60,7 +61,8 @@ function failed(index: number, stagedSomething: boolean): ConversionQueueItem {
       kind: "single",
       report: {
         datasetHandle: row(index).handle, sourceKind: "thermo_raw", outcome: "backend_rejected",
-        detailedOutcome: "backend_rejected", outputFileName: null, output: null, validation: null,
+        detailedOutcome: "backend_rejected", outputFileName: null, output: null,
+        validationMode: "output_only", validation: null,
         backend: { exitCode: 3, elapsedMilliseconds: 412 }, stagingResidue: null, receipt: 1,
       },
     },

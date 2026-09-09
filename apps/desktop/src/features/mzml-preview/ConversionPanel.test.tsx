@@ -235,6 +235,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
                   spectrumCount: 0,
                   chromatogramCount: 144,
                 },
+                validationMode: "output_only",
                 validation: {
                   mode: "output_only",
                   fullyVerified: false,
@@ -448,6 +449,7 @@ describe("queueing selected Thermo RAW conversions", () => {
                 detailedOutcome: "output_contains_no_records",
                 outputFileName: null,
                 output: null,
+                validationMode: "output_only",
                 validation: null,
                 backend: { exitCode: 0, elapsedMilliseconds: 90 },
                 stagingResidue: null,
@@ -563,6 +565,7 @@ describe("queueing selected Thermo RAW conversions", () => {
                   spectrumCount: 12,
                   chromatogramCount: 3,
                 },
+                validationMode: "output_only",
                 validation: {
                   mode: "output_only",
                   fullyVerified: false,
@@ -629,6 +632,7 @@ describe("queueing selected Thermo RAW conversions", () => {
                 detailedOutcome: "destination_exists",
                 outputFileName: null,
                 output: null,
+                validationMode: "output_only",
                 validation: null,
                 backend: null,
                 stagingResidue: null,

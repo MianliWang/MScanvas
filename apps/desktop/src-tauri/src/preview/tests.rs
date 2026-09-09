@@ -11665,6 +11665,9 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "sourceKind",
             "stagingResidue",
             "validation",
+            // The scope of the check, stated beside the record rather than
+            // inside it: a refused output keeps no record and still has one.
+            "validationMode",
         ]
     );
     assert_eq!(
