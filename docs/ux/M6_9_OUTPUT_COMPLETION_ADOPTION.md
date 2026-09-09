@@ -471,35 +471,22 @@ not about the code, and it is reported rather than re-aimed silently.
 
 ### Native evidence
 
-> **`BLOCKED` at this head.** The complete set below was taken on the binary
-> `942af64835219b0e04806ce7e86605a5af24d88ffe601e14223d20743c273df8`. Commits
-> after it changed conversion result handling — a fourth member state, the
-> member counts, both of a stop's answers, a rendered sentence — so by this
-> repository's own rule that set no longer covers this head, and it is not
-> presented as though it did. This head builds
-> `60c208d2adcf81a624b52cf50bdf121f2cc6dd31f40d407fb0702358950964f5`
-> (16,082,944 bytes), and the suites have not been run on it.
->
-> The reason is the Windows session, not the code: `LogonUI.exe` is running, so
-> the desktop is locked and the native pickers cannot be driven. The attempt
-> failed at the first workspace-files dialog with *"the native button click
-> timed out or failed"*. Nothing was weakened to get past it — no guard relaxed,
-> no `Cancel` substituted for an `Escape`, no focus scripted, no security
-> setting changed — and no browser result is counted as native evidence.
-> **Owner: this slice, on the next interactive session.** The exact commands are
-> in the task checkpoint; the fixture, the ports and the output roots are
-> unchanged.
-
-**What follows was taken on one binary, and that binary is named rather than
+**Complete, on the binary this head builds, and that binary is named rather than
 assumed.** `target/e2e/release/mscanvas-desktop.exe`, SHA-256
-`942af64835219b0e04806ce7e86605a5af24d88ffe601e14223d20743c273df8`, 16,080,384 bytes.
-WebView2 and msedgedriver 152.0.4191.66. Provider: ProteoWizard
+`60c208d2adcf81a624b52cf50bdf121f2cc6dd31f40d407fb0702358950964f5`, 16,082,944
+bytes — the value the run recorded in its own identity entry, not one read
+beside it. WebView2 and msedgedriver 152.0.4191.66. Provider: ProteoWizard
 3.0.26013.47b13cf 64-bit, `msconvert.exe` SHA-256 prefix `9bb6f5d5033bb8ea`.
-Approved Thermo fixture SHA-256 `b3d97b38…2bd6dd7b`, recorded in each run's own
-identity entry.
+Approved Thermo fixture SHA-256 `b3d97b38…2bd6dd7b`, recorded the same way.
 
-An earlier complete run at `d9d3eb8404a6aca5…` is what found the two defects
-below. Neither run is the evidence for this head, for the reason stated above.
+Two earlier complete runs, at `d9d3eb8404a6aca5…` and `942af64835219b0e…`, are
+what found the defects recorded below. Neither is the evidence for this head:
+the repairs after them changed a phase identifier, several rendered sentences,
+the member states, the member counts and both of a stop's answers, so every
+suite was taken again on the binary above. The set was also `BLOCKED` for a
+stretch by a locked Windows session, which is what a locked session does to a
+proof that drives real dialogs; nothing was weakened to get past it, and the
+suites were run once the session was interactive again.
 
 `m6.9-output-completion.tauri` 1/1 — the real picker, the real queue and the
 installed provider, to a real output-only completion of two acquisitions:
@@ -526,30 +513,27 @@ went on saying nobody had asked while Rust held the answer. And recording it did
 not advance the slot's ordering key, so even once the document did re-read, the
 update was discarded as stale. A rendered test and a Rust test now pin each.
 
-**Affected regressions on the same binary: M6.6 4/5 with one `BLOCKED`, M6.7
-2/2, M6.8 3/3.** M6.7 covers both scope proofs; M6.8 covers all three stop
-scopes, including the stop that lands while the provider is genuinely executing
-settling `confirmed_gone` with the queue carrying on.
+**Affected regressions on the same binary: M6.6 5/5, M6.7 2/2, M6.8 3/3.** M6.6
+includes the real `Escape` at the exact owned folder picker, through the
+foreground guard, with the inactive subfolder draft preserved and Convert focus
+restored. M6.7 covers both scope proofs. M6.8 covers all three stop scopes,
+including the stop that lands while the provider is genuinely executing settling
+`confirmed_gone` with the queue carrying on.
 
-**The blocked case is M6.6's real Escape at the exact owned folder picker**, and
-it is blocked rather than failed. The Windows session locked partway through
-this run, and `e2e/native/choose-conversion-folder.ps1` refuses to send a key
-unless that exact dialog holds the foreground — *"Escape refused because the
-exact owned dialog is not foreground"*. That refusal is the guard working. It
-was retried once and refused again on the same ground. It **passed earlier the
-same day** on the `d9d3eb84…` binary, in an unlocked window, and nothing in this
-diff touches the destination picker, the draft it preserves or the focus it
-restores. It is recorded as blocked rather than absorbed, and rather than
-reached by any other means.
+**One M6.6 run was discarded and re-run rather than reported.** Stray keyboard
+input reached the machine mid-run and the setup timed out waiting for Convert to
+become enabled — a disturbed run, not a product answer, and not an assertion
+that failed. It is named here rather than quietly dropped, and the re-run that
+follows it is the evidence.
 
 Nothing was weakened at any point: no guard relaxed, no `Cancel` substituted for
 an `Escape`, no focus scripted after cancellation, no security policy changed,
 and no browser result counted as native evidence.
 
-Evidence at this head: `D:/tmp/mscanvas-m69-final/m69-native-UvLKtl/`, and
-`regress/m66-native-ZRPWKs/`, `regress/m67-native-2LCXjS/`,
-`regress/m68-native-UuiPmv/`. The earlier run that found the two defects is at
-`D:/tmp/mscanvas-m69-20260909/m69-native-L2arzk/`.
+Evidence at this head: `D:/tmp/mscanvas-m69-final2/m69-native-0ZEuVN/`, and
+`regress/m66/`, `regress/m67/`, `regress/m68/` beside it. The earlier runs that
+found the defects are at `D:/tmp/mscanvas-m69-20260909/m69-native-L2arzk/` and
+`D:/tmp/mscanvas-m69-final/m69-native-UvLKtl/`.
 
 ## Residuals
 

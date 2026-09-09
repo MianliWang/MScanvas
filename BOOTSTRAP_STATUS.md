@@ -7868,37 +7868,31 @@ absorbed, and this diff cannot be their cause: it changes no viewer or spectrum
 production file, and every stylesheet rule it adds is scoped to a class name
 this slice introduces.
 
-**Native validation is `BLOCKED` at this head, and is not claimed for it.** The
-complete set below was taken on an earlier binary; commits after it changed
-conversion result handling, so by this repository's own rule it no longer covers
-this head. The obstacle is the Windows session rather than the code — the
-desktop is locked, so the native pickers cannot be driven, and nothing was
-weakened to get past that. Owner: this slice, on the next interactive session.
-
-One build, four suites, one binary: `target/e2e/release/mscanvas-desktop.exe`,
+**Native validation is taken on the build this head produces.** One build, four
+suites, one binary: `target/e2e/release/mscanvas-desktop.exe`,
 SHA-256
-`942af64835219b0e04806ce7e86605a5af24d88ffe601e14223d20743c273df8`, WebView2 and
+`60c208d2adcf81a624b52cf50bdf121f2cc6dd31f40d407fb0702358950964f5`, WebView2 and
 msedgedriver 152.0.4191.66, against ProteoWizard 3.0.26013.47b13cf 64-bit and
 the approved Thermo fixture. M6.9 1/1 — a real output-only completion of two
 acquisitions, the digest on the wire re-computed from the file on disk, two
 different run identities for two attempts of one plan, the manifest read off the
 rendered disclosure, adoption only when asked, a real changed-output refusal
 that leaves the finalization and its integrity result intact, and a real
-duplicate. Affected regressions on the same binary: M6.7 2/2, M6.8 3/3, and M6.6
-4/5.
+duplicate. Affected regressions on the same binary: M6.6 5/5, M6.7 2/2 and M6.8
+3/3, M6.6 including the real `Escape` at the exact owned folder picker through
+the foreground guard.
 
-**M6.6's fifth case is `BLOCKED` rather than failed.** It presses a real Escape
-at the exact owned folder picker, the session locked partway through the run,
-and the helper refuses to send a key unless that exact dialog holds the
-foreground. That refusal is the guard working; it was retried once and refused
-again on the same ground. The case passed earlier the same day on the previous
-binary in an unlocked window, and nothing in this slice touches the picker, the
-draft it preserves or the focus it restores. Sources were digest-checked
-afterwards and are unchanged; nothing outside each run's own scratch directory
-was written. Nothing was weakened to reach any of it — no guard relaxed, no
-`Cancel` substituted for an `Escape`, no focus scripted, no policy changed.
+**The set was blocked for a stretch, and one run was discarded.** A locked
+Windows session cannot drive a real dialog, so the suites waited for an
+interactive one rather than being reached another way; and one M6.6 run was
+disturbed by stray keyboard input, timed out in its setup, and was re-run rather
+than reported. Both are named here rather than absorbed. Sources were
+digest-checked afterwards and are unchanged; nothing outside each run's own
+scratch directory was written. Nothing was weakened to reach any of it — no
+guard relaxed, no `Cancel` substituted for an `Escape`, no focus scripted, no
+policy changed.
 
-**That run found two defects, both mine, and both are fixed.** The adoption's
+**An earlier run found two defects, both mine, and both are fixed.** The adoption's
 answer is recorded on the queue so it survives a re-read — and the document did
 not re-read the queue after adopting, so the row went on saying nobody had
 asked. Recording it also did not advance the slot's ordering key, so even a
