@@ -6141,6 +6141,15 @@ fn set_stop_facts(conversion: &mut SciexConversion) -> Option<SetStopFacts> {
         process_launched: match report.process_outcome() {
             mscanvas_proteowizard::ProcessAttemptOutcome::NotAttempted => Some(false),
             mscanvas_proteowizard::ProcessAttemptOutcome::Indeterminate => None,
+            // The runner answered and its answer is that no process was
+            // created. Process *facts* exist for such a call -- it was made and
+            // it returned -- so reading `backend.is_some()` here would report a
+            // launched process beside `not_started` and `none_launched`, which
+            // is one item answering one question three ways.
+            mscanvas_proteowizard::ProcessAttemptOutcome::Settled {
+                termination: mscanvas_proteowizard::Termination::NotStarted,
+                ..
+            } => Some(false),
             mscanvas_proteowizard::ProcessAttemptOutcome::Settled { .. } => Some(backend.is_some()),
         },
         termination: backend.map(BackendRunFacts::termination),
