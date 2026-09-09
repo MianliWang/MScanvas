@@ -563,7 +563,8 @@ control reachable with no horizontal overflow at 1366x768, 1920x1080, 1200x800
 and 960x640, plus M6.6 8/8 and M6.7 7/7 on the same head. Screenshots and console
 records inspected; console empty.
 
-**Run at this head**, not carried. The fourth review's repairs changed the
+**Run at this head**, not carried — the frontend inputs have not changed since,
+and the diff to the published head touches no compiled frontend file. The fourth review's repairs changed the
 rendered product — the completed summary names two more counts, the per-item
 stop says something different while it is in flight and no longer predicts an
 outcome, the plan-time disclosure names all three scopes, and the stop-failed
@@ -702,9 +703,11 @@ older run describe a different boundary. It reproduces exactly; see
 **Native, on the build attributable to this head.** One build, and all three
 suites on that one binary — no rebuild between them.
 
-- Head `1fd44df`, binary `target/e2e/release/mscanvas-desktop.exe`, SHA-256
-  `9da84ae53aa16d5777ea67f1cc44df3de28dd25d3f2819a2dba004f4e3ee3f54`,
-  16,044,032 bytes.
+- Built at head `1fd44df`; binary `target/e2e/release/mscanvas-desktop.exe`,
+  SHA-256 `9da84ae53aa16d5777ea67f1cc44df3de28dd25d3f2819a2dba004f4e3ee3f54`,
+  16,044,032 bytes. Everything committed after `1fd44df` is markdown — the
+  diff to the published head is two `.md` files and no compiled input — so the
+  binary above is the one this head builds.
 - WebView2 and msedgedriver 152.0.4191.66; approved Thermo fixture SHA-256
   `b3d97b38…2bd6dd7b`, as recorded in each run's own identity entry.
 
