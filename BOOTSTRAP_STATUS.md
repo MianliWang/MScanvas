@@ -7749,7 +7749,7 @@ not widened. Capacity stays 16 with a current rationale. Two progress defects
 are closed: a completed queue now accounts for every item it held, and the retry
 display no longer speaks for a rerun that is already done.
 
-Implementation is complete and every local gate passes: 1661 frontend tests,
+Implementation is complete and every local gate passes: 1662 frontend tests,
 1523 Rust tests across the workspace, lint, both typechecks, the build,
 `cargo fmt --check`, clippy with warnings denied, and `check_repo.py` with the
 claim guard's thirty-five self-proved bypasses. Rendered QA is browser 10/10 at four

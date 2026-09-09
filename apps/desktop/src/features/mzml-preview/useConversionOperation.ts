@@ -1093,6 +1093,14 @@ export function useConversionOperation(
   // queue moves to the next item the control comes back on its own rather than
   // staying disabled for the rest of the run.
   const [itemStopRequested, setItemStopRequested] = useState<string | null>(null);
+  // The rendered value above is what the availability rule reads; this is what
+  // the dispatch reads, for the reason the skip lane already has one. Two
+  // activations in one tick both see the state before either commits, so a
+  // guard on the rendered value is not a guard at all: both would dispatch, the
+  // first stop would settle the attempt, and Rust would refuse the second as
+  // naming an attempt that is over -- leaving an error on screen about a file
+  // that had in fact stopped.
+  const itemStopRequestedRef = useRef<string | null>(null);
 
   // The one attempt a per-item stop could reach, read from the authoritative
   // state rather than remembered. `null` is every reason there is nothing to
@@ -1147,6 +1155,14 @@ export function useConversionOperation(
     }
     const { operationId } = current;
     const key = `${operationId}:${String(index)}:${String(item.attempts)}`;
+    // Claimed before the request leaves, and lowered only by its own outcome. A
+    // second activation inside that window is this document asking again for
+    // something already under way, not a new request. The key names the exact
+    // attempt, so when the queue moves on the next one is not blocked by it.
+    if (itemStopRequestedRef.current === key) {
+      return;
+    }
+    itemStopRequestedRef.current = key;
     // Marked before the request leaves, exactly as the queue-level stop is.
     // Termination takes as long as it takes and a control that stayed live
     // would invite a second press at something already under way.
@@ -1162,6 +1178,9 @@ export function useConversionOperation(
           return;
         }
         // Nothing was stopped, so this document must not go on saying it was.
+        if (itemStopRequestedRef.current === key) {
+          itemStopRequestedRef.current = null;
+        }
         setItemStopRequested((requested) => (requested === key ? null : requested));
         setError(toPreviewError(cause));
         readState();

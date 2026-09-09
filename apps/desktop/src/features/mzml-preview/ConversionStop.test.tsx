@@ -373,6 +373,48 @@ describe("stopping a running conversion queue", () => {
     ).toHaveLength(2);
   });
 
+  it("sends one request when this file's stop is activated twice in a tick", async () => {
+    /*
+     * Two activations before the first reply -- a double click, or Enter held.
+     * Both handlers read the same running item from the same ref, so a guard on
+     * rendered state cannot separate them. Rust accepts a repeat against the
+     * same live attempt idempotently, but the attempt can settle between the
+     * two: the second then names an attempt that is over and is refused, and
+     * the document shows an error for a file it had in fact stopped.
+     */
+    let settle: (state: WorkspaceConversionState) => void = () => {};
+    const held = new Promise<WorkspaceConversionState>((resolve) => {
+      settle = resolve;
+    });
+    const api = apiWith(runningQueue(), { cancelItem: () => held });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const cancelItem = await within(panel).findByRole("button", {
+      name: "Stop this file",
+    });
+    // Both inside one act, which is what "in a tick" means: React batches the
+    // updates and neither handler sees the other's rendered effect. Two
+    // separate fireEvents would flush between them and the second would find a
+    // disabled control, which is the rendering this asserts is not the guard.
+    await act(async () => {
+      fireEvent.click(cancelItem);
+      fireEvent.click(cancelItem);
+    });
+
+    expect(api.itemCancelRequests).toHaveLength(1);
+    await waitFor(() => {
+      expect(within(panel).getByText("Stopping this file…")).toBeVisible();
+    });
+    expect(api.itemCancelRequests).toHaveLength(1);
+
+    await act(async () => {
+      settle(stoppedQueue());
+      await held;
+    });
+    expect(api.itemCancelRequests).toHaveLength(1);
+  });
+
   it("draws a stop this document did not make, from the queue Rust serialises", async () => {
     /*
      * Stopping one file takes as long as the converter takes, and for a while

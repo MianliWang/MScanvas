@@ -567,7 +567,7 @@ open) and this record. Fifteen, and the count is checkable: `git diff
 
 ## Validation
 
-Local gates: frontend lint, typecheck, 1661 tests across 69 files, build;
+Local gates: frontend lint, typecheck, 1662 tests across 69 files, build;
 `cargo fmt --all --check`; `cargo clippy --locked --workspace --all-targets
 --all-features -- -D warnings`; `cargo test --locked --workspace --all-targets`
 (1523 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
@@ -685,10 +685,10 @@ to refuse. Both are repaired, and both now have tests over the decision rather
 than over a hand-built value.
 
 **Round 9 — the repository's release review on the pull request**, which is a
-required check rather than an extra pass. Nineteen threads. Seven were against
-earlier heads and describe defects the rounds above repaired. Of the twelve
-against this one, nine were real; the other three describe code an earlier round
-had already changed — the skip guard is a synchronous ref claimed before the
+required check rather than an extra pass. Twenty threads. Seven were against
+earlier heads and describe defects the rounds above repaired. Of the thirteen
+against this one, ten were real; the other three describe code an earlier round
+had already changed — the *skip* guard is a synchronous ref claimed before the
 request leaves, the diagnostics schema moved to 2 in the round that changed the
 field, and `force_owned_cleanup` does read the Job's own count.
 
@@ -741,6 +741,20 @@ The ninth is arithmetic in copy: between two items the panel published
 `currentIndex` as a count of conversions, and it is a count of items that are no
 longer pending — so a queue whose first file failed announced "Converted 1 of 2"
 with nothing converted at all.
+
+The tenth arrived while the other nine were being closed, and it is the third
+control in this milestone to need the same thing the *skip* lane already had.
+`Stop this file` marked its attempt with `setItemStopRequested`, and two
+activations in one tick both read the state before either commits — so both
+dispatched. Rust answers a repeat against the same live attempt idempotently, so
+that alone is not visible; what is visible is the attempt settling between the
+two, after which the second names an attempt that is over and is refused, and
+the document shows an error about a file it had in fact stopped. The claim is a
+synchronous ref now, keyed by the exact attempt so the next item's control is
+not blocked by it, and lowered only by its own failure. Its test batches both
+activations inside one `act`, because two separate events flush a render between
+them and would find a disabled control — which is the rendering, not the
+guard.
 
 Round 7: four more demonstrated bypasses, listed above, and one substantive
 overclaim. `RootNotStarted` — an ordinary, retryable failure that raises no
