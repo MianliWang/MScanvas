@@ -127,8 +127,8 @@ separately.
 
 **Re-taken at the final head**, on the same rule the suites are held to: this
 measurement is produced through the launch path, so a changed launch path makes
-an older run describe a different boundary. Run 04, taken at head `d0da14d`,
-reproduces runs 01 to 03 exactly — `provider.executable_sha256` still
+an older run describe a different boundary. Run 05, taken at head `1fd44df`,
+reproduces runs 01 to 04 exactly — `provider.executable_sha256` still
 `9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD`, a kernel
 cumulative `total_owned_processes` of 1 in every scenario,
 `tree_ownership=established_before_execution` throughout,
@@ -136,7 +136,7 @@ cumulative `total_owned_processes` of 1 in every scenario,
 request observed before the launch. It is a console harness rather than an
 interface one, so it does not need an unlocked interactive session.
 
-Evidence: `D:/tmp/mscanvas-m68-20260908/cancellation-evidence-0{1,2,3,4}.log`; run 04 is the one taken at this head.
+Evidence: `D:/tmp/mscanvas-m68-20260908/cancellation-evidence-0{1,2,3,4,5}.log`; run 05 is the one taken at this head.
 The harness removed its own scratch directories; verified empty.
 
 ## The claim guard
@@ -702,17 +702,17 @@ older run describe a different boundary. It reproduces exactly; see
 **Native, on the build attributable to this head.** One build, and all three
 suites on that one binary — no rebuild between them.
 
-- Head `d0da14d`, binary `target/e2e/release/mscanvas-desktop.exe`, SHA-256
-  `a7e0cdb0b12aa84c8430605e5a1d19f75cc591eb98eb4a1d4c22409210380073`,
+- Head `1fd44df`, binary `target/e2e/release/mscanvas-desktop.exe`, SHA-256
+  `9da84ae53aa16d5777ea67f1cc44df3de28dd25d3f2819a2dba004f4e3ee3f54`,
   16,044,032 bytes.
 - WebView2 and msedgedriver 152.0.4191.66; approved Thermo fixture SHA-256
   `b3d97b38…2bd6dd7b`, as recorded in each run's own identity entry.
 
 | Scenario | Result |
 | --- | --- |
-| A stop while the provider is genuinely executing | `ownedTree: confirmed_gone`, `processLaunched: true`, `termination: cancelled`, 22 ms from request to settle, no partial output and no staging residue; the queue carried on to `completed` with 7 finalized, 1 cancelled, 0 not run |
+| A stop while the provider is genuinely executing | `ownedTree: confirmed_gone`, `processLaunched: true`, `termination: cancelled`, 31 ms from request to settle, no partial output and no staging residue; the queue carried on to `completed` with 7 finalized, 1 cancelled, 0 not run |
 | A waiting item settled without launching it | index 7, 0 attempts, counted as 1 skipped by request, queue `completed` with 7 finalized |
-| The whole queue stopped mid-execution | `stopped`, 2 attempted of 8, 1 finalized, 1 cancelled, **0** whose stop could not be confirmed, 6 not run |
+| The whole queue stopped mid-execution | `stopped`, 1 attempted of 8, 0 finalized, 1 cancelled, **0** whose stop could not be confirmed, 7 not run |
 
 The phase is observed, never assumed: the suite reads Rust's own authoritative
 state until an item reports running, dispatches against that exact item and
@@ -729,9 +729,15 @@ real custom picker"*. Nothing was weakened to reach it at any point: no guard
 relaxed, no Cancel substituted for Escape, no focus scripted after cancellation,
 and no browser result counted as native evidence.
 
-Evidence: `D:/tmp/mscanvas-m68-20260908/m68-native-uaR5i8/`,
-`m66-native-KggtJv/`, `m67-native-qAlccG/`, and
-`final-binary-identity.log`.
+Evidence: `D:/tmp/mscanvas-m68-20260908/m68-native-VDU6PR/`,
+`m66-native-XtIpn5/`, `m67-native-aoZYSD/`, and `final-binary-identity.log`.
+Each run's own identity entry records the binary digest above and the approved
+Thermo fixture `b3d97b38…2bd6dd7b`.
+
+An earlier pass of the same three suites at head `d0da14d`, on binary
+`a7e0cdb0…`, also passed 3/3, 5/5 and 2/2. It is not this candidate's evidence —
+the delta review's repairs landed after it — and is recorded here only so the
+count of native runs in this milestone is not silently one fewer than it was.
 
 **What the earlier runs were.** They are kept as history and belong to the heads
 they were taken on, not to this one: M6.8 3/3, M6.7 2/2 and M6.6 4/5 at head

@@ -7758,9 +7758,9 @@ this head builds. That suite is headless, so a locked session does not block it.
 
 **Native validation is complete on the build attributable to this head.** One
 build, three suites, one binary: `target/e2e/release/mscanvas-desktop.exe`,
-SHA-256 `a7e0cdb0b12aa84c8430605e5a1d19f75cc591eb98eb4a1d4c22409210380073`,
+SHA-256 `9da84ae53aa16d5777ea67f1cc44df3de28dd25d3f2819a2dba004f4e3ee3f54`,
 WebView2 and driver 152.0.4191.66. M6.8 3/3 — a stop that reached a genuinely
-executing provider settled `confirmed_gone` 22 ms after the request with no
+executing provider settled `confirmed_gone` 31 ms after the request with no
 partial output and no residue, and the queue carried on to `completed` with 7
 finalized. M6.6 5/5, including the real Escape at the exact owned folder picker
 through the foreground guard that had refused it while the session was locked.
