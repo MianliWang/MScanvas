@@ -50,7 +50,7 @@ moved out and says nothing about what the converter produced. Four phases:
 | `provider_not_invoked` | The attempt settled without the converter being called at all. The folder exists and nothing was ever handed it. |
 | `provider_returned` | As soon as the call on the process boundary handed control back — however it handed it back. The earliest point at which "did the provider write anything" is answerable. |
 | `output_refused` | After the output was judged and refused. Validation reads and removes nothing. |
-| `publication_settled` | After publication ran, whether it succeeded, failed outright or stopped partway. |
+| `publication_settled` | After publication ran, whether it succeeded, failed outright or stopped partway — including a set whose first rename did not land. |
 
 **A phase names when the reading was taken, never an event that did not
 happen.** The middle one is called `provider_returned` and not "the backend
@@ -76,7 +76,11 @@ over-large set without walking it, and an observation taken on that very refusal
 that read the whole directory would hand the bound straight back. So the
 enumeration stops at twice the lifecycle's output bound and says so: the counts
 become lower bounds, and the row reads "held more than N entries… MSCanvas
-stopped counting rather than reading all of them."
+stopped counting rather than reading all of them." The diagnostics export
+carries the same flag and writes the classified fields as `null` where it is
+set, because exporting a bounded reading as an exact total — with "no
+directories" and "no file with content" beside it — would turn one omitted flag
+into three false facts.
 
 **Observation is evidence and only evidence.** It decides nothing removed,
 replaces no primary failure, changes no termination judgement and authorises no

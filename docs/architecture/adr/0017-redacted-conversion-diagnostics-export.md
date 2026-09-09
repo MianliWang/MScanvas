@@ -246,6 +246,13 @@ state identifier `skipped_by_request` — would not have moved it on their own. 
 against version 1 must not read a version 2 file as though the boolean were
 merely absent, which is what the version exists to tell it.
 
+`stagedOutput` carries `countsAreLowerBounds` beside its counts, and where that
+is true the classified fields are `null` rather than zero. The observation stops
+at a bound so a backend that filled the staging area cannot make a failure pay
+for enumerating all of it; exporting the bounded reading as an exact total, with
+"no directories" and "no file with content" beside it, would turn one omitted
+flag into three false facts. An addition, so it did not move the version.
+
 **Amended 2026-09-09 (M6.9's release review): version 3 became version 4.** An
 item's `cancellation.processLaunched` became nullable. It was derived from
 whether `BackendRunFacts` came back, so a stop the boundary could not confirm

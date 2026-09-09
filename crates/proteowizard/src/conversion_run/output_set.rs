@@ -1704,6 +1704,15 @@ fn run_bound_multi_output(
             StagedObservationPhase::OutputRefused,
             super::observe_staged_content(&staging_output),
         ),
+        // The first rename did not land. Publication ran -- it is what failed --
+        // so the reading is about what it left, and calling it a backend that
+        // had just returned would put the clock back past the attempt.
+        MultiOutputOutcome::RefusedBeforePublication(MultiOutputFailure::MemberNotFinalized {
+            ..
+        }) => StagedOutputEvidence::of(
+            StagedObservationPhase::PublicationSettled,
+            super::observe_staged_content(&staging_output),
+        ),
         // Nothing was published: the set stepped aside because every one of its
         // names was occupied, or it was refused after discovery and before any
         // name was taken. Naming a publication phase would assert one that did

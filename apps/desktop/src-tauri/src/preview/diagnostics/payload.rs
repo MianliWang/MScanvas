@@ -207,17 +207,29 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
         match ticket.attempt.staged.observation() {
             Some(observation) => {
                 written.count("entryCount", observation.entry_count());
-                written.count("directoryCount", observation.directory_count());
-                written.boolean(
-                    "nonEmptyFileObserved",
-                    observation.non_empty_file_observed(),
-                );
+                // Whether the enumeration stopped at its bound. Dropping it
+                // would export a lower bound as an exact total, and would
+                // export "no directories, no file with content" for a reading
+                // that classified nothing -- three false facts from one absent
+                // field.
+                written.boolean("countsAreLowerBounds", observation.bounded());
+                if observation.bounded() {
+                    written.null("directoryCount");
+                    written.null("nonEmptyFileObserved");
+                } else {
+                    written.count("directoryCount", observation.directory_count());
+                    written.boolean(
+                        "nonEmptyFileObserved",
+                        observation.non_empty_file_observed(),
+                    );
+                }
             }
             // Absent rather than zero. A zero here would be the one reading
             // this field must never produce: an unread directory described as
             // an empty one.
             None => {
                 written.null("entryCount");
+                written.null("countsAreLowerBounds");
                 written.null("directoryCount");
                 written.null("nonEmptyFileObserved");
             }
