@@ -346,9 +346,9 @@ adoption result, no duplicate ids and no horizontal overflow at any of the four.
 Plus M6.8 10/10, M6.7 7/7 and M6.6 8/8 on the same head. Screenshots and console
 records inspected; console empty.
 
-Run at this head against the bundle this head builds: `index-BAPQGOhn.js`,
-SHA-256 prefix `fd26b9e58a790679`, beside `index-Cq2IHovW.css`
-(`683071bfc1a0e39d`) and `index.html` (`9b70fe7be19a9df9`). The suite is
+Run at this head against the bundle this head builds: `index-k2BvQVBj.js`,
+SHA-256 prefix `ced44436fc40dbfa`, beside `index-Cq2IHovW.css`
+(`683071bfc1a0e39d`) and `index.html` (`65c788b50ea7aaa8`). The suite is
 headless, so it does not need an unlocked session.
 
 **Two browser cases fail here and on the published baseline alike**: `m4.1`
@@ -373,12 +373,18 @@ decision exists for and each failing by assertion rather than by not compiling:
 
 ### Native evidence
 
-**Complete, on one binary.** Built at this head:
-`target/e2e/release/mscanvas-desktop.exe`, SHA-256
-`d9d3eb8404a6aca5ba486dd127c60a4323306ae898a0dd79f1d4f41a4ee49ae5`, 16,079,872 bytes. WebView2 and
-msedgedriver 152.0.4191.66. Provider: ProteoWizard 3.0.26013.47b13cf 64-bit,
-`msconvert.exe` SHA-256 prefix `9bb6f5d5033bb8ea`. Approved Thermo fixture
-SHA-256 `b3d97b38…2bd6dd7b`, recorded in the run's own identity entry.
+**Taken on the binary this head builds, and that binary is named rather than
+assumed.** `target/e2e/release/mscanvas-desktop.exe`, SHA-256
+`942af64835219b0e04806ce7e86605a5af24d88ffe601e14223d20743c273df8`, 16,080,384 bytes.
+WebView2 and msedgedriver 152.0.4191.66. Provider: ProteoWizard
+3.0.26013.47b13cf 64-bit, `msconvert.exe` SHA-256 prefix `9bb6f5d5033bb8ea`.
+Approved Thermo fixture SHA-256 `b3d97b38…2bd6dd7b`, recorded in each run's own
+identity entry.
+
+An earlier complete run at `d9d3eb8404a6aca5…` is what
+found the two defects below. It is not the evidence for this head — the repairs
+after it changed a phase identifier, four rendered sentences, the observation's
+bound and a wire field — so every suite was taken again on the binary above.
 
 `m6.9-output-completion.tauri` 1/1 — the real picker, the real queue and the
 installed provider, to a real output-only completion of two acquisitions:
@@ -405,17 +411,30 @@ went on saying nobody had asked while Rust held the answer. And recording it did
 not advance the slot's ordering key, so even once the document did re-read, the
 update was discarded as stale. A rendered test and a Rust test now pin each.
 
-**Affected regressions on the same binary: M6.6 5/5, M6.7 2/2, M6.8 3/3.** M6.6
-includes the real Escape at the exact owned folder picker through the foreground
-guard, M6.7 both scope proofs, and M6.8 all three stop scopes — the stop that
-lands while the provider is genuinely executing settling `confirmed_gone` with
-the queue carrying on. Nothing was weakened at any point: no guard relaxed, no
-`Cancel` substituted for an `Escape`, no focus scripted after cancellation, and
-no browser result counted as native evidence.
+**Affected regressions on the same binary: M6.6 4/5 with one `BLOCKED`, M6.7
+2/2, M6.8 3/3.** M6.7 covers both scope proofs; M6.8 covers all three stop
+scopes, including the stop that lands while the provider is genuinely executing
+settling `confirmed_gone` with the queue carrying on.
 
-Evidence: `D:/tmp/mscanvas-m69-20260909/m69-native-L2arzk/`, and
-`regress/m66-native-H7UAnX/`, `regress/m67-native-5xJbnB/`,
-`regress/m68-native-D6LSc5/`.
+**The blocked case is M6.6's real Escape at the exact owned folder picker**, and
+it is blocked rather than failed. The Windows session locked partway through
+this run, and `e2e/native/choose-conversion-folder.ps1` refuses to send a key
+unless that exact dialog holds the foreground — *"Escape refused because the
+exact owned dialog is not foreground"*. That refusal is the guard working. It
+was retried once and refused again on the same ground. It **passed earlier the
+same day** on the `d9d3eb84…` binary, in an unlocked window, and nothing in this
+diff touches the destination picker, the draft it preserves or the focus it
+restores. It is recorded as blocked rather than absorbed, and rather than
+reached by any other means.
+
+Nothing was weakened at any point: no guard relaxed, no `Cancel` substituted for
+an `Escape`, no focus scripted after cancellation, no security policy changed,
+and no browser result counted as native evidence.
+
+Evidence at this head: `D:/tmp/mscanvas-m69-final/m69-native-UvLKtl/`, and
+`regress/m66-native-ZRPWKs/`, `regress/m67-native-2LCXjS/`,
+`regress/m68-native-UuiPmv/`. The earlier run that found the two defects is at
+`D:/tmp/mscanvas-m69-20260909/m69-native-L2arzk/`.
 
 ## Residuals
 
