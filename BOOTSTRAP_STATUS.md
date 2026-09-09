@@ -7750,7 +7750,7 @@ are closed: a completed queue now accounts for every item it held, and the retry
 display no longer speaks for a rerun that is already done.
 
 Implementation is complete and every local gate passes: 1659 frontend tests,
-1516 Rust tests across the workspace, lint, both typechecks, the build,
+1519 Rust tests across the workspace, lint, both typechecks, the build,
 `cargo fmt --check`, clippy with warnings denied, and `check_repo.py` with the
 claim guard's thirty-three self-proved bypasses. Rendered QA is browser 10/10 at four
 inner sizes plus M6.6 8/8 and M6.7 7/7, re-run at this head against the bundle
@@ -7774,6 +7774,6 @@ separate worktree at `735dfeb`: `m4.1` "offers all three formats for a spectrum
 that loaded with no peaks" and `m5.2` "still reaches the plot by Tab where the
 range can move". They are pre-existing and are recorded rather than absorbed.
 
-The evidence and the 54-path closure are in
+The evidence and the 56-path closure are in
 [the M6.8 record](docs/ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md).
 M6.9 has not started.

@@ -3470,6 +3470,10 @@ CLAIM_CODE_GLOBS = (
     "e2e/**/*.ts",
 )
 CLAIM_SOURCE_GLOBS = CLAIM_CODE_GLOBS + (
+    # The manifests, so a copy of these sources still knows which files Cargo
+    # compiles as integration-test targets. Without them the bypass suite's
+    # pristine tree reads a downstream consumer test as production code.
+    "crates/*/Cargo.toml",
     "docs/architecture/adr/*.md",
     "docs/product/*.md",
     "docs/ux/*.md",
@@ -3850,6 +3854,26 @@ def _defined_symbol(line: str, markdown: bool) -> str:
     return _RUST_DECLARED_HEAD.match(line.split("//")[0]).group(0)
 
 
+def _is_integration_test_target(path: Path) -> bool:
+    """Whether Cargo compiles this file as an integration test.
+
+    `<crate>/tests/*.rs`, where `<crate>` is the directory holding `Cargo.toml`.
+    That is Cargo's own target convention rather than a name chosen inside a
+    source file, which is what keeps it out of the hole the path-based exemption
+    used to have: `src/preview/tests/forged.rs` is a module of the library and
+    is not matched here, because its crate root is two directories further up.
+
+    An integration test links the crate as an external consumer, so it is
+    exactly where the *consumer* half of the claim boundary has to be written.
+    """
+    parent = path.parent
+    return (
+        parent.name == "tests"
+        and (parent.parent / "Cargo.toml").is_file()
+        and (parent.parent / "src").is_dir()
+    )
+
+
 def _is_test_source(path: Path, root: Path) -> bool:
     """Whether this file exists to test the boundary rather than to be it.
 
@@ -3858,7 +3882,7 @@ def _is_test_source(path: Path, root: Path) -> bool:
     claim at all. What makes a file one is the declaration that compiles it for
     tests only, which `_declared_test_modules` reads.
     """
-    return path in _declared_test_modules(root)
+    return _is_integration_test_target(path) or path in _declared_test_modules(root)
 
 
 def _check_the_cancellation_claim(root: Path, errors: list[str]) -> None:
@@ -4319,9 +4343,9 @@ CLAIM_BYPASSES: tuple[tuple[str, str, str, str], ...] = (
     (
         "a second lifecycle derives the judgement for itself",
         CLAIM_VOCABULARY,
-        "    pub const fn of(output: &ProcessOutput) -> Self {",
-        "    pub const fn of(output: &ProcessOutput) -> Self { Self::ConfirmedGone }\n"
-        "    pub const fn of(output: &ProcessOutput) -> Self {",
+        "    pub(crate) const fn of(output: &ProcessOutput) -> Self {",
+        "    pub(crate) const fn of(output: &ProcessOutput) -> Self { Self::ConfirmedGone }\n"
+        "    pub(crate) const fn of(output: &ProcessOutput) -> Self {",
     ),
     (
         "a consumer knows only some of the dispositions",

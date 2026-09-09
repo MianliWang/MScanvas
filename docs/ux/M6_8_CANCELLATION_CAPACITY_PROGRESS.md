@@ -82,7 +82,7 @@ discriminates the interval, and both say so.
 | Emptiness times out | The Job would not empty. `NotTerminated`. |
 | Any of the above **with no stop in flight** | The same uncertainty, and the same consequence. The invariant is about the machine rather than about anything the user pressed, so the run is asked a typed question about its own failure and the queue ends on the quarantine that is then in force. Before this, quarantine fired only on the stop path and the queue went on to launch the next converter beside a process nothing could account for. |
 | Any of the above **on a lane that is not the queue** | The same again, on all three. A preview is a process and so is a discovery help probe, and the sentence the quarantine shows had always named preview and conversion both while only the queue could raise it — so a preview that lost track of a process left the session trusting the backend and the next conversion started a converter beside it. Every lane now asks `ProcessError::leaves_an_owned_process_unaccounted`, which is *derived from* the queue's own classification rather than restated beside it, so they cannot answer differently. Discovery needed one more step: its typed error was reduced to an `io::ErrorKind` and a string, so the question could not be asked of it at all. The typed error is kept as the `io::Error`'s source, `DiscoveryResult` answers the question, and the provider latches it — a probe is not an operation anyone asked for, so there is no attempt for it to report through. |
-| A wait that failed after its owned teardown succeeded | `NotAwaited`, and **not** a quarantine. This run cannot report how its process ended; it can say the owned Job was emptied. Quarantining here would refuse every later operation, for the rest of a session, on a fact that is not true — and a Job that would not empty is already classified `NotTerminated` at the boundary rather than folded into this. |
+| A wait that failed after its owned teardown succeeded | `NotAwaited`, and **not** a quarantine. This run cannot report how its process ended, and it *did* observe the owned Job empty afterwards — `failure_after_teardown` reads the count on every failure path and promotes anything not observed empty to `OwnedJobNotEmptied` before it is classified, so a failure still carrying `NotAwaited` is one the kernel said held nothing of this run's. Quarantining here would refuse every later operation, for the rest of a session, on a fact that is not true — and a Job that would not empty is already classified `NotTerminated` at the boundary rather than folded into this. |
 | The thread snapshot the launch takes fails | Retried a bounded four times. It is documented to fail transiently while the system's thread list changes, and the process being asked about is suspended and cannot move under the retry. |
 | The suspended root reports more than one thread | Every one of them is resumed, and the launch continues. A process created suspended has one thread of its own, but a second can be one another product injected — which endpoint security software does routinely — and refusing there would have failed conversion, discovery and preview alike on such a machine over something that is not about ownership. Ownership comes from the suspended creation and the Job assignment that precede the resume. What is still required is checked directly: some thread must report a previous suspend count of one, which is the primary thread as created and before it ran. |
 | Capture or launch failure coinciding with a request | Keeps the reason that is true of it. An execution error does not erase an ownership uncertainty, and only the two failures that describe one are reclassified. |
@@ -169,8 +169,18 @@ conversion from starting. The state is derived from the disposition where the
 item settles, and the quarantine reads the disposition rather than a rendering
 of it.
 
-**The claim's *name* is carried by the compiler. Its *value* is not, and the
-difference is written down because this record overstated it once.**
+### Three guarantees, and what enforces each
+
+| Guarantee | Enforced by |
+| --- | --- |
+| This attempt's process tree was owned before the image executed, and its disappearance was observed | The runtime: `CREATE_SUSPENDED` → `AssignProcessToJobObject` → resume, breakaway refused, and a kernel process count read after teardown. Nothing textual is involved. |
+| Who may **derive** the affirmative judgement in compiled production code | Rust privacy. `OwnedTreeDisposition::ConfirmedGone` is `non_exhaustive`, so no consumer can name it; `OwnedTreeDisposition::of` is `pub(crate)`, so no consumer can ask for it either. Measured downstream, not asserted — see *The downstream probe*. |
+| Names, wire/schema agreement, and descriptive copy | `check_repo.py`. **Policy over spellings, not a theorem.** It recognises the shapes it has been shown; it does not cover every Rust expansion or every synonym in prose, and this record does not claim it does. |
+
+**The claim's *name* is carried by the compiler, and since this closure so is
+the *derivation*. What is not, and is written down because this record
+overstated it once, is everything downstream of the judgement once it is a
+string.**
 
 `OwnedTreeDisposition::ConfirmedGone` is `non_exhaustive`, so outside the crate
 that decides it the affirmative member cannot be **constructed** — not by
@@ -194,14 +204,57 @@ to the derivation and receive the affirmative member back without ever naming
 it. No type distinguishes a fabricated report from a supervised one, and none is
 claimed to.
 
-So the *asking* is contained instead, and by the guard rather than by the
-compiler: only `crates/proteowizard/src/`, the crate that creates the process
-and watches it end, may call the derivation. The scope is that crate rather than
-one file because two lifecycles inside it each supervise a real run; what the
-rule refuses is a consumer minting the judgement for itself. And once the
-judgement leaves the type it is a string — on the wire and in the diagnostics
-payload — which no compiler refuses either, so the identifier itself is
-watched.
+So the *asking* is contained instead — and it is contained by Rust, not by a
+repository check. `OwnedTreeDisposition::of` is `pub(crate)`. The scope is the
+crate rather than one file because two lifecycles inside it each supervise a
+real run; what privacy refuses is a consumer minting the judgement for itself.
+This was a `check_repo.py` rule until the closure, and a repository check is
+policy rather than privacy: the rule is still there, as a second reader, but it
+is no longer what holds the door.
+
+The one cross-crate caller that remains is a desktop **test** fixture, and it
+reaches `of_supervised_run_for_test`, which exists only under the `test-support`
+feature. That feature is off by default, arrives in the desktop crate solely as
+a dev-dependency, and makes an *optimized* build fail to compile at the crate
+root. `cargo tree --edges features` shows the shipped edge is `default` alone;
+`cargo build --release --features test-support` refuses. That is what
+establishes it is absent from the configuration users receive — a filename or
+`debug_assertions` would not have.
+
+And once the judgement leaves the type it is a string — on the wire and in the
+diagnostics payload — which no compiler refuses, so the identifier itself is
+watched by the guard.
+
+### The downstream probe
+
+Measured rather than argued, against a crate that links this one the way any
+consumer does, on the pinned toolchain, with a control that builds so a refusal
+cannot be a missing dependency:
+
+| Probe | Result |
+| --- | --- |
+| Reads a returned judgement (`stable_id`, `no_owned_process_survives`) | builds |
+| Names `OwnedTreeDisposition::ConfirmedGone` | `error[E0603]: unit variant ConfirmedGone is private` |
+| Calls `OwnedTreeDisposition::of` on a fabricated `ProcessOutput` | `error[E0624]: associated function of is private` |
+
+Evidence: `D:/tmp/mscanvas-m68-20260908/claim-boundary-probe.log` and
+`shipped-configuration.log`. The consumer half is also a permanent integration
+test — `crates/proteowizard/tests/claim_boundary.rs` compiles as a downstream
+crate, so closing those two doors cannot quietly close the read-only API with
+them.
+
+### The trust seam, stated rather than dissolved
+
+`ProcessRunner` is public and `run_conversion*` take `&dyn ProcessRunner`, so
+whoever chooses the runner chooses what a `ProcessOutput` says. In the shipped
+application that is one place — `backend.rs` passes `&SystemProcessRunner` — and
+substitution exists for tests. Privacy over the derivation stops a consumer
+*converting* a fabricated report into the affirmative judgement; it does not and
+cannot make a fabricated report authentic. What is trusted is the first-party
+code that selects the runner, and this is a boundary between MSCanvas's own
+layers rather than a sandbox against hostile code with authority to edit the
+provider crate. The same is true of the discovery help probes and the preview
+lane: they run through the same supervised boundary and the same one runner.
 
 `validate_the_cancellation_claim_has_one_origin` in `scripts/check_repo.py`
 carries what a type cannot. It checks that the conjunction is defined once and
@@ -412,7 +465,7 @@ pressed from the pass that answers it.
 
 ## Changed-path closure
 
-54 paths: 39 of code and evidence, and 15 documents. Each of the 39 is either
+56 paths: 41 of code and evidence, and 15 documents. Each of the 39 is either
 the boundary that decides the claim, a direct consumer of it, a surface that
 carries it, or the evidence for one; the documents are listed at the end, so the
 closure is the whole diff against the baseline rather than the part of it that
@@ -437,6 +490,14 @@ later one claim a confirmed tree by forgetting to say otherwise.
 **Evidence harness** — `crates/proteowizard/examples/conversion_cancellation_evidence.rs`.
 The three process quantities and the disposition.
 
+**The claim boundary, measured downstream** —
+`crates/proteowizard/tests/claim_boundary.rs`. An integration test compiles as a
+separate crate that links this one the way any consumer does, so what it can
+reach is what a consumer can reach. It pins the read-only half; the refused half
+is measured by the probe described above, because a downstream crate that names
+the affirmative member does not compile and so cannot be a test in a suite that
+must.
+
 **Discovery** — `crates/proteowizard/src/discovery.rs`. The third lane that
 starts backend processes. Its typed error was reduced to an `io::ErrorKind` and
 a string, so the one question about an unaccounted process could not be asked of
@@ -456,7 +517,8 @@ only for items that ran — plus the tests that pin them:
 `conversionContract.test.ts`, `ConversionStop.test.tsx`,
 `ConversionDiagnostics.test.tsx`, `conversionLaneAuthority.test.tsx`,
 `usePreviewWorkspace.test.tsx`, `src/test/outputSetRendering.test.tsx`,
-`src/test/previewFixtures.ts`. Plus the two places the quarantine sentence is
+`src/test/previewFixtures.ts`, and `src/app/App.test.tsx`, which asserts the
+banner's quarantine sentence. Plus the two places the quarantine sentence is
 written for a user — `conversionAvailability.ts` and
 `conversionNoticeRegistry.ts` — which said a *converter* had not been confirmed
 to have *stopped*, when this state is now reached by a preview, a spectrum read
@@ -478,14 +540,14 @@ decisions), `0013` (the capacity premise and the "no Cancel" paragraph), `0014`
 and `0020` (one measured sentence made unambiguous), plus
 `docs/spikes/M0_PROTEOWIZARD_SPIKE.md` (the spawn-to-assignment race it left
 open) and this record. Fifteen, and the count is checkable: `git diff
---name-only` against the baseline reports 54 paths, 15 of them documents.
+--name-only` against the baseline reports 56 paths, 15 of them documents.
 
 ## Validation
 
 Local gates: frontend lint, typecheck, 1659 tests across 69 files, build;
 `cargo fmt --all --check`; `cargo clippy --locked --workspace --all-targets
 --all-features -- -D warnings`; `cargo test --locked --workspace --all-targets`
-(1516 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
+(1519 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
 E2E typecheck.
 
 **Rendered QA**: 10/10 in `m6.8-cancellation-controls.browser`, including every

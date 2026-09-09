@@ -244,12 +244,13 @@ fn selected_spectrum_output(index: u64, points: &[(f64, f64)]) -> String {
 /// The confirmed disposition, obtained the only way this crate can obtain it.
 ///
 /// `OwnedTreeDisposition::ConfirmedGone` is `non_exhaustive`, so no code
-/// outside the crate that decides it may name it — a fixture included. This
-/// builds the run that earns it and lets the one origin say so.
+/// outside the crate that decides it may name it — a fixture included. And the
+/// derivation is `pub(crate)` there, so no code outside it may ask either: what
+/// this reaches is the `test-support` entry, which the crate root refuses to
+/// compile into an optimized build.
 ///
-/// A fixture may do this; production code here may not, and that is a guard
-/// rule rather than a compiler one. The value is derivable by anyone who can
-/// build a `ProcessOutput`, which is everyone who can substitute a runner.
+/// Production code in this crate cannot call it at all. The feature arrives
+/// through a dev-dependency, so it is absent from the build a user receives.
 fn confirmed_gone_disposition() -> mscanvas_proteowizard::OwnedTreeDisposition {
     let supervised = ProcessOutput {
         termination: mscanvas_proteowizard::Termination::Cancelled,
@@ -257,7 +258,7 @@ fn confirmed_gone_disposition() -> mscanvas_proteowizard::OwnedTreeDisposition {
         tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
         ..completed_process("")
     };
-    mscanvas_proteowizard::OwnedTreeDisposition::of(&supervised)
+    mscanvas_proteowizard::OwnedTreeDisposition::of_supervised_run_for_test(&supervised)
 }
 
 fn completed_process(stdout: &str) -> ProcessOutput {

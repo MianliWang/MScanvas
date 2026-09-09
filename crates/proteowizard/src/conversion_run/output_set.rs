@@ -1742,9 +1742,11 @@ fn run_set_backend(
         Err(error) => {
             let cause = BackendExecutionFailure::from(&error);
             // The same rule as the single-output lifecycle, for the same
-            // reason: `NotAwaited` is a wait whose owned teardown succeeded, so
-            // nothing of this run survives it and a stop in flight must not make
-            // the same machine state mean something different.
+            // reason: a failure still carrying `NotAwaited` is one whose owned
+            // Job was observed empty -- the process boundary promotes anything
+            // else to `OwnedJobNotEmptied` before it is classified -- so nothing
+            // of this run survives it, and a stop in flight must not make the
+            // same machine state mean something different.
             let failure = if requested && matches!(cause, BackendExecutionFailure::NotTerminated) {
                 MultiOutputFailure::CancellationNotConfirmed(cause)
             } else {

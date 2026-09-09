@@ -1604,25 +1604,28 @@ impl ConversionRunFailure {
     /// uncertainty as one that reaches it with a stop.
     ///
     /// It is exactly `NotTerminated`, and that identifier now means what it
-    /// says. Three paths reach it and no others: a Job that would not report
-    /// itself empty within its bounded window, an owned teardown that failed,
-    /// and a root that was created and could neither be started nor reclaimed.
+    /// says. Four paths reach it and no others: a Job that would not report
+    /// itself empty within its bounded window, an owned teardown that failed, a
+    /// root that was created and could neither be started nor reclaimed, and
+    /// **any other failure whose owned Job was not observed empty afterwards**.
     /// Each is a process this run owned whose end nothing observed.
     ///
-    /// **`NotAwaited` is deliberately not included, and the line is finer than
-    /// it looks.** Both this and `OwnedJobNotEmptied` end in the same teardown,
-    /// and neither re-reads the Job's process count afterwards — so the
-    /// distinction is not "one observed an empty Job and the other did not".
-    /// It is what the run *already knows*: `OwnedJobNotEmptied` is the Job
-    /// having been asked and having said it still held processes, which is a
-    /// positive observation of survival, while this is a supervision loop that
-    /// lost its answer with nothing having said anything survives. Quarantining
-    /// on the absence of an answer would end a session on a fact nobody
-    /// established. It is an ordinary wait failure whose owned teardown then
-    /// succeeded — the Job was terminated, and
-    /// a run that lost track of its child but tore down what held it has not
-    /// lost the child. Including it quarantined a session for a queue whose
-    /// processes were in fact gone, and quarantine is never lifted.
+    /// **`NotAwaited` is not included, and what makes that safe is an
+    /// observation rather than an argument.** It once was an argument, and the
+    /// text here said so: that neither this nor `OwnedJobNotEmptied` re-read the
+    /// Job's count, so the two were told apart by what the run already knew.
+    /// That reasoning is gone, because `failure_after_teardown` in the process
+    /// boundary now reads the count on **every** failure path and promotes
+    /// anything not observed empty to `OwnedJobNotEmptied` before it is
+    /// classified at all. A failure still carrying `NotAwaited` when it reaches
+    /// here is therefore one whose owned Job *was* observed empty: the
+    /// supervision loop lost how the process ended, and the kernel said nothing
+    /// of this run's remains. Quarantining that would end a session on a fact
+    /// nobody established, and quarantine is never lifted.
+    ///
+    /// The two are still different facts and neither implies the other: a
+    /// termination *request* that succeeded is not an observation of
+    /// disappearance, and it is the observation that decides this.
     #[must_use]
     pub const fn leaves_an_owned_process_unaccounted(&self) -> bool {
         matches!(self, Self::Backend(BackendExecutionFailure::NotTerminated))
@@ -2171,10 +2174,12 @@ pub enum OwnedTreeDisposition {
     /// [`ProcessOutput`], which is the report a `ProcessRunner` returns — so
     /// every consumer that substitutes a runner can build one, including one
     /// that describes a run that never happened. No type tells those apart.
-    /// What is contained instead is the *asking*: `check_repo.py` allows this
-    /// derivation only inside this crate, the one that creates the process and
-    /// watches it end, and watches the identifier the judgement travels as once
-    /// it leaves the type and becomes a string.
+    /// What contains it is the derivation's own visibility:
+    /// [`OwnedTreeDisposition::of`] is `pub(crate)`, so the crate that creates
+    /// the process and watches it end is the only one that can ask. The
+    /// repository guard still watches the identifier the judgement travels as
+    /// once it leaves the type and becomes a string, which is policy over
+    /// spellings rather than a second compiler.
     #[non_exhaustive]
     ConfirmedGone,
     /// A tree existed and its disappearance could not be established.
@@ -2190,10 +2195,21 @@ impl OwnedTreeDisposition {
     /// named outside this crate — the only way anyone obtains the affirmative
     /// member at all.
     ///
-    /// Public for that reason. A caller that needs the confirmed member, a test
-    /// fixture included, must present a run that earns it.
+    /// **`pub(crate)`, and that is the whole of the enforcement.** It was
+    /// public, on the argument that a caller needing the confirmed member had
+    /// to present a run that earned it — but `ProcessOutput` is the report a
+    /// substituted [`ProcessRunner`] returns, so every consumer can build one,
+    /// including one describing a run that never happened. What kept consumers
+    /// out was a text rule in `scripts/check_repo.py`, and a repository check
+    /// is policy, not privacy. Rust decides it now: the two production callers
+    /// are the two conversion lifecycles in this crate, and nothing outside it
+    /// can reach this function at all.
+    ///
+    /// Consumers still read the judgement — [`CancellationReport::owned_tree`]
+    /// and the predicates on this type are public and unchanged. What they can
+    /// no longer do is *make* one.
     #[must_use]
-    pub const fn of(output: &ProcessOutput) -> Self {
+    pub(crate) const fn of(output: &ProcessOutput) -> Self {
         if !output.termination.launched() {
             return Self::NoneLaunched;
         }
@@ -2201,6 +2217,24 @@ impl OwnedTreeDisposition {
             return Self::ConfirmedGone;
         }
         Self::Unconfirmed
+    }
+
+    /// The derivation, for a test in another crate of this repository.
+    ///
+    /// Behind `test-support`, which is off by default, is enabled only as a
+    /// dev-dependency, and makes an *optimized* build fail to compile — see the
+    /// `compile_error!` at the crate root. That is what establishes it is not
+    /// in the configuration users receive; a name or `debug_assertions` alone
+    /// would not.
+    ///
+    /// It exists because the desktop crate's fixtures need a confirmed
+    /// disposition to build the reports its queue tests read. The alternative
+    /// was leaving the production derivation public, which is the barrier this
+    /// closure removed.
+    #[cfg(feature = "test-support")]
+    #[must_use]
+    pub const fn of_supervised_run_for_test(output: &ProcessOutput) -> Self {
+        Self::of(output)
     }
 
     /// The stable identifier a record or a transfer object writes.

@@ -2563,6 +2563,110 @@ mod tests {
     /// process whose disappearance this boundary cannot state — which is what
     /// `NotTerminated` already means, and the state a stop must never be
     /// allowed to call clean.
+    /// The whole decision chain, run rather than restated.
+    ///
+    /// Supervision and teardown produce a typed failure; the fold may decorate
+    /// it; the classification turns it into a `BackendExecutionFailure`; and the
+    /// queue's admission question reads that. Each step already has a test of
+    /// its own, and each of those tests starts from a value written by hand —
+    /// so a change that broke the *composition* while leaving every step correct
+    /// would pass all of them. This composes the real functions and asserts only
+    /// the end of the chain.
+    ///
+    /// The four rows are the cases the milestone's contract turns on. Absence,
+    /// zero, nothing created and a confirmed stop stay four different things.
+    #[test]
+    fn the_failure_chain_decides_admission_from_what_was_observed() {
+        use crate::conversion_run::{BackendExecutionFailure, ConversionRunFailure};
+
+        let capture = ProcessError::Capture {
+            stream: "stdout",
+            detail: "the pipe broke".to_owned(),
+        };
+        let teardown = ProcessError::Terminate {
+            detail: "the owned job would not terminate".to_owned(),
+        };
+        let wait = || ProcessError::Wait {
+            detail: "the wait was interrupted".to_owned(),
+        };
+        let job_held_processes = || ProcessError::OwnedJobNotEmptied {
+            detail: "the owned job would not empty".to_owned(),
+        };
+
+        /// One row of the chain: what happened, and what the queue must decide.
+        struct Step<'a> {
+            name: &'a str,
+            primary: ProcessError,
+            owned_job_observed_empty: bool,
+            cleanup: Option<&'a ProcessError>,
+            capture: Option<&'a ProcessError>,
+            classified: BackendExecutionFailure,
+            refuses_further_work: bool,
+        }
+
+        let chain = [
+            Step {
+                name: "a Job that said it still held processes, beside a broken pipe",
+                primary: job_held_processes(),
+                owned_job_observed_empty: false,
+                cleanup: None,
+                capture: Some(&capture),
+                classified: BackendExecutionFailure::NotTerminated,
+                refuses_further_work: true,
+            },
+            Step {
+                name: "an ordinary wait failure with no accounting to read",
+                primary: wait(),
+                owned_job_observed_empty: false,
+                cleanup: None,
+                capture: None,
+                classified: BackendExecutionFailure::NotTerminated,
+                refuses_further_work: true,
+            },
+            Step {
+                name: "an ordinary wait failure whose owned Job was observed empty",
+                primary: wait(),
+                owned_job_observed_empty: true,
+                cleanup: None,
+                capture: None,
+                classified: BackendExecutionFailure::NotAwaited,
+                refuses_further_work: false,
+            },
+            Step {
+                name: "an ordinary wait failure whose teardown itself failed",
+                primary: wait(),
+                owned_job_observed_empty: false,
+                cleanup: Some(&teardown),
+                capture: None,
+                classified: BackendExecutionFailure::NotTerminated,
+                refuses_further_work: true,
+            },
+        ];
+
+        for step in chain {
+            let name = step.name;
+            let after_teardown =
+                failure_after_teardown(step.primary, step.owned_job_observed_empty);
+            let folded = add_process_cleanup_context(after_teardown, step.cleanup, step.capture);
+            let classified = BackendExecutionFailure::from(&folded);
+            assert_eq!(
+                classified, step.classified,
+                "{name}: classified {classified:?}"
+            );
+            assert_eq!(
+                ConversionRunFailure::Backend(classified).leaves_an_owned_process_unaccounted(),
+                step.refuses_further_work,
+                "{name}: the queue's admission question disagreed"
+            );
+            // The same question, asked of the error the other lanes hold.
+            assert_eq!(
+                folded.leaves_an_owned_process_unaccounted(),
+                step.refuses_further_work,
+                "{name}: the lanes disagree about one failure"
+            );
+        }
+    }
+
     /// A coincident capture failure may add text; it may not lower a kind.
     ///
     /// The fold *replaced* the primary, so a stdout pipe that returned an error
