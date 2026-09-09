@@ -532,13 +532,14 @@ Evidence at this head: `D:/tmp/mscanvas-m69-final/m69-native-UvLKtl/`, and
   without a reader. Owner: M7, with the rest of the evidence surface, or
   whichever slice first admits a family that is compared against its source.
 - **The staged observation now runs on every failure path of both lifecycles**,
-  and it is an unbounded directory enumeration with a metadata read per entry.
-  That work used to be paid only on a stop. A backend that filled the working
-  folder therefore makes each failure settlement pay for the whole listing. It
-  is bounded by what one conversion may write and it is off the success path, so
-  nothing here measures a cost worth trading the judgement for — but it is a
-  real change in where that work happens and is recorded rather than left to be
-  discovered. Owner: M6.11 to carry, or the first slice that measures it.
+  where that work used to be paid only on a stop. The enumeration stops at
+  `OBSERVED_STAGED_ENTRY_BOUND` — twice the lifecycle's own output bound — so a
+  backend that filled the working folder cannot make a failure settlement pay
+  for the whole listing; what remains is one directory read and a metadata read
+  per entry up to that bound, on paths that have already failed. Nothing here
+  measures a cost worth trading the judgement for, but it is a real change in
+  where that work happens and is recorded rather than left to be discovered.
+  Owner: M6.11 to carry, or the first slice that measures it.
 - **`msedgedriver` had to be restored** before the native suites could run. It
   is fetched by the repository's own pinned `edgedriver` dependency, which is
   lockfile restoration rather than a package addition, and the version it
