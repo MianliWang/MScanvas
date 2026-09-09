@@ -30222,3 +30222,43 @@ fn an_export_reports_no_staged_counts_where_nothing_was_observed() {
     assert_eq!(item["process"]["kind"], "not_attempted");
     assert!(item["runIdentity"].is_null());
 }
+
+/// Recording the adoption moves the ordering key a reader installs by.
+///
+/// The fifth judgement is recorded on the queue precisely so it survives a
+/// re-read, and a document installs a read only when its sequence is newer than
+/// the one it holds. A terminal queue is not polled, so a record that did not
+/// move the sequence would be written here and never reach the row it is about
+/// — which is exactly what happened on a real native run before this was pinned.
+#[test]
+fn recording_an_adoption_moves_the_sequence_a_reader_installs_by() {
+    let fixture = TestFile::new("queue-adoption-sequence");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::Convert),
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("adopt.raw"));
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = operation_of(&update);
+    let before = service.conversion_state().sequence;
+
+    adopt_visible(&service, operation).expect("a finalized output is adoptable");
+
+    let after = service.conversion_state();
+    assert!(
+        after.sequence > before,
+        "the adoption's answer was recorded without moving the sequence, so no \
+         reader would install it: {before} -> {}",
+        after.sequence
+    );
+    assert_eq!(
+        terminal_queue(&after).items[0].adoption,
+        ConversionItemAdoptionDto::Settled {
+            added: 1,
+            already_in_workspace: 0,
+            refused: 0,
+            refusals: Vec::new(),
+        }
+    );
+}

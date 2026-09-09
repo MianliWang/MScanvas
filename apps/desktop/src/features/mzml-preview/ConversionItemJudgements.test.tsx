@@ -165,6 +165,16 @@ function rowFor(result: HTMLElement, fileName: string): HTMLElement {
   return row;
 }
 
+/** Opens the numbered row's disclosure and returns its text. */
+async function details(index: number): Promise<string> {
+  const result = await queueResult();
+  const row = within(result).getAllByRole("listitem")[index - 1];
+  if (row === undefined) {
+    throw new Error(`no queue row ${String(index)}`);
+  }
+  return openDetails(row).textContent ?? "";
+}
+
 /** Opens a row's detail disclosure the way a user does. */
 function openDetails(row: HTMLElement): HTMLElement {
   const summary = within(row).getByText(/^Details for /).closest("summary");
@@ -450,6 +460,28 @@ describe("the five judgements of one queue item", () => {
     expect((stillJudged as HTMLElement).textContent).toMatch(/^Output-only\./);
   });
 
+  it("shows what an adoption did without waiting for anything else to happen", async () => {
+    // Rust records the fifth judgement on the queue, and the adoption's reply
+    // carries the roster rather than the queue. A terminal queue is not polled,
+    // so a document that did not re-read it would go on saying nobody had asked
+    // for the rest of the session while Rust held the answer. Caught on a real
+    // native run before it was pinned here.
+    const api = terminalApi([converted("file-1", "run-1.raw")], [acquisition(1)]);
+    renderApp(api);
+    const result = await queueResult();
+
+    expect(await details(1)).toContain("Not added yet.");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add converted output to workspace" }),
+    );
+
+    await waitFor(() => {
+      expect(rowFor(result, "run-1.raw").textContent).toContain(
+        "When outputs were last added: 1 added, 0 already in the workspace, 0 not added.",
+      );
+    });
+  });
+
   it("keeps an open disclosure open across an adoption, and loses no focus", async () => {
     const api = terminalApi(
       [converted("file-1", "run-1.raw"), converted("file-2", "run-2.raw")],
@@ -475,7 +507,13 @@ describe("the five judgements of one queue item", () => {
     });
     adopt.focus();
     fireEvent.click(adopt);
-    await screen.findByText(/1 added, 1 already in the workspace|added,/);
+    // The panel's own summary, not any row's: every row now carries a sentence
+    // containing "added", so a page-wide text query would match several.
+    await waitFor(() => {
+      expect(
+        document.querySelector(".conversion-adoption-summary")?.textContent ?? "",
+      ).toContain("added,");
+    });
 
     expect(details.open).toBe(true);
     // The control the user activated is still on screen and still focused: it

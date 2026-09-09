@@ -297,12 +297,18 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
     expect(await browser.$(PANEL).getText()).toContain(`${changedName} was not added: changed since it was converted.`);
     expect(await rosterNames()).toHaveLength(QUEUE_SIZE + 1);
 
-    // The rows say what the adoption did with their own outputs.
+    // The rows say what the adoption did with their own outputs. Waited for:
+    // the reply carries the roster, and the judgement lives on the queue, so
+    // the document re-reads the slot and the row settles a round trip later.
+    await browser.waitUntil(
+      async () => (await details(1)).includes("When outputs were last added"),
+      { timeout: 60_000, timeoutMsg: "The row never reported what the adoption did." },
+    );
     const addedRow = await details(1);
     expect(addedRow).toContain("When outputs were last added: 1 added, 0 already in the workspace, 0 not added.");
     const refusedRow = await details(2);
     expect(refusedRow).toContain("When outputs were last added: 0 added, 0 already in the workspace, 1 not added.");
-    expect(refusedRow).toContain("Not added because each changed since it was converted.");
+    expect(refusedRow).toContain("Not added because it changed since it was converted.");
     // A refusal erases neither the finalization nor what the check established.
     expect(refusedRow).toContain(`One output obtained its final name: ${changedName}.`);
     expect(refusedRow).toContain("Output-only.");
@@ -321,7 +327,11 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
     expect(await browser.$(`${PANEL} .conversion-adoption-summary`).getText())
       .toBe("0 added, 1 already in the workspace, 1 not added.");
     expect(await rosterNames()).toHaveLength(QUEUE_SIZE + 1);
-    expect(await details(1)).toContain("When outputs were last added: 0 added, 1 already in the workspace, 0 not added.");
+    await browser.waitUntil(
+      async () =>
+        (await details(1)).includes("0 added, 1 already in the workspace"),
+      { timeout: 60_000, timeoutMsg: "The row never reported the repeated adoption." },
+    );
 
     // The queue's own result is what it was: an adoption reads it and does not
     // rewrite it.

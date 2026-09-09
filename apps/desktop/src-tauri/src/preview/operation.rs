@@ -2354,6 +2354,12 @@ impl ConversionSlot {
                 item.record_adoption(adoption.clone());
             }
         }
+        // Something a reader can see has changed, so the ordering key moves.
+        // A document installs a read by sequence and a terminal queue is not
+        // polled, so without this the answer would be recorded here and never
+        // reach the row it is about -- which is the whole reason it is recorded
+        // rather than left in the reply. Caught on a real native run.
+        self.advance();
         true
     }
 

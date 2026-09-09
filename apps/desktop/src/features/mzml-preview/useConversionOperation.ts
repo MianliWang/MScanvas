@@ -1396,6 +1396,17 @@ export function useConversionOperation(
         if (mounted.current) {
           setAdopting(false);
           setAdoption(result);
+          // The queue is re-read, because the adoption's answer is recorded on
+          // it. Rust writes what each item's outputs did onto the row they
+          // belong to -- that is what makes the fifth judgement survive a
+          // remount -- and this reply carries the roster rather than the queue.
+          // A terminal queue is not polled, so without this read the rows would
+          // go on saying nobody had asked for the rest of the session while
+          // Rust held the answer.
+          //
+          // One read, and it launches nothing: reading the slot starts no
+          // process, opens no file and reruns no conversion.
+          readState();
         }
         // Handed on even when this document is gone. The rows were committed by
         // Rust either way, and the replacement reads the roster on mount.
@@ -1409,7 +1420,7 @@ export function useConversionOperation(
         setAdopting(false);
         setError(toPreviewError(cause));
       });
-  }, [api, onOutputsAdopted, state]);
+  }, [api, onOutputsAdopted, readState, state]);
 
   const dismissError = useCallback(() => {
     setError(null);

@@ -7821,7 +7821,7 @@ optional observation left, and the item's own staged evidence, process and run
 identity arrived.
 
 Implementation is complete and every local gate passes at the reviewed head:
-1671 frontend tests across 70 files, 1547 Rust tests across the workspace with
+1672 frontend tests across 70 files, 1548 Rust tests across the workspace with
 23 ignored, lint, both typechecks, the build, `cargo fmt --check`, clippy with
 warnings denied, `check_repo.py` and `git diff --check`.
 
@@ -7852,16 +7852,26 @@ absorbed, and this diff cannot be their cause: it changes no viewer or spectrum
 production file, and every stylesheet rule it adds is scoped to a class name
 this slice introduces.
 
-**Native validation is `BLOCKED`, and is recorded as blocked rather than
-claimed.** The interactive Windows session was locked for the whole of this
-slice's execution: `LockApp` was running and the foreground window was never one
-this application or its owned picker could take. The native suites drive the
-real owned pickers through helpers that refuse when the exact owned dialog is
-not foreground, and that refusal is the guard working. Nothing was weakened, no
-`Cancel` was substituted for an `Escape`, no post-cancel focus was scripted and
-no security policy was changed. The proof is written, typechecked and committed
-as `e2e/specs/m6.9-output-completion.tauri.e2e.ts`, and the provider and fixture
-it needs were verified present. What is missing is an interactive session.
+**Native validation is complete on the build attributable to this head.** One
+build, four suites, one binary: `target/e2e/release/mscanvas-desktop.exe`,
+SHA-256 `d9d3eb8404a6aca5ba486dd127c60a4323306ae898a0dd79f1d4f41a4ee49ae5`, WebView2 and
+msedgedriver 152.0.4191.66, against ProteoWizard 3.0.26013.47b13cf 64-bit and
+the approved Thermo fixture. M6.9 1/1 — a real output-only completion of two
+acquisitions, the digest on the wire re-computed from the file on disk, two
+different run identities for two attempts of one plan, the manifest read off the
+rendered disclosure, adoption only when asked, a real changed-output refusal
+that leaves the finalization and its integrity result intact, and a real
+duplicate. Affected regressions on the same binary: M6.6 5/5 including the real
+Escape at the exact owned folder picker, M6.7 2/2 and M6.8 3/3. Sources were
+digest-checked afterwards and are unchanged; nothing outside the run's own
+scratch directory was written. Nothing was weakened to reach any of it.
+
+**That run found two defects, both mine, and both are fixed.** The adoption's
+answer is recorded on the queue so it survives a re-read — and the document did
+not re-read the queue after adopting, so the row went on saying nobody had
+asked. Recording it also did not advance the slot's ordering key, so even a
+re-read would have been discarded as stale. Neither was visible to the unit, the
+rendered or the review layers; a rendered test and a Rust test now pin each.
 
 The evidence and the changed-path closure are in
 [the M6.9 record](docs/ux/M6_9_OUTPUT_COMPLETION_ADOPTION.md).

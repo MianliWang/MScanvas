@@ -2102,6 +2102,50 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           };
         },
       );
+      // Modelled as Rust behaves: committing the adoption records what it did
+      // with each item's outputs on the queue that produced them, so a document
+      // that re-reads the slot sees the fifth judgement. The reply itself
+      // carries the roster and not the queue, which is exactly why the record
+      // has to live on the slot.
+      if (conversion.status === "terminal") {
+        const perItem = new Map<number, { added: number; already: number; refusals: string[] }>();
+        for (const outcome of outcomes) {
+          const entry = perItem.get(outcome.itemIndex) ?? {
+            added: 0,
+            already: 0,
+            refusals: [] as string[],
+          };
+          if (outcome.kind === "added") {
+            entry.added += 1;
+          } else if (outcome.kind === "alreadyInWorkspace") {
+            entry.already += 1;
+          } else {
+            entry.refusals.push(outcome.reason);
+          }
+          perItem.set(outcome.itemIndex, entry);
+        }
+        publishConversion({
+          ...conversion,
+          queue: {
+            ...conversion.queue,
+            items: conversion.queue.items.map((item, index) => {
+              const settled = perItem.get(index);
+              return settled === undefined
+                ? item
+                : {
+                    ...item,
+                    adoption: {
+                      kind: "settled" as const,
+                      added: settled.added,
+                      alreadyInWorkspace: settled.already,
+                      refused: settled.refusals.length,
+                      refusals: settled.refusals,
+                    },
+                  };
+            }),
+          },
+        });
+      }
       return {
         operationId,
         retryRound: conversion.status === "terminal" ? conversion.queue.retryRound : 0,

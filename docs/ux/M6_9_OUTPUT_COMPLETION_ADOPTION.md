@@ -1,7 +1,6 @@
 # M6.9 output completion and adoption
 
-Status: implemented; local, rendered and review validation complete; native
-evidence `BLOCKED`.
+Status: implemented and validated.
 Baseline: `96351b2adc0f668f12c26a3ca1ee471ca991f284` (published M6.8), tree
 `7383517e022de64faf90d05340ac2484f8467852`.
 
@@ -246,12 +245,12 @@ basename.
 
 ## Changed-path closure
 
-41 paths at this head: 31 of code and evidence and
+42 paths at this head: 32 of code and evidence and
 10 documents, 6 of them new. Re-derived at every head
 with `git diff --name-status` against the baseline rather than hand-maintained.
 It was wrong once and it is worth saying why: it was written before the rendered
 and native evidence existed, and it went on saying twenty-eight while the diff
-said 41. A reviewer found it by running the command this section names.
+said forty-two. A reviewer found it by running the command this section names.
 
 **The attempt's own facts** — `crates/proteowizard/src/attempt.rs` (new): the
 identity, the observation phase, the four-way staged evidence and the process
@@ -275,7 +274,9 @@ increment.
 
 **Interface** — `apps/desktop/src/features/mzml-preview/ConversionItemJudgements.tsx`
 (new), `ConversionItemJudgements.test.tsx` (new), `ConversionPanel.tsx`,
-`contracts.ts`, `apps/desktop/src/app/app.css`, plus the suites that pin the
+`contracts.ts`, `useConversionOperation.ts` — which re-reads the queue after an
+adoption, because the answer lives there — `apps/desktop/src/app/app.css`, plus
+the suites that pin the
 wire and the existing surfaces: `conversionContract.test.ts`,
 `ConversionPanel.test.tsx`, `ConversionOutputSet.test.tsx`,
 `ConversionAdoption.test.tsx`, `ConversionDiagnostics.test.tsx`,
@@ -296,10 +297,10 @@ and the M7/M8 seams it freezes), `0016` (the adoption relation this records),
 
 ## Validation
 
-Local gates at this head: frontend lint, typecheck, 1671 tests
+Local gates at this head: frontend lint, typecheck, 1672 tests
 across 70 files, build; `cargo fmt --all --check`; `cargo clippy
 --locked --workspace --all-targets --all-features -- -D warnings`; `cargo test
---locked --workspace --all-targets` (1547 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.
+--locked --workspace --all-targets` (1548 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.
 
 ### Rendered QA
 
@@ -335,29 +336,49 @@ decision exists for and each failing by assertion rather than by not compiling:
 
 ### Native evidence
 
-**`BLOCKED` at this head.** The interactive Windows session was locked for the
-whole of this slice's execution: `LockApp` was running and the foreground window
-was not one this application or its owned picker could take. The native suites
-drive the real owned pickers through `e2e/native/choose-workspace-files.ps1` and
-`choose-conversion-folder.ps1`, which refuse when the exact owned dialog is not
-foreground — and that refusal is the guard working. It was not weakened, no
-`Cancel` was substituted for an `Escape`, no post-cancel focus was scripted, and
-no security policy was changed to get past it.
+**Complete, on one binary.** Built at this head:
+`target/e2e/release/mscanvas-desktop.exe`, SHA-256
+`d9d3eb8404a6aca5ba486dd127c60a4323306ae898a0dd79f1d4f41a4ee49ae5`, 16,079,872 bytes. WebView2 and
+msedgedriver 152.0.4191.66. Provider: ProteoWizard 3.0.26013.47b13cf 64-bit,
+`msconvert.exe` SHA-256 prefix `9bb6f5d5033bb8ea`. Approved Thermo fixture
+SHA-256 `b3d97b38…2bd6dd7b`, recorded in the run's own identity entry.
 
-`e2e/specs/m6.9-output-completion.tauri.e2e.ts` is written, typechecked and
-committed, and it is what the proof will run. It drives the real picker, the
-real queue and the installed ProteoWizard to a real output-only completion,
-checks the digest on the wire against the file on disk, inspects the manifest,
-adopts explicitly, and covers a real duplicate and a real changed-output
-refusal — the changed file being one the suite itself wrote inside its own
-scratch directory, with every source copy's digest re-checked afterwards. It
-skips explicitly without its fixture environment rather than reporting a pass.
+`m6.9-output-completion.tauri` 1/1 — the real picker, the real queue and the
+installed provider, to a real output-only completion of two acquisitions:
 
-The environment it needs is present and was verified: ProteoWizard
-3.0.26013.47b13cf 64-bit, `msconvert.exe` SHA-256 prefix `9bb6f5d5033bb8ea`, and
-the approved hash-pinned `FT-HCD-MSX.raw` whose digest matches the value the
-suites pin. What is missing is an interactive session, which is not something
-this execution may manufacture.
+| What was proved | How |
+| --- | --- |
+| Real completion, judged output-only | Two items `finalized`, `validationMode: output_only`, `fullyVerified: false`, and the destination folder holding exactly the two names the plan derived |
+| The digest on the wire is the file's | The SHA-256 the row reports re-computed from the file on disk, and compared |
+| Process and staged output, per item | `settled / exited / 0` and `published` on both, and two **different** run identities for two attempts of one plan into one folder |
+| The manifest, on screen | The output's name, size and digest read out of the rendered disclosure |
+| Adoption is asked for | Zero adoption calls before the button was pressed, and no preview read at any point |
+| A real changed-output refusal | One output altered on disk *after* MSCanvas finalized it, by the suite, inside its own scratch directory: adoption reports `1 added, 0 already in the workspace, 1 not added`, names the file, and the refused row still reports its finalization and its integrity result |
+| A real duplicate | Asking again reports `0 added, 1 already in the workspace, 1 not added` and adds nothing |
+| The judgement survives a re-read | Each row's own adoption sentence, read back from the queue after the reply |
+
+Sources were digest-checked after the scenario and are unchanged. Nothing
+outside the run's own scratch directory was written, and no pre-existing target
+was touched.
+
+**Two defects were found by this run and are fixed.** Both are mine, and both
+were invisible to every other layer. The adoption's answer is recorded on the
+queue, and the document did not re-read the queue after adopting — so the row
+went on saying nobody had asked while Rust held the answer. And recording it did
+not advance the slot's ordering key, so even once the document did re-read, the
+update was discarded as stale. A rendered test and a Rust test now pin each.
+
+**Affected regressions on the same binary: M6.6 5/5, M6.7 2/2, M6.8 3/3.** M6.6
+includes the real Escape at the exact owned folder picker through the foreground
+guard, M6.7 both scope proofs, and M6.8 all three stop scopes — the stop that
+lands while the provider is genuinely executing settling `confirmed_gone` with
+the queue carrying on. Nothing was weakened at any point: no guard relaxed, no
+`Cancel` substituted for an `Escape`, no focus scripted after cancellation, and
+no browser result counted as native evidence.
+
+Evidence: `D:/tmp/mscanvas-m69-20260909/m69-native-L2arzk/`, and
+`regress/m66-native-H7UAnX/`, `regress/m67-native-5xJbnB/`,
+`regress/m68-native-D6LSc5/`.
 
 ## Residuals
 
@@ -384,5 +405,12 @@ this execution may manufacture.
   nothing here measures a cost worth trading the judgement for — but it is a
   real change in where that work happens and is recorded rather than left to be
   discovered. Owner: M6.11 to carry, or the first slice that measures it.
-- **The native proof is written and unrun.** See *Native evidence* above. Owner:
-  this slice, on the first interactive session.
+- **`msedgedriver` had to be restored** before the native suites could run. It
+  is fetched by the repository's own pinned `edgedriver` dependency, which is
+  lockfile restoration rather than a package addition, and the version it
+  resolved (152.0.4191.66) is the one WebView2 reports. The driver ports also
+  had to be moved off the defaults: 4444, 4445 and 4466 all fall inside a
+  Windows TCP exclusion range on this machine, so `tauri-driver` cannot bind
+  them. Both are environment facts rather than repository ones, and neither
+  changed a machine setting. Owner: none; recorded so the next run does not
+  rediscover them.
