@@ -21,6 +21,15 @@ function item(index: number, state: ConversionQueueItem["state"], attempts: numb
     datasetHandle: row(index).handle, fileName: row(index).fileName, sourceKind: "thermo_raw",
     output: { kind: "knownSingle", fileName: `sample-${index}.mzML` },
     state, attempts, retryable: false, result: null, error: null, cancellation: null,
+    // The three facts an attempt establishes about itself, plus the fifth
+    // judgement. A finished row renders them, so a fixture that omitted them
+    // would be describing a wire Rust does not produce.
+    process: state === "finalized"
+      ? { kind: "settled" as const, termination: "exited", exitCode: 0 }
+      : { kind: "notAttempted" as const },
+    staged: state === "finalized" ? { kind: "published" as const } : { kind: "notCreated" as const },
+    runIdentity: state === "finalized" ? `0000000000000001000000000000000${index}` : null,
+    adoption: { kind: "nothingToAdopt" as const },
   } as ConversionQueueItem;
 }
 
