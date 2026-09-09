@@ -131,8 +131,11 @@ separately.
 
 **Re-taken at the final head**, on the same rule the suites are held to: this
 measurement is produced through the launch path, so a changed launch path makes
-an older run describe a different boundary. Run 06, taken at head `1b9298a`
-after the ninth round changed that path again, reproduces runs 01 to 05 —
+an older run describe a different boundary. Run 06 was taken at `1b9298a`, after
+the ninth round changed that path again; the diff from there to the published
+head is two frontend files and markdown, and this harness is a console binary
+built from `crates/proteowizard` alone, so nothing it compiles has moved. It
+reproduces runs 01 to 05 —
 `provider.executable_sha256` still
 `9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD`, a kernel
 cumulative `total_owned_processes` of 1 in every scenario,
@@ -791,9 +794,9 @@ again, so it was taken again. Every categorical fact reproduces; see
 **Native, on the build attributable to this head.** One build, and all three
 suites on that one binary — no rebuild between them.
 
-- Built at head `1b9298a`; binary `target/e2e/release/mscanvas-desktop.exe`,
-  SHA-256 `64f7edfacb4d3d05d5755109b2bc4642625a0ff336784b5d471581e6a8d23667`,
-  16,093,184 bytes. Everything committed after `1b9298a` is markdown — the diff
+- Built at head `9a7ac4c`; binary `target/e2e/release/mscanvas-desktop.exe`,
+  SHA-256 `43f57fe49b893d529e77e98822d9d5a54e563ddb332f96351939cff7ddbc26b8`,
+  16,093,184 bytes. Everything committed after `9a7ac4c` is markdown — the diff
   to the published head is `.md` only and no compiled input — so the binary
   above is the one this head builds.
 - WebView2 and msedgedriver 152.0.4191.66; approved Thermo fixture SHA-256
@@ -801,7 +804,7 @@ suites on that one binary — no rebuild between them.
 
 | Scenario | Result |
 | --- | --- |
-| A stop while the provider is genuinely executing | `ownedTree: confirmed_gone`, `processLaunched: true`, `termination: cancelled`, 39 ms from request to settle, no partial output and no staging residue; the queue carried on to `completed` with 7 finalized, 1 cancelled, 0 not run |
+| A stop while the provider is genuinely executing | `ownedTree: confirmed_gone`, `processLaunched: true`, `termination: cancelled`, 29 ms from request to settle; the converter had begun writing, so `partialOutputObserved` is true and `stagingResidue` is `null` — the private staging was removed and nothing partial reached a destination. The queue carried on to `completed` with 7 finalized, 1 cancelled, 0 not run |
 | A waiting item settled without launching it | index 7, 0 attempts, counted as 1 skipped by request, queue `completed` with 7 finalized |
 | The whole queue stopped mid-execution | `stopped`, 1 attempted of 8, 0 finalized, 1 cancelled, **0** whose stop could not be confirmed, 7 not run |
 
@@ -820,18 +823,30 @@ real custom picker"*. Nothing was weakened to reach it at any point: no guard
 relaxed, no Cancel substituted for Escape, no focus scripted after cancellation,
 and no browser result counted as native evidence.
 
-Evidence: `D:/tmp/mscanvas-m68-20260908/r9/m68/m68-native-hko8Xa/`,
-`r9/m66/m66-native-tGAi65/`, `r9/m67/m67-native-Aln8L1/`, and
+Evidence: `D:/tmp/mscanvas-m68-20260908/r9c/m68/m68-native-d6FIsU/`,
+`r9c/m66/m66-native-A9gYcu/`, `r9c/m67/m67-native-hL61q6/`, and
 `final-binary-identity-r9.log`. Each run's own identity entry records the binary
 digest above and the approved Thermo fixture `b3d97b38…2bd6dd7b`.
 
-Two earlier passes of the same three suites also gave 3/3, 5/5 and 2/2: at head
-`1fd44df` on binary `9da84ae5…` (`m68-native-VDU6PR/`, `m66-native-XtIpn5/`,
-`m67-native-aoZYSD/`, `final-binary-identity.log`), and at head `d0da14d` on
-binary `a7e0cdb0…`. Neither is this candidate's evidence — the ninth round's
-repairs changed the process and classification boundary after both — and they
-are recorded here only so the count of native runs in this milestone is not
-silently smaller than it was.
+**One invocation of this binary before it did not pass, and it is recorded
+rather than dropped.** `m68-native-r9b.log`: M6.8 2/3, M6.6 5/5, M6.7 2/2, with
+the first M6.8 scenario failing in the UI-Automation helper — *"Native
+workspace-files choose failed: The native button click timed out or failed"* —
+before the application was asked anything. That is the helper losing a click on
+the operating system's own file dialog, not a result about the product, and it
+is the reason this suite drives that window by UI Automation rather than by
+WebDriver at all. The desktop was unlocked either side of it and no owned
+process was left behind. The re-run above is the same binary, unchanged: nothing
+was rebuilt, no guard was relaxed and no step was substituted.
+
+Three earlier passes of the same three suites also gave 3/3, 5/5 and 2/2: at
+head `1b9298a` on binary `64f7edfa…` (`r9/`), at head `1fd44df` on binary
+`9da84ae5…` (`m68-native-VDU6PR/`, `m66-native-XtIpn5/`, `m67-native-aoZYSD/`,
+`final-binary-identity.log`), and at head `d0da14d` on binary `a7e0cdb0…`. None
+of them is this candidate's evidence — the ninth round's repairs changed the
+process and classification boundary, and its tenth changed the interface to it —
+and they are recorded here only so the count of native runs in this milestone is
+not silently smaller than it was.
 
 **What the earlier runs were.** They are kept as history and belong to the heads
 they were taken on, not to this one: M6.8 3/3, M6.7 2/2 and M6.6 4/5 at head
