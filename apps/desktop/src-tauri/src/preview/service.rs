@@ -2551,6 +2551,14 @@ impl PreviewService {
         let mut workspace = self.workspace();
         let outcomes = commit_adoption_candidates(&mut workspace, inspected);
         let described = describe_adoptions(&workspace, outcomes);
+        let per_item = per_item_adoption(&described);
+        let result = WorkspaceOutputAdoptionResultDto {
+            operation_id: operation.to_string(),
+            retry_round,
+            roster: roster_of(&workspace),
+            outcomes: described,
+        };
+        drop(workspace);
         // The fifth judgement, written back onto the queue that produced these
         // outputs before the reply leaves. The reply is one message and the
         // queue is read again on every poll and every remount, so an answer
@@ -2559,18 +2567,15 @@ impl PreviewService {
         // between the two halves cannot be given this round's answers -- and
         // the same check has already refused the commit above, so this is the
         // last of three rather than the first.
-        self.conversion_slot().record_adoption(
-            operation,
-            retry_round,
-            &per_item_adoption(&described),
-        );
-        let result = WorkspaceOutputAdoptionResultDto {
-            operation_id: operation.to_string(),
-            retry_round,
-            roster: roster_of(&workspace),
-            outcomes: described,
-        };
-        drop(workspace);
+        //
+        // Taken after the registry lock is released rather than under it. The
+        // slot is very nearly a leaf lock and the one documented nesting is
+        // "read the described rows first, take this afterwards"; there is no
+        // reason for this write to hold both at once, and not holding both is
+        // one fewer ordering to keep true. The gate is still held, which is
+        // what serializes this against another workspace mutation.
+        self.conversion_slot()
+            .record_adoption(operation, retry_round, &per_item);
         // Cleared under the gate this commit still holds, not at the end of the
         // function. Between the two a drop or a queued mutation could take the
         // gate, see a flag for an adoption that has already finished, and be
