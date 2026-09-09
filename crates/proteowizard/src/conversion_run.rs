@@ -1607,8 +1607,12 @@ impl ConversionRunFailure {
     /// says. Four paths reach it and no others: a Job that would not report
     /// itself empty within its bounded window, an owned teardown that failed, a
     /// root that was created and could neither be started nor reclaimed, and
-    /// **any other failure whose owned Job was not observed empty afterwards**.
-    /// Each is a process this run owned whose end nothing observed.
+    /// **any other failure of the supervised execution phase whose owned Job was
+    /// not observed empty afterwards**. The last is scoped to that phase because
+    /// that is where the observation is taken: a launch that never created a
+    /// Job, or an environment refused before one existed, has no owned tree to
+    /// be uncertain about and classifies elsewhere. Each of the four is a
+    /// process this run owned whose end nothing observed.
     ///
     /// **`NotAwaited` is not included, and what makes that safe is an
     /// observation rather than an argument.** It once was an argument, and the
@@ -2161,9 +2165,10 @@ pub enum OwnedTreeDisposition {
     /// *written* by a caller. The spelling everyone would reach for is refused
     /// in a pattern too; what stays legal is the struct pattern
     /// `ConfirmedGone { .. }`, which reads the judgement without being able to
-    /// make one. Every consumer reaches it
-    /// through [`OwnedTreeDisposition::of`], or asks one of the predicates
-    /// below.
+    /// make one. A consumer receives it from a supervised run — through
+    /// [`CancellationReport::owned_tree`] — or asks one of the predicates
+    /// below. The derivation itself is `pub(crate)` and no longer something a
+    /// consumer can name.
     ///
     /// A repository check over spellings cannot do that much: an import can put
     /// a member behind any name, and four reviewers demonstrated exactly that

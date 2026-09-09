@@ -2632,10 +2632,15 @@ mod tests {
                 classified: BackendExecutionFailure::NotAwaited,
                 refuses_further_work: false,
             },
+            // Observed empty, so the promotion does not fire and the fold's
+            // own branch is what decides. Written `false` at first, which made
+            // this row a copy of the one above it: the primary was already
+            // `OwnedJobNotEmptied` before `add_process_cleanup_context` saw it,
+            // so the branch this row exists for never ran.
             Step {
-                name: "an ordinary wait failure whose teardown itself failed",
+                name: "an emptied Job whose teardown request itself failed",
                 primary: wait(),
-                owned_job_observed_empty: false,
+                owned_job_observed_empty: true,
                 cleanup: Some(&teardown),
                 capture: None,
                 classified: BackendExecutionFailure::NotTerminated,

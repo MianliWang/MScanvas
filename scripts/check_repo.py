@@ -3378,6 +3378,13 @@ def _writes_the_identifier(line: str) -> bool:
     )
 
 
+# Every entry point that returns the judgement from a `ProcessOutput`. The
+# second is the `test-support` one added when the production derivation became
+# `pub(crate)`; a rule that watched only `of` could not see a production caller
+# reaching the test entry, and both PR Rust jobs compile with the feature on.
+CLAIM_DERIVATION_ENTRIES = ("of", "of_supervised_run_for_test")
+
+
 def _derivation_call(name: str) -> re.Pattern[str]:
     """A call to `of` on this name, however the path is written.
 
@@ -3385,7 +3392,10 @@ def _derivation_call(name: str) -> re.Pattern[str]:
     inside the path, which is how two compiling spellings walked past a
     substring test on one stripped line.
     """
-    return re.compile(r"\b" + re.escape(name) + r"\s*>?\s*::\s*of\s*\(")
+    entries = "|".join(re.escape(entry) for entry in CLAIM_DERIVATION_ENTRIES)
+    return re.compile(
+        r"\b" + re.escape(name) + r"\s*>?\s*::\s*(?:" + entries + r")\s*\("
+    )
 # The crate that creates the process and watches it end. Two lifecycles inside
 # it derive the judgement, and both supervise a real run; nothing outside it may.
 CLAIM_DERIVATION_SCOPE = "crates/proteowizard/src/"
@@ -3498,6 +3508,7 @@ _ANY_MODULE_DECLARATION = re.compile(
 _PATH_ATTRIBUTE = re.compile(r'#\[\s*path\s*=\s*"([^"]+)"\s*\]')
 _INCLUDE = re.compile(r'\binclude!\s*\(\s*"([^"]+)"\s*\)')
 _DECLARED_TEST_MODULES: dict[Path, frozenset[Path]] = {}
+_PRODUCTION_MODULES: dict[Path, frozenset[Path]] = {}
 
 
 def _declared_test_modules(root: Path) -> frozenset[Path]:
@@ -3618,10 +3629,24 @@ def _declared_test_modules(root: Path) -> frozenset[Path]:
                         back -= 1
                 if not governed:
                     plain.update(files_for(match.group(1)))
-    frozen = frozenset({path for path in declared if path.resolve() not in plain}
-                       - plain)
+    frozen = frozenset(
+        {path for path in declared if path.resolve() not in plain} - plain
+    )
     _DECLARED_TEST_MODULES[root] = frozen
+    _PRODUCTION_MODULES[root] = frozenset(plain)
     return frozen
+
+
+def _production_modules(root: Path) -> frozenset[Path]:
+    """Resolved paths some file compiles into the product.
+
+    Populated by `_declared_test_modules`, which is where the declarations are
+    read. Asked separately because *both* test exemptions have to answer to it:
+    a file is not a test because of where it sits if the crate also builds it.
+    """
+    if root not in _PRODUCTION_MODULES:
+        _declared_test_modules(root)
+    return _PRODUCTION_MODULES[root]
 
 
 def _consume_string(line: str, index: int) -> tuple[int, bool]:
@@ -3882,6 +3907,13 @@ def _is_test_source(path: Path, root: Path) -> bool:
     claim at all. What makes a file one is the declaration that compiles it for
     tests only, which `_declared_test_modules` reads.
     """
+    # The `#[path]` subtraction applies to both exemptions. It was written for
+            # the declared-module one and the integration-test branch was placed
+            # in front of it, so `#[path = "../tests/forged.rs"] mod forged;` in a
+            # crate root compiled a `tests/` file into the library while the name
+            # of its directory exempted it. A reviewer demonstrated it.
+    if path.resolve() in _production_modules(root):
+        return False
     return _is_integration_test_target(path) or path in _declared_test_modules(root)
 
 
@@ -4380,6 +4412,36 @@ CLAIM_BYPASSES: tuple[tuple[str, str, str, str], ...] = (
         "use super::destination::admit_destination_root;",
         "use super::destination::admit_destination_root;\n"
         "use mscanvas_proteowizard::OwnedTreeDisposition::ConfirmedGone;",
+    ),
+    # The two the delta review demonstrated against the closure itself.
+    #
+    # `<crate>/tests/*.rs` is a Cargo target convention, but `#[path]` in a crate
+    # root can compile one of those files into the library — and the
+    # integration-test exemption was placed in front of the subtraction written
+    # to catch exactly that.
+    (
+        "a path attribute compiles an integration-test file into the library",
+        "crates/proteowizard/src/lib.rs",
+        "mod cancellation;",
+        '#[path = "../tests/forged.rs"]\nmod forged;\nmod cancellation;',
+        (
+            "crates/proteowizard/tests/forged.rs",
+            None,
+            'pub const FORGED: &str = "confirmed_gone";\n',
+        ),
+    ),
+    # The derivation gained a second entry name when the production one became
+    # `pub(crate)`. A rule watching only `of` could not see a production caller
+    # reaching the test entry, and both PR Rust jobs compile with the feature on.
+    (
+        "the derivation is reached through the test-support entry",
+        "apps/desktop/src-tauri/src/preview/conversion.rs",
+        "use super::backend::ConversionBackend;",
+        "use super::backend::ConversionBackend;\n"
+        "fn _forged(output: &mscanvas_proteowizard::ProcessOutput)\n"
+        "    -> mscanvas_proteowizard::OwnedTreeDisposition {\n"
+        "    mscanvas_proteowizard::OwnedTreeDisposition::of_supervised_run_for_test(output)\n"
+        "}",
     ),
     # The three the eighth review demonstrated. The first is smaller than any
     # other proof here: one existing line changed, no line added.

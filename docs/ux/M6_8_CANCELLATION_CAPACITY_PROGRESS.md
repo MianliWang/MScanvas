@@ -173,7 +173,7 @@ of it.
 | Guarantee | Enforced by |
 | --- | --- |
 | This attempt's process tree was owned before the image executed, and its disappearance was observed | The runtime: `CREATE_SUSPENDED` → `AssignProcessToJobObject` → resume, breakaway refused, and a kernel process count read after teardown. Nothing textual is involved. |
-| Who may **derive** the affirmative judgement in compiled production code | Rust privacy. `OwnedTreeDisposition::ConfirmedGone` is `non_exhaustive`, so no consumer can name it; `OwnedTreeDisposition::of` is `pub(crate)`, so no consumer can ask for it either. Measured downstream, not asserted — see *The downstream probe*. |
+| Who may **call the derivation**, and who may name the affirmative member | Rust privacy. `ConfirmedGone` is `non_exhaustive`, so no consumer can name it; `OwnedTreeDisposition::of` is `pub(crate)`, so no consumer can call it. Measured downstream, not asserted — see *The downstream probe*. **Narrower than "who may obtain the judgement"**; the difference is *The trust seam*. |
 | Names, wire/schema agreement, and descriptive copy | `check_repo.py`. **Policy over spellings, not a theorem.** It recognises the shapes it has been shown; it does not cover every Rust expansion or every synonym in prose, and this record does not claim it does. |
 
 **The claim's *name* is carried by the compiler, and since this closure so is
@@ -247,13 +247,22 @@ them.
 `ProcessRunner` is public and `run_conversion*` take `&dyn ProcessRunner`, so
 whoever chooses the runner chooses what a `ProcessOutput` says. In the shipped
 application that is one place — `backend.rs` passes `&SystemProcessRunner` — and
-substitution exists for tests. Privacy over the derivation stops a consumer
-*converting* a fabricated report into the affirmative judgement; it does not and
-cannot make a fabricated report authentic. What is trusted is the first-party
-code that selects the runner, and this is a boundary between MSCanvas's own
-layers rather than a sandbox against hostile code with authority to edit the
-provider crate. The same is true of the discovery help probes and the preview
-lane: they run through the same supervised boundary and the same one runner.
+substitution exists for tests.
+
+**Privacy is narrower than it first reads, and the difference is the seam.** It
+stops a consumer *calling* the derivation on a report it wrote. It does not stop
+a consumer implementing `ProcessRunner`, calling the public
+`run_conversion_cancellable`, returning a `ProcessOutput` it composed — every
+field is public — and receiving back a `CancellationReport` whose `owned_tree()`
+is the affirmative member. The crate derived it, from input the caller supplied.
+That path is not new and this closure did not narrow it; what would be new is
+claiming otherwise, so this record does not.
+
+What is trusted, therefore, is the first-party code that selects the runner: one
+call site in the desktop crate. This is a boundary between MSCanvas's own layers,
+not a sandbox against hostile code with authority to edit the provider crate or
+its callers. The same is true of the discovery help probes and the preview lane —
+they run through the same supervised boundary and the same one runner.
 
 `validate_the_cancellation_claim_has_one_origin` in `scripts/check_repo.py`
 carries what a type cannot. It checks that the conjunction is defined once and
@@ -301,7 +310,7 @@ buys is narrower and worth stating exactly: a wrong *description* cannot become
 a wrong *claim in code*. The words can drift; the member cannot be written by
 the code that reads them.
 
-**The guard proves itself.** On every run it applies thirty-three deliberate bypasses
+**The guard proves itself.** On every run it applies thirty-five deliberate bypasses
 to isolated copies and requires each to be detected, including all six the two
 reviewers demonstrated: the alias import, the braced member import, the braced
 ownership import, a production claim hidden behind a file-based test module, the
