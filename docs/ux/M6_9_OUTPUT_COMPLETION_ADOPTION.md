@@ -425,10 +425,14 @@ adoption result, no duplicate ids and no horizontal overflow at any of the four.
 Plus M6.8 10/10, M6.7 7/7 and M6.6 8/8 on the same head. Screenshots and console
 records inspected; console empty.
 
-Run at this head against the bundle this head builds: `index-BHoIIXOe.js`,
-SHA-256 prefix `2ce14d7f7f925876`, beside `index-Cq2IHovW.css`
-(`683071bfc1a0e39d`) and `index.html` (`759be4131828bd26`). The suite is
-headless, so it does not need an unlocked session.
+Run at this head against the bundle this head builds: `index-D1OqEcxZ.js`,
+SHA-256 prefix `e9bd839221a53210`, beside `index-Cq2IHovW.css`
+(`683071bfc1a0e39d`) and `index.html` (`e654cd20ab9b3ea1`). The suite is
+headless, so it does not need an unlocked session — but it does need a port it
+can bind, and the one it names is now inside a Windows reserved range on this
+machine. The port is overridable for exactly that reason, the same way the
+native suite's driver ports already were; the default is unchanged and CI runs
+on it.
 
 **Two browser cases fail here and on the published baseline alike**: `m4.1`
 "offers all three formats for a spectrum that loaded with no peaks" and `m5.2`
@@ -474,20 +478,21 @@ not about the code, and it is reported rather than re-aimed silently.
 
 **Complete, on the binary this head builds, and that binary is named rather than
 assumed.** `target/e2e/release/mscanvas-desktop.exe`, SHA-256
-`60c208d2adcf81a624b52cf50bdf121f2cc6dd31f40d407fb0702358950964f5`, 16,082,944
+`c89b3270a9f2c30cb0e6a80efe05f136f753d875b7b6e43361fe0343dc790684`, 16,082,944
 bytes — the value the run recorded in its own identity entry, not one read
 beside it. WebView2 and msedgedriver 152.0.4191.66. Provider: ProteoWizard
 3.0.26013.47b13cf 64-bit, `msconvert.exe` SHA-256 prefix `9bb6f5d5033bb8ea`.
 Approved Thermo fixture SHA-256 `b3d97b38…2bd6dd7b`, recorded the same way.
 
-Two earlier complete runs, at `d9d3eb8404a6aca5…` and `942af64835219b0e…`, are
-what found the defects recorded below. Neither is the evidence for this head:
-the repairs after them changed a phase identifier, several rendered sentences,
-the member states, the member counts and both of a stop's answers, so every
-suite was taken again on the binary above. The set was also `BLOCKED` for a
-stretch by a locked Windows session, which is what a locked session does to a
-proof that drives real dialogs; nothing was weakened to get past it, and the
-suites were run once the session was interactive again.
+Three earlier complete runs, at `d9d3eb8404a6aca5…`, `942af64835219b0e…` and
+`60c208d2adcf81a6…`, are what found the defects recorded below. None of them is
+the evidence for this head: the repairs after them changed a phase identifier,
+several rendered sentences, the member states, the member counts, both of a
+stop's answers and the scope a refused set states, so every suite was taken
+again on the binary above. The set was also `BLOCKED` for a stretch by a locked
+Windows session, which is what a locked session does to a proof that drives real
+dialogs; nothing was weakened to get past it, and the suites were run once the
+session was interactive again.
 
 `m6.9-output-completion.tauri` 1/1 — the real picker, the real queue and the
 installed provider, to a real output-only completion of two acquisitions:
@@ -531,10 +536,10 @@ Nothing was weakened at any point: no guard relaxed, no `Cancel` substituted for
 an `Escape`, no focus scripted after cancellation, no security policy changed,
 and no browser result counted as native evidence.
 
-Evidence at this head: `D:/tmp/mscanvas-m69-final2/m69-native-0ZEuVN/`, and
+Evidence at this head: `D:/tmp/mscanvas-m69-final3/m69-native-5eo573/`, and
 `regress/m66/`, `regress/m67/`, `regress/m68/` beside it. The earlier runs that
-found the defects are at `D:/tmp/mscanvas-m69-20260909/m69-native-L2arzk/` and
-`D:/tmp/mscanvas-m69-final/m69-native-UvLKtl/`.
+found the defects are under `D:/tmp/mscanvas-m69-20260909/`,
+`D:/tmp/mscanvas-m69-final/` and `D:/tmp/mscanvas-m69-final2/`.
 
 ## Residuals
 
