@@ -310,9 +310,10 @@ adoption result, no duplicate ids and no horizontal overflow at any of the four.
 Plus M6.8 10/10, M6.7 7/7 and M6.6 8/8 on the same head. Screenshots and console
 records inspected; console empty.
 
-Run at this head against the bundle this head builds: `index-CSn6z4bh.js`, SHA-256
-prefix `0ec221fd0ca39da7`, beside `index-Cq2IHovW.css` (`683071bfc1a0e39d`) and `index.html`
-(`19eeddea7c4e8138`). The suite is headless, so it does not need an unlocked session.
+Run at this head against the bundle this head builds: `index-BAPQGOhn.js`,
+SHA-256 prefix `fd26b9e58a790679`, beside `index-Cq2IHovW.css`
+(`683071bfc1a0e39d`) and `index.html` (`9b70fe7be19a9df9`). The suite is
+headless, so it does not need an unlocked session.
 
 **Two browser cases fail here and on the published baseline alike**: `m4.1`
 "offers all three formats for a spectrum that loaded with no peaks" and `m5.2`
