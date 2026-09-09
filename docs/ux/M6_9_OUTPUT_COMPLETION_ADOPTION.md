@@ -425,7 +425,7 @@ introduces. They are recorded rather than absorbed.
 
 ### Mechanism reversions
 
-Seven, each failing the test its decision exists for and each failing **by
+Eight, each failing the test its decision exists for and each failing **by
 assertion** rather than by not compiling:
 
 | Reversion | Test that caught it |
@@ -436,7 +436,8 @@ assertion** rather than by not compiling:
 | The identity minted after the provider ran rather than before | `a_failed_launch_is_indeterminate_rather_than_no_process` |
 | A refused member left without its own state | `one_bad_member_publishes_nothing` |
 | The export not counting refused members | `every_private_sciex_failure_is_diagnosable_and_path_free` |
-| A stop's ending read from the facts beside it | `a_stop_reports_the_ending_the_boundary_decided_rather_than_the_facts_beside_it`, `a_stop_that_beat_the_process_still_says_how_the_attempt_ended` |
+| A stop's ending read from the facts beside it (the rule) | `a_stop_reports_the_ending_the_boundary_decided_rather_than_the_facts_beside_it` |
+| A stop's ending read from the facts beside it (the call site) | `a_stop_that_beat_the_process_still_says_how_the_attempt_ended` |
 
 They were run serially in an **isolated copy of this head**, extracted with `git
 archive` into a scratch directory with its own `CARGO_TARGET_DIR` — no symlink
