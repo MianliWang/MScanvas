@@ -1925,7 +1925,7 @@ pub fn queue_too_large() -> PreviewErrorDto {
 pub fn queue_is_empty() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "queue_is_empty",
-        "Select at least one Thermo RAW row to convert.",
+        "Select at least one convertible row to convert.",
         false,
     )
 }

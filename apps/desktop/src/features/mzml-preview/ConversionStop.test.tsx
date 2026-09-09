@@ -459,15 +459,45 @@ describe("stopping a running conversion queue", () => {
     });
   });
 
-  it("names the items a lost converter process left behind, in a completed queue", async () => {
+  it("tells a listener that this file's stop was accepted", async () => {
     /*
-     * The refusal this milestone added ends the queue *without* a stop: a
-     * session that cannot account for a converter process refuses the rest, so
-     * the terminal reason is `completed` while the items left behind are
-     * `notRun` and the one that lost the process is `cancellationFailed`. Those
-     * two were the only states a completed queue was assumed never to hold, and
-     * naming five counts would report them nowhere -- the same defect the
-     * summary was widened to fix, reached by the path this slice added.
+     * The queue-level stop has been announced since M3.4. The per-item one had
+     * nothing: the state is still `running` with the item still `running`, so
+     * the region returned the unchanged "Converting item N of M" and, being
+     * unchanged, said nothing at all -- while the panel changed its button and
+     * swapped its note, both outside any live region.
+     */
+    let settle: (state: WorkspaceConversionState) => void = () => {};
+    const held = new Promise<WorkspaceConversionState>((resolve) => {
+      settle = resolve;
+    });
+    const api = apiWith(runningQueue(), { cancelItem: () => held });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const cancelItem = await within(panel).findByRole("button", {
+      name: "Stop this file",
+    });
+    fireEvent.click(cancelItem);
+
+    await waitFor(() => {
+      expect(liveRegion()).toContain("Stopping run-2.raw.");
+    });
+    expect(liveRegion()).toContain("may still finish on its own");
+    settle(runningQueue());
+  });
+
+  it("renders both defensive counts a completed queue could hold", async () => {
+    /*
+     * **A rendering test for a pairing Rust does not currently produce, and it
+     * says so rather than claiming otherwise.** `notRun` in a completed queue
+     * is reachable -- the test above exercises the real path, where a session
+     * that cannot account for a process refuses the rest of the queue -- but
+     * `cancellationFailed` is not: that state has one producer, a stop whose
+     * termination could not be confirmed, and the queue is then `stopFailed`.
+     * The summary and the live region carry it anyway, for the reason the panel
+     * gives: a count neither of them can render is a count they would report
+     * nowhere if the pairing ever changed. This pins that they can.
      */
     const api = apiWith({
       status: "terminal",

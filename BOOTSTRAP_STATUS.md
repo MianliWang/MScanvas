@@ -7717,11 +7717,16 @@ decides it — not the value, which any caller can still derive from a
 `ProcessOutput` it built, because that report is what a substituted runner
 returns and no type separates a fabricated one from a supervised one. The
 derivation is therefore confined to that crate by a `check_repo.py` guard, which
-proves itself against twenty-six deliberate bypasses on every run, four of
+proves itself against twenty-six deliberate bypasses on every run, seven of
 them edits reviewers demonstrated against it and two written for rules that
 until the fifth review could not fail at all.
 
-Two independent reviews rejected the first candidate and every finding was real:
+**Six rounds of two independent reviews rejected six candidates**, and reviewers
+defeated the claim guard with compiling edits in five of them; each of those
+edits is now one of its proofs. Every finding was verified against the code
+before it was acted on, and every repair is proved by reverting it. The first
+round is below and the rest are in
+[the M6.8 record](docs/ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md):
 a skip landing between the worker choosing an item and starting it wedged the
 queue; the guard was blind to 650 lines of production `service.rs`; the item
 state and queue count still described a confirmed tree for a state also reached
@@ -7744,7 +7749,7 @@ not widened. Capacity stays 16 with a current rationale. Two progress defects
 are closed: a completed queue now accounts for every item it held, and the retry
 display no longer speaks for a rerun that is already done.
 
-Implementation is complete and every local gate passes: 1656 frontend tests,
+Implementation is complete and every local gate passes: 1657 frontend tests,
 1514 Rust tests across the workspace, lint, both typechecks, the build,
 `cargo fmt --check`, clippy with warnings denied, and `check_repo.py` with the
 claim guard's twenty-six self-proved bypasses. Rendered QA is browser 10/10 at four

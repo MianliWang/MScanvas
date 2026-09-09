@@ -881,9 +881,18 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
     const current = position === -1 ? undefined : queue.items[position];
     // Named rather than counted alone, so a repeated poll that finds the same
     // item says the same sentence and is not announced twice.
-    return current === undefined
-      ? `Converting ${String(queue.itemCount)} acquisitions.`
-      : `Converting item ${String(position + 1)} of ${String(queue.itemCount)}, ${current.fileName}.`;
+    if (current === undefined) {
+      return `Converting ${String(queue.itemCount)} acquisitions.`;
+    }
+    // A per-item stop this document asked for, said where a queue stop is said.
+    // The panel changes its button and its note; both are outside any live
+    // region, so a listener had no confirmation that the control this milestone
+    // adds had been accepted at all -- while the queue-level stop two lines
+    // above has had one since M3.4.
+    if (workspace.conversion.cancellingItem) {
+      return `Stopping ${current.fileName}. The queue keeps going either way, and this file may still finish on its own.`;
+    }
+    return `Converting item ${String(position + 1)} of ${String(queue.itemCount)}, ${current.fileName}.`;
   }
   if (state.status === "terminal" && state.reason === "stopFailed") {
     // Not "Queue stopped" either. The one thing this state does not establish
@@ -905,18 +914,21 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
       queue.cancellationFailedCount > 0
         ? `, ${String(queue.cancellationFailedCount)} stop could not be confirmed`
         : ""
-    }.${queue.error === null ? "" : ` ${queue.error.summary}`}`;
+    }.${
+      // Wherever the panel shows it. A stopped queue that finalized outputs
+      // showed the disclosure to a sighted reader and withheld it from a
+      // listener, which is the asymmetry this region exists not to have.
+      queue.items.some(conversionJudgedAnyOutput) ? " Output-only validation." : ""
+    }${queue.error === null ? "" : ` ${queue.error.summary}`}`;
   }
-  // **Not above the counts.** This short-circuit sat here, and the one state
-  // this milestone added reaches it every time: a session that loses track of a
-  // process refuses the rest of the queue, which settles `completed` with rows
-  // marked not-run *and* an error. A listener heard the refusal and none of the
-  // counts while the panel showed both -- exactly what the `stopped` branch
-  // above is careful to avoid. Only a queue with an error and nothing terminal
-  // to count belongs here.
-  if (queue.error !== null && state.status !== "terminal") {
-    return queue.error.summary;
-  }
+  // A short-circuit returning `queue.error.summary` alone stood here, and the
+  // one state this milestone added reached it every time: a session that loses
+  // track of a process refuses the rest of the queue, which settles `completed`
+  // with rows marked not-run *and* an error. A listener heard the refusal and
+  // none of the counts while the panel showed both. It is gone rather than
+  // guarded -- every non-terminal status has already returned above, so a guard
+  // would have been a branch that cannot run -- and the refusal is said after
+  // the counts below, exactly as the `stopped` branch says it.
   // The same condition the visible panel applies, because it is the same claim.
   // A queue whose items were all skipped judged nothing, and a skipped item's
   // existing file was explicitly not inspected.

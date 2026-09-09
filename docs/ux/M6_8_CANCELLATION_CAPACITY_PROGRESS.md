@@ -474,7 +474,7 @@ open) and this record. Fifteen, and the count is checkable: `git diff
 
 ## Validation
 
-Local gates: frontend lint, typecheck, 1656 tests across 69 files, build;
+Local gates: frontend lint, typecheck, 1657 tests across 69 files, build;
 `cargo fmt --all --check`; `cargo clippy --locked --workspace --all-targets
 --all-features -- -D warnings`; `cargo test --locked --workspace --all-targets`
 (1514 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`;
@@ -498,9 +498,11 @@ bundle and is not inherited. The bundle these cases exercised is
 The suite is headless, so it does not need an unlocked session — which is why
 it could be re-run at this head when the native suites could not.
 
-**Three rounds of two independent reviews rejected three candidates, and every
+**Six rounds of two independent reviews rejected six candidates, and every
 finding was verified against the code before it was acted on.** Each repair is
-proved by reverting it and watching a test report the defect.
+proved by reverting it and watching a test, or the guard's own bypass suite,
+report the defect. Reviewers demonstrated working bypasses of the claim guard in
+five separate rounds; each of those edits is now one of its proofs.
 
 Round 1: a skip landing between the worker choosing an item and starting it
 wedged the queue; the guard was blind to 650 lines of production `service.rs`;
@@ -516,7 +518,45 @@ member's name and make the compiler refuse it, which is where `non_exhaustive`
 came from, and to invert the description rule into an allowlist — which
 immediately found a live defect on a public API arm.
 
-Round 6 also defeated the guard three more times, each with something that
+Round 3: the guard's own test-source exemption could be won by naming a
+directory; the assign-failure path could strand an owned root without saying so;
+`NotAwaited` had been widened into the quarantine and would have refused a whole
+session on a fact that was not true; the launch refused any process reporting
+more than one thread, which would have failed every lane on a machine that
+injects one; the quarantine was raised by the conversion lane alone while its
+sentence named preview too; the skip single-flight test passed with its guard
+removed; ADR 0015's shipping definition of `cancelled` still asserted a confirmed
+tree; the diagnostics schema had moved from 1 to 2 with nothing recording it; and
+this document overstated what the compiler carries and contradicted itself about
+what the bypass proofs prove. All are repaired above.
+
+Round 4: two more demonstrated bypasses, both compiling — a braced
+`#[cfg(test)]` import arming a skip region over 158 lines of production
+`service.rs`, and a module declaration written inside a raw string literal that
+made all 8,303 lines of it a test source. The document rule had no proof at all,
+because the pristine copy the suite builds held no markdown. One row's honest
+qualification exempted its neighbours, so two rows beside `cancelled` could be
+rewritten into confirmed-tree claims undetected. The resume could be moved above
+the Job assignment and the two tests watching that interval would have stayed
+green. `NotAwaited` quarantined a session only when a stop was in flight.
+Discovery, the third lane that starts processes, could never quarantine. A skip
+during a rerun erased a failure the user had already seen. A queue this
+milestone's own refusal ends held rows the completed summary named nowhere. The
+per-item stop promised an outcome the race can falsify and said the control was
+available while it was in flight. And `non_exhaustive` was documented as
+refusing matching, which a two-crate probe disproved.
+
+Round 5: a comment containing a brace opened a skip region over production code
+and a raw-identifier module declaration exempted a whole production file — the
+same two attacks as round 4, in shapes the repairs had not covered, and both now
+answered by scrubbing comments and literals before anything is counted; two
+guard rules could not fail at all; a resume could start the root and *then*
+refuse, and the refusal was classified as a root that never started, which is
+retryable and raises no quarantine; and a skip during a rerun was still offered
+on a row that had already run, which Rust settled correctly and the interface
+then labelled as a failure with no mention of a skip.
+
+Round 6 defeated the guard three more times, each with something that
 compiles. A `#[cfg(test)]` written inside a block comment armed a region: the
 brace counter had been scrubbed a round earlier and the line that *arms* a
 region was left raw, so the same attack worked one line further up. A
@@ -528,7 +568,8 @@ about members, arriving a round late at rule 7. The attribute is read as code
 now, declarations are matched over the file as one text, and the derivation is
 matched under every name the type can be reached by in that file.
 
-Round 6: the screen-reader region returned the refusal *instead of* the counts
+Round 6, on the product side: the screen-reader region returned the refusal
+*instead of* the counts
 in exactly the state this milestone added — a session that loses track of a
 process refuses the rest of the queue, which settles `completed` with rows marked
 not-run and an error, and the region short-circuited on the error; the test meant
@@ -541,28 +582,6 @@ image that may have been running, and offered a retry. `BOOTSTRAP_STATUS.md`
 still cited a 34-path closure, and `ROADMAP.md` said a stop of a launched
 conversion now settles as a successful cancellation, which is the claim the whole
 `stopFailed` surface exists because it cannot make.
-
-Round 5: a comment containing a brace opened a skip region over production code
-and a raw-identifier module declaration exempted a whole production file — the
-same two attacks as round 4, in shapes the repairs had not covered, and both now
-answered by scrubbing comments and literals before anything is counted; two
-guard rules could not fail at all; a resume could start the root and *then*
-refuse, and the refusal was classified as a root that never started, which is
-retryable and raises no quarantine; and a skip during a rerun was still offered
-on a row that had already run, which Rust settled correctly and the interface
-then labelled as a failure with no mention of a skip.
-
-Round 3: the guard's own test-source exemption could be won by naming a
-directory; the assign-failure path could strand an owned root without saying so;
-`NotAwaited` had been widened into the quarantine and would have refused a whole
-session on a fact that was not true; the launch refused any process reporting
-more than one thread, which would have failed every lane on a machine that
-injects one; the quarantine was raised by the conversion lane alone while its
-sentence named preview too; the skip single-flight test passed with its guard
-removed; ADR 0015's shipping definition of `cancelled` still asserted a confirmed
-tree; the diagnostics schema had moved from 1 to 2 with nothing recording it; and
-this document overstated what the compiler carries and contradicted itself about
-what the bypass proofs prove. All are repaired above.
 
 **The provider measurement was re-taken rather than carried**, for the reason
 below — it is produced through this same launch path. It reproduces exactly; see

@@ -833,9 +833,9 @@ function PlanState({
           </dl>
 
           <p className="quiet-text" id="conversion-validation-disclosure" role="note">
-            {OUTPUT_ONLY_DISCLOSURE} They run one at a time. Stop queue ends the whole
-            queue; Stop this file ends only the one being converted, and Skip settles a row
-            that has not started.
+            {OUTPUT_ONLY_DISCLOSURE} Acquisitions convert one at a time. Stop queue ends
+            the whole queue; Stop this file ends only the one being converted, and Skip
+            settles a row that has not started.
           </p>
 
           {/* What this combination reduces, and only that. A combination that
@@ -1348,8 +1348,16 @@ function QueueState({
             !conversion.adopting &&
             !conversion.exportingDiagnostics ? (
               <p className="quiet-text" role="note">
-                Those failures would not change on another attempt with the same acquisitions,
-                folder and settings.
+                {/* Two different reasons there is no retry, and the sentence
+                    names the one that applies. The refusal this milestone adds
+                    always lands here -- a process nothing can account for is a
+                    non-retryable failure -- and saying the acquisitions, folder
+                    and settings would not change anything is true of them and
+                    beside the point: what forbids another attempt is that the
+                    session has stopped starting backend work at all. */}
+                {conversion.backendQuarantined
+                  ? "MSCanvas is not starting any more backend work this session, so there is nothing to retry until you restart it."
+                  : "Those failures would not change on another attempt with the same acquisitions, folder and settings."}
               </p>
             ) : null
           ) : (

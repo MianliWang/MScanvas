@@ -84,14 +84,14 @@ first item had finalized, and that output stayed.
 | --- | --- |
 | `running` | Items are converting in order |
 | `stopping` | A stop was accepted; no further item will start |
-| `terminal` + `completed` | Every item reached an outcome of its own |
+| `terminal` + `completed` | Every item reached an outcome of its own, or the queue was refused |
 | `terminal` + `stopped` | The user stopped it, and no converter process survives |
 | `terminal` + `stopFailed` | The user stopped it, and termination could not be confirmed |
 
 | Item | Meaning |
 | --- | --- |
 | `cancelled` | Stopped with nothing finalized: either the owned tree was confirmed gone, or nothing was launched to be a tree |
-| `notRun` | The stopped queue never began it — no process, nothing created |
+| `notRun` | The queue never began it — no process, nothing created |
 | `cancellationFailed` | Stopped while running, termination not confirmed |
 | `skippedByRequest` | The user settled it without running it, and the queue carried on (M6.8) |
 
@@ -105,6 +105,15 @@ first item had finalized, and that output stayed.
 > only the first would assert a process tree for a run that never started a
 > process — the defect this repository's cancellation-claim guard exists to
 > catch.
+>
+> **Two rows above it widened with it, for one reason.** `notRun` read "The
+> *stopped* queue never began it" and `completed` read "Every item reached an
+> outcome of its own". M6.8 gave the queue a way to end that is neither: a run
+> that leaves an owned process unaccounted for quarantines the session and
+> refuses the rest of the queue with nothing in flight, so the terminal reason
+> is `completed` while the rows behind it were never begun. A stop is one way
+> into `notRun` and is no longer the only one, and a `completed` queue no longer
+> implies that every row reached an outcome of its own.
 
 `stopping` is a state rather than a flag beside `running`, so nothing can read
 "running" and conclude another item may start. The terminal reason is carried
