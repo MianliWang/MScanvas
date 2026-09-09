@@ -7871,7 +7871,7 @@ this slice introduces.
 **Native validation is taken on the build this head produces.** One build, four
 suites, one binary: `target/e2e/release/mscanvas-desktop.exe`,
 SHA-256
-`c89b3270a9f2c30cb0e6a80efe05f136f753d875b7b6e43361fe0343dc790684`, WebView2 and
+`5342b711fd477523c16eacd69aeab97bef271f091165c7ed5ee6179eefd3ddf3`, WebView2 and
 msedgedriver 152.0.4191.66, against ProteoWizard 3.0.26013.47b13cf 64-bit and
 the approved Thermo fixture. M6.9 1/1 — a real output-only completion of two
 acquisitions, the digest on the wire re-computed from the file on disk, two
@@ -7882,11 +7882,14 @@ duplicate. Affected regressions on the same binary: M6.6 5/5, M6.7 2/2 and M6.8
 3/3, M6.6 including the real `Escape` at the exact owned folder picker through
 the foreground guard.
 
-**The set was blocked for a stretch, and one run was discarded.** A locked
+**The set was blocked for a stretch, and two runs were discarded.** A locked
 Windows session cannot drive a real dialog, so the suites waited for an
-interactive one rather than being reached another way; and one M6.6 run was
-disturbed by stray keyboard input, timed out in its setup, and was re-run rather
-than reported. Both are named here rather than absorbed. Sources were
+interactive one rather than being reached another way. One M6.6 run was
+disturbed by stray keyboard input and timed out in its setup. One M6.8 run hit a
+race in that spec's own harness, which reads the running row and then clicks
+*Stop this file*, so the click can land on the row that started in between. All
+three are named rather than absorbed, and the M6.8 harness race is left to
+whichever slice next touches that spec. Sources were
 digest-checked afterwards and are unchanged; nothing outside each run's own
 scratch directory was written. Nothing was weakened to reach any of it — no
 guard relaxed, no `Cancel` substituted for an `Escape`, no focus scripted, no

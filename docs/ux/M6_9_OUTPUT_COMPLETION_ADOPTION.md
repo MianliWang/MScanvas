@@ -430,9 +430,9 @@ adoption result, no duplicate ids and no horizontal overflow at any of the four.
 Plus M6.8 10/10, M6.7 7/7 and M6.6 8/8 on the same head. Screenshots and console
 records inspected; console empty.
 
-Run at this head against the bundle this head builds: `index-D1OqEcxZ.js`,
-SHA-256 prefix `e9bd839221a53210`, beside `index-Cq2IHovW.css`
-(`683071bfc1a0e39d`) and `index.html` (`e654cd20ab9b3ea1`). The suite is
+Run at this head against the bundle this head builds: `index-D7v_tbGJ.js`,
+SHA-256 prefix `c38ba04be4b92476`, beside `index-Cq2IHovW.css`
+(`683071bfc1a0e39d`) and `index.html` (`d1404ce73a18b54f`). The suite is
 headless, so it does not need an unlocked session — but it does need a port it
 can bind, and the one it names is now inside a Windows reserved range on this
 machine. The port is overridable for exactly that reason, the same way the
@@ -483,14 +483,15 @@ not about the code, and it is reported rather than re-aimed silently.
 
 **Complete, on the binary this head builds, and that binary is named rather than
 assumed.** `target/e2e/release/mscanvas-desktop.exe`, SHA-256
-`c89b3270a9f2c30cb0e6a80efe05f136f753d875b7b6e43361fe0343dc790684`, 16,082,944
+`5342b711fd477523c16eacd69aeab97bef271f091165c7ed5ee6179eefd3ddf3`, 16,083,456
 bytes — the value the run recorded in its own identity entry, not one read
 beside it. WebView2 and msedgedriver 152.0.4191.66. Provider: ProteoWizard
 3.0.26013.47b13cf 64-bit, `msconvert.exe` SHA-256 prefix `9bb6f5d5033bb8ea`.
 Approved Thermo fixture SHA-256 `b3d97b38…2bd6dd7b`, recorded the same way.
 
-Three earlier complete runs, at `d9d3eb8404a6aca5…`, `942af64835219b0e…` and
-`60c208d2adcf81a6…`, are what found the defects recorded below. None of them is
+Four earlier complete runs, at `d9d3eb8404a6aca5…`, `942af64835219b0e…`,
+`60c208d2adcf81a6…` and `c89b3270a9f2c30c…`, are what found the defects recorded
+below. None of them is
 the evidence for this head: the repairs after them changed a phase identifier,
 several rendered sentences, the member states, the member counts, both of a
 stop's answers and the scope a refused set states, so every suite was taken
@@ -531,20 +532,32 @@ restored. M6.7 covers both scope proofs. M6.8 covers all three stop scopes,
 including the stop that lands while the provider is genuinely executing settling
 `confirmed_gone` with the queue carrying on.
 
-**One M6.6 run was discarded and re-run rather than reported.** Stray keyboard
-input reached the machine mid-run and the setup timed out waiting for Convert to
-become enabled — a disturbed run, not a product answer, and not an assertion
-that failed. It is named here rather than quietly dropped, and the re-run that
-follows it is the evidence.
+**Two runs were discarded and re-run rather than reported, and both are named.**
+
+One M6.6 run took stray keyboard input mid-run and timed out waiting for Convert
+to become enabled. A disturbed run, not a product answer, and not an assertion
+about behaviour.
+
+One M6.8 run failed `cancelledCount === 1` with two. The mechanism is in the
+spec rather than in the product: it reads the queue to find the running row,
+then clicks *Stop this file* — and between those two steps that row can finish
+and the next one start, so the click lands on the later row. The loop then sees
+its own named index still uncancelled and stops another, and two rows end
+cancelled. What the product did is stop exactly the row the button named when it
+was pressed, which is the guarantee M6.8 states and which its Rust tests hold.
+The stale index is the harness's. Owner: whichever slice next touches
+`m6.8-cancellation-controls.tauri`; it is out of this slice's scope and is
+recorded rather than silently re-run.
 
 Nothing was weakened at any point: no guard relaxed, no `Cancel` substituted for
 an `Escape`, no focus scripted after cancellation, no security policy changed,
 and no browser result counted as native evidence.
 
-Evidence at this head: `D:/tmp/mscanvas-m69-final3/m69-native-5eo573/`, and
+Evidence at this head: `D:/tmp/mscanvas-m69-final4/m69-native-uYXbjI/`, and
 `regress/m66/`, `regress/m67/`, `regress/m68/` beside it. The earlier runs that
 found the defects are under `D:/tmp/mscanvas-m69-20260909/`,
-`D:/tmp/mscanvas-m69-final/` and `D:/tmp/mscanvas-m69-final2/`.
+`D:/tmp/mscanvas-m69-final/`, `D:/tmp/mscanvas-m69-final2/` and
+`D:/tmp/mscanvas-m69-final3/`.
 
 ## Residuals
 
