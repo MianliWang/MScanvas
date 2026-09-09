@@ -471,7 +471,26 @@ not about the code, and it is reported rather than re-aimed silently.
 
 ### Native evidence
 
-**Taken on the binary this head builds, and that binary is named rather than
+> **`BLOCKED` at this head.** The complete set below was taken on the binary
+> `942af64835219b0e04806ce7e86605a5af24d88ffe601e14223d20743c273df8`. Commits
+> after it changed conversion result handling — a fourth member state, the
+> member counts, both of a stop's answers, a rendered sentence — so by this
+> repository's own rule that set no longer covers this head, and it is not
+> presented as though it did. This head builds
+> `60c208d2adcf81a624b52cf50bdf121f2cc6dd31f40d407fb0702358950964f5`
+> (16,082,944 bytes), and the suites have not been run on it.
+>
+> The reason is the Windows session, not the code: `LogonUI.exe` is running, so
+> the desktop is locked and the native pickers cannot be driven. The attempt
+> failed at the first workspace-files dialog with *"the native button click
+> timed out or failed"*. Nothing was weakened to get past it — no guard relaxed,
+> no `Cancel` substituted for an `Escape`, no focus scripted, no security
+> setting changed — and no browser result is counted as native evidence.
+> **Owner: this slice, on the next interactive session.** The exact commands are
+> in the task checkpoint; the fixture, the ports and the output roots are
+> unchanged.
+
+**What follows was taken on one binary, and that binary is named rather than
 assumed.** `target/e2e/release/mscanvas-desktop.exe`, SHA-256
 `942af64835219b0e04806ce7e86605a5af24d88ffe601e14223d20743c273df8`, 16,080,384 bytes.
 WebView2 and msedgedriver 152.0.4191.66. Provider: ProteoWizard
@@ -479,10 +498,8 @@ WebView2 and msedgedriver 152.0.4191.66. Provider: ProteoWizard
 Approved Thermo fixture SHA-256 `b3d97b38…2bd6dd7b`, recorded in each run's own
 identity entry.
 
-An earlier complete run at `d9d3eb8404a6aca5…` is what
-found the two defects below. It is not the evidence for this head — the repairs
-after it changed a phase identifier, four rendered sentences, the observation's
-bound and a wire field — so every suite was taken again on the binary above.
+An earlier complete run at `d9d3eb8404a6aca5…` is what found the two defects
+below. Neither run is the evidence for this head, for the reason stated above.
 
 `m6.9-output-completion.tauri` 1/1 — the real picker, the real queue and the
 installed provider, to a real output-only completion of two acquisitions:

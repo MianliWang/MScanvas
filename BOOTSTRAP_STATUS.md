@@ -7830,9 +7830,11 @@ Implementation is complete and every local gate passes at the reviewed head:
 23 ignored, lint, both typechecks, the build, `cargo fmt --check`, clippy with
 warnings denied, `check_repo.py` and `git diff --check`.
 
-**Two independent reviews were run against the full diff and every finding was
-verified against the code before it was acted on.** Between them they raised two
-blocking and eleven should-fix items, and all of them were repaired: a rendered
+**Four independent reviews were run — three against the full diff and one
+against the repairs — and the repository's own reviewer raised twenty threads
+across five batches. Every finding was verified against the code before it was
+acted on, and none was suppressed.** They raised two blocking and thirty-one
+should-fix items, and all of them were repaired: a rendered
 sentence that denied the very integrity check that caused the failure; a set
 that produced files reported as having produced none; a partial set told it
 produced nothing adoptable when a policy refused it; one refusal reason asserted
@@ -7847,6 +7849,15 @@ that no family this release converts can populate, asserted in fixtures pairing
 it with a mode Rust never pairs it with; and this section, which said the slice
 had not started at a head that ships it.
 
+The later rounds found more of the same class: a refused set member spelled the
+same way as one nobody examined, so a manifest could not say which member was
+the problem; a saved diagnostic that lost a refused member from every count it
+kept; a stop's ending read from the facts beside it rather than from the
+boundary that decided it, wrong in both directions; the fourth list of the
+integrity judgement never written to the export; a rendered sentence claiming a
+folder held nothing but the output it published; and the bounded reading
+asserted at no layer at all.
+
 Rendered QA is browser 7/7 for M6.9 at four inner sizes, plus M6.8 10/10, M6.7
 7/7 and M6.6 8/8, re-run at this head against the bundle this head builds. That
 suite is headless, so a locked session does not block it. Two browser cases fail
@@ -7857,8 +7868,15 @@ absorbed, and this diff cannot be their cause: it changes no viewer or spectrum
 production file, and every stylesheet rule it adds is scoped to a class name
 this slice introduces.
 
-**Native validation is taken on the build this head produces.** One build, four
-suites, one binary: `target/e2e/release/mscanvas-desktop.exe`, SHA-256
+**Native validation is `BLOCKED` at this head, and is not claimed for it.** The
+complete set below was taken on an earlier binary; commits after it changed
+conversion result handling, so by this repository's own rule it no longer covers
+this head. The obstacle is the Windows session rather than the code — the
+desktop is locked, so the native pickers cannot be driven, and nothing was
+weakened to get past that. Owner: this slice, on the next interactive session.
+
+One build, four suites, one binary: `target/e2e/release/mscanvas-desktop.exe`,
+SHA-256
 `942af64835219b0e04806ce7e86605a5af24d88ffe601e14223d20743c273df8`, WebView2 and
 msedgedriver 152.0.4191.66, against ProteoWizard 3.0.26013.47b13cf 64-bit and
 the approved Thermo fixture. M6.9 1/1 — a real output-only completion of two
