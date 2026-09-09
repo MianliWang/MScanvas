@@ -225,6 +225,15 @@ Output-only stays output-only however many properties passed. `inapplicable`
 stays distinct from `unverified`. Nothing on this surface says fully verified,
 lossless or vendor-faithful.
 
+**A stop's two answers come from one place.** Whether a process was created and
+how it ended are both read from the boundary's own judgement, never from whether
+`BackendRunFacts` came back beside it. A stop that lands after the item starts
+and before the process exists settles as `not_started` and carries no facts,
+because there was no process to have facts about; deriving from that absence
+dropped the ending on one path and reported an established ending as
+unestablished on another. One helper answers both, for the single-output stop,
+the stop that could not be confirmed and the set stop alike.
+
 **A publication failure is not an unchecked run either.** A rename that did not
 land, and a name something else took during the run, both happen strictly after
 the judgement returned a valid output — and neither retains the record, because

@@ -87,7 +87,7 @@ use super::selection::{
     FileIdentity, accept_mzml_file, accept_shimadzu_lcd_file, accept_thermo_raw_file,
     accept_workspace_file, open_conversion_source, revalidate,
 };
-use super::service::PreviewService;
+use super::service::{PreviewService, stop_process_facts};
 
 const METADATA_OUTPUT: &str = concat!(
     // Printed before any section header, which the parser keeps separately.
@@ -12835,6 +12835,52 @@ fn an_unconfirmed_stop_quarantines_the_backend_and_refuses_every_operation() {
         // And the roster is still the user's to read and curate.
         assert_eq!(service.roster().datasets.len(), 3);
         let _ = &fixture;
+    }
+}
+
+/// Both of a stop's answers come from the process boundary's own judgement.
+///
+/// A stop that arrives after the item starts but before the process exists
+/// settles as `NotStarted` and carries no `BackendRunFacts` beside it, because
+/// there was no process to have facts about. Reading either answer from that
+/// absence made the queue and the export disagree with the item's own `process`
+/// judgement: the ending vanished, and an unconfirmed stop that *did* return an
+/// ending reported "not established".
+#[test]
+fn a_stop_reports_the_ending_the_boundary_decided_rather_than_the_facts_beside_it() {
+    use mscanvas_proteowizard::{ProcessAttemptOutcome, Termination};
+
+    // Nothing was ever asked of the boundary, so there is no ending to report.
+    assert_eq!(
+        stop_process_facts(ProcessAttemptOutcome::NotAttempted),
+        (Some(false), None)
+    );
+    // Asked and unanswerable. `None` and not `false`: a boolean cannot tell
+    // "no process was created" from "this was not established".
+    assert_eq!(
+        stop_process_facts(ProcessAttemptOutcome::Indeterminate),
+        (None, None)
+    );
+    // The case this rule exists for. No process was created *and* the boundary
+    // said so, so the ending survives and the launch answer is a settled `false`
+    // rather than an absence.
+    assert_eq!(
+        stop_process_facts(ProcessAttemptOutcome::Settled {
+            termination: Termination::NotStarted,
+            exit_code: None,
+        }),
+        (Some(false), Some(Termination::NotStarted))
+    );
+    // Every other settled ending is a process that existed.
+    for termination in [Termination::Cancelled, Termination::Exited] {
+        assert_eq!(
+            stop_process_facts(ProcessAttemptOutcome::Settled {
+                termination,
+                exit_code: None,
+            }),
+            (Some(true), Some(termination)),
+            "{termination:?}"
+        );
     }
 }
 

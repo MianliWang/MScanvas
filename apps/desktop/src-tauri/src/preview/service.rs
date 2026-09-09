@@ -31,9 +31,7 @@ use mscanvas_proteowizard::{
     SetRunSeam, run_admitted_multi_output_conversion_seamed,
 };
 #[allow(clippy::wildcard_imports)]
-use mscanvas_proteowizard::{
-    BackendRunFacts, ConversionAttempt, ConversionCancellation, OwnedTreeDisposition,
-};
+use mscanvas_proteowizard::{ConversionAttempt, ConversionCancellation, OwnedTreeDisposition};
 
 #[cfg(test)]
 use super::adoption::FinalizedOutputSetAdoptionTicket;
@@ -4682,10 +4680,12 @@ impl PreviewService {
                 // backend text to be an account of.
                 diagnostics: None,
                 facts: CancellationFacts {
-                    // A confirmed stop's boundary answered, so this is settled
-                    // either way: a tree existed, or the runner reported that
-                    // no process was created.
-                    process_launched: Some(report.backend_was_run()),
+                    // Both read from the boundary's own judgement. A stop that
+                    // beat process creation settles as `not_started` with no
+                    // facts beside it, and deriving either answer from that
+                    // absence dropped the ending the boundary had already
+                    // decided.
+                    process_launched: stop_process_facts(report.process()).0,
                     // Read from the boundary that decided it. Writing `true`
                     // here would be this side deciding a claim about the user's
                     // machine from the shape of an enum arm, and it is how the
@@ -4693,7 +4693,7 @@ impl PreviewService {
                     // one word.
                     owned_tree: report.owned_tree(),
                     elapsed,
-                    termination: report.backend().map(BackendRunFacts::termination),
+                    termination: stop_process_facts(report.process()).1,
                     staging_residue: report.residue(),
                 },
             },
@@ -4743,19 +4743,20 @@ impl PreviewService {
                 // which to redact them.
                 diagnostics: failure.take_backend_text().map(Box::new),
                 facts: CancellationFacts {
-                    // **Unknown, not false.** The boundary could not confirm
-                    // the stop and returned no process facts, so whether a
-                    // process was created is exactly what it could not
-                    // establish — which is what `process` reports beside this
-                    // as `indeterminate`. Deriving `false` from the absent
-                    // facts is the inference this whole judgement refuses.
-                    process_launched: None,
+                    // **Unknown where the boundary could not say, and settled
+                    // where it could.** An unconfirmed stop reaches here two
+                    // ways: the runner returned an error, which establishes
+                    // nothing about a process, and a tree whose disappearance
+                    // could not be confirmed, which returned a real ending. A
+                    // flat `None` reported the second as unestablished beside
+                    // its own settled `process`.
+                    process_launched: stop_process_facts(failure.process()).0,
                     // This type exists only where the tree's disappearance could
                     // not be established, so the disposition is not a reading
                     // of anything: it is what the variant means.
                     owned_tree: OwnedTreeDisposition::Unconfirmed,
                     elapsed,
-                    termination: failure.backend().map(BackendRunFacts::termination),
+                    termination: stop_process_facts(failure.process()).1,
                     staging_residue: failure.residue(),
                 },
             },
@@ -6120,6 +6121,35 @@ struct QueuedItemRun<'a> {
     conflict: ConversionConflictPolicyDto,
 }
 
+/// What a stop's own process boundary says: whether a process was created, and
+/// how it ended.
+///
+/// Both answers come from the boundary's judgement rather than from whether
+/// `BackendRunFacts` came back beside it. That distinction is the whole point:
+/// a stop that arrives before process creation returns a *settled* result whose
+/// termination is `NotStarted` and no facts, and reading the facts' absence
+/// gave a queue that said "no process launched" beside an export that said
+/// nothing at all about how it ended, while the item's own process judgement
+/// said `not_started`. One item, one question, three answers.
+pub(super) const fn stop_process_facts(
+    process: mscanvas_proteowizard::ProcessAttemptOutcome,
+) -> (Option<bool>, Option<mscanvas_proteowizard::Termination>) {
+    match process {
+        // Nothing was ever asked of the boundary, so there is no ending.
+        mscanvas_proteowizard::ProcessAttemptOutcome::NotAttempted => (Some(false), None),
+        // Asked and unanswerable. `None` rather than `false`, which a boolean
+        // cannot distinguish from a settled "no process was created".
+        mscanvas_proteowizard::ProcessAttemptOutcome::Indeterminate => (None, None),
+        mscanvas_proteowizard::ProcessAttemptOutcome::Settled { termination, .. } => (
+            Some(!matches!(
+                termination,
+                mscanvas_proteowizard::Termination::NotStarted
+            )),
+            Some(termination),
+        ),
+    }
+}
+
 /// What a stop established about one set attempt, if a stop is what ended it.
 //
 // Reads the lifecycle's own two cancellation refusals and nothing else. A run
@@ -6132,28 +6162,14 @@ fn set_stop_facts(conversion: &mut SciexConversion) -> Option<SetStopFacts> {
     // `None` is a refusal that was not a stop at all, which is the one case
     // this translation does not apply to.
     let owned_tree = report.owned_tree()?;
-    let backend = report.backend_facts();
+    // Read from the boundary's own judgement rather than from whether facts
+    // came back, by the same rule the single-output stops use.
+    let (process_launched, termination) = stop_process_facts(report.process_outcome());
     Some(SetStopFacts {
         bound_source_objects: report.bound_source_objects(),
         owned_tree,
-        // Read from the boundary's own judgement rather than from whether facts
-        // came back: `Indeterminate` is the one answer a boolean cannot hold,
-        // and it is the one this used to render as "no process launched".
-        process_launched: match report.process_outcome() {
-            mscanvas_proteowizard::ProcessAttemptOutcome::NotAttempted => Some(false),
-            mscanvas_proteowizard::ProcessAttemptOutcome::Indeterminate => None,
-            // The runner answered and its answer is that no process was
-            // created. Process *facts* exist for such a call -- it was made and
-            // it returned -- so reading `backend.is_some()` here would report a
-            // launched process beside `not_started` and `none_launched`, which
-            // is one item answering one question three ways.
-            mscanvas_proteowizard::ProcessAttemptOutcome::Settled {
-                termination: mscanvas_proteowizard::Termination::NotStarted,
-                ..
-            } => Some(false),
-            mscanvas_proteowizard::ProcessAttemptOutcome::Settled { .. } => Some(backend.is_some()),
-        },
-        termination: backend.map(BackendRunFacts::termination),
+        process_launched,
+        termination,
         staging_residue: report.residue(),
         // Carried from the lifecycle's own report rather than rebuilt from the
         // stop's shape, so a stopped set answers judgements one and two the
