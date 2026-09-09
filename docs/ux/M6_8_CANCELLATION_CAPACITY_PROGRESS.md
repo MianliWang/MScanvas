@@ -498,9 +498,9 @@ stop says something different while it is in flight and no longer predicts an
 outcome, the plan-time disclosure names all three scopes, and the stop-failed
 live region carries the counts — so the earlier run describes a different
 bundle and is not inherited. The bundle these cases exercised is
-`index-Dp-ztoMN.js`, SHA-256 prefix `7b2db84899d18c30`, beside
+`index-BkiQRL25.js`, SHA-256 prefix `8f72cf930388c953`, beside
 `index-BGNQ9ajg.css` (`d6f6a6c32034f882`) and `index.html`
-(`bdaa5f5974708458`).
+(`1b8b8abf76b163ae`).
 
 The suite is headless, so it does not need an unlocked session — which is why
 it could be re-run at this head when the native suites could not.
