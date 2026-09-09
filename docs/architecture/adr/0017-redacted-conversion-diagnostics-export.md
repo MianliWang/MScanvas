@@ -3,6 +3,9 @@
 - **Status:** Accepted. A terminal queue's diagnosable attempts can be saved to
   one local JSON file when the user asks, and never otherwise.
 - **Date:** 2026-08-09
+- Amended: 2026-09-08 (M6.8) — the schema is at **version 2**. A field left, so
+  the version moved by the rule this ADR already states. See *One versioned
+  schema* below.
 - **Builds on:** [ADR 0009](0009-mzml-conversion-execution-boundary.md) (the
   execution boundary and its bounded process capture),
   [ADR 0013](0013-serial-conversion-queue.md) (the serial queue),
@@ -211,7 +214,7 @@ different facts.
 ```json
 {
   "schema": "mscanvas.conversion-diagnostics",
-  "version": 1,
+  "version": 2,
   "application": { "name": "MSCanvas", "version": "…" },
   "queue": { "operationId": "…", "terminalReason": "…", "…": "counts" },
   "provider": { "release": "…", "buildDate": "…", "sourceRevision": "…",
@@ -227,6 +230,18 @@ Everything in it is a display name, a measurement, a closed enumeration or a
 stable identifier. Items are in queue order; field order is fixed by the code
 that writes it, so two exports of one unchanged queue are byte-identical rather
 than merely equivalent.
+
+**Amended 2026-09-08 (M6.8): version 1 became version 2.** An item's
+`treeTerminationConfirmed` boolean was removed and `ownedTree` took its place —
+a closed identifier saying which of the three things happened to the process
+tree, because a `false` could not tell "a tree existed and its end could not be
+confirmed" from "no process was ever created". A field leaving is exactly what
+the rule beside the constant reserves the version for, so the number moved; the
+additions beside it — `sampledMaxActiveProcesses`, `totalOwnedProcesses` and
+`treeOwnership` on an item, `skippedByRequestCount` on the queue, and the item
+state identifier `skipped_by_request` — would not have moved it on their own. A reader written
+against version 1 must not read a version 2 file as though the boolean were
+merely absent, which is what the version exists to tell it.
 
 Serialized by hand rather than through a format crate. Nothing in this
 application's production dependencies renders JSON — `serde` describes shapes and

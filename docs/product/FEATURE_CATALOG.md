@@ -37,7 +37,10 @@ table remains the target, including the unsupported portions called out below:
   complete roster's chosen sort, with added order breaking ties, and show every
   resolved queue member in order. Rust's current capacity is displayed and an
   oversized eligible scope is refused before queue creation, picker, staging or
-  provider work. The number is unchanged; M6.8 owns its re-evaluation.
+  provider work. **M6.8 re-evaluated it and it stays sixteen**, on a rationale
+  that no longer rests on the queue being uninterruptible: what a bound now
+  limits is the cost of getting the *size* wrong, because items still run one at
+  a time and a queue can be stopped whole, by the file, or by the row.
   Membership/order bind at BEGIN and survive search, sort, selection, later
   workspace changes and retry. Only the three evidenced
   vendor families — Thermo Scientific RAW, Shimadzu LabSolutions LCD and SCIEX
@@ -271,8 +274,9 @@ of having written one. See
 [ADR 0017](../architecture/adr/0017-redacted-conversion-diagnostics-export.md).
 
 The named limits: at most **16** items per queue, three named vendor families,
-regular files only, one folder, no overwrite, one queue-level stop and no per-item
-cancellation, no percentage, no
+regular files only, one folder, no overwrite, three stop scopes — the whole
+queue, the file being converted, and a row still waiting — but no way to take a
+row out of a running queue, no percentage, no
 parallelism, and no queue that survives closing the application. A diagnostics
 export describes only the latest attempt of each item, holds at most 32 KiB per
 stream and 2 MiB in total, never replaces an existing file, and does not survive
@@ -353,9 +357,11 @@ route that owns closing these.
 
 | ID | Feature | Priority | Acceptance summary |
 |---|---|---:|---|
-| RUN-001 | Per-file queue | P0 | Ready/queued/running/completed/failed/cancelled/unsupported are distinct. |
+| RUN-001 | Per-file queue | P0 | Ready/queued/running/completed/failed/cancelled/skipped-by-you/never-run/unsupported are distinct. |
 | RUN-002 | Failure isolation | P0 | One failure does not stop independent queued items. |
-| RUN-003 | Queue stop | P0 | Stops the whole queue: terminates the running process tree, begins no later item, retains completed outputs, and never reports a partial output as valid. An unconfirmed termination is reported as such and quarantines the backend. |
+| RUN-003 | Queue stop | P0 | Stops the whole queue: ends the running conversion, begins no later item, retains completed outputs, and never reports a partial output as valid. The termination claim is the owned process tree's, and it holds because the root is owned before it executes; an unconfirmed one is reported as such and quarantines the backend. |
+| RUN-010 | Stop the file being converted | P0 | Ends only the acquisition converting now; the queue carries on with the rest and finished outputs are kept. Bound to the exact operation, item and attempt, checked against Rust's own state, so a late press cannot reach the next item. **One exception, and it is the same one RUN-003 has:** a stop whose termination cannot be confirmed ends the whole queue and quarantines the backend, because a session that may have lost a process starts no more of them. Admitted on structural process ownership and a measurement of the installed build. |
+| RUN-011 | Skip a waiting item | P0 | Settles a row that has not started, without running it. The row keeps its place in the bound plan and the queue still says what became of it. Offered only while it is waiting **and has never run**: one already converting is ended by RUN-010 instead, and one a rerun moved back to waiting keeps the failure it earned rather than being relabelled as a decision the user made. Taking a row out of a running queue is refused — membership is fixed at BEGIN. |
 | RUN-004 | Retry failed | P0 | Retries only selected/failed items without rebuilding the workspace. |
 | RUN-005 | Actionable error | P0 | User sees a plain-language cause/action before raw stderr. Raw stderr is never shown; a terminal queue's diagnosable attempts can instead be saved to one local redacted JSON file the user chooses. |
 | RUN-006 | Transactional output | P0 | Final filename appears only after successful process exit and basic checks. |

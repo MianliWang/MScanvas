@@ -25,8 +25,8 @@ use mscanvas_proteowizard::{
     CancellationReport, ConflictPolicy, ConversionAttempt, ConversionCancellation,
     ConversionIntent, ConversionPlan, ConversionPlanError, ConversionRunFailure,
     ConversionRunOutcome, ConversionRunReport, ConversionSource, ConversionSourceKind,
-    InstalledHelpCapabilities, IntegrityProperty, OpenFormat, OutputFormat, StagingResidue,
-    ValidationMode, conversion_output_file_name, provider_build_is_evidenced,
+    InstalledHelpCapabilities, IntegrityProperty, OpenFormat, OutputFormat, OwnedTreeDisposition,
+    StagingResidue, ValidationMode, conversion_output_file_name, provider_build_is_evidenced,
     run_conversion_cancellable,
 };
 // The private multi-output report is built only by the private coordinator,
@@ -68,6 +68,12 @@ pub(super) struct WorkspaceConversionReport {
     source_kind: DatasetSourceKind,
     /// What the run did, by the crate's own identifier.
     outcome: &'static str,
+    /// Whether this run left a backend process it owned unaccounted for.
+    ///
+    /// Carried rather than re-derived from `detailed_outcome`, because reading
+    /// a claim about the user's machine out of an identifier string is how the
+    /// two drift apart.
+    owned_process_unaccounted: bool,
     /// The name a finalized output took in the destination root. A display
     /// name, not a location.
     output_file_name: Option<String>,
@@ -149,6 +155,7 @@ impl WorkspaceConversionReport {
             dataset,
             source_kind,
             outcome: run.outcome().stable_id(),
+            owned_process_unaccounted: run.leaves_an_owned_process_unaccounted(),
             // The two are not one answer. `outcome` groups -- a caller tells
             // finalized from skipped from failed by it -- and this one
             // explains, which is what a reader needs when the group is
@@ -193,6 +200,15 @@ impl WorkspaceConversionReport {
     /// Whether another attempt could plausibly end differently.
     pub(super) const fn is_retryable(&self) -> bool {
         self.retryable
+    }
+
+    /// Whether this run left a backend process it owned unaccounted for.
+    ///
+    /// MSCanvas must not begin new backend work while it cannot say whether an
+    /// earlier conversion-owned process survives, and that is true whether or
+    /// not a stop was asked for.
+    pub(super) const fn owned_process_unaccounted(&self) -> bool {
+        self.owned_process_unaccounted
     }
 
     /// What this report contributes to a failure diagnostic.
@@ -278,6 +294,13 @@ pub(super) struct WorkspaceMultiOutputConversionReport {
     partial: Option<PartialFinalization>,
     /// The precise refusal, when the set was refused before anything published.
     refusal: Option<&'static str>,
+    /// Whether this run left a backend process it owned unaccounted for.
+    owned_process_unaccounted: bool,
+    /// What a stop established about the backend process tree, where the
+    /// refusal was a stop. Carried as the boundary's own typed judgement rather
+    /// than re-derived here from `refusal`, so both conversion lifecycles reach
+    /// the queue through the same origin.
+    owned_tree: Option<OwnedTreeDisposition>,
     /// Bounded facts about the backend process, when one ran.
     backend: Option<BackendRunFacts>,
     /// What the run could not reclaim of its own staging area.
@@ -330,6 +353,7 @@ impl std::fmt::Debug for WorkspaceMultiOutputConversionReport {
             .field("published", &self.published_count())
             .field("partial", &self.partial.is_some())
             .field("refusal", &self.refusal)
+            .field("owned_tree", &self.owned_tree)
             .field("residue", &self.residue)
             .field(
                 "completeness",
@@ -476,6 +500,16 @@ impl WorkspaceMultiOutputConversionReport {
                 .collect(),
             partial,
             refusal,
+            owned_process_unaccounted: match run.outcome() {
+                MultiOutputOutcome::RefusedBeforePublication(failure) => {
+                    failure.leaves_an_owned_process_unaccounted()
+                }
+                _ => false,
+            },
+            owned_tree: match run.outcome() {
+                MultiOutputOutcome::RefusedBeforePublication(failure) => failure.owned_tree(),
+                _ => None,
+            },
             backend: run.backend(),
             residue: run.residue(),
             authority,
@@ -564,6 +598,17 @@ impl WorkspaceMultiOutputConversionReport {
 
     pub(super) const fn refusal_id(&self) -> Option<&'static str> {
         self.refusal
+    }
+
+    /// What a stop established about the backend process tree, where this run
+    /// was stopped.
+    pub(super) const fn owned_tree(&self) -> Option<OwnedTreeDisposition> {
+        self.owned_tree
+    }
+
+    /// Whether this run left a backend process it owned unaccounted for.
+    pub(super) const fn owned_process_unaccounted(&self) -> bool {
+        self.owned_process_unaccounted
     }
 
     pub(super) const fn backend_facts(&self) -> Option<BackendRunFacts> {
@@ -867,6 +912,19 @@ fn outcome_is_retryable(outcome: &ConversionRunOutcome) -> bool {
                 | BackendExecutionFailure::OutputNotCaptured { .. }
                 | BackendExecutionFailure::NotTerminated,
             ) => false,
+            // The owned root was created, executed nothing, and was reclaimed.
+            //
+            // Retryable, and it is the one execution failure here that is,
+            // because what refuses it is a condition of the environment at that
+            // instant rather than of the plan: a thread of the root that could
+            // not be opened or resumed, or none reporting the suspend count it
+            // was created with. Both are about the state of one process on one
+            // machine at one moment, and the next attempt creates a different
+            // process.
+            // Classifying it permanent would turn a transient condition into a
+            // conversion the user can never run, and the preview surface
+            // already reports the same underlying error as retryable.
+            ConversionRunFailure::Backend(BackendExecutionFailure::RootNotStarted) => true,
         },
     }
 }

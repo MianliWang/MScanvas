@@ -263,6 +263,8 @@ impl ProcessRunner for FakeRunner<'_> {
             max_active_processes: Some(1),
             final_active_processes: Some(0),
             peak_job_memory_bytes: Some(1_024),
+            total_owned_processes: Some(1),
+            tree_ownership: crate::process::TreeOwnership::EstablishedBeforeExecution,
         })
     }
 }
@@ -287,6 +289,187 @@ fn entry_names(directory: &Path) -> Vec<OsString> {
         .collect();
     names.sort();
     names
+}
+
+/// The question a run is asked before anything else starts covers every way an
+/// owned process can be left unaccounted for, not only the one with a name that
+/// says so.
+///
+/// `NotTerminated` is the one, and it is the whole of it. A Job that would not
+/// empty is classified as `NotTerminated` at the boundary rather than folded
+/// into a wait failure, so the name means what it says: this run owned
+/// processes and cannot state that they are gone. `NotAwaited` is a supervision
+/// loop that lost its answer after its owned teardown succeeded, which is a
+/// failure to report rather than a process left running — and quarantining for
+/// it would refuse every later operation on a fact that is not true, for the
+/// rest of a session, because quarantine is never lifted.
+///
+/// Whether anyone asked for a stop is not what decides whether a process
+/// survived, so neither is it what decides this.
+#[test]
+fn every_failure_that_leaves_an_owned_process_unaccounted_says_so() {
+    assert!(
+        ConversionRunFailure::Backend(BackendExecutionFailure::NotTerminated)
+            .leaves_an_owned_process_unaccounted(),
+        "a process this run owned whose end nothing observed"
+    );
+
+    // And nothing else does. A launch that never happened, a capture that
+    // failed, a root reclaimed without running, and a wait that failed after
+    // its owned teardown succeeded all leave nothing behind — and quarantining
+    // for them would refuse work on a fact that is not true, permanently,
+    // because quarantine is never lifted.
+    for cause in [
+        BackendExecutionFailure::NotAwaited,
+        BackendExecutionFailure::NotSupervised,
+        BackendExecutionFailure::RootNotStarted,
+        BackendExecutionFailure::EnvironmentInvalid,
+        BackendExecutionFailure::ExecutableChanged,
+        BackendExecutionFailure::SourceChanged,
+        BackendExecutionFailure::OutputInsideSource,
+        BackendExecutionFailure::StagingDirectoryNotEmpty,
+        BackendExecutionFailure::StagedDestinationExists,
+    ] {
+        assert!(
+            !ConversionRunFailure::Backend(cause).leaves_an_owned_process_unaccounted(),
+            "{cause:?} leaves nothing of this run's behind"
+        );
+    }
+
+    // The same question, of the lifecycle that runs a backend-named set.
+    assert!(
+        MultiOutputFailure::Backend(BackendExecutionFailure::NotTerminated)
+            .leaves_an_owned_process_unaccounted()
+    );
+    assert!(
+        !MultiOutputFailure::Backend(BackendExecutionFailure::NotAwaited)
+            .leaves_an_owned_process_unaccounted()
+    );
+    assert!(
+        MultiOutputFailure::CancellationNotConfirmed(BackendExecutionFailure::NotTerminated)
+            .leaves_an_owned_process_unaccounted()
+    );
+    assert!(!MultiOutputFailure::BackendDidNotComplete.leaves_an_owned_process_unaccounted());
+}
+
+/// Every lane asks the same question of the same failure.
+///
+/// The queue reads it through its own classification; a preview reads it
+/// straight off the process error. Both must be the *same* answer, or a
+/// preview that lost a process leaves a session that goes on to start a
+/// converter beside it — which is exactly what happened while the quarantine
+/// was raised on the conversion path alone.
+#[test]
+fn a_process_failure_answers_the_same_way_to_every_lane() {
+    let unaccounted = [
+        ProcessError::OwnedJobNotEmptied {
+            detail: String::from("the owned job would not empty"),
+        },
+        ProcessError::Terminate {
+            detail: String::from("the owned job would not terminate"),
+        },
+        ProcessError::AssignToOwnedJob {
+            detail: String::from("the root could not be assigned"),
+            owned_root_reclaimed: false,
+        },
+        ProcessError::ResumeOwnedRoot {
+            detail: String::from("the root could not be resumed"),
+            owned_job_observed_empty: false,
+            refused_before_resuming: true,
+        },
+        // Reclaimed, but the image had already started: terminating it is a
+        // request rather than an observation, so what it created is unaccounted
+        // for.
+        ProcessError::ResumeOwnedRoot {
+            detail: String::from("the root was refused after it had been resumed"),
+            owned_job_observed_empty: true,
+            refused_before_resuming: false,
+        },
+    ];
+    for error in &unaccounted {
+        assert!(
+            error.leaves_an_owned_process_unaccounted(),
+            "{error:?} leaves a process of this run's on the machine"
+        );
+        // Against the classification named outright, not against the
+        // expression the predicate is defined as -- which is what this
+        // asserted at first, and which cannot fail.
+        assert_eq!(
+            BackendExecutionFailure::from(error),
+            BackendExecutionFailure::NotTerminated,
+            "{error:?} must classify as the failure that means exactly this"
+        );
+    }
+
+    // And the failures that leave nothing behind, including the two that differ
+    // from the above only by having reclaimed the root they created.
+    let accounted = [
+        ProcessError::AssignToOwnedJob {
+            detail: String::from("the root could not be assigned"),
+            owned_root_reclaimed: true,
+        },
+        ProcessError::ResumeOwnedRoot {
+            detail: String::from("the root could not be resumed"),
+            owned_job_observed_empty: true,
+            refused_before_resuming: true,
+        },
+        ProcessError::Wait {
+            detail: String::from("the wait was interrupted"),
+        },
+        ProcessError::ExecutableIdentityChanged,
+        ProcessError::OutputDestinationExists,
+    ];
+    for error in &accounted {
+        assert!(
+            !error.leaves_an_owned_process_unaccounted(),
+            "{error:?} leaves nothing of this run's behind"
+        );
+        assert_ne!(
+            BackendExecutionFailure::from(error),
+            BackendExecutionFailure::NotTerminated,
+            "{error:?} must not classify as a process nothing can account for"
+        );
+    }
+}
+
+/// The two halves of a resume failure classify differently, and only one of
+/// them is an ordinary backend failure.
+///
+/// A reclaimed root executed nothing and is gone. One teardown could not
+/// reclaim is an owned process whose disappearance cannot be stated, and it
+/// takes the identifier that already means exactly that — so a stop reaching it
+/// settles `CancellationFailed` and quarantines rather than reporting a clean
+/// end.
+#[test]
+fn a_resume_failure_classifies_by_whether_the_owned_root_was_reclaimed() {
+    let reclaimed = BackendExecutionFailure::from(&ProcessError::ResumeOwnedRoot {
+        detail: "no".to_owned(),
+        owned_job_observed_empty: true,
+        refused_before_resuming: true,
+    });
+    let stranded = BackendExecutionFailure::from(&ProcessError::ResumeOwnedRoot {
+        detail: "no".to_owned(),
+        owned_job_observed_empty: false,
+        refused_before_resuming: true,
+    });
+    // Reclaimed, and *not* an ordinary failure: the image had already started,
+    // so terminating it afterwards is a request rather than an observation of
+    // what it may have created.
+    let started = BackendExecutionFailure::from(&ProcessError::ResumeOwnedRoot {
+        detail: "no".to_owned(),
+        owned_job_observed_empty: true,
+        refused_before_resuming: false,
+    });
+
+    assert_eq!(reclaimed, BackendExecutionFailure::RootNotStarted);
+    assert_eq!(stranded, BackendExecutionFailure::NotTerminated);
+    assert_eq!(
+        started,
+        BackendExecutionFailure::NotTerminated,
+        "reclamation alone does not make a started root an ordinary failure"
+    );
+    assert_ne!(reclaimed.stable_id(), stranded.stable_id());
+    assert_eq!(reclaimed.stable_id(), "backend_root_not_started");
 }
 
 #[test]
@@ -5750,7 +5933,8 @@ fn a_cancelled_multi_output_run_publishes_nothing_and_cleans_staging() {
     assert!(matches!(
         run.report.outcome(),
         MultiOutputOutcome::RefusedBeforePublication(MultiOutputFailure::Cancelled {
-            surviving_processes: Some(0)
+            surviving_processes: Some(0),
+            owned_tree: OwnedTreeDisposition::ConfirmedGone
         })
     ));
     assert!(run.retained.is_empty());
@@ -5983,6 +6167,8 @@ impl ProcessRunner for CancellingRunner<'_> {
             max_active_processes: Some(1),
             final_active_processes: self.final_active_processes,
             peak_job_memory_bytes: Some(2_048),
+            total_owned_processes: Some(1),
+            tree_ownership: crate::process::TreeOwnership::EstablishedBeforeExecution,
         })
     }
 }
@@ -6132,6 +6318,52 @@ fn a_cancelled_run_removes_a_nested_tree_the_backend_left_behind() {
     assert!(
         entry_names(&fixture.root).is_empty(),
         "a nested tree survived a cancelled run"
+    );
+}
+
+/// A wait that failed after its owned teardown succeeded is not a cancellation
+/// failure, whether or not a stop was in flight.
+///
+/// `NotAwaited` used to be reclassified alongside `NotTerminated` whenever a
+/// stop had been requested, which made the identical machine state quarantine
+/// the session when the user had pressed something and not when they had not --
+/// against the whole basis of this invariant, which is that it is about the
+/// machine. What `NotAwaited` means is that the Job emptied and how the process
+/// ended was lost; a Job that would not empty is classified `NotTerminated` at
+/// the boundary and never reaches here.
+#[test]
+fn a_wait_failure_whose_teardown_succeeded_is_not_a_cancellation_failure() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let request = cancellation.request_handle();
+    let act = |spec: &CommandSpec| {
+        write_partial_output(spec)?;
+        request.request();
+        Err(ProcessError::Wait {
+            detail: "the supervision loop lost its answer".to_owned(),
+        })
+    };
+    let runner = CancellingRunner::new(&act);
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    assert!(
+        !matches!(attempt, ConversionAttempt::CancellationFailed(_)),
+        "a wait whose teardown succeeded leaves no process to be uncertain about: {attempt:?}"
+    );
+    let ConversionAttempt::Completed(report) = &attempt else {
+        panic!("it is an ordinary backend failure of the run: {attempt:?}");
+    };
+    let ConversionRunOutcome::Failed(failure) = report.outcome() else {
+        panic!("the run failed: {report:?}");
+    };
+    assert_eq!(
+        failure,
+        &ConversionRunFailure::Backend(BackendExecutionFailure::NotAwaited)
+    );
+    assert!(
+        !failure.leaves_an_owned_process_unaccounted(),
+        "nothing of this run survives it, so it must not quarantine the session"
     );
 }
 

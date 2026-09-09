@@ -1,6 +1,6 @@
 # ADR 0043 — Conversion Completion is the next milestone, and this is its route
 
-Status: accepted, amended 2026-09-04 and twice on 2026-09-06
+Status: accepted, amended 2026-09-04, twice on 2026-09-06, and 2026-09-08
 Date: 2026-09-01
 Related: [0002](0002-external-proteowizard.md),
 [0009](0009-mzml-conversion-execution-boundary.md),
@@ -123,8 +123,8 @@ surface, not about building the boundary.
 | G9 | No admitted acquisition family is **directory-shaped**, so the vendor-dataset-root rule CNV-003 states has never been exercisable. `ProcessError::OutputDirectoryInsideDirectoryInput` and `BackendExecutionFailure::OutputInsideSource` exist and are unreachable for conversion today | latent safety rule | **M6.5** |
 | G10 | CNV-008's overwrite half is unimplemented, and what is missing is a **destructive-finalization contract on the Rust side** — how an already-validated new object replaces an existing destination object without a failure losing the old one. The backend's own overwrite behaviour is *not* the gap: ADR 0009 sends the provider only into private staging and refuses before launch where the final target exists | product and architecture gap | **M6.6** |
 | G11 | No `Convert all`. `scope` is derived — `selection` where any convertible row is selected, else `focused` — and there is no scope control; WSP-008 is recorded as partially implemented for exactly this reason | product surface | **M6.7** |
-| G12 | Queue capacity is `16` with a **wait-time** rationale whose stated premise is stale: the doc comment justifies it on the queue having "no cancellation", and a queue-level stop has existed since ADR 0015 | stale rationale | **M6.7** surfaces it, **M6.8** re-decides it |
-| G13 | No per-item cancel and no queued-item **skip**. `request_stop` takes an operation id and no index, and the module records the omission as deliberate. Queued-item *removal* is a different request and is refused — see CNV-D7 | product surface | **M6.8** |
+| G12 | Queue capacity is `16` with a **wait-time** rationale whose stated premise is stale: the doc comment justifies it on the queue having "no cancellation", and a queue-level stop has existed since ADR 0015 | stale rationale | **M6.7** surfaces it, **M6.8** re-decides it — *closed: the number stands and the doc comment now states what a bound actually limits* |
+| G13 | No per-item cancel and no queued-item **skip**. `request_stop` takes an operation id and no index, and the module records the omission as deliberate. Queued-item *removal* is a different request and is refused — see CNV-D7 | product surface | **M6.8** — *closed: `request_item_stop` and `skip_pending_item` both take an index; removal stays refused* |
 | G14 | Capacity is never surfaced proactively — a seventeen-row selection learns the limit from a failed plan read | product surface | **M6.7** |
 | G15 | No conversion result carries an identity that outlives its queue. `SlotState::Terminal` holds exactly one queue and is "not a history" | M8 readiness seam | **M6.9** |
 | G16 | The staging-ownership marker is **forgeable** by anything that can write into the destination root | `DEFERRED_WITH_OWNER` | **M6.5** records it where the destination contract lives; closing it is **M8's**, with the artifact-identity work — it is an authenticated-ownership question, not a conversion-surface one |
@@ -333,9 +333,10 @@ judgement is the same collapse in a different direction.
 **Multi-output and partial sets are first class.** A SCIEX acquisition is one
 item, one process and one row producing a backend-named set; three of five
 members landing is a *partial finalization report*, not a failure and not a
-success. `ItemState` has eight members for this reason — `Pending`, `Running`,
-`Finalized`, `Skipped`, `Failed`, `Cancelled`, `NotRun`, `CancellationFailed` —
-and the interface renders eight distinct labels.
+success. `ItemState` has nine members for this reason — `Pending`, `Running`,
+`Finalized`, `Skipped`, `Failed`, `Cancelled`, `NotRun`, `CancellationFailed`
+and, since M6.8, `SkippedByRequest` — and the interface renders nine distinct
+labels. *(This audit was written when there were eight.)*
 
 **Two things this audit found and M6.9 owns.** The judgements are separated in
 the crate's vocabulary but the item's own visible state does not carry them; and
@@ -1361,6 +1362,10 @@ through `ReportableProcessOutput`, but it appears in **no evidence document**, i
 is **absent from `BackendRunFacts`** so no product or diagnostics surface can see
 it, and the **cancellation** evidence harness does not report it at all. So M6.8
 must publish the peak count and observe it on a real vendor conversion.
+*(Closed by M6.8: `BackendRunFacts` carries `max_active_processes`, the
+diagnostics payload writes it as `sampledMaxActiveProcesses`, and the
+cancellation harness reports it beside the kernel's cumulative total. The
+paragraph above is the audit as it stood.)*
 
 **But measurement alone cannot license the claim, and this is the part the route
 states as a contract rather than as a task.** The child is spawned *before* it is
@@ -1547,6 +1552,83 @@ queue stays finitely bounded whatever that basis is.
 *Non-goals:* no parallelism, no pause/resume, no persistence.
 
 *Downstream:* M6.9.
+
+**Outcome, 2026-09-08: `OWNERSHIP_STRUCTURALLY_CLOSED`.** The disjunction this
+route fixed is closed on the first branch rather than the second, and the
+reasoning is recorded here rather than only in the slice.
+
+The window was removed rather than narrowed. The root process is created
+suspended, ownership is established while it has executed no instruction of its
+own, and only then is its primary thread resumed — so every process the backend
+can create is created inside the Job, and breakaway is refused so ownership
+cannot be given up afterwards. Stable `std::process` does expose enough for
+this: `CommandExt::creation_flags` is stable, and the primary thread is
+identified by owner process id, which is sound because the caller still holds
+the process handle and a process that has executed nothing has exactly one
+thread. The repository's own comment that stable `std` exposed no
+suspended-create-and-resume was true of the job-list attribute and not of this
+route to the same guarantee.
+
+Both named paths close together. An assignment failure now terminates a root
+that has provably executed nothing, so the direct-child cleanup it degrades to
+is complete rather than a degradation — and it is complete because of how the
+child was created.
+
+The claim's scope is stated and not exceeded: it covers the provider's own
+process tree. Work brokered to a service or COM server that was already running
+is not a descendant and is not owned.
+
+**The measurement is separate and was taken.** Against release `3.0.26013`,
+revision `47b13cf`, `msconvert.exe` SHA-256 `9BB6F5D5…D590BD`, re-observed
+unchanged after the set: every case reports a cumulative total of one process,
+kernel-counted and therefore without the sampling gap a polled peak leaves. That
+is an honest result about this build and these inputs, not a claim that this
+provider never spawns children.
+
+**The reconciliation is carried by the compiler where a claim can be, and by a
+guard where it cannot — and the line between them is exactly where the member's
+*name* ends and its *value* begins.** `OwnedTreeDisposition::ConfirmedGone` is
+`non_exhaustive`: outside the crate that decides it, the affirmative member
+cannot be constructed — not by production code, not by a fixture, not under an
+alias or a braced import. The bare spelling is refused in a pattern as well; a
+struct pattern `ConfirmedGone { .. }` still reads it, which is the half that
+carries nothing, because reading a judgement is not making one. Four independent reviews across
+two rounds each defeated the string-matching versions that preceded this, and
+none of those bypasses compiles now. The item state is derived from the
+disposition rather than supplied, so the wrong pairing is not expressible
+either.
+
+The compiler stops there, and the route says so rather than claiming more.
+`OwnedTreeDisposition::of` is public and takes a `ProcessOutput`, which every
+consumer that substitutes a runner must be able to build — so a consumer could
+present a run that never happened and receive the affirmative member without
+naming it. No type separates a fabricated report from a supervised one. The
+containment is therefore on the *asking*: only the crate that creates the
+process and watches it end may derive a disposition, and the identifier the
+judgement travels as once it leaves the type is watched as a string.
+
+What a type cannot carry, `check_repo.py` does: one definition of the
+conjunction reading both halves, one derivation, the Rust and TypeScript sets
+compared against each other, the retired boolean kept out, neither member named
+outside the files that own them — as bare identifiers, because a qualified path
+is the spelling an import removes — the derivation called only inside the crate
+that supervises a run, the claim's identifier written as a string nowhere, and
+no description asserting a confirmed tree unless that is all the symbol means.
+That last rule is an allowlist of what may claim rather than a list of sites to
+inspect: the version that listed sites passed while three other descriptions
+asserted a confirmed tree, one of them a public API arm reached by a run that
+launched nothing, and inverting it is what found that. It reads the state tables
+in documents too, which found a fourth — ADR 0015's shipping definition of
+`cancelled`. Fifteen deliberate bypasses are proved on every run. Prose remains
+the fallible half and says so: an unlisted synonym still passes, and no proof
+here claims otherwise.
+
+With all three satisfied, an owned-Job-empty stop of a launched conversion
+settles as a successful `Cancelled`, and **cancel the current item and continue**
+and **skip a queued item** are both admitted. **Remove a queued item** stays
+refused on the contract. Capacity was re-decided after cancellation was
+understood and stays `16`, with the stale "no cancellation" premise replaced.
+The record is [the M6.8 evidence document](../../ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md).
 
 ### M6.9 — Output completion and adoption
 
@@ -2058,8 +2140,11 @@ The locked semantics:
 
 ### CNV-D6 — queue capacity
 
-**Status: `PROVISIONAL_PENDING_MEASUREMENT`. Bounded-ness is `LOCKED`. M6.7
-surfaces the bound; M6.8 re-decides it.**
+**Status: `DECIDED` by M6.8, 2026-09-08 — the value is `16`, unchanged, on a
+stated basis. Bounded-ness remains `LOCKED`.** M6.7 surfaced the bound; M6.8
+re-decided it after cancellation was understood and kept it, replacing the stale
+premise. What follows is the decision as it stood before that, kept because it
+is what the re-decision was made against.
 
 The current value is `MAX_CONVERSION_QUEUE_ITEMS = 16`, enforced twice and
 carried to the interface as `ConversionQueuePlanDto.capacity`, **which no surface
@@ -2086,6 +2171,16 @@ is **M6.8's, after cancellation is understood**, because how large a queue may
 reasonably be is a function of what a user can interrupt. A capacity change with
 no stated basis is refused.
 
+**Closed by M6.8.** The number stays `16`. What changed is the cost of getting
+it wrong, not the size: items still run serially, so sixteen is still something
+like half an hour a user commits to, but a wrong decision no longer has to be
+waited out — a queue-level stop, ending the file being converted, and settling a
+waiting item are all available at any point. It remains a judgement about how
+long a person should be asked to commit to, and the doc comment now says that
+rather than defending it on a premise that had gone stale. Nothing measures
+memory or throughput against queue length, and deriving a number from the
+largest fixture that happened to pass would be invention.
+
 **M6.7 and M6.8 do not depend on each other circularly**, and the distinction is
 worth stating because it looks as though they might. M6.7 surfaces **the capacity
 the queue enforces**, reading `ConversionQueuePlanDto.capacity` — a field that
@@ -2109,10 +2204,15 @@ reconciliation, and no one of them settles it — owner M6.8, terminal on
 `OWNERSHIP_STRUCTURALLY_CLOSED` or `OWNERSHIP_UNCONFIRMED`. Under
 `OWNERSHIP_UNCONFIRMED` that outcome is `REFUSED` by this decision rather than
 deferred: the stop settles `CancellationFailed` / `StopFailed` and quarantines.
-Per-item cancel `PROVISIONAL_PENDING_MEASUREMENT` **and** conditional on the
-ownership outcome, owner M6.8. Queued-item *skip*
-`PROVISIONAL_PENDING_MEASUREMENT`, owner M6.8. Queued-item *removal* `REFUSED`,
-here.**
+Per-item cancel and queued-item *skip* are both `ADMITTED` by M6.8, 2026-09-08,
+on the outcome `OWNERSHIP_STRUCTURALLY_CLOSED` and a measurement of the exact
+installed build. Queued-item *removal* stays `REFUSED`, here.**
+
+**Closed by M6.8.** Both conditions the decision set were met together, so both
+optional controls are shipped: `Stop this file` ends the acquisition being
+converted and the queue carries on, and `Skip` settles a waiting row without
+running it. Removal is unchanged. What follows is the decision as it stood
+before that.
 
 **Four different promises, and M6 must not blur them** — least of all the last
 two, which read as one request and are not:
@@ -2222,7 +2322,10 @@ process nobody can account for.
 
 ### CNV-D8 — progress
 
-**Status: `LOCKED`.**
+**Status: `LOCKED`. Amended 2026-09-08 by M6.8**, which added the ninth item
+state and the count beside it. The vocabulary below is what M6 may show and the
+addition is listed in it; what stays locked is the shape — counts and a named
+state, never a percentage, a fraction of an item or an estimate.
 
 What M6 may show:
 
@@ -2230,8 +2333,8 @@ What M6 may show:
 item N of M                     current_index and item_count
 per-state counts                finalized, skipped, failed, retryable-failed,
                                 non-retryable-failed, cancelled, not-run,
-                                cancellation-failed
-the current item's state        one of the eight ItemState members
+                                cancellation-failed, skipped-by-request
+the current item's state        one of the nine ItemState members
 ```
 
 **No percentage, no fraction of an item, no estimate and no remaining-time.** The
@@ -2824,17 +2927,21 @@ Recorded so a later slice inherits a question rather than an assumption.
    M3.10 and are not open; only a non-mzML format is, which makes this a
    consequence of CNV-D1 rather than a standing debt. Owner **M6.2**, and only
    if a second format is admitted.
-3. **Whether a real `msconvert` run is a process tree at all.** The termination
-   mechanism is right; the evidence is about one process. Owner **M6.8**.
+3. **Closed by M6.8: whether a real `msconvert` run is a process tree at all.**
+   Measured against the exact installed build: every case reports a cumulative
+   total of one process, counted by the kernel rather than sampled. That is a
+   result about this build and these inputs, not a claim that the provider never
+   spawns children — and the structural closure is what makes the answer
+   sufficient either way.
 4. **Closed by M6.6: whether overwrite is admissible at all.** The authorized
    CNV-D4 decision is `OVERWRITE_REFUSED`; ADR 0009's no-clobber guarantee stands,
    and CNV-008 and the proposal now state that refusal explicitly.
 5. **What numeric precision MSCanvas means to ship.** The provider's default is
    currently answering a question MSCanvas has never asked. Owner **M6.2** to
    measure, **M6.3** to type, **M6.4** to show.
-6. **What queue capacity should be**, once cancellation is understood. The current
-   number is a wait-time judgement whose stated premise has gone stale. Owner
-   **M6.8**.
+6. **Closed by M6.8: what queue capacity should be**, once cancellation is
+   understood. Re-decided and kept at `16`, with the stale premise replaced by
+   the one that is true. It is still a wait-time judgement and still says so.
 7. **Whether a mzML `dataProcessing` record can be relied on as verification**,
    given that other writers emit placeholders. Owner **M6.2**.
 

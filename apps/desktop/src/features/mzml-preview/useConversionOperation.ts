@@ -182,6 +182,53 @@ export interface ConversionOperation {
    */
   readonly stopping: boolean;
   /**
+   * Asks Rust to end the one conversion in flight, leaving the queue running.
+   *
+   * Takes no arguments on purpose. The exact attempt is read from the same
+   * authoritative state this hook already holds, at the moment of the press --
+   * a caller passing an identity it had captured earlier could name an item
+   * that has since settled.
+   */
+  readonly cancelCurrentItem: () => void;
+  /**
+   * The item a press of that action would end, or `null` when there is none.
+   *
+   * Its index and the file name, so the control can say which acquisition it is
+   * about rather than "the current one". `null` is the disabled state: between
+   * items, while the whole queue is stopping, and once this attempt has already
+   * been asked to end.
+   */
+  readonly cancellableItem: { readonly index: number; readonly fileName: string } | null;
+  /**
+   * Whether this document has asked for the current item to end and it has not
+   * settled.
+   *
+   * Per attempt, not per queue. It clears when the queue moves on, so the
+   * control comes back for the next item rather than staying disabled for the
+   * rest of the run.
+   */
+  readonly cancellingItem: boolean;
+  /** Asks Rust to settle one waiting item without running it. */
+  readonly skipItem: (index: number) => void;
+  /**
+   * Whether that item can be skipped right now.
+   *
+   * Reads the same authoritative state the action dispatches against, so what
+   * the interface offers and what Rust will accept are one rule rather than
+   * two. An item the worker has already started is not skippable: ending work
+   * in progress is the other action, and it says so.
+   */
+  readonly canSkipItem: (index: number) => boolean;
+  /**
+   * Whether a skip this document asked for is still unanswered for that item.
+   *
+   * Separate from `canSkipItem` because the control has to stay on screen while
+   * it is true: withdrawing the button a keyboard user just activated drops
+   * focus to the document and announces nothing, which is the rule the queue
+   * stop and the adoption already follow.
+   */
+  readonly skippingItem: (index: number) => boolean;
+  /**
    * Whether this session has stopped trusting the backend.
    *
    * Read from the authoritative slot rather than derived from the terminal
@@ -348,7 +395,30 @@ type ConversionDispatch =
        */
       readonly reported: boolean;
     }
-  | { readonly kind: "retry" };
+  | {
+      readonly kind: "retry";
+      /**
+       * The retry round the queue was on when this was dispatched.
+       *
+       * How an arriving read is told apart from the one this dispatch replaces
+       * -- the same job `replacing` does for a conversion, in the one term that
+       * can do it here. A rerun keeps its queue's name, so the name cannot say
+       * which pass a terminal state is about; the round advances with every
+       * rerun, so a terminal state past this number is the rerun's own result.
+       */
+      readonly fromRound: number;
+    };
+
+/**
+ * Which pass of a queue a state is describing.
+ *
+ * Zero where there is no queue to be on a pass of, which is the same answer a
+ * first pass gives and is harmless: a retry dispatched against no queue is
+ * refused before it can claim the lane.
+ */
+function retryRoundOf(state: WorkspaceConversionState): number {
+  return state.status === "idle" ? 0 : state.queue.retryRound;
+}
 
 /** Whether an arriving state describes a queue that is not the one named. */
 function reportsAQueueOtherThan(
@@ -473,7 +543,30 @@ export function useConversionOperation(
   }, []);
   // The two windows the rest of this file names, each one projection of the
   // single claim above rather than a flag of its own.
-  const retrying = dispatch?.kind === "retry";
+  // The claim, which is what the lane is held by. It is lowered only by the
+  // retry command's own outcome, because a claim that an arriving read could
+  // clear would let a second dispatch slip through the window this exists to
+  // close.
+  const retryClaimed = dispatch?.kind === "retry";
+  // What the interface says, which is not the same thing.
+  //
+  // The retry command answers once, when the whole rerun is over, and this
+  // document polls while it waits -- so a read can install the *finished* rerun
+  // before the command replies. Saying "Retrying the failures…" over a queue
+  // that is done is untrue for the length of a command round trip, and it is a
+  // progress claim rather than an availability one: nothing is offered here
+  // that Rust would refuse.
+  //
+  // The signal is the round, not the status. A rerun is terminal at both ends
+  // of this window; only the round tells the pass that was on screen when the
+  // control was pressed from the pass that answers it.
+  const retrying =
+    retryClaimed &&
+    !(
+      state.status === "terminal" &&
+      dispatch?.kind === "retry" &&
+      state.queue.retryRound > dispatch.fromRound
+    );
   // Whether this document has dispatched a stop and has not seen the queue
   // settle. Rendered, because Stop queue has to stop being offered for the
   // whole of that window rather than only once Rust answers.
@@ -996,6 +1089,196 @@ export function useConversionOperation(
       });
   }, [api, applyUpdate, readState, state]);
 
+  // Per attempt, not per queue. Keyed by the exact identity so that when the
+  // queue moves to the next item the control comes back on its own rather than
+  // staying disabled for the rest of the run.
+  const [itemStopRequested, setItemStopRequested] = useState<string | null>(null);
+  // The rendered value above is what the availability rule reads; this is what
+  // the dispatch reads, for the reason the skip lane already has one. Two
+  // activations in one tick both see the state before either commits, so a
+  // guard on the rendered value is not a guard at all: both would dispatch, the
+  // first stop would settle the attempt, and Rust would refuse the second as
+  // naming an attempt that is over -- leaving an error on screen about a file
+  // that had in fact stopped.
+  const itemStopRequestedRef = useRef<string | null>(null);
+
+  // The one attempt a per-item stop could reach, read from the authoritative
+  // state rather than remembered. `null` is every reason there is nothing to
+  // end: no running queue, between items, or the whole queue already stopping.
+  const runningItem =
+    state.status === "running" && !stopping
+      ? (() => {
+          const index = state.queue.items.findIndex((item) => item.state === "running");
+          if (index === -1) {
+            return null;
+          }
+          const item = state.queue.items[index];
+          return item === undefined
+            ? null
+            : {
+                index,
+                fileName: item.fileName,
+                attempt: item.attempts,
+                stopRequested: item.stopRequested,
+              };
+        })()
+      : null;
+  const runningItemKey =
+    runningItem === null
+      ? null
+      : `${state.status === "idle" ? "" : state.operationId}:${String(runningItem.index)}:${String(
+          runningItem.attempt,
+        )}`;
+  // The authority first, this document's memory second. They answer the same
+  // question at different moments: Rust knows a request is outstanding from the
+  // moment it accepts one and goes on knowing it across a remount of this
+  // document, and the local key covers the interval before the reply that
+  // carries the new snapshot installs. Reading only the local one is what made
+  // a reloaded view offer to stop a file whose stop was already under way.
+  const cancellingItem =
+    runningItem !== null &&
+    (runningItem.stopRequested || (runningItemKey !== null && itemStopRequested === runningItemKey));
+  const cancellableItem =
+    runningItem === null || cancellingItem
+      ? null
+      : { index: runningItem.index, fileName: runningItem.fileName };
+
+  const cancelCurrentItem = useCallback(() => {
+    const current = stateRef.current;
+    if (current.status !== "running") {
+      return;
+    }
+    const index = current.queue.items.findIndex((item) => item.state === "running");
+    const item = index === -1 ? undefined : current.queue.items[index];
+    if (item === undefined) {
+      return;
+    }
+    const { operationId } = current;
+    const key = `${operationId}:${String(index)}:${String(item.attempts)}`;
+    // Claimed before the request leaves, and lowered only by its own outcome. A
+    // second activation inside that window is this document asking again for
+    // something already under way, not a new request. The key names the exact
+    // attempt, so when the queue moves on the next one is not blocked by it.
+    if (itemStopRequestedRef.current === key) {
+      return;
+    }
+    itemStopRequestedRef.current = key;
+    // Marked before the request leaves, exactly as the queue-level stop is.
+    // Termination takes as long as it takes and a control that stayed live
+    // would invite a second press at something already under way.
+    setItemStopRequested(key);
+    setError(null);
+    api
+      .cancelCurrentConversionItem(operationId, index, item.attempts)
+      .then((update) => {
+        applyUpdate(update);
+      })
+      .catch((cause: unknown) => {
+        if (!mounted.current) {
+          return;
+        }
+        // Nothing was stopped, so this document must not go on saying it was.
+        if (itemStopRequestedRef.current === key) {
+          itemStopRequestedRef.current = null;
+        }
+        setItemStopRequested((requested) => (requested === key ? null : requested));
+        setError(toPreviewError(cause));
+        readState();
+      });
+  }, [api, applyUpdate, readState, setError]);
+
+  // Which rows have a skip in flight, keyed by the exact item this document
+  // asked about.
+  //
+  // Synchronous, and read by the availability rule rather than only by the
+  // dispatch. The authoritative state cannot answer this: it is what the
+  // *reply* will say, and between the press and the reply it still reports the
+  // row as pending. Two presses in that window would both pass, Rust would
+  // accept the first and refuse the second, and the document would show an
+  // error for a skip that had in fact succeeded.
+  const [skipsInFlight, setSkipsInFlight] = useState<readonly string[]>([]);
+  // The rendered copy above is what the availability rule reads; this is what
+  // the dispatch reads. Two presses in one tick both see the same stale state,
+  // so the guard has to be the ref rather than the rendered value.
+  const skipsInFlightRef = useRef<readonly string[]>([]);
+  const canSkipItem = useCallback(
+    (index: number) => {
+      if (state.status !== "running" || stopping) {
+        return false;
+      }
+      if (skipsInFlight.includes(`${state.operationId}:${String(index)}`)) {
+        return false;
+      }
+      const item = state.queue.items[index];
+      if (item?.state !== "pending") {
+        return false;
+      }
+      // **Pending is not the same as never run.** A retry moves every retryable
+      // failure back to pending, so during a rerun this rule would offer `Skip`
+      // on rows that failed in the pass before. Rust settles such a row with the
+      // result it earned rather than claiming nothing ran -- which is right, and
+      // makes pressing `Skip` turn a row labelled "Waiting" into one labelled
+      // "Failed" with no mention of a skip. The control is withdrawn instead, so
+      // it is offered only where it does what its label says.
+      return item.attempts === 0;
+    },
+    [skipsInFlight, state, stopping],
+  );
+
+  const skippingItem = useCallback(
+    (index: number) =>
+      state.status === "running" &&
+      skipsInFlight.includes(`${state.operationId}:${String(index)}`),
+    [skipsInFlight, state],
+  );
+
+  const skipItem = useCallback(
+    (index: number) => {
+      const current = stateRef.current;
+      if (current.status !== "running") {
+        return;
+      }
+      // Re-read at the moment of the press. The rendered decision was made
+      // against a state that may have moved, and Rust refuses a skip that
+      // raced a start rather than turning it into a cancellation -- this keeps
+      // the interface from asking for one it already knows is not available.
+      if (current.queue.items[index]?.state !== "pending") {
+        return;
+      }
+      const key = `${current.operationId}:${String(index)}`;
+      // Claimed before the request leaves, and lowered only by its own outcome.
+      // A second press inside that window is this document asking again for
+      // something already under way, not a new request.
+      if (skipsInFlightRef.current.includes(key)) {
+        return;
+      }
+      skipsInFlightRef.current = [...skipsInFlightRef.current, key];
+      setSkipsInFlight(skipsInFlightRef.current);
+      const release = (): void => {
+        skipsInFlightRef.current = skipsInFlightRef.current.filter((held) => held !== key);
+        setSkipsInFlight(skipsInFlightRef.current);
+      };
+      setError(null);
+      api
+        .skipPendingConversionItem(current.operationId, index)
+        .then((update) => {
+          if (mounted.current) {
+            release();
+          }
+          applyUpdate(update);
+        })
+        .catch((cause: unknown) => {
+          if (!mounted.current) {
+            return;
+          }
+          release();
+          setError(toPreviewError(cause));
+          readState();
+        });
+    },
+    [api, applyUpdate, readState, setError],
+  );
+
   const retry = useCallback(() => {
     // Retry availability, not the start control's. The lane is the same and the
     // target is not: this asks the one authority about a rerun of the slot as
@@ -1005,7 +1288,7 @@ export function useConversionOperation(
     if (!canRetryConversion(readLane(), target.retryableFailureCount, target.queueCompleted)) {
       return;
     }
-    claimLane({ kind: "retry" });
+    claimLane({ kind: "retry", fromRound: retryRoundOf(stateRef.current) });
     setError(null);
     api
       .retryConversions()
@@ -1198,6 +1481,12 @@ export function useConversionOperation(
     stop,
     canStop,
     stopping,
+    cancelCurrentItem,
+    cancellableItem,
+    cancellingItem,
+    skipItem,
+    canSkipItem,
+    skippingItem,
     backendQuarantined,
     adopt,
     canAdopt,

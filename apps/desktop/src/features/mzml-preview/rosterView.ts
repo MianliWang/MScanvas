@@ -74,8 +74,10 @@ export interface RosterProjectionInput {
    * Pinned above every other reason. The row cannot be removed while it is
    * being read, so a search that hid it would hide the one row the user most
    * needs to see -- and the state it is in is the reason they cannot act on it
-   * here. The one action they do have is stopping the queue, which is offered
-   * where the queue is, not on the row.
+   * here. The actions they do have are in the conversion panel: stopping the
+   * whole queue, stopping the file being converted, and skipping a row that has
+   * not started. The first two are offered where the queue is; the third is
+   * offered on that row of the queue, which is not this roster row.
    *
    * Conversion is never a search term and never a sort key: this decides
    * whether a row stays visible, not where it sits or whether it matched.

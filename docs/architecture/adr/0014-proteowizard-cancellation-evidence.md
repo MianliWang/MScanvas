@@ -1,12 +1,17 @@
 # ADR 0014: private ProteoWizard conversion cancellation
 
 - **Status:** Accepted for the private boundary. No user-visible cancellation
-  exists, and none may be added on this ADR alone.
+  existed when this was decided, and none could be added on this ADR alone —
+  each of the three that exist now was admitted by a later decision on evidence
+  of its own: the queue stop by [ADR 0015](0015-user-visible-queue-stop.md), the
+  per-item stop and the queued-item skip by M6.8.
 - **Date:** 2026-08-08
 - **Supersedes:** the *Cancellation* section of
   [ADR 0009](0009-mzml-conversion-execution-boundary.md), which put it out of
   scope because it was unmeasured.
 - **Evidence:** [M3.3 cancellation evidence record](../../spikes/M3_CANCELLATION_EVIDENCE.md)
+- Amended: 2026-09-08 (M6.8) — the interval this ADR left open is closed. See
+  the amendment at the end of this document.
 
 ## Context
 
@@ -237,7 +242,10 @@ and the only one the harness will run against.
 
 - The queue is still uncancellable and still says so. No `Cancel` button, no
   Tauri command, no transfer object, no queue state and no frontend change is
-  part of this.
+  part of this. *(True of this ADR alone. [ADR 0015](0015-user-visible-queue-stop.md)
+  made the queue stoppable and M6.8 added a per-item stop and a queued-item
+  skip, each on evidence of its own; the consequence recorded here is what
+  **this** decision left, not what the product does now.)*
 - `ConversionRunOutcome` is deliberately not widened. The queue and the desktop
   boundary match it exhaustively, and a cancellation state added to it would
   become a state they must classify before any product decision about
@@ -314,6 +322,43 @@ Rejected and unnecessary. The locked stack expresses all of it: `Arc<AtomicBool>
 for the request, and the `kernel32` declarations this crate has carried since M0
 for the Job.
 
+
+## Amendment, 2026-09-08 (M6.8) — the interval this ADR left open is closed
+
+This document recorded one interval as unavoidable and did not claim it was
+closed: "the interval that remains is the one stable `std::process` leaves
+between deciding to spawn and spawning, which is the same one the documented
+spawn-to-assignment race lives in and is not claimed to be closed."
+
+**It is closed now, and the rule this ADR set is what closed it.** The root is
+created suspended, assigned to the owned Job while it has executed no
+instruction of its own, and only then resumed, so a descendant created before
+assignment is not merely unlikely — it is not possible. Breakaway is refused, so
+ownership established before execution cannot be given up after it.
+
+Nothing in the decision above is withdrawn. "A confirmed cancellation is the
+only cancellation" stands, and what changed is that the confirmation now has a
+second half: `Some(0)` from the Job *and* ownership that preceded execution.
+Neither alone is the claim, and the conjunction has one origin —
+`ProcessOutput::owned_tree_confirmed_gone` — that everything downstream reads
+rather than re-decides.
+
+The one correction is to a spelling, not to a rule. The boolean this boundary
+handed upward answered `true` both for a tree confirmed gone and for a run that
+launched nothing, which is the conflation `Termination::NotStarted` exists to
+prevent — reintroduced one layer up. `OwnedTreeDisposition` replaces it with
+three members that say which of the two happened, and a repository check keeps
+the affirmative one from being asserted anywhere but at its origin.
+
+The scope of the claim is stated: the provider's own process tree. Work brokered
+to a service or COM server that was already running is not a descendant and is
+not owned by this boundary.
+
+**And the open question this ADR named is answered.** "Can `msconvert` be
+stopped on request, and what does it leave behind" was answered in M3.3; what a
+real run *is* was not. It is now, for this build: every measured case reports a
+cumulative total of one process, counted by the kernel rather than sampled. See
+[the M6.8 record](../../ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md).
 
 ## Amendment, 2026-08-12 — the same primitive, a second lifecycle
 

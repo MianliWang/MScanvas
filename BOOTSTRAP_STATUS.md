@@ -5971,6 +5971,12 @@ enumeration would be correct only until the next surface was added. No
 implementation is prescribed. **Owner: M6.8**, before any surface claims a tree
 was terminated.
 
+**Both of the above were settled by M6.8**, whose own entry records the
+outcome. They are left here as M6.0 wrote them on 2026-09-01, because a dated
+entry that is edited to match a later answer stops being a record of what was
+known when the route was locked — and the reasoning M6.0 had to do to get
+there is the part a reader of this log is looking for.
+
 ### XIC: no new identity at this baseline
 
 The installed `msaccess.exe` hashes to `85681B20…D1F4` and the sibling
@@ -7690,4 +7696,85 @@ closes current product/status wording. Final confirmation, protected merge
 and natural-main CI identities are in [PR #100](https://github.com/MianliWang/MScanvas/pull/100).
 The evidence and 36-path closure are in
 [the M6.7 record](docs/ux/M6_7_CONVERSION_SCOPE.md).
-M6.8 has not started.
+M6.8 is recorded below.
+
+## M6.8 cancellation, capacity and truthful progress, 2026-09-08
+
+Baseline live-verified before edits: local HEAD/main/origin-main and remote main
+all `735dfebac5d48db30b6d1802c208ccf05853b3d8`, with clean index/worktree, no
+untracked files, stash or active operation. PR #100 is the published M6.7 true
+merge.
+
+M6.8 ends on **`OWNERSHIP_STRUCTURALLY_CLOSED`**. The backend root is created
+suspended and assigned to its owned Job before it executes an instruction, so
+provider execution cannot produce an uncaptured descendant; breakaway is
+refused, and an assignment or resume failure terminates a root that has provably
+run nothing. The confirmed-cancellation claim becomes a conjunction with one
+origin, and `OwnedTreeDisposition` replaces the boolean that asserted a
+terminated tree for a run that never started one. The affirmative member is
+`non_exhaustive`, so the compiler refuses the *name* outside the crate that
+decides it — not the value, which any caller can still derive from a
+`ProcessOutput` it built, because that report is what a substituted runner
+returns and no type separates a fabricated one from a supervised one. The
+derivation is therefore confined to that crate by a `check_repo.py` guard, which
+proves itself against thirty-five deliberate bypasses on every run, seventeen of
+them edits reviewers demonstrated against it and two written for rules that
+until the fifth review could not fail at all.
+
+**Eight rounds of two independent reviews rejected eight candidates**, and reviewers
+defeated the claim guard with compiling edits in five of them; each of those
+edits is now one of its proofs. Every finding was verified against the code
+before it was acted on, and every repair is proved by reverting it. The first
+round is below and the rest are in
+[the M6.8 record](docs/ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md):
+a skip landing between the worker choosing an item and starting it wedged the
+queue; the guard was blind to 650 lines of production `service.rs`; the item
+state and queue count still described a confirmed tree for a state also reached
+by a run that launched nothing; exit criterion 7's invariant fired only on the
+stop path; and two of the three ownership tests did not discriminate what they
+were named for. Each repair is proved by reverting it and watching a test report
+the defect.
+
+The exact installed build was measured: release `3.0.26013`, revision `47b13cf`,
+`msconvert.exe` SHA-256 `9BB6F5D5…D590BD`, re-observed unchanged after the set.
+Every case reports a cumulative total of one process, kernel-counted rather than
+sampled. That is a result about this build, not a claim about the provider.
+
+Under CNV-D7, ending the file being converted and skipping a waiting item are
+both admitted; removing a queued item stays refused on the bound-plan contract.
+Both commands bind to an exact operation/item/attempt identity checked under the
+lock that records the request, a queue stop takes precedence over both, and a
+skip that raced a start is refused rather than becoming a cancellation. Retry is
+not widened. Capacity stays 16 with a current rationale. Two progress defects
+are closed: a completed queue now accounts for every item it held, and the retry
+display no longer speaks for a rerun that is already done.
+
+Implementation is complete and every local gate passes: 1662 frontend tests,
+1523 Rust tests across the workspace, lint, both typechecks, the build,
+`cargo fmt --check`, clippy with warnings denied, and `check_repo.py` with the
+claim guard's thirty-five self-proved bypasses. Rendered QA is browser 10/10 at four
+inner sizes plus M6.6 8/8 and M6.7 7/7, re-run at this head against the bundle
+this head builds. That suite is headless, so a locked session does not block it.
+
+**Native validation is complete on the build attributable to this head.** One
+build, three suites, one binary: `target/e2e/release/mscanvas-desktop.exe`,
+SHA-256 `43f57fe49b893d529e77e98822d9d5a54e563ddb332f96351939cff7ddbc26b8`,
+WebView2 and driver 152.0.4191.66. M6.8 3/3 — a stop that reached a genuinely
+executing provider settled `confirmed_gone` 29 ms after the request, with the
+converter's partial output observed in private staging and no residue left
+anywhere, and the queue carried on to `completed` with 7 finalized. M6.6 5/5, including the real Escape at the exact owned folder picker
+through the foreground guard that had refused it while the session was locked.
+M6.7 2/2. The provider measurement was re-taken at this head and reproduces the
+earlier runs in every categorical fact. The release review's ninth round changed
+the process and classification boundary, so all of it was taken again on a build
+of the head that carries those repairs rather than inherited. Nothing was
+weakened at any point to reach any of it.
+
+Two browser cases fail here and on the published baseline alike, verified in a
+separate worktree at `735dfeb`: `m4.1` "offers all three formats for a spectrum
+that loaded with no peaks" and `m5.2` "still reaches the plot by Tab where the
+range can move". They are pre-existing and are recorded rather than absorbed.
+
+The evidence and the 56-path closure are in
+[the M6.8 record](docs/ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md).
+M6.9 has not started.

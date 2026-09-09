@@ -203,6 +203,15 @@ pub enum DiscoveryFailure {
         executable: String,
         path: PathBuf,
         detail: String,
+        /// Whether the probe left a process it started unaccounted for.
+        ///
+        /// Discovery runs the installed tools' help, and a help probe is a
+        /// process like any other: it is created suspended, owned before it
+        /// executes, and torn down through the same Job. When that teardown
+        /// cannot be confirmed, this lane has the same uncertainty the queue
+        /// has, and the session must stop starting backend work for the same
+        /// reason. The bare `detail` string it used to carry could not say so.
+        owned_process_unaccounted: bool,
     },
     ProbeExecutableInspectionFailed {
         executable: String,
@@ -241,6 +250,25 @@ pub enum DiscoveryFailure {
 }
 
 impl DiscoveryFailure {
+    /// Whether this failure left a process the discovery started unaccounted
+    /// for.
+    ///
+    /// One place, asked both of a single tool -- before the next one is
+    /// started -- and of the whole result the desktop reads. A second match
+    /// over the same variant is a second place to be wrong, and this lane
+    /// already learned that from the preview lane disagreeing with the queue
+    /// about the same process.
+    #[must_use]
+    pub const fn leaves_an_owned_process_unaccounted(&self) -> bool {
+        matches!(
+            self,
+            Self::ProbeLaunchFailed {
+                owned_process_unaccounted: true,
+                ..
+            }
+        )
+    }
+
     pub fn kind(&self) -> &'static str {
         match self {
             Self::InvalidConfiguredLocation { .. } => "invalid_configured_location",
@@ -459,6 +487,27 @@ pub struct DiscoveryResult {
 }
 
 impl DiscoveryResult {
+    /// Whether this discovery left a process it started unaccounted for.
+    ///
+    /// Discovery is the third lane that starts backend processes, and for a
+    /// while it was the one that could not say this. The queue quarantined the
+    /// session, then the preview and spectrum lanes did, while a help probe
+    /// whose Job would not empty was reported as an ordinary launch failure and
+    /// the session went on starting converters beside whatever was still there.
+    /// One question, asked of every lane, or the invariant is about which code
+    /// path ran rather than about the machine.
+    #[must_use]
+    pub fn leaves_an_owned_process_unaccounted(&self) -> bool {
+        [
+            self.failure.as_ref(),
+            self.msconvert.failure.as_ref(),
+            self.msaccess.failure.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(DiscoveryFailure::leaves_an_owned_process_unaccounted)
+    }
+
     fn unavailable(source: Option<DiscoverySource>, failure: DiscoveryFailure) -> Self {
         Self {
             availability: AvailabilityState::Unavailable,
@@ -525,6 +574,30 @@ fn backend_tool(executable: &Path) -> io::Result<BackendTool> {
             "the probe executable is not msconvert.exe or msaccess.exe",
         )),
     }
+}
+
+/// The probe's failure as an `io::Error`, with the typed error kept as its
+/// source.
+///
+/// The kind is what the discovery code branches on; the source is what lets the
+/// one question about an unaccounted process still be asked. Reducing the error
+/// to a kind and a string is what made discovery the lane that could not answer
+/// it.
+/// Whether a failed probe left a process it started unaccounted for.
+///
+/// The typed error is carried inside the `io::Error` rather than reduced to its
+/// kind, so the one question every lane asks can still be asked here;
+/// `process_error_as_io` keeps it as the source for exactly this.
+///
+/// A named function rather than an expression at the construction site, because
+/// a test could otherwise only assert the field it had written itself: replacing
+/// the expression with `false` left every test green while a help probe whose
+/// owned Job would not empty stopped quarantining the session.
+fn probe_left_a_process_unaccounted(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<ProcessError>())
+        .is_some_and(ProcessError::leaves_an_owned_process_unaccounted)
 }
 
 fn process_error_as_io(error: ProcessError) -> io::Error {
@@ -802,7 +875,28 @@ fn evaluate_candidate(candidate: Candidate, executor: &dyn ProbeExecutor) -> Dis
     } else {
         probe_tool(BackendTool::MsConvert, &mut msconvert, executor);
     }
-    if !msaccess.exists {
+
+    // **Nothing else starts once a probe has lost one.** The result this builds
+    // is what quarantines the session, and it is read after both probes have
+    // run -- so a `msconvert --help` whose owned Job would not empty used to be
+    // followed, immediately and in the same discovery, by an `msaccess --help`
+    // started beside whatever the first one left. The invariant is about the
+    // machine rather than about which lane noticed: a session that cannot say a
+    // process it started has ended does not start another, and that has to hold
+    // between two probes of one discovery as much as between a discovery and
+    // the queue that follows it.
+    //
+    // The second tool keeps the state `at` gave it -- a path that exists and
+    // was asked nothing -- rather than being given a failure of its own. It has
+    // none: what happened is the first probe's, `overall_failure` reports that
+    // one, and inventing a second would describe a probe that never ran.
+    let msconvert_lost_a_process = msconvert
+        .failure
+        .as_ref()
+        .is_some_and(DiscoveryFailure::leaves_an_owned_process_unaccounted);
+    if msconvert_lost_a_process {
+        // Deliberately empty.
+    } else if !msaccess.exists {
         msaccess.failure = Some(missing_tool_failure(MSACCESS_EXE, &msaccess));
     } else {
         probe_tool(BackendTool::MsAccess, &mut msaccess, executor);
@@ -930,6 +1024,7 @@ fn probe_tool(backend_tool: BackendTool, tool: &mut DiscoveredTool, executor: &d
                     executable: executable_name.to_owned(),
                     path: path.clone(),
                     detail: error.to_string(),
+                    owned_process_unaccounted: probe_left_a_process_unaccounted(&error),
                 }
             });
         }
@@ -1333,6 +1428,53 @@ mod tests {
     use super::*;
     use crate::{HelpCapabilityError, Sha256Digest};
 
+    /// A probe failure says whether it left a process of its own unaccounted
+    /// for, and says it from the typed error rather than from a string.
+    ///
+    /// This lane's failure used to reach the caller as an `io::ErrorKind` and a
+    /// message, so the one question every lane asks could not be asked of it at
+    /// all -- discovery starts `msconvert --help` and `msaccess --help` like any
+    /// other process. The typed error is kept as the `io::Error`'s source for
+    /// exactly this, so the test asks it the way the production site does.
+    #[test]
+    fn a_probe_failure_says_whether_it_left_a_process_unaccounted_for() {
+        let unaccounted = process_error_as_io(ProcessError::OwnedJobNotEmptied {
+            detail: String::from("the owned job would not empty"),
+        });
+        let ordinary = process_error_as_io(ProcessError::Launch {
+            executable: String::from("msconvert.exe"),
+            kind: LaunchFailureKind::NotFound,
+            detail: String::from("no such executable"),
+        });
+
+        // The production function, not a copy of its body written here.
+        let answer = probe_left_a_process_unaccounted;
+        assert!(
+            answer(&unaccounted),
+            "a Job that would not empty is a process this probe cannot account for"
+        );
+        assert!(
+            !answer(&ordinary),
+            "an executable that is not there started nothing"
+        );
+
+        // And the result carries it, which is what the desktop reads.
+        let mut failed = DiscoveredTool::undiscovered();
+        failed.failure = Some(DiscoveryFailure::ProbeLaunchFailed {
+            executable: String::from("msconvert.exe"),
+            path: PathBuf::from("msconvert.exe"),
+            detail: unaccounted.to_string(),
+            owned_process_unaccounted: true,
+        });
+        let mut result = DiscoveryResult::unavailable(None, DiscoveryFailure::BackendNotFound);
+        assert!(
+            !result.leaves_an_owned_process_unaccounted(),
+            "a discovery that started nothing has nothing to account for"
+        );
+        result.msconvert = failed;
+        assert!(result.leaves_an_owned_process_unaccounted());
+    }
+
     struct TempTree {
         root: PathBuf,
     }
@@ -1711,6 +1853,66 @@ Examples:
                 "controlled probe timeout",
             ))
         }
+    }
+
+    /// Fails every probe with a process it could not account for.
+    struct LosingProbeExecutor {
+        calls: Mutex<Vec<PathBuf>>,
+    }
+
+    impl ProbeExecutor for LosingProbeExecutor {
+        fn execute(&self, executable: &Path, _args: &[OsString]) -> io::Result<ToolProbe> {
+            self.calls
+                .lock()
+                .expect("call list mutex should not be poisoned")
+                .push(executable.to_path_buf());
+            Err(process_error_as_io(ProcessError::OwnedJobNotEmptied {
+                detail: String::from("the owned job would not empty"),
+            }))
+        }
+    }
+
+    /// A discovery that loses a process starts nothing else.
+    ///
+    /// The session quarantine this failure raises is read from the finished
+    /// `DiscoveryResult`, which is not built until both probes have returned.
+    /// So the one interval the invariant could not cover was inside a single
+    /// discovery: `msconvert --help` left a Job that would not empty, and
+    /// `msaccess --help` was launched next to it before anything had a result
+    /// to read. Asserted on the calls the executor actually received, because
+    /// the returned result looks the same either way.
+    #[test]
+    fn a_discovery_that_loses_a_process_does_not_start_the_next_probe() {
+        let tree = TempTree::new("probe-short-circuit");
+        let home = tree.installation("pwiz", &[MSCONVERT_EXE, MSACCESS_EXE]);
+        let msconvert_path = fs::canonicalize(home.join(MSCONVERT_EXE)).expect("canonical");
+        let executor = LosingProbeExecutor {
+            calls: Mutex::new(Vec::new()),
+        };
+
+        let result = discover_with(
+            DiscoveryRequest::with_home(&home),
+            &DiscoveryEnvironment::default(),
+            &executor,
+        );
+
+        assert!(
+            result.leaves_an_owned_process_unaccounted(),
+            "the discovery reports the process it could not account for"
+        );
+        let calls = executor
+            .calls
+            .lock()
+            .expect("call list mutex should not be poisoned");
+        assert_eq!(
+            calls.as_slice(),
+            &[msconvert_path],
+            "the second help probe started beside an unaccounted process"
+        );
+        assert!(
+            result.msaccess.probe.is_none() && result.msaccess.failure.is_none(),
+            "the tool that was never asked is not given an answer"
+        );
     }
 
     #[test]

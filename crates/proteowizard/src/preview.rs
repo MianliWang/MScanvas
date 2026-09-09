@@ -2178,6 +2178,8 @@ mod tests {
             max_active_processes: Some(1),
             final_active_processes: Some(0),
             peak_job_memory_bytes: None,
+            total_owned_processes: Some(1),
+            tree_ownership: crate::process::TreeOwnership::EstablishedBeforeExecution,
         }
     }
 

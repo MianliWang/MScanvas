@@ -464,6 +464,7 @@ pub(super) struct DiagnosticsQueueFacts {
     pub(super) failed_count: usize,
     pub(super) cancelled_count: usize,
     pub(super) not_run_count: usize,
+    pub(super) skipped_by_request_count: usize,
     pub(super) cancellation_failed_count: usize,
     pub(super) installation_generation: u64,
     /// A refusal that ended the whole queue, by its stable identifier.

@@ -113,6 +113,7 @@ const itemStateIsExact: Equal<
   | "failed"
   | "cancelled"
   | "notRun"
+  | "skippedByRequest"
   | "cancellationFailed"
 > = true;
 const terminalReasonIsExact: Equal<
@@ -156,6 +157,7 @@ const CONVERTED_ITEM = {
   result: { kind: "single", report: FINALIZED_REPORT },
   error: null,
   cancellation: null,
+  stopRequested: false,
 } as const satisfies ConversionQueueItem;
 
 const FAILED_ITEM = {
@@ -174,6 +176,7 @@ const FAILED_ITEM = {
     retryable: true,
   },
   cancellation: null,
+  stopRequested: false,
 } as const satisfies ConversionQueueItem;
 
 const QUEUE = {
@@ -191,6 +194,7 @@ const QUEUE = {
   nonRetryableFailedCount: 0,
   cancelledCount: 0,
   notRunCount: 0,
+  skippedByRequestCount: 0,
   cancellationFailedCount: 0,
   adoptableOutputCount: 1,
   error: null,
@@ -201,7 +205,7 @@ const QUEUE = {
 const CANCELLATION = {
   processLaunched: true,
   terminationRequested: true,
-  treeTerminationConfirmed: true,
+  ownedTree: "confirmed_gone",
   elapsedMilliseconds: 71,
   termination: "cancelled",
   partialOutputObserved: true,
@@ -219,6 +223,7 @@ const CANCELLED_ITEM = {
   result: null,
   error: null,
   cancellation: CANCELLATION,
+  stopRequested: false,
 } as const satisfies ConversionQueueItem;
 
 const NOT_RUN_ITEM = {
@@ -232,6 +237,7 @@ const NOT_RUN_ITEM = {
   result: null,
   error: null,
   cancellation: null,
+  stopRequested: false,
 } as const satisfies ConversionQueueItem;
 
 const STOPPED_QUEUE = {
@@ -249,6 +255,7 @@ const STOPPED_QUEUE = {
   nonRetryableFailedCount: 0,
   cancelledCount: 1,
   notRunCount: 1,
+  skippedByRequestCount: 0,
   cancellationFailedCount: 0,
   adoptableOutputCount: 1,
   error: null,
@@ -462,6 +469,7 @@ describe("the conversion wire contract", () => {
         "nonRetryableFailedCount",
         "cancelledCount",
         "notRunCount",
+        "skippedByRequestCount",
         "cancellationFailedCount",
         "retryRound",
         "retryableFailedCount",
@@ -480,6 +488,7 @@ describe("the conversion wire contract", () => {
         "retryable",
         "sourceKind",
         "state",
+        "stopRequested",
       ].sort(),
     );
     // What a stop is allowed to say about an attempt: whether a process ran,
@@ -488,12 +497,12 @@ describe("the conversion wire contract", () => {
     expect(Object.keys(CANCELLATION).sort()).toEqual(
       [
         "elapsedMilliseconds",
+        "ownedTree",
         "partialOutputObserved",
         "processLaunched",
         "stagingResidue",
         "termination",
         "terminationRequested",
-        "treeTerminationConfirmed",
       ].sort(),
     );
     // A cancelled item finalized nothing, so it names no output file and

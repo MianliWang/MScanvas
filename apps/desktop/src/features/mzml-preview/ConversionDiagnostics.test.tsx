@@ -148,7 +148,7 @@ function unconfirmed(handle: string, name: string): ConversionQueueItem {
     cancellation: {
       processLaunched: true,
       terminationRequested: true,
-      treeTerminationConfirmed: false,
+      ownedTree: "unconfirmed",
       elapsedMilliseconds: 5_200,
       termination: null,
       partialOutputObserved: true,

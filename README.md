@@ -103,8 +103,8 @@ the ProteoWizard build MSCanvas was tested against, not merely pending;
 directory-formatted acquisition recognition; filtering the workspace by
 anything other than filename, and grouping it; a workspace that outlives the
 session, which includes remembering a search or a sort; conversion progress as a
-percentage; cancelling one item of a queue while the rest carry on; resuming a
-stopped queue; a conversion queue that survives closing the application;
+percentage; resuming a stopped queue; removing a row from a queue that is
+already running; a conversion queue that survives closing the application;
 diagnostics for anything but the latest attempt of each item, a diagnostics
 history, complete raw converter logs, and sending a diagnostics file anywhere;
 and every figure export but the selected spectrum's own SVG, PNG, CSV and TSV,
@@ -166,6 +166,18 @@ over; converting those rows again is a new queue. If MSCanvas cannot confirm tha
 the converter process ended, it says so and refuses further backend work until
 you restart it, rather than starting a second converter beside one it has lost
 track of.
+
+`Stop this file` is the narrower one: it ends only the conversion under way and
+lets the queue carry on with the rest — unless MSCanvas cannot confirm that
+converter ended, in which case the whole queue stops and the session needs a
+restart, for the reason above. `Skip` on a row that has not started settles that
+row without converting it — on a row that has never run, so a rerun's earlier
+failure keeps its own answer instead of being called something you chose. Both carry the same race the queue stop
+does — a file that finished before the request arrived keeps its result — and a
+file stopped before its converter had started is cancelled having launched
+nothing at all, which MSCanvas says rather than claiming it ended something.
+Removing a row from a queue that is already running is refused: the queue is the
+list you approved, and its membership does not change under it.
 
 **What a conversion is asked to do is now something you choose, from what the
 installed build can actually run.** Four control groups — peak processing,

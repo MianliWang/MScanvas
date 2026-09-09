@@ -881,36 +881,102 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
     const current = position === -1 ? undefined : queue.items[position];
     // Named rather than counted alone, so a repeated poll that finds the same
     // item says the same sentence and is not announced twice.
-    return current === undefined
-      ? `Converting ${String(queue.itemCount)} acquisitions.`
-      : `Converting item ${String(position + 1)} of ${String(queue.itemCount)}, ${current.fileName}.`;
+    if (current === undefined) {
+      return `Converting ${String(queue.itemCount)} acquisitions.`;
+    }
+    // A per-item stop this document asked for, said where a queue stop is said.
+    // The panel changes its button and its note; both are outside any live
+    // region, so a listener had no confirmation that the control this milestone
+    // adds had been accepted at all -- while the queue-level stop two lines
+    // above has had one since M3.4.
+    if (workspace.conversion.cancellingItem) {
+      // The same three outcomes the panel's note carries, for the same reason:
+      // "the queue keeps going either way" is a promise about two of them, and
+      // the third -- a converter whose end cannot be confirmed -- ends the
+      // queue and the session's backend work. A listener heard only the
+      // reassuring half.
+      return `Stopping ${current.fileName}. This file may still finish on its own, and the items after it still run unless MSCanvas cannot confirm that its converter ended.`;
+    }
+    // A skip this document asked for, said the same way. Without it the string
+    // is byte-identical either side of the press -- the row stays pending and
+    // the running item does not move -- so nothing is announced at all, which
+    // is the defect repaired one sentence above for the other new control.
+    const skipping = queue.items.findIndex((_, index) =>
+      workspace.conversion.skippingItem(index),
+    );
+    if (skipping !== -1) {
+      const name = queue.items[skipping]?.fileName ?? "that file";
+      return `Skipping ${name}. It will not be converted, and the queue carries on.`;
+    }
+    return `Converting item ${String(position + 1)} of ${String(queue.itemCount)}, ${current.fileName}.`;
   }
   if (state.status === "terminal" && state.reason === "stopFailed") {
     // Not "Queue stopped" either. The one thing this state does not establish
     // is that the queue's converter stopped.
-    return `Stop could not be confirmed. MSCanvas could not confirm that the backend process stopped.${
+    // The counts, as the panel shows them. A listener auditing the one terminal
+    // state that most needs auditing was getting strictly less than a sighted
+    // reader: the sentence, and none of what the queue actually did.
+    return `Stop could not be confirmed. MSCanvas could not confirm that the backend process stopped. ${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed, ${String(queue.cancelledCount)} cancelled, ${String(queue.notRunCount)} not run, ${String(queue.skippedByRequestCount)} skipped by you, ${String(queue.cancellationFailedCount)} stop could not be confirmed.${
       workspace.conversion.backendQuarantined
         ? " Restart MSCanvas before starting another preview or conversion."
         : ""
+    }${
+      // The same rule the two branches below follow: wherever the panel shows
+      // it. This branch withheld it, and `stopFailed` is the terminal state in
+      // which what was and was not verified most needs saying.
+      queue.items.some(conversionJudgedAnyOutput) ? " Output-only validation." : ""
     }${queue.error === null ? "" : ` ${queue.error.summary}`}`;
   }
   if (state.status === "terminal" && state.reason === "stopped") {
     // The refusal that ended it, where there was one, said alongside rather
     // than instead of the counts. The visible panel shows both, and a region
     // that dropped one of them would describe a different queue.
-    return `Queue stopped. ${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed, ${String(queue.cancelledCount)} cancelled, ${String(queue.notRunCount)} not run.${
-      queue.error === null ? "" : ` ${queue.error.summary}`
-    }`;
+    return `Queue stopped. ${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed, ${String(queue.cancelledCount)} cancelled, ${String(queue.notRunCount)} not run, ${String(queue.skippedByRequestCount)} skipped by you${
+      queue.cancellationFailedCount > 0
+        ? `, ${String(queue.cancellationFailedCount)} stop could not be confirmed`
+        : ""
+    }.${
+      // Wherever the panel shows it. A stopped queue that finalized outputs
+      // showed the disclosure to a sighted reader and withheld it from a
+      // listener, which is the asymmetry this region exists not to have.
+      queue.items.some(conversionJudgedAnyOutput) ? " Output-only validation." : ""
+    }${queue.error === null ? "" : ` ${queue.error.summary}`}`;
   }
-  if (queue.error !== null) {
-    return queue.error.summary;
-  }
+  // A short-circuit returning `queue.error.summary` alone stood here, and the
+  // one state this milestone added reached it every time: a session that loses
+  // track of a process refuses the rest of the queue, which settles `completed`
+  // with rows marked not-run *and* an error. A listener heard the refusal and
+  // none of the counts while the panel showed both. It is gone rather than
+  // guarded -- every non-terminal status has already returned above, so a guard
+  // would have been a branch that cannot run -- and the refusal is said after
+  // the counts below, exactly as the `stopped` branch says it.
   // The same condition the visible panel applies, because it is the same claim.
   // A queue whose items were all skipped judged nothing, and a skipped item's
   // existing file was explicitly not inspected.
   const judged = queue.items.some(conversionJudgedAnyOutput);
-  return `${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed.${
-    judged ? " Output-only validation." : ""
+  // Every item the queue held, including the two a user decides about and the
+  // rows a lost process leaves behind. Three counts were complete only while a
+  // cancelled item required a queue stop; a completed queue can now hold a file
+  // the user ended, a row they skipped, and the rows a session that lost track
+  // of a process refused to start. `cancellationFailed` is carried defensively
+  // -- that state pairs with a `stopFailed` queue today -- for the same reason
+  // the panel carries it. A region that named any of them short would tell a
+  // listener less than the panel tells a sighted reader, which is the one thing
+  // it exists not to do.
+  const decided = [
+    queue.cancelledCount > 0 ? `${String(queue.cancelledCount)} cancelled` : null,
+    queue.skippedByRequestCount > 0
+      ? `${String(queue.skippedByRequestCount)} skipped by you`
+      : null,
+    queue.notRunCount > 0 ? `${String(queue.notRunCount)} not run` : null,
+    queue.cancellationFailedCount > 0
+      ? `${String(queue.cancellationFailedCount)} stop could not be confirmed`
+      : null,
+  ].filter((part): part is string => part !== null);
+  return `${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed${
+    decided.length === 0 ? "" : `, ${decided.join(", ")}`
+  }.${judged ? " Output-only validation." : ""}${
+    queue.error === null ? "" : ` ${queue.error.summary}`
   }`;
 }
 

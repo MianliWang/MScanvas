@@ -47,7 +47,9 @@ Not a roster selection and not a subset the interface chose. The queue on screen
 is what the user is looking at when they press it, and the list the panel drew is
 the list they are asking about. Only `finalized` items are eligible: `skipped`,
 `failed`, `cancelled`, `notRun`, `cancellationFailed`, `pending` and `running`
-produced no output of this queue's to offer.
+produced no output of this queue's to offer. *(M6.8 added a ninth state,
+`skippedByRequest`, and it is not eligible for the reason `notRun` is not:
+nothing ran and nothing was written.)*
 
 Nothing is previewed. Reading a file is a separate thing to ask for, and a
 workflow that opened one would be deciding what the user is looking at — the

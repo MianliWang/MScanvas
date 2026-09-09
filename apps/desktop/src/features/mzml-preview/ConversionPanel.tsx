@@ -149,6 +149,50 @@ const STOP_EXPLANATION =
   "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.";
 
 /**
+ * What ending one file does, said before it is pressed.
+ *
+ * The difference from Stop queue is the whole reason both exist, so it is
+ * stated rather than implied: this one is about the acquisition being converted
+ * now, and the queue keeps going.
+ */
+const CANCEL_ITEM_EXPLANATION =
+  "Files already converted are kept, and the items after it still run. It may finish on its own first, and then it keeps its result. If MSCanvas cannot confirm that its converter ended, the whole queue stops and the session needs a restart.";
+
+/**
+ * Why the control is unavailable, at the control.
+ *
+ * One sentence for the two ways there is nothing to end -- between items, or
+ * the whole queue ending -- because a reader does not need the session's
+ * internal state to know that pressing would do nothing.
+ *
+ * **Not for the third way**, which is this document having already asked. That
+ * one is a different fact and gets its own sentence below: a note saying the
+ * control is "available while a file is being converted" would appear exactly
+ * while a file is being converted, which is when a reader is least able to
+ * believe it.
+ */
+const CANCEL_ITEM_UNAVAILABLE =
+  "Available while a file is being converted, and not once the whole queue is stopping.";
+
+/**
+ * What is true while *this file's* stop is in flight.
+ *
+ * The per-item counterpart of `STOP_IN_FLIGHT_EXPLANATION`, and silent about
+ * which of ending and finishing happens for the same reason: that is decided
+ * by what the process boundary observes first.
+ *
+ * **Not silent about the third outcome.** "The queue keeps going either way"
+ * described two of the three. A stop whose process tree cannot be confirmed
+ * gone ends the whole queue and quarantines the session, which is the branch a
+ * reader most needs said and the only one they cannot undo -- and this sentence
+ * is on screen exactly while it is undecided. `CANCEL_ITEM_EXPLANATION` says it
+ * before the press; dropping it afterwards left the promise standing at the one
+ * moment it was in doubt.
+ */
+const CANCEL_ITEM_IN_FLIGHT_EXPLANATION =
+  "This file may still finish on its own, and then it keeps its result. The items after it still run. If MSCanvas cannot confirm that its converter ended, the whole queue stops and the session needs a restart.";
+
+/**
  * What is true while a stop is in flight.
  *
  * Deliberately silent about the current item. Whether it is cancelled or
@@ -797,8 +841,9 @@ function PlanState({
           </dl>
 
           <p className="quiet-text" id="conversion-validation-disclosure" role="note">
-            {OUTPUT_ONLY_DISCLOSURE} They run one at a time, and Stop queue ends the whole queue
-            rather than one item.
+            {OUTPUT_ONLY_DISCLOSURE} Acquisitions convert one at a time. Stop queue ends
+            the whole queue; Stop this file ends only the one being converted, and Skip
+            settles a row that has not started.
           </p>
 
           {/* What this combination reduces, and only that. A combination that
@@ -1040,7 +1085,15 @@ function QueueState({
       ) : state.status === "running" ? (
         <>
           <p>
-            {`Converting item ${String(runningPosition(queue))} of ${String(queue.itemCount)}…`}
+            {/* `finalizedCount`, not `currentIndex`. The second is how many
+                items are no longer pending, which between two items counts
+                every failure, conflict skip, user skip and cancellation as
+                well -- so a queue whose first file failed announced
+                "Converted 1 of 2" while nothing had been converted at all.
+                Directory re-admission widens the window this is read in. */}
+            {(queue.items.some((item) => item.state === "running")
+                    ? `Converting item ${String(runningPosition(queue))} of ${String(queue.itemCount)}…`
+                    : `Converted ${String(queue.finalizedCount)} of ${String(queue.itemCount)}, starting the next…`)}
           </p>
           <div className="conversion-actions">
             <button
@@ -1052,9 +1105,29 @@ function QueueState({
             >
               Stop queue
             </button>
+            {/* Beside Stop queue rather than in the row it is about. The two
+                are the same kind of decision at two scales, and a control that
+                ended one acquisition from inside the list would read as an
+                attribute of that row instead of an action on the run. */}
+            <button
+              type="button"
+              className="secondary-button"
+              aria-describedby="conversion-cancel-item-scope"
+              disabled={conversion.cancellableItem === null}
+              onClick={conversion.cancelCurrentItem}
+            >
+              {conversion.cancellingItem ? "Stopping this file…" : "Stop this file"}
+            </button>
           </div>
           <p className="quiet-text" id="conversion-stop-scope" role="note">
             {STOP_EXPLANATION}
+          </p>
+          <p className="quiet-text" id="conversion-cancel-item-scope" role="note">
+            {conversion.cancellingItem
+              ? CANCEL_ITEM_IN_FLIGHT_EXPLANATION
+              : conversion.cancellableItem === null
+                ? CANCEL_ITEM_UNAVAILABLE
+                : `Stop this file ends ${conversion.cancellableItem.fileName} and carries on with the rest of the queue. ${CANCEL_ITEM_EXPLANATION}`}
           </p>
         </>
       ) : state.reason === "stopFailed" ? (
@@ -1065,9 +1138,7 @@ function QueueState({
       ) : state.reason === "stopped" ? (
         <p>Queue stopped</p>
       ) : (
-        <p>
-          {`${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed of ${String(queue.itemCount)}.`}
-        </p>
+        <p>{completedSummary(queue)}</p>
       )}
 
       <dl className="metadata-list" aria-label="Queue destination">
@@ -1134,6 +1205,47 @@ function QueueState({
               )}
               <span className="visually-hidden">, </span>
               <span className="conversion-queue-status">{itemStateLabel(item)}</span>
+              {/* Only on a row that is actually waiting. Skipping is about an
+                  item that has not started; the file being converted now is
+                  ended by Stop this file, which says so. The same authoritative
+                  state decides this and the dispatch, so the interface never
+                  offers what Rust would refuse. */}
+              {/* Left mounted and disabled while the skip is unanswered, for
+                  the reason the queue stop and the adoption are: removing the
+                  control a keyboard user just activated drops focus to the
+                  document and announces nothing. */}
+              {conversion.canSkipItem(index) || conversion.skippingItem(index) ? (
+                <button
+                  type="button"
+                  className="link-button conversion-queue-skip"
+                  disabled={conversion.skippingItem(index)}
+                  onClick={() => {
+                    conversion.skipItem(index);
+                  }}
+                >
+                  {conversion.skippingItem(index)
+                    ? `Skipping ${item.fileName}…`
+                    : `Skip ${item.fileName}`}
+                </button>
+              ) : null}
+              {/* Why there is no Skip here, at the row that does not have one.
+                  Two rows both read "Waiting" during a rerun and only one is
+                  skippable: the other failed in the earlier pass and keeps that
+                  failure, which is a decision a reader cannot make sense of
+                  from an absent control. The per-item stop states its own
+                  unavailability for the same reason. */}
+              {item.state === "pending" &&
+              item.attempts > 0 &&
+              state.status === "running" &&
+              !conversion.canSkipItem(index) ? (
+                <>
+                  <span className="visually-hidden">, </span>
+                  <span className="conversion-queue-reason">
+                    Rerunning an earlier failure — it keeps that result if it is not run
+                    again.
+                  </span>
+                </>
+              ) : null}
               {item.attempts > 1 ? (
                 <>
                   <span className="visually-hidden">, </span>
@@ -1259,8 +1371,16 @@ function QueueState({
             !conversion.adopting &&
             !conversion.exportingDiagnostics ? (
               <p className="quiet-text" role="note">
-                Those failures would not change on another attempt with the same acquisitions,
-                folder and settings.
+                {/* Two different reasons there is no retry, and the sentence
+                    names the one that applies. The refusal this milestone adds
+                    always lands here -- a process nothing can account for is a
+                    non-retryable failure -- and saying the acquisitions, folder
+                    and settings would not change anything is true of them and
+                    beside the point: what forbids another attempt is that the
+                    session has stopped starting backend work at all. */}
+                {conversion.backendQuarantined
+                  ? "MSCanvas is not starting any more backend work this session, so there is nothing to retry until you restart it."
+                  : "Those failures would not change on another attempt with the same acquisitions, folder and settings."}
               </p>
             ) : null
           ) : (
@@ -1312,6 +1432,55 @@ function QueueState({
  * one number a user most needs to trust here is how many files are in the
  * folder.
  */
+/**
+ * What a queue that ran to its own end did.
+ *
+ * Three counts used to be the whole vocabulary here, because a completed queue
+ * could only reach three states: a cancelled item arrived only through a queue
+ * stop, and a stopped queue is a different summary. M6.8 admitted ending the
+ * file being converted and settling a waiting item, so a queue that completed
+ * can now hold either -- and a three-count sentence would report two of three
+ * items as unaccounted for.
+ *
+ * **And `notRun`, which only a stopped queue was assumed to hold.** A session
+ * that loses track of a process it started refuses the rest of the queue
+ * without the user having pressed anything, so the terminal reason is
+ * `completed` and every row it never began is `notRun`. Naming only the first
+ * five would have reported those rows nowhere -- the same defect this function
+ * was widened to fix, reached by the path this milestone added.
+ *
+ * `cancellationFailed` is named beside it defensively rather than because this
+ * path produces one: an item reaches that state only through a stop whose
+ * termination could not be confirmed, and the queue is then `stopFailed`. A
+ * count this summary cannot render is a count it would report nowhere if the
+ * pairing ever changed.
+ *
+ * All four are named only when they happened. Unlike the stopped summary, where
+ * every count is named including the zeroes because the reader is auditing what
+ * a stop left behind, an ordinary completion has no such question to answer and
+ * a row of zeroes for actions nobody took would be noise.
+ */
+function completedSummary(queue: ConversionQueue): string {
+  const parts = [
+    `${String(queue.finalizedCount)} converted`,
+    `${String(queue.skippedCount)} skipped`,
+    `${String(queue.failedCount)} failed`,
+  ];
+  if (queue.cancelledCount > 0) {
+    parts.push(`${String(queue.cancelledCount)} cancelled`);
+  }
+  if (queue.skippedByRequestCount > 0) {
+    parts.push(`${String(queue.skippedByRequestCount)} skipped by you`);
+  }
+  if (queue.notRunCount > 0) {
+    parts.push(`${String(queue.notRunCount)} not run`);
+  }
+  if (queue.cancellationFailedCount > 0) {
+    parts.push(`${String(queue.cancellationFailedCount)} stop could not be confirmed`);
+  }
+  return `${parts.join(", ")} of ${String(queue.itemCount)}.`;
+}
+
 function stoppedSummary(queue: ConversionQueue): string {
   const parts = [
     `${String(queue.finalizedCount)} converted`,
@@ -1319,6 +1488,7 @@ function stoppedSummary(queue: ConversionQueue): string {
     `${String(queue.failedCount)} failed`,
     `${String(queue.cancelledCount)} cancelled`,
     `${String(queue.notRunCount)} not run`,
+    `${String(queue.skippedByRequestCount)} skipped by you`,
   ];
   if (queue.cancellationFailedCount > 0) {
     parts.push(`${String(queue.cancellationFailedCount)} stop could not be confirmed`);
@@ -1370,6 +1540,11 @@ const ITEM_STATE_LABEL: Record<ConversionQueueItem["state"], string> = {
   cancelled: "Cancelled",
   cancellationFailed: "Stop could not be confirmed",
   notRun: "Not run",
+  // Says who decided, because that is the whole of what separates this from the
+  // two states beside it. It deliberately does not say "nothing was created":
+  // a destination folder the queue prepared is the queue's, and what became of
+  // one item does not answer for it.
+  skippedByRequest: "Skipped — you chose not to convert this one",
   pending: "Waiting",
   running: "Converting",
   finalized: "Converted",

@@ -169,9 +169,16 @@ export type ConversionAvailability =
  * that refused rather than the situation the reader is in.
  */
 const CONVERSION_MESSAGES: Record<ConversionUnavailableReason, string> = {
+  // Neither "a converter" nor "stopped". This state is reached from a preview,
+  // a spectrum read and a discovery help probe as well as from a conversion,
+  // and by a root that could neither be started nor reclaimed with nothing in
+  // flight -- so naming a stop names an action the user may never have taken.
   "backend-quarantined":
-    "MSCanvas could not confirm that a converter process stopped. " +
-    "Restart MSCanvas before starting another conversion.",
+    "MSCanvas could not confirm that a ProteoWizard process it started has ended. " +
+    // Not "before starting another conversion": the refusal is over every lane
+    // that starts a process, and this control is only where the reader happens
+    // to be standing.
+    "Restart MSCanvas before starting another preview or conversion.",
   "backend-changing":
     "Converting is unavailable while the installed ProteoWizard backend is being checked.",
   "backend-unavailable":

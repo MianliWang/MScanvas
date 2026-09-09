@@ -28,7 +28,7 @@ use crate::preview::selection::DatasetSourceKind;
 const SCHEMA: &str = "mscanvas.conversion-diagnostics";
 
 /// Incremented when a field changes meaning or leaves, never for an addition.
-const SCHEMA_VERSION: u64 = 1;
+const SCHEMA_VERSION: u64 = 2;
 
 /// The redaction contract this file's excerpts were produced under.
 const REDACTION_SCHEMA: &str = "mscanvas.path-redaction";
@@ -67,6 +67,7 @@ pub(in crate::preview) fn render(request: &DiagnosticsExportRequest) -> Rendered
         queue.count("failedCount", facts.failed_count);
         queue.count("cancelledCount", facts.cancelled_count);
         queue.count("notRunCount", facts.not_run_count);
+        queue.count("skippedByRequestCount", facts.skipped_by_request_count);
         queue.count("cancellationFailedCount", facts.cancellation_failed_count);
         queue.number("installationGeneration", facts.installation_generation);
         queue.optional_string("queueError", facts.queue_error.as_deref());
@@ -138,10 +139,7 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
         Some(cancellation) => item.object("cancellation", |written| {
             written.boolean("processLaunched", cancellation.process_launched);
             written.boolean("terminationRequested", true);
-            written.boolean(
-                "treeTerminationConfirmed",
-                cancellation.tree_termination_confirmed,
-            );
+            written.string("ownedTree", cancellation.owned_tree.stable_id());
             written.number(
                 "elapsedMilliseconds",
                 u64::try_from(cancellation.elapsed.as_millis()).unwrap_or(u64::MAX),
@@ -219,6 +217,28 @@ fn write_backend(written: &mut Members<'_>, backend: BackendRunFacts) {
         Some(bytes) => written.number("peakJobMemoryBytes", bytes),
         None => written.null("peakJobMemoryBytes"),
     }
+    // Two process counts under names that keep them apart, and a third fact
+    // that says what they are counts *of*.
+    //
+    // `sampledMaxActiveProcesses` is polled, so it is a floor on the real peak:
+    // a process that began and ended between two observations was never
+    // sampled. `totalOwnedProcesses` is the kernel's own cumulative count and
+    // has no such interval. Neither is the number left at the end.
+    //
+    // `null` is the absence of bounded accounting, never a count of zero. A
+    // reader that saw `0` for both a run that owned nothing and a run that could
+    // not count could not tell them apart, and only one of those is a fact.
+    match backend.max_active_processes() {
+        Some(count) => written.number("sampledMaxActiveProcesses", u64::from(count)),
+        None => written.null("sampledMaxActiveProcesses"),
+    }
+    match backend.total_owned_processes() {
+        Some(count) => written.number("totalOwnedProcesses", u64::from(count)),
+        None => written.null("totalOwnedProcesses"),
+    }
+    // Whether the counts above are about the whole tree or only the part
+    // ownership happened to hold.
+    written.string("treeOwnership", backend.tree_ownership().stable_id());
 }
 
 /// One stream, or the honest absence of one.
@@ -317,6 +337,7 @@ const fn item_state_id(state: ItemState) -> &'static str {
         ItemState::Failed => "failed",
         ItemState::Cancelled => "cancelled",
         ItemState::NotRun => "not_run",
+        ItemState::SkippedByRequest => "skipped_by_request",
         ItemState::CancellationFailed => "cancellation_failed",
     }
 }

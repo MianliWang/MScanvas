@@ -1050,10 +1050,32 @@ export type ConversionQueueItemState =
   | "finalized"
   | "skipped"
   | "failed"
-  /** Stopped while running, with the owned process tree confirmed gone. */
+  /**
+   * A stop settled it and no backend process of it survives.
+   *
+   * Two ways that is so, and this state is both: a tree existed and was
+   * confirmed gone, or nothing was launched for there to be one. The
+   * cancellation facts' `ownedTree` says which; this state does not, and must
+   * not be described as a confirmed tree.
+   */
   | "cancelled"
-  /** A stopped queue never began it. Not a failure and not an attempt. */
+  /**
+   * The queue never began it. Not a failure and not an attempt.
+   *
+   * A stop is one way that happens and not the only one: a session that loses
+   * track of a process it started refuses the rest of the queue, and that queue
+   * is `completed`.
+   */
   | "notRun"
+  /**
+   * The user settled it without running it, and the queue carried on.
+   *
+   * Three states now say no process ran, and they are three because they answer
+   * three questions. `skipped` is the conflict policy leaving an existing file
+   * alone. `notRun` is a stopped queue never reaching the item. This is a
+   * decision the user made about this item, and the plan still holds it.
+   */
+  | "skippedByRequest"
   /** Stopped while running, and the termination could not be confirmed. */
   | "cancellationFailed";
 
@@ -1063,17 +1085,32 @@ export type ConversionQueueItemState =
  * Path-free like everything else on this wire: no process identifier, no job
  * handle, no staging location and no backend text.
  */
+export type ConversionOwnedTreeDisposition =
+  /** No process was created, so there was no tree. Not a confirmation and not an uncertainty. */
+  | "none_launched"
+  /**
+   * A tree existed, the run owned it before it could grow, and the owned job
+   * reported itself empty. The one member that asserts a terminated tree.
+   */
+  | "confirmed_gone"
+  /**
+   * A tree existed and its disappearance could not be established. The one
+   * member that quarantines the session.
+   */
+  | "unconfirmed";
+
 export interface ConversionCancellation {
   readonly processLaunched: boolean;
   readonly terminationRequested: boolean;
   /**
-   * Whether MSCanvas knows no converter process of this attempt survives.
+   * What the stop established about this attempt's backend process tree.
    *
-   * True when the owned tree was observed empty, and true when no process was
-   * created for there to be one. False is the whole reason
-   * `cancellationFailed` exists.
+   * Three members rather than a boolean. The boolean this replaced said `true`
+   * both for a tree confirmed gone and for a run that launched nothing, so a
+   * reader given only `true` could not tell a claim about a process that
+   * existed from a statement that none did.
    */
-  readonly treeTerminationConfirmed: boolean;
+  readonly ownedTree: ConversionOwnedTreeDisposition;
   readonly elapsedMilliseconds: number;
   readonly termination: string | null;
   readonly partialOutputObserved: boolean;
@@ -1204,6 +1241,18 @@ export interface ConversionQueueItem {
    * none, because nothing ran for it to establish anything about.
    */
   readonly cancellation: ConversionCancellation | null;
+  /**
+   * Whether *this* attempt has been asked to end while the queue runs on.
+   *
+   * The authority's own answer, so it survives this document: stopping one file
+   * takes as long as the converter takes, and a view that remounted inside that
+   * window used to read the item back as plainly `running` and offer the
+   * control again for a request already accepted.
+   *
+   * False for an item whose stop has settled. This says a request is
+   * outstanding; what a settled one established is `cancellation`.
+   */
+  readonly stopRequested: boolean;
 }
 
 /** One queue, in facts that name no location. */
@@ -1222,10 +1271,28 @@ export interface ConversionQueue {
   readonly failedCount: number;
   readonly retryableFailedCount: number;
   readonly nonRetryableFailedCount: number;
-  /** Items whose running conversion was stopped, tree confirmed gone. */
+  /**
+   * Items a stop settled with no backend process of them surviving — whether a
+   * tree was confirmed gone or nothing was launched for there to be one.
+   *
+   * Deliberately not a count of confirmed process trees: which of the two each
+   * item was is on its own cancellation facts.
+   */
   readonly cancelledCount: number;
-  /** Items a stopped queue never began. Not failures. */
+  /**
+   * Items the queue never began. Not failures.
+   *
+   * A stop is one way that happens and not the only one: a session that loses
+   * track of a converter process refuses the rest of the queue on its own, and
+   * that queue is `completed`.
+   */
   readonly notRunCount: number;
+  /**
+   * Items the user settled without running, while the queue carried on.
+   * Counted apart from `notRunCount`: a decision the user made is not a
+   * consequence of ending the batch.
+   */
+  readonly skippedByRequestCount: number;
   /** Items whose stop could not be confirmed. */
   readonly cancellationFailedCount: number;
   /**
@@ -1357,9 +1424,11 @@ export interface WorkspaceConversionUpdate {
   /**
    * Whether this session has stopped trusting the backend.
    *
-   * Set by a stop whose termination could not be confirmed, and never cleared:
-   * nothing in the session can establish that the process it lost track of has
-   * ended.
+   * Set where MSCanvas cannot say whether a process it started is still
+   * running — a stop it could not confirm, or a conversion, preview, spectrum
+   * read or discovery probe that ended without accounting for one. Never
+   * cleared: nothing in the session can establish that the process it lost
+   * track of has ended.
    */
   readonly backendQuarantined: boolean;
   /**

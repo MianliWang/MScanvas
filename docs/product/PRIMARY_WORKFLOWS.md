@@ -312,15 +312,31 @@ availability, queue, adoption and export contracts.
    the next conversion and nothing about this one, and `Retry` repeats the
    queue's own combination rather than the controls'.
 7. Items convert one at a time, in the order shown, and the panel says which item
-   of how many is running. `Stop queue` ends the whole queue: it asks the current
-   conversion to stop and begins none of the items after it, and the panel says
-   so before it is pressed. Adding, clearing and previewing are unavailable until
-   it ends; searching, sorting and reading the list are not, and every queued row
-   stays visible through a search.
+   of how many is running. Three things can be stopped, at three scopes, and each
+   control says which one it is before it is pressed. `Stop queue` ends the whole
+   queue: it asks the current conversion to stop and begins none of the items
+   after it. `Stop this file` ends only the acquisition being converted now and
+   the queue carries on with the rest; the file it names is on screen. Unless
+   MSCanvas cannot confirm that its converter ended — then the whole queue stops
+   and the session is quarantined, exactly as it is for an unconfirmed queue
+   stop, because what that state is about is a process nothing can account for. `Skip` on
+   a row still waiting its turn settles that row without running it — the row
+   keeps its place and the queue still says what became of it. It is offered on
+   rows that have not run: during a rerun, a row that failed in the earlier pass
+   keeps the failure it earned rather than being called something the user
+   chose, so there is nothing there for a skip to settle. Adding, clearing
+   and previewing are unavailable until the queue ends; searching, sorting and
+   reading the list are not, and every queued row stays visible through a search.
+
+   Taking a row *out* of a running queue is deliberately not offered. What the
+   queue was asked to do is fixed when it starts, and a plan that could lose a
+   row afterwards could no longer say what it was asked about.
 8. Each item reports its own outcome: the output's name, size and record counts;
    or that a name was already taken and left alone; or why nothing was written.
    The queue reports how many converted, were skipped, and failed — always as
-   counts of acquisitions, never of output files.
+   counts of acquisitions, never of output files — and names anything you
+   decided about: a file you stopped, and a row you skipped, each counted apart
+   from the policy's own skip and from a stopped queue's never-run rows.
 
    An item that produced a set of outputs reports how many were finalized, and
    — where the run established it — that every sample identified by the SCIEX
@@ -339,12 +355,18 @@ availability, queue, adoption and export contracts.
    the policy nor asks for a replacement folder. Converted
    and skipped files are left exactly as they are. A queue that was stopped is
    over instead: it reports how many converted, were skipped, failed, were
-   cancelled and were never run, and converting those rows again is a new queue.
+   cancelled, were never run and were skipped by you — every count including the
+   zeroes — and converting those rows again is a new queue.
+   A file you stopped and a row you skipped are not offered a rerun either:
+   neither has a failure to correct, and converting them after all is a new
+   queue that includes them.
 10. A stop is not instantaneous and is not a promise about the item under way. A
    conversion that finished before the request was accepted keeps its ordinary
-   result rather than being called cancelled. If MSCanvas cannot confirm that the
-   converter process ended, it says so and refuses further backend work until the
-   application is restarted.
+   result rather than being called cancelled, whichever scope was pressed. If
+   MSCanvas cannot confirm that the converter process ended, it says so and
+   refuses further backend work until the application is restarted — that is the
+   one state where it cannot say whether a converter of its own is still running,
+   and it is never described as a stop that worked.
 
 11. `Add converted outputs to workspace` adds every finalized output of that
     queue — in queue order, and then in publication order within one item's own
@@ -384,8 +406,8 @@ that file, and the interface never claims more about any of them than
 output-only validation established.
 
 **Not included:** more than 16 items in one queue, any other vendor family,
-cancelling one item while the rest carry on, resuming a stopped queue, retrying
-one, a progress percentage, parallel conversion, a queue that survives closing
+taking a row out of a running queue, pausing or resuming one, retrying a stopped
+queue, a progress percentage, parallel conversion, a queue that survives closing
 the application, overwrite, adopting a subset of a queue's outputs, adopting
 them automatically, previewing them automatically, any record of where an
 adopted file came from that survives the session, diagnostics for an attempt

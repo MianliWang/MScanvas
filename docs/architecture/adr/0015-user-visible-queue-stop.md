@@ -1,8 +1,18 @@
 # ADR 0015: a user-visible queue stop
 
-- **Status:** Accepted. One queue-level Stop is reachable from the product;
-  per-item cancellation, resume and retry-after-stop are not.
+- **Status:** Accepted, amended. One queue-level Stop is reachable from the
+  product, and since M6.8 so are a per-item stop and a queued-item skip; resume
+  and retry-after-stop are not, and removing a row from a bound queue is
+  refused.
 - **Date:** 2026-08-08
+- Amended: 2026-09-08 (M6.8) — **per-item cancellation exists.** This ADR said
+  it did not, and that was true of everything measured then. What admitted it is
+  process-tree ownership established before the child executes and a measurement
+  of the installed provider, so a stop of one item can say what it ended;
+  ADR 0014's amendment records the measurement and
+  [the M6.8 record](../../ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md) records the
+  slice. The `cancelled` item state widened with it — see the amendment under
+  *What the states mean*.
 - **Builds on:** [ADR 0013](0013-serial-conversion-queue.md) (the serial queue)
   and [ADR 0014](0014-proteowizard-cancellation-evidence.md) (the private
   cancellation primitive and the measured race rule).
@@ -47,6 +57,11 @@ There is **no cancel-current-and-continue**, no pause, no resume and no per-item
 cancellation. Each is a different promise about work already begun, and none of
 them has been asked for by anything measured.
 
+> **Amended 2026-09-08 by M6.8.** Two of those were asked for and measured, and
+> both exist: cancel-current-and-continue is `Stop this file`, and a waiting item
+> can be settled with `Skip`. Pause, resume, and removing a row from a queue that
+> is already running remain unbuilt, for the reason this paragraph gives.
+
 ### The race rule is ADR 0014's, unchanged
 
 Observation order inside the supervision loop decides the current item. A
@@ -69,15 +84,43 @@ first item had finalized, and that output stayed.
 | --- | --- |
 | `running` | Items are converting in order |
 | `stopping` | A stop was accepted; no further item will start |
-| `terminal` + `completed` | Every item reached an outcome of its own |
+| `terminal` + `completed` | Every item reached an outcome of its own, or the queue was refused |
 | `terminal` + `stopped` | The user stopped it, and no converter process survives |
-| `terminal` + `stopFailed` | The user stopped it, and termination could not be confirmed |
+| `terminal` + `stopFailed` | A stop of the queue or of one file could not be confirmed to have ended the converter |
 
 | Item | Meaning |
 | --- | --- |
-| `cancelled` | Stopped while running, owned tree confirmed gone, nothing finalized |
-| `notRun` | The stopped queue never began it — no process, nothing created |
+| `cancelled` | Stopped with nothing finalized: either the owned tree was confirmed gone, or nothing was launched to be a tree |
+| `notRun` | The queue never began it — no process, nothing created |
 | `cancellationFailed` | Stopped while running, termination not confirmed |
+| `skippedByRequest` | The user settled it without running it, and the queue carried on (M6.8) |
+
+> **Amended 2026-09-08 by M6.8: the `cancelled` row above widened.** It read
+> "Stopped while running, owned tree confirmed gone, nothing finalized", and
+> that was the whole of the state when this shipped, because the only stop was a
+> queue stop and it could only reach an item that was running. A per-item stop
+> can also be observed before the launch. That item is `cancelled` too, and there
+> was no tree to confirm because nothing was launched. Both settle the same way;
+> the item's own `ownedTree` fact says which happened, and a definition naming
+> only the first would assert a process tree for a run that never started a
+> process — the defect this repository's cancellation-claim guard exists to
+> catch.
+>
+> **Two rows above it widened with it, for one reason.** `notRun` read "The
+> *stopped* queue never began it" and `completed` read "Every item reached an
+> outcome of its own". M6.8 gave the queue a way to end that is neither: a run
+> that leaves an owned process unaccounted for quarantines the session and
+> refuses the rest of the queue with nothing in flight, so the terminal reason
+> is `completed` while the rows behind it were never begun. A stop is one way
+> into `notRun` and is no longer the only one, and a `completed` queue no longer
+> implies that every row reached an outcome of its own.
+>
+> **And `stopFailed` no longer implies the user stopped the queue.** It read
+> "The user stopped it, and termination could not be confirmed". M6.8's per-item
+> stop reaches it too: an item stopped while running whose owned tree cannot be
+> said to be gone settles `cancellationFailed`, and the queue then ends
+> `stopFailed` with no queue-level stop ever requested. What the reason means is
+> that a stop could not be confirmed, not which scope was pressed.
 
 `stopping` is a state rather than a flag beside `running`, so nothing can read
 "running" and conclude another item may start. The terminal reason is carried
@@ -219,9 +262,14 @@ output auto-import or auto-preview.
   a reason, so every exhaustive match over them had to be answered for. That is
   the intent: the states are closed on both sides of the wire and pinned by
   contract tests.
-- Quarantine is a session-ending state for backend work, and it is reachable
-  only from an unconfirmed stop. It is the first state in this product a user
-  can enter that a restart is the only way out of, and it says so.
+- Quarantine is a session-ending state for backend work, and when this shipped
+  it was reachable only from an unconfirmed stop. It is the first state in this
+  product a user can enter that a restart is the only way out of, and it says
+  so. *(Amended 2026-09-08 by M6.8: three more ways in, all of them the same
+  fact rather than the same action — a conversion that could not account for a
+  process with no stop in flight, a preview or spectrum read that could not, and
+  a discovery help probe that could not. The state is about a process this
+  session may have lost, so what reaches it is every lane that starts one.)*
 - The item DTO still carries the planned output name for every item, including
   a cancelled one. That is the name the plan derived and the queue displays
   throughout; the claim that a file *was produced* lives in the report, and a
@@ -274,9 +322,9 @@ already offers the honest way to convert those rows again.
 A stopped queue and a stop-failed queue both retain whatever they finalized
 before the stop, and [ADR 0016](0016-explicit-converted-output-adoption.md)
 makes those outputs adoptable like any other. Only `finalized` items are:
-`cancelled`, `notRun` and `cancellationFailed` produced nothing to offer, and
-the eligibility rule asks the item state rather than inferring it from what a
-queue reached.
+`cancelled`, `notRun`, `cancellationFailed` and — since M6.8 — `skippedByRequest`
+produced nothing to offer, and the eligibility rule asks the item state rather
+than inferring it from what a queue reached.
 
 Backend quarantine does not block adoption, because adoption launches no
 process. It does not clear it either. An adopted mzML row may enter a

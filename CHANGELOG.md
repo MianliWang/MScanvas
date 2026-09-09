@@ -6,6 +6,28 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- **Three scopes of stop, and one of them is new because the process boundary
+  earned it.** `Stop queue` still ends the whole run. `Stop this file` ends only
+  the acquisition being converted now and lets the rest of the queue carry on.
+  `Skip` on a row still waiting settles it without running it — the row keeps its
+  place and the queue still says what became of it. Taking a row out of a running
+  queue is deliberately not offered: what a queue was asked to do is fixed when
+  it starts.
+
+  The reason the middle one exists is not a feature decision on its own. The
+  backend process used to be started and *then* put under MSCanvas's ownership,
+  and anything it created in between belonged to nothing MSCanvas could see or
+  stop. It is now created suspended, owned before it runs a single instruction,
+  and only then released — so when MSCanvas says a converter stopped, that is
+  about every process it started rather than the ones it happened to be
+  counting. Where it cannot say that, it still says so and still refuses further
+  work until you restart it; that state is never dressed up as a stop that
+  worked.
+
+  What the queue tells you afterwards accounts for every item it held, including
+  the two kinds you decided about, and a rerun that has already finished no
+  longer says it is still retrying.
+
 - **SCIEX WIFF conversion, through `Add files…`.** Select a `.wiff` and MSCanvas
   admits it together with the required `.wiff.scan` beside it as **one**
   workspace row — the companion is never a row of its own, and selecting both
@@ -43,6 +65,17 @@ All notable changes will be documented here once versioned releases begin.
   rows still cannot be previewed directly: convert first, then add the outputs.
 
 ### Changed
+
+- **The conversion diagnostics file is now schema version 2.** An item used to
+  carry `treeTerminationConfirmed`, a yes-or-no about the converter's process
+  tree, and a `false` could not tell an end that could not be confirmed from a
+  run that never started a process at all. It is replaced by `ownedTree`, which
+  names which of the three actually happened, alongside three new measurements of
+  what the run owned, a count of the rows you skipped, and one more item-state
+  name. The version moved because a field left rather than because fields were
+  added — a reader written
+  for version 1 will see the number and know not to read the boolean's absence as
+  a `false`.
 
 - **A queue item now states what it will produce rather than naming one file.**
   Items whose output name is known before the run — Thermo and Shimadzu — are

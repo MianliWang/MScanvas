@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { PreviewApiProvider } from "./api";
@@ -46,6 +46,18 @@ const DATASETS = [acquisition(1), acquisition(2), acquisition(3)];
 
 const STOP_EXPLANATION =
   "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.";
+
+// The other scope's copy, written out here for the same reason the one above is:
+// asserting the rendered sentence against a constant imported from the panel
+// would pass whatever the panel happened to say.
+const CANCEL_ITEM_EXPLANATION =
+  "Files already converted are kept, and the items after it still run. It may finish on its own first, and then it keeps its result. If MSCanvas cannot confirm that its converter ended, the whole queue stops and the session needs a restart.";
+
+// What the same control says once this document has asked. Its own sentence,
+// because the unavailable one -- "available while a file is being converted" --
+// would be shown exactly while a file is being converted.
+const CANCEL_ITEM_IN_FLIGHT_EXPLANATION =
+  "This file may still finish on its own, and then it keeps its result. The items after it still run. If MSCanvas cannot confirm that its converter ended, the whole queue stops and the session needs a restart.";
 
 function renderApp(api: FakePreviewApi): void {
   render(
@@ -103,7 +115,7 @@ function cancelled(handle: string, name: string): ConversionQueueItem {
     cancellation: {
       processLaunched: true,
       terminationRequested: true,
-      treeTerminationConfirmed: true,
+      ownedTree: "confirmed_gone",
       elapsedMilliseconds: 71,
       termination: "cancelled",
       partialOutputObserved: true,
@@ -178,11 +190,28 @@ describe("stopping a running conversion queue", () => {
     expect(within(panel).getByText(STOP_EXPLANATION)).toBeVisible();
     expect(stop).toHaveAccessibleDescription(STOP_EXPLANATION);
 
-    // Not a cancel, not a pause, not a resume, and not a per-item control.
-    expect(within(panel).queryByRole("button", { name: /^cancel/i })).toBeNull();
+    // Two scopes, and exactly two. M6.8 admitted ending the one file being
+    // converted, on a process boundary that owns the backend tree before it can
+    // grow and a measurement of the installed build; the queue-level stop it
+    // sits beside is unchanged. Each names its own scope, because two controls
+    // both called "Stop" would be the ambiguity this pair exists to avoid.
+    const stopScoped = within(panel).getAllByRole("button", { name: /stop/i });
+    expect(stopScoped.map((button) => button.textContent)).toEqual([
+      "Stop queue",
+      "Stop this file",
+    ]);
+    const cancelItem = within(panel).getByRole("button", { name: "Stop this file" });
+    expect(cancelItem).toBeEnabled();
+    expect(cancelItem).toHaveAccessibleDescription(
+      `Stop this file ends run-2.raw and carries on with the rest of the queue. ${CANCEL_ITEM_EXPLANATION}`,
+    );
+
+    // Still no pause and no resume: M6.8 adds neither, and a queue that could
+    // be suspended is a different lifecycle from the one this ships.
     expect(within(panel).queryByRole("button", { name: /resume/i })).toBeNull();
     expect(within(panel).queryByRole("button", { name: /pause/i })).toBeNull();
-    expect(within(panel).getAllByRole("button", { name: /stop/i })).toHaveLength(1);
+    // And still nothing that would take a row out of the bound plan.
+    expect(within(panel).queryByRole("button", { name: /remove/i })).toBeNull();
     // And still no fraction of an item.
     expect(within(panel).queryByRole("progressbar")).toBeNull();
     expect(panel.textContent ?? "").not.toMatch(/\d+\s?%/);
@@ -207,6 +236,454 @@ describe("stopping a running conversion queue", () => {
     });
     expect(within(panel).getByText("Stopping queue…")).toBeVisible();
     expect(api.stopRequests).toEqual(["1"]);
+  });
+
+  it("asks once for a skip however many times it is pressed", async () => {
+    /*
+     * The authoritative state cannot answer whether a skip is already under
+     * way: it is what the *reply* will say, and between the press and the reply
+     * it still reports the row as pending. Two presses in that window used to
+     * both pass, Rust would accept the first and refuse the second, and this
+     * document would show an error for a skip that had in fact succeeded.
+     *
+     * **The two presses share one render pass, and that is the whole test.**
+     * Written as consecutive `fireEvent.click` calls it proved nothing: each
+     * one flushes React, the button is gone by the second, and the assertion
+     * below passed with the single-flight guard removed. Dispatching both
+     * inside one `act` is the window a real double-press lands in -- the
+     * handler runs twice against a state that has not moved, which is why the
+     * guard has to be a ref rather than the rendered decision.
+     */
+    let settle: (state: WorkspaceConversionState) => void = () => {};
+    const held = new Promise<WorkspaceConversionState>((resolve) => {
+      settle = resolve;
+    });
+    const api = apiWith(runningQueue(), { skipItem: () => held });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const skip = await within(panel).findByRole("button", { name: "Skip run-3.raw" });
+    act(() => {
+      skip.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      skip.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      skip.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    // One request, whatever the pressing looked like.
+    await waitFor(() => {
+      expect(api.itemSkipRequests).toEqual([{ operationId: "1", itemIndex: 2 }]);
+    });
+    // And the control is withdrawn for the whole of that window rather than
+    // staying live at something already happening.
+    expect(within(panel).queryByRole("button", { name: "Skip run-3.raw" })).toBeNull();
+    // Nothing is reported as having gone wrong, because nothing did. The
+    // refusal this used to produce carries that exact sentence.
+    expect(panel.textContent ?? "").not.toContain("no longer waiting its turn");
+
+    settle({
+      status: "running",
+      operationId: "1",
+      queue: queueOf([
+        converted("file-1", "run-1.raw"),
+        queueItem("file-2", "run-2.raw", { state: "running", attempts: 1 }),
+        queueItem("file-3", "run-3.raw", { state: "skippedByRequest" }),
+      ]),
+    });
+    await waitFor(() => {
+      expect(
+        within(panel).getByText("Skipped — you chose not to convert this one"),
+      ).toBeVisible();
+    });
+    expect(api.itemSkipRequests).toEqual([{ operationId: "1", itemIndex: 2 }]);
+  });
+
+  it("tells a listener about the two items a user decided, not only the three counts", async () => {
+    /*
+     * The panel's own summary grew for this: a completed queue can now hold a
+     * file the user ended and a row they skipped, and three counts would leave
+     * two of three items unaccounted for. The live region is the same claim to
+     * a different reader, and a region that named neither would give a listener
+     * less than the panel gives a sighted reader.
+     */
+    const api = apiWith({
+      status: "terminal",
+      operationId: "1",
+      reason: "completed",
+      queue: queueOf([
+        converted("file-1", "run-1.raw"),
+        cancelled("file-2", "run-2.raw"),
+        queueItem("file-3", "run-3.raw", { state: "skippedByRequest" }),
+      ]),
+    });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(
+        within(panel).getByText("1 converted, 0 skipped, 0 failed, 1 cancelled, 1 skipped by you of 3."),
+      ).toBeVisible();
+    });
+    await waitFor(() => {
+      expect(liveRegion()).toContain(
+        "1 converted, 0 skipped, 0 failed, 1 cancelled, 1 skipped by you.",
+      );
+    });
+  });
+
+  it("does not offer Skip on a row a retry moved back to waiting", async () => {
+    /*
+     * `begin_retry` moves every retryable failure back to `pending` while its
+     * error, its attempt count and its diagnostic ticket stay in place, so
+     * during a rerun a `pending` row may be one that ran and failed in the pass
+     * before. Rust settles such a row with the result it earned rather than
+     * claiming nothing ran -- which is right, and would make pressing `Skip`
+     * turn a row labelled "Waiting" into one labelled "Failed" with no mention
+     * of a skip. The control is withdrawn instead: it is offered only where it
+     * does what its label says.
+     */
+    const api = apiWith({
+      status: "running",
+      operationId: "1",
+      queue: queueOf([
+        queueItem("file-1", "run-1.raw", { state: "running", attempts: 2 }),
+        // Both counts, because the rule is `attempts === 0` and a test that
+        // used only one of them would pass for `attempts !== 1` -- or, having
+        // moved to two, for `attempts !== 2`. One failed pass is also the
+        // common case, and it was the one the single-count version dropped.
+        queueItem("file-2", "run-2.raw", { state: "pending", attempts: 1 }),
+        queueItem("file-4", "run-4.raw", { state: "pending", attempts: 2 }),
+        // Never reached in any pass.
+        queueItem("file-3", "run-3.raw", { state: "pending" }),
+      ]),
+    });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(within(panel).getByRole("button", { name: "Skip run-3.raw" })).toBeEnabled();
+    });
+    expect(within(panel).queryByRole("button", { name: "Skip run-2.raw" })).toBeNull();
+    expect(within(panel).queryByRole("button", { name: "Skip run-4.raw" })).toBeNull();
+    // And the row says why, rather than being a "Waiting" row that silently
+    // lacks a control its neighbour has.
+    expect(
+      within(panel).getAllByText(
+        "Rerunning an earlier failure — it keeps that result if it is not run again.",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("sends one request when this file's stop is activated twice in a tick", async () => {
+    /*
+     * Two activations before the first reply -- a double click, or Enter held.
+     * Both handlers read the same running item from the same ref, so a guard on
+     * rendered state cannot separate them. Rust accepts a repeat against the
+     * same live attempt idempotently, but the attempt can settle between the
+     * two: the second then names an attempt that is over and is refused, and
+     * the document shows an error for a file it had in fact stopped.
+     */
+    let settle: (state: WorkspaceConversionState) => void = () => {};
+    const held = new Promise<WorkspaceConversionState>((resolve) => {
+      settle = resolve;
+    });
+    const api = apiWith(runningQueue(), { cancelItem: () => held });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const cancelItem = await within(panel).findByRole("button", {
+      name: "Stop this file",
+    });
+    // Both inside one act, which is what "in a tick" means: React batches the
+    // updates and neither handler sees the other's rendered effect. Two
+    // separate fireEvents would flush between them and the second would find a
+    // disabled control, which is the rendering this asserts is not the guard.
+    await act(async () => {
+      fireEvent.click(cancelItem);
+      fireEvent.click(cancelItem);
+    });
+
+    expect(api.itemCancelRequests).toHaveLength(1);
+    await waitFor(() => {
+      expect(within(panel).getByText("Stopping this file…")).toBeVisible();
+    });
+    expect(api.itemCancelRequests).toHaveLength(1);
+
+    await act(async () => {
+      settle(stoppedQueue());
+      await held;
+    });
+    expect(api.itemCancelRequests).toHaveLength(1);
+  });
+
+  it("draws a stop this document did not make, from the queue Rust serialises", async () => {
+    /*
+     * Stopping one file takes as long as the converter takes, and for a while
+     * that request lived only in the React state of the document that pressed
+     * the button. A view mounting inside the window -- a reload, or this pane
+     * being reached again -- read the item back as plainly `running` and drew
+     * "Converting" with the control live, offering to ask for something the
+     * authority had already accepted. Rust holds the request; this asserts the
+     * interface reads it rather than only remembering it.
+     */
+    const stopping = queueOf([
+      converted("file-1", "run-1.raw"),
+      queueItem("file-2", "run-2.raw", {
+        state: "running",
+        attempts: 1,
+        stopRequested: true,
+      }),
+      queueItem("file-3", "run-3.raw"),
+    ]);
+    const api = apiWith({ status: "running", operationId: "1", queue: stopping });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const control = await within(panel).findByRole("button", {
+      name: "Stopping this file…",
+    });
+    expect(control).toBeDisabled();
+    expect(within(panel).queryByRole("button", { name: "Stop this file" })).toBeNull();
+    expect(within(panel).getByText(CANCEL_ITEM_IN_FLIGHT_EXPLANATION)).toBeVisible();
+  });
+
+  it("counts what was converted between items, not what is no longer pending", async () => {
+    /*
+     * The panel published `currentIndex` as a success count. It is how many
+     * items are no longer pending, so a first file that failed, was skipped by
+     * the conflict policy, was skipped by the user or was cancelled all read as
+     * one converted -- announced in the interval after an item settles and
+     * before the next one starts, which directory re-admission widens.
+     */
+    const afterAFailure = queueOf([
+      queueItem("file-1", "run-1.raw", {
+        state: "failed",
+        attempts: 1,
+        retryable: true,
+        error: previewError(),
+      }),
+      queueItem("file-2", "run-2.raw"),
+    ]);
+    const api = apiWith({ status: "running", operationId: "1", queue: afterAFailure });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    expect(
+      within(panel).getByText("Converted 0 of 2, starting the next…"),
+    ).toBeVisible();
+  });
+
+  it("stops saying the control is available once this document has asked", async () => {
+    /*
+     * Between the press and Rust's reply the panel is still on the running
+     * branch, the button reads "Stopping this file…", and the note beside it
+     * used to read "Available while a file is being converted, and not once the
+     * whole queue is stopping" -- shown exactly while a file was being
+     * converted and the queue was not stopping. The in-flight sentence is also
+     * silent about the outcome, for the same reason the queue-level one is.
+     */
+    let settle: (state: WorkspaceConversionState) => void = () => {};
+    const held = new Promise<WorkspaceConversionState>((resolve) => {
+      settle = resolve;
+    });
+    const api = apiWith(runningQueue(), { cancelItem: () => held });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const cancelItem = await within(panel).findByRole("button", {
+      name: "Stop this file",
+    });
+    fireEvent.click(cancelItem);
+
+    await waitFor(() => {
+      expect(within(panel).getByText("Stopping this file…")).toBeVisible();
+    });
+    expect(within(panel).getByText(CANCEL_ITEM_IN_FLIGHT_EXPLANATION)).toBeVisible();
+    expect(panel.textContent ?? "").not.toContain(
+      "Available while a file is being converted",
+    );
+
+    settle({
+      status: "running",
+      operationId: "1",
+      queue: queueOf([
+        converted("file-1", "run-1.raw"),
+        cancelled("file-2", "run-2.raw"),
+        queueItem("file-3", "run-3.raw", { state: "running", attempts: 1 }),
+      ]),
+    });
+    await waitFor(() => {
+      expect(within(panel).getByRole("button", { name: "Stop this file" })).toBeEnabled();
+    });
+  });
+
+  it("tells a listener the counts and the refusal, not the refusal alone", async () => {
+    /*
+     * The one state this milestone added always carries both: a session that
+     * loses track of a process refuses the rest of the queue, which settles
+     * `completed` with rows marked not-run *and* an error. The live region used
+     * to return the error summary and stop, so a listener got the refusal and
+     * none of the counts while the panel showed both -- and the test that was
+     * meant to catch it built its queue with a fixture that hard-coded
+     * `error: null`, a state Rust never emits on this path.
+     */
+    const api = apiWith({
+      status: "terminal",
+      operationId: "1",
+      reason: "completed",
+      queue: queueOf(
+        [
+          converted("file-1", "run-1.raw"),
+          queueItem("file-2", "run-2.raw", { state: "failed", attempts: 1 }),
+          queueItem("file-3", "run-3.raw", { state: "notRun" }),
+        ],
+        previewError({
+          kind: "backend_quarantined",
+          summary:
+            "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
+          retryable: false,
+        }),
+      ),
+    });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(
+        within(panel).getByText("1 converted, 0 skipped, 1 failed, 1 not run of 3."),
+      ).toBeVisible();
+    });
+    await waitFor(() => {
+      const spoken = liveRegion();
+      expect(spoken).toContain("1 converted, 0 skipped, 1 failed, 1 not run.");
+      expect(spoken).toContain(
+        "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
+      );
+    });
+  });
+
+  it("keeps the skip control on screen while it is unanswered, and says so", async () => {
+    /*
+     * Two rules this milestone's other controls already follow and this one did
+     * not. The button was unmounted the moment the skip was dispatched, which
+     * drops focus to the document for a keyboard user; and nothing was
+     * announced, because a successful skip leaves the running item where it was
+     * and the region's string byte-identical either side of the press.
+     */
+    let settle: (state: WorkspaceConversionState) => void = () => {};
+    const held = new Promise<WorkspaceConversionState>((resolve) => {
+      settle = resolve;
+    });
+    const api = apiWith(runningQueue(), { skipItem: () => held });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const skip = await within(panel).findByRole("button", { name: "Skip run-3.raw" });
+    fireEvent.click(skip);
+
+    const skipping = await within(panel).findByRole("button", {
+      name: "Skipping run-3.raw…",
+    });
+    expect(skipping).toBeDisabled();
+    await waitFor(() => {
+      expect(liveRegion()).toContain("Skipping run-3.raw.");
+    });
+    expect(liveRegion()).toContain("the queue carries on");
+
+    settle(runningQueue());
+  });
+
+  it("speaks the output-only claim for a queue whose stop was not confirmed", async () => {
+    /*
+     * The panel shows it for every terminal reason. The region showed it for
+     * two of the three, and the one it withheld is the state in which what was
+     * and was not verified most needs saying.
+     */
+    const api = apiWith({
+      status: "terminal",
+      operationId: "1",
+      reason: "stopFailed",
+      queue: queueOf([
+        converted("file-1", "run-1.raw"),
+        queueItem("file-2", "run-2.raw", { state: "cancellationFailed", attempts: 1 }),
+        queueItem("file-3", "run-3.raw", { state: "notRun" }),
+      ]),
+    });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(within(panel).getByText(/Output-only validation\./)).toBeVisible();
+    });
+    await waitFor(() => {
+      expect(liveRegion()).toContain("Output-only validation.");
+    });
+  });
+
+  it("tells a listener that this file's stop was accepted", async () => {
+    /*
+     * The queue-level stop has been announced since M3.4. The per-item one had
+     * nothing: the state is still `running` with the item still `running`, so
+     * the region returned the unchanged "Converting item N of M" and, being
+     * unchanged, said nothing at all -- while the panel changed its button and
+     * swapped its note, both outside any live region.
+     */
+    let settle: (state: WorkspaceConversionState) => void = () => {};
+    const held = new Promise<WorkspaceConversionState>((resolve) => {
+      settle = resolve;
+    });
+    const api = apiWith(runningQueue(), { cancelItem: () => held });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const cancelItem = await within(panel).findByRole("button", {
+      name: "Stop this file",
+    });
+    fireEvent.click(cancelItem);
+
+    await waitFor(() => {
+      expect(liveRegion()).toContain("Stopping run-2.raw.");
+    });
+    expect(liveRegion()).toContain("may still finish on its own");
+    settle(runningQueue());
+  });
+
+  it("renders both defensive counts a completed queue could hold", async () => {
+    /*
+     * **A rendering test for a pairing Rust does not currently produce, and it
+     * says so rather than claiming otherwise.** `notRun` in a completed queue
+     * is reachable -- the test above exercises the real path, where a session
+     * that cannot account for a process refuses the rest of the queue -- but
+     * `cancellationFailed` is not: that state has one producer, a stop whose
+     * termination could not be confirmed, and the queue is then `stopFailed`.
+     * The summary and the live region carry it anyway, for the reason the panel
+     * gives: a count neither of them can render is a count they would report
+     * nowhere if the pairing ever changed. This pins that they can.
+     */
+    const api = apiWith({
+      status: "terminal",
+      operationId: "1",
+      reason: "completed",
+      queue: queueOf([
+        converted("file-1", "run-1.raw"),
+        queueItem("file-2", "run-2.raw", { state: "cancellationFailed", attempts: 1 }),
+        queueItem("file-3", "run-3.raw", { state: "notRun" }),
+      ]),
+    });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(
+        within(panel).getByText(
+          "1 converted, 0 skipped, 0 failed, 1 not run, 1 stop could not be confirmed of 3.",
+        ),
+      ).toBeVisible();
+    });
+    await waitFor(() => {
+      expect(liveRegion()).toContain(
+        "1 converted, 0 skipped, 0 failed, 1 not run, 1 stop could not be confirmed.",
+      );
+    });
   });
 
   it("says nothing about how the current item will end while it is stopping", async () => {
@@ -264,7 +741,9 @@ describe("stopping a running conversion queue", () => {
     expect(items[1].textContent ?? "").not.toContain("28,655");
 
     expect(
-      within(panel).getByText("1 converted, 0 skipped, 0 failed, 1 cancelled, 1 not run of 3."),
+      within(panel).getByText(
+        "1 converted, 0 skipped, 0 failed, 1 cancelled, 1 not run, 0 skipped by you of 3.",
+      ),
     ).toBeVisible();
     expect(
       within(panel).getByText(
@@ -290,7 +769,7 @@ describe("stopping a running conversion queue", () => {
             cancellation: {
               processLaunched: true,
               terminationRequested: true,
-              treeTerminationConfirmed: true,
+              ownedTree: "confirmed_gone",
               elapsedMilliseconds: 64,
               termination: "cancelled",
               partialOutputObserved: true,
@@ -355,7 +834,7 @@ describe("stopping a running conversion queue", () => {
     const banner = (await screen.findByText("ProteoWizard is not available"))
       .parentElement as HTMLElement;
     expect(banner.textContent ?? "").toContain(
-      "MSCanvas could not confirm that the converter process stopped.",
+      "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
     );
     expect(banner.textContent ?? "").toContain(
       "Restart MSCanvas before starting another preview or conversion.",
@@ -462,7 +941,7 @@ describe("stopping a running conversion queue", () => {
     expect(within(panel).getByText("MSCanvas cannot write to that folder.")).toBeVisible();
     await waitFor(() => {
       expect(liveRegion()).toContain(
-        "Queue stopped. 1 converted, 0 skipped, 0 failed, 1 cancelled, 1 not run.",
+        "Queue stopped. 1 converted, 0 skipped, 0 failed, 1 cancelled, 1 not run, 0 skipped by you.",
       );
     });
     expect(liveRegion()).toContain("MSCanvas cannot write to that folder.");
@@ -558,7 +1037,7 @@ describe("stopping a running conversion queue", () => {
             cancellation: {
               processLaunched: true,
               terminationRequested: true,
-              treeTerminationConfirmed: false,
+              ownedTree: "unconfirmed",
               elapsedMilliseconds: 5_000,
               termination: null,
               partialOutputObserved: true,
@@ -615,7 +1094,7 @@ describe("stopping a running conversion queue", () => {
     const banner = (await screen.findByText("ProteoWizard is not available"))
       .parentElement as HTMLElement;
     expect(banner.textContent ?? "").toContain(
-      "MSCanvas could not confirm that the converter process stopped.",
+      "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
     );
     expect(banner.textContent ?? "").toContain(
       "Restart MSCanvas before starting another preview or conversion.",

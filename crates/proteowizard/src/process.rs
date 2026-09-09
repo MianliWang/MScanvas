@@ -78,6 +78,59 @@ impl Termination {
     }
 }
 
+/// Whether ownership of the backend process tree existed before that tree could
+/// grow.
+///
+/// This is the fact an emptiness observation cannot supply, and the reason it
+/// is carried beside `final_active_processes` rather than folded into it. The
+/// owned Job's active-process count answers a question about the processes the
+/// Job holds. Whether it holds *every* process the backend created is a
+/// question about when ownership was established, and only the launch path
+/// knows the answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeOwnership {
+    /// The root process was created suspended and assigned to the owned Job
+    /// before it executed a single instruction, and the Job refuses breakaway.
+    ///
+    /// Every process the backend could create was therefore created while the
+    /// Job already held its creator, so the Job's accounting covers the whole
+    /// tree and an empty Job is an empty tree.
+    ///
+    /// The claim is about the backend's own process tree — the root and its
+    /// descendants. Work a backend hands to a service or COM server that was
+    /// already running is not a descendant, was never this Job's, and is not
+    /// covered. That limit is stated rather than assumed away, and it is why
+    /// this is not a sandbox.
+    EstablishedBeforeExecution,
+    /// No such guarantee: either ownership was never established, or the root
+    /// process was already executing when it was.
+    ///
+    /// A descendant created before assignment belongs to no Job of this run's,
+    /// so it is outside `TerminateJobObject` *and* outside the accounting that
+    /// would otherwise report the tree gone. An empty Job is then an empty Job
+    /// and nothing more.
+    NotEstablishedBeforeExecution,
+}
+
+impl TreeOwnership {
+    /// The stable identifier for how ownership was established, so a record can
+    /// carry the distinction without depending on a Rust variant name.
+    #[must_use]
+    pub const fn stable_id(self) -> &'static str {
+        match self {
+            Self::EstablishedBeforeExecution => "established_before_execution",
+            Self::NotEstablishedBeforeExecution => "not_established_before_execution",
+        }
+    }
+
+    /// Whether the owned Job's accounting covers every process the backend
+    /// could have created.
+    #[must_use]
+    pub const fn covers_every_descendant(self) -> bool {
+        matches!(self, Self::EstablishedBeforeExecution)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchFailureKind {
     NotFound,
@@ -116,17 +169,60 @@ pub struct ProcessOutput {
     /// Active processes observed after the root process and its owned tree were
     /// fully reaped. A successful supervised Windows execution reports `Some(0)`.
     pub final_active_processes: Option<u32>,
+    /// Every process the owned Windows Job Object has ever held, counted by the
+    /// kernel rather than sampled.
+    ///
+    /// The complement to `max_active_processes`, and a stronger measurement
+    /// than it: polling can miss a process that started and exited between two
+    /// observations, so the sampled peak is a floor. This is cumulative and has
+    /// no such gap -- a run reporting `Some(1)` created exactly one process,
+    /// whatever the sampling happened to catch. `None` means no bounded
+    /// accounting was available, never that there were none.
+    pub total_owned_processes: Option<u32>,
     /// Peak committed memory charged to the owned Windows Job Object across the
     /// whole supervised process tree. `None` means the platform exposed no
     /// equivalent bounded accounting or the query itself failed; this is an
     /// advisory observation, never a supervision result.
     pub peak_job_memory_bytes: Option<u64>,
+    /// When ownership of the process tree was established, relative to the
+    /// backend executing anything.
+    ///
+    /// Read together with `final_active_processes` and never apart from it:
+    /// see [`ProcessOutput::owned_tree_confirmed_gone`].
+    pub tree_ownership: TreeOwnership,
 }
 
 impl ProcessOutput {
     #[must_use]
     pub fn success(&self) -> bool {
         self.termination == Termination::Exited && self.exit_code == Some(0)
+    }
+
+    /// Whether this run establishes that every backend process it created is
+    /// gone.
+    ///
+    /// **This is the single origin of that claim.** Nothing else in the
+    /// repository may decide it, and no surface, wire field, diagnostic key or
+    /// document may assert a confirmed process tree on any other basis. A
+    /// repository check enforces that, because the claim is a semantic
+    /// boundary and a hand-maintained list of sites is correct only until the
+    /// next site is added.
+    ///
+    /// Two independent facts, and neither alone is the claim:
+    ///
+    /// - the owned Job reported itself empty — `Some(0)`, never `None`, which
+    ///   means no bounded accounting was available rather than nothing left;
+    /// - ownership covered the tree before it could grow, so the Job's
+    ///   accounting is about every process the backend created rather than
+    ///   only the ones it happened to hold.
+    ///
+    /// A run that never launched is not a terminated tree and is not asked
+    /// this question: [`Termination::NotStarted`] carries no job accounting at
+    /// all, and its caller distinguishes it by [`Termination::launched`].
+    #[must_use]
+    pub const fn owned_tree_confirmed_gone(&self) -> bool {
+        self.tree_ownership.covers_every_descendant()
+            && matches!(self.final_active_processes, Some(0))
     }
 
     /// The result of a run that never started, because cancellation had already
@@ -150,7 +246,13 @@ impl ProcessOutput {
             termination: Termination::NotStarted,
             max_active_processes: None,
             final_active_processes: None,
+            total_owned_processes: None,
             peak_job_memory_bytes: None,
+            // No process was created, so nothing was owned and there is no
+            // ownership establishment to report. The launched-tree claim is
+            // unreachable from here by construction, which is exactly the
+            // separation `NotStarted` exists to keep.
+            tree_ownership: TreeOwnership::NotEstablishedBeforeExecution,
         }
     }
 }
@@ -184,7 +286,64 @@ pub enum ProcessError {
         detail: String,
     },
     #[error("failed to assign the backend to an owned process job: {detail}")]
-    AssignToOwnedJob { detail: String },
+    AssignToOwnedJob {
+        detail: String,
+        /// Whether teardown observed the created root reclaimed.
+        ///
+        /// There is no Job on this path, so `KILL_ON_JOB_CLOSE` is not a
+        /// backstop and dropping the handle does not kill anything. `false` is
+        /// a suspended process this run created, still holding the pipes and
+        /// working directory it was given, that nothing observed end.
+        owned_root_reclaimed: bool,
+    },
+    /// The owned Job would not report itself empty within its bounded window.
+    ///
+    /// Distinct from an ordinary wait failure because of what is *not* known:
+    /// processes the Job held were still there when the window closed, and
+    /// terminating it afterwards is a request rather than an observation. A run
+    /// that ends here has not established that its tree is gone.
+    #[error("the owned backend process job did not empty: {detail}")]
+    OwnedJobNotEmptied { detail: String },
+    /// Ownership was established, and the owned root could not then be started.
+    ///
+    /// Its own variant rather than a `Launch` failure: the process exists and
+    /// this run owns it, which is a different fact about the machine from one
+    /// that never started. It has still executed nothing, so it has no
+    /// descendants — but whether it is *gone* depends on whether teardown
+    /// reclaimed it, and that is carried rather than assumed.
+    #[error("failed to start the owned backend process: {detail}")]
+    ResumeOwnedRoot {
+        detail: String,
+        /// Whether the owned Job reported itself empty after teardown.
+        ///
+        /// **An observation, not a request.** This was `owned_root_reclaimed`,
+        /// which said only that terminating and killing returned success —
+        /// and a caller then classified the run as an ordinary failure on the
+        /// strength of it, which is the reasoning this boundary refuses
+        /// everywhere else. `false` is not "probably fine": it is a process
+        /// this run owns whose disappearance it cannot state, and callers
+        /// classify it exactly as they classify a Job that would not terminate.
+        owned_job_observed_empty: bool,
+        /// Whether this run refused before it resumed anything.
+        ///
+        /// **Named for what it observed, not for what it would like to
+        /// conclude.** It was `root_never_ran`, which claimed more than the
+        /// boundary can see: a root an external agent had already resumed, or
+        /// one whose primary thread could not be opened, is a root that may or
+        /// may not have run, and only the *order* of this run's own actions is
+        /// a fact. What follows from the order is still the thing that matters
+        /// — nothing resumed means nothing of the image can have executed
+        /// because of this run — and where it is `false` the boundary declines
+        /// to say either way, which is the conservative answer.
+        ///
+        /// Reclaiming a root says it is gone; this says whether this run had
+        /// released it. Only both together make the failure an ordinary one,
+        /// because "terminating it afterwards is a request rather than an
+        /// observation" — a root already executing when the refusal came may
+        /// have created descendants the Job holds and that no emptiness check
+        /// was made about.
+        refused_before_resuming: bool,
+    },
     #[error("failed while waiting for the backend process: {detail}")]
     Wait { detail: String },
     #[error("failed to capture backend {stream}: {detail}")]
@@ -291,41 +450,79 @@ fn execute_command_after_assignment(
     // is one that unambiguously preceded process creation, and launching for it
     // would report a terminated tree where none needed to exist. What remains
     // is the interval stable `std::process` leaves between deciding to spawn
-    // and spawning — the same one the documented spawn-to-assignment race lives
-    // in — which is instructions rather than a file hash.
+    // and spawning, which is instructions rather than a file hash — and the
+    // process it creates executes nothing until this function resumes it.
     if cancellation.is_cancelled() {
         return Ok(ProcessOutput::cancelled_before_launch());
     }
     let started = Instant::now();
+    // Created suspended, so ownership is established before the backend runs.
+    //
+    // The published boundary spawned a running child and assigned it to the Job
+    // afterwards. A descendant created in that interval belonged to no Job, so
+    // it was outside termination *and* outside the accounting that reports the
+    // tree gone — and no number of samples closes that, because the hole is in
+    // what is being counted. Suspending the root removes the interval instead
+    // of narrowing it: the process exists, holds its pipes, and has executed no
+    // instruction of its own, so it cannot yet have created anything.
+    suspend_root_creation(&mut command);
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| launch_error(spec, &error))?;
 
-    // Assign before starting capture threads to keep the documented, unavoidable
-    // spawn-to-assignment window as narrow as stable std::process permits.
     let owned_job = match OwnedProcessJob::assign(&child) {
         Ok(job) => job,
         Err(error) => {
+            // Ownership was never established — and the root has still executed
+            // nothing, so there is no descendant this cannot reach. Terminating
+            // the direct child is complete here rather than a degradation, and
+            // it is complete because of how the child was created.
             let stdout_reader =
                 capture_stream(child.stdout.take().expect("stdout was configured as piped"));
             let stderr_reader =
                 capture_stream(child.stderr.take().expect("stderr was configured as piped"));
             let cleanup = force_unowned_cleanup(&mut child);
+            let owned_root_reclaimed = cleanup.is_ok();
             let captures = join_captures(stdout_reader, stderr_reader);
             let detail = add_cleanup_context(error.to_string(), cleanup, captures.err());
-            return Err(ProcessError::AssignToOwnedJob { detail });
+            return Err(ProcessError::AssignToOwnedJob {
+                detail,
+                owned_root_reclaimed,
+            });
         }
     };
 
+    // Capture starts before the backend does, so no output can be produced
+    // against an unattended pipe.
     let stdout_reader =
         capture_stream(child.stdout.take().expect("stdout was configured as piped"));
     let stderr_reader =
         capture_stream(child.stderr.take().expect("stderr was configured as piped"));
+
+    // Ownership exists; only now may the backend execute.
+    //
+    // The Job is passed in rather than merely existing, so this ordering is a
+    // compile-time fact. `OwnedProcessJob` is obtainable only from `assign`, so
+    // a resume moved above it does not build — which matters because the two
+    // tests that watch this interval construct their own suspended child, and a
+    // swapped order here would have left them green while the root ran before
+    // it was owned. `ROOT_TREE_OWNERSHIP` can therefore stay a constant: what
+    // makes it true is the signature below, not a convention.
+    let mut owned_job = Some(owned_job);
+    if let Err(refusal) = resume_owned_root(&child, owned_job.as_ref().expect("just assigned")) {
+        let (cleanup, owned_job_observed_empty) = force_owned_cleanup(&mut child, &mut owned_job);
+        let captures = join_captures(stdout_reader, stderr_reader);
+        let detail = add_cleanup_context(refusal.error.to_string(), cleanup, captures.err());
+        return Err(ProcessError::ResumeOwnedRoot {
+            detail,
+            owned_job_observed_empty,
+            refused_before_resuming: refusal.refused_before_resuming,
+        });
+    }
     after_assignment();
 
-    let mut owned_job = Some(owned_job);
     let mut max_active_processes = None;
     let execution = monitor_process(
         &mut child,
@@ -351,7 +548,10 @@ fn execute_command_after_assignment(
                     },
                     final_active_processes,
                 )),
-                Err(error) => Err(ProcessError::Wait {
+                // Its own kind, because what it means is its own fact: the Job
+                // still held processes when its window closed, and nothing
+                // after this observes them leave.
+                Err(error) => Err(ProcessError::OwnedJobNotEmptied {
                     detail: format!("failed to observe an empty owned process job: {error}"),
                 }),
             }
@@ -365,16 +565,38 @@ fn execute_command_after_assignment(
         .as_ref()
         .and_then(|job| ProcessJob::peak_memory_bytes(job).ok())
         .flatten();
-    let cleanup = if execution.is_err() {
+    // The cumulative count, taken here for the same reason and answering a
+    // different question from the sampled peak: how many processes this run
+    // ever owned, with no interval it could have missed one in.
+    let total_owned_processes = owned_job
+        .as_ref()
+        .and_then(|job| ProcessJob::total_process_count(job).ok())
+        .flatten();
+    // **The observation is read, not dropped.** `force_owned_cleanup` says both
+    // whether the requests succeeded and whether the Job then reported itself
+    // empty, and this call kept only the first -- which is exactly the reasoning
+    // its own docstring refuses. A failing run whose Job was not *observed*
+    // empty is a run that cannot say its processes are gone, whatever the
+    // teardown requests returned.
+    let (cleanup, owned_job_observed_empty) = if execution.is_err() {
         force_owned_cleanup(&mut child, &mut owned_job)
     } else {
-        Ok(())
+        (Ok(()), true)
     };
     let captures = join_captures(stdout_reader, stderr_reader);
     drop(owned_job);
 
     let (status, termination, final_active_processes) = execution.map_err(|error| {
-        add_process_cleanup_context(error, cleanup.as_ref().err(), captures.as_ref().err())
+        // Decorate first, decide last. The fold may only raise, and it raises
+        // on a teardown *request* that returned an error; the Job's accounting
+        // is what says whether anything of this run survived, so it is read
+        // after the text is complete and it is what the kind follows. A failure
+        // whose Job was never observed empty is an unaccounted process whatever
+        // it failed at; one whose Job was observed empty is not, whatever the
+        // requests returned.
+        let error =
+            add_process_cleanup_context(error, cleanup.as_ref().err(), captures.as_ref().err());
+        failure_after_teardown(error, owned_job_observed_empty)
     })?;
     cleanup?;
     let (stdout, stderr) = captures?;
@@ -391,8 +613,132 @@ fn execute_command_after_assignment(
         termination,
         max_active_processes,
         final_active_processes,
+        total_owned_processes,
         peak_job_memory_bytes,
+        tree_ownership: ROOT_TREE_OWNERSHIP,
     })
+}
+
+/// What a successful supervised launch establishes about ownership on this
+/// platform.
+///
+/// One constant rather than a value threaded through the launch path, because
+/// the answer is a property of how this function creates and owns a process,
+/// not of how a particular run went. Every path that reaches the `ProcessOutput`
+/// below has created the root suspended and assigned it before resuming it.
+#[cfg(windows)]
+const ROOT_TREE_OWNERSHIP: TreeOwnership = TreeOwnership::EstablishedBeforeExecution;
+
+/// Off Windows there is no owned Job, no suspended creation and no process-tree
+/// termination, so nothing here establishes ownership over a tree.
+///
+/// Nothing regresses: `OwnedProcessJob::terminate` is already unsupported off
+/// Windows and its accounting already reports `None`, so a successful
+/// `Cancelled` for a launched run was unreachable before this constant existed
+/// and stays unreachable now.
+#[cfg(not(windows))]
+const ROOT_TREE_OWNERSHIP: TreeOwnership = TreeOwnership::NotEstablishedBeforeExecution;
+
+/// Creates the root process suspended, so that ownership can be established
+/// before it executes.
+#[cfg(windows)]
+fn suspend_root_creation(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    // CREATE_SUSPENDED. The process and its primary thread are created, the
+    // standard handles this command configured are inherited, and the thread is
+    // left with a suspend count of one so no instruction of the image runs.
+    const CREATE_SUSPENDED: u32 = 0x0000_0004;
+
+    command.creation_flags(CREATE_SUSPENDED);
+}
+
+#[cfg(not(windows))]
+fn suspend_root_creation(_command: &mut Command) {}
+
+/// Why a resume was refused, and whether the image had run by then.
+///
+/// The second half is not a detail. A refusal *before* anything is resumed
+/// leaves a root that has executed nothing, so terminating the direct child is
+/// complete; a refusal after one leaves a process that may have created
+/// descendants, and a run that ends there has not established that its tree is
+/// gone. The two classify differently and only one of them is retryable.
+#[derive(Debug)]
+struct ResumeRefusal {
+    error: io::Error,
+    refused_before_resuming: bool,
+}
+
+impl ResumeRefusal {
+    /// A refusal taken before this run resumed anything.
+    fn before_resuming(error: io::Error) -> Self {
+        Self {
+            error,
+            refused_before_resuming: true,
+        }
+    }
+
+    /// A refusal taken after this run had resumed what it could.
+    ///
+    /// Not "the root ran": whether it did is exactly what this boundary cannot
+    /// see once it has released threads and none reported the count it created
+    /// them with. Declining to say is what makes the classification safe.
+    fn after_resuming(error: io::Error) -> Self {
+        Self {
+            error,
+            refused_before_resuming: false,
+        }
+    }
+}
+
+/// What a set of observed previous suspend counts means for the launch.
+///
+/// Split out from the Windows calls so the decision can be tested without a
+/// process: the whole point of the two-phase resume is which answer follows
+/// which observation, and that was reachable only through a real refusal.
+///
+/// `Ok` exactly when some thread reported the count a thread created suspended
+/// has. Nothing else identifies the primary — a thread another product injected
+/// suspended reports the same one — so this is the strongest statement the
+/// observation supports, and the docs say so rather than claiming the root is
+/// certainly running.
+///
+/// **An empty set is its own answer.** A count is pushed only by a `ResumeThread`
+/// that returned one, so nothing here means every handle failed to open or every
+/// resume failed — this run released no thread, and a suspended root that was
+/// never released has executed nothing. Folding that into the refusal below said
+/// the opposite of what the run observed: an environment that denies
+/// `THREAD_SUSPEND_RESUME` on the root's threads would report a root that might
+/// have run, and the session was quarantined for the rest of its life over a
+/// process whose image never started.
+fn resume_verdict(previous_suspend_counts: &[u32]) -> Result<(), ResumeRefusal> {
+    if previous_suspend_counts.contains(&1) {
+        return Ok(());
+    }
+    if previous_suspend_counts.is_empty() {
+        return Err(ResumeRefusal::before_resuming(io::Error::other(
+            "no thread of the owned root could be resumed, so this run released \
+             nothing and the image had executed nothing when it took ownership",
+        )));
+    }
+    Err(ResumeRefusal::after_resuming(io::Error::other(
+        "no thread of the owned root was still suspended as it was created, so this \
+         run cannot say the image had executed nothing when it took ownership",
+    )))
+}
+
+/// Starts the owned root process.
+///
+/// Called only after [`OwnedProcessJob::assign`] has succeeded, so what it
+/// releases is a process this run already owns.
+#[cfg(windows)]
+fn resume_owned_root(child: &Child, _owned: &OwnedProcessJob) -> Result<(), ResumeRefusal> {
+    windows_job::resume_primary_thread(child)
+}
+
+#[cfg(not(windows))]
+fn resume_owned_root(_child: &Child, _owned: &OwnedProcessJob) -> Result<(), ResumeRefusal> {
+    Ok(())
 }
 
 fn require_executable_identity(spec: &CommandSpec) -> Result<(), ProcessError> {
@@ -610,21 +956,66 @@ fn wait_for_job_empty_with_timeout(
     }
 }
 
+/// Tears the owned tree down, and says whether it was *observed* gone.
+///
+/// **The second half is the point.** Terminating a Job is a request; the only
+/// statement about what survived it is the Job's own process count, read after
+/// the request. This used to return success or failure of the request alone,
+/// and a caller then classified a run as an ordinary failure on the strength of
+/// it — "teardown observed it gone" about a teardown that observed nothing.
 fn force_owned_cleanup(
     child: &mut Child,
     owned_job: &mut Option<OwnedProcessJob>,
-) -> Result<(), ProcessError> {
+) -> (Result<(), ProcessError>, bool) {
     let mut failures = Vec::new();
+    let mut observed_empty = false;
     if let Some(job) = owned_job.take() {
         if let Err(error) = job.terminate() {
             failures.push(format!("owned-job termination failed: {error}"));
         }
+        // Asked after the request, and asked until it can be answered.
+        // `TerminateJobObject` returns once the signal is delivered, not once
+        // the processes it signalled have finished exiting, so a single read
+        // taken here is a read of a teardown still in progress: it reported the
+        // Job populated, the run recorded "not observed empty", and the session
+        // was quarantined for the rest of its life over a race it had won
+        // milliseconds later. Only `Some(0)` counts. `None` is an accounting
+        // answer this platform could not give, which is not zero and will not
+        // become zero by asking again.
+        observed_empty = observe_owned_job_emptied(&job, JOB_EMPTY_TIMEOUT);
         // KILL_ON_JOB_CLOSE is a final process-tree safety net even when the
         // explicit TerminateJobObject call itself failed.
         drop(job);
     }
     collect_direct_child_cleanup(child, &mut failures);
-    cleanup_result(failures)
+    (cleanup_result(failures), observed_empty)
+}
+
+/// Waits, boundedly, for an owned Job to report itself empty.
+///
+/// The counterpart of [`wait_for_job_empty_with_timeout`] for the teardown path,
+/// and deliberately smaller: there is no cancellation to observe here and no
+/// second termination to escalate to, because the caller has already made the
+/// one request there is. All this adds to a single read is the willingness to
+/// wait for the answer.
+///
+/// `false` for every answer that is not `Some(0)` — an expired window, an
+/// accounting this platform will not give, or a query that failed. None of them
+/// is an observation that the tree is gone, and this returns only that.
+fn observe_owned_job_emptied(owned_job: &impl ProcessJob, empty_timeout: Duration) -> bool {
+    let deadline = Instant::now() + empty_timeout;
+    loop {
+        match owned_job.active_process_count() {
+            Ok(Some(0)) => return true,
+            Ok(None) | Err(_) => return false,
+            Ok(Some(_)) => {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                thread::sleep(POLL_INTERVAL);
+            }
+        }
+    }
 }
 
 fn force_unowned_cleanup(child: &mut Child) -> Result<(), ProcessError> {
@@ -667,6 +1058,71 @@ fn add_cleanup_context(
     detail
 }
 
+/// What a failing run's error means once its owned Job has been read.
+///
+/// **The observation decides, in both directions, and it decides last.**
+///
+/// A failure whose owned Job was never *observed* empty is an unaccounted
+/// process, whatever it failed at: `NotAwaited` claims the Job emptied and that
+/// only how the process ended was lost, and without the observation it claims
+/// the first half on nothing.
+///
+/// A failure whose owned Job *was* observed empty is not an unaccounted process,
+/// whatever a teardown *request* returned. `Some(0)` is the Job's own accounting
+/// of processes this run owns, breakaway is refused, so nothing it started is
+/// running — and that is the same evidence a confirmed stop rests on. Keeping an
+/// earlier "could not confirm" beside it ended sessions permanently, because
+/// quarantine is never lifted, on an uncertainty the run itself had already
+/// resolved: a first `TerminateJobObject` that reported failure before the
+/// second emptied the Job, an emptiness window that expired before the final
+/// teardown, a redundant `kill` of a process that had already gone.
+///
+/// This is not the fold lowering a kind. [`add_process_cleanup_context`] may
+/// only ever raise, and it runs before this; what happens here is a later and
+/// stronger reading of the same Job replacing an earlier one, which is the only
+/// thing entitled to.
+fn failure_after_teardown(error: ProcessError, owned_job_observed_empty: bool) -> ProcessError {
+    if !owned_job_observed_empty {
+        if error.leaves_an_owned_process_unaccounted() {
+            return error;
+        }
+        return ProcessError::OwnedJobNotEmptied {
+            detail: error.to_string(),
+        };
+    }
+    // The detail is carried across rather than restated, so what the run failed
+    // at and what its teardown reported are still readable in the text; only
+    // the claim about surviving processes is withdrawn.
+    match error {
+        ProcessError::OwnedJobNotEmptied { detail } | ProcessError::Terminate { detail } => {
+            ProcessError::Wait { detail }
+        }
+        error => error,
+    }
+}
+
+/// Folds what teardown and capture reported into the error a run returns.
+///
+/// **A failed owned teardown changes the kind, not only the text.** The
+/// difference between "this run failed and its Job was terminated" and "this
+/// run failed and its Job would not go" is the whole of what decides whether
+/// anything of this session's may start next, and folding the second into a
+/// detail string is how it stopped being decidable.
+///
+/// **And it only ever raises.** This used to *replace* the primary kind: a
+/// capture thread that returned an error beside a Job that had already said it
+/// still held processes turned `OwnedJobNotEmptied` into `Wait`, which
+/// classifies as `NotAwaited` — an ordinary broken conversion, retryable, no
+/// quarantine — while a converter this run owned was positively observed to
+/// have survived. A coincident failure of a stdout pipe may add text; it may
+/// not lower what the run already established about the machine.
+///
+/// **Raising is not the last word, and this is not where the last word is.**
+/// Because it may only raise, it raises on the teardown *request* alone: a
+/// redundant `kill` of a process that had already exited is a cleanup error,
+/// and this makes an unaccounted process of it. That is right for what this
+/// function can see and wrong about the machine, so [`failure_after_teardown`]
+/// runs after it and lets the Job's own accounting settle the kind.
 fn add_process_cleanup_context(
     primary: ProcessError,
     cleanup: Option<&ProcessError>,
@@ -682,6 +1138,17 @@ fn add_process_cleanup_context(
     }
     if let Some(error) = capture {
         detail.push_str(&format!("; capture cleanup error: {error}"));
+    }
+    // A primary that already names an unaccounted process keeps its kind and
+    // gains the text. Nothing here can make that fact smaller.
+    if primary.leaves_an_owned_process_unaccounted() {
+        return match primary {
+            ProcessError::Terminate { .. } => ProcessError::Terminate { detail },
+            _ => ProcessError::OwnedJobNotEmptied { detail },
+        };
+    }
+    if cleanup.is_some() {
+        return ProcessError::OwnedJobNotEmptied { detail };
     }
     ProcessError::Wait { detail }
 }
@@ -882,6 +1349,7 @@ use windows_job::OwnedProcessJob;
 trait ProcessJob {
     fn terminate(&self) -> io::Result<()>;
     fn active_process_count(&self) -> io::Result<Option<u32>>;
+    fn total_process_count(&self) -> io::Result<Option<u32>>;
     fn peak_memory_bytes(&self) -> io::Result<Option<u64>>;
 }
 
@@ -892,6 +1360,10 @@ impl ProcessJob for OwnedProcessJob {
 
     fn active_process_count(&self) -> io::Result<Option<u32>> {
         Self::active_process_count(self)
+    }
+
+    fn total_process_count(&self) -> io::Result<Option<u32>> {
+        Self::total_process_count(self)
     }
 
     fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {
@@ -919,6 +1391,10 @@ impl OwnedProcessJob {
         Ok(None)
     }
 
+    fn total_process_count(&self) -> io::Result<Option<u32>> {
+        Ok(None)
+    }
+
     fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {
         Ok(None)
     }
@@ -933,10 +1409,24 @@ mod windows_job {
     use std::process::Child;
     use std::ptr;
 
+    use super::ResumeRefusal;
+
     type Handle = *mut c_void;
     type Bool = i32;
 
     const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
+    const TH32CS_SNAPTHREAD: u32 = 0x0000_0004;
+    const THREAD_SUSPEND_RESUME: u32 = 0x0002;
+    const INVALID_HANDLE_VALUE: isize = -1;
+    /// `ResumeThread` returns the thread's previous suspend count, or this on
+    /// failure. Zero is not a failure: a thread that was not suspended keeps
+    /// the count it had, because the call will not take one below zero.
+    const RESUME_THREAD_FAILED: u32 = u32::MAX;
+    /// How many times a thread snapshot is taken before its failure is the
+    /// answer. The suspended process cannot change under it, so a retry asks
+    /// the same question of a system that has moved on.
+    const SNAPSHOT_ATTEMPTS: usize = 4;
+    const SNAPSHOT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(15);
     const JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION_CLASS: i32 = 1;
     const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: i32 = 9;
     const CANCELLED_EXIT_CODE: u32 = 0xC000_013A;
@@ -1018,6 +1508,165 @@ mod windows_job {
             information_length: u32,
             return_length: *mut u32,
         ) -> Bool;
+        #[link_name = "CreateToolhelp32Snapshot"]
+        fn create_toolhelp32_snapshot(flags: u32, process_id: u32) -> Handle;
+        #[link_name = "Thread32First"]
+        fn thread32_first(snapshot: Handle, entry: *mut ThreadEntry32) -> Bool;
+        #[link_name = "Thread32Next"]
+        fn thread32_next(snapshot: Handle, entry: *mut ThreadEntry32) -> Bool;
+        #[link_name = "OpenThread"]
+        fn open_thread(access: u32, inherit_handle: Bool, thread_id: u32) -> Handle;
+        #[link_name = "ResumeThread"]
+        fn resume_thread(thread: Handle) -> u32;
+    }
+
+    #[repr(C)]
+    #[derive(Debug, Default)]
+    struct ThreadEntry32 {
+        size: u32,
+        usage: u32,
+        thread_id: u32,
+        owner_process_id: u32,
+        base_priority: i32,
+        delta_priority: i32,
+        flags: u32,
+    }
+
+    /// Starts the suspended root process this run already owns.
+    ///
+    /// Stable `std::process` creates the process but hands back no handle to
+    /// its primary thread, so the threads are found by asking the system which
+    /// ones belong to the child's process id. That identification is sound
+    /// rather than a lookup that could hit a stranger because the caller still
+    /// holds the child's process handle: the process cannot have exited and its
+    /// id cannot have been reused, so every thread reported for that id belongs
+    /// to the process this run created.
+    ///
+    /// **Every one of them is resumed, and a count other than one is not an
+    /// error.** An earlier version took "a process created suspended has one
+    /// thread" as an identity check and refused anything else. A process
+    /// created suspended does have one thread of its own — but a second thread
+    /// in it need not be a stranger's process, it can be one another product
+    /// injected, which endpoint security software does routinely. This boundary
+    /// is the one every lane uses, so that refusal would have failed conversion,
+    /// discovery and preview alike on such a machine, over something that was
+    /// never about ownership in the first place. Ownership comes from
+    /// `CREATE_SUSPENDED` and the Job assignment that both precede this call,
+    /// and no thread count changes what they established.
+    ///
+    /// What the count was standing in for is still required, and is checked
+    /// directly: some thread must report a previous suspend count of one, which
+    /// is the primary thread exactly as it was created and before it ran.
+    /// Resuming a thread that was not suspended does nothing at all, so the
+    /// others cost only the call.
+    ///
+    /// **Every handle is opened before any thread is resumed**, and that order
+    /// is the whole of the error contract. A resume cannot be taken back: once
+    /// the primary thread is running, the image may have created descendants,
+    /// and a refusal returned after that would be classified as a root that
+    /// never started — retryable, and not a quarantine — while a process this
+    /// run owns is executing. Refusing during the opening phase is refusing
+    /// while "it has executed nothing" is still true.
+    ///
+    /// A thread that cannot be opened is skipped rather than fatal. It is one
+    /// that ended between the snapshot and the call, which is the ordinary life
+    /// of an injected loader thread, and it cannot be the primary: that one is
+    /// suspended, and this run holds its process handle.
+    pub(super) fn resume_primary_thread(child: &Child) -> Result<(), ResumeRefusal> {
+        let process_id = child.id();
+        let threads = threads_of_owned_root(process_id).map_err(ResumeRefusal::before_resuming)?;
+        let mut handles = Vec::with_capacity(threads.len());
+        for thread_id in threads {
+            // SAFETY: A thread id the system just reported for a live process,
+            // asked for with the one access right this needs. The returned
+            // handle is checked before use and owned exactly once.
+            let raw_thread = unsafe { open_thread(THREAD_SUSPEND_RESUME, 0, thread_id) };
+            if raw_thread.is_null() {
+                continue;
+            }
+            // SAFETY: OpenThread returned a new, non-null owned HANDLE whose
+            // ownership is transferred exactly once to OwnedHandle.
+            handles.push(unsafe { OwnedHandle::from_raw_handle(raw_thread) });
+        }
+
+        let mut previous_suspend_counts = Vec::with_capacity(handles.len());
+        for handle in &handles {
+            // SAFETY: The handle remains owned by `handles` and is valid for
+            // the call.
+            let previous_suspend_count = unsafe { resume_thread(handle.as_raw_handle()) };
+            if previous_suspend_count == RESUME_THREAD_FAILED {
+                // The thread ended between opening and this call. Nothing of
+                // the image can have been started by it, so the loop goes on
+                // looking for the one that was created suspended.
+                continue;
+            }
+            previous_suspend_counts.push(previous_suspend_count);
+        }
+        super::resume_verdict(&previous_suspend_counts)
+    }
+
+    /// Every thread the system reports for a process.
+    ///
+    /// An empty answer is an error: the caller holds the process handle, so a
+    /// process with no thread is a snapshot that has not caught up rather than
+    /// a fact about the process.
+    pub(super) fn threads_of_owned_root(process_id: u32) -> io::Result<Vec<u32>> {
+        // The snapshot is documented to fail transiently while the system's
+        // thread list is changing, so a single attempt would turn ordinary load
+        // into a launch that refuses. Bounded, and short: the process being
+        // asked about is suspended and cannot go anywhere in the meantime.
+        let mut last = None;
+        for attempt in 0..SNAPSHOT_ATTEMPTS {
+            match threads_in_one_snapshot(process_id) {
+                Ok(threads) => return Ok(threads),
+                Err(error) => {
+                    last = Some(error);
+                    if attempt + 1 < SNAPSHOT_ATTEMPTS {
+                        std::thread::sleep(SNAPSHOT_RETRY_DELAY);
+                    }
+                }
+            }
+        }
+        Err(last.expect("at least one attempt was made"))
+    }
+
+    /// One snapshot, and every thread it reports for the process.
+    fn threads_in_one_snapshot(process_id: u32) -> io::Result<Vec<u32>> {
+        // SAFETY: A thread snapshot over every process, which is what the
+        // documented call takes a zero process id to mean. The returned handle
+        // is checked against both failure spellings before use.
+        let raw_snapshot = unsafe { create_toolhelp32_snapshot(TH32CS_SNAPTHREAD, 0) };
+        if raw_snapshot.is_null() || raw_snapshot as isize == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: CreateToolhelp32Snapshot returned a new, non-null owned HANDLE
+        // whose ownership is transferred exactly once to OwnedHandle.
+        let snapshot = unsafe { OwnedHandle::from_raw_handle(raw_snapshot) };
+        let entry_size = structure_size::<ThreadEntry32>()?;
+        let mut entry = ThreadEntry32 {
+            size: entry_size,
+            ..ThreadEntry32::default()
+        };
+        let mut found = Vec::new();
+        // SAFETY: The snapshot is live and the entry is a correctly sized,
+        // writable THREADENTRY32 for the duration of each call.
+        let mut more = unsafe { thread32_first(snapshot.as_raw_handle(), &mut entry) };
+        while more != 0 {
+            if entry.owner_process_id == process_id {
+                found.push(entry.thread_id);
+            }
+            // Reset on every iteration: the enumeration is documented to require
+            // the size field, and a call that overwrote it would walk off.
+            entry.size = entry_size;
+            // SAFETY: As above.
+            more = unsafe { thread32_next(snapshot.as_raw_handle(), &mut entry) };
+        }
+        if found.is_empty() {
+            return Err(io::Error::other(
+                "the owned root process reported no thread before it ran",
+            ));
+        }
+        Ok(found)
     }
 
     #[derive(Debug)]
@@ -1026,10 +1675,19 @@ mod windows_job {
     }
 
     impl OwnedProcessJob {
+        /// Creates the owned Job and puts `child` in it.
+        ///
+        /// The caller creates `child` suspended, so this runs before the image
+        /// has executed anything and the Job therefore holds the creator of
+        /// every process the backend can go on to create.
+        ///
+        /// The limit flags deliberately do **not** include
+        /// `JOB_OBJECT_LIMIT_BREAKAWAY_OK` or its silent variant. Without them
+        /// a descendant asking for `CREATE_BREAKAWAY_FROM_JOB` is refused by
+        /// the kernel, so ownership established here cannot be given up later.
+        /// Nested Jobs are what makes this safe to do inside another Job — the
+        /// child joins both, and terminating this one still terminates it.
         pub(super) fn assign(child: &Child) -> io::Result<Self> {
-            // Stable std does not expose suspended CreateProcess/job-list attributes.
-            // The M0 spike therefore assigns immediately after spawn and records this
-            // narrow spawn-to-assignment race as a production follow-up.
             // SAFETY: Both optional pointers are null, requesting an unnamed job with
             // default security attributes. The returned handle is checked before use.
             let raw_job = unsafe { create_job_object_w(ptr::null(), ptr::null()) };
@@ -1078,6 +1736,11 @@ mod windows_job {
         }
 
         pub(super) fn active_process_count(&self) -> io::Result<Option<u32>> {
+            Ok(Some(self.accounting()?.active_processes))
+        }
+
+        /// One bounded accounting query, read by both counts.
+        fn accounting(&self) -> io::Result<BasicAccountingInformation> {
             let mut information = BasicAccountingInformation::default();
             let information_length = structure_size::<BasicAccountingInformation>()?;
             // SAFETY: The handle is live and the mutable repr(C) buffer and byte size
@@ -1094,7 +1757,16 @@ mod windows_job {
             if queried == 0 {
                 return Err(io::Error::last_os_error());
             }
-            Ok(Some(information.active_processes))
+            Ok(information)
+        }
+
+        /// Every process this Job has ever held, cumulative and kernel-counted.
+        ///
+        /// The same bounded query as the active count, reading the other field
+        /// of it. Sampling the active count can miss a process that lived
+        /// entirely between two observations; this cannot.
+        pub(super) fn total_process_count(&self) -> io::Result<Option<u32>> {
+            Ok(Some(self.accounting()?.total_processes))
         }
 
         /// Peak committed memory charged to every process this Job has owned.
@@ -1912,6 +2584,768 @@ mod tests {
         assert!(String::from_utf8_lossy(&output.stdout).contains("mock child started"));
     }
 
+    /// The claim is a conjunction, and neither half alone is it.
+    ///
+    /// An empty owned Job under an open ownership window is an observation
+    /// about the processes ownership happened to hold. Ownership established
+    /// before execution, over a Job that will not report itself empty, is not a
+    /// terminated tree either.
+    #[test]
+    fn an_empty_job_is_an_empty_tree_only_where_ownership_preceded_execution() {
+        let owned_and_empty = supervised_output(
+            TreeOwnership::EstablishedBeforeExecution,
+            Some(0),
+            Termination::Cancelled,
+        );
+        assert!(owned_and_empty.owned_tree_confirmed_gone());
+
+        for unconfirmed in [
+            // Ownership after the fact: a descendant created before assignment
+            // was never in the Job the count is about.
+            supervised_output(
+                TreeOwnership::NotEstablishedBeforeExecution,
+                Some(0),
+                Termination::Cancelled,
+            ),
+            // Owned from the start, and the Job still holds something.
+            supervised_output(
+                TreeOwnership::EstablishedBeforeExecution,
+                Some(1),
+                Termination::Cancelled,
+            ),
+            // No bounded accounting at all. `None` is not zero, and a run that
+            // cannot count is not a run that counted nothing.
+            supervised_output(
+                TreeOwnership::EstablishedBeforeExecution,
+                None,
+                Termination::Cancelled,
+            ),
+        ] {
+            assert!(
+                !unconfirmed.owned_tree_confirmed_gone(),
+                "{:?}/{:?} must not confirm a terminated tree",
+                unconfirmed.tree_ownership,
+                unconfirmed.final_active_processes
+            );
+        }
+    }
+
+    /// A run that never launched makes no claim about a tree in either
+    /// direction, and carries no accounting to make one from.
+    #[test]
+    fn a_run_that_never_launched_claims_no_terminated_tree() {
+        let refused = ProcessOutput::cancelled_before_launch();
+
+        assert_eq!(refused.termination, Termination::NotStarted);
+        assert!(!refused.termination.launched());
+        assert!(!refused.owned_tree_confirmed_gone());
+        assert_eq!(refused.final_active_processes, None);
+        assert_eq!(refused.max_active_processes, None);
+        assert_eq!(refused.exit_code, None);
+    }
+
+    /// A root that was created and could not be started is two different facts,
+    /// and which one it is depends on teardown rather than on the failure.
+    ///
+    /// Reclaimed, it ran nothing and is gone. Unreclaimed, it is an owned
+    /// process whose disappearance this boundary cannot state — which is what
+    /// `NotTerminated` already means, and the state a stop must never be
+    /// allowed to call clean.
+    /// The whole decision chain, run rather than restated.
+    ///
+    /// Supervision and teardown produce a typed failure; the fold may decorate
+    /// it; the classification turns it into a `BackendExecutionFailure`; and the
+    /// queue's admission question reads that. Each step already has a test of
+    /// its own, and each of those tests starts from a value written by hand —
+    /// so a change that broke the *composition* while leaving every step correct
+    /// would pass all of them. This composes the real functions and asserts only
+    /// the end of the chain.
+    ///
+    /// The four rows are the cases the milestone's contract turns on. Absence,
+    /// zero, nothing created and a confirmed stop stay four different things.
+    #[test]
+    fn the_failure_chain_decides_admission_from_what_was_observed() {
+        use crate::conversion_run::{BackendExecutionFailure, ConversionRunFailure};
+
+        let capture = ProcessError::Capture {
+            stream: "stdout",
+            detail: "the pipe broke".to_owned(),
+        };
+        let teardown = ProcessError::Terminate {
+            detail: "the owned job would not terminate".to_owned(),
+        };
+        let wait = || ProcessError::Wait {
+            detail: "the wait was interrupted".to_owned(),
+        };
+        let job_held_processes = || ProcessError::OwnedJobNotEmptied {
+            detail: "the owned job would not empty".to_owned(),
+        };
+
+        /// One row of the chain: what happened, and what the queue must decide.
+        struct Step<'a> {
+            name: &'a str,
+            primary: ProcessError,
+            owned_job_observed_empty: bool,
+            cleanup: Option<&'a ProcessError>,
+            capture: Option<&'a ProcessError>,
+            classified: BackendExecutionFailure,
+            refuses_further_work: bool,
+        }
+
+        let chain = [
+            Step {
+                name: "a Job that said it still held processes, beside a broken pipe",
+                primary: job_held_processes(),
+                owned_job_observed_empty: false,
+                cleanup: None,
+                capture: Some(&capture),
+                classified: BackendExecutionFailure::NotTerminated,
+                refuses_further_work: true,
+            },
+            Step {
+                name: "an ordinary wait failure with no accounting to read",
+                primary: wait(),
+                owned_job_observed_empty: false,
+                cleanup: None,
+                capture: None,
+                classified: BackendExecutionFailure::NotTerminated,
+                refuses_further_work: true,
+            },
+            Step {
+                name: "an ordinary wait failure whose owned Job was observed empty",
+                primary: wait(),
+                owned_job_observed_empty: true,
+                cleanup: None,
+                capture: None,
+                classified: BackendExecutionFailure::NotAwaited,
+                refuses_further_work: false,
+            },
+            // The fold raises on a cleanup error alone, and it is right to:
+            // from where it stands a teardown that returned an error is a
+            // teardown that may have left something. This row is the case
+            // where the run knows better — the Job it owns reported itself
+            // empty — and it asserted the opposite until the eighth review,
+            // which is how a redundant `kill` of a process that had already
+            // exited quarantined a session for the rest of its life.
+            Step {
+                name: "an emptied Job whose redundant teardown request failed",
+                primary: wait(),
+                owned_job_observed_empty: true,
+                cleanup: Some(&teardown),
+                capture: None,
+                classified: BackendExecutionFailure::NotAwaited,
+                refuses_further_work: false,
+            },
+            // The same law reached from the other side: the primary is itself
+            // the unaccounted kind, raised when the supervised window closed on
+            // a populated Job, and the final teardown then emptied it.
+            Step {
+                name: "an emptiness window that expired before the final teardown emptied it",
+                primary: job_held_processes(),
+                owned_job_observed_empty: true,
+                cleanup: None,
+                capture: Some(&capture),
+                classified: BackendExecutionFailure::NotAwaited,
+                refuses_further_work: false,
+            },
+            // And the row that proves the downgrade is the observation's and
+            // not the teardown's: the same primary, the same requests, and no
+            // observation of an empty Job.
+            Step {
+                name: "an emptiness window that expired and a teardown that observed nothing",
+                primary: job_held_processes(),
+                owned_job_observed_empty: false,
+                cleanup: Some(&teardown),
+                capture: None,
+                classified: BackendExecutionFailure::NotTerminated,
+                refuses_further_work: true,
+            },
+        ];
+
+        for step in chain {
+            let name = step.name;
+            // The production order: decorate, then let the observation decide.
+            let folded = add_process_cleanup_context(step.primary, step.cleanup, step.capture);
+            let folded = failure_after_teardown(folded, step.owned_job_observed_empty);
+            let classified = BackendExecutionFailure::from(&folded);
+            assert_eq!(
+                classified, step.classified,
+                "{name}: classified {classified:?}"
+            );
+            assert_eq!(
+                ConversionRunFailure::Backend(classified).leaves_an_owned_process_unaccounted(),
+                step.refuses_further_work,
+                "{name}: the queue's admission question disagreed"
+            );
+            // The same question, asked of the error the other lanes hold.
+            assert_eq!(
+                folded.leaves_an_owned_process_unaccounted(),
+                step.refuses_further_work,
+                "{name}: the lanes disagree about one failure"
+            );
+        }
+    }
+
+    /// A coincident capture failure may add text; it may not lower a kind.
+    ///
+    /// The fold *replaced* the primary, so a stdout pipe that returned an error
+    /// beside a Job that had already said it still held processes produced
+    /// `Wait` — which classifies as an ordinary broken conversion, retryable,
+    /// with no quarantine — for a run that had positively observed a surviving
+    /// tree.
+    #[test]
+    fn a_coincident_capture_failure_never_lowers_what_a_run_established() {
+        let capture = ProcessError::Capture {
+            stream: "stdout",
+            detail: "the pipe broke".to_owned(),
+        };
+
+        for primary in [
+            ProcessError::OwnedJobNotEmptied {
+                detail: "the owned job would not empty".to_owned(),
+            },
+            ProcessError::Terminate {
+                detail: "the owned job would not terminate".to_owned(),
+            },
+        ] {
+            let folded = add_process_cleanup_context(primary.clone(), None, Some(&capture));
+            assert!(
+                folded.leaves_an_owned_process_unaccounted(),
+                "{primary:?} was lowered to {folded:?}"
+            );
+            assert!(
+                folded.to_string().contains("capture cleanup error"),
+                "the text is still added: {folded}"
+            );
+        }
+
+        // And a primary that established nothing about the machine still takes
+        // the kind its teardown reported.
+        let wait = ProcessError::Wait {
+            detail: "the wait was interrupted".to_owned(),
+        };
+        assert!(
+            !add_process_cleanup_context(wait.clone(), None, Some(&capture))
+                .leaves_an_owned_process_unaccounted()
+        );
+        let cleanup = ProcessError::Terminate {
+            detail: "teardown failed".to_owned(),
+        };
+        assert!(
+            add_process_cleanup_context(wait, Some(&cleanup), None)
+                .leaves_an_owned_process_unaccounted()
+        );
+    }
+
+    /// A run whose Job was never observed empty cannot say its processes ended.
+    ///
+    /// The observation was computed and thrown away on every failure path but
+    /// one, so `NotAwaited` — "the Job emptied and only the ending was lost" —
+    /// was reached with nothing having read the count.
+    #[test]
+    fn a_failure_without_an_emptiness_observation_says_so() {
+        let wait = ProcessError::Wait {
+            detail: "the wait was interrupted".to_owned(),
+        };
+
+        assert!(
+            !failure_after_teardown(wait.clone(), true).leaves_an_owned_process_unaccounted(),
+            "an observed-empty Job leaves nothing of this run's behind"
+        );
+        assert!(
+            failure_after_teardown(wait, false).leaves_an_owned_process_unaccounted(),
+            "without the observation the run cannot say its processes ended"
+        );
+
+        // And what already names an unaccounted process keeps its own kind.
+        let terminate = ProcessError::Terminate {
+            detail: "the owned job would not terminate".to_owned(),
+        };
+        assert_eq!(failure_after_teardown(terminate.clone(), false), terminate);
+
+        // The other direction, which is the same law: an observation of an
+        // empty Job is the end of the question, and the kinds that exist to
+        // say "this run cannot state its tree is gone" are exactly the ones it
+        // withdraws. Quarantine is never lifted, so a session ended on an
+        // uncertainty the run had itself resolved is ended for good.
+        for unaccounted in [
+            terminate,
+            ProcessError::OwnedJobNotEmptied {
+                detail: "the owned job would not empty".to_owned(),
+            },
+        ] {
+            let settled = failure_after_teardown(unaccounted.clone(), true);
+            assert!(
+                !settled.leaves_an_owned_process_unaccounted(),
+                "{unaccounted:?} outlived the observation that emptied its Job"
+            );
+            assert!(
+                settled.to_string().contains("would not"),
+                "what the run failed at is still readable: {settled}"
+            );
+        }
+    }
+
+    /// A teardown is asked until it can answer, not once while it is running.
+    ///
+    /// `TerminateJobObject` returns when the signal is delivered. A count read
+    /// on the next instruction is a count of a teardown in progress, and the
+    /// run recorded that as "the Job was not observed empty" -- the one fact
+    /// that quarantines a session permanently.
+    #[test]
+    fn an_emptying_job_is_observed_rather_than_sampled_once() {
+        /// Populated for the first reads, then empty: an ordinary asynchronous
+        /// exit, which is the only thing a single sample gets wrong.
+        struct EmptyingJob {
+            reads: AtomicUsize,
+            empty_from: usize,
+        }
+
+        impl ProcessJob for EmptyingJob {
+            fn terminate(&self) -> io::Result<()> {
+                Ok(())
+            }
+
+            fn active_process_count(&self) -> io::Result<Option<u32>> {
+                let read = self.reads.fetch_add(1, Ordering::AcqRel);
+                Ok(Some(if read >= self.empty_from { 0 } else { 1 }))
+            }
+
+            fn total_process_count(&self) -> io::Result<Option<u32>> {
+                Ok(Some(1))
+            }
+
+            fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {
+                Ok(None)
+            }
+        }
+
+        let emptying = EmptyingJob {
+            reads: AtomicUsize::new(0),
+            empty_from: 2,
+        };
+        assert!(
+            observe_owned_job_emptied(&emptying, Duration::from_secs(5)),
+            "a Job that emptied on the third read was observed empty"
+        );
+        assert!(emptying.reads.load(Ordering::Acquire) >= 3);
+
+        // A Job that never empties still ends the wait, and still says the one
+        // thing that is true of it.
+        let populated = EmptyingJob {
+            reads: AtomicUsize::new(0),
+            empty_from: usize::MAX,
+        };
+        assert!(!observe_owned_job_emptied(
+            &populated,
+            Duration::from_millis(60)
+        ));
+
+        /// Every answer that is not `Some(0)`, none of which becomes one by
+        /// being asked again.
+        struct UnansweredJob(io::ErrorKind);
+
+        impl ProcessJob for UnansweredJob {
+            fn terminate(&self) -> io::Result<()> {
+                Ok(())
+            }
+
+            fn active_process_count(&self) -> io::Result<Option<u32>> {
+                if self.0 == io::ErrorKind::Other {
+                    return Ok(None);
+                }
+                Err(io::Error::from(self.0))
+            }
+
+            fn total_process_count(&self) -> io::Result<Option<u32>> {
+                Ok(None)
+            }
+
+            fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {
+                Ok(None)
+            }
+        }
+
+        for unanswered in [
+            UnansweredJob(io::ErrorKind::Other),
+            UnansweredJob(io::ErrorKind::PermissionDenied),
+        ] {
+            assert!(
+                !observe_owned_job_emptied(&unanswered, Duration::from_secs(5)),
+                "an accounting that was not given is not an observation of zero"
+            );
+        }
+    }
+
+    /// The verdict follows the observation, and only the observation.
+    ///
+    /// The whole point of the two-phase resume is which answer follows which
+    /// set of previous suspend counts, and that decision was reachable only
+    /// through a real refusal -- so changing `refused_before_resuming` to
+    /// `true` at the one site that sets it false kept every test green while
+    /// restoring the defect the fifth review reported.
+    #[test]
+    fn a_resume_verdict_follows_the_counts_it_observed() {
+        // Some thread reported the count a thread created suspended has.
+        assert!(resume_verdict(&[1]).is_ok());
+        assert!(resume_verdict(&[0, 1, 0]).is_ok());
+
+        // None did. This run released what it could and cannot say what the
+        // image did, so it must not claim it never started. Several lengths,
+        // because a rule keyed on how many threads were seen rather than on
+        // what they reported would otherwise pass: the `Ok` cases above are one
+        // and three, so a mutant reading `len() > 2` needs a three-count
+        // refusal to catch it.
+        for counts in [
+            &[0][..],
+            &[0, 0][..],
+            &[2, 0][..],
+            &[0, 0, 0][..],
+            &[2, 0, 2, 0][..],
+        ] {
+            let refusal = resume_verdict(counts).expect_err("nothing was created suspended");
+            assert!(
+                !refusal.refused_before_resuming,
+                "this run had already resumed what it opened: {counts:?}"
+            );
+        }
+
+        // No count at all is not the same observation and must not take the
+        // same answer. A count is pushed only by a resume that returned one, so
+        // an empty set is a run that released nothing -- every handle refused,
+        // or every resume refused -- and a root that was never released has
+        // executed nothing. Said the other way, this run's own two-phase
+        // ordering is what makes it true, and it was reported as a root that
+        // might have run: a permanent quarantine over a process that never
+        // started.
+        let released_nothing = resume_verdict(&[]).expect_err("nothing was resumed");
+        assert!(
+            released_nothing.refused_before_resuming,
+            "a run that resumed no thread had not resumed anything"
+        );
+
+        // And a refusal taken before any resume says so, which is the only
+        // case an ordinary classification is allowed to follow from.
+        let early = ResumeRefusal::before_resuming(io::Error::other("no snapshot"));
+        assert!(early.refused_before_resuming);
+    }
+
+    /// A refusal taken before anything ran is the only one that says so.
+    ///
+    /// This used to assert that two hand-built values were unequal and printed
+    /// the same, which a derive and a format string satisfy between them and
+    /// which says nothing about the boundary. What matters is that the two
+    /// facts are carried *separately* and that neither is inferred from the
+    /// other: reclamation says the root is gone, and the second half says
+    /// whether it had run before it went.
+    #[test]
+    fn a_refused_resume_carries_reclamation_and_execution_apart() {
+        let combinations = [(true, true), (true, false), (false, true), (false, false)];
+        let errors = combinations.map(|(reclaimed, never_ran)| ProcessError::ResumeOwnedRoot {
+            detail: "the owned root could not be resumed".to_owned(),
+            owned_job_observed_empty: reclaimed,
+            refused_before_resuming: never_ran,
+        });
+
+        // Four distinct values from one detail: nothing but the two facts tells
+        // them apart, which is what carrying both is for.
+        for (first, error) in errors.iter().enumerate() {
+            for other in &errors[first + 1..] {
+                assert_ne!(error, other, "two of the four are the same value");
+            }
+        }
+        for error in &errors {
+            assert_eq!(
+                error.to_string(),
+                errors[0].to_string(),
+                "the message is the detail, so only the facts distinguish them"
+            );
+        }
+    }
+
+    /// A process with several threads is enumerated, not refused.
+    ///
+    /// This is the property the launch path lost when it read "a process
+    /// created suspended has one thread" as an identity check: on a machine
+    /// where anything injects a thread, every lane that starts a backend would
+    /// have failed. The test process is made to have several threads on
+    /// purpose and the count is asserted, because a harness that happened to
+    /// have one would make the assertion below say nothing.
+    #[cfg(windows)]
+    #[test]
+    fn every_thread_of_a_process_is_reported_rather_than_only_a_lone_one() {
+        let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let spares = (0..3)
+            .map(|_| {
+                let running = std::sync::Arc::clone(&running);
+                std::thread::spawn(move || {
+                    while running.load(std::sync::atomic::Ordering::SeqCst) {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let threads = windows_job::threads_of_owned_root(std::process::id())
+            .expect("enumerate the threads of this process");
+
+        running.store(false, std::sync::atomic::Ordering::SeqCst);
+        for spare in spares {
+            spare.join().expect("join a spare thread");
+        }
+
+        assert!(
+            threads.len() > 1,
+            "a process with several threads reported {} of them, so this test cannot \
+             say whether more than one is refused",
+            threads.len()
+        );
+        let unique = threads.iter().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            unique.len(),
+            threads.len(),
+            "the same thread was reported twice: {threads:?}"
+        );
+    }
+
+    #[test]
+    fn every_tree_ownership_has_its_own_stable_identifier() {
+        let ownerships = [
+            TreeOwnership::EstablishedBeforeExecution,
+            TreeOwnership::NotEstablishedBeforeExecution,
+        ];
+        let ids = ownerships.map(TreeOwnership::stable_id);
+        assert_ne!(ids[0], ids[1]);
+        assert!(TreeOwnership::EstablishedBeforeExecution.covers_every_descendant());
+        assert!(!TreeOwnership::NotEstablishedBeforeExecution.covers_every_descendant());
+    }
+
+    /// The root has executed nothing at the moment ownership is taken.
+    ///
+    /// **This is the test that discriminates**, and it is the only one that
+    /// can. The interval the published boundary left between `spawn()` and
+    /// `AssignProcessToJobObject` is instructions wide; no child can be made to
+    /// create a descendant reliably inside it, so no behavioural test of a
+    /// descendant proves the interval is gone. What proves it is that the
+    /// process exists, is owned, and has run none of its own image — which is
+    /// observable directly.
+    ///
+    /// The marker's absence is the assertion, and resuming afterwards is what
+    /// makes that absence mean suspension rather than a fixture that never
+    /// worked. Against a boundary that did not create the root suspended, the
+    /// child writes its marker immediately and the first assertion fails.
+    #[cfg(windows)]
+    #[test]
+    fn the_root_has_executed_nothing_when_ownership_is_taken() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        );
+        // The production command, built the production way, suspended the
+        // production way. Nothing here is a parallel launch path.
+        let mut command = process_command(&spec).expect("construct the controlled command");
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        suspend_root_creation(&mut command);
+        let mut child = command.spawn().expect("spawn the suspended root");
+
+        // Ownership, taken exactly where the production path takes it.
+        let owned_job = OwnedProcessJob::assign(&child).expect("assign the suspended root");
+
+        // It has run nothing of its own: no marker, and it has not exited. A
+        // running child writes the marker in milliseconds, so this window is
+        // far longer than the one it would need.
+        assert!(
+            !wait_for_paths(&[&marker], Duration::from_millis(750)),
+            "the root executed before ownership was established"
+        );
+        assert!(
+            child.try_wait().expect("poll the suspended root").is_none(),
+            "the root ran to an end before it was resumed"
+        );
+        // And the Job already holds it, which is what makes the absence above a
+        // statement about an owned process rather than about any process.
+        assert_eq!(
+            ProcessJob::active_process_count(&owned_job).expect("query the owned job"),
+            Some(1)
+        );
+
+        // Released, and only then does it run — which is what proves the
+        // absence above was suspension.
+        resume_owned_root(&child, &owned_job).expect("resume the owned root");
+        assert!(
+            wait_for_paths(&[&marker], Duration::from_secs(10)),
+            "the resumed root never executed"
+        );
+        child.wait().expect("reap the controlled child");
+        drop(owned_job);
+    }
+
+    /// A descendant created as early as the operating system allows is owned.
+    ///
+    /// **What this does not prove**, and the previous test does: that the
+    /// escape interval is gone. This child starts a descendant as its first
+    /// action, but "first action" is still an image load, a harness start and
+    /// an argument filter later — tens of milliseconds, against an interval of
+    /// instructions. A boundary that assigned a *running* child to its Job
+    /// would own this descendant too.
+    ///
+    /// What it does prove is the other half, which the structural test does not
+    /// reach: that ownership taken before execution actually holds a descendant
+    /// the backend goes on to create, that the Job's accounting sees it, and
+    /// that terminating the Job takes it with the root.
+    #[cfg(windows)]
+    #[test]
+    fn a_descendant_created_at_startup_is_owned_and_terminated_with_the_root() {
+        let test_directory = TestDirectory::new();
+        let grandchild_ready = test_directory.path().join("grandchild-ready");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_racing_parent",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            std::env::current_dir().expect("current directory"),
+        );
+        let mut command = process_command(&spec).expect("construct the racing parent command");
+        command.env("MSCANVAS_PROCESS_TEST_DIRECTORY", test_directory.path());
+
+        let cancellation = CancellationToken::new();
+        let run_cancellation = cancellation.clone();
+        let run = thread::spawn(move || {
+            execute_command_after_assignment(command, &spec, &run_cancellation, || {})
+        });
+
+        let ready = wait_for_paths(&[&grandchild_ready], Duration::from_secs(10));
+        cancellation.cancel();
+        let output = run
+            .join()
+            .expect("executor thread")
+            .expect("cancel the racing tree");
+
+        assert!(ready, "the racing descendant never signalled readiness");
+        assert_eq!(output.termination, Termination::Cancelled);
+        assert_eq!(
+            output.tree_ownership,
+            TreeOwnership::EstablishedBeforeExecution
+        );
+        assert!(
+            output.max_active_processes.unwrap_or(0) >= 2,
+            "the descendant created at startup was outside the owned job"
+        );
+        assert_eq!(output.final_active_processes, Some(0));
+        assert!(output.owned_tree_confirmed_gone());
+    }
+
+    /// A root that exits the instant it has spawned leaves the run waiting on
+    /// the Job rather than on the handle it happens to hold.
+    ///
+    /// The claim is about the *tree*, so the run cannot settle when the root
+    /// goes: its descendant is still in the Job, and the emptiness the claim
+    /// rests on is the Job's. This asserts the run reaches `Some(0)` only after
+    /// that descendant is gone too, and that the disposition it publishes is
+    /// the confirmed one rather than an admission.
+    #[cfg(windows)]
+    #[test]
+    fn an_immediate_root_exit_still_waits_for_the_owned_job_to_empty() {
+        let test_directory = TestDirectory::new();
+        let release = test_directory.path().join("release");
+        let grandchild_ready = test_directory.path().join("grandchild-ready");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_mock_parent",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            std::env::current_dir().expect("current directory"),
+        );
+        let mut command = process_command(&spec).expect("construct the exiting parent command");
+        command
+            .env("MSCANVAS_PROCESS_TEST_DIRECTORY", test_directory.path())
+            .env("MSCANVAS_PROCESS_TEST_PARENT_EXITS_AFTER_SPAWN", "1");
+
+        let cancellation = CancellationToken::new();
+        let run_cancellation = cancellation.clone();
+        let (assigned_sender, assigned_receiver) = mpsc::channel();
+        let run = thread::spawn(move || {
+            execute_command_after_assignment(command, &spec, &run_cancellation, || {
+                let _ = assigned_sender.send(());
+            })
+        });
+
+        let assigned = assigned_receiver.recv_timeout(Duration::from_secs(5));
+        if assigned.is_ok() {
+            fs::write(&release, b"release").expect("release the exiting parent");
+        }
+        let ready = wait_for_paths(&[&grandchild_ready], Duration::from_secs(10));
+        cancellation.cancel();
+        let output = run
+            .join()
+            .expect("executor thread")
+            .expect("the surviving descendant is terminated through the owned job");
+
+        assert!(assigned.is_ok(), "executor did not establish job ownership");
+        assert!(ready, "the descendant of the exiting root never started");
+        // The root left, the descendant did not, and the run kept waiting on
+        // the Job rather than on the process it happened to have a handle for.
+        // Two processes were owned across the run, and the root's own exit did
+        // not settle it.
+        assert!(
+            output.max_active_processes.unwrap_or(0) >= 1,
+            "the run never observed the owned job holding anything"
+        );
+        assert_eq!(output.termination, Termination::Cancelled);
+        assert_eq!(output.final_active_processes, Some(0));
+        assert!(output.owned_tree_confirmed_gone());
+        assert!(
+            output.termination.launched(),
+            "a tree existed, so this is not the no-launch sense of the claim"
+        );
+    }
+
+    /// Builds a supervised result for the conjunction tests above. Deliberately
+    /// not a `Default`: a fixture that could omit the ownership field would let
+    /// a later one claim a confirmed tree by forgetting to say otherwise.
+    fn supervised_output(
+        tree_ownership: TreeOwnership,
+        final_active_processes: Option<u32>,
+        termination: Termination,
+    ) -> ProcessOutput {
+        ProcessOutput {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            stdout_total_bytes: 0,
+            stderr_total_bytes: 0,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(0),
+            elapsed: Duration::from_millis(1),
+            termination,
+            max_active_processes: Some(1),
+            final_active_processes,
+            total_owned_processes: Some(1),
+            peak_job_memory_bytes: None,
+            tree_ownership,
+        }
+    }
+
     #[cfg(windows)]
     #[test]
     fn a_request_made_before_the_run_launches_no_process_at_all() {
@@ -2153,6 +3587,10 @@ mod tests {
                 Ok(Some(1))
             }
 
+            fn total_process_count(&self) -> io::Result<Option<u32>> {
+                Ok(Some(1))
+            }
+
             fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {
                 Ok(None)
             }
@@ -2281,6 +3719,37 @@ mod tests {
         }
         thread::sleep(Duration::from_secs(8));
         child.wait().expect("wait for controlled grandchild");
+    }
+
+    /// Creates a descendant as its very first action.
+    ///
+    /// No readiness handshake and no release file: the point is to give a
+    /// descendant the earliest start the operating system allows, so that a run
+    /// which only owned its child *after* the child was running would have the
+    /// interval this needs. Under suspended creation there is no such interval.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "controlled subprocess entry point"]
+    fn controlled_racing_parent() {
+        let test_directory = controlled_test_directory();
+        let mut child = Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_mock_grandchild",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("MSCANVAS_PROCESS_TEST_DIRECTORY", &test_directory)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn racing descendant");
+        println!("racing descendant started pid={}", child.id());
+        io::stdout().flush().expect("flush racing status");
+        thread::sleep(Duration::from_secs(8));
+        child.wait().expect("wait for racing descendant");
     }
 
     #[cfg(windows)]
@@ -2507,6 +3976,10 @@ mod tests {
                 1 => Ok(Some(1)),
                 _ => Ok(Some(0)),
             }
+        }
+
+        fn total_process_count(&self) -> io::Result<Option<u32>> {
+            Ok(Some(1))
         }
 
         fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {

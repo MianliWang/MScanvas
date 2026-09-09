@@ -70,9 +70,9 @@ pub use conversion_run::{
     BackendDiagnosticText, BackendExecutionFailure, BackendRunFacts, BackendStream,
     CancellationFailure, CancellationReport, ConflictPolicy, ConversionAttempt, ConversionPlan,
     ConversionPlanError, ConversionRunFailure, ConversionRunOutcome, ConversionRunReport,
-    ConversionSource, ConversionSourceKind, ConversionSourceRejection, StagedContentObservation,
-    StagingReclaimError, StagingResidue, provider_build_is_evidenced, run_conversion,
-    run_conversion_cancellable,
+    ConversionSource, ConversionSourceKind, ConversionSourceRejection, OwnedTreeDisposition,
+    StagedContentObservation, StagingReclaimError, StagingResidue, provider_build_is_evidenced,
+    run_conversion, run_conversion_cancellable,
 };
 pub use diagnostics::{
     BackendTextExcerpt, ExcerptSuppression, MAX_DIAGNOSTIC_STREAM_EXCERPT_BYTES, Redactor,
@@ -113,7 +113,7 @@ pub use preview::{
 };
 pub use process::{
     CancellationToken, LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner,
-    SystemProcessRunner, Termination, execute, execute_cancellable,
+    SystemProcessRunner, Termination, TreeOwnership, execute, execute_cancellable,
 };
 pub use sciex_completeness::{
     EstablishedSampleCompleteness, SampleCompletenessRefusal, SciexSampleCompleteness,

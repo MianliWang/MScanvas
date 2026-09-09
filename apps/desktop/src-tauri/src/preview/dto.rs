@@ -1082,15 +1082,32 @@ pub enum ConversionConflictPolicyDto {
 
 /// The most items one queue may hold.
 ///
-/// Far below the workspace's own capacity, and deliberately so. This slice runs
-/// items serially and has no cancellation, so a queue is something the user
-/// waits out: at a realistic minute or three per acquisition, sixteen is
-/// something like half an hour. A queue sized to the roster would be an
-/// afternoon nobody could stop.
+/// Far below the workspace's own capacity, and deliberately so.
 ///
-/// Stated as one number rather than derived from anything, because it is a
-/// judgement about how long a person should be asked to wait and not a fact
-/// about the machine.
+/// **Re-decided after cancellation was understood, and the number is
+/// unchanged.** The premise it used to be defended on is not: it said the queue
+/// had "no cancellation", and a queue-level stop has existed since ADR 0015.
+/// A user can now also end the file being converted and leave the rest running,
+/// or settle a waiting item without running it.
+///
+/// What that changes is the cost of getting the size wrong, not the size. Items
+/// run serially, so a queue is still something a user commits to: at a
+/// realistic minute or three per acquisition, sixteen is something like half an
+/// hour, and a queue sized to the roster would be an afternoon. What is no
+/// longer true is that a wrong decision has to be waited out -- it can be ended
+/// at any point, in whichever of the three scopes fits.
+///
+/// **It remains a judgement about how long a person should be asked to commit
+/// to, and not a fact about the machine.** Nothing in this repository measures
+/// memory, throughput or scaling against the number of queue items, and this
+/// number must not be described as though something did. Deriving one from the
+/// largest fixture that happened to pass would be the same invention wearing a
+/// measurement's clothes.
+///
+/// Bounded is the part that is not a judgement. Rust is the only authority for
+/// it: the limit is enforced before a queue is committed, delivered to the
+/// interface through `ConversionQueuePlanDto.capacity`, and never restated as a
+/// frontend constant.
 pub const MAX_CONVERSION_QUEUE_ITEMS: usize = 16;
 
 /// One bounded, path-free read of the session's conversion slot.
@@ -1105,9 +1122,11 @@ pub struct WorkspaceConversionUpdateDto {
     pub diagnostics: ConversionDiagnosticsStateDto,
     /// Whether this session has stopped trusting the backend.
     ///
-    /// Set when a stop request could not be confirmed, which is the one state
-    /// in which MSCanvas cannot say whether a converter process of its own is
-    /// still running. It rides on the conversion read because that is what a
+    /// Set where MSCanvas cannot say whether a process it started is still
+    /// running. A stop it could not confirm is one way in; so are a conversion,
+    /// a preview, a spectrum read or a discovery help probe that ends without
+    /// accounting for a process, with nothing in flight. It rides on the
+    /// conversion read because that is what a
     /// document already asks for on mount and while work is under way, so a
     /// reload recovers the quarantine with the queue that caused it rather
     /// than needing a second question.
@@ -1215,14 +1234,29 @@ pub struct ConversionQueueDto {
     /// source, destination, policy and build.
     pub retryable_failed_count: usize,
     pub non_retryable_failed_count: usize,
-    /// Items whose running conversion was stopped with the process tree
-    /// confirmed gone. Counted apart from failures: a cancelled item is
-    /// something the user asked for, not something that went wrong.
+    /// Items a stop settled with no backend process of them surviving —
+    /// whether a tree was confirmed gone or nothing was launched for there to
+    /// be one. Counted apart from failures: a cancelled item is something the
+    /// user asked for, not something that went wrong.
+    ///
+    /// It is deliberately **not** a count of confirmed process trees. Which of
+    /// the two each item was is on its own cancellation facts, because a count
+    /// cannot carry that distinction without inventing a second number for a
+    /// question nobody asked.
     pub cancelled_count: usize,
-    /// Items a stopped queue never began. They did not fail and launched no
-    /// process, and counting them as failures would report work that was never
-    /// attempted as work that went wrong.
+    /// Items the queue never began. They did not fail and launched no process,
+    /// and counting them as failures would report work that was never attempted
+    /// as work that went wrong.
+    ///
+    /// **Not only a stopped queue's.** A session that loses track of a converter
+    /// process refuses the rest of the queue without the user having pressed
+    /// anything, and that queue is `completed` with the rows it never started
+    /// counted here.
     pub not_run_count: usize,
+    /// Items the user settled without running, while the queue carried on.
+    /// Counted apart from `not_run_count` because a decision the user made is
+    /// not a consequence of ending the batch.
+    pub skipped_by_request_count: usize,
     /// Items whose stop could not be confirmed. Apart from both of the above,
     /// because what is unknown here is whether a process survived.
     pub cancellation_failed_count: usize,
@@ -1287,6 +1321,20 @@ pub struct ConversionQueueItemDto {
     /// item a stop actually reached; a `notRun` item has none, because nothing
     /// ran for it to establish anything about.
     pub cancellation: Option<ConversionCancellationDto>,
+    /// Whether *this* attempt has been asked to end while the queue runs on.
+    ///
+    /// The stop of one item is an asynchronous operation of unbounded length --
+    /// a converter decides when it goes -- and it lived only in the document
+    /// that pressed the button. A webview that remounted inside that window
+    /// read this item back as `running` with nothing said about the request,
+    /// so it drew "Converting" and offered the control again for a stop the
+    /// authority had already accepted. What is in flight is the authority's to
+    /// say, like every other thing about this queue.
+    ///
+    /// False for every other item, including one whose stop has settled: this
+    /// says a request is outstanding, not that one was ever made. What a
+    /// settled stop established is `cancellation`.
+    pub stop_requested: bool,
 }
 
 /// Where one item is.
@@ -1301,12 +1349,33 @@ pub enum ConversionQueueItemStateDto {
     /// inspected and nothing was written.
     Skipped,
     Failed,
-    /// The running conversion was stopped and its owned process tree was
-    /// confirmed gone. No output was finalized.
+    /// A stop settled this item and no backend process of it survives. No
+    /// output was finalized.
+    ///
+    /// **Two ways that is so, and this state is both**: a tree existed and was
+    /// confirmed gone, or nothing was launched for there to be one. The
+    /// cancellation facts' `ownedTree` says which. Describing this state as a
+    /// confirmed tree would claim one for a run that never started a process.
     Cancelled,
-    /// A stopped queue never began this item. Not a failure: no process was
-    /// launched and nothing was created.
+    /// The queue never began this item. Not a failure: no process was launched
+    /// and nothing was created.
+    ///
+    /// A stop is one way that happens and not the only one — a session that
+    /// loses track of a process it started refuses the rest of the queue on its
+    /// own, and that queue is `completed`.
     NotRun,
+    /// The user settled this item without running it, and the queue carried on.
+    ///
+    /// Its own state rather than either neighbour. `Skipped` is the conflict
+    /// policy leaving an existing file alone -- a decision about a destination,
+    /// which this is not. `NotRun` is a stopped queue never reaching the item --
+    /// a consequence of ending the batch, which this is not either.
+    ///
+    /// No conversion ran and no output was written. It does **not** say that
+    /// nothing was created: a destination folder the queue prepared is bound to
+    /// the queue and governed by the queue's own reclamation rule, not by what
+    /// became of one item.
+    SkippedByRequest,
     /// The stop was requested and could not be confirmed. Whether a converter
     /// process survived is unknown, which is why this is neither cancelled nor
     /// an ordinary failure.
@@ -1326,14 +1395,21 @@ pub struct ConversionCancellationDto {
     /// Always true for an item a stop reached; carried rather than implied so a
     /// reader never has to infer it from the item state.
     pub termination_requested: bool,
-    /// Whether MSCanvas knows that no converter process of this attempt
-    /// survives.
+    /// What the stop established about this attempt's backend process tree, by
+    /// the conversion boundary's stable identifier.
     ///
-    /// True when the owned process tree was terminated and observed empty, and
-    /// true when no process was created for there to be a tree. False is the
-    /// whole reason `cancellationFailed` exists, and it is the one condition
-    /// that quarantines the session.
-    pub tree_termination_confirmed: bool,
+    /// Three values, not two:
+    ///
+    /// - `none_launched` — no process was created, so there was no tree. Not a
+    ///   confirmation and not an uncertainty.
+    /// - `confirmed_gone` — a tree existed, this run owned it before it could
+    ///   grow, and the owned job reported itself empty.
+    /// - `unconfirmed` — a tree existed and its disappearance could not be
+    ///   established. The one value that quarantines the session.
+    ///
+    /// It replaced a boolean that said `true` for the first two alike, which
+    /// asserted a terminated process tree for a run that never started one.
+    pub owned_tree: String,
     /// How long the accepted stop took to produce a result. Milliseconds,
     /// matching the one time format already on this wire, and deliberately not
     /// how long the attempt had been running before the request.
@@ -1863,7 +1939,7 @@ pub fn queue_too_large() -> PreviewErrorDto {
 pub fn queue_is_empty() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "queue_is_empty",
-        "Select at least one Thermo RAW row to convert.",
+        "Select at least one convertible row to convert.",
         false,
     )
 }
@@ -2055,13 +2131,78 @@ pub fn conversion_not_stoppable() -> PreviewErrorDto {
     )
 }
 
-/// What every backend operation answers with once a stop could not be
-/// confirmed.
+/// What cancelling one item answers with when that exact attempt is not the one
+/// in flight.
+///
+/// One refusal for every way of naming something else -- a replaced document, an
+/// operation the slot no longer holds, an item that has already settled, an
+/// attempt number from an earlier retry round, or a queue already stopping as a
+/// whole. They are one answer because the caller is, by construction, not the
+/// one running the queue, and telling them apart would describe the session's
+/// internal state to it.
+///
+/// Retryable, unlike the queue-level refusal: what makes this fail is usually
+/// that the queue moved on, and the next read shows what to ask about instead.
+pub fn conversion_item_not_cancellable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_item_not_cancellable",
+        // Deliberately about the *request* rather than about the item. The
+        // named conversion may well still be running: a queue-level stop
+        // accepted first outranks this, and an attempt that has started but is
+        // not yet bound cannot be addressed by an attempt number. Saying "no
+        // longer the one running" claimed something this boundary does not
+        // know, in two states it can actually be in.
+        concat!(
+            "MSCanvas could not act on that request, so nothing was stopped. ",
+            "The queue may have moved on, or a stop of the whole queue may already be ",
+            "under way."
+        ),
+        true,
+    )
+}
+
+/// What skipping one item answers with when it is not a pending item of the
+/// caller's running queue.
+///
+/// Deliberately separate from the cancel refusal. An item the worker has
+/// already started is not skippable, and answering that with a cancellation
+/// would turn a request to leave something alone into a request to stop work in
+/// progress.
+pub fn conversion_item_not_skippable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_item_not_skippable",
+        // About the request, not about the row. Five conditions answer with
+        // this, and in two of them -- a stopping slot, and a queue whose
+        // stop was accepted -- the named item *is* still waiting its turn;
+        // the queue is simply about to settle it itself. The sibling
+        // refusal was corrected for the same reason.
+        concat!(
+            "MSCanvas could not act on that request, so nothing was skipped. ",
+            "That row may have started, or the whole queue may already be stopping."
+        ),
+        true,
+    )
+}
+
+/// What every backend operation answers with once a converter process this
+/// session owned cannot be accounted for.
+///
+/// **Not "once a stop could not be confirmed."** That was true while a stop was
+/// the only way to reach this state; M6.8 added a second, where a root was
+/// created and could neither be started nor reclaimed with nothing in flight.
+/// The consequence is the same because the fact is the same — a process of this
+/// application's that it cannot say is gone — and naming a stop here would name
+/// an action the user may never have taken.
 pub fn backend_quarantined() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "backend_quarantined",
-        "MSCanvas could not confirm that the converter process stopped. Restart MSCanvas before \
-         starting another preview or conversion.",
+        // "a ProteoWizard process", not "a converter": this is reached from a
+        // preview, a spectrum read and a discovery help probe as well as
+        // from a conversion, and only one of those runs a converter.
+        concat!(
+            "MSCanvas could not confirm that a ProteoWizard process it started has ended. ",
+            "Restart MSCanvas before starting another preview or conversion."
+        ),
         false,
     )
 }

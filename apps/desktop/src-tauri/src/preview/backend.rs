@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use mscanvas_proteowizard::{
     AvailabilityState, ConfiguredLocation, DiscoveryRequest, DiscoveryResult,
@@ -36,6 +37,13 @@ use super::installation::{InstallationIdentity, classify_chosen_folder};
 /// to name one.
 pub struct OperationAttempt {
     pub installation: Option<InstallationIdentity>,
+    /// Whether this attempt left a process it started unaccounted for.
+    ///
+    /// Carried out separately from `outcome` because it is a fact about the
+    /// machine rather than about this preview: whatever the user is told, the
+    /// session must stop starting backend processes. The message a failed
+    /// attempt shows is about the request; this is about everything after it.
+    pub owned_process_unaccounted: bool,
     /// The preview verdict for that same installation, from the same discovery.
     ///
     /// Here for ADR 0044's Decision 1: an attempt names a binding, and a
@@ -66,6 +74,15 @@ pub trait PreviewProvider: Send + Sync {
     /// bound and not previewable, and one fact must not be able to erase the
     /// other.
     fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>);
+
+    /// Whether any discovery this provider has run left a process it started
+    /// unaccounted for.
+    ///
+    /// Defaulted to `false` so a substituted provider that starts no process
+    /// says the only true thing it can. The production provider overrides it.
+    fn discovery_lost_a_process(&self) -> bool {
+        false
+    }
 
     /// Runs one preview operation against one already-validated source file.
     ///
@@ -336,6 +353,15 @@ pub struct ProteoWizardProvider {
     /// Making the user say so again next time is what keeps it narrower than
     /// either, and is the cost of that.
     chosen: RwLock<Option<PathBuf>>,
+    /// Whether any discovery this provider has run left a process it started
+    /// unaccounted for.
+    ///
+    /// A latch, never lowered, because the thing it records cannot become
+    /// untrue: a process nothing could account for is not accounted for later.
+    /// It is set here rather than returned because discovery happens inside
+    /// every entry point this provider has, and a session that must stop
+    /// starting processes must stop whichever one noticed.
+    discovery_lost_a_process: AtomicBool,
 }
 
 impl ProteoWizardProvider {
@@ -343,7 +369,20 @@ impl ProteoWizardProvider {
     pub const fn new() -> Self {
         Self {
             chosen: RwLock::new(None),
+            discovery_lost_a_process: AtomicBool::new(false),
         }
+    }
+
+    /// Runs discovery and records what it says about processes it started.
+    ///
+    /// Every discovery in this provider goes through here, so there is one
+    /// place the question is asked rather than one per entry point.
+    fn discover_and_observe(&self, request: &DiscoveryRequest) -> DiscoveryResult {
+        let discovery = discover(request);
+        if discovery.leaves_an_owned_process_unaccounted() {
+            self.discovery_lost_a_process.store(true, Ordering::Release);
+        }
+        discovery
     }
 
     /// What to hand discovery: the chosen folder, or nothing at all.
@@ -417,7 +456,7 @@ impl ProteoWizardProvider {
     fn resolve(&self, tool: BoundTool) -> ToolResolution {
         let request = self.request();
         let configured = configured_home(&request);
-        let discovery = discover(&request);
+        let discovery = self.discover_and_observe(&request);
         // Minted from `Available` and from nothing else, exactly as
         // `availability` mints it: `InstallationIdentity::of` answers for a
         // `Partial` folder too, and admitting one here would bind the session
@@ -462,41 +501,72 @@ impl ProteoWizardProvider {
         source: &Path,
         operation: &PreviewOperation,
     ) -> OperationAttempt {
+        let (outcome, owned_process_unaccounted) =
+            Self::execute_bound(capabilities, source, operation);
         OperationAttempt {
             installation: installation.cloned(),
             preview_availability,
-            outcome: Self::execute_bound(capabilities, source, operation),
+            outcome,
+            owned_process_unaccounted,
         }
     }
 
+    /// The attempt, and whether it left a process of its own unaccounted for.
+    ///
+    /// Two answers rather than one because a `?` would keep only the first. The
+    /// second is `true` on exactly the launch failures the process boundary
+    /// classifies that way, and every other step here — a temporary directory,
+    /// a plan, a manifest, an interpretation — starts no process and so cannot
+    /// leave one.
     fn execute_bound(
         capabilities: &InstalledHelpCapabilities,
         source: &Path,
         operation: &PreviewOperation,
-    ) -> Result<PreviewOutcome, PreviewErrorDto> {
-        let output_root = TemporaryOutputDirectory::create()?;
-        let command = build_msaccess_command_with_capabilities(
+    ) -> (Result<PreviewOutcome, PreviewErrorDto>, bool) {
+        let output_root = match TemporaryOutputDirectory::create() {
+            Ok(root) => root,
+            Err(refusal) => return (Err(refusal), false),
+        };
+        let command = match build_msaccess_command_with_capabilities(
             capabilities,
             source,
             output_root.path(),
             operation.clone(),
+        ) {
+            Ok(command) => command,
+            Err(_) => {
+                return (
+                    Err(PreviewErrorDto::new(
+                        "preview_not_plannable",
+                        "MSCanvas could not prepare that preview request.",
+                        false,
+                    )),
+                    false,
+                );
+            }
+        };
+
+        let process = match execute(&command) {
+            Ok(process) => process,
+            Err(error) => return (Err(process_error_seen(&error)), unaccounted_by(&error)),
+        };
+
+        let manifest = match capture_manifest(output_root.path(), operation) {
+            Ok(manifest) => manifest,
+            Err(refusal) => return (Err(refusal), false),
+        };
+        (
+            interpret_preview(operation, &process, &manifest).map_err(interpretation_error),
+            false,
         )
-        .map_err(|_| {
-            PreviewErrorDto::new(
-                "preview_not_plannable",
-                "MSCanvas could not prepare that preview request.",
-                false,
-            )
-        })?;
-
-        let process = execute(&command).map_err(process_error)?;
-
-        let manifest = capture_manifest(output_root.path(), operation)?;
-        interpret_preview(operation, &process, &manifest).map_err(interpretation_error)
     }
 }
 
 impl PreviewProvider for ProteoWizardProvider {
+    fn discovery_lost_a_process(&self) -> bool {
+        self.discovery_lost_a_process.load(Ordering::Acquire)
+    }
+
     fn use_installation(&self, home: Option<PathBuf>) {
         if let Ok(mut chosen) = self.chosen.write() {
             *chosen = home;
@@ -504,7 +574,7 @@ impl PreviewProvider for ProteoWizardProvider {
     }
 
     fn read_conversion_configuration(&self) -> ConfigurationReading {
-        let discovery = discover(self.request());
+        let discovery = self.discover_and_observe(&self.request());
         let preview_availability = preview_verdict(&discovery);
         // Both halves of "there is an installation" are decided here, together.
         // `AvailabilityState::Available` is the authority's rule for minting an
@@ -581,7 +651,7 @@ impl PreviewProvider for ProteoWizardProvider {
         let request = self.request();
         let configured = configured_home(&request);
         let chosen = configured.is_some();
-        let discovery = discover(&request);
+        let discovery = self.discover_and_observe(&request);
         let discovered = discovery.availability == AvailabilityState::Available;
         // Availability answers "can this installation produce a preview", not
         // "does an executable exist" and not "does its help parse". Reading the
@@ -780,11 +850,38 @@ pub fn process_error(error: ProcessError) -> PreviewErrorDto {
             "MSCanvas could not build a safe environment for the ProteoWizard program.",
             false,
         ),
-        ProcessError::AssignToOwnedJob { .. } => PreviewErrorDto::new(
+        ProcessError::AssignToOwnedJob {
+            owned_root_reclaimed,
+            ..
+        } => PreviewErrorDto::new(
             "backend_supervision_failed",
-            "MSCanvas could not keep the ProteoWizard program under its own supervision, \
-             so it did not use its output.",
+            "MSCanvas could not keep the ProteoWizard program under its own supervision, so it did not use its output.",
+            // Whether another attempt could differ depends on whether the root
+            // this one created was reclaimed. One that was not is a process
+            // still on the machine, and offering to start another beside it is
+            // the offer this boundary exists to refuse.
+            owned_root_reclaimed,
+        ),
+        // The owned root was created and could not be started. **Both halves
+        // decide this**, exactly as they decide it on the conversion lane: the
+        // owned Job *observed* empty and this run having released nothing is an
+        // ordinary failure another attempt could change, and anything else is a
+        // process this run may have left on the machine. Reading the success of
+        // teardown alone told the user the program "could not be started" about
+        // an image that may have been running, and offered a retry beside it.
+        ProcessError::ResumeOwnedRoot {
+            owned_job_observed_empty: true,
+            refused_before_resuming: true,
+            ..
+        } => PreviewErrorDto::new(
+            "backend_not_started",
+            "MSCanvas prepared the ProteoWizard program under its own supervision but could not start it.",
             true,
+        ),
+        ProcessError::ResumeOwnedRoot { .. } => PreviewErrorDto::new(
+            "backend_not_accounted_for",
+            "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
+            false,
         ),
         ProcessError::Wait { .. } => PreviewErrorDto::new(
             "backend_wait_failed",
@@ -795,6 +892,14 @@ pub fn process_error(error: ProcessError) -> PreviewErrorDto {
             "backend_output_capture_failed",
             "MSCanvas could not read what the ProteoWizard program produced.",
             true,
+        ),
+        // The owned job would not report itself empty, or its teardown failed.
+        // Either way a process this run created has not been observed to end,
+        // so nothing here offers to try again.
+        ProcessError::OwnedJobNotEmptied { .. } => PreviewErrorDto::new(
+            "backend_not_accounted_for",
+            "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
+            false,
         ),
         ProcessError::Terminate { .. } => PreviewErrorDto::new(
             "backend_termination_failed",
@@ -808,6 +913,24 @@ pub fn process_error(error: ProcessError) -> PreviewErrorDto {
 ///
 /// Only stable identifiers cross this boundary: no English backend text is
 /// inspected and none is forwarded.
+/// Whether this failure left a process the run started unaccounted for.
+///
+/// Named, and asked of the error rather than computed inline at the one call
+/// site, because a test that substitutes the whole provider never reaches that
+/// site: replacing the expression with `false` left the lane's own quarantine
+/// tests green.
+pub fn unaccounted_by(error: &ProcessError) -> bool {
+    error.leaves_an_owned_process_unaccounted()
+}
+
+/// The transfer object for a process failure, from a borrowed error.
+///
+/// `process_error` consumes; this is what a caller that also has to ask the
+/// error a second question uses, so the two answers describe one failure.
+pub fn process_error_seen(error: &ProcessError) -> PreviewErrorDto {
+    process_error(error.clone())
+}
+
 pub fn interpretation_error(error: PreviewInterpretError) -> PreviewErrorDto {
     let identifier = error.stable_id();
     match error {

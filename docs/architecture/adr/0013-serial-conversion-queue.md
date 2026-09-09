@@ -68,6 +68,14 @@ The reasoning, because a bound chosen silently is a bound nobody can argue with:
 - The queue is **serial** and **cannot be cancelled**. Whatever a user starts,
   they wait out. That is the constraint that decides the number — not memory,
   not the registry, not any limit of the boundary beneath.
+
+  > **Amended 2026-09-08 by M6.8: the premise is gone and the number stays.**
+  > A queue can be stopped whole (ADR 0015), by the file being converted, or by
+  > the row still waiting, so "wait it out" is no longer what sixteen limits.
+  > What it limits now is the cost of getting the *size* wrong: items still run
+  > one at a time, so a queue too large is still an hour of serial work, and
+  > every way out of it costs the user a deliberate action. The number was
+  > re-decided rather than inherited — see ADR 0043's CNV-D6.
 - The M3.0.3 fixture converts in about half a second, but it is a derived
   single-scan file. A real acquisition is minutes. At one to three minutes each,
   sixteen is roughly sixteen to fifty minutes of unstoppable work — long, and
@@ -258,6 +266,14 @@ did not prove it owns is not something this workflow offers.
 Progress is `Converting item N of M`. Nothing measures a fraction of an
 `msconvert` run, and this workflow still cannot stop one — so there is no
 percentage and no Cancel, and the panel says so while it runs.
+
+> **Amended by [ADR 0015](0015-user-visible-queue-stop.md) and again 2026-09-08
+> by M6.8: the second clause is gone, the first is not.** The panel offers
+> `Stop queue`, `Stop this file` and a per-row `Skip`, and says what each of
+> them does before it is pressed. There is still no percentage, no fraction of
+> an item and no estimate: nothing measures a fraction of an `msconvert` run,
+> which is the half of this paragraph that was about measurement rather than
+> about what had been built.
 
 Each item shows its position, its source name, its planned output name, its
 state in words, its attempt count once it exceeds one, its failure sentence if it
