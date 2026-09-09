@@ -383,21 +383,32 @@ describe("the five judgements of one queue item", () => {
     ).toBeVisible();
   });
 
-  it("separates the member that was refused from the ones nobody looked at", async () => {
-    const members = ["b-S1.mzML", "b-S2.mzML", "b-S3.mzML"];
-    // What a real refusal produces: the set is judged member by member and
-    // stops at the first that fails, so one member has a validation record, one
-    // was read and refused, and one was never examined at all.
-    const refused = outputSetReport("file-11", members, {
+  /** A set that stopped at the member in `states` marked `rejected`. */
+  function refusedSet(handle: string, states: readonly string[]) {
+    const members = states.map((_, index) => `b-S${String(index + 1)}.mzML`);
+    return outputSetReport(handle, members, {
       groupOutcome: "refused_before_publication",
       detailedOutcome: "multi_output_member_rejected",
       finalizedCount: 0,
-      validatedNotPublishedCount: 1,
-      notPublishedCount: 2,
-      members: setMembers(members, ["validated_not_published", "rejected", "not_published"]),
+      validatedNotPublishedCount: states.filter((state) => state === "validated_not_published")
+        .length,
+      rejectedCount: 1,
+      notPublishedCount: states.filter((state) => state === "not_published").length,
+      members: setMembers(members, states),
       completeness: { kind: "notPosed" },
       completeSetAdoptable: false,
     });
+  }
+
+  it("separates the member that was refused from the ones nobody looked at", async () => {
+    // What a refusal at the second member produces: the set is judged member by
+    // member and stops at the first that fails, so one member has a validation
+    // record, one was read and refused, and one was never examined at all.
+    const refused = refusedSet("file-11", [
+      "validated_not_published",
+      "rejected",
+      "not_published",
+    ]);
     const api = terminalApi(
       [
         sciexQueueItem("file-11", "Enolase_refused.wiff", {
@@ -423,12 +434,51 @@ describe("the five judgements of one queue item", () => {
     expect(within(manifest as HTMLElement).getByText("Checked and refused")).toBeVisible();
     expect(within(manifest as HTMLElement).getByText("Checked, not published")).toBeVisible();
     expect(within(manifest as HTMLElement).getByText("Not published")).toBeVisible();
-    // The item's own integrity line states the mode and hands the per-member
-    // answers to the manifest, rather than presenting one member's result as
-    // the item's. That is where "which one failed" is answerable at all.
+    // The item's own integrity line hands the per-member answers to the
+    // manifest rather than presenting one member's result as the item's. That
+    // is where "which one failed" is answerable at all.
     expect(
-      within(details).getByText(/Each output is judged on its own; the manifest below has every one\./),
+      within(details).getByText(
+        /the set stopped at the one that did not pass, so nothing was published/,
+      ),
     ).toBeVisible();
+  });
+
+  it("never calls a refused member \"the output\" when the item had three", async () => {
+    // The ordinary refusal: the *first* member is the one that fails, so no
+    // member has a validation record at all. The mode is therefore unavailable
+    // -- and the sentence must still not become a singular claim, because the
+    // two members below it were never examined.
+    const refused = refusedSet("file-12", ["rejected", "not_published", "not_published"]);
+    const api = terminalApi(
+      [
+        sciexQueueItem("file-12", "Enolase_first_refused.wiff", {
+          state: "failed",
+          attempts: 1,
+          retryable: false,
+          result: { kind: "outputSet", report: refused },
+          ...failedAttemptFacts(true, "000000000000000100000000000000e1"),
+        }),
+      ],
+      [bundle],
+    );
+    renderApp(api);
+    const result = await queueResult();
+
+    const details = openDetails(rowFor(result, "Enolase_first_refused.wiff"));
+    expect(
+      within(details).getByText(
+        /Outputs are judged one at a time and the set stopped at the one that did not pass/,
+      ),
+    ).toBeVisible();
+    // The singular sentence belongs to an item that produced one output. Here
+    // it would claim a check for two files the manifest calls unexamined.
+    expect(details.textContent).not.toContain(
+      "The output was checked against this source posture's contract",
+    );
+    const manifest = details.querySelector(".conversion-item-manifest");
+    expect(within(manifest as HTMLElement).getByText("Checked and refused")).toBeVisible();
+    expect(within(manifest as HTMLElement).getAllByText("Not published")).toHaveLength(2);
   });
 
   it("names a row that never reached a converter as one, and never as a run", async () => {

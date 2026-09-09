@@ -7,8 +7,8 @@
   so the version moved by the rule this ADR already states.
 - Amended: 2026-09-09 (M6.9) — the schema moved to **version 3**, for the same
   reason a second time.
-- Amended: 2026-09-09 (M6.9's release review) — the schema is at **version 4**.
-  A third field changed meaning. See *One versioned schema* below.
+- Amended: 2026-09-09 (M6.9's release review) — the schema is at **version 5**.
+  Two more fields changed meaning. See *One versioned schema* below.
 - **Builds on:** [ADR 0009](0009-mzml-conversion-execution-boundary.md) (the
   execution boundary and its bounded process capture),
   [ADR 0013](0013-serial-conversion-queue.md) (the serial queue),
@@ -252,6 +252,18 @@ at a bound so a backend that filled the staging area cannot make a failure pay
 for enumerating all of it; exporting the bounded reading as an exact total, with
 "no directories" and "no file with content" beside it, would turn one omitted
 flag into three false facts. An addition, so it did not move the version.
+
+**Amended 2026-09-09 (M6.9's release review): version 4 became version 5.** A
+set's `outputSet.notPublishedCount` narrowed. It counts members in the state
+`not_published`, and a member the integrity judgement read and refused used to
+be in that state. Once refusal became its own state, such a member fell out of
+that count and into none of the others, so the export accounted for fewer
+members than the `memberCount` beside it. `rejectedCount` is new and holds it,
+which is an addition -- but the older field's population is smaller than it was,
+and a reader written against version 4 must not read a version 5 file as though
+`notPublishedCount` still included refused members. The four counts partition
+the set and sum to `memberCount`; a test asserts that sum for every set class
+the export can produce.
 
 **Amended 2026-09-09 (M6.9's release review): version 3 became version 4.** An
 item's `cancellation.processLaunched` became nullable. It was derived from

@@ -184,6 +184,13 @@ the members this run actually produced. The lifecycle's maximum output bound is
 neither the number expected nor the number produced and is never the second
 number in that sentence.
 
+**Every member is counted exactly once, in both directions.** The projection
+used to derive "not published" by subtracting the finalized members from the
+total, which made it mean *everything else* and quietly absorbed a state added
+underneath it; the export counted the three state names it knew and simply lost
+the fourth. Both now count by state, so a reader of either can add the four up
+and get the set.
+
 **Rows are keyed by position as well as name.** Two members can share a display
 string — the lifecycle matches their facts on the native name precisely because
 of that — and two rows under one key are two rows the renderer may reconcile the
@@ -224,6 +231,15 @@ the judgement returned a valid output — and neither retains the record, becaus
 the record travels with a finalization. The row says the output was checked and
 passed and that giving it its final name is what failed, rather than reporting a
 run nobody checked.
+
+**And a refused member is not the item's whole answer.** An item with several
+outputs never says "the output" of a refusal: the set is judged one member at a
+time and stops at the first that fails, so the members after it were never
+examined, and a singular sentence would claim a check for files the manifest
+directly below it calls unexamined. Where the refused member is the *first* one
+-- the ordinary case -- no validation record survives at all, so the mode is
+unavailable and the sentence states only what happened. It still does not become
+"nothing was checked".
 
 **A refused output is not an unchecked one.** A run whose output failed the
 contract retains no validation record — the record travels with a finalization,
@@ -288,8 +304,15 @@ uselessness.
 
 ## Diagnostics schema
 
-`SCHEMA_VERSION` moves from 2 to 4, and both increments are earned rather than
+`SCHEMA_VERSION` moves from 2 to 5, and every increment is earned rather than
 decorative.
+
+**4 → 5**: `outputSet.notPublishedCount` narrowed. It counts members in the
+state `not_published`, and a member the integrity judgement refused used to be
+one of them. Once refusal became its own state that member fell out of all three
+counts at once, and the export accounted for fewer members than the
+`memberCount` printed beside it. `rejectedCount` now holds it, and the four
+counts partition the set.
 
 **3 → 4**: `cancellation.processLaunched` became nullable. It was derived from
 whether process facts came back, so a stop the boundary could not confirm

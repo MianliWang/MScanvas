@@ -228,14 +228,31 @@ export function integritySentence(
   refused = false,
   passedThenUnpublished = false,
 ): string {
-  if (validation === null) {
-    // The one failure the integrity judgement *causes* must not report that no
-    // judgement happened. A refused output was read, judged and discarded, and
-    // saying nothing was checked there is the collapse this whole surface
-    // exists to undo.
-    if (refused) {
-      return "The output was checked against this source posture's contract, did not pass, and was discarded rather than published.";
+  // What was checked, where a surviving record says so. A refusal keeps none,
+  // and an item whose first output was the refused one therefore has no record
+  // at all -- which is an absent mode, not an absent judgement.
+  const scope =
+    validation === null
+      ? null
+      : validation.mode === "source_comparison"
+        ? "Compared against the source document"
+        : "Output-only. The converted data was not compared against a readable vendor-source model";
+  // The one failure the integrity judgement *causes* must not report that no
+  // judgement happened. A refused output was read, judged and discarded, and
+  // saying nothing was checked there is the collapse this whole surface exists
+  // to undo.
+  if (refused) {
+    // An item with several outputs never says "the output". A set is judged one
+    // member at a time and stops at the first that fails, so the members after
+    // it were never examined -- and a singular sentence would claim a check for
+    // files the manifest directly below it says nobody looked at.
+    if (perOutput) {
+      const mode = scope === null ? "" : `${scope}. `;
+      return `${mode}Outputs are judged one at a time and the set stopped at the one that did not pass, so nothing was published. The manifest below says which output was refused and which were never examined.`;
     }
+    return "The output was checked against this source posture's contract, did not pass, and was discarded rather than published.";
+  }
+  if (validation === null) {
     // Nor may a publication that failed *after* the check report that no check
     // happened. The record travels with a finalization and there was none, so
     // the properties are gone — but the judgement ran and passed, and the
@@ -245,10 +262,6 @@ export function integritySentence(
     }
     return "Nothing was checked, because nothing was validated.";
   }
-  const scope =
-    validation.mode === "source_comparison"
-      ? "Compared against the source document"
-      : "Output-only. The converted data was not compared against a readable vendor-source model";
   // A set is judged member by member. Printing one member's counts as the
   // item's would be presenting a sample as a total, so where there is more than
   // one output this states the mode — which is a property of the source posture
@@ -552,8 +565,11 @@ export function ConversionItemJudgements({
                   {/* "Refused" is its own word. A set stops at the first
                       member that fails, so the refused one and every member
                       after it were both unpublished — and only one of them was
-                      looked at. */}
-                  <td>{MEMBER_STATE_LABEL[member.state] ?? "Not published"}</td>
+                      looked at. A state this surface has no word for is shown
+                      as itself, like every other identifier here: answering an
+                      unrecognised state with "Not published" would state a fact
+                      about the file rather than admit an unread one. */}
+                  <td>{MEMBER_STATE_LABEL[member.state] ?? member.state}</td>
                   {/* Nothing measured is nothing shown. A zero here would read
                       as a measured empty document. */}
                   <td>{member.output === null ? "—" : formatByteLength(member.output.byteLength)}</td>

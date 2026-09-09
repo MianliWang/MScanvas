@@ -689,11 +689,19 @@ impl WorkspaceMultiOutputConversionReport {
     /// pair the ticket's constructor refuses.
     pub(super) fn to_dto(&self, complete_set_adoptable: bool) -> ConversionOutputSetReportDto {
         let finalized_count = self.published_count();
-        let validated_not_published_count = self
-            .members
-            .iter()
-            .filter(|member| member.state != "finalized" && member.validation.is_some())
-            .count();
+        // Counted by the state each member is actually in, so the four counts
+        // partition the members. Deriving one of them by subtraction made it
+        // mean "everything else", which quietly absorbed a state the lifecycle
+        // added underneath it.
+        let count_in = |state: &str| {
+            self.members
+                .iter()
+                .filter(|member| member.state == state)
+                .count()
+        };
+        let validated_not_published_count = count_in("validated_not_published");
+        let rejected_count = count_in("rejected");
+        let not_published_count = count_in("not_published");
         ConversionOutputSetReportDto {
             dataset_handle: self.dataset.clone(),
             source_kind: source_kind_dto(self.source_kind),
@@ -703,7 +711,8 @@ impl WorkspaceMultiOutputConversionReport {
             member_count: self.members.len(),
             finalized_count,
             validated_not_published_count,
-            not_published_count: self.members.len() - finalized_count,
+            rejected_count,
+            not_published_count,
             // Zero would say the acquisition was held to no objects, which is a
             // different claim from never having been bound at all. Only a run
             // that reached the source has a number to report.

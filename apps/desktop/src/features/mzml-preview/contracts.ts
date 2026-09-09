@@ -1296,6 +1296,14 @@ export interface ConversionOutputSetReport {
   readonly memberCount: number;
   readonly finalizedCount: number;
   readonly validatedNotPublishedCount: number;
+  /** Members the integrity judgement read and refused. */
+  readonly rejectedCount: number;
+  /**
+   * Members nobody examined.
+   *
+   * These four counts partition the members and sum to `memberCount`. This one
+   * is not "members without a final name": that is this plus the two above it.
+   */
   readonly notPublishedCount: number;
   /** `null` where the acquisition was never bound — not zero, which is a claim. */
   readonly boundSourceObjects: number | null;

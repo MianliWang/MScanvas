@@ -1986,6 +1986,14 @@ pub struct ConversionOutputSetReportDto {
     /// Members that passed validation and were never published — the shape a
     /// refusal after validation leaves.
     pub validated_not_published_count: usize,
+    /// Members the integrity judgement read and refused.
+    ///
+    /// Its own count because a refused member and one nobody examined are
+    /// opposite facts. These four counts partition the members: every one is in
+    /// exactly one of them, and they sum to `member_count`.
+    pub rejected_count: usize,
+    /// Members nobody examined. **Not** "members without a final name" — that
+    /// is this count plus the two above it.
     pub not_published_count: usize,
     /// How many filesystem objects the acquisition was held to for the run.
     ///
@@ -2038,6 +2046,7 @@ impl std::fmt::Debug for ConversionOutputSetReportDto {
                 "validated_not_published_count",
                 &self.validated_not_published_count,
             )
+            .field("rejected_count", &self.rejected_count)
             .field("not_published_count", &self.not_published_count)
             .field("bound_source_objects", &self.bound_source_objects)
             // The manifest, whose own `Debug` redacts every basename. Which

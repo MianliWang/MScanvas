@@ -118,7 +118,7 @@ function partialSet(): ConversionQueueItem {
       report: {
         datasetHandle: "wiff-1", sourceKind: "sciex_wiff", groupOutcome: "partially_finalized",
         detailedOutcome: null, maxMembers: 24, memberCount: 3, finalizedCount: 1,
-        validatedNotPublishedCount: 2, notPublishedCount: 2, boundSourceObjects: 2,
+        validatedNotPublishedCount: 2, rejectedCount: 0, notPublishedCount: 0, boundSourceObjects: 2,
         members: SET_MEMBERS.map((name, index) => member(name, index, index === 0)),
         backend: { exitCode: 0, elapsedMilliseconds: 4_200 }, stagingResidue: null,
         validationMode: "output_only", completeness: { kind: "notPosed" },
@@ -294,7 +294,10 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
     const published = await browser.execute((list: string) =>
       [...document.querySelectorAll(`${list} .conversion-item-manifest tbody tr`)]
         .map((row) => row.querySelector("td")?.textContent ?? ""), LIST);
-    expect(published).toEqual(["Finalized", "Not published", "Not published"]);
+    // "Checked, not published" and not "Not published": these two were read and
+    // passed, and publication is what stopped. A member nobody examined says
+    // something different, and a refused one says a third thing again.
+    expect(published).toEqual(["Finalized", "Checked, not published", "Checked, not published"]);
     const named = await browser.execute((list: string) =>
       [...document.querySelectorAll(`${list} .conversion-item-manifest tbody tr th`)].map((cell) => cell.textContent), LIST);
     expect(named).toEqual(["Enolase_S1.mzML", "Enolase_S2.mzML", "Enolase_S3.mzML"]);

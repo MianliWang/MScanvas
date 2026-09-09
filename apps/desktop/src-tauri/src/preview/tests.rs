@@ -22828,11 +22828,41 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
             "{}: primary and companion",
             case.label
         );
+        let member_count = set["memberCount"].as_u64().expect("a member count");
         assert!(
-            set["memberCount"].as_u64().expect("a member count") <= 24,
+            member_count <= 24,
             "{}: bounded by the lifecycle's own bound",
             case.label
         );
+        // Every member is accounted for exactly once. A refused member used to
+        // be spelled `not_published` and was counted there; once it became its
+        // own state it fell out of all three counts, and the export said a set
+        // had more members than it could account for.
+        let counted: u64 = [
+            "finalizedCount",
+            "validatedNotPublishedCount",
+            "rejectedCount",
+            "notPublishedCount",
+        ]
+        .into_iter()
+        .map(|field| {
+            set[field]
+                .as_u64()
+                .unwrap_or_else(|| panic!("{}: {field} is a count", case.label))
+        })
+        .sum();
+        assert_eq!(
+            counted, member_count,
+            "{}: the member states partition the set",
+            case.label
+        );
+        if case.detail == Some("multi_output_member_rejected") {
+            assert_eq!(
+                set["rejectedCount"], 1,
+                "{}: the member the judgement refused is named as refused",
+                case.label
+            );
+        }
 
         // The backend's own account of the failure survives, redacted and
         // bounded. Dropping it would leave a document that says which class of
@@ -30131,15 +30161,17 @@ fn an_adoption_answer_is_refused_against_a_different_settling() {
     );
 }
 
-/// The exported document is at version three, and carries the three fields the
-/// increment was earned by.
+/// The exported document is at the version this release ships, and carries the
+/// fields each increment was earned by.
 ///
 /// Nothing pinned the payload's own version or its new members, so the schema
-/// increment ADR 0017 records was documented and unproved. It matters most for
-/// the field that **left**: a reader written against version two must not read
-/// a version three file as though `partialOutputObserved` were merely absent.
+/// increments ADR 0017 records were documented and unproved. It matters most
+/// where a field **left** or narrowed: a reader written against version two
+/// must not read a later file as though `partialOutputObserved` were merely
+/// absent, and one written against version four must not read
+/// `notPublishedCount` as though it still counted a refused member.
 #[test]
-fn the_exported_diagnostics_are_version_three_and_say_what_was_staged() {
+fn the_exported_diagnostics_are_at_this_releases_version_and_say_what_was_staged() {
     let fixture = TestFile::new("queue-export-schema");
     let destination = destination_root(&fixture, "out");
     let service = PreviewService::new(Box::new(ConvertingProvider::new(
@@ -30154,7 +30186,7 @@ fn the_exported_diagnostics_are_version_three_and_say_what_was_staged() {
     export_diagnostics(&service, &operation, &saved).expect("a failed item is diagnosable");
     let document = read_export(&saved);
 
-    assert_eq!(document["version"], 4);
+    assert_eq!(document["version"], 5);
     assert_eq!(document["schema"], "mscanvas.conversion-diagnostics");
     let item = &document["items"][0];
 

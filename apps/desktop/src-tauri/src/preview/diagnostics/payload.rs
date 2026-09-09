@@ -43,7 +43,7 @@ const SCHEMA: &str = "mscanvas.conversion-diagnostics";
 /// given `false` could not tell the two apart. What replaced it is the item's
 /// own `stagedOutput`, which is a typed four-way answer and is present for
 /// every item rather than only for the ones a stop reached.
-const SCHEMA_VERSION: u64 = 4;
+const SCHEMA_VERSION: u64 = 5;
 
 /// The redaction contract this file's excerpts were produced under.
 const REDACTION_SCHEMA: &str = "mscanvas.path-redaction";
@@ -262,6 +262,7 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
                 "validatedNotPublishedCount",
                 facts.validated_not_published_count,
             );
+            written.count("rejectedCount", facts.rejected_count);
             written.count("notPublishedCount", facts.not_published_count);
             written.optional_count("boundSourceObjects", facts.bound_source_objects);
             written.optional_string("sampleCompleteness", facts.completeness);

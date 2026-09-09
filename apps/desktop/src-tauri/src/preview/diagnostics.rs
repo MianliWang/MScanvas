@@ -169,6 +169,11 @@ pub(super) struct OutputSetDiagnosticFacts {
     pub(super) member_count: usize,
     pub(super) finalized_count: usize,
     pub(super) validated_not_published_count: usize,
+    /// Members the integrity judgement read and refused.
+    ///
+    /// Without it a refused member appeared in none of these counts, and the
+    /// export accounted for fewer members than it said the set had.
+    pub(super) rejected_count: usize,
     pub(super) not_published_count: usize,
     /// How many objects the acquisition was bound to for the run.
     ///
@@ -200,6 +205,7 @@ impl OutputSetDiagnosticFacts {
             member_count: 0,
             finalized_count: 0,
             validated_not_published_count: 0,
+            rejected_count: 0,
             not_published_count: 0,
             // Never bound, so there is no number to report. Zero would say the
             // acquisition was held to no objects, which is a different claim.
@@ -307,6 +313,7 @@ impl ConversionFailureDiagnosticTicket {
             member_count: report.members().len(),
             finalized_count: member_count_in(report, "finalized"),
             validated_not_published_count: member_count_in(report, "validated_not_published"),
+            rejected_count: member_count_in(report, "rejected"),
             not_published_count: member_count_in(report, "not_published"),
             bound_source_objects: Some(report.bound_source_objects()),
             completeness: report

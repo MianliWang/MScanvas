@@ -4712,6 +4712,7 @@ impl PreviewService {
                         member_count: 0,
                         finalized_count: 0,
                         validated_not_published_count: 0,
+                        rejected_count: 0,
                         not_published_count: 0,
                         bound_source_objects: Some(facts.bound_source_objects),
                         completeness: None,

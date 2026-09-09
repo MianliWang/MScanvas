@@ -1319,6 +1319,7 @@ export function outputSetReport(
     memberCount: memberFileNames.length,
     finalizedCount: memberFileNames.length,
     validatedNotPublishedCount: 0,
+    rejectedCount: 0,
     notPublishedCount: 0,
     boundSourceObjects: 2,
     members: setMembers(
