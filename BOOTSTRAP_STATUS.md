@@ -7749,8 +7749,8 @@ not widened. Capacity stays 16 with a current rationale. Two progress defects
 are closed: a completed queue now accounts for every item it held, and the retry
 display no longer speaks for a rerun that is already done.
 
-Implementation is complete and every local gate passes: 1659 frontend tests,
-1519 Rust tests across the workspace, lint, both typechecks, the build,
+Implementation is complete and every local gate passes: 1661 frontend tests,
+1523 Rust tests across the workspace, lint, both typechecks, the build,
 `cargo fmt --check`, clippy with warnings denied, and `check_repo.py` with the
 claim guard's thirty-five self-proved bypasses. Rendered QA is browser 10/10 at four
 inner sizes plus M6.6 8/8 and M6.7 7/7, re-run at this head against the bundle
@@ -7758,14 +7758,17 @@ this head builds. That suite is headless, so a locked session does not block it.
 
 **Native validation is complete on the build attributable to this head.** One
 build, three suites, one binary: `target/e2e/release/mscanvas-desktop.exe`,
-SHA-256 `9da84ae53aa16d5777ea67f1cc44df3de28dd25d3f2819a2dba004f4e3ee3f54`,
+SHA-256 `64f7edfacb4d3d05d5755109b2bc4642625a0ff336784b5d471581e6a8d23667`,
 WebView2 and driver 152.0.4191.66. M6.8 3/3 — a stop that reached a genuinely
-executing provider settled `confirmed_gone` 31 ms after the request with no
+executing provider settled `confirmed_gone` 39 ms after the request with no
 partial output and no residue, and the queue carried on to `completed` with 7
 finalized. M6.6 5/5, including the real Escape at the exact owned folder picker
 through the foreground guard that had refused it while the session was locked.
 M6.7 2/2. The provider measurement was re-taken at this head and reproduces the
-earlier runs exactly. Nothing was weakened at any point to reach any of it.
+earlier runs in every categorical fact. The release review's ninth round changed
+the process and classification boundary, so all of it was taken again on a build
+of the head that carries those repairs rather than inherited. Nothing was
+weakened at any point to reach any of it.
 
 Two browser cases fail here and on the published baseline alike, verified in a
 separate worktree at `735dfeb`: `m4.1` "offers all three formats for a spectrum

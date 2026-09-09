@@ -131,16 +131,27 @@ separately.
 
 **Re-taken at the final head**, on the same rule the suites are held to: this
 measurement is produced through the launch path, so a changed launch path makes
-an older run describe a different boundary. Run 05, taken at head `1fd44df`,
-reproduces runs 01 to 04 exactly — `provider.executable_sha256` still
+an older run describe a different boundary. Run 06, taken at head `1b9298a`
+after the ninth round changed that path again, reproduces runs 01 to 05 —
+`provider.executable_sha256` still
 `9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD`, a kernel
 cumulative `total_owned_processes` of 1 in every scenario,
 `tree_ownership=established_before_execution` throughout,
 `owned_tree=confirmed_gone` for every launched run and `none_launched` for the
-request observed before the launch. It is a console harness rather than an
-interface one, so it does not need an unlocked interactive session.
+request observed before the launch.
 
-Evidence: `D:/tmp/mscanvas-m68-20260908/cancellation-evidence-0{1,2,3,4,5}.log`; run 05 is the one taken at this head.
+Every line the two runs differ on is a quantity no two runs of anything share:
+elapsed milliseconds, the peak Job memory the kernel reported, and how many
+bytes the staged output had reached at the two moments the harness looked. Not
+one categorical fact moved — outcome, disposition, residue, staging removal,
+finalized output and every count are identical, line for line. Those quantities
+are reported rather than smoothed away because a measurement that reported only
+what is stable would be reporting a conclusion.
+
+It is a console harness rather than an interface one, so it does not need an
+unlocked interactive session.
+
+Evidence: `D:/tmp/mscanvas-m68-20260908/cancellation-evidence-0{1,2,3,4,5,6}.log`; run 06 is the one taken at this head.
 The harness removed its own scratch directories; verified empty.
 
 ## The claim guard
@@ -759,23 +770,24 @@ conversion now settles as a successful cancellation, which is the claim the whol
 
 **The provider measurement was re-taken at this head**, for the reason below —
 it is produced through this same launch path, so a changed launch path makes an
-older run describe a different boundary. It reproduces exactly; see
+older run describe a different boundary. The ninth round changed that path
+again, so it was taken again. Every categorical fact reproduces; see
 *The measurement*.
 
 **Native, on the build attributable to this head.** One build, and all three
 suites on that one binary — no rebuild between them.
 
-- Built at head `1fd44df`; binary `target/e2e/release/mscanvas-desktop.exe`,
-  SHA-256 `9da84ae53aa16d5777ea67f1cc44df3de28dd25d3f2819a2dba004f4e3ee3f54`,
-  16,044,032 bytes. Everything committed after `1fd44df` is markdown — the
-  diff to the published head is two `.md` files and no compiled input — so the
-  binary above is the one this head builds.
+- Built at head `1b9298a`; binary `target/e2e/release/mscanvas-desktop.exe`,
+  SHA-256 `64f7edfacb4d3d05d5755109b2bc4642625a0ff336784b5d471581e6a8d23667`,
+  16,093,184 bytes. Everything committed after `1b9298a` is markdown — the diff
+  to the published head is `.md` only and no compiled input — so the binary
+  above is the one this head builds.
 - WebView2 and msedgedriver 152.0.4191.66; approved Thermo fixture SHA-256
   `b3d97b38…2bd6dd7b`, as recorded in each run's own identity entry.
 
 | Scenario | Result |
 | --- | --- |
-| A stop while the provider is genuinely executing | `ownedTree: confirmed_gone`, `processLaunched: true`, `termination: cancelled`, 31 ms from request to settle, no partial output and no staging residue; the queue carried on to `completed` with 7 finalized, 1 cancelled, 0 not run |
+| A stop while the provider is genuinely executing | `ownedTree: confirmed_gone`, `processLaunched: true`, `termination: cancelled`, 39 ms from request to settle, no partial output and no staging residue; the queue carried on to `completed` with 7 finalized, 1 cancelled, 0 not run |
 | A waiting item settled without launching it | index 7, 0 attempts, counted as 1 skipped by request, queue `completed` with 7 finalized |
 | The whole queue stopped mid-execution | `stopped`, 1 attempted of 8, 0 finalized, 1 cancelled, **0** whose stop could not be confirmed, 7 not run |
 
@@ -794,15 +806,18 @@ real custom picker"*. Nothing was weakened to reach it at any point: no guard
 relaxed, no Cancel substituted for Escape, no focus scripted after cancellation,
 and no browser result counted as native evidence.
 
-Evidence: `D:/tmp/mscanvas-m68-20260908/m68-native-VDU6PR/`,
-`m66-native-XtIpn5/`, `m67-native-aoZYSD/`, and `final-binary-identity.log`.
-Each run's own identity entry records the binary digest above and the approved
-Thermo fixture `b3d97b38…2bd6dd7b`.
+Evidence: `D:/tmp/mscanvas-m68-20260908/r9/m68/m68-native-hko8Xa/`,
+`r9/m66/m66-native-tGAi65/`, `r9/m67/m67-native-Aln8L1/`, and
+`final-binary-identity-r9.log`. Each run's own identity entry records the binary
+digest above and the approved Thermo fixture `b3d97b38…2bd6dd7b`.
 
-An earlier pass of the same three suites at head `d0da14d`, on binary
-`a7e0cdb0…`, also passed 3/3, 5/5 and 2/2. It is not this candidate's evidence —
-the delta review's repairs landed after it — and is recorded here only so the
-count of native runs in this milestone is not silently one fewer than it was.
+Two earlier passes of the same three suites also gave 3/3, 5/5 and 2/2: at head
+`1fd44df` on binary `9da84ae5…` (`m68-native-VDU6PR/`, `m66-native-XtIpn5/`,
+`m67-native-aoZYSD/`, `final-binary-identity.log`), and at head `d0da14d` on
+binary `a7e0cdb0…`. Neither is this candidate's evidence — the ninth round's
+repairs changed the process and classification boundary after both — and they
+are recorded here only so the count of native runs in this milestone is not
+silently smaller than it was.
 
 **What the earlier runs were.** They are kept as history and belong to the heads
 they were taken on, not to this one: M6.8 3/3, M6.7 2/2 and M6.6 4/5 at head
