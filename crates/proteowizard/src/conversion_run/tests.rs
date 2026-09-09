@@ -35,6 +35,22 @@ Options:
   -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
 ";
 
+/// The same help, with the output-format option the shipped intent needs
+/// removed.
+///
+/// A plan cannot be expressed against a build that does not offer it, so a run
+/// against these capabilities reaches `NotPlannable` *after* it has created its
+/// staging area and *before* it invokes anything -- which is the one interval
+/// where a reading has a directory to describe and no execution to name.
+const MSCONVERT_HELP_WITHOUT_MZML: &str = r"Usage: msconvert [options] [filemasks]
+Convert mass spec data file formats.
+
+Options:
+  -o [ --outdir ] arg (=.)           : set output directory
+  --outfile arg                      : Override the name of output file.
+  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
+";
+
 struct TestDirectory(PathBuf);
 
 impl TestDirectory {
@@ -128,22 +144,8 @@ fn capabilities() -> InstalledHelpCapabilities {
 
 /// The same capabilities, from a build whose help omits the output-format
 /// option the shipped intent needs.
-///
-/// A plan cannot be expressed against it, so a run reaches `NotPlannable`
-/// *after* it has created its staging area and *before* it invokes anything --
-/// which is the one interval where a reading has a directory to describe and no
-/// execution to name.
 fn capabilities_without_mzml_output() -> InstalledHelpCapabilities {
-    capabilities_from(
-        "Usage: msconvert [options] [filemasks]
-Convert mass spec data file formats.
-
-Options:
-  -o [ --outdir ] arg (=.)           : set output directory
-  --outfile arg                      : Override the name of output file.
-  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
-",
-    )
+    capabilities_from(MSCONVERT_HELP_WITHOUT_MZML)
 }
 
 fn capabilities_from(help: &str) -> InstalledHelpCapabilities {

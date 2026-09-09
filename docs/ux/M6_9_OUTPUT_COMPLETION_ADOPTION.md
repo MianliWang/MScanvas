@@ -36,15 +36,27 @@ transfer object and the rendered row.
 
 | Arm | What it says |
 | --- | --- |
-| `notCreated` | No working folder existed. The converter was never given anywhere to write. |
+| `notCreated` | No working folder was available to observe. The converter was never given anywhere to write — either because the attempt settled before one was made, or because one was made, its own setup failed, and teardown removed what it had built before anything was invoked. |
 | `unobserved` | One existed and could not be read **at the stated phase**. Unknown, never empty. |
 | `observed` | Read at the stated phase, with a shape: entries, directories, and whether any ordinary file held bytes. |
 | `published` | The staged output took its final name. Not an observation, and it says so. |
 
 The phase is part of the answer. An empty snapshot says the folder was empty
 *then*; taken after a publication it is consistent with everything having been
-moved out and says nothing about what the converter produced. Three phases:
-`backend_settled`, `output_refused`, `publication_settled`.
+moved out and says nothing about what the converter produced. Four phases:
+
+| Phase | When the reading was taken |
+| --- | --- |
+| `provider_not_invoked` | The attempt settled without the provider being invoked at all. The folder exists and nothing was ever handed it. |
+| `backend_settled` | As soon as the backend's own execution settled. The phase at which "did the provider write anything" is answerable. |
+| `output_refused` | After the output was judged and refused. Validation reads and removes nothing. |
+| `publication_settled` | After publication ran and stopped partway. |
+
+**A phase never asserts an event that did not happen.** An unplannable command
+and a stop that arrives between creating the working folder and launching are
+both read at `provider_not_invoked`, not at `backend_settled`; a skipped set and
+a set refused after discovery published nothing, so neither is read at
+`publication_settled`.
 
 **A zero-byte staged file is an entry and is not an output document.** It counts
 in `entryCount` and does not earn `nonEmptyFileObserved`, which is the only
@@ -89,13 +101,24 @@ reading as a run that happened, and it is enforced by construction: the
 constructor is crate-private, so no consumer can stamp one onto an attempt that
 never reached a provider.
 
-The form is a fixed-width opaque 32-character lowercase hex value: a per-process
-nonce beside a monotonic counter, session-local, never reused, and persistable
-unchanged. **M6 neither persists it nor resolves one across sessions**, and there
-is deliberately no parser — a value that cannot be read back cannot be compared
-against another session's by accident. No history of retry attempts accumulates:
-an item carries the latest attempt's identity, as it carries the latest
-attempt's result.
+The form is a fixed-width 32-character lowercase hex value: a per-process nonce
+beside a monotonic counter, rendered through a bijection so the low half is not
+this session's launch ordinal in plain hexadecimal. **Uniqueness within a session
+is by construction** — the counter never repeats and the rendering is
+one-to-one. **Across sessions it is an argument rather than a proof**: the nonce
+is a 64-bit mix of the wall clock, the process id and the address of a static,
+so two sessions colliding is improbable and not impossible. That is the right
+strength for a value nothing authorizes anything on.
+
+**M6 keeps no store of one and resolves none across sessions**, and there is
+deliberately no parser — a value that cannot be read back cannot be compared
+against another session's by accident. It does reach one file: the redacted
+diagnostics export the user chooses to save carries it beside every other stable
+identifier about an attempt. That is a document the user asked for rather than
+session state, and "never written to disk" would be false of it.
+
+No history of retry attempts accumulates: an item carries the latest attempt's
+identity, as it carries the latest attempt's result.
 
 `identity` used to be a forbidden word on this wire, because the only identities
 this application had were filesystem ones — a volume serial and a file id, which
@@ -128,9 +151,32 @@ disposition: none of them is a check that could have been made and was not, and
 folding them into `unverified` would report expected behaviour as an unanswered
 question.
 
+**And the list is empty on every conversion this release can run.** An advisory
+observation is recorded only by the source comparison, and no family the visible
+queue accepts is read under one — `is_convertible` refuses mzML, so every queued
+item is judged output-only. Projecting and rendering them is the contract
+CNV-D9 states, and it is what keeps the next family that *is* compared from
+arriving at a surface that silently drops a quarter of judgement 4. What it is
+not is something a user sees today, and no document here says otherwise. The
+rendering is pinned against `source_comparison`, which is the mode the crate
+pairs advisories with; a fixture pairing them with `output_only` would describe
+a wire Rust cannot produce.
+
+An item with more than one output states the **mode** and leaves the counts to
+the manifest, which carries each member's own checked, not-established and
+not-applicable totals. One member's counts printed as the item's would be a
+sample presented as a total.
+
 Output-only stays output-only however many properties passed. `inapplicable`
 stays distinct from `unverified`. Nothing on this surface says fully verified,
 lossless or vendor-faithful.
+
+**A refused output is not an unchecked one.** A run whose output failed the
+contract retains no validation record — the record travels with a finalization,
+and there was none — so the naive reading of an absent record is "nothing was
+checked", which is exactly false in the one case the check *is* the answer. The
+sentence is chosen from the boundary's own failure identifier instead, and says
+the output was checked, did not pass, and was discarded rather than published.
 
 ## Adoption
 
