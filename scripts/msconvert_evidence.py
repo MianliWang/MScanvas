@@ -299,11 +299,13 @@ def generate(out: Path) -> list[tuple[str, int]]:
 
     # The second fixture exists for one dimension the first cannot reach: mzXML
     # drops a spectrum whose source file is not the run's default, and a
-    # single-source document cannot exhibit that. Indices 1 and 3 are attributed
-    # to the second source file, and they are not adjacent, so a drop is
-    # distinguishable from a truncation.
+    # single-source document cannot exhibit that.
+    #
     # The second source file is attributed to **one MS1 and one MS2** spectrum,
-    # indices 1 and 2. A fixture that put it on both MS2 spectra would confound
+    # indices 1 and 2, which leaves `SF1` on indices 0 and 3 -- also one MS1 and
+    # one MS2. (An earlier version of this comment said indices 1 and 3, which
+    # the line below has never done. It is corrected rather than left, because
+    # M6.10's mzXML refusal argues from exactly which indices carry `SF2`.) A fixture that put it on both MS2 spectra would confound
     # the two hypotheses this fixture exists to separate: a format that drops by
     # source file and a format that drops by MS level would delete the same two
     # spectra, and either result would look like proof of the other.
@@ -752,9 +754,15 @@ def strict_base64(text: str) -> tuple[bytes, str | None]:
         return b"", None
     if len(payload) % 4:
         return b"", f"{len(payload)} base64 characters is not a multiple of 4"
+    if not payload.isascii():
+        return b"", "payload carries characters outside ASCII"
     try:
         return base64.b64decode(payload, validate=True), None
-    except binascii.Error as error:
+    except ValueError as error:
+        # `binascii.Error` subclasses `ValueError`, not the reverse, and
+        # `b64decode` raises the plain one for a non-ASCII `str`. Catching only
+        # the narrower class let a stray non-ASCII byte crash the reader instead
+        # of being reported as the defect it is.
         return b"", f"payload is not strict base64: {error}"
 
 
@@ -768,8 +776,40 @@ def decompress(raw: bytes, compression: str) -> tuple[bytes, str | None]:
         return b"", f"payload declares zlib and does not decompress: {error}"
 
 
+def declared_count_defect(
+    declared: str | None, written: int, what: str, attribute: str, noun: str
+) -> str | None:
+    """The one thing a run-level declaration can be wrong about, in three ways.
+
+    Absent, unreadable, or standing over a different number of elements. The
+    first two used to be skipped: `if declared is not None` said nothing about a
+    document that declared nothing, and `int(...)` on a non-numeric attribute
+    raised out of the reader instead of reporting it. The production contract
+    already refuses an output that declares no count while carrying records, so
+    this reader says the same thing rather than a quieter one.
+    """
+    if declared is None:
+        return f"{what} declares no {attribute} over {written} {noun} elements"
+    try:
+        stated = int(declared)
+    except ValueError:
+        return f"{what} declares {attribute}={declared!r}, which is not a number"
+    if stated != written:
+        return f"{what} declares {attribute}={stated} over {written} {noun} elements"
+    return None
+
+
 def role_defects(arrays: list[dict[str, object]], where: str) -> list[str]:
-    """Every required array a spectrum does not carry exactly once."""
+    """Every required array a spectrum does not carry exactly once.
+
+    **An array this reader does not recognize is not a defect.** A real
+    acquisition carries ion-mobility, charge and sampled-noise arrays as a matter
+    of course, and reporting them as structural faults would make a healthy
+    document read as broken the moment this inspector is pointed at one -- which
+    M6.10 does. What matters is that the two arrays every numeric claim here is
+    *about* are present, once each. Anything else is counted and reported beside
+    the spectrum as information.
+    """
     roles = [array["kind"] for array in arrays]
     found: list[str] = []
     for role in REQUIRED_ARRAY_ROLES:
@@ -778,9 +818,6 @@ def role_defects(arrays: list[dict[str, object]], where: str) -> list[str]:
             found.append(f"{where} carries no {role} array")
         elif seen > 1:
             found.append(f"{where} carries {seen} {role} arrays")
-    unrecognized = roles.count("other")
-    if unrecognized:
-        found.append(f"{where} carries {unrecognized} array(s) with no recognized role")
     return found
 
 
@@ -815,14 +852,23 @@ def _decode_array(array: ElementTree.Element) -> dict[str, object]:
     kind = next((ARRAY_ACCESSIONS[a] for a in params if a in ARRAY_ACCESSIONS), "other")
     node = array.find(f"{{{MZML_NS}}}binary")
     encoded = (node.text or "") if node is not None else ""
-    raw, malformed = strict_base64(encoded)
-    if malformed is None:
-        raw, malformed = decompress(raw, compression)
+    # Order matters here. Decoding first diagnosed an array with no `<binary>`
+    # element at all as a compression lie, because `decompress(b"", "zlib")`
+    # fires before anything notices the element is absent.
+    if node is None:
+        raw, malformed = b"", "no binary element"
+    else:
+        raw, malformed = strict_base64(encoded)
+        if malformed is None:
+            raw, malformed = decompress(raw, compression)
+    # F2: an array that declares no compression at all has said nothing about how
+    # its bytes are stored, and every numeric claim over it would be a claim
+    # about bytes this reader guessed at.
+    if malformed is None and compression == "unknown":
+        malformed = "no compression cvParam"
     values: list[float] = []
     if malformed is not None:
         pass
-    elif node is None:
-        malformed = "no binary element"
     elif width is None:
         malformed = "no float-width cvParam"
     else:
@@ -843,7 +889,9 @@ def _decode_array(array: ElementTree.Element) -> dict[str, object]:
         "kind": kind,
         "bits": None if width is None else width[0],
         "compression": compression,
-        "encoded_bytes": len(encoded.strip()),
+        "encoded_bytes": len(
+            "".join(character for character in encoded if character not in BASE64_LAYOUT)
+        ),
         "decoded_bytes": len(raw),
         "length": len(values),
         "malformed": malformed,
@@ -895,6 +943,12 @@ def inspect_mzml(root: ElementTree.Element) -> dict[str, object]:
         ]
         where = f"spectrum {element.get('id') or element.get('index')}"
         defects = role_defects(arrays, where) + array_defects(arrays, where)
+        if declared is None and arrays:
+            # Required by the mzML schema, and required here for the same reason
+            # the production contract refuses an output without it: with no
+            # declared length there is nothing for the comparison below to read,
+            # so an array storing nothing at all reports clean.
+            defects.append(f"{where} carries arrays and declares no defaultArrayLength")
         if mismatched:
             defects.append(
                 f"{where} declares {declared} values and stores "
@@ -931,12 +985,11 @@ def inspect_mzml(root: ElementTree.Element) -> dict[str, object]:
     # the mzML twin of `msRun/@scanCount`, and the reason both are reported is
     # that a consumer trusting either would read a short document as a complete
     # conversion.
-    if declared_count is not None and int(declared_count) != len(spectra):
-        defects.insert(
-            0,
-            f"spectrumList declares count={declared_count} over "
-            f"{len(spectra)} spectrum elements",
-        )
+    mismatch = declared_count_defect(
+        declared_count, len(spectra), "spectrumList", "count", "spectrum"
+    )
+    if mismatch is not None:
+        defects.insert(0, mismatch)
     return {
         "format": "mzML",
         "source_files": sources,
@@ -989,6 +1042,18 @@ def inspect_mzxml(root: ElementTree.Element) -> dict[str, object]:
             raw, malformed = strict_base64(peaks.text or "")
             if malformed is None:
                 raw, malformed = decompress(raw, compression)
+            # Read rather than assumed. This reader unpacks network byte order
+            # and an interleaved m/z-intensity pair list; a scan declaring
+            # anything else would decode to numbers under a rule it did not
+            # state, and every byte count would still line up.
+            order = peaks.get("byteOrder", "network")
+            content = peaks.get("contentType", "m/z-int")
+            if malformed is None and order != "network":
+                malformed = f"scan declares byteOrder={order!r}, which this reader does not decode"
+            if malformed is None and content != "m/z-int":
+                malformed = (
+                    f"scan declares contentType={content!r}, which this reader does not decode"
+                )
             code = "d" if bits == 64 else "f"
             stride = bits // 8
             # Refused rather than rounded down, and the pairing is checked as
@@ -1030,7 +1095,10 @@ def inspect_mzxml(root: ElementTree.Element) -> dict[str, object]:
                 "centroided": element.get("centroided"),
                 "declared_length": declared,
                 "length_disagreement": mismatched,
-                "array_roles": list(REQUIRED_ARRAY_ROLES),
+                # Observed, not asserted. This used to be the constant
+                # `["mz", "intensity"]`, which claimed both arrays even for a
+                # scan whose whole defect was carrying no peaks element at all.
+                "array_roles": [] if malformed is not None else list(REQUIRED_ARRAY_ROLES),
                 "defects": defects,
                 "retention_time": element.get("retentionTime"),
                 "arrays": [
@@ -1061,12 +1129,11 @@ def inspect_mzxml(root: ElementTree.Element) -> dict[str, object]:
     # `<scan>` elements: the drop reproduced through the old inspector and the
     # misdeclaration did not, so a consumer trusting the header would have read
     # a two-spectrum document as a complete four-spectrum conversion.
-    if declared_count is not None and int(declared_count) != len(spectra):
-        defects.insert(
-            0,
-            f"msRun declares scanCount={declared_count} over "
-            f"{len(spectra)} scan elements",
-        )
+    mismatch = declared_count_defect(
+        declared_count, len(spectra), "msRun", "scanCount", "scan"
+    )
+    if mismatch is not None:
+        defects.insert(0, mismatch)
     return {
         "format": "mzXML",
         "source_files": sources,

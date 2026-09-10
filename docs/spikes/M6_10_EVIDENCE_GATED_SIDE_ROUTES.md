@@ -35,8 +35,8 @@ from here.
 | # | Route | Question, exactly | Shipped availability today | Applicable gate | Disposition | Named outcome it maps to |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | **CNV-002 mzXML output** | May MSCanvas offer mzXML as a second conversion output format? | **Unavailable and unconstructible.** `OutputFormat` has one variant, so no `ConversionIntent` names mzXML and `PlanError::MzXmlIntegrityGateRequired` is unreachable | CNV-002's **source/output spectrum comparison**. `ValidationMode::OutputOnly` cannot carry it | **`REFUSED_WITH_EVIDENCE`** | CNV-D1's **`MZXML_REFUSED`** |
-| 2 | **Vendor-format direct preview** | May a vendor acquisition be previewed without converting it first? | **Unavailable.** `open_preview` refuses a non-previewable family with `dataset_not_previewable` before any backend runs | ADR 0037 / 0042: **conversion support is not direct-preview support**, and no reader, format or family is supported from one declaration or one file | **`EVIDENCE_BLOCKED`** | — (criterion 11 vocabulary only) |
-| 3 | **Any further vendor family** | Does M6 open an additional vendor source family at all — asked once, not family by family? | **Unchanged at three**: Thermo RAW, Shimadzu LCD, SCIEX WIFF. `EVIDENCED_PROVIDER_BUILDS` holds three rows and `ConversionSourceKind` four variants | ADR 0007's **fourteen-item directory-acquisition evidence list**, and the family-specific admission each remaining candidate would need | **`REFUSED_WITH_EVIDENCE`** | — (criterion 11 vocabulary only) |
+| 2 | **Vendor-format direct preview** | May a vendor acquisition be previewed without converting it first? | **Unavailable.** `open_preview` refuses a non-previewable family with `dataset_not_previewable` before any backend runs | ADR 0037 / 0042: **conversion support is not direct-preview support**, under ADR 0042's evidence discipline, whose third step is a **representative** measurement | **`EVIDENCE_BLOCKED`** | — (criterion 11 vocabulary only) |
+| 3 | **Any further vendor family** | Does M6 open an additional vendor source family at all — asked once, not family by family? | **Unchanged at three**: Thermo RAW, Shimadzu LCD, SCIEX WIFF. `EVIDENCED_PROVIDER_BUILDS` holds three rows and `ConversionSourceKind` four variants | ADR 0007's directory-acquisition evidence list for the directory-shaped candidates, and the lawful-fixture and recognition prerequisites ADR 0010 and ADR 0018 each established for a file-shaped one | **`REFUSED_WITH_EVIDENCE`** | — (criterion 11 vocabulary only) |
 | 4 | **VIEW-007 conditional XIC re-entry** | Has a **different** `msaccess` executable identity appeared, which is the stated trigger? | **Unavailable.** VIEW-007 is unimplemented; no operation, gate, DTO, command or surface exists | ADR 0042 / `ROADMAP.md`: a **different measured `msaccess` identity**, then M5.4's three-part gate in full | **`REFUSED_WITH_EVIDENCE`** | M5.4's **`XIC_SOURCE_REFUSED`**, retained |
 
 **Three vocabularies, mapped rather than merged.** Criterion 11 admits exactly
@@ -77,8 +77,8 @@ reproduces M5.4's recorded stderr digest exactly.
 ### The decisive comparison, reproduced with the corrected tooling
 
 The whole M6.2 ledger was re-run against the executable above with the
-strengthened inspector and driver this slice delivers. **29 cases, 52
-independent confirmations, all 52 agree, no classification changed.**
+strengthened inspector and driver this slice delivers. **29 cases, 60
+independent confirmations, all 60 agree, no classification changed.**
 
 | Case | Source | argv between source and `--outdir` | Exit | `<scan>`/`<spectrum>` written | Run-level declaration | Survivor identities |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -114,10 +114,22 @@ shipped comparison path reads mzML on both sides.
 
 ### The single-source result, kept at its own scope
 
-`X1`, `X4` and `X5` are faithful: four spectra of four, MS levels and point
-counts preserved, `precision="64"` declared, decoded m/z and intensity arrays
-**exactly equal to the source `float64` values**, and a header that declares what
-was written. That is a real result and it is **not** product support.
+**`X1` and `X4` are faithful.** Four spectra of four, MS levels and point counts
+preserved at `14, 7, 21, 7`, `precision="64"` declared, decoded m/z and intensity
+arrays **exactly equal to the source `float64` values**, and a header that
+declares what was written. `X4` is the case that supplied no `--outfile`, so that
+result holds for a document the backend named itself. Both comparisons are made
+by the driver against the fixture rather than against each other.
+
+**`X5` is not one of them, and saying so matters.** It runs a picker, which is
+its purpose in the ledger, so its arrays are the picked apexes and its point
+counts are `4, 1, 7, 1` against the source's `14, 7, 21, 7`. What `X5` shows is
+that a processing intent carried into mzXML keeps all four spectra and an honest
+header — not that mzXML preserved anything. Reading it as faithful would be
+reading the picker's output as the source's, and an earlier draft of this
+sentence did exactly that.
+
+That is a real result and it is **not** product support.
 
 **A narrower single-source admission is not established, and is not proposed
 here.** It would need, and does not have: an *enforceable* source precondition
@@ -148,9 +160,12 @@ pinned working directory.
 
 | Input | `metadata` | `run_summary` | `spectrum_table` | `tic` | `binary` |
 | --- | --- | --- | --- | --- | --- |
-| **A** — the Thermo acquisition, read **directly** | exit `0`, `1,033` B | exit `0`, no file | exit `0`, `260` B | exit `0`, `147` B | exit `0`, `47,253` B |
-| **B** — a generated mzML fixture, the harness control | exit `0`, `995` B | exit `0`, no file | exit `0`, `469` B | exit `0`, `233` B | exit `0`, `729` B |
-| **C** — the same acquisition **converted** to mzML | exit `0`, `1,479` B | exit `0`, no file | exit `0`, `257` B | exit `0`, `144` B | exit `0`, `47,250` B |
+| **A** — the Thermo acquisition, read **directly** | exit `0`, `1,033` B | exit `0`, no file, `324` B on stdout | exit `0`, `260` B | exit `0`, `147` B | exit `0`, `47,253` B |
+| **B** — a generated mzML fixture, the harness control | exit `0`, `995` B | exit `0`, no file, `337` B on stdout | exit `0`, `469` B | exit `0`, `233` B | exit `0`, `729` B |
+| **C** — the same acquisition **converted** to mzML | exit `0`, `1,479` B | exit `0`, no file, `321` B on stdout | exit `0`, `257` B | exit `0`, `144` B | exit `0`, `47,250` B |
+
+Bytes are the output directory's contents unless the cell says stdout. Every
+other operation wrote its output to a file and nothing to stdout.
 
 **`msaccess` reads the vendor acquisition directly.** Four of the five operations
 wrote a file and the fifth wrote to stdout; none failed, and none refused the
@@ -164,6 +179,16 @@ file. All `1,504` data lines are identical. `spectrum_table` and `tic` differ in
 the same one line and in nothing else, down to the native identifier
 `controllerType=0 controllerNumber=1 scan=1`.
 
+**Where that comparison is held, stated rather than implied.** The line counts
+above were taken from the two outputs directly, and those outputs are retained
+outside the worktree with the acquisition, so they are not reproducible from
+anything committed here. What the retained report does carry independently is the
+**three-byte delta on every affected output** — `47,253` against `47,250`, `260`
+against `257`, `147` against `144` — which is exactly the difference in length
+between the two source names and nothing else. Read the line figures as the
+unretained observation they are; the byte deltas corroborate them and are
+recorded.
+
 ### Why that is not an admission, and what is actually missing
 
 **The comparison is not independent.** Both sides of it pass through the same
@@ -175,8 +200,11 @@ preview numbers, and a self-consistent reread is not either.**
 **One file is not a family.** This acquisition is a single-scan MS2 extraction:
 one spectrum, one controller, already centroided, no MS1, no chromatogram list.
 Nothing here says what this build does with an MS1 spectrum, a chromatogram, a
-multi-sample acquisition or a profile scan — and ADR 0037's rule is explicit that
-no reader, format or family becomes supported from one file. **Two of the three
+multi-sample acquisition or a profile scan. ADR 0042 names the discipline this
+falls short of — exact capability, exact executable identity, **representative
+and live measurement**, classification, then admission or an explicit refusal —
+and ADR 0037 supplies the half that bites hardest here: an exit code of `0` is
+not evidence of correctness. **Two of the three
 admitted conversion families were not measured at all**, and SCIEX WIFF is
 structurally harder: one acquisition legitimately yields one document per sample,
 and the preview boundary carries one source identity.
@@ -221,19 +249,29 @@ because the reason is the same for all of them and does not depend on which.
 prerequisite**, and it is stated that way rather than as an experimental result.
 
 - **ADR 0007 decides directory acquisitions: "Recognise none."** Suffix-only
-  recognition is rejected outright, and the ADR lists **fourteen** things this
+  recognition is rejected outright, and the ADR states a list of things this
   repository requires before *any* directory family may be recognised — a
   representative structure, a lawful source for it, marker evidence beyond the
   suffix, case and nesting behaviour, whether the provider accepts the root,
   whether preview and conversion support it, how filesystem identity, a lease and
   change detection would work on a directory, and what a roster row could then
-  truthfully say. **None of the fourteen was produced by any M6 slice**, and no
-  M6 slice was scoped to produce them. That covers Bruker, Waters and Agilent
-  `.d` together, which is why they are not surveyed one at a time.
-- **`.wiff2` is a different container**, and the SCIEX admission says so in the
-  code that carries it: the evidenced row is about this installation's SCIEX
-  library reading acquisitions Analyst wrote between 2007 and 2012, and is
-  explicitly not evidence about `.wiff2`.
+  truthfully say. **Not one item of it was produced by any M6 slice**, and no M6
+  slice was scoped to produce any. That covers Bruker, Waters and Agilent `.d`
+  together, which is why they are not surveyed one at a time. The list is cited
+  rather than counted: an earlier draft of this sentence gave it a number, and
+  the number was arrived at by counting semicolons — the kind of hand-derived
+  count the rest of this slice exists to remove.
+- **The file-shaped candidates need a different prerequisite, stated separately**
+  because ADR 0007's list is about directories and does not reach them. A
+  file-shaped family needs what ADR 0010 and ADR 0018 each established before
+  their family was admitted: a lawfully redistributable acquisition, a
+  recognition authority that reads the bytes rather than the suffix — and M3.7
+  recorded that ProteoWizard's own compound-file readers supply none — and a
+  source model the conversion plan can represent. **`.wiff2` is a different
+  container**, and the SCIEX admission says so in the code that carries it: the
+  evidenced row is about this installation's SCIEX library reading acquisitions
+  Analyst wrote between 2007 and 2012, and is explicitly not evidence about
+  `.wiff2`.
 - **No lawful fixture exists in this repository for any unadmitted family.** The
   two vendor families this repository did admit each came in through a recorded
   lawful-use basis and a measured two-stage acquisition; nothing equivalent
@@ -434,17 +472,20 @@ Every gap M6.2 enumerated, and what replaced it:
 | --- | --- |
 | No `cwd` passed; only `--outdir` enumerated | One **pinned** working directory, created empty, used by every case, enumerated afterwards — and the driver's report is written outside it, so the driver's own file is not one of the entries the measurement is about |
 | `posture` copied into the report; only `K7` and `K8` compared | Every case's exit is parsed from its declared posture and compared, together with its output **name** and its directory **contents**, as one per-case comparison |
-| `K5` and `K6` run and never compared | Both compared, by surviving spectrum ids **and** by every decoded value of both arrays |
+| `K5` and `K6` run and never compared | Each anchored to the two MS2 spectra the fixture holds, **and** compared to each other by every decoded value of both arrays. Anchoring both sides is the point: compared only to each other, "the order does not matter" and "neither filter did anything" are the same observation |
 | The default-picker check read spectrum 2, m/z only | Every apex of every spectrum, **m/z and intensity**, against apexes derived from the fixture plan rather than from any output |
 | MS-level checks compared ids, not arrays | `L1` and `L2` compared by id **and** by every value of both arrays of every surviving spectrum |
 | `P1` and `P2` run and never shaped | All six precision postures shaped over both arrays of every spectrum |
 | The compression check read one array of one spectrum | Every array of every spectrum, for `D1`, `C1` and `C2` |
 | `K12` run and never compared | Every value against the exact `binary32` image of `K1`'s, plus declared width and entry counts |
+| `K10` run and read by nobody, `K8` read only for its exit status | `K10`'s scope compared against both levels and its arrays against `K2`'s; `K8`'s output read, not just its exit — it is what makes `K7` a fact about the algorithm rather than about the fixture |
+| Nothing pinned *which* outputs failed to read back | `K7` is required to be the only one. Without that, a second output that stopped parsing would be dropped from the health check silently and the run would still report agreement |
 | The guard compared case id and format | The guard compares **every field a case declares** — id, family, fixture, argv, format, output name, posture — through one rendering contract |
 
-**Two rules keep the new checks honest.** An equality taken over an array that
-decoded to nothing would agree with anything, so every array a comparison reads is
-recorded and an empty one is a **disagreement in its own right**. And `K7`'s
+**Two rules keep the new checks honest.** An equality taken over an array — or
+over a list of surviving spectrum ids — that came back empty would agree with
+anything, so every one a comparison reads is recorded and an empty one is a
+**disagreement in its own right**. And `K7`'s
 expected failure stays its own result: exit `1`, an unterminated partial document
 that does not parse, and one directory entry that is that partial artifact — never
 a successful conversion, and never a reason to skip a case.
@@ -465,13 +506,22 @@ python -B scripts/msconvert_evidence_run.py --report <file>
 | mzXML-producing cases, derived from the ledger | `4` — `X1`, `X2`, `X4`, `X5` |
 | Parsed outputs carrying a structural defect | `1` — `X2`, and its one defect is the run-level misdeclaration |
 | Entries in the pinned process working directory afterwards | **`0`** |
-| Independent confirmations recomputed from this run | **52 / 52 agree** |
+| Independent confirmations recomputed from this run | **60 / 60 agree** |
 | Executable identity checked **after** the run | byte length, digest, release and build date unchanged |
 
 **No classification changed.** The corrected tooling reproduced every M6.2
 conclusion and revealed no prior measurement error; what it added is the ability
 to *see* the one defect M6.2 had to describe in prose, and to fail if any of the
-newly covered comparisons ever stops holding. M6.2's own conclusions stay as they
+newly covered comparisons ever stops holding.
+
+**Two of the confirmations were removed rather than counted.** An earlier
+revision of this driver compared the ledger's own derivation of the mzXML cases
+against a copy of itself, and the number of cases run against the length of a
+dict built by iterating those cases. Neither could fail. They are replaced by
+comparisons against what the run actually wrote — the output names on disk, and
+the set of cases that produced a document — because a check that cannot fail
+inflates a count without adding a confirmation, which is the defect this driver
+exists to prevent. M6.2's own conclusions stay as they
 were written, and this record does not rewrite them.
 
 **The working-directory result is now a property the tooling enforces**, not a
@@ -483,28 +533,59 @@ written outside, and the directory is empty.
 
 **Found by S1, and it is a claim rather than a capability.** Three places in the
 shipped product said the bare `peakPicking` filter runs the local-maximum
-algorithm. On this build that is true for a source with no vendor reader behind
-it and false for all three admitted vendor families.
+algorithm, unconditionally. On this build that is measured true for a source with
+no vendor reader behind it, measured **false for Thermo RAW**, and **unestablished
+for Shimadzu LCD and SCIEX WIFF** — neither was measured, and whether their
+readers advertise vendor centroiding is not a question this slice asked.
+
+Which is enough to correct the claim without replacing it with a second
+unsupported one. A sentence that names one algorithm for every source is
+contradicted by the one family that was measured and unsupported for the two that
+were not, so the algorithm is no longer named.
 
 | Where | What it said | What it says now |
 | --- | --- | --- |
 | `mzml.rs`, the recognised picker names | `"vendor peak picking"` — **a string no run of this build has ever produced**, carried from a source reading into a table whose other entry is measured | `"Thermo/Xcalibur peak picking"`, measured here, and qualified as **family-specific as well as build-specific** |
-| `intent.rs`, `UnscopedDefaultCentroiding` | "Centroiding by the build's default local-maximum picker" | the picker the **bare form selects**, which is the local-maximum one on sources without a vendor reader and the vendor one otherwise |
+| `intent.rs`, `UnscopedDefaultCentroiding` | "Centroiding by the build's default local-maximum picker" | the picker the **bare form selects**, which is measured per source family rather than named once |
 | `ConversionSettings.tsx`, the disclosure a user reads | "Lossy. **Default local-maximum peak picking** replaces the recorded profile points…" | "Lossy. **Peak picking** replaces the recorded profile points…" — the loss is claimed, the implementation is not |
 
-**A consequence is recorded rather than left to be met.** On this build, a vendor
-acquisition converted under `UnscopedDefaultCentroiding` is **refused** by the
-conversion integrity contract with `ProcessingAlgorithmMismatch`, because the
-algorithm the intent names is not the algorithm this build runs there. **The
-refusal is the contract working**: nothing wrong is certified and no wrong data
-is published. The repair makes the diagnosis accurate — `VendorPeakPicking`
-rather than `Unrecognized` — and changes no gate outcome, no admission and no
-argv.
+**A consequence is recorded rather than left to be met, and it is reachable.** On
+this build a **Thermo** acquisition converted under `UnscopedDefaultCentroiding`
+is **refused** by the conversion integrity contract with
+`ProcessingAlgorithmMismatch`, because the algorithm the intent names is not the
+algorithm this build runs there. **The refusal is the contract working**: nothing
+wrong is certified and no wrong data is published. The repair makes the diagnosis
+accurate — `VendorPeakPicking` rather than `Unrecognized` — and changes no gate
+outcome, no admission and no argv.
 
-**What is not decided here.** Whether the product should offer that combination
-for a vendor row at all, and what M6.4's typed availability would say if it did
-not, is a **product decision with no owner yet**. M6.10 does not make it, does not
-change what the settings offer, and does not touch M6.3's admitted table.
+**How reachable, exactly.** `is_convertible` answers `false` for mzML, so **every
+conversion the visible workflow performs is of a vendor acquisition**. The two
+`UnscopedDefaultCentroiding` rows in the admitted table rest on `K1`, `K8` and
+`K12`, all measured on **mzML** fixtures, and the control that offers them is not
+qualified by source family. So the combination a user can select is offered only
+on sources where M6.10 has now measured a different algorithm running — and for
+the one family measured, the conversion is refused after the provider has run.
+Nothing on screen says so.
+
+**This is not a regression, and it is not repaired here.** The refusal predates
+this slice: before the repair the same conversion failed as `Unrecognized`
+instead. What changed is that somebody has now measured why. Whether the product
+should offer that combination for a vendor row at all, whether M6.4's typed
+availability should withdraw it, and what the control should say instead are one
+**product decision**, and it needs the two unmeasured families answered before it
+can be made well.
+
+**Owner: M6.11, to carry as a non-blocking residual with this record as its
+evidence**, and the first slice that revisits conversion processing to decide it.
+Naming an owner is not optional here — ADR 0043 requires a residual recorded
+outside the exit criteria to carry one, and an unowned known-broken option is the
+shape of exactly the failure criterion 11 exists to prevent, one level down.
+
+**Also recorded, and lower.** A *source* mzML whose own history names
+`vendor peak picking` now folds to `Unrecognized`, which makes the unknown delta
+unestablishable and degrades `RequestedProcessing` from verified to unverified
+rather than refusing. It is fail-safe, and it is unreachable from the visible
+workflow because mzML is not convertible there.
 
 ## Fixture and permission provenance
 
@@ -539,6 +620,13 @@ The three synthetic mzML fixtures are unchanged, regenerated from
   candidate set, and it admits nothing.
 - **`msRun/@scanCount` was measured on the multi-source mzXML case.** Whether the
   same writer misdeclares on other inputs is still unmeasured, as M6.2 recorded.
+- **The vendor measurements are not reproducible from this repository.** The
+  29-case ledger is committed, fixture-pinned and re-runnable by anyone; routes 2
+  and 3's measurements and S1's are not, because the acquisition they need cannot
+  be committed. Their inputs are identified by digest and their argv is stated,
+  so they are repeatable by someone holding the same lawfully retrieved file —
+  which is a weaker property than the ledger's, and is recorded as one rather
+  than left to be assumed equal.
 
 ## What this record does not do
 

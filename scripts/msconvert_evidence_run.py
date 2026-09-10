@@ -401,6 +401,18 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
             empty.append(f"{case}[{index}].{kind}")
         return got
 
+    def ids(case: str) -> list[str]:
+        """Surviving spectrum ids, with an empty document recorded rather than compared.
+
+        The same non-vacuity rule `values()` applies. Two documents that returned
+        no spectra at all agree with each other, and an equality between them
+        would read as a measurement.
+        """
+        found = spectrum_ids(work, case)
+        if not found:
+            empty.append(f"{case}.spectra")
+        return found
+
     def source(index: int, kind: str) -> list[float]:
         return list(plan[index]["mz" if kind == "mz" else "intensity"])
 
@@ -457,13 +469,13 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
     # --------------------------------------------------------- MS-level population
     #
     # The surviving spectra compared by value in both arrays, not by id alone.
-    note("MS1 only keeps", ["scan=1", "scan=3"], spectrum_ids(work, "L1"))
-    note("MS2 only keeps", ["scan=2", "scan=4"], spectrum_ids(work, "L2"))
-    note(
-        "explicit all matches omitted all",
-        spectrum_ids(work, "L3"),
-        spectrum_ids(work, "L4"),
-    )
+    every_id = [str(entry["id"]) for entry in plan]
+    note("MS1 only keeps", ["scan=1", "scan=3"], ids("L1"))
+    note("MS2 only keeps", ["scan=2", "scan=4"], ids("L2"))
+    # Anchored to the fixture as well as to each other, for the same reason the
+    # order pair is: two documents that both lost everything agree.
+    note("explicit all keeps every spectrum", every_id, ids("L4"))
+    note("omitted all matches explicit all", ids("L3"), ids("L4"))
     for case, kept in (("L1", (0, 2)), ("L2", (1, 3))):
         note(
             f"{case} retains both arrays of every surviving spectrum unchanged",
@@ -511,7 +523,7 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
         [values("K3", i, k) for i in range(len(plan)) for k in ("mz", "intensity")],
     )
     note(
-        "vendor request is recorded as the local-maximum picker",
+        "vendor request on an open source is recorded as the local-maximum picker",
         True,
         any(
             "local maximum" in name
@@ -531,19 +543,45 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
     )
     note("cwt refuses unflanked input", 1, results["K7"]["exit"])
     note("the default picker accepts that same input", 0, results["K8"]["exit"])
+    # `K8` is what makes `K7` a fact about the algorithm rather than about the
+    # fixture, so its output is read rather than only its exit status.
+    note(
+        "the default picker centroids every spectrum of the unflanked fixture",
+        (len(unflanked), [True] * len(unflanked)),
+        (
+            results["K8"]["inspected"]["spectrum_count"],
+            [s["centroided"] for s in results["K8"]["inspected"]["spectra"]],
+        ),
+    )
+    # `K10` ran in every prior round and was compared by nobody. Its scope names
+    # both levels, so unlike `K4` it must centroid all of them -- and on this
+    # fixture `cwt` must lose the same peaks it loses in `K2`.
+    note(
+        "an explicit 1-2 scope centroids both levels",
+        [True, True, True, True],
+        [s["centroided"] for s in results["K10"]["inspected"]["spectra"]],
+    )
+    note(
+        "cwt under an explicit scope returns what cwt returns",
+        [values("K2", i, k) for i in range(len(plan)) for k in ("mz", "intensity")],
+        [values("K10", i, k) for i in range(len(plan)) for k in ("mz", "intensity")],
+    )
 
     # ------------------------------------------------------ interaction and ordering
     #
     # `K5`/`K6` and `K12` were both run by the old driver and compared by nobody.
-    note(
-        "the order pair returns the same spectra",
-        spectrum_ids(work, "K5"),
-        spectrum_ids(work, "K6"),
-    )
+    # Anchored to the fixture on both sides, not only to each other. Compared
+    # against each other alone, "the order does not matter" and "neither filter
+    # did anything" are the same observation: if `msLevel 2` stopped filtering,
+    # both would return all four spectra and both checks would agree.
+    ms2_ids = ["scan=2", "scan=4"]
+    note("K5 keeps exactly the MS2 spectra", ms2_ids, ids("K5"))
+    note("K6 keeps exactly the MS2 spectra", ms2_ids, ids("K6"))
+    order_pair = range(len(ms2_ids))
     note(
         "the order pair returns the same values in both arrays",
-        [values("K5", i, k) for i in range(2) for k in ("mz", "intensity")],
-        [values("K6", i, k) for i in range(2) for k in ("mz", "intensity")],
+        [values("K5", i, k) for i in order_pair for k in ("mz", "intensity")],
+        [values("K6", i, k) for i in order_pair for k in ("mz", "intensity")],
     )
     note(
         "a global --32 narrows what a filter rewrote, every value",
@@ -575,7 +613,7 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
     note("mzXML single-source keeps", 4, results["X1"]["inspected"]["spectrum_count"])
     note("mzXML multi-source keeps", 2, results["X2"]["inspected"]["spectrum_count"])
     note("mzML control on the same document keeps", 4, results["X3"]["inspected"]["spectrum_count"])
-    note("mzXML multi-source survivors", ["1", "4"], spectrum_ids(work, "X2"))
+    note("mzXML multi-source survivors", ["1", "4"], ids("X2"))
     note(
         "mzXML multi-source declares a scan count it did not write",
         ("4", 2),
@@ -595,14 +633,25 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
             for case in ("X1", "X4", "X5")
         ],
     )
+    # The two unfiltered single-source mzXML cases, both compared against the
+    # fixture. `X5` is deliberately absent: it runs a picker, so its arrays are
+    # the picked apexes and its point counts are `4, 1, 7, 1` rather than the
+    # source's `14, 7, 21, 7`. Reading it as faithful would be reading the
+    # picker's output as the source's.
+    for case in ("X1", "X4"):
+        note(
+            f"{case} preserves both arrays of every spectrum exactly",
+            True,
+            all(
+                values(case, i, kind) == source(i, kind)
+                for i in range(len(plan))
+                for kind in ("mz", "intensity")
+            ),
+        )
     note(
-        "X1 preserves both arrays of every spectrum exactly",
-        True,
-        all(
-            values("X1", i, kind) == source(i, kind)
-            for i in range(len(plan))
-            for kind in ("mz", "intensity")
-        ),
+        "X5 carries the picker's output, not the source's",
+        [len(source_apexes(i)) for i in range(len(plan))],
+        [len(nonzero("X5", i)) for i in range(len(plan))],
     )
 
     # ------------------------------------------------- structural health per case
@@ -611,6 +660,17 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
     # case that parsed is required to carry no structural defect, and the one
     # document that legitimately does carries exactly the defect it is evidence
     # of.
+    # The complement of the check below, and the reason it is here: the health
+    # check reads only cases that produced an `inspected` block, so a second case
+    # whose output stopped parsing would be dropped from it silently and the run
+    # would still report agreement.
+    note(
+        "K7 is the only case whose output does not read back",
+        ["K7"],
+        sorted(
+            result["case"] for result in results.values() if not result.get("inspected")
+        ),
+    )
     note(
         "every parsed output but X2 is structurally clean",
         [],
@@ -652,9 +712,14 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
             for defect in case_defects(case, results[case.case])
         ],
     )
-    note("mzXML-producing cases", list(EV.mzxml_cases()), [
-        result["case"] for result in results.values() if result["output_format"] == "mzXML"
-    ])
+    # Derived from the ledger on one side and from what was actually written on
+    # the other. Comparing the ledger's derivation against a copy of itself --
+    # which is what reading `result["output_format"]` did -- could not fail.
+    note("mzXML-producing cases", list(EV.mzxml_cases()), sorted(
+        result["case"]
+        for result in results.values()
+        if str(result.get("output_name", "")).lower().endswith(".mzxml")
+    ))
     # Size *relations*, never absolute sizes. `msconvert` stamps its own command
     # line into an mzML output, so every mzML byte count moves with the length
     # of the paths the operator happened to use; the relation does not.
@@ -670,7 +735,17 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
     )
 
     note("no comparison above was taken over an empty array", [], sorted(set(empty)))
-    note("cases run", len(EV.CASES), len(results))
+    # Every ledger case reached a process and came back with a result. Comparing
+    # `len(EV.CASES)` against the length of a dict built by iterating `EV.CASES`
+    # could not fail; comparing the ids against the outputs that exist can.
+    note(
+        "every ledger case ran and produced a document",
+        [case.case for case in EV.CASES],
+        sorted(
+            (result["case"] for result in results.values() if "output_name" in result),
+            key=[case.case for case in EV.CASES].index,
+        ),
+    )
     return checks
 
 
@@ -717,12 +792,12 @@ def main() -> int:
         # this measurement is about.
         provider_cwd = work / "cwd"
         provider_cwd.mkdir()
-        if report_at == provider_cwd or provider_cwd in report_at.parents:
-            print(
-                "the report would be written into the directory this run measures",
-                file=sys.stderr,
-            )
-            return 1
+        # No runtime guard is needed and one would be unfalsifiable: this
+        # directory lives under a temporary tree created a line ago, so no
+        # `--report` path an operator can type is inside it. The property is
+        # structural, and it is stated rather than checked because a check that
+        # cannot fail is not evidence that the report is outside.
+        assert report_at != provider_cwd and provider_cwd not in report_at.parents
         fixtures = work / "fixtures"
         written = EV.generate(fixtures)
         fixture_facts = {}

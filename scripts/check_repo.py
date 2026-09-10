@@ -3286,7 +3286,13 @@ def validate_the_evidence_tooling_detects_what_it_claims(errors: list[str]) -> N
 
     # ------------------------------------------- the ledger / record contract
     spike_path = ROOT / M62_SPIKE
-    if spike_path.is_file():
+    if not spike_path.is_file():
+        fail(
+            f"{M62_SPIKE} is missing, so the ledger/record contract and its five proofs check "
+            "nothing. A guard whose subject is checks that pass quietly may not have one",
+            errors,
+        )
+    else:
         spike_text = spike_path.read_text(encoding="utf-8")
         declared = tuple(case.case for case in ledger.CASES)
         control = []
@@ -3319,33 +3325,35 @@ def validate_the_evidence_tooling_detects_what_it_claims(errors: list[str]) -> N
 
     # -------------------------------------------------- the M6.10 disposition
     record_path = ROOT / M610_RECORD
-    if record_path.is_file():
-        record_text = record_path.read_text(encoding="utf-8")
-        control = []
-        _check_the_m610_ledger(record_text, control)
-        if control:
+    if not record_path.is_file():
+        # Reported in full by the terminal-ledger validator; not repeated here.
+        return
+    record_text = record_path.read_text(encoding="utf-8")
+    control = []
+    _check_the_m610_ledger(record_text, control)
+    if control:
+        fail(
+            "the M6.10 terminal-ledger guard fails against the unmodified record, so its "
+            f"proofs below mean nothing: {control[0]}",
+            errors,
+        )
+        return
+    for name, before, after in M610_LEDGER_MUTATIONS:
+        if record_text.count(before) != 1:
             fail(
-                "the M6.10 terminal-ledger guard fails against the unmodified record, so its "
-                f"proofs below mean nothing: {control[0]}",
+                f"the M6.10 terminal-ledger guard cannot prove it detects '{name}': its "
+                f"anchor no longer appears exactly once in {M610_RECORD}",
                 errors,
             )
-            return
-        for name, before, after in M610_LEDGER_MUTATIONS:
-            if record_text.count(before) != 1:
-                fail(
-                    f"the M6.10 terminal-ledger guard cannot prove it detects '{name}': its "
-                    f"anchor no longer appears exactly once in {M610_RECORD}",
-                    errors,
-                )
-                continue
-            detected = []
-            _check_the_m610_ledger(record_text.replace(before, after), detected)
-            if not detected:
-                fail(
-                    f"the M6.10 terminal-ledger guard does not detect '{name}'; a route could "
-                    "therefore be left open while the record reads as closed",
-                    errors,
-                )
+            continue
+        detected = []
+        _check_the_m610_ledger(record_text.replace(before, after), detected)
+        if not detected:
+            fail(
+                f"the M6.10 terminal-ledger guard does not detect '{name}'; a route could "
+                "therefore be left open while the record reads as closed",
+                errors,
+            )
 
 
 def base64_of(payload: bytes) -> str:

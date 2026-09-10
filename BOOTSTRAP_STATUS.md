@@ -6345,6 +6345,13 @@ only" or "centroid MS1+MS2" at all**. Both presets re-open on the same evidence
 acquisition. Found by review; the record entailed it and did not say it, and now
 says it.
 
+**M6.10 obtained a lawful vendor acquisition and the presets did not re-open.**
+The vendor path is reached on it and names itself, so the *substitution* question
+is answered; what stays blocked is what the vendor algorithm computes, because
+that acquisition is already centroided and no picker had profile data to act on.
+The re-entry condition is therefore narrower than this paragraph left it: a
+**profile-mode** acquisition, vendor or open.
+
 ### Two things measured that a careless slice would have got wrong
 
 **`peakPicking msLevel=2` silently centroids every MS level.** `msLevel=` is
@@ -7904,4 +7911,59 @@ rendered or the review layers; a rendered test and a Rust test now pin each.
 
 The evidence and the changed-path closure are in
 [the M6.9 record](docs/ux/M6_9_OUTPUT_COMPLETION_ADOPTION.md).
-M6.10 has not started.
+
+## M6.10 — evidence-gated side routes
+
+**Four conditional routes, four terminal dispositions, none admitted and none
+left open.** Exit criterion 11 requires each route to *reach* a disposition and
+never requires one to be admitted, and the closed set is now completely
+dispositioned: mzXML `REFUSED_WITH_EVIDENCE`, which is CNV-D1's `MZXML_REFUSED`;
+vendor-format direct preview `EVIDENCE_BLOCKED`; any further vendor family
+`REFUSED_WITH_EVIDENCE`; VIEW-007's conditional re-entry `REFUSED_WITH_EVIDENCE`,
+which retains M5.4's `XIC_SOURCE_REFUSED`.
+
+**mzXML was refused on the gate CNV-002 states, measured on the installed build
+rather than inherited.** A two-source document lost both spectra of the
+non-default source at exit `0` with empty stderr, under `msRun/@scanCount="4"`
+standing over two `<scan>` elements; the survivors span both MS levels, so the
+drop is by source file and not by MS level, and the mzML control on the same
+document kept all four. Single-source mzXML is faithful and is kept at that
+scope. The format stays unconstructible.
+
+**Direct preview is blocked on an absent input, not on an inability.** This build
+serves all five preview operations directly from one lawful vendor acquisition,
+and the direct read agrees with the read of the same acquisition converted to
+mzML. That is one file, one MS2 spectrum, one controller, already centroided, and
+both sides of the comparison pass through the same vendor reader — so what is
+missing is representative acquisitions per admitted family and a reference that
+does not share the reader.
+
+**No further vendor family opens**, on ADR 0007's standing decision and the
+lawful-fixture and recognition prerequisites a file-shaped family would need.
+That is a scope choice supported by what is absent; no family was tested and
+failed.
+
+**VIEW-007's trigger did not fire.** The `msaccess` identity was re-observed and
+is byte-identical to the one M5.4 refused, help capture included. No XIC science
+was re-run.
+
+**The evidence tooling M6.2 assigned to this slice is corrected in one pass**, and
+the whole 29-case ledger was re-run with it: **60 confirmations, all agreeing**,
+executable stable, the newly pinned process working directory empty afterwards,
+and no classification changed.
+
+**One shipped claim was repaired, and one residual is left with an owner.** The
+recognized vendor picker name had never been produced by any run of this build;
+the measured one replaces it. The consequence — that a Thermo acquisition
+converted under the admitted centroiding intent is refused by the integrity
+contract, fail-closed and now accurately diagnosed — is recorded with **M6.11** as
+the owner of the product decision it raises.
+
+Review was two independent read-only reviewers with complementary
+responsibilities. Their findings are repaired in the same branch, including a
+sentence that read a picker's output as the source's, a comparison that could not
+fail, and three cases the driver ran and read back for nobody.
+
+The evidence, the four dispositions and the changed-path closure are in
+[the M6.10 record](docs/spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md).
+M6.11 has not started.

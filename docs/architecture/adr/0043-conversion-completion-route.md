@@ -1737,10 +1737,13 @@ refusal is retained rather than re-derived.
 
 The evidence-tooling correction M6.2 assigned to this slice is closed as one pass
 over the inspector, the runner and the guard, and the whole 29-case ledger was
-re-run with it: **52 confirmations, all agreeing, no classification changed.** One
-shipped claim was repaired — the picker name three places asserted was measured
-here to be wrong for every admitted vendor family — and no admission, gate, argv
-or family was changed by it.
+re-run with it: **60 confirmations, all agreeing, no classification changed.** One
+shipped claim was repaired — the picker name three places asserted unconditionally
+was measured here to be wrong for the one vendor family measured, and is
+unestablished for the other two — and no admission, gate, argv or family was
+changed by it. The consequence that a Thermo acquisition converted under the
+admitted centroiding intent is refused by the integrity contract is recorded there
+as a non-blocking residual with an owner.
 
 See [the M6.10 record](../../spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md), which is
 the single authority for criterion 11.
