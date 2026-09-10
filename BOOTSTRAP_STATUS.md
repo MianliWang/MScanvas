@@ -7968,14 +7968,15 @@ fail, and three cases the driver ran and read back for nobody.
 
 The evidence, the four dispositions and the changed-path closure are in
 [the M6.10 record](docs/spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md).
-## M6.11 — closure and handoff
+## M6.11 — closure audit
 
-**`M6 COMPLETE`.** All twelve exit criteria are proved and the three
-milestone-wide conditions hold. Criterion 11 passes because every route in its
-closed set reached a terminal disposition; **none of the four is admitted, and
-none had to be.** The closure record is
+**`M6 NOT COMPLETE`.** Eleven of the twelve exit criteria are proved on published
+evidence and the three milestone-wide conditions hold. **Criterion 2 is not
+proved**, and ADR 0043 is explicit that a core criterion which cannot be proved
+means the milestone does not close. The audit, the determination and the exact
+owning repair are in
 [ADR 0045](docs/architecture/adr/0045-conversion-completion-closure-and-handoff.md),
-which is the single matrix and carries the citations.
+kept as a **draft** rather than accepted. No PASS closure was published.
 
 **The baseline was not the M6.10 anchor, and the difference is accounted for.**
 Two separately authorized Dependabot merges landed between them, touching only
@@ -7987,31 +7988,47 @@ before the audit began: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`
 --all-features -D warnings`, `cargo test --workspace` and
 `python scripts/check_repo.py` all pass. No gate was redefined and none dropped.
 
-**The one finding that needed a determination rather than a summary** is the
-centroiding setting M6.10 measured. Its evidence was taken on mzML fixtures; the
-visible product converts only vendor acquisitions; and on the one vendor family
-measured the bare filter selects the vendor picker and the integrity contract
-refuses. The closure checked which branch that refusal actually takes, from the
-retained output of M6.10's measurement: the processing reference resolves, so the
-run **fails closed with a truthful reason** rather than finalizing an output
-centroided by an algorithm the product never admitted. It is carried as a scoped
-residual with an owner and a re-entry condition, and the record explains why it
-does not defeat criterion 2 — chiefly that the disqualifying principle would
-unship the product's own default, since all nine admitted rows rest on the same
-mzML fixtures.
+**The finding.** M6.10 measured that the shipped centroiding setting is evidenced
+only on generated mzML fixtures; that the visible product converts vendor
+acquisitions only, mzML being non-convertible by design; and that on Thermo the
+bare filter selects the vendor picker. This audit checked which branch the
+resulting refusal actually takes, from the retained output of that measurement:
+the processing reference resolves, so the run **fails closed with a truthful
+reason** rather than finalizing an output centroided by an algorithm the product
+never admitted. So no unsafe output is published — and that is not what criterion
+2 asks.
+
+**The determination was reached, reversed, and reached again, and the record
+keeps the argument rather than only the conclusion.** The first reversal came
+from a correct objection: a principle disqualifying mzML evidence wholesale
+proves too much, because all nine admitted rows rest on the same fixtures,
+including the posture every vendor conversion has ever run under. What undoes the
+reversal is the narrower principle from the same objection — **peak picking is
+the one admitted axis decided by the reader**, per CNV-D2's reading of the
+provider's sources, while format, precision, compression and population are
+writer-side. That rescues the other seven rows and convicts these two. Three
+defences were considered and refused by name: fail-closed, an assigned owner, and
+pre-existing are not exemptions.
+
+**Owning repair, and it is not documentation.** Either qualify the admitted
+centroiding rows by source family, or reconcile the intent and the integrity
+contract on one algorithm semantic and measure it on the shipped families. Both
+are production changes to admission and availability under CNV-D2's authority,
+and both need their own implementation authorization. ADR 0043 separately owes an
+amendment: its M6.2 evidence standard has no source-family dimension.
 
 **Two statements in ADR 0043 had gone stale and are amended in that document**,
 dated, with the superseded wording quoted rather than deleted: M6.6's
 *publication pending*, and the M6.1 lane's *eight facts* / *eleven reasons*
 counts, which ADR 0044's Decision 10 had already superseded in substance.
 
-Review was two independent read-only reviewers, one on criterion and evidence
-coverage and one on document and handoff consistency. The first reversed this
-slice's initial determination, which had read criterion 2 as family-scoped; the
-argument that changed it is recorded in ADR 0045 rather than summarized here.
+Review was two independent read-only reviewers plus the repository's automated PR
+review. The first reviewer produced the objection that caused the reversal; the
+automated review produced the objection that undid it.
 
 **Two browser cases still fail**, `m4.1` and `m5.2`, on this baseline and on the
 published one alike. Neither is a conversion requirement or an M6 control, and
 both keep their existing owners and their actual failing status.
 
-Post-M6 XIC Provider / Runtime Interlude has not started. M7 has not started.
+Post-M6 XIC Provider / Runtime Interlude is gated on `M6 COMPLETE` and has not
+started. M7 has not started.

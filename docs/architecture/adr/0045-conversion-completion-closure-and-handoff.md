@@ -1,6 +1,6 @@
 # ADR 0045 — Conversion Completion closure and handoff
 
-Status: accepted
+Status: **draft, not accepted. `M6 NOT COMPLETE`.**
 Date: 2026-09-10
 Related: [0043](0043-conversion-completion-route.md),
 [0044](0044-conversion-configuration-authority.md),
@@ -9,14 +9,21 @@ Related: [0043](0043-conversion-completion-route.md),
 [0010](0010-first-vendor-raw-source-admission.md),
 [0018](0018-shimadzu-labsolutions-lcd-source-admission.md)
 
-**`M6 COMPLETE`.** All twelve of
+**This record does not close M6.** Eleven of
 [ADR 0043's exit criteria](0043-conversion-completion-route.md#m6-exit-criteria)
-are proved, and the three milestone-wide conditions hold. Criterion 11 passes
-because every route in its closed set reached a terminal disposition; **none of
-the four is admitted, and none had to be.**
+are proved on published evidence and the three milestone-wide conditions hold.
+**Criterion 2 is not proved**, and ADR 0043 is explicit that a core criterion
+which cannot be proved means the milestone is not complete.
 
-This record answers the criteria from published evidence and hands M6 to M7. It
-implements nothing. Where a measurement is cited it is linked, not retold.
+It is written and kept anyway, because the audit is the useful part: the matrix
+below is what the next owner needs, and it does not become less true for being
+blocked on one row. It implements nothing. Where a measurement is cited it is
+linked, not retold.
+
+**This verdict was reached, reversed, and reached again.** The reversal and what
+undid it are recorded [in full below](#the-finding-that-defeats-criterion-2),
+because a reader deciding whether to trust this row deserves the argument rather
+than the conclusion.
 
 ## Baseline this audit was taken on
 
@@ -60,8 +67,8 @@ restated here.
 
 | # | Criterion, owner | Verdict | Implementation authority | Current consumer | Discriminating evidence | Limits and conflicts |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | One availability authority — **M6.1** | **PASS** | `apps/desktop/src/features/mzml-preview/conversionAvailability.ts` — one `ConversionLane` of nine facts and a closed set of seventeen unavailable-reasons | `ConversionAction` is `start` and `retry`; both the controls and `useConversionOperation`'s dispatch resolve them from that one module | `conversionAvailability.test.ts`; the reason registry is exhaustive over the union, so a lane fact added without a sentence fails to compile | Stop is gated by its own `canStop` boolean rather than by `ConversionAction`, which is the shape M6.8 shipped. The settings catalog is a **separate** judgement by design — see [the finding below](#the-finding-this-closure-carries-rather-than-fails-on) |
-| 2 | Evidence-backed typed settings — **M6.2**, **M6.3**, **M6.4** | **PASS** | `crates/proteowizard/src/intent.rs` — `ConversionIntent::ADMITTED`, nine rows, private fields, `admitted(..)` the only constructor | `ConversionCatalog::of` and the bound plan | `scripts/check_repo.py`'s `validate_the_admitted_intent_table_cites_measurements_that_support_it` holds every row against the committed M6.2 ledger: the case must exist, have produced mzML, have exited zero, and have run argv consistent with the row | The centroiding rows carry a real limitation that is **not** a criterion failure. See below |
+| 1 | One availability authority — **M6.1** | **PASS** | `apps/desktop/src/features/mzml-preview/conversionAvailability.ts` — one `ConversionLane` of nine facts and a closed set of seventeen unavailable-reasons | `ConversionAction` is `start` and `retry`; both the controls and `useConversionOperation`'s dispatch resolve them from that one module | `conversionAvailability.test.ts`; the reason registry is exhaustive over the union, so a lane fact added without a sentence fails to compile | Stop is gated by its own `canStop` boolean rather than by `ConversionAction`, which is the shape M6.8 shipped. The settings catalog is a **separate** judgement by design — see [the finding below](#the-finding-that-defeats-criterion-2) |
+| 2 | Evidence-backed typed settings — **M6.2**, **M6.3**, **M6.4** | **NOT PROVED** | `crates/proteowizard/src/intent.rs` — `ConversionIntent::ADMITTED`, nine rows, private fields, `admitted(..)` the only constructor | `ConversionCatalog::of` and the bound plan | `scripts/check_repo.py`'s `validate_the_admitted_intent_table_cites_measurements_that_support_it` holds every row against the committed M6.2 ledger: the case must exist, have produced mzML, have exited zero, and have run argv consistent with the row | **Blocking.** Seven rows are proved. The two `UnscopedDefaultCentroiding` rows are not: their evidence covers no source the product can convert, and on the one it can convert that was measured the setting deterministically fails. See below |
 | 3 | The visible plan is the bound plan — **M6.3**–**M6.7** | **PASS** | The queue's bound facts, captured under the workspace mutation gate at `BEGIN` | The plan summary and the running queue project the same bound values | Moving any control after `BEGIN` changes nothing about the running queue, pinned per fact in the preview suites | Of the four facts the criterion names, **destructive authorization is vacuously satisfied**: CNV-D4 is `OVERWRITE_REFUSED`, so nothing destructive can be bound. Recorded for the same reason criterion 4's unexercisable halves are |
 | 4 | Destination authority — **M6.5** | **PASS**, on its named exception | The destination resolved to an admitted directory object, with the policy that chose it | The queue planner and every per-item claim and revalidation | Aliasing refused on object identity and an ancestry walk compared by identity at each step, never on a path prefix; retry revalidates every identity it will use | The aliasing and vendor-dataset-root halves stay **unexercisable** — no admitted family is directory-shaped. This is CNV-D3's explicitly named exception, carried unchanged, not a gap found here |
 | 5 | Selected and all are deterministic and bound — **M6.7** | **PASS** | The scope decision and its membership capture | The scope controls and the queue | [The M6.7 record](../../ux/M6_7_CONVERSION_SCOPE.md): visible order, explicit ineligible-row treatment, capacity refusal before commitment, membership immutable after `BEGIN` | None found |
@@ -77,16 +84,16 @@ restated here.
 
 | | Condition | Verdict | Basis |
 | --- | --- | --- | --- |
-| **A** | No unimplemented capability described as implemented, and no delivered one described as missing | **PASS** | Audited across `README.md`, `ROADMAP.md`, `BOOTSTRAP_STATUS.md`, `PROJECT_PROPOSAL.md`, `docs/product/FEATURE_CATALOG.md`, `docs/product/PRIMARY_WORKFLOWS.md` and the accepted conversion ADRs. Two passages state the admitted table without qualifying it by source family — `FEATURE_CATALOG.md`'s "nine combinations, each admitted by a named M6.2 measurement" and its CNV-005 sentence. Both are **true as written**: the table is what it says, and the qualification the finding below asks for does not exist yet in the product either, so no document claims one. `docs/architecture/ARTIFACT_MODEL.md` describes Project/Artifact/Run/lineage as a **design model**, not as shipped state, and is read as such |
+| **A** | No unimplemented capability described as implemented, and no delivered one described as missing | **NOT PROVED** | The centroiding setting is offered as a supported choice on families where the evidence does not reach. That is the same finding as criterion 2 rather than a second one. Otherwise audited across `README.md`, `ROADMAP.md`, `BOOTSTRAP_STATUS.md`, `PROJECT_PROPOSAL.md`, `docs/product/FEATURE_CATALOG.md`, `docs/product/PRIMARY_WORKFLOWS.md` and the accepted conversion ADRs. Two passages state the admitted table without qualifying it by source family — `FEATURE_CATALOG.md`'s "nine combinations, each admitted by a named M6.2 measurement" and its CNV-005 sentence. Both are **true as written**: the table is what it says, and the qualification the finding below asks for does not exist yet in the product either, so no document claims one. `docs/architecture/ARTIFACT_MODEL.md` describes Project/Artifact/Run/lineage as a **design model**, not as shipped state, and is read as such |
 | **B** | Inherited interaction, accessibility and responsive obligations at all three targets | **PASS on reused evidence** | Carried from the slices that shipped each control, at their own rendered validation. **One control's text changed after that validation**: M6.10 rewrote the centroiding disclosure in `ConversionSettings.tsx`. The change is a string constant with no layout, state or role effect, and it is covered by a rendered assertion added in the same commit. No other M6 control changed |
 | **C** | The local gate set passes unchanged | **PASS** | The gate set is the one `AGENTS.md` names under **Required checks** — `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -D warnings`, `cargo test --workspace`, `python scripts/check_repo.py`. All pass on `P` with lockfiles unchanged, recorded in `BOOTSTRAP_STATUS.md`'s M6.11 entry. **No gate was redefined and none was dropped**; the browser and native suites are `qa:*` rendered-verification scripts rather than members of that set, and the two that fail are [inventoried below](#environment-and-qa-residuals-inventoried-rather-than-hidden) as failing |
 
-## The finding this closure carries rather than fails on
+## The finding that defeats criterion 2
 
 M6.10 measured something about the shipped centroiding setting that nobody knew
-before, and it deserves the most careful paragraph in this record.
+before, and it deserves the most careful section in this record.
 
-### What was measured, and what follows from it
+### What was measured
 
 `ConversionIntent::ADMITTED` carries two `UnscopedDefaultCentroiding` rows.
 `ConversionCatalog::of` judges every admitted **table row** against one thing
@@ -104,92 +111,122 @@ M6.10 then converted the lawful Thermo acquisition ADR 0010 admitted and found
 that the bare `peakPicking` filter these rows lower to selects the **vendor**
 picker there, recording `Thermo/Xcalibur peak picking`.
 
-**What that produces is a refusal, and this closure checked which branch, because
-the two branches are very different.** A vendor source is judged output-only, so
-its processing history is whatever the run wrote. Read from the retained output
-of that measurement: its `spectrumList` carries
+**Which branch that produces was checked, not assumed, because the two branches
+are very different.** A vendor source is judged output-only, so its processing
+history is whatever the run wrote. Read from the retained output of that
+measurement: its `spectrumList` carries
 `defaultDataProcessingRef="pwiz_Reader_Thermo_conversion"`, that `dataProcessing`
 carries `MS:1000035 peak picking` with the vendor `userParam`, and the spectrum
 declares no override — so the reference **resolves**, and
 `check_requested_processing` reaches `ProcessingAlgorithmMismatch` rather than
 recording the property as merely unverified. **The conversion fails closed with a
 truthful reason. It does not finalize an output centroided by an algorithm the
-product never admitted.** That distinction is the whole of why this is a
-usability defect and not a correctness one.
+product never admitted.**
 
 So, plainly: **for every source family a user can actually convert, this setting
 is either measured to fail or not measured at all.** Thermo is measured to fail.
 Shimadzu LCD and SCIEX WIFF are unmeasured — and nothing here says they would
 fail, only that no evidence says what they do.
 
-### Why it does not defeat criterion 2
+### The argument that nearly saved it, and why it does not
 
-The tempting reading is that a setting evidenced only on a source class the
-product cannot convert is not evidence-backed. **That reading proves far too
-much, and following it would unship the product's own default.**
+An earlier draft of this record failed criterion 2 on the ground that evidence
+taken on mzML is not evidence for a vendor conversion. Review answered that the
+ground **proves far too much**: all nine admitted rows rest on the same three
+generated mzML fixtures — `D1`, `P1`–`P5`, `C1`, `C2`, `L1`–`L3` as much as `K1`,
+`K8` and `K12` — including `SHIPPED`, which is `ADMITTED[0]` and the posture
+every vendor conversion this product has ever performed ran under. A principle
+that disqualifies mzML evidence wholesale unships the default.
 
-All nine admitted rows rest on the same three generated mzML fixtures — `D1`,
-`P1`–`P5`, `C1`, `C2`, `L1`–`L3` as much as `K1`, `K8` and `K12` — including
-`SHIPPED`, which is `ADMITTED[0]` and the posture every vendor conversion this
-product has ever performed ran under. A principle that disqualifies mzML-measured
-evidence for vendor conversions disqualifies all nine.
+That answer is correct, and this record reversed to a `PASS` on the strength of
+it. **The reversal was wrong, and what undoes it is the narrower principle the
+same review supplied.**
 
-**The correct principle is narrower, and CNV-D2 already contains it.** Peak
-picking is the one axis that is decided by the *reader*: ADR 0043 records from
-the provider's sources that vendor centroiding is selected by a `dynamic_cast` on
-the immediately inner spectrum list. Output format, numeric precision,
-compression and MS-level population are writer-side and sit downstream of
-whichever reader produced the spectra, so a measurement of them on one source
-generalizes in a way a measurement of peak picking does not.
+**Peak picking is the one axis decided by the *reader*.** ADR 0043 records from
+the provider's own sources, in CNV-D2, that vendor centroiding is selected by a
+`dynamic_cast` on the immediately inner spectrum list. Output format, numeric
+precision, compression and MS-level population are **writer-side**: they act on
+whatever spectra the reader produced, so a measurement of them on one source
+generalizes. A measurement of peak picking does not.
 
-**And criterion 2, as ADR 0043 writes it, is build-scoped.** Its four traces are
-an exact provider identity, *a live measurement of that build*, a stated product
-semantic and a deterministic argv mapping. The route defines the axis the same
-way — *may this setting be admitted on this build* — and it settles what
-"measured to the standard" means through a closed, repository-validated list of
-**nine** candidate evidence dimensions in which source family does not appear.
+That principle does two things, and the reversal used only the first. It rescues
+the other seven rows — their mzML evidence transfers, and the reductio is
+answered. And it establishes that **for this one axis the mzML measurement is not
+evidence about what the product does**, which is precisely what criterion 2 asks
+for.
 
-All four traces hold for these rows. A product semantic **is** stated, and it is
-the one M6.10 left after removing an algorithm name the evidence no longer
-supported: peak picking is applied across every MS level and is lossy. On
-Thermo that statement is true — the vendor picker does centroid.
+**The corroboration runs opposite ways, which is the plainest way to see it.**
+The seven writer-side rows are backed not only by their mzML cases but by every
+vendor conversion this product has performed under them, each passing the
+integrity contract. The two centroiding rows have the opposite corroboration: the
+one shipped family anyone measured produces a refusal.
 
-**Failing criterion 2 here would mean reading a tenth evidence dimension into the
-route's own closed list.** Strengthening a criterion during its own closure audit
-is as far out of bounds as weakening one, and ADR 0043 is explicit that a
-criterion which may be adjusted is a preference rather than an exit criterion.
+### The other defence, and why it is a technicality
 
-**Criterion 1 is not defeated either, and for a different reason.** It governs
-the conversion *action*: controls and dispatch read one lane, the action is
-genuinely available for a vendor dataset, and the operation performs it. What
-follows is an outcome. That the settings catalog answers a separate question is
-not a duplicate authority discovered here — ADR 0044 separates them deliberately,
-and says in as many words that the catalog is not `ConversionLane`.
+Criterion 2's four traces are an exact provider identity, *a live measurement of
+that build*, a stated product semantic and a deterministic argv mapping, and the
+route defines the axis as *may this setting be admitted on this build*. On a
+build-scoped reading all four hold, and M6.2's candidate evidence dimensions are
+a closed, repository-validated list of **nine** in which source family does not
+appear.
 
-### What is actually wrong, and who owns it
+**That list defines how a candidate is measured, not which inputs a setting is
+admitted for.** Asking whether the evidence covers the product's real inputs is
+not a tenth measurement dimension; it is what *evidence-backed* means. And ADR
+0043 is explicit that a criterion which may be adjusted is a preference rather
+than an exit criterion — passing this one on the scoping of a word is an
+adjustment in substance.
 
-**The gap is in the route, not in the criteria's application to it.** ADR 0043's
-evidence standard has no source-family dimension, and peak picking is the one
-admitted axis where that omission has a consequence. Nobody could have known
-that before M6.10 reached the vendor path, which is exactly why the route left
-the vendor picker blocked.
+Three further reasons this record will not take the exemption, each of which it
+had reached for at some point:
 
-What a user meets today: selecting *Centroid all MS levels* and converting a
-Thermo acquisition produces a failed item with a truthful reason, on this build.
-Nothing wrong is published and nothing is silently substituted.
+- **Fail-closed is not an exemption.** No unsafe output is published, and that
+  establishes nothing about whether the setting is evidence-backed.
+- **An assigned owner is not an exemption.** M6.10 recorded this as a
+  non-blocking residual and named M6.11 to carry it. A source record's residual
+  label does not amend an exit criterion, and this record is M6.11.
+- **Pre-existing is not an exemption.** The condition predates M6.10; only the
+  knowledge of it is new. A closure audit judges on current evidence.
+
+### The exact owning repair
+
+**Not this slice's, and not a documentation change.** Either would discharge it:
+
+1. **Qualify the admitted centroiding rows by source family**, so the catalog
+   does not offer a combination whose evidence does not reach the families the
+   product converts; or
+2. **Reconcile the intent and the integrity contract on one algorithm semantic
+   and measure it on the shipped families** — a Thermo result already exists and
+   refuses, so this means family-specific admission for Shimadzu LCD and SCIEX
+   WIFF and an honest answer for Thermo.
+
+Both are production changes to admission and availability. They need their own
+implementation authorization and their own evidence.
 
 | | |
 | --- | --- |
 | **Scope** | The two `UnscopedDefaultCentroiding` rows, on this provider build. Measured for Thermo RAW; unmeasured for Shimadzu LCD and SCIEX WIFF |
-| **Evidence** | [M6.10's S1 measurement and its shipped-claim repair](../../spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md#one-shipped-claim-repaired), plus `a_vendor_acquisition_records_the_vendor_picker_and_does_not_satisfy_the_request` in `crates/proteowizard/src/conversion.rs`, which pins the classification and the refusal |
-| **Owner** | A new slice under CNV-D2's authority, which is where processing-intent admission lives. **CNV-D2's own status line names M6.2 as its owner and is stale in that respect**: M6.2 is complete, and what remains is a family dimension it never had |
-| **Re-entry** | Either qualify the admitted centroiding rows by source family so the catalog does not offer them where the evidence does not reach, or measure the intent on the shipped families. Both are production changes to admission and availability and need their own implementation authorization |
-| **Why it does not defeat a criterion** | Criterion 2's four traces all hold on the build-scoped standard the route defines; criterion 1 governs the action, which is available and performed; the failure is fail-closed and truthfully reported |
+| **Evidence** | [M6.10's S1 measurement and its shipped-claim repair](../../spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md#one-shipped-claim-repaired); `a_vendor_acquisition_records_the_vendor_picker_and_does_not_satisfy_the_request` in `crates/proteowizard/src/conversion.rs`, which pins the classification and the refusal; and the retained output whose resolved processing reference settles which branch is taken |
+| **Owner** | A new slice under CNV-D2's authority, which is where processing-intent admission lives. **CNV-D2's status line names M6.2 as its owner and is stale in that respect**: M6.2 is complete, and what remains is a family dimension it never had |
+| **What must be true to close criterion 2** | Every admitted setting is backed by evidence covering a source the product can convert |
 
-**This closure records that ADR 0043 owes an amendment on this point** — a tenth
-evidence dimension, or an explicit statement that settings evidence is
-build-scoped and family qualification belongs to admission. Making that decision
-is not this record's, because it changes what a future criterion means.
+**ADR 0043 also owes an amendment here**, and this record does not make it: its
+M6.2 evidence standard has no source-family dimension, and peak picking is the
+one admitted axis where that omission has a consequence. Whether the fix is a
+tenth dimension or an explicit statement that settings evidence is build-scoped
+while family qualification belongs to admission is a decision that changes what a
+future criterion means, so it belongs to whoever authorizes the repair.
+
+### Criterion 1 is not defeated by the same facts
+
+It governs the conversion *action*: controls and dispatch read one lane, the
+action is genuinely available for a vendor dataset, and the operation performs
+it. What follows is an outcome, not an availability disagreement. That the
+settings catalog answers a separate question is not a duplicate authority
+discovered here — ADR 0044 separates them deliberately and says in as many words
+that the catalog is not `ConversionLane`. What the catalog answers is *this build
+accepts this argv*; what a reader hears is *this conversion will work*. Closing
+that gap is part of the repair above, not a second finding.
 
 ## Criterion 11, by citation
 
@@ -248,9 +285,10 @@ store, no lineage. Where a capability is refused or blocked above, that is the
 product's published limit and not a prototype awaiting release.
 
 **The Post-M6 XIC Provider / Runtime Interlude remains the recorded preferred
-next route before M7.** It is not an M6 exit criterion, it has **not started**,
-and nothing here schedules it: it needs its own route lock, and this closure
-neither grants one nor selects a replacement runtime.
+next route before M7.** Its gate is `M6 COMPLETE`, which is **not met**, so it is
+not reachable yet. It is not an M6 exit criterion, it has **not started**, and
+nothing here schedules it: it needs its own route lock, and this record neither
+grants one nor selects a replacement runtime.
 
 ## Residuals carried
 
@@ -258,7 +296,6 @@ Each is scoped, owned, and mapped to the criterion it does not defeat.
 
 | Residual | Scope and evidence | Owner | Why it does not defeat a criterion |
 | --- | --- | --- | --- |
-| The centroiding family gap | [Above](#the-finding-this-closure-carries-rather-than-fails-on) | A new slice under CNV-D2 | Criterion 2's traces hold on the build-scoped standard; the failure is fail-closed and truthful |
 | Directory-shaped acquisition rules unexercisable | No admitted family is directory-shaped | The first slice that admits one | Criterion 4's **named** exception, carried from CNV-D3 |
 | Destructive authorization unexercisable | CNV-D4 is `OVERWRITE_REFUSED`, so nothing destructive can be bound | CNV-D4, unless reopened | Criterion 3's other three facts are exercised |
 | No conversion-boundary failure is retryable | A rerun that mints a second identity for a *launched* attempt cannot be produced through the queue; the queue-level proof runs from a retryable refusal | **This closure records it**, per M6.9's assignment. Re-entry: the first measured transient conversion failure | Criterion 9's identity timing is proved at the conversion boundary instead |
@@ -297,7 +334,7 @@ failing, with their owners and their actual status.
   clipboard and window-focus limitations M5 recorded persist. Inherited, with the
   boundary rules proved in Rust instead.
 
-## Amendments this closure makes
+## Amendments this record makes
 
 **Two statements in ADR 0043 were true when written and are not now.** Both are
 corrected in that document, dated, with the superseded wording quoted there

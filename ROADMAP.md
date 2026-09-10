@@ -380,12 +380,13 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 
 ## M6 — Conversion Completion
 
-**Complete.** All twelve exit criteria are proved and the three milestone-wide
-conditions hold; the closure record is
-[ADR 0045](docs/architecture/adr/0045-conversion-completion-closure-and-handoff.md).
-None of criterion 11's four conditional routes is admitted, and none had to be.
-**The Post-M6 XIC Provider / Runtime Interlude is the recorded preferred next
-route before M7, and has not started.**
+**Not complete.** M6.11 audited the twelve exit criteria and eleven are proved;
+**criterion 2 is not**, so the milestone does not close. The audit, the
+determination and the exact owning repair are in
+[ADR 0045](docs/architecture/adr/0045-conversion-completion-closure-and-handoff.md),
+which is kept as a draft rather than accepted. None of criterion 11's four
+conditional routes is admitted, and none had to be. **The Post-M6 XIC Provider /
+Runtime Interlude is gated on `M6 COMPLETE` and has not started.**
 
 The route was locked, the conversion lane has one availability
 authority, the installed `msconvert` has been measured against M6's finite
@@ -460,12 +461,16 @@ Twelve slices, plus one authority interlude:
   whole 29-case ledger re-run with it, every confirmation agreeing and no
   classification changed. See
   [the M6.10 record](docs/spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md).
-- M6.11 — closure. **Complete.** Twelve criteria proved, three milestone-wide
-  conditions held, four conditional routes carried by citation from M6.10's
-  ledger rather than re-decided. The centroiding family gap M6.10 measured is
-  carried as a scoped residual with an owner and a re-entry condition, and ADR
-  0043 is amended where two of its own statements had gone stale. See
+- M6.11 — closure. **Audited; M6 does not close.** Eleven criteria proved and the
+  three milestone-wide conditions held; **criterion 2 is not proved.** The two
+  admitted centroiding rows are evidenced only on a source class the product
+  cannot convert, and on the one shipped family measured the setting is refused
+  by the integrity contract after the provider has run. Peak picking is the one
+  admitted axis decided by the reader, so that evidence does not transfer the way
+  the other seven rows''' does. The exact owning repair, and why fail-closed and an
+  assigned owner are not exemptions, are in
   [ADR 0045](docs/architecture/adr/0045-conversion-completion-closure-and-handoff.md).
+  ADR 0043 is amended where two of its own statements had gone stale.
 
 **M6.4 was attempted once, and what shipped is the replacement.** The first
 attempt is on `feat/m6.4-visible-conversion-settings` / PR #95, which stopped
