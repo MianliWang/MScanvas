@@ -51,7 +51,7 @@ tauri.workspace = true
 # Copy plot writes an image to the clipboard from Rust. The official plugin's
 # Rust API is used directly; its generic commands stay denied to the webview,
 # which never receives the pixels and has no clipboard capability of its own.
-tauri-plugin-clipboard-manager = "=2.3.2"
+tauri-plugin-clipboard-manager = "=2.3.3"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "=0.61.3", features = [
