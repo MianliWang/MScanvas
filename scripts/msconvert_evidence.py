@@ -774,10 +774,25 @@ def decompress(raw: bytes, compression: str) -> tuple[bytes, str | None]:
         # reports a truncated stream for it -- which diagnosed a legitimate empty
         # array as a document that lied about its encoding.
         return raw, None
+    # A decompression object rather than `zlib.decompress`, because the
+    # convenience function accepts a valid stream with arbitrary bytes appended
+    # and returns the stream. Every value would come back right and the trailing
+    # bytes would go unmentioned, which is a malformed payload reported as
+    # healthy.
+    engine = zlib.decompressobj()
     try:
-        return zlib.decompress(raw), None
+        out = engine.decompress(raw)
+        out += engine.flush()
     except zlib.error as error:
         return b"", f"payload declares zlib and does not decompress: {error}"
+    if not engine.eof:
+        return b"", "payload declares zlib and its stream is incomplete"
+    if engine.unused_data:
+        return b"", (
+            f"payload declares zlib and carries {len(engine.unused_data)} byte(s) "
+            "after the end of its stream"
+        )
+    return out, None
 
 
 def declared_length(value: str | None) -> int | None:
@@ -891,20 +906,34 @@ def _params(element: ElementTree.Element) -> dict[str, str]:
 
 def _decode_array(array: ElementTree.Element) -> dict[str, object]:
     params = _params(array)
-    width = next(
-        (FLOAT_ACCESSIONS[a] for a in params if a in FLOAT_ACCESSIONS), None
+    # Counted, not taken first-found. An array declaring both `zlib compression`
+    # and `no compression` has said two contradictory things about its own bytes,
+    # and picking whichever appeared first decoded it successfully under one of
+    # them and reported nothing about the other. The same for two float widths.
+    widths = [a for a in params if a in FLOAT_ACCESSIONS]
+    compressions = [a for a in params if a in COMPRESSION_ACCESSIONS]
+    width = FLOAT_ACCESSIONS[widths[0]] if len(widths) == 1 else None
+    compression = (
+        COMPRESSION_ACCESSIONS[compressions[0]] if len(compressions) == 1 else "unknown"
     )
-    compression = next(
-        (COMPRESSION_ACCESSIONS[a] for a in params if a in COMPRESSION_ACCESSIONS),
-        "unknown",
-    )
+    contradiction = None
+    if len(widths) > 1:
+        contradiction = (
+            "declares " + ", ".join(sorted(widths)) + ", which are two float widths"
+        )
+    elif len(compressions) > 1:
+        contradiction = (
+            "declares " + ", ".join(sorted(compressions)) + ", which are two compressions"
+        )
     kind = next((ARRAY_ACCESSIONS[a] for a in params if a in ARRAY_ACCESSIONS), "other")
     node = array.find(f"{{{MZML_NS}}}binary")
     encoded = (node.text or "") if node is not None else ""
     # Order matters here. Decoding first diagnosed an array with no `<binary>`
     # element at all as a compression lie, because `decompress(b"", "zlib")`
     # fires before anything notices the element is absent.
-    if node is None:
+    if contradiction is not None:
+        raw, malformed = b"", contradiction
+    elif node is None:
         raw, malformed = b"", "no binary element"
     else:
         raw, malformed = strict_base64(encoded)
@@ -948,6 +977,10 @@ def _decode_array(array: ElementTree.Element) -> dict[str, object]:
             values = list(struct.unpack(f"<{count}{code}", raw))
     return {
         "kind": kind,
+        # mzML lets an array state its own length, which overrides the
+        # spectrum's default. Discarding it made every legitimate use of the
+        # attribute read as a length disagreement.
+        "declared_length": array.get("arrayLength"),
         "bits": None if width is None else width[0],
         "compression": compression,
         "encoded_bytes": len(
@@ -998,13 +1031,21 @@ def inspect_mzml(root: ElementTree.Element) -> dict[str, object]:
             rt = _params(scan).get("MS:1000016")
         declared = element.get("defaultArrayLength")
         stated = declared_length(declared)
+
+        def effective(array: dict[str, object]) -> int | None:
+            """The length this array is actually held to: its own, or the default."""
+            own = declared_length(array.get("declared_length"))
+            return stated if own is None else own
+
         mismatched = [
             # A malformed array decoded to nothing, and "declares 14 and stores
             # 0" about it is a restatement of the failure rather than a second
             # finding. The malformed defect already says what happened.
             array["kind"]
             for array in arrays
-            if stated is not None and not array.get("malformed") and array["length"] != stated
+            if effective(array) is not None
+            and not array.get("malformed")
+            and array["length"] != effective(array)
         ]
         where = f"spectrum {element.get('id') or element.get('index')}"
         defects = role_defects(arrays, where) + array_defects(arrays, where)
@@ -1020,9 +1061,10 @@ def inspect_mzml(root: ElementTree.Element) -> dict[str, object]:
             defects.append(f"{where} carries arrays and declares no defaultArrayLength")
         if mismatched:
             defects.append(
-                f"{where} declares {declared} values and stores "
+                f"{where} stores "
                 + ", ".join(
-                    f"{array['length']} in its {array['kind']} array"
+                    f"{array['length']} values in its {array['kind']} array against "
+                    f"{effective(array)} declared"
                     for array in arrays
                     if array["kind"] in mismatched
                 )
@@ -1107,12 +1149,24 @@ def inspect_mzxml(root: ElementTree.Element) -> dict[str, object]:
             malformed = "scan carries no peaks element"
         else:
             declared_bits = peaks.get("precision", "32")
+            # The mzXML twin of the mzML rule above. Anything other than the two
+            # this reader undoes was passed to `decompress`, which returned the
+            # bytes untouched -- so a scan declaring an encoding this reader
+            # cannot undo decoded as if it had declared none, and said nothing.
             compression = peaks.get("compressionType", "none")
+            unknown_compression = (
+                None
+                if compression in COMPRESSION_ACCESSIONS.values()
+                else f"scan declares compressionType={compression!r}, which this reader "
+                "does not decode"
+            )
             try:
                 bits = int(declared_bits)
             except ValueError:
                 bits = None
             raw, malformed = strict_base64(peaks.text or "")
+            if malformed is None:
+                malformed = unknown_compression
             if malformed is None:
                 raw, malformed = decompress(raw, compression)
             if malformed is None and bits not in (32, 64):
@@ -1159,7 +1213,9 @@ def inspect_mzxml(root: ElementTree.Element) -> dict[str, object]:
         )
         where = f"scan {element.get('num')}"
         defects = []
-        if declared is not None and stated is None:
+        if declared is None:
+            defects.append(f"{where} declares no peaksCount")
+        elif stated is None:
             defects.append(f"{where} declares peaksCount={declared!r}, which is not a number")
         if malformed is not None:
             defects.append(f"{where} peaks: {malformed}")
@@ -1227,15 +1283,30 @@ def inspect_mzxml(root: ElementTree.Element) -> dict[str, object]:
     }
 
 
+#: The only document roots this reader will read. Anything else is refused.
+DOCUMENT_ROOTS: tuple[str, ...] = ("mzML", "indexedmzML", "mzXML")
+
+
 def inspect(path: Path) -> dict[str, object]:
     root = ElementTree.parse(path).getroot()
     tag = root.tag.rsplit("}", 1)[-1]
+    if tag not in DOCUMENT_ROOTS:
+        # Refused rather than read. The mzML reader searches descendants, so a
+        # complete mzML wrapped in any other element came back with all its
+        # spectra, `format: "mzML"` and an empty defect list -- a document that
+        # is not an mzML serialization, certified as a clean one.
+        raise ValueError(
+            f"document root {tag!r} is not one this reader reads ("
+            + ", ".join(DOCUMENT_ROOTS)
+            + ")"
+        )
     if tag == "mzXML":
         return inspect_mzxml(root)
     if tag == "indexedmzML":
         inner = root.find(f"{{{MZML_NS}}}mzML")
-        if inner is not None:
-            root = inner
+        if inner is None:
+            raise ValueError("indexedmzML carries no mzML element")
+        root = inner
     return inspect_mzml(root)
 
 

@@ -77,8 +77,8 @@ reproduces M5.4's recorded stderr digest exactly.
 ### The decisive comparison, reproduced with the corrected tooling
 
 The whole M6.2 ledger was re-run against the executable above with the
-strengthened inspector and driver this slice delivers. **29 cases, 63
-independent confirmations, all 63 agree, no classification changed.**
+strengthened inspector and driver this slice delivers. **29 cases, 66
+independent confirmations, all 66 agree, no classification changed.**
 
 | Case | Source | argv between source and `--outdir` | Exit | `<scan>`/`<spectrum>` written | Run-level declaration | Survivor identities |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -452,6 +452,10 @@ than a patch per instance**, and it is done that way.
 
 | Property | Before | Now |
 | --- | --- | --- |
+| Document root | any root fell through to the mzML reader, whose descendant search then recovered every spectrum — so a complete mzML wrapped in anything at all read as a clean mzML | only `mzML`, `indexedmzML` and `mzXML` are read; every other root is refused |
+| Contradictory declarations | two compression terms, or two float widths, silently took whichever appeared first | an array that declares two of either is reported rather than decoded under one of them |
+| Trailing bytes | a valid zlib stream with bytes appended decoded to the stream and said nothing about the suffix | an incomplete stream and a non-empty suffix are each reported |
+| Per-array length | mzML's optional `arrayLength` override was discarded, so a document using it legitimately read as corrupt | each array is held to its own declared length where it states one |
 | Base64 syntax | `b64decode` **silently discarded** characters outside the alphabet, so a payload with a stray `$` decoded to aligned bytes and read as healthy | Layout whitespace is removed; anything else — a stray character, a length that is not a multiple of four, wrong padding — is reported and the array decodes to nothing |
 | Declared compression | a payload declaring `zlib` that does not decompress raised | reported as a defect on the array that carries it |
 | Required arrays | a spectrum with **no intensity array at all** carried no malformed flag and no length disagreement | each spectrum's array **roles** are checked by name: a missing one, a duplicated one and an unrecognised one are each a named defect |
@@ -506,7 +510,7 @@ python -B scripts/msconvert_evidence_run.py --report <file>
 | mzXML-producing cases, derived from the ledger | `4` — `X1`, `X2`, `X4`, `X5` |
 | Parsed outputs carrying a structural defect | `1` — `X2`, and its one defect is the run-level misdeclaration |
 | Entries in the pinned process working directory afterwards | **`0`** |
-| Independent confirmations recomputed from this run | **63 / 63 agree** |
+| Independent confirmations recomputed from this run | **66 / 66 agree** |
 | Executable identity checked **after** the run | byte length, digest, release and build date unchanged |
 
 **No classification changed.** The corrected tooling reproduced every M6.2
@@ -532,14 +536,16 @@ summary elsewhere link here rather than restate it. A figure repeated across fiv
 documents and derivable in none is the shape of the defect this slice spent its
 tooling budget removing.
 
-**And the number rose three times while this slice was under review**, from 52 to
-60 to 62 to 63. Every increment is a check review found missing, not the same
-measurement recounted: `K8`'s and `K10`'s outputs, which the driver ran and read
-back for nobody; the pinning of `K7` as the *only* output that does not read
-back, without which a second unreadable one would have been dropped from the
-health check in silence; and the checks that separate what `X1` declares from
-what `X5` declares from what `X5`'s apexes are — one of which, in its first
-form, was named for `X5` and read `X1`, so it could not fail. M6.2's own conclusions stay as they
+**And the number rose through review**, from 52 to 66. Every increment is a
+check review found missing, not the same measurement recounted: `K8`'s and
+`K10`'s outputs, which the driver ran and read back for nobody; the pinning of
+`K7` as the *only* output that does not read back, without which a second
+unreadable one would have been dropped from the health check in silence; the
+checks that separate what `X1` declares from what `X5` declares from what `X5`'s
+apexes are — one of which, in its first form, was named for `X5` and read `X1`,
+so it could not fail; and the anchoring of the order pair to `K2`, because two
+outputs compared only to each other agree just as well when the picker did
+nothing to either. M6.2's own conclusions stay as they
 were written, and this record does not rewrite them.
 
 **The working-directory result is now a property the tooling enforces**, not a

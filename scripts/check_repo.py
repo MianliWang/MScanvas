@@ -3247,7 +3247,7 @@ def validate_the_evidence_tooling_detects_what_it_claims(errors: list[str]) -> N
         mislengthed = defects_of(
             "mislengthed", healthy.replace('defaultArrayLength="14"', 'defaultArrayLength="17"', 1)
         )
-        if not mislengthed or not any("declares 17 values" in defect for defect in mislengthed):
+        if not mislengthed or not any("against 17 declared" in defect for defect in mislengthed):
             fail(
                 "the M6.2 inspector does not report a spectrum declaring one length and "
                 f"storing another: {mislengthed}",

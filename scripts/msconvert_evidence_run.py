@@ -96,7 +96,11 @@ def find_msconvert(explicit: Path | None) -> Path:
     if explicit is not None:
         if not explicit.is_file():
             raise SystemExit(f"no msconvert at the path given: {explicit.name}")
-        return explicit
+        # Resolved here, not left as given. Every conversion now starts in the
+        # pinned working directory, so a relative path that resolved for the
+        # identity check would fail to launch once the run began -- the option
+        # would pass its first use and break on its second.
+        return explicit.resolve()
     root = os.environ.get(DISCOVERY_ROOT_VARIABLE)
     if not root:
         raise SystemExit(
@@ -594,6 +598,24 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
         "the order pair returns the same values in both arrays",
         [values("K5", i, k) for i in order_pair for k in ("mz", "intensity")],
         [values("K6", i, k) for i in order_pair for k in ("mz", "intensity")],
+    )
+    # Anchored to an independent result, because the comparison above holds just
+    # as well if the picker silently did nothing on both sides. `K2` runs the
+    # same `peakPicking cwt` over the whole document, so its MS2 spectra are what
+    # a correctly composed K5 and K6 must contain -- the population filter
+    # selects them, the picker decides their contents, and only this check reads
+    # the second half.
+    ms2_from_k2 = [values("K2", i, k) for i in (1, 3) for k in ("mz", "intensity")]
+    for case in ("K5", "K6"):
+        note(
+            f"{case} carries the picker's MS2 spectra, not the source's",
+            ms2_from_k2,
+            [values(case, i, k) for i in order_pair for k in ("mz", "intensity")],
+        )
+    note(
+        "and the picker changed those spectra",
+        True,
+        ms2_from_k2 != [source(i, k) for i in (1, 3) for k in ("mz", "intensity")],
     )
     note(
         "a global --32 narrows what a filter rewrote, every value",
