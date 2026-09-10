@@ -8163,3 +8163,169 @@ fn an_unreadable_staging_area_is_unknown_rather_than_empty() {
     assert_ne!(observed, unknown);
     assert_ne!(observed, StagedOutputEvidence::NotCreated);
 }
+
+/// The centroiding intent this repair qualifies, built through the table.
+fn centroiding_intent() -> ConversionIntent {
+    ConversionIntent::admitted(
+        crate::OutputFormat::MzMl,
+        crate::ProcessingIntent::UnscopedDefaultCentroiding,
+        crate::SpectrumPopulation::All,
+        crate::NumericPrecision::Mz64Intensity64,
+        crate::CompressionIntent::Zlib,
+    )
+    .expect("the centroiding combination is admitted")
+}
+
+/// A Thermo acquisition cannot be planned under an intent measured only on mzML.
+///
+/// **Refused before anything happens, and the destination proves it.** The plan
+/// canonicalizes the destination root, derives a name and inspects the folder
+/// only after this check, so a directory that is still empty afterwards is the
+/// observable difference between refusing and refusing late. M6.10 measured why
+/// the refusal is owed: on a real Thermo acquisition the bare `peakPicking`
+/// filter selects the vendor picker, which the requested-processing contract
+/// then rejects — after the provider has already run.
+#[test]
+fn a_vendor_source_cannot_be_planned_under_an_intent_measured_only_on_mzml() {
+    let directory = TestDirectory::new();
+    let source = open_thermo(&write_thermo_source(directory.path(), "acquisition.raw"));
+    let destination = directory.path().join("destination");
+    fs::create_dir(&destination).expect("create the destination root");
+
+    assert_eq!(
+        ConversionPlan::to_mzml(
+            source,
+            &destination,
+            ConflictPolicy::Fail,
+            centroiding_intent(),
+        )
+        .map(|_| ()),
+        Err(ConversionPlanError::IntentNotEvidencedForSource)
+    );
+    assert_eq!(
+        fs::read_dir(&destination)
+            .expect("read the destination root")
+            .count(),
+        0,
+        "a refused plan created something in the destination"
+    );
+}
+
+/// The same source under the shipped posture plans, so the refusal above is
+/// about the intent's evidence and not about the family.
+#[test]
+fn the_same_vendor_source_still_plans_under_an_intent_whose_evidence_covers_it() {
+    let directory = TestDirectory::new();
+    let source = open_thermo(&write_thermo_source(directory.path(), "acquisition.raw"));
+    let destination = directory.path().join("destination");
+    fs::create_dir(&destination).expect("create the destination root");
+
+    assert!(
+        ConversionPlan::to_mzml(
+            source,
+            &destination,
+            ConflictPolicy::Fail,
+            ConversionIntent::SHIPPED,
+        )
+        .is_ok(),
+        "the shipped posture stopped planning a Thermo acquisition"
+    );
+}
+
+/// An mzML source keeps the measured centroiding combination.
+///
+/// The repair withholds what was never measured; it does not withdraw what was.
+#[test]
+fn an_mzml_source_keeps_the_measured_centroiding_combination() {
+    let directory = TestDirectory::new();
+    let source = open_source(&write_source(directory.path(), "acquisition.mzML"));
+    let destination = directory.path().join("destination");
+    fs::create_dir(&destination).expect("create the destination root");
+
+    assert!(
+        ConversionPlan::to_mzml(
+            source,
+            &destination,
+            ConflictPolicy::Fail,
+            centroiding_intent(),
+        )
+        .is_ok(),
+        "the measured mzML centroiding combination was withdrawn"
+    );
+}
+
+/// A Shimadzu acquisition is refused for the same reason, and it is the reason
+/// that matters: nobody measured it, and this repair does not claim it fails.
+#[test]
+fn a_shimadzu_source_is_refused_for_absent_evidence_rather_than_a_measured_failure() {
+    let directory = TestDirectory::new();
+    let source = open_shimadzu(&write_shimadzu_source(directory.path(), "acquisition.lcd"));
+    let destination = directory.path().join("destination");
+    fs::create_dir(&destination).expect("create the destination root");
+
+    assert_eq!(
+        ConversionPlan::to_mzml(
+            source,
+            &destination,
+            ConflictPolicy::Fail,
+            centroiding_intent(),
+        )
+        .map(|_| ()),
+        Err(ConversionPlanError::IntentNotEvidencedForSource)
+    );
+}
+
+/// The set lifecycle refuses the same combination, and refuses it before the
+/// source object is captured.
+///
+/// A separate entry point with its own preconditions, so a caller that reaches
+/// the queue's set path cannot obtain what the single-output plan refuses. The
+/// staging area is named under the destination root, so an empty root afterwards
+/// is the observable proof that nothing was created.
+#[test]
+fn the_set_lifecycle_refuses_an_intent_measured_only_on_mzml() {
+    let directory = TestDirectory::new();
+    let primary = write_sciex_bundle(directory.path(), "acquisition");
+    let source = open_sciex(&primary);
+    let destination = directory.path().join("destination");
+    fs::create_dir(&destination).expect("create the destination root");
+    let never = |_: &CommandSpec| -> Result<i32, ProcessError> {
+        panic!("a refused set request reached the provider")
+    };
+    let runner = FakeRunner::new(&never);
+
+    let run = run_admitted_multi_output_conversion(
+        AdmittedSetRun {
+            source: &source,
+            destination_root: &destination,
+            conflict: ConflictPolicy::Fail,
+            intent: centroiding_intent(),
+        },
+        &evidenced_capabilities(),
+        &runner,
+        None,
+    );
+
+    assert!(
+        matches!(
+            run.report.outcome(),
+            MultiOutputOutcome::RefusedBeforePublication(
+                MultiOutputFailure::IntentNotEvidencedForSource
+            )
+        ),
+        "the set lifecycle did not refuse: {:?}",
+        run.report.outcome()
+    );
+    assert_eq!(
+        runner.calls(),
+        0,
+        "a refused set request reached the provider"
+    );
+    assert_eq!(
+        fs::read_dir(&destination)
+            .expect("read the destination root")
+            .count(),
+        0,
+        "a refused set request created something in the destination"
+    );
+}

@@ -1816,6 +1816,20 @@ neither still described.
 
 ## Decision 7 — availability belongs to the row, never to the value
 
+> **Amended 2026-09-10 by the CNV-D2 source-qualified centroiding repair.** The
+> decision below is unchanged and gains a third answer rather than a second
+> meaning for one of its two. A row is now judged on **source applicability**
+> before grammar: `available`, `unsupported_by_installation`, or
+> `not_evidenced_for_conversion_sources`. The first refusal is about this
+> installation and a different ProteoWizard release can change it; the second is
+> about the product's evidence and no release can. Both remain **row-level** —
+> neither is ever rendered against an axis value — and the catalog still holds
+> all nine rows so a retained selection keeps its identity. Readiness, probe
+> failure and source applicability stay three different facts, and neither
+> `backendUsable` nor `ConversionLane` was made to carry any of them. See
+> [the repair record](../../ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md).
+
+
 M6.3's finding is the load-bearing one here: *individual capability supported* is
 not *arbitrary composition supported*. Forty-eight combinations span the axes and
 nine are measured.

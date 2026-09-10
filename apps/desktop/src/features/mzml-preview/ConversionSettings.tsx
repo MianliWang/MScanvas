@@ -131,6 +131,9 @@ const REFUSAL_NOTE: Record<ConversionChoiceRefusal, string> = {
   unavailableHere:
     "Not available with the other settings you have chosen: the installed ProteoWizard build " +
     "does not offer that combination.",
+  notEvidencedForSources:
+    "Not available with the other settings you have chosen: MSCanvas has not measured that " +
+    "combination on the kinds of acquisition it converts.",
 };
 
 /**

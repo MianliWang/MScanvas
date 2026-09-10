@@ -272,6 +272,7 @@ export function planIdentity(
 export const completeCatalog: readonly ConversionCatalogRow[] = admittedIntents.map((row) => ({
   intent: row,
   available: true,
+  availability: "available",
 }));
 
 /**

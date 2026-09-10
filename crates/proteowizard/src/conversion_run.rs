@@ -1036,6 +1036,18 @@ pub enum ConversionPlanError {
     /// is knowable the moment the source is handed over.
     #[error("the conversion source's family produces an output set, not one output")]
     SourceProducesAnOutputSet,
+    /// The intent is an admitted combination, and the evidence admitting it was
+    /// not taken on this source's family.
+    ///
+    /// A third refusal beside "the vocabulary has no such combination" and "this
+    /// build cannot express it", and it is neither of them: the combination
+    /// exists, the grammar accepts it, and the measurement behind it is about a
+    /// different kind of source. Refused here because it is knowable the moment
+    /// the source and the intent are both in hand -- before a name is derived,
+    /// before the destination root is touched, and long before anything is
+    /// staged or launched.
+    #[error("the conversion intent's evidence was not measured on this source's family")]
+    IntentNotEvidencedForSource,
 }
 
 impl ConversionPlanError {
@@ -1048,6 +1060,7 @@ impl ConversionPlanError {
             Self::DestinationRootNotInspectable { .. } => "destination_root_not_inspectable",
             Self::DestinationRootNotADirectory => "destination_root_not_a_directory",
             Self::SourceProducesAnOutputSet => "source_produces_an_output_set",
+            Self::IntentNotEvidencedForSource => "intent_not_evidenced_for_source",
         }
     }
 }
@@ -1091,6 +1104,13 @@ impl ConversionPlan {
         conflict: ConflictPolicy,
         intent: ConversionIntent,
     ) -> Result<Self, ConversionPlanError> {
+        // First, and before anything is derived, opened or canonicalized. The
+        // question needs only the two values already in hand, and answering it
+        // here is what makes the refusal cost the user no name, no destination
+        // inspection, no staging directory and no provider process.
+        if !intent.evidence_covers_source(source.kind()) {
+            return Err(ConversionPlanError::IntentNotEvidencedForSource);
+        }
         // Before a name is derived at all, because for these families there is
         // no name to derive: the backend chooses one per sample, and measured
         // on the real build it does so even when the acquisition holds a single

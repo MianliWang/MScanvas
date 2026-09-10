@@ -26,7 +26,10 @@ use super::backend::{
     ConfigurationReading, ConversionBackend, ConversionBackendAttempt, OperationAttempt,
     PreviewProvider, ResolvedInstallation, interpretation_error,
 };
-use super::conversion::{conversion_source_kind, is_convertible};
+use super::conversion::{
+    ALL_DATASET_SOURCE_KINDS, conversion_source_kind, convertible_source_kinds,
+    dataset_source_kind_index, is_convertible,
+};
 #[cfg(windows)]
 use super::destination_policy::admit_and_hold;
 use super::destination_policy::{
@@ -30442,4 +30445,99 @@ fn recording_an_adoption_moves_the_sequence_a_reader_installs_by() {
             refusals: Vec::new(),
         }
     );
+}
+
+/// The family list the source-applicability derivation iterates names every
+/// family, exactly once.
+///
+/// Without this the list could go stale silently: a variant added to
+/// `DatasetSourceKind` forces an arm in `dataset_source_kind_index`, and this
+/// then fails until the array carries it too. A missing family would be a family
+/// the catalog never asked the applicability rule about.
+#[test]
+fn the_dataset_family_list_names_every_family_exactly_once() {
+    let mut seen = vec![false; ALL_DATASET_SOURCE_KINDS.len()];
+    for kind in ALL_DATASET_SOURCE_KINDS {
+        let index = dataset_source_kind_index(kind);
+        assert!(
+            index < seen.len(),
+            "{kind:?} has index {index}, past the end of the family list"
+        );
+        assert!(!seen[index], "two families share index {index}");
+        seen[index] = true;
+    }
+    assert!(
+        seen.iter().all(|listed| *listed),
+        "the family list does not name every family: {seen:?}"
+    );
+}
+
+/// The families the visible workflow converts are derived from `is_convertible`
+/// rather than listed, and are exactly the three vendor ones.
+///
+/// mzML is deliberately absent: the crate converts it and the visible workflow
+/// declines it, which is what makes the two centroiding rows unavailable in the
+/// vendor workflow without anything naming a vendor family.
+#[test]
+fn the_convertible_family_set_is_derived_and_holds_the_three_vendor_families() {
+    let derived: Vec<_> = convertible_source_kinds().collect();
+    assert_eq!(
+        derived,
+        vec![
+            mscanvas_proteowizard::ConversionSourceKind::ThermoRawFile,
+            mscanvas_proteowizard::ConversionSourceKind::ShimadzuLcdFile,
+            mscanvas_proteowizard::ConversionSourceKind::SciexWiffBundle,
+        ]
+    );
+    for kind in ALL_DATASET_SOURCE_KINDS {
+        assert_eq!(
+            derived.contains(&conversion_source_kind(kind)),
+            is_convertible(kind),
+            "{kind:?} disagrees with is_convertible"
+        );
+    }
+}
+
+/// No admitted combination that asks for centroiding is offered for any family
+/// the visible workflow converts.
+///
+/// The product-level statement of the repair, asked through the crate's own rule
+/// rather than through a list of rows: a centroiding row admitted for a vendor
+/// family later would fail here without anyone having to remember this test.
+#[test]
+fn no_centroiding_combination_is_evidenced_for_a_family_the_workflow_converts() {
+    use mscanvas_proteowizard::{ConversionIntent, ProcessingIntent};
+
+    for admitted in ConversionIntent::ADMITTED {
+        if admitted.intent().processing() != ProcessingIntent::UnscopedDefaultCentroiding {
+            continue;
+        }
+        for kind in convertible_source_kinds() {
+            assert!(
+                !admitted.intent().evidence_covers_source(kind),
+                "{:?} is offered for {kind:?}, which nobody measured it on",
+                admitted.intent()
+            );
+        }
+    }
+}
+
+/// And every other admitted row still is, so the repair narrowed exactly what it
+/// meant to.
+#[test]
+fn every_writer_side_combination_is_still_evidenced_for_the_families_converted() {
+    use mscanvas_proteowizard::{ConversionIntent, ProcessingIntent};
+
+    for admitted in ConversionIntent::ADMITTED {
+        if admitted.intent().processing() == ProcessingIntent::UnscopedDefaultCentroiding {
+            continue;
+        }
+        for kind in convertible_source_kinds() {
+            assert!(
+                admitted.intent().evidence_covers_source(kind),
+                "{:?} stopped covering {kind:?}",
+                admitted.intent()
+            );
+        }
+    }
 }

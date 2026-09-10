@@ -117,9 +117,27 @@ export interface ConversionIntentDescriptor {
  * about the product's evidence rather than about this build — and it is read as
  * the absence of a row, never as `available: false`.
  */
+/**
+ * Why one admitted combination is not offered, where it is not.
+ *
+ * Two refusals rather than one, because they are different facts and lead to
+ * different sentences. `unsupported_by_installation` is about this build: a
+ * different ProteoWizard release can change it. `not_evidenced_for_conversion_sources`
+ * is about the product'''s evidence: the combination is one MSCanvas measured, and
+ * the measurement was not taken on the kinds of acquisition this workflow
+ * converts. Peak picking is the axis that reaches, because the picker is chosen
+ * by the reader rather than by the writer.
+ */
+export type ConversionRowAvailability =
+  | "available"
+  | "unsupported_by_installation"
+  | "not_evidenced_for_conversion_sources";
+
 export interface ConversionCatalogRow {
   readonly intent: ConversionIntentDescriptor;
   readonly available: boolean;
+  /** Which of the three answers this row got. */
+  readonly availability: ConversionRowAvailability;
 }
 
 /**

@@ -1,6 +1,7 @@
 # ADR 0043 — Conversion Completion is the next milestone, and this is its route
 
-Status: accepted, amended 2026-09-04, twice on 2026-09-06, and 2026-09-08
+Status: accepted, amended 2026-09-04, twice on 2026-09-06, 2026-09-08, and
+2026-09-10 by the CNV-D2 source-qualified centroiding repair
 Date: 2026-09-01
 Related: [0002](0002-external-proteowizard.md),
 [0009](0009-mzml-conversion-execution-boundary.md),
@@ -1857,7 +1858,56 @@ enum and must not rely on the provider to reject a contradiction.
 ### CNV-D2 — processing intent
 
 **Status: "no additional centroiding" `LOCKED`. Everything else
-`EVIDENCE_REQUIRED`, owner M6.2. One new rule `LOCKED` below.**
+`EVIDENCE_REQUIRED`, owner M6.2. Evidence applicability for reader-sensitive
+processing `LOCKED`, 2026-09-10. Two new rules `LOCKED` below.**
+
+> **Amended 2026-09-10 by the CNV-D2 source-qualified centroiding repair.** One
+> rule is added below and nothing above is withdrawn. The status line gains a
+> third clause: **evidence applicability for reader-sensitive processing is
+> `LOCKED`**, and its owner is this repair rather than M6.2, which is complete.
+>
+> **Locked, and new: a processing measurement is evidence about the source
+> families it was taken on.** M6.2 measured every admitted combination on
+> generated mzML fixtures. For output format, numeric precision, compression and
+> MS-level population that carries to any admitted family, because those are
+> decided by the **writer** and act on whatever spectra the reader produced.
+> Peak picking is decided by the **reader** — which this decision already records
+> from the provider's own sources, in the `dynamic_cast` paragraph above — so a
+> measurement of it on one family is not evidence about another.
+>
+> M6.10 measured the consequence on a lawful Thermo acquisition: the same bare
+> `peakPicking` argv selects the vendor picker there, and the
+> requested-processing contract correctly refuses the result. **The repair is to
+> stop offering the combination where its evidence does not reach, not to widen
+> the contract to accept whichever algorithm a reader happens to use.**
+>
+> So admission gains a **source domain**, beside the combination and the build.
+> Three questions, and all three must hold before a conversion may be planned:
+>
+> 1. does the measured vocabulary contain this combination;
+> 2. can the installed build express it;
+> 3. **was the measurement behind it taken on this kind of source.**
+>
+> `EvidenceSourceDomain` answers the third, once, beside the table it qualifies.
+> Seven rows carry `AnyAdmittedSource`; the two `UnscopedDefaultCentroiding` rows
+> carry the families they were measured on, which is mzML alone.
+>
+> **What this does not do.** It admits no combination and excludes none: the nine
+> measured rows and the thirty-nine the cross-product excludes are M6.2's and are
+> unchanged. It adds no source family and no vendor experiment. It does not label
+> Shimadzu LCD or SCIEX WIFF measured failures — nobody measured them, which is
+> the whole reason the rows are withheld there. And it is not a licence to assert
+> that all future writer-side behaviour is source-independent: seven rows carry
+> that domain on the axes M6.2 measured, and a new axis earns it by argument.
+>
+> **This strengthens criterion 2 and does not rewrite it.** The criterion asks
+> that every admitted setting be evidence-backed; what this adds is that being
+> backed includes being backed *for the sources the product converts*. It is not
+> permission to offer a known mismatch.
+>
+> Recorded in
+> [the repair record](../../ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md).
+
 
 The candidate product semantics are CNV-004 to CNV-007: no additional
 centroiding; MS2 centroiding; MS1+MS2 centroiding; All / MS1 / MS2 population;

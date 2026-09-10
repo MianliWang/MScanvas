@@ -87,7 +87,8 @@ use super::dto::{
     ValidationModeDto, WorkspaceAddOutcomeDto, WorkspaceAddResultDto,
     WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto, WorkspaceDropStateDto,
     WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
-    WorkspaceRosterDto, bounded_text, conversion_busy, dataset_not_previewable,
+    WorkspaceRosterDto, bounded_text, conversion_busy,
+    conversion_settings_not_evidenced_for_source, dataset_not_previewable,
     invalid_conversion_reservation, queue_destination_changed, queue_is_empty,
     queue_output_name_collision, queue_too_large, redact_absolute_paths, require_finite,
     require_finite_option, workspace_full,
@@ -1802,6 +1803,15 @@ impl PreviewService {
             // dropped: the interface states how many selected rows are
             // excluded, and a boundary that quietly shortened the list would
             // make that count a fiction.
+            // The same applicability question the crate's plan asks, asked here
+            // so it is answered before the queue commits, before a destination
+            // picker opens and before any folder is created. It is a *refusal*,
+            // not an exclusion: the row is convertible, and shortening the batch
+            // to make this intent succeed would change what the user asked for
+            // and make the stated exclusion count a fiction.
+            if !intent.evidence_covers_source(conversion_source_kind(kind)) {
+                return Err(conversion_settings_not_evidenced_for_source());
+            }
             let output = item_output_topology(kind, &dto.file_name, intent)?;
             items.push(QueueItem::new(
                 ResolutionSubject {

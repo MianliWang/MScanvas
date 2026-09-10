@@ -23,11 +23,34 @@ import type { ConversionCatalogRow } from "./contracts";
 const COMPLETE: readonly ConversionCatalogRow[] = admittedIntents.map((intent) => ({
   intent,
   available: true,
+  availability: "available",
 }));
 
-/** The same nine rows, with the named ones unavailable. */
+/** The same nine rows, with the named ones unavailable on this installation. */
 function withoutRunning(...ids: readonly string[]): readonly ConversionCatalogRow[] {
-  return COMPLETE.map((row) => ({ ...row, available: !ids.includes(row.intent.id) }));
+  return COMPLETE.map((row) => ({
+    ...row,
+    available: !ids.includes(row.intent.id),
+    availability: ids.includes(row.intent.id) ? "unsupported_by_installation" : "available",
+  }));
+}
+
+/**
+ * The same nine rows, with the named ones unavailable for absent source
+ * evidence.
+ *
+ * The shape the vendor workflow actually produces: the installation is fine and
+ * the combination is one MSCanvas measured, and no acquisition this product
+ * converts is one that measurement was taken on.
+ */
+function withoutSourceEvidence(...ids: readonly string[]): readonly ConversionCatalogRow[] {
+  return COMPLETE.map((row) => ({
+    ...row,
+    available: !ids.includes(row.intent.id),
+    availability: ids.includes(row.intent.id)
+      ? "not_evidenced_for_conversion_sources"
+      : "available",
+  }));
 }
 
 const id = (
@@ -256,5 +279,68 @@ describe("what may be pressed", () => {
     expect(canChoose({ status: "selected" })).toBe(false);
     expect(canChoose({ status: "unavailable", reason: "notQualified" })).toBe(false);
     expect(canChoose({ status: "unavailable", reason: "unavailableHere" })).toBe(false);
+  });
+});
+
+describe("a combination this product has no source evidence for", () => {
+  const catalog = withoutSourceEvidence(CENTROIDED_64, CENTROIDED_32);
+  /**
+   * The baseline a one-axis move actually reaches a centroiding row from.
+   *
+   * The shipped posture's precision is `mz64_intensity32`, which no centroiding
+   * row carries, so moving processing from there produces a combination the
+   * evidence never admitted — a different refusal, and not the one under test.
+   */
+  const flat64 = catalogRow(catalog, FLAT_64)!.intent;
+
+  it("is refused with its own reason, not the installation's", () => {
+    // The distinction the repair exists for. Telling a reader to try another
+    // ProteoWizard release would send them after a build that would behave
+    // exactly the same way, because the missing thing is a measurement.
+    const state = choiceState(catalog, flat64, "processing", "unscoped_default_centroiding");
+    expect(state).toEqual({ status: "unavailable", reason: "notEvidencedForSources" });
+  });
+
+  it("says nothing about the values that combination happens to use", () => {
+    // Row-level, not value-level. Every precision, population and compression
+    // the refused rows carry also appears in rows this catalog offers, so none
+    // of them may be reported as refused.
+    for (const axis of ["population", "precision", "compression"] as const) {
+      const refused = axisChoices(catalog, flat64, axis).filter(
+        (choice) => choice.state.status === "unavailable",
+      );
+      expect(refused).toEqual([]);
+    }
+  });
+
+  it("keeps a retained selection visible rather than resetting it", () => {
+    // A scientific request survives; it does not get quietly rewritten.
+    expect(reselect(catalog, shippedIntent.id, CENTROIDED_64)).toBe(CENTROIDED_64);
+    expect(selectionIsUnavailable(catalog, CENTROIDED_64)).toBe(true);
+  });
+
+  it("offers an ordinary one-axis way out rather than an explicit reset", () => {
+    // No additional centroiding is one processing step away and available, so
+    // the explicit recovery control must stay absent: offering it beside a
+    // working control would claim a dead end that is not there.
+    expect(recoveryIntent(catalog, shippedIntent.id, CENTROIDED_64)).toBeNull();
+    const route = axisChoices(catalog, catalogRow(catalog, CENTROIDED_64)!.intent, "processing");
+    expect(
+      route.some((choice) => choice.value === "no_additional_centroiding" && canChoose(choice.state)),
+    ).toBe(true);
+  });
+
+  it("does not confuse absent source evidence with a build that lacks the grammar", () => {
+    const installation = withoutRunning(CENTROIDED_64, CENTROIDED_32);
+    expect(
+      choiceState(installation, flat64, "processing", "unscoped_default_centroiding"),
+    ).toEqual({ status: "unavailable", reason: "unavailableHere" });
+    expect(
+      choiceState(catalog, flat64, "processing", "unscoped_default_centroiding"),
+    ).toEqual({ status: "unavailable", reason: "notEvidencedForSources" });
+  });
+
+  it("refuses to be chosen", () => {
+    expect(canChoose({ status: "unavailable", reason: "notEvidencedForSources" })).toBe(false);
   });
 });

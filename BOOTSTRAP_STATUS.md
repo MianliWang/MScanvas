@@ -7969,3 +7969,47 @@ fail, and three cases the driver ran and read back for nobody.
 The evidence, the four dispositions and the changed-path closure are in
 [the M6.10 record](docs/spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md).
 M6.11 has not started.
+
+## CNV-D2 prerequisite — source-qualified centroiding admission
+
+**A processing measurement is evidence about the source families it was taken
+on**, and since this repair that is executable rather than implied. M6.2
+measured every admitted combination on generated mzML fixtures; for output
+format, numeric precision, compression and MS-level population that carries,
+because those are decided by the writer. Peak picking is decided by the
+**reader**, so the two `UnscopedDefaultCentroiding` rows are admitted for mzML
+alone — and because the visible workflow converts vendor acquisitions, the
+vendor workflow now offers seven of the nine measured combinations.
+
+One applicability answer reaches the Rust-authored catalog, the `BEGIN`
+preflight, the single-output plan and the output-set lifecycle. Each refuses
+before queue commitment, before a destination picker or folder creation, before
+private staging and before the provider runs; the crate tests prove it with an
+empty destination directory and a provider call count of zero rather than only
+with a returned error. The catalog keeps all nine rows and distinguishes *this
+build cannot express it* from *no source this product converts is one this row's
+evidence covers* — two refusals, two sentences, both about the combination and
+never about an axis value.
+
+**What did not change.** The integrity contract still rejects a vendor-picker
+output against a request for the measured local-maximum behaviour. The other
+seven rows, `SHIPPED`, every stable identity, and the nine-admitted /
+thirty-nine-excluded vocabulary are untouched. No source family was added, no
+vendor algorithm was exercised, no dependency changed, and mzML conversion was
+not added to the desktop roster. Shimadzu LCD and SCIEX WIFF are withheld for
+**absent evidence**, not as measured failures.
+
+The repository guard now holds each row's source domain and was proved against
+both reversions — widening a centroiding row and narrowing a writer-side one —
+in isolated copies, with the tree restored afterwards.
+
+**Rendered and native QA were reduced at the owner's direction**, because the
+conversion surface is expected to change substantially in later work. The
+repair rests on the unit and boundary evidence recorded in
+[the repair record](docs/ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md); nothing is
+attributed to rendered or native evidence that was not produced.
+
+This is a prerequisite under CNV-D2 and renumbers no M6 slice. **M6.11's closure
+audit is to be resumed against this baseline** to decide whether criterion 2 and
+condition A are now proved; that decision is the audit's, not this repair's.
+M6 is not complete. Post-M6 XIC interlude and M7 have not started.

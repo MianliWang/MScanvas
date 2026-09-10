@@ -79,7 +79,20 @@ export type ConversionChoiceRefusal =
   /** No row of the catalog names the combination this choice would produce. */
   | "notQualified"
   /** The row exists; the installed ProteoWizard does not declare what it emits. */
-  | "unavailableHere";
+  | "unavailableHere"
+  /**
+   * The row exists and this build can express it; MSCanvas has not measured it
+   * on the kinds of acquisition this workflow converts.
+   *
+   * A third refusal because it is a third fact. The first two are about the
+   * product's vocabulary and about this installation; this one is about which
+   * sources the measurement behind a row was taken on. Peak picking is the axis
+   * it reaches, because the picker is chosen by the reader rather than by the
+   * writer — so a measurement on one kind of source is not evidence about
+   * another, and offering the row anyway would be offering an outcome nobody
+   * has observed.
+   */
+  | "notEvidencedForSources";
 
 /**
  * What one value of one axis can currently do.
@@ -248,6 +261,13 @@ export function choiceState<A extends ConversionAxis>(
   });
   if (row === null) {
     return { status: "unavailable", reason: "notQualified" };
+  }
+  // Read from the row's own answer rather than from the boolean beside it, so
+  // the two refusals stay two sentences. A reader told "this installation does
+  // not offer it" about a row their installation offers perfectly well would go
+  // looking for a different ProteoWizard release, and find nothing.
+  if (row.availability === "not_evidenced_for_conversion_sources") {
+    return { status: "unavailable", reason: "notEvidencedForSources" };
   }
   if (!row.available) {
     return { status: "unavailable", reason: "unavailableHere" };

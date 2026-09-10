@@ -1850,8 +1850,32 @@ M63_INTENT_ROW = re.compile(
     r"compression:\s*CompressionIntent::(?P<compression>\w+),\s*"
     r"\},\s*"
     r'evidence:\s*"(?P<evidence>[^"]*)",\s*'
+    # The source domain, captured because it is now part of what a row
+    # asserts. A row that dropped it stops matching, and one that widened it
+    # is compared below against the rule this repair exists to hold.
+    r"(?://[^\n]*\n\s*)*"
+    r"sources:\s*EvidenceSourceDomain::(?P<sources>[^,]+),\s*"
     r"\}",
 )
+
+#: The processing intent whose evidence is reader-sensitive, and the only
+#: source family it was measured on.
+#:
+#: M6.2 measured every admitted row on generated mzML fixtures. For output
+#: format, numeric precision, compression and MS-level population that
+#: carries, because those are decided by the writer. Peak picking is chosen
+#: by the *reader* -- CNV-D2 records the provider selecting vendor
+#: centroiding by a `dynamic_cast` on the immediately inner spectrum list --
+#: so the same measurement says nothing about a vendor acquisition, and M6.10
+#: measured a vendor reader choosing its own picker.
+#:
+#: Pinned here because widening it is the one edit that would quietly restore
+#: the defect: a row whose domain became `AnyAdmittedSource` would offer a
+#: combination on families nobody measured it on, and every other check in
+#: this file would still pass.
+M63_READER_SENSITIVE_PROCESSING = "UnscopedDefaultCentroiding"
+M63_READER_SENSITIVE_DOMAIN = "MeasuredOn(&[ConversionSourceKind::MzmlFile])"
+M63_WRITER_SIDE_DOMAIN = "AnyAdmittedSource"
 
 
 M610_RECORD = "docs/spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md"
@@ -2636,6 +2660,8 @@ def validate_the_admitted_intent_table_cites_measurements_that_support_it(
                 )
             _validate_one_admitted_row_against_its_case(combination, name, case, errors)
 
+        _validate_one_admitted_rows_source_domain(row, combination, errors)
+
 
 def _msconvert_case_semantics(
     arguments: tuple[str, ...],
@@ -2666,6 +2692,55 @@ def _msconvert_case_semantics(
             flags.add(token)
         index += 1
     return frozenset(flags), tuple(pickers), tuple(levels)
+
+
+def _validate_one_admitted_rows_source_domain(
+    row: dict[str, str], combination: tuple[str, ...], errors: list[str]
+) -> None:
+    """Every admitted row says which source families its evidence covers.
+
+    The third question this table answers, and the newest. A combination being
+    in the measured vocabulary and this build being able to express it are both
+    answered without reference to what is being converted -- and for most of
+    these rows that is right, because output format, numeric precision,
+    compression and MS-level population are decided by the *writer* and act on
+    whatever spectra the reader produced.
+
+    Peak picking is not. CNV-D2 records the provider selecting vendor
+    centroiding by a `dynamic_cast` on the immediately inner spectrum list, so
+    the picker is the reader's choice, and M6.2's measurement -- taken on
+    generated mzML fixtures like every other row's -- is not evidence about a
+    vendor acquisition. M6.10 measured what that means: on a lawful Thermo
+    acquisition the same argv selects the vendor picker, which the
+    requested-processing contract then refuses.
+
+    So the rule this holds is narrow and specific. A centroiding row carries the
+    mzML-only domain; every other row carries the writer-side one. Widening a
+    centroiding row is the single edit that would restore the defect while every
+    other check in this file went on passing, and narrowing a writer-side row
+    would withdraw a posture the product has converted vendor acquisitions under
+    since M3.
+    """
+    domain = row["sources"].strip()
+    reader_sensitive = row["processing"] == M63_READER_SENSITIVE_PROCESSING
+    expected = M63_READER_SENSITIVE_DOMAIN if reader_sensitive else M63_WRITER_SIDE_DOMAIN
+    if domain == expected:
+        return
+    if reader_sensitive:
+        fail(
+            f"{M63_INTENT} admits {'+'.join(combination)} over sources {domain!r}, not "
+            f"{expected!r}. Its evidence was measured on mzML fixtures, and peak picking is "
+            "chosen by the reader -- so offering it for another family would offer an outcome "
+            "nobody has observed. M6.10 measured the vendor reader choosing its own picker",
+            errors,
+        )
+        return
+    fail(
+        f"{M63_INTENT} admits {'+'.join(combination)} over sources {domain!r}, not "
+        f"{expected!r}. This row's semantic is writer-side, and narrowing it would withdraw a "
+        "combination the product has converted admitted acquisitions under",
+        errors,
+    )
 
 
 def _validate_one_admitted_row_against_its_case(

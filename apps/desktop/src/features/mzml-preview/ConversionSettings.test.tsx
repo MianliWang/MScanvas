@@ -11,6 +11,7 @@ afterEach(cleanup);
 const COMPLETE: readonly ConversionCatalogRow[] = admittedIntents.map((intent) => ({
   intent,
   available: true,
+  availability: "available",
 }));
 
 const id = (
