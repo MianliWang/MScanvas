@@ -770,10 +770,9 @@ def decompress(raw: bytes, compression: str) -> tuple[bytes, str | None]:
     """The payload as stored, or the reason its declared compression is a lie."""
     if compression != "zlib" or not raw:
         # An empty payload is not a compression lie. A zero-length array is
-        # written as `encodedLength="0"` with an empty `<binary>`, and
-        # `zlib.decompress(b"")` reports a truncated stream for it -- which
-        # diagnosed a legitimate empty array as a document that lied about its
-        # encoding.
+        # written as an empty `<binary>` element, and `zlib.decompress(b"")`
+        # reports a truncated stream for it -- which diagnosed a legitimate empty
+        # array as a document that lied about its encoding.
         return raw, None
     try:
         return zlib.decompress(raw), None
@@ -781,8 +780,30 @@ def decompress(raw: bytes, compression: str) -> tuple[bytes, str | None]:
         return b"", f"payload declares zlib and does not decompress: {error}"
 
 
+def declared_length(value: str | None) -> int | None:
+    """One declared element count, or `None` where the document did not state one.
+
+    Non-numeric reads as unstated rather than raising. A reader that crashes on
+    a malformed attribute has turned a defect it exists to report into a stopped
+    run, which is the failure mode the run-level rule was written to eliminate --
+    and `defaultArrayLength` and `peaksCount` were still being read that way
+    after that rule landed.
+    """
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
 def declared_count_defect(
-    declared: str | None, written: int, what: str, attribute: str, noun: str
+    declared: str | None,
+    written: int,
+    what: str,
+    attribute: str,
+    noun: str,
+    present: bool = True,
 ) -> str | None:
     """The one thing a run-level declaration can be wrong about, in three ways.
 
@@ -793,13 +814,19 @@ def declared_count_defect(
     already refuses an output that declares no count while carrying records, so
     this reader says the same thing rather than a quieter one.
 
-    **And it says it only where there is something to declare.** A conversion
-    that yields no spectra is written with no `<spectrumList>` at all, which is
-    a legal exit-`0` output; demanding a count of it reported a healthy document
-    as defective. The rule matches production exactly: a declared count is owed
-    by a document that carries records, and by no other.
+    **And it says it only where there is a list to declare a count for.** A
+    conversion that yields no spectra is written with no `<spectrumList>` at all,
+    and demanding a count of an element that is not there reported an exit-`0`
+    output as defective. Where the list exists, its count is required -- by the
+    schema and by this reader -- however few records it holds.
+
+    This is *not* the whole of what the shipped contract says about such a
+    document. That contract refuses an output holding no spectra **and** no
+    chromatograms outright, and this reader cannot express that rule because it
+    does not count chromatograms. What matches production is the declared-count
+    rule; the records rule is production's alone.
     """
-    if written == 0 and declared is None:
+    if not present:
         return None
     if declared is None:
         return f"{what} declares no {attribute} over {written} {noun} elements"
@@ -820,8 +847,10 @@ def role_defects(arrays: list[dict[str, object]], where: str) -> list[str]:
     of course, and reporting them as structural faults would make a healthy
     document read as broken the moment this inspector is pointed at one -- which
     M6.10 does. What matters is that the two arrays every numeric claim here is
-    *about* are present, once each. Anything else is listed in the spectrum's
-    `array_roles` as information and is not a defect.
+    *about* are present, once each. An array with any other role is listed in
+    the spectrum's `array_roles` and is **not** a defect *for its role* -- it is
+    still read like any other, so a malformed payload under it is still
+    reported.
     """
     roles = [array["kind"] for array in arrays]
     found: list[str] = []
@@ -878,14 +907,18 @@ def _decode_array(array: ElementTree.Element) -> dict[str, object]:
     # its bytes are stored, and every numeric claim over it would be a claim
     # about bytes this reader guessed at.
     if malformed is None and compression == "unknown":
-        # Said precisely, because the two cases are different and the old
-        # message merged them. A numpress array *does* carry a compression
-        # cvParam; what it does not carry is one this reader can undo. Either
-        # way no numeric claim may rest on the bytes.
+        # Two cases share this message and it does not pretend to tell them
+        # apart: an array declaring nothing, and one declaring a compression this
+        # reader cannot undo -- numpress, say. Distinguishing them needs the
+        # controlled vocabulary's own hierarchy, which this reader does not have
+        # and will not guess at. What it can do is show every accession it did
+        # not recognize, so a reader can see which case they are in.
+        #
+        # Either way no numeric claim may rest on the bytes.
         unknown = sorted(set(params) - set(ARRAY_ACCESSIONS) - set(FLOAT_ACCESSIONS))
         malformed = (
             "declares no compression this reader decodes"
-            + (f"; other cvParams present: {', '.join(unknown)}" if unknown else "")
+            + (f"; unrecognized cvParams: {', '.join(unknown)}" if unknown else "")
         )
     values: list[float] = []
     if malformed is not None:
@@ -957,13 +990,21 @@ def inspect_mzml(root: ElementTree.Element) -> dict[str, object]:
         if scan is not None:
             rt = _params(scan).get("MS:1000016")
         declared = element.get("defaultArrayLength")
+        stated = declared_length(declared)
         mismatched = [
+            # A malformed array decoded to nothing, and "declares 14 and stores
+            # 0" about it is a restatement of the failure rather than a second
+            # finding. The malformed defect already says what happened.
             array["kind"]
             for array in arrays
-            if declared is not None and array["length"] != int(declared)
+            if stated is not None and not array.get("malformed") and array["length"] != stated
         ]
         where = f"spectrum {element.get('id') or element.get('index')}"
         defects = role_defects(arrays, where) + array_defects(arrays, where)
+        if declared is not None and stated is None:
+            defects.append(
+                f"{where} declares defaultArrayLength={declared!r}, which is not a number"
+            )
         if declared is None and arrays:
             # Required by the mzML schema, and required here for the same reason
             # the production contract refuses an output without it: with no
@@ -1007,7 +1048,7 @@ def inspect_mzml(root: ElementTree.Element) -> dict[str, object]:
     # that a consumer trusting either would read a short document as a complete
     # conversion.
     mismatch = declared_count_defect(
-        declared_count, len(spectra), "spectrumList", "count", "spectrum"
+        declared_count, len(spectra), "spectrumList", "count", "spectrum", listed is not None
     )
     if mismatch is not None:
         defects.insert(0, mismatch)
@@ -1103,13 +1144,16 @@ def inspect_mzxml(root: ElementTree.Element) -> dict[str, object]:
                     # mzXML stores network byte order.
                     values = list(struct.unpack(f">{count}{code}", raw))
         declared = element.get("peaksCount")
+        stated = declared_length(declared)
         mismatched = (
             ["mz", "intensity"]
-            if declared is not None and len(values[0::2]) != int(declared)
+            if stated is not None and malformed is None and len(values[0::2]) != stated
             else None
         )
         where = f"scan {element.get('num')}"
         defects = []
+        if declared is not None and stated is None:
+            defects.append(f"{where} declares peaksCount={declared!r}, which is not a number")
         if malformed is not None:
             defects.append(f"{where} peaks: {malformed}")
         if mismatched:
@@ -1160,7 +1204,7 @@ def inspect_mzxml(root: ElementTree.Element) -> dict[str, object]:
     # misdeclaration did not, so a consumer trusting the header would have read
     # a two-spectrum document as a complete four-spectrum conversion.
     mismatch = declared_count_defect(
-        declared_count, len(spectra), "msRun", "scanCount", "scan"
+        declared_count, len(spectra), "msRun", "scanCount", "scan", run is not None
     )
     if mismatch is not None:
         defects.insert(0, mismatch)

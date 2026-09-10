@@ -346,6 +346,18 @@ def decoded(work: Path, case: str, index: int, kind: str) -> list[float]:
     return arrays[kind]
 
 
+def declared_int(value: Any) -> int | None:
+    """A declared length as a number, or `None` where the document did not give one.
+
+    Reported as a disagreement rather than raised. A driver that crashes on a
+    malformed attribute stops the run instead of recording the defect.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def spectrum_ids(work: Path, case: str) -> list[str]:
     document = next((work / "out" / case).glob("*.mz*"))
     return [s["id"] for s in EV.inspect(document)["spectra"]]
@@ -653,24 +665,27 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
         [source_apexes(i) for i in range(len(plan))],
         [nonzero("X5", i) for i in range(len(plan))],
     )
-    # The declared lengths the record states, guarded rather than asserted. The
-    # surplus over the apex counts is the default picker's zero-intensity
-    # padding, which is why the two figures differ and why both are recorded.
+    # The declared lengths, on both sides of the comparison the record makes:
+    # `X1` carries the source's point counts and `X5` carries the picker's. The
+    # surplus of `X5`'s over its apex counts is the default picker's
+    # zero-intensity padding, which is why the two figures differ and why the
+    # record states both.
+    #
+    # An earlier revision named this check for `X5` and read `X1`, so both sides
+    # held the source's numbers and it could not fail -- the exact shape it was
+    # added to guard against.
+    def declared(case: str) -> list[int | None]:
+        return [
+            declared_int(spectrum["declared_length"])
+            for spectrum in results[case]["inspected"]["spectra"]
+        ]
+
+    note("X1 declares the source's point counts", [14, 7, 21, 7], declared("X1"))
+    note("X5 declares the picker's, and they are the record's", [4, 1, 7, 1], declared("X5"))
     note(
-        "X5 declares the picked lengths, not the source's",
-        [len(source(i, "mz")) for i in range(len(plan))],
-        [int(s["declared_length"]) for s in results["X1"]["inspected"]["spectra"]],
-    )
-    note(
-        "and X5's are shorter in every spectrum",
+        "X5's apex counts sit under its declared lengths, the surplus being padding",
         [True] * len(plan),
-        [
-            int(x5["declared_length"]) < int(x1["declared_length"])
-            for x5, x1 in zip(
-                results["X5"]["inspected"]["spectra"],
-                results["X1"]["inspected"]["spectra"],
-            )
-        ],
+        [len(source_apexes(i)) <= (declared("X5")[i] or 0) for i in range(len(plan))],
     )
 
     # ------------------------------------------------- structural health per case
@@ -796,8 +811,6 @@ def main() -> int:
             print(f"  {line}", file=sys.stderr)
         return 1
 
-    report_at = args.report.resolve()
-
     with tempfile.TemporaryDirectory(prefix="m62-") as scratch:
         work = Path(scratch)
         # The process working directory, pinned and created empty.
@@ -817,7 +830,6 @@ def main() -> int:
         # assertion here would be unfalsifiable, and `python -O` would strip it
         # anyway -- neither is evidence. If a `--work` option is ever added, the
         # property stops being structural and needs a real check.
-        _ = report_at
         fixtures = work / "fixtures"
         written = EV.generate(fixtures)
         fixture_facts = {}

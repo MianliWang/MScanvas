@@ -77,8 +77,8 @@ reproduces M5.4's recorded stderr digest exactly.
 ### The decisive comparison, reproduced with the corrected tooling
 
 The whole M6.2 ledger was re-run against the executable above with the
-strengthened inspector and driver this slice delivers. **29 cases, 62
-independent confirmations, all 62 agree, no classification changed.**
+strengthened inspector and driver this slice delivers. **29 cases, 63
+independent confirmations, all 63 agree, no classification changed.**
 
 | Case | Source | argv between source and `--outdir` | Exit | `<scan>`/`<spectrum>` written | Run-level declaration | Survivor identities |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -506,7 +506,7 @@ python -B scripts/msconvert_evidence_run.py --report <file>
 | mzXML-producing cases, derived from the ledger | `4` — `X1`, `X2`, `X4`, `X5` |
 | Parsed outputs carrying a structural defect | `1` — `X2`, and its one defect is the run-level misdeclaration |
 | Entries in the pinned process working directory afterwards | **`0`** |
-| Independent confirmations recomputed from this run | **62 / 62 agree** |
+| Independent confirmations recomputed from this run | **63 / 63 agree** |
 | Executable identity checked **after** the run | byte length, digest, release and build date unchanged |
 
 **No classification changed.** The corrected tooling reproduced every M6.2
@@ -523,12 +523,20 @@ output names on disk, and the set of cases that produced a document. A check
 that cannot fail inflates a count without adding a confirmation, which is the
 defect this driver exists to prevent.
 
-**The count itself is not guarded, and cannot honestly be.** It is what the run
-printed, and reproducing it requires the executable, which repository validation
-does not have. So the number is stated **here**, where the run is described, and
-the summaries elsewhere link to this record rather than restating it — a figure
-repeated in five documents and derivable in none is the shape of the defect this
-slice spent its tooling budget removing. M6.2's own conclusions stay as they
+**The count itself is not guarded.** It is what the run printed, and reproducing
+it requires the executable, which repository validation does not have. A static
+guard over the driver's source is conceivable and would be brittle, so none is
+claimed. What is done instead is to keep the number in the **two evidence
+records that describe a run** — this one and M6.2's amendment — and to have every
+summary elsewhere link here rather than restate it. A figure repeated across five
+documents and derivable in none is the shape of the defect this slice spent its
+tooling budget removing.
+
+**And the number moved twice while this slice was under review**, from 52 to 60
+to 63. The increments are checks that were added because review found them
+missing — `K8`'s and `K10`'s outputs, the pinning of `K7` as the only
+unreadable one, and the three that separate what `X1` declares from what `X5`
+does — not the same measurements recounted. M6.2's own conclusions stay as they
 were written, and this record does not rewrite them.
 
 **The working-directory result is now a property the tooling enforces**, not a
