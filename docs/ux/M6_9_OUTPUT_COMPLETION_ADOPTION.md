@@ -267,6 +267,18 @@ row, on rows whose own label says the earlier failure is being kept. It is
 hidden for a row that has never been attempted, which is what the rule always
 meant.
 
+**An item with several outputs never says "the output" — including about its
+staging.** A fully finalized set settles as `published` without taking a
+listing, and that arm rendered the singular sentence one line above the item's
+own "N of N obtained a final name" and an N-row manifest. The claim's *scope* is
+the narrower lifecycle's to set; its *number* is not.
+
+**And the two failures that happen after a check passed do not deny the write.**
+A rename that did not land and a name something else took during the run both
+fell through to "the conversion did not finish, so no file was written", which
+contradicts the staged and integrity judgements printed beside them. Each says
+what actually happened now.
+
 **A refused member is a check that ran.** The shared predicate behind every
 "output-only validation" disclosure reads what an item judged, and it read only
 finalized and validated-not-published members — and, for a single output, only a
@@ -404,12 +416,14 @@ basename.
 
 ## Changed-path closure
 
-42 paths at this head: 32 of code and evidence and
-10 documents. Six of the forty-two are new. Re-derived at every head
+43 paths at this head: 33 of code and evidence and
+10 documents. Six of the forty-three are new. Re-derived at every head
 with `git diff --name-status` against the baseline rather than hand-maintained.
-It was wrong once and it is worth saying why: it was written before the rendered
-and native evidence existed, and it went on saying twenty-eight while the diff
-said forty-two. A reviewer found it by running the command this section names.
+It has been wrong twice and both are worth saying. It was first written before
+the rendered and native evidence existed and went on saying twenty-eight while
+the diff said forty-two. It then said forty-two after a repair added a
+forty-third path. Both times a reviewer found it by running the command this
+section names, which is the argument for deriving it rather than keeping it.
 
 **The attempt's own facts** — `crates/proteowizard/src/attempt.rs` (new): the
 identity, the observation phase, the four-way staged evidence and the process
@@ -456,7 +470,7 @@ and the M7/M8 seams it freezes), `0016` (the adoption relation this records),
 
 ## Validation
 
-Local gates at this head: frontend lint, typecheck, 1682 tests
+Local gates at this head: frontend lint, typecheck, 1685 tests
 across 70 files, build; `cargo fmt --all --check`; `cargo clippy
 --locked --workspace --all-targets --all-features -- -D warnings`; `cargo test
 --locked --workspace --all-targets` (1554 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.

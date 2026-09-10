@@ -129,7 +129,7 @@ export function processSentence(process: ConversionProcessOutcome): string {
  * never gave the converter anywhere to write, whether because none was made or
  * because one was made and torn down before anything was invoked.
  */
-export function stagedSentence(staged: ConversionStagedOutput): string {
+export function stagedSentence(staged: ConversionStagedOutput, outputCount = 1): string {
   switch (staged.kind) {
     case "notCreated":
       // What this establishes is that no converter was given a folder — which
@@ -182,7 +182,14 @@ export function stagedSentence(staged: ConversionStagedOutput): string {
       // lifecycle does -- discovery refuses a staging area holding anything
       // that is not a member -- but one sentence serves both, and it may only
       // claim what the narrower of the two knows.
-      return "The output was written to the temporary working folder and took its final name.";
+      //
+      // The *number*, though, is not the narrower one's to withhold: an item
+      // with several outputs never says "the output", and this arm was the last
+      // place one did -- one line above its own "10 of 10 obtained a final
+      // name" and a ten-row manifest.
+      return outputCount <= 1
+        ? "The output was written to the temporary working folder and took its final name."
+        : `All ${formatCount(outputCount)} outputs were written to the temporary working folder and took their final names.`;
   }
 }
 
@@ -529,7 +536,7 @@ export function ConversionItemJudgements({
         </div>
         <div>
           <dt>Staged output</dt>
-          <dd data-testid={`${id}-staged`}>{stagedSentence(item.staged)}</dd>
+          <dd data-testid={`${id}-staged`}>{stagedSentence(item.staged, manifest.length)}</dd>
         </div>
         <div>
           <dt>Finalized output</dt>

@@ -1760,6 +1760,17 @@ function failureSentence(report: ConversionReport): string {
   if (report.outcome === "output_rejected") {
     return "The converted file did not pass MSCanvas' integrity checks, so it was discarded.";
   }
+  // The two failures that happen strictly *after* the check returned a valid
+  // output. A file was written and judged, and only giving it its final name
+  // failed -- so the generic "the conversion did not finish, so no file was
+  // written" below is false of both, and contradicts the item's own staged and
+  // integrity judgements.
+  if (report.outcome === "output_not_finalized") {
+    return "The converted file passed MSCanvas' integrity checks, and giving it its final name failed, so it was not published.";
+  }
+  if (report.outcome === "destination_appeared_during_run") {
+    return "A file of that name appeared in that folder while the conversion was running, so the converted file was left unpublished rather than replacing it.";
+  }
   switch (report.detailedOutcome) {
     case "destination_exists":
       return "A file of that name is already in that folder, so nothing was converted.";

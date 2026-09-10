@@ -611,6 +611,95 @@ describe("the five judgements of one queue item", () => {
     ).toBeVisible();
   });
 
+  it("says how many outputs a finalized set published, not \"the output\"", async () => {
+    // A fully finalized set skips the listing and settles as `published`, so
+    // the staged sentence is the one place a multi-output item could still say
+    // "the output" -- one line above its own "N of N obtained a final name" and
+    // an N-row manifest.
+    const names = ["d-S1.mzML", "d-S2.mzML", "d-S3.mzML"];
+    const whole = outputSetReport("file-16", names);
+    const api = terminalApi(
+      [
+        sciexQueueItem("file-16", "Enolase_whole.wiff", {
+          state: "finalized",
+          attempts: 1,
+          result: { kind: "outputSet", report: whole },
+          ...finalizedAttemptFacts("000000000000000100000000000000f6"),
+        }),
+      ],
+      [bundle],
+    );
+    renderApp(api);
+    const result = await queueResult();
+
+    const details = openDetails(rowFor(result, "Enolase_whole.wiff"));
+    expect(
+      within(details).getByText(
+        "All 3 outputs were written to the temporary working folder and took their final names.",
+      ),
+    ).toBeVisible();
+    // The two sentences agree on the number.
+    expect(
+      within(details).getByText(/3 of 3 discovered output files obtained a final name\./),
+    ).toBeVisible();
+    expect(details.textContent).not.toContain(
+      "The output was written to the temporary working folder",
+    );
+  });
+
+  it.each([
+    {
+      outcome: "output_not_finalized",
+      says: "The converted file passed MSCanvas' integrity checks, and giving it its final name failed, so it was not published.",
+    },
+    {
+      outcome: "destination_appeared_during_run",
+      says: "A file of that name appeared in that folder while the conversion was running, so the converted file was left unpublished rather than replacing it.",
+    },
+  ])(
+    "does not tell a $outcome row that no file was written",
+    async ({ outcome, says }) => {
+      // Both happen strictly after the integrity judgement returned a valid
+      // output: a file was written and checked, and only the final name
+      // failed. The generic sentence denied the write, one line from the
+      // item's own staged and integrity judgements saying otherwise.
+      const api = terminalApi(
+        [
+          queueItem("file-9", "run-9.raw", {
+            state: "failed",
+            attempts: 1,
+            retryable: false,
+            result: {
+              kind: "single" as const,
+              report: {
+                datasetHandle: "file-9",
+                sourceKind: "thermo_raw",
+                outcome,
+                detailedOutcome: outcome,
+                outputFileName: null,
+                output: null,
+                validationMode: "output_only",
+                validation: null,
+                backend: { exitCode: 0, elapsedMilliseconds: 800 },
+                stagingResidue: null,
+                receipt: 1,
+              },
+            },
+            ...failedAttemptFacts(true, "000000000000000100000000000000f7"),
+          }),
+        ],
+        [acquisition(9)],
+      );
+      renderApp(api);
+      const result = await queueResult();
+
+      expect(within(result).getByText(says)).toBeVisible();
+      expect(result.textContent).not.toContain(
+        "The conversion did not finish, so no file was written.",
+      );
+    },
+  );
+
   it("does not tell a skipped set that nothing was written", async () => {
     // A set is skipped only after its members were written into the working
     // folder and validated there: the occupied names are compared against the
