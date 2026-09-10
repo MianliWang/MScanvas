@@ -1854,6 +1854,48 @@ M63_INTENT_ROW = re.compile(
 )
 
 
+M610_RECORD = "docs/spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md"
+
+# The four routes criterion 11 closes, and the set is closed. Pinned here rather
+# than counted from the document, because a record that lost a row would
+# otherwise be checked against itself and agree.
+M610_ROUTES: tuple[str, ...] = (
+    "CNV-002 mzXML output",
+    "Vendor-format direct preview",
+    "Any further vendor family",
+    "VIEW-007 conditional XIC re-entry",
+)
+
+# The only dispositions criterion 11 accepts. Criterion 11 itself is never
+# refused or evidence-blocked; these are the *inner* states a route may end in.
+M610_DISPOSITIONS: frozenset[str] = frozenset(
+    {
+        "ADMITTED",
+        "REFUSED_WITH_EVIDENCE",
+        "EVIDENCE_BLOCKED",
+    }
+)
+
+# Tokens that describe a route as still open. None is terminal, and an undisposed
+# route is the one outcome this slice exists to prevent -- so a ledger that ends
+# a route on any of them fails rather than reads.
+M610_NON_TERMINAL: tuple[str, ...] = (
+    "PENDING",
+    "DEFERRED_WITH_OWNER",
+    "NOT_TRIGGERED",
+)
+
+# The named route-specific outcomes that already existed, and the route each
+# belongs to. They are preserved and mapped rather than replaced: a competing
+# status invented beside CNV-D1's or M5.4's would be a second vocabulary for one
+# answer.
+M610_NAMED_OUTCOMES: tuple[tuple[str, str], ...] = (
+    ("CNV-002 mzXML output", "MZXML_REFUSED"),
+    ("VIEW-007 conditional XIC re-entry", "XIC_SOURCE_REFUSED"),
+)
+
+M610_ROUTE_OUTCOMES: frozenset[str] = frozenset({"SIDE_ROUTES_DISPOSITIONED"})
+
 M62_SPIKE = "docs/spikes/M6_MSCONVERT_CAPABILITY_EVIDENCE.md"
 M62_ROUTE = "docs/architecture/adr/0043-conversion-completion-route.md"
 
@@ -2387,6 +2429,30 @@ def _validate_the_msconvert_case_ledger(spike_text: str, errors: list[str]) -> N
             errors,
         )
 
+    _validate_the_record_carries_every_ledger_field(ledger, declared, spike_text, errors)
+
+
+def _validate_the_record_carries_every_ledger_field(
+    ledger: object, declared: tuple[str, ...], spike_text: str, errors: list[str]
+) -> None:
+    """The record's case table and the committed ledger agree on **every** field.
+
+    This is M6.10's correction, and the size of what it replaced is the reason
+    for it. M6.2's guard compared two of a case's seven declared fields -- its id
+    and its output format -- so a row could name the wrong fixture, the wrong
+    argv, the wrong output name or a posture the run never had, and read as
+    agreeing with the ledger it contradicted. M6.2 verified all seven by hand
+    and recorded that the guard did not.
+
+    The comparison is against text the ledger itself renders, not against a
+    second description of the formatting written here. A validator that
+    re-described the markup would be a second spelling of the ledger, free to
+    agree with a document the ledger does not.
+
+    Nothing below reads what a row argues. That a row says what the ledger says
+    is structure; whether the measurement behind it was any good stays a matter
+    for review.
+    """
     table = _first_markdown_table(spike_text, "### The measured cases")
     if table is None:
         fail(
@@ -2397,11 +2463,17 @@ def _validate_the_msconvert_case_ledger(spike_text: str, errors: list[str]) -> N
         )
         return
     header, body = _table_header_and_body(table)
-    at = _column_index(header, "Case", f"{M62_SPIKE} measured cases", errors)
-    format_at = _column_index(header, "Format", f"{M62_SPIKE} measured cases", errors)
-    if at is None or format_at is None:
+    expected_header = [name for name, _ in ledger.RECORD_COLUMNS]
+    if [cell.strip() for cell in header] != expected_header:
+        fail(
+            f"{M62_SPIKE}: the measured-cases table names columns "
+            f"{[cell.strip() for cell in header]}, not the ledger's record contract "
+            f"{expected_header}. Every column is a field the rows are compared on, so a "
+            "renamed or missing one silently stops that field being checked",
+            errors,
+        )
         return
-    listed = tuple(_bare(row[at]) for row in body if len(row) > at)
+    listed = tuple(_bare(row[0]) for row in body if row)
     if listed != declared:
         missing = sorted(set(declared) - set(listed))
         extra = sorted(set(listed) - set(declared))
@@ -2419,24 +2491,29 @@ def _validate_the_msconvert_case_ledger(spike_text: str, errors: list[str]) -> N
             errors,
         )
         return
-    formats = {
-        _bare(row[at]): _bare(row[format_at]) for row in body if len(row) > format_at
-    }
-    disagreed = sorted(
-        case.case
-        for case in ledger.CASES
-        if formats.get(case.case) != case.output_format
-    )
-    if disagreed:
-        fail(
-            f"{M62_SPIKE}: the measured-cases table gives "
-            + ", ".join(
-                f"`{name}` as {formats.get(name)!r} where the ledger says "
-                f"{next(c.output_format for c in ledger.CASES if c.case == name)!r}"
-                for name in disagreed
+
+    disagreements: list[str] = []
+    for case, row in zip(ledger.CASES, body):
+        if len(row) != len(expected_header):
+            disagreements.append(
+                f"`{case.case}` has {len(row)} cells where the contract has "
+                f"{len(expected_header)}"
             )
-            + ". The mzXML count is derived from these formats, so a row that disagrees "
-            "makes the count wrong wherever it is stated",
+            continue
+        for (column, _), expected, found in zip(
+            ledger.RECORD_COLUMNS, ledger.record_row(case), row
+        ):
+            if expected != found.strip():
+                disagreements.append(
+                    f"`{case.case}` gives {column} as {found.strip()!r} where the ledger "
+                    f"says {expected!r}"
+                )
+    if disagreements:
+        fail(
+            f"{M62_SPIKE}: the measured-cases table disagrees with the committed ledger -- "
+            + "; ".join(disagreements)
+            + ". A row that states a fixture, an argv, an output name or a posture the "
+            "ledger does not is a measurement the record describes and nothing performed",
             errors,
         )
 
@@ -2848,6 +2925,434 @@ def validate_the_msconvert_capability_evidence_is_closed(errors: list[str]) -> N
                 errors,
             )
 
+
+
+def validate_the_m610_side_routes_are_all_terminal(errors: list[str]) -> None:
+    """Four conditional routes, each ending in a state criterion 11 accepts.
+
+    Exit criterion 11 is the one place in M6 where the obligation is to *answer*
+    rather than to admit. It passes when the closed set of four routes is
+    completely dispositioned and not before, so what has to be guarded is not
+    which answer a route reached but that it reached one at all -- and that the
+    word it reached is a terminal one rather than a token that merely sounds
+    like a decision.
+
+    Four properties:
+
+    1. The record exists, states exactly one route outcome, and carries the
+       terminal ledger as a table rather than as prose. A checker that cannot
+       find the table fails; it does not pass quietly, which is the failure mode
+       this whole family of guards was corrected for.
+    2. The ledger's rows are exactly the four closed routes, once each.
+    3. Every route's disposition is one of the three criterion 11 defines, and no
+       route ends on `PENDING`, `DEFERRED_WITH_OWNER` or `NOT_TRIGGERED`.
+    4. The two routes that inherit a named outcome still name it, so CNV-D1's
+       and M5.4's vocabularies are mapped rather than replaced.
+
+    Nothing here reads whether a disposition is *justified*. That a route was
+    answered is structure; whether the evidence supports the answer stays a
+    matter for review.
+    """
+    record_path = ROOT / M610_RECORD
+    if not record_path.is_file():
+        fail(
+            f"{M610_RECORD} is missing. It is M6.10's owning ledger and the only place exit "
+            "criterion 11 is answered from; without it four conditional routes are open and "
+            "nothing says so",
+            errors,
+        )
+        return
+    _check_the_m610_ledger(record_path.read_text(encoding="utf-8"), errors)
+
+
+def _check_the_m610_ledger(record_text: str, errors: list[str]) -> None:
+    """The four properties above, over one record's text.
+
+    Split from its caller so the proofs below can run it against copies that
+    break it. A guard nobody has seen fail is not yet evidence of anything.
+    """
+    outcomes = re.findall(r"\*\*Route outcome: `([A-Z_][A-Z0-9_]*)`\.\*\*", record_text)
+    if len(outcomes) != 1:
+        fail(
+            f"{M610_RECORD} declares {len(outcomes)} route outcomes, not 1. The record states "
+            "exactly one answer for itself",
+            errors,
+        )
+    elif outcomes[0] not in M610_ROUTE_OUTCOMES:
+        fail(
+            f"{M610_RECORD} declares route outcome `{outcomes[0]}`, which is not one M6.10 "
+            "defines (" + ", ".join(f"`{name}`" for name in sorted(M610_ROUTE_OUTCOMES))
+            + "). A token that resembles an outcome is not one",
+            errors,
+        )
+
+    table = _first_markdown_table(record_text, "## The terminal ledger")
+    if table is None:
+        fail(
+            f"{M610_RECORD} has no `## The terminal ledger` table. The dispositions are the "
+            "record's whole content, and prose that discusses them is not a ledger",
+            errors,
+        )
+        return
+    header, body = _table_header_and_body(table)
+    where = f"{M610_RECORD} terminal ledger"
+    columns = {
+        name: _column_index(header, name, where, errors)
+        for name in ("Route", "Shipped availability today", "Disposition")
+    }
+    if any(index is None for index in columns.values()):
+        return
+
+    ragged = [row for row in body if len(row) != len(header)]
+    if ragged:
+        fail(
+            f"{M610_RECORD}: {len(ragged)} row(s) of the terminal ledger have a cell count "
+            f"the header's {len(header)} does not match. A ragged row shifts a route's "
+            "disposition onto the wrong column",
+            errors,
+        )
+        return
+
+    listed = [_bare(row[columns["Route"]]) for row in body]
+    if listed != list(M610_ROUTES):
+        missing = sorted(set(M610_ROUTES) - set(listed))
+        extra = sorted(set(listed) - set(M610_ROUTES))
+        detail = []
+        if missing:
+            detail.append("omits " + ", ".join(repr(name) for name in missing))
+        if extra:
+            detail.append("adds " + ", ".join(repr(name) for name in extra))
+        if not detail:
+            detail.append("lists them in a different order")
+        fail(
+            f"{M610_RECORD}: the terminal ledger {'; '.join(detail)} against the closed set "
+            "of four conditional routes. A route that leaves the ledger is a question the "
+            "next milestone inherits without knowing it has",
+            errors,
+        )
+        return
+
+    for row in body:
+        route = _bare(row[columns["Route"]])
+        disposition = _bare(row[columns["Disposition"]])
+        if disposition not in M610_DISPOSITIONS:
+            opened = [name for name in M610_NON_TERMINAL if name in disposition]
+            because = (
+                f" `{opened[0]}` is not terminal; it is the ending criterion 11 exists to "
+                "prevent."
+                if opened
+                else ""
+            )
+            fail(
+                f"{M610_RECORD}: the route {route!r} ends {disposition!r}, which is not one "
+                "of the three dispositions criterion 11 accepts ("
+                + ", ".join(f"`{name}`" for name in sorted(M610_DISPOSITIONS))
+                + f").{because} Reaching one is required; being admitted is not",
+                errors,
+            )
+        if not _bare(row[columns["Shipped availability today"]]):
+            fail(
+                f"{M610_RECORD}: the route {route!r} states no shipped availability. A "
+                "disposition and what the product actually offers are two facts, and a "
+                "record that gives only the first invites the other to be inferred from it",
+                errors,
+            )
+
+    dispositions = {_bare(row[columns["Route"]]): row for row in body}
+    for route, named in M610_NAMED_OUTCOMES:
+        row = dispositions.get(route)
+        if row is not None and not any(named in cell for cell in row):
+            fail(
+                f"{M610_RECORD}: the route {route!r} does not name `{named}`, the outcome it "
+                "already had. A criterion 11 disposition maps an existing named outcome; it "
+                "does not replace it with a competing status",
+                errors,
+            )
+
+
+# One mutation per decision the tooling claims to make, written as the smallest
+# edit that would defeat it. Each is (name, before, after) against the M6.2
+# record's text; the guard must report every one.
+M62_RECORD_MUTATIONS: tuple[tuple[str, str, str], ...] = (
+    (
+        "a row names a fixture the case never converted",
+        "| `X2` | format | `m62-multisource.mzML` |",
+        "| `X2` | format | `m62-profile.mzML` |",
+    ),
+    (
+        "a row states argv the case never ran",
+        "| `P5` | precision | `m62-profile.mzML` | `--mz32` `--inten64` |",
+        "| `P5` | precision | `m62-profile.mzML` | `--mz64` `--inten64` |",
+    ),
+    (
+        "a row states an output name the case did not ask for",
+        "| `X4` | format | `m62-profile.mzML` | `--mzXML` `--64` | mzXML | *backend-named* |",
+        "| `X4` | format | `m62-profile.mzML` | `--mzXML` `--64` | mzXML | `out.mzXML` |",
+    ),
+    (
+        "a failing case is recorded as a successful one",
+        "exit 1, unterminated partial output |",
+        "exit 0 |",
+    ),
+    (
+        "a column the rows are compared on is renamed away",
+        "| Case | Family | Fixture | Arguments between source and `--outdir` |",
+        "| Case | Family | Source | Arguments between source and `--outdir` |",
+    ),
+)
+
+# The same, against M6.10's own ledger.
+M610_LEDGER_MUTATIONS: tuple[tuple[str, str, str], ...] = (
+    (
+        "a route ends on a token that is not terminal",
+        "| **`REFUSED_WITH_EVIDENCE`** | CNV-D1's **`MZXML_REFUSED`** |",
+        "| **`PENDING`** | CNV-D1's **`MZXML_REFUSED`** |",
+    ),
+    (
+        "a route is deferred to an owner instead of answered",
+        "| **`EVIDENCE_BLOCKED`** | — (criterion 11 vocabulary only) |",
+        "| **`DEFERRED_WITH_OWNER`** | — (criterion 11 vocabulary only) |",
+    ),
+    (
+        "a route's inherited named outcome is replaced by a competing status",
+        "M5.4's **`XIC_SOURCE_REFUSED`**, retained",
+        "**`XIC_ROUTE_CLOSED`**",
+    ),
+    (
+        "the ledger stops saying what the product actually offers",
+        "| **Unavailable.** `open_preview` refuses a non-previewable family with `dataset_not_previewable` before any backend runs |",
+        "|  |",
+    ),
+    (
+        "the ledger becomes prose",
+        "## The terminal ledger",
+        "## The terminal narrative",
+    ),
+)
+
+
+def validate_the_evidence_tooling_detects_what_it_claims(errors: list[str]) -> None:
+    """The M6.10 tooling is run against inputs it is supposed to refuse.
+
+    Three checks are proved here, and the reason is the same for all of them:
+    M6.2 shipped an inspector whose *silence* was mistaken for a certificate,
+    and a guard that compared two of a case's seven fields while its own
+    docstring described the ledger as checked. Neither failure was visible,
+    because neither check had ever been seen to fail.
+
+    So each decision is exercised against the smallest input that would defeat
+    it -- a payload with a character outside the base64 alphabet, a spectrum
+    missing a required array, a run-level count standing over the wrong number
+    of elements, a case row stating a fixture or a posture the ledger does not,
+    and a route ending on a word that is not terminal. This is a proof that the
+    checks discriminate, not a competition to find bypasses: each mutation is
+    one decision, and there is no reward for adding a sixth spelling of one that
+    is already covered.
+
+    The controls matter as much as the mutations. An unmodified document must
+    pass, or a failure below would prove only that the copy was broken.
+    """
+    import struct
+    import tempfile
+
+    ledger = _msconvert_ledger(errors)
+    if ledger is None:
+        return
+
+    # ---------------------------------------------------------- the inspector
+    with tempfile.TemporaryDirectory(prefix="mscanvas-evidence-tooling-") as scratch:
+        room = Path(scratch)
+        try:
+            ledger.generate(room / "fixtures")
+        except Exception as error:  # noqa: BLE001 - a generator that cannot run is the finding
+            fail(
+                f"scripts/msconvert_evidence.py cannot generate its fixtures, so nothing "
+                f"below proves anything about the inspector: {type(error).__name__}",
+                errors,
+            )
+            return
+        healthy = (room / "fixtures" / "m62-profile.mzML").read_text(encoding="utf-8")
+
+        def defects_of(name: str, text: str) -> list[str] | None:
+            target = room / f"{name}.mzML"
+            target.write_text(text, encoding="utf-8", newline="")
+            try:
+                return list(ledger.inspect(target)["defects"])
+            except Exception:  # noqa: BLE001 - a document that does not parse is a result
+                return None
+
+        control = defects_of("control", healthy)
+        if control is None or control:
+            fail(
+                "the M6.2 inspector reports a defect in the fixture it generates itself, so "
+                f"its refusals below prove nothing: {control}",
+                errors,
+            )
+            return
+
+        # Characters outside the base64 alphabet, inserted **four at a time** so
+        # the payload's length stays a multiple of four. That is the isolating
+        # mutation: one stray character is caught by the length rule instead, and
+        # a proof that passed through the length rule would say nothing about
+        # strict validation. Four are dropped silently by a non-validating
+        # decoder, which returns the original bytes and reads as healthy -- the
+        # exact case M6.2 recorded and could not detect.
+        at = healthy.index("<binary>") + len("<binary>")
+        stray = defects_of("stray", healthy[:at] + "$$$$" + healthy[at:])
+        if not stray or not any("base64" in defect for defect in stray):
+            fail(
+                "the M6.2 inspector accepts a binary payload carrying a character outside "
+                f"the base64 alphabet: {stray}. Discarding it silently is the gap M6.2 "
+                "recorded and M6.10 owns",
+                errors,
+            )
+
+        # A spectrum that carries only one of the two required arrays.
+        one_array = re.sub(
+            r" {10}<binaryDataArray encodedLength=.*?</binaryDataArray>\n",
+            "",
+            healthy,
+            count=1,
+            flags=re.S,
+        )
+        missing = defects_of("missing", one_array)
+        if one_array == healthy:
+            fail(
+                "the M6.2 inspector proof cannot remove an array from the generated fixture, "
+                "so the missing-array decision is unexercised",
+                errors,
+            )
+        elif not missing or not any("carries no" in defect for defect in missing):
+            fail(
+                "the M6.2 inspector reports a spectrum missing a required array as healthy: "
+                f"{missing}. No malformed flag and no length disagreement is exactly how M6.2 "
+                "found it",
+                errors,
+            )
+
+        # A run-level count standing over a different number of elements: the
+        # mzML twin of the `msRun/@scanCount` misdeclaration `X2` writes.
+        miscounted = defects_of(
+            "miscounted", healthy.replace('<spectrumList count="4"', '<spectrumList count="7"', 1)
+        )
+        if not miscounted or not any("declares count=7" in defect for defect in miscounted):
+            fail(
+                "the M6.2 inspector does not report a run-level count standing over a "
+                f"different number of spectrum elements: {miscounted}. A consumer trusting "
+                "that count reads a short document as a complete conversion",
+                errors,
+            )
+
+        # A declared per-spectrum length the stored arrays do not have.
+        mislengthed = defects_of(
+            "mislengthed", healthy.replace('defaultArrayLength="14"', 'defaultArrayLength="17"', 1)
+        )
+        if not mislengthed or not any("declares 17 values" in defect for defect in mislengthed):
+            fail(
+                "the M6.2 inspector does not report a spectrum declaring one length and "
+                f"storing another: {mislengthed}",
+                errors,
+            )
+
+        # The same run-level rule on the format it was written for. A small
+        # hand-built document, because producing one needs the provider and this
+        # check is about the reader.
+        payload = base64_of(struct.pack(">2d", 300.0, 100.0))
+        mzxml = (
+            '<?xml version="1.0" encoding="utf-8"?>\n'
+            '<mzXML xmlns="http://sashimi.sourceforge.net/schema_revision/mzXML_3.2">\n'
+            '  <msRun scanCount="4">\n'
+            '    <scan num="1" msLevel="1" peaksCount="1" retentionTime="PT60S">\n'
+            '      <peaks precision="64" byteOrder="network" contentType="m/z-int" '
+            f'compressionType="none">{payload}</peaks>\n'
+            "    </scan>\n"
+            "  </msRun>\n"
+            "</mzXML>\n"
+        )
+        target = room / "declared.mzXML"
+        target.write_text(mzxml, encoding="utf-8", newline="")
+        try:
+            reported = list(ledger.inspect(target)["defects"])
+        except Exception as error:  # noqa: BLE001
+            reported = [f"<did not parse: {type(error).__name__}>"]
+        if not any("scanCount=4" in defect for defect in reported):
+            fail(
+                "the M6.2 inspector does not read `msRun/@scanCount` beside the scan elements "
+                f"actually written: {reported}. This is the exact misdeclaration `X2` produces, "
+                "and the reason its drop reproduced through the old harness while its hollow "
+                "count did not",
+                errors,
+            )
+
+    # ------------------------------------------- the ledger / record contract
+    spike_path = ROOT / M62_SPIKE
+    if spike_path.is_file():
+        spike_text = spike_path.read_text(encoding="utf-8")
+        declared = tuple(case.case for case in ledger.CASES)
+        control = []
+        _validate_the_record_carries_every_ledger_field(ledger, declared, spike_text, control)
+        if control:
+            fail(
+                "the ledger/record contract fails against the unmodified record, so its "
+                f"proofs below mean nothing: {control[0]}",
+                errors,
+            )
+        else:
+            for name, before, after in M62_RECORD_MUTATIONS:
+                if spike_text.count(before) != 1:
+                    fail(
+                        f"the ledger/record contract cannot prove it detects '{name}': its "
+                        f"anchor no longer appears exactly once in {M62_SPIKE}",
+                        errors,
+                    )
+                    continue
+                detected: list[str] = []
+                _validate_the_record_carries_every_ledger_field(
+                    ledger, declared, spike_text.replace(before, after), detected
+                )
+                if not detected:
+                    fail(
+                        f"the ledger/record contract does not detect '{name}'; a record may "
+                        "therefore describe a measurement nothing performed",
+                        errors,
+                    )
+
+    # -------------------------------------------------- the M6.10 disposition
+    record_path = ROOT / M610_RECORD
+    if record_path.is_file():
+        record_text = record_path.read_text(encoding="utf-8")
+        control = []
+        _check_the_m610_ledger(record_text, control)
+        if control:
+            fail(
+                "the M6.10 terminal-ledger guard fails against the unmodified record, so its "
+                f"proofs below mean nothing: {control[0]}",
+                errors,
+            )
+            return
+        for name, before, after in M610_LEDGER_MUTATIONS:
+            if record_text.count(before) != 1:
+                fail(
+                    f"the M6.10 terminal-ledger guard cannot prove it detects '{name}': its "
+                    f"anchor no longer appears exactly once in {M610_RECORD}",
+                    errors,
+                )
+                continue
+            detected = []
+            _check_the_m610_ledger(record_text.replace(before, after), detected)
+            if not detected:
+                fail(
+                    f"the M6.10 terminal-ledger guard does not detect '{name}'; a route could "
+                    "therefore be left open while the record reads as closed",
+                    errors,
+                )
+
+
+def base64_of(payload: bytes) -> str:
+    """Standard base64, for the small documents the proofs above hand-build."""
+    import base64
+
+    return base64.b64encode(payload).decode("ascii")
 
 def _validate_the_msconvert_route_acceptance_is_current(
     route_text: str, errors: list[str]
@@ -4832,6 +5337,8 @@ def main() -> int:
         validate_the_xic_route_outcome_has_one_answer(errors)
         validate_one_candidate_evidence_dimension_vocabulary(errors)
         validate_the_msconvert_capability_evidence_is_closed(errors)
+        validate_the_m610_side_routes_are_all_terminal(errors)
+        validate_the_evidence_tooling_detects_what_it_claims(errors)
         validate_the_admitted_intent_table_cites_measurements_that_support_it(errors)
         validate_the_cancellation_claim_has_one_origin(errors)
         validate_current_status_documents_describe_the_shipped_product(errors)

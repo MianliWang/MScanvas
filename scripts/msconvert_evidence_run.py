@@ -22,10 +22,26 @@ What it guarantees, in order:
    mid-measurement would otherwise inherit observations it never made;
 3. every case runs in a **fresh empty directory**, so anything besides the
    requested output is visible rather than assumed absent;
-4. argv is passed as a list and never as a shell string;
-5. the produced document is read back by the shared inspector;
-6. the emitted report carries no absolute path, and the working tree is removed
+4. every case runs from **one pinned working directory**, created empty and
+   enumerated afterwards, so a file written beside the caller rather than into
+   `--outdir` is visible too -- and the report is written outside it, so the
+   driver's own file is not one of the entries this measurement is about;
+5. argv is passed as a list and never as a shell string;
+6. the produced document is read back by the shared inspector, and every case's
+   exit status, output name and directory contents are compared against the row
+   that asked for them;
+7. the emitted report carries no absolute path, and the working tree is removed
    once the facts are captured.
+
+**M6.10 rewrote the checks rather than adding to them.** M6.2 recorded that
+`verify()` re-answered the confirmations that slice owed and not the bases its
+classifications rested on, and enumerated the gaps: one spectrum and one array
+for the picker, ids and not values for the MS-level filters, `P1`/`P2` run and
+never shaped, `K5`/`K6` and `K12` run and never compared, one array of one
+spectrum for compression, a posture copied rather than compared, and a working
+directory nothing pinned. Every one of those is closed, and an equality taken
+over an array that decoded to nothing is now a disagreement rather than a
+vacuous pass.
 
 Standard library only, and no network.
 
@@ -149,8 +165,17 @@ def normalized_argv(case: Any, fixture: Path, out: Path) -> list[str]:
     return argv
 
 
-def run_case(case: Any, msconvert: Path, fixtures: Path, work: Path) -> dict[str, Any]:
-    """One conversion, in a directory that did not exist a moment ago."""
+def run_case(
+    case: Any, msconvert: Path, fixtures: Path, work: Path, provider_cwd: Path
+) -> dict[str, Any]:
+    """One conversion, in a directory that did not exist a moment ago.
+
+    Two directories are watched rather than one. `--outdir` is where the output
+    is asked for; `provider_cwd` is where the process is actually started, and a
+    file written beside the caller instead of into the output directory would be
+    invisible to a driver that enumerated only the first. M6.2 measured that by
+    hand and recorded that the tooling did not pin it; this pins it.
+    """
     out = work / "out" / case.case
     out.mkdir(parents=True)
     fixture = fixtures / case.fixture
@@ -159,7 +184,9 @@ def run_case(case: Any, msconvert: Path, fixtures: Path, work: Path) -> dict[str
         argv += ["--outfile", case.output_name]
     # A list, never a string. The boundary this repository defends everywhere
     # else is defended here too, even though this side is a developer tool.
-    completed = subprocess.run(argv, capture_output=True, check=False, shell=False)
+    completed = subprocess.run(
+        argv, capture_output=True, check=False, shell=False, cwd=str(provider_cwd)
+    )
 
     entries = sorted(path.name for path in out.iterdir())
     record: dict[str, Any] = {
@@ -168,7 +195,9 @@ def run_case(case: Any, msconvert: Path, fixtures: Path, work: Path) -> dict[str
         "fixture": case.fixture,
         "argv": normalized_argv(case, fixture, out),
         "output_format": case.output_format,
+        "expected_output_name": case.output_name,
         "posture": case.posture,
+        "expected_exit": expected_exit(case),
         "purpose": case.purpose,
         "exit": completed.returncode,
         "stdout_bytes": len(completed.stdout),
@@ -194,6 +223,59 @@ def run_case(case: Any, msconvert: Path, fixtures: Path, work: Path) -> dict[str
         else:
             record["inspected"] = summarize(facts)
     return record
+
+
+def expected_exit(case: Any) -> int:
+    """The exit status a case's declared posture states, as a number.
+
+    The ledger states a posture in the record's own words, and until now only
+    two cases had that posture compared against anything. Parsed here rather
+    than re-listed, so a posture that changes changes the comparison with it.
+    """
+    posture = case.posture.strip()
+    if posture.startswith("exit "):
+        return int(posture[len("exit ") :].split(",")[0].strip())
+    raise ValueError(f"{case.case} declares a posture with no exit status: {posture!r}")
+
+
+def case_defects(case: Any, record: dict[str, Any]) -> list[str]:
+    """Everything one run did that its own ledger row did not describe.
+
+    Posture, output naming and directory contents, checked per case rather than
+    summarized. The old driver copied `posture` into the report and compared it
+    for two of twenty-nine cases; naming and directory contents were counted but
+    never held against what the row asked for.
+    """
+    found: list[str] = []
+    if record["exit"] != record["expected_exit"]:
+        found.append(
+            f"{case.case} exited {record['exit']} against its declared posture "
+            f"{case.posture!r}"
+        )
+    produced = record.get("output_name")
+    if case.output_name is not None and produced != case.output_name:
+        found.append(
+            f"{case.case} asked for {case.output_name!r} and produced {produced!r}"
+        )
+    if produced is not None and not produced.lower().endswith(
+        f".{case.output_format.lower()}"
+    ):
+        found.append(
+            f"{case.case} declares {case.output_format} and produced {produced!r}"
+        )
+    entries = record["directory_entries"]
+    if entries != ([produced] if produced is not None else []):
+        found.append(
+            f"{case.case} left {entries!r} in its output directory, not exactly its "
+            f"one output"
+        )
+    inspected = record.get("inspected")
+    if inspected is not None and inspected["format"] != case.output_format:
+        found.append(
+            f"{case.case} declares {case.output_format} and its output reads as "
+            f"{inspected['format']}"
+        )
+    return found
 
 
 def summarize(facts: dict[str, Any]) -> dict[str, Any]:
@@ -235,6 +317,11 @@ def summarize(facts: dict[str, Any]) -> dict[str, Any]:
     return {
         "format": facts["format"],
         "spectrum_count": facts["spectrum_count"],
+        # The run-level declaration, carried beside the count actually written.
+        # A report that held only one of the two could not distinguish a short
+        # document from an honest one.
+        "declared_spectrum_count": facts["declared_spectrum_count"],
+        "defects": facts["defects"],
         "source_file_count": len(facts["source_files"]),
         "processing": [
             {"software": method["software"], "cv": [c["name"] for c in method.get("cv", [])],
@@ -265,14 +352,32 @@ def spectrum_ids(work: Path, case: str) -> list[str]:
 
 
 def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any]]:
-    """Every claim the record makes that a rerun can independently re-answer."""
+    """Every claim the record makes that a rerun can independently re-answer.
+
+    M6.2 recorded exactly what this function was and was not. Its thirty-three
+    checks were the confirmations that slice had to reproduce; they were not the
+    bases its classifications rested on, and review enumerated gap after gap --
+    a picker check reading one spectrum and one array, MS-level checks comparing
+    ids and not values, `P1` and `P2` run and never shaped, `K5`/`K6` and `K12`
+    run and never compared, compression read from one array of one spectrum, and
+    a posture copied into the report rather than compared.
+
+    Every one of those is closed here, and closed the same way: over **every**
+    relevant spectrum and **both** arrays, against two references computed from
+    the fixture rather than from the output -- the source `float64` value and its
+    exact `binary32` image. An equality taken over an empty array would pass
+    vacuously, so every array a comparison reads is recorded and an empty one is
+    a disagreement in its own right.
+    """
     import struct
 
     def f32(value: float) -> float:
         return struct.unpack("<f", struct.pack("<f", value))[0]
 
     plan = EV.spectra_plan()
+    unflanked = EV.spectra_plan(flanked=False)
     checks: list[dict[str, Any]] = []
+    empty: list[str] = []
 
     def note(name: str, expected: Any, observed: Any) -> None:
         checks.append(
@@ -284,47 +389,74 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
             }
         )
 
+    def values(case: str, index: int, kind: str) -> list[float]:
+        """One decoded array, with an empty one recorded rather than compared.
+
+        This is the non-vacuity rule. `all(x == y for ...)` over arrays that
+        decoded to nothing is a universal quantifier over an empty set, and it
+        agrees with anything.
+        """
+        got = decoded(work, case, index, kind)
+        if not got:
+            empty.append(f"{case}[{index}].{kind}")
+        return got
+
+    def source(index: int, kind: str) -> list[float]:
+        return list(plan[index]["mz" if kind == "mz" else "intensity"])
+
     def shape(case: str, kind: str) -> str:
-        exact = all(
-            decoded(work, case, i, kind) == plan[i]["mz" if kind == "mz" else "intensity"]
-            for i in range(len(plan))
-        )
+        """Which of the two independent references a whole document equals."""
+        got = [values(case, i, kind) for i in range(len(plan))]
+        exact = all(got[i] == source(i, kind) for i in range(len(plan)))
         narrowed = all(
-            decoded(work, case, i, kind)
-            == [f32(v) for v in plan[i]["mz" if kind == "mz" else "intensity"]]
-            for i in range(len(plan))
+            got[i] == [f32(v) for v in source(i, kind)] for i in range(len(plan))
         )
         return "exact float64" if exact else ("float32 image" if narrowed else "neither")
 
-    note("precision default, m/z", "exact float64", shape("D1", "mz"))
-    note("precision default, intensity", "float32 image", shape("D1", "intensity"))
-    note("--64, m/z", "exact float64", shape("P4", "mz"))
-    note("--64, intensity", "exact float64", shape("P4", "intensity"))
-    note("--32, m/z", "float32 image", shape("P3", "mz"))
-    note("--32, intensity", "float32 image", shape("P3", "intensity"))
-    note("--mz32 --inten64, m/z", "float32 image", shape("P5", "mz"))
-    note("--mz32 --inten64, intensity", "exact float64", shape("P5", "intensity"))
+    # ---------------------------------------------------------------- precision
+    #
+    # Every declared posture, both arrays. `P1` and `P2` were run by the old
+    # driver and shaped by nothing.
+    for case, expected_mz, expected_intensity in (
+        ("D1", "exact float64", "float32 image"),
+        ("P4", "exact float64", "exact float64"),
+        ("P3", "float32 image", "float32 image"),
+        ("P1", "exact float64", "exact float64"),
+        ("P2", "float32 image", "float32 image"),
+        ("P5", "float32 image", "exact float64"),
+    ):
+        note(f"{case}, m/z", expected_mz, shape(case, "mz"))
+        note(f"{case}, intensity", expected_intensity, shape(case, "intensity"))
 
-    note(
-        "compression default declared",
-        "zlib",
-        results["D1"]["inspected"]["spectra"][0]["arrays"][0]["compression"],
-    )
-    note(
-        "--zlib=off declared",
-        "none",
-        results["C2"]["inspected"]["spectra"][0]["arrays"][0]["compression"],
-    )
+    # ------------------------------------------------------------- compression
+    #
+    # Across every array of every spectrum rather than the first array of the
+    # first spectrum, which is what the old check read.
+    def declared_compression(case: str) -> list[str]:
+        return sorted(
+            {
+                array["compression"]
+                for spectrum in results[case]["inspected"]["spectra"]
+                for array in spectrum["arrays"]
+            }
+        )
+
+    note("compression default declared, every array", ["zlib"], declared_compression("D1"))
+    note("--zlib declared, every array", ["zlib"], declared_compression("C1"))
+    note("--zlib=off declared, every array", ["none"], declared_compression("C2"))
     note(
         "zlib on and off decode identically at fixed precision",
         True,
         all(
-            decoded(work, "C1", i, kind) == decoded(work, "C2", i, kind)
+            values("C1", i, kind) == values("C2", i, kind)
             for i in range(len(plan))
             for kind in ("mz", "intensity")
         ),
     )
 
+    # --------------------------------------------------------- MS-level population
+    #
+    # The surviving spectra compared by value in both arrays, not by id alone.
     note("MS1 only keeps", ["scan=1", "scan=3"], spectrum_ids(work, "L1"))
     note("MS2 only keeps", ["scan=2", "scan=4"], spectrum_ids(work, "L2"))
     note(
@@ -332,19 +464,51 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
         spectrum_ids(work, "L3"),
         spectrum_ids(work, "L4"),
     )
+    for case, kept in (("L1", (0, 2)), ("L2", (1, 3))):
+        note(
+            f"{case} retains both arrays of every surviving spectrum unchanged",
+            True,
+            all(
+                values(case, position, kind) == source(index, kind)
+                for position, index in enumerate(kept)
+                for kind in ("mz", "intensity")
+            ),
+        )
 
-    def nonzero(case: str, index: int) -> list[float]:
-        mz = decoded(work, case, index, "mz")
-        intensity = decoded(work, case, index, "intensity")
-        return [m for m, v in zip(mz, intensity) if v != 0.0]
+    # ------------------------------------------------------------- peak picking
+    #
+    # The apexes are derived from the fixture plan rather than from any output:
+    # each profile peak is one contiguous block whose middle point is its
+    # maximum, so the reference is a fact about the source.
+    span = len(EV.PROFILE_OFFSETS)
 
-    centres = list(EV.PEAK_CENTRES)
-    note("default picker recovers every apex of the 3-peak spectrum", centres, nonzero("K1", 2))
-    note("cwt returns one peak of that spectrum", 1, len(nonzero("K2", 2)))
+    def source_apexes(index: int) -> list[tuple[float, float]]:
+        mz = source(index, "mz")
+        intensity = source(index, "intensity")
+        return [
+            (mz[start + span // 2], intensity[start + span // 2])
+            for start in range(0, len(mz), span)
+        ]
+
+    def nonzero(case: str, index: int) -> list[tuple[float, float]]:
+        mz = values(case, index, "mz")
+        intensity = values(case, index, "intensity")
+        return [(m, v) for m, v in zip(mz, intensity) if v != 0.0]
+
+    note(
+        "the default picker recovers every apex, m/z and intensity, in every spectrum",
+        [source_apexes(i) for i in range(len(plan))],
+        [nonzero("K1", i) for i in range(len(plan))],
+    )
+    note(
+        "cwt returns one peak of the three-peak spectrum",
+        1,
+        len(nonzero("K2", 2)),
+    )
     note(
         "vendor produces the default picker's arrays",
-        [decoded(work, "K1", i, k) for i in range(len(plan)) for k in ("mz", "intensity")],
-        [decoded(work, "K3", i, k) for i in range(len(plan)) for k in ("mz", "intensity")],
+        [values("K1", i, k) for i in range(len(plan)) for k in ("mz", "intensity")],
+        [values("K3", i, k) for i in range(len(plan)) for k in ("mz", "intensity")],
     )
     note(
         "vendor request is recorded as the local-maximum picker",
@@ -368,16 +532,126 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
     note("cwt refuses unflanked input", 1, results["K7"]["exit"])
     note("the default picker accepts that same input", 0, results["K8"]["exit"])
 
+    # ------------------------------------------------------ interaction and ordering
+    #
+    # `K5`/`K6` and `K12` were both run by the old driver and compared by nobody.
+    note(
+        "the order pair returns the same spectra",
+        spectrum_ids(work, "K5"),
+        spectrum_ids(work, "K6"),
+    )
+    note(
+        "the order pair returns the same values in both arrays",
+        [values("K5", i, k) for i in range(2) for k in ("mz", "intensity")],
+        [values("K6", i, k) for i in range(2) for k in ("mz", "intensity")],
+    )
+    note(
+        "a global --32 narrows what a filter rewrote, every value",
+        [[f32(v) for v in values("K1", i, k)] for i in range(len(plan)) for k in ("mz", "intensity")],
+        [values("K12", i, k) for i in range(len(plan)) for k in ("mz", "intensity")],
+    )
+    note(
+        "K12 declares 32 bits on every array",
+        [32],
+        sorted(
+            {
+                array["bits"]
+                for spectrum in results["K12"]["inspected"]["spectra"]
+                for array in spectrum["arrays"]
+            }
+        ),
+    )
+    note(
+        "K12 keeps K1's entry counts",
+        [s["declared_length"] for s in results["K1"]["inspected"]["spectra"]],
+        [s["declared_length"] for s in results["K12"]["inspected"]["spectra"]],
+    )
+
+    # -------------------------------------------------------------------- mzXML
+    #
+    # The run-level declaration read beside the elements actually written, which
+    # is the check the old harness did not have and the reason `X2`'s drop
+    # reproduced while its misdeclaration did not.
     note("mzXML single-source keeps", 4, results["X1"]["inspected"]["spectrum_count"])
     note("mzXML multi-source keeps", 2, results["X2"]["inspected"]["spectrum_count"])
     note("mzML control on the same document keeps", 4, results["X3"]["inspected"]["spectrum_count"])
     note("mzXML multi-source survivors", ["1", "4"], spectrum_ids(work, "X2"))
+    note(
+        "mzXML multi-source declares a scan count it did not write",
+        ("4", 2),
+        (
+            results["X2"]["inspected"]["declared_spectrum_count"],
+            results["X2"]["inspected"]["spectrum_count"],
+        ),
+    )
+    note(
+        "the single-source mzXML cases declare what they wrote",
+        [(str(4), 4)] * 3,
+        [
+            (
+                results[case]["inspected"]["declared_spectrum_count"],
+                results[case]["inspected"]["spectrum_count"],
+            )
+            for case in ("X1", "X4", "X5")
+        ],
+    )
+    note(
+        "X1 preserves both arrays of every spectrum exactly",
+        True,
+        all(
+            values("X1", i, kind) == source(i, kind)
+            for i in range(len(plan))
+            for kind in ("mz", "intensity")
+        ),
+    )
 
-    note("every case produced exactly one entry", [], [
-        result["case"]
-        for result in results.values()
-        if result["directory_entry_count"] != 1
-    ])
+    # ------------------------------------------------- structural health per case
+    #
+    # A document whose numbers agree is not thereby a well-formed document. Every
+    # case that parsed is required to carry no structural defect, and the one
+    # document that legitimately does carries exactly the defect it is evidence
+    # of.
+    note(
+        "every parsed output but X2 is structurally clean",
+        [],
+        sorted(
+            result["case"]
+            for result in results.values()
+            if result.get("inspected")
+            and result["case"] != "X2"
+            and result["inspected"]["defects"]
+        ),
+    )
+    note(
+        "X2's only structural defect is its run-level misdeclaration",
+        ["msRun declares scanCount=4 over 2 scan elements"],
+        results["X2"]["inspected"]["defects"],
+    )
+    note(
+        "the unflanked fixture converts cleanly with no filter",
+        (
+            len(unflanked),
+            [False] * len(unflanked),
+            [len(entry["mz"]) for entry in unflanked],
+        ),
+        (
+            results["K9"]["inspected"]["spectrum_count"],
+            [s["centroided"] for s in results["K9"]["inspected"]["spectra"]],
+            [int(s["declared_length"]) for s in results["K9"]["inspected"]["spectra"]],
+        ),
+    )
+    note("the refused run's output does not parse", "ParseError", results["K7"].get("inspect_error"))
+
+    # ----------------------------------------------------- posture, naming, set
+    note(
+        "every case's exit, output name and directory contents match its row",
+        [],
+        [
+            defect
+            for case in EV.CASES
+            for defect in case_defects(case, results[case.case])
+        ],
+    )
     note("mzXML-producing cases", list(EV.mzxml_cases()), [
         result["case"] for result in results.values() if result["output_format"] == "mzXML"
     ])
@@ -394,16 +668,8 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
         True,
         results["K7"]["output_bytes"] < results["K9"]["output_bytes"] / 2,
     )
-    note("the refused run's output does not parse", "ParseError", results["K7"].get("inspect_error"))
-    note(
-        "the unflanked fixture converts cleanly with no filter",
-        (4, [False, False, False, False]),
-        (
-            results["K9"]["inspected"]["spectrum_count"],
-            [s["centroided"] for s in results["K9"]["inspected"]["spectra"]],
-        ),
-    )
 
+    note("no comparison above was taken over an empty array", [], sorted(set(empty)))
     note("cases run", len(EV.CASES), len(results))
     return checks
 
@@ -436,8 +702,27 @@ def main() -> int:
             print(f"  {line}", file=sys.stderr)
         return 1
 
+    report_at = args.report.resolve()
+
     with tempfile.TemporaryDirectory(prefix="m62-") as scratch:
         work = Path(scratch)
+        # The process working directory, pinned and created empty.
+        #
+        # Counting entries in `--outdir` cannot see a file written beside the
+        # *caller* instead, which is a different place and an easy one to miss.
+        # M6.2 asked that question by running the whole set from a directory made
+        # for the purpose and recorded that the driver did not pin it; it does
+        # now, and the report is written outside every directory the provider is
+        # observed in so that the driver's own file is not one of the entries
+        # this measurement is about.
+        provider_cwd = work / "cwd"
+        provider_cwd.mkdir()
+        if report_at == provider_cwd or provider_cwd in report_at.parents:
+            print(
+                "the report would be written into the directory this run measures",
+                file=sys.stderr,
+            )
+            return 1
         fixtures = work / "fixtures"
         written = EV.generate(fixtures)
         fixture_facts = {}
@@ -449,8 +734,24 @@ def main() -> int:
                 print(f"{name} did not regenerate to its recorded identity", file=sys.stderr)
                 return 1
 
-        results = {case.case: run_case(case, msconvert, fixtures, work) for case in EV.CASES}
+        results = {
+            case.case: run_case(case, msconvert, fixtures, work, provider_cwd)
+            for case in EV.CASES
+        }
         checks = verify(results, work)
+        # Asked after the whole set rather than per case: a provider that wrote
+        # beside its caller once would leave the entry there for the rest of the
+        # run, and one enumeration of a directory nothing else touched is the
+        # complete answer.
+        working_directory_entries = sorted(path.name for path in provider_cwd.iterdir())
+        checks.append(
+            {
+                "check": "the provider wrote nothing to its own working directory",
+                "expected": [],
+                "observed": working_directory_entries,
+                "agrees": working_directory_entries == [],
+            }
+        )
         after = executable_identity(msconvert)
 
     disagreed = [check for check in checks if not check["agrees"]]
@@ -461,6 +762,7 @@ def main() -> int:
         "executable_before": before,
         "executable_after": after,
         "executable_stable": before == after,
+        "working_directory_entries": working_directory_entries,
         "checks": checks,
         "disagreements": len(disagreed),
         "results": list(results.values()),

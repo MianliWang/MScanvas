@@ -389,7 +389,8 @@ is now a bound policy resolved to admitted directory objects. M6.6's destination
 and conflict UX is published; M6.7 makes selected/all scope explicit; M6.8 closes
 the process-ownership window, measures the installed provider, and settles what a
 user may stop; M6.9 makes what a conversion produced legible, with all five
-judgements separated per item and the seams M7 and M8 read. M6.10 is not
+judgements separated per item and the seams M7 and M8 read. M6.10 takes the four conditional side
+routes to a terminal disposition, none of them admitted. M6.11 is not
 started.**
 
 The route, the live conversion gap audit it was decided from, the nine product
@@ -435,7 +436,23 @@ Twelve slices, plus one authority interlude:
   lifecycle's bound. Adoption stays explicit and its result is recorded on the
   queue it was about. See
   [the M6.9 record](docs/ux/M6_9_OUTPUT_COMPLETION_ADOPTION.md).
-- M6.10 — evidence-gated side routes.
+- M6.10 — evidence-gated side routes. **Complete.** Four conditional routes, four
+  terminal dispositions, **none admitted and none left open**. mzXML is refused
+  with evidence on the source/output comparison CNV-002 states, reproduced on the
+  installed build: two spectra written of four, under a header declaring four,
+  at exit `0`, with the mzML control keeping all four. Vendor-format direct
+  preview is evidence-blocked, and the block is named after measuring that this
+  build *does* serve the preview operations directly from one lawful vendor
+  acquisition — what is missing is representative acquisitions per family and an
+  independent reference, not the provider's ability. No further vendor family
+  opens, and the basis is ADR 0007's standing decision and its fourteen unmet
+  prerequisites rather than any family having been tested and failed. VIEW-007's
+  re-entry is refused with evidence: the `msaccess` identity was re-observed and
+  is byte-identical to the one M5.4 refused, so the trigger did not fire. The
+  evidence tooling M6.2 assigned to this slice was corrected in one pass and the
+  whole 29-case ledger re-run with it — 52 confirmations, all agreeing, no
+  classification changed. See
+  [the M6.10 record](docs/spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md).
 - M6.11 — closure.
 
 **M6.4 was attempted once, and what shipped is the replacement.** The first
@@ -500,7 +517,7 @@ error, where the default picker recovered all three bit-exactly — a rejection
 scoped to this evidence and re-openable only by a representative profile
 acquisition. The record is
 [M6.2's evidence document](docs/spikes/M6_MSCONVERT_CAPABILITY_EVIDENCE.md); the
-disposition remains M6.10's.
+disposition is **M6.10's, and it is `MZXML_REFUSED`**.
 
 **M6.3 turned that evidence into a type, and the useful part of it was never the
 list of options.** What M6.2 produced is an *incomplete composition graph*: five

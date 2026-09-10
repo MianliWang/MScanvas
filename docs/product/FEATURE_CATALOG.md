@@ -68,7 +68,7 @@ table remains the target, including the unsupported portions called out below:
 | VIEW-004 | Scan table | P0 | Virtualized rows with scan, RT, MS level and precursor context. |
 | VIEW-005 | Linked selection | P0 | **Implemented across the chromatogram, the loaded scan table and the selected-spectrum panel.** Selection synchronizes chromatogram marker, table row, spectrum and inspector in both directions. Where a scan cannot be committed right now, both surfaces say so once and neither stops being readable. |
 | VIEW-006 | Keyboard scan navigation | P0 | **Implemented.** Previous/next and table navigation work without pointer-only access, including while selection is unavailable: `Enter` and `Space` are the activations that stop, and arrow, page, `Home` and `End` navigation does not. |
-| VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. **Unimplemented, and the evidence gate is answered `XIC_SOURCE_REFUSED`: no query the measured ProteoWizard build offers can serve as a general XIC source.** M5.5 and M5.6 are `NOT_APPLICABLE`. Re-entry requires an exact executable identity and capability grammar covered by fresh evidence, a resolved numeric-fidelity answer, and re-measurement of everything the record establishes — aggregation and the singular-parabola abort are invisible in help text; **owner: M6**, for that measurement. |
+| VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. **Unimplemented, and the evidence gate is answered `XIC_SOURCE_REFUSED`: no query the measured ProteoWizard build offers can serve as a general XIC source.** M5.5 and M5.6 are `NOT_APPLICABLE`. Re-entry requires an exact executable identity and capability grammar covered by fresh evidence, a resolved numeric-fidelity answer, and re-measurement of everything the record establishes — aggregation and the singular-parabola abort are invisible in help text. **M6 measured it: M6.10 re-observed the `msaccess` identity on 2026-09-10 and it is byte-identical to the one M5.4 refused, so the trigger did not fire and the M6 route closes `REFUSED_WITH_EVIDENCE`, retaining M5.4's refusal.** The gate above stays live for a different installed identity; **owner: whichever slice measures one**. |
 | VIEW-008 | Multi-layer comparison | P2 | Visibility, style and provenance remain inspectable per layer. **Deferred: M8 for layer identity, M9 for comparison semantics.** |
 
 Implementation notes for the three viewer features Viewer Closure closed follow.
@@ -209,7 +209,7 @@ Where each of those is owned, and why, is fixed by
 | ID | Feature | Priority | Acceptance summary |
 |---|---|---:|---|
 | CNV-001 | mzML output | P0 | Default open format with typed backend mapping. |
-| CNV-002 | mzXML output | P1 | Disabled until representative multi-source source/output spectrum counts pass; if enabled later, clearly labels legacy chromatogram/metadata limits. |
+| CNV-002 | mzXML output | P1 | **Refused with evidence, terminal, 2026-09-10 (`MZXML_REFUSED`).** Measured on the installed build: a two-source document lost both spectra of the non-default source at exit `0` under a header declaring the full count, and the mzML control on the same document kept all four. Unplannable by type, and re-openable only by a build that passes the source/output comparison CNV-002 states. |
 | CNV-003 | Output location | P0 | Source sibling/subfolder/custom choices never write inside recognized vendor dataset roots. |
 | CNV-004 | No additional centroiding | P0 | No peak-picking filter is inserted by this option. |
 | CNV-005 | Explicit centroid presets | P0 | MS2 or MS1+MS2 changes are visibly marked as lossy. |
@@ -256,7 +256,7 @@ acquisition or an adoptable complete set. See
 [ADR 0043, CNV-D4](../architecture/adr/0043-conversion-completion-route.md#cnv-d4--conflict-and-overwrite).
 
 CNV-001 and CNV-009 retain their output-format and truthful-plan contracts.
-CNV-002 remains unplannable by type. CNV-004 to CNV-007 became reachable in
+CNV-002 remains unplannable by type, and **M6.10 made its disposition terminal**: `MZXML_REFUSED`, with the evidence in [the M6.10 record](../spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md). CNV-004 to CNV-007 became reachable in
 **M6.4**, as four controls over one admitted combination rather than four
 independent settings. This candidate does not change selected/all membership,
 source-family gates, scientific intent, receipt authority or viewer/export
