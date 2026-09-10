@@ -532,11 +532,14 @@ summary elsewhere link here rather than restate it. A figure repeated across fiv
 documents and derivable in none is the shape of the defect this slice spent its
 tooling budget removing.
 
-**And the number moved twice while this slice was under review**, from 52 to 60
-to 63. The increments are checks that were added because review found them
-missing — `K8`'s and `K10`'s outputs, the pinning of `K7` as the only
-unreadable one, and the three that separate what `X1` declares from what `X5`
-does — not the same measurements recounted. M6.2's own conclusions stay as they
+**And the number rose three times while this slice was under review**, from 52 to
+60 to 62 to 63. Every increment is a check review found missing, not the same
+measurement recounted: `K8`'s and `K10`'s outputs, which the driver ran and read
+back for nobody; the pinning of `K7` as the *only* output that does not read
+back, without which a second unreadable one would have been dropped from the
+health check in silence; and the checks that separate what `X1` declares from
+what `X5` declares from what `X5`'s apexes are — one of which, in its first
+form, was named for `X5` and read `X1`, so it could not fail. M6.2's own conclusions stay as they
 were written, and this record does not rewrite them.
 
 **The working-directory result is now a property the tooling enforces**, not a
