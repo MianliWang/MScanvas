@@ -1357,8 +1357,16 @@ function QueueState({
                   Not offered for a row that has not been attempted: a waiting
                   item has one honest answer to every one of the five, and a
                   disclosure that only ever says "nothing yet" teaches its own
-                  uselessness. */}
-              {item.state === "pending" || item.state === "running" ? null : (
+                  uselessness.
+
+                  Attempts, not state. A retry returns every retryable failure
+                  to `pending` and *keeps* its report and its attempt facts
+                  until that item is actually rerun -- the row says so in its
+                  own label -- so hiding on the state alone took the retained
+                  judgements away from every later item for as long as an
+                  earlier conversion was still running. */}
+              {(item.state === "pending" && item.attempts === 0) ||
+              item.state === "running" ? null : (
                 <ConversionItemJudgements index={index} item={item} />
               )}
             </li>

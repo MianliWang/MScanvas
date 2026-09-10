@@ -1756,6 +1756,30 @@ export type ConversionStartOutcome =
   | { readonly outcome: "refused"; readonly error: PreviewError };
 
 /**
+ * Whether a single-output run failed *because* the integrity judgement refused
+ * it.
+ *
+ * Read from the boundary's own identifier rather than from the absence of a
+ * validation record: a refused output carries none, and so does a run that
+ * never produced one, and those are opposite answers to "was it checked".
+ */
+export function conversionOutcomeRefusedByIntegrity(outcome: string): boolean {
+  return outcome === "output_rejected";
+}
+
+/**
+ * Whether a single-output run passed its check and then failed to publish.
+ *
+ * Both identifiers name a failure that happens strictly after the judgement
+ * returned a valid output: the rename did not land, or something appeared at
+ * the final name during the run. Neither retains the record, and neither may be
+ * reported as a run that was never checked.
+ */
+export function conversionOutcomePassedThenUnpublished(outcome: string): boolean {
+  return outcome === "output_not_finalized" || outcome === "destination_appeared_during_run";
+}
+
+/**
  * Whether one queue item's latest attempt actually judged an output.
  *
  * The predicate behind every "output-only validation" claim, written once
@@ -1774,7 +1798,15 @@ export function conversionJudgedAnyOutput(item: ConversionQueueItem): boolean {
     return false;
   }
   if (result.kind === "single") {
-    return result.report.validation !== null;
+    // The record is not the only evidence that a check ran. It travels with a
+    // finalization, so an output the judgement *refused* keeps none, and so
+    // does one that passed and then could not be given its final name. Reading
+    // only the record reported "no check" on exactly the runs a check decided.
+    return (
+      result.report.validation !== null ||
+      conversionOutcomeRefusedByIntegrity(result.report.outcome) ||
+      conversionOutcomePassedThenUnpublished(result.report.outcome)
+    );
   }
   // A refused member counts. The judgement ran on it and did not pass it, which
   // is a check having happened rather than one having been skipped -- and it is

@@ -569,6 +569,48 @@ describe("the five judgements of one queue item", () => {
     expect(details.textContent).not.toContain("Nothing was checked");
   });
 
+  it("keeps a retried row's earlier judgements readable while it waits", async () => {
+    // A retry returns every retryable failure to `pending` and keeps its report
+    // and attempt facts until that item is actually rerun. Hiding on the state
+    // alone took those judgements away from every later item for as long as an
+    // earlier conversion was still running -- on rows whose own label says the
+    // earlier failure is being kept.
+    const api = terminalApi(
+      [
+        queueItem("file-1", "run-1.raw", {
+          state: "pending",
+          attempts: 1,
+          retryable: true,
+          result: {
+            kind: "single" as const,
+            report: {
+              datasetHandle: "file-1",
+              sourceKind: "thermo_raw",
+              outcome: "backend_rejected",
+              detailedOutcome: "backend_rejected",
+              outputFileName: null,
+              output: null,
+              validationMode: "output_only",
+              validation: null,
+              backend: { exitCode: 3, elapsedMilliseconds: 412 },
+              stagingResidue: null,
+              receipt: 1,
+            },
+          },
+          ...failedAttemptFacts(true, "000000000000000100000000000000f5"),
+        }),
+      ],
+      [acquisition(1)],
+    );
+    renderApp(api);
+    const result = await queueResult();
+
+    const details = openDetails(rowFor(result, "run-1.raw"));
+    expect(
+      within(details).getByText(/The temporary working folder held 1 entry/),
+    ).toBeVisible();
+  });
+
   it("does not tell a skipped set that nothing was written", async () => {
     // A set is skipped only after its members were written into the working
     // folder and validated there: the occupied names are compared against the
@@ -732,7 +774,7 @@ describe("the five judgements of one queue item", () => {
       ),
     ).toBeVisible();
     expect(
-      within(details).getByText("No converter run: none was started for this item."),
+      within(details).getByText("No attempt reached a converter for this item."),
     ).toBeVisible();
     expect(
       within(details).getByText("This item produced nothing that could be added to the workspace."),

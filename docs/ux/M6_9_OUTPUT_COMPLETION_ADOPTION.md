@@ -253,12 +253,30 @@ returned a real ending. The set lifecycle keeps its facts through the same
 event, which is why it was already right — and it now reads the same helper
 anyway, so the two cannot drift apart again.
 
+**The identity names the attempt, and now the label does too.** It read "Run
+identity", and a stop that arrived after the boundary call and before a process
+existed carries one beside a process judgement that says the converter was never
+created — a name for something the same panel says did not happen. It reads
+"Attempt identity".
+
+**A retried row keeps its earlier judgements while it waits.** A retry returns
+every retryable failure to `pending` and keeps its report and attempt facts
+until that item is actually rerun. The disclosure was hidden on the state alone,
+so a slow first conversion took the retained judgements away from every later
+row, on rows whose own label says the earlier failure is being kept. It is
+hidden for a row that has never been attempted, which is what the rule always
+meant.
+
 **A refused member is a check that ran.** The shared predicate behind every
 "output-only validation" disclosure reads what an item judged, and it read only
-finalized and validated-not-published members. A set refused at its only member
+finalized and validated-not-published members — and, for a single output, only a
+surviving validation record. A set refused at its only member
 has neither, because a refusal keeps no record and publishes nothing — so the
 one item whose whole story is the check reported that no check had happened.
-`rejectedCount` counts there now.
+`rejectedCount` counts there now, and the single-output branch reads the two
+outcome identifiers that name a check having decided: the refusal, and the
+publication that failed after one passed. Those identifiers live in one place
+and the item's own sentences read them from there.
 
 **A publication failure is not an unchecked run either.** A rename that did not
 land, and a name something else took during the run, both happen strictly after
@@ -438,7 +456,7 @@ and the M7/M8 seams it freezes), `0016` (the adoption relation this records),
 
 ## Validation
 
-Local gates at this head: frontend lint, typecheck, 1681 tests
+Local gates at this head: frontend lint, typecheck, 1682 tests
 across 70 files, build; `cargo fmt --all --check`; `cargo clippy
 --locked --workspace --all-targets --all-features -- -D warnings`; `cargo test
 --locked --workspace --all-targets` (1554 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.

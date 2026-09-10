@@ -27,6 +27,10 @@ import type {
   ConversionStagedOutput,
   ConversionValidation,
 } from "./contracts";
+import {
+  conversionOutcomePassedThenUnpublished,
+  conversionOutcomeRefusedByIntegrity,
+} from "./contracts";
 import { formatByteLength, formatCount } from "./format";
 
 /**
@@ -396,7 +400,7 @@ function manifestOf(item: ConversionQueueItem): readonly ConversionOutputMember[
  */
 function integrityRefused(item: ConversionQueueItem): boolean {
   if (item.result?.kind === "single") {
-    return item.result.report.outcome === "output_rejected";
+    return conversionOutcomeRefusedByIntegrity(item.result.report.outcome);
   }
   if (item.result?.kind === "outputSet") {
     return item.result.report.detailedOutcome === "multi_output_member_rejected";
@@ -417,8 +421,7 @@ function passedThenUnpublished(item: ConversionQueueItem): boolean {
   if (item.result?.kind !== "single") {
     return false;
   }
-  const { outcome } = item.result.report;
-  return outcome === "output_not_finalized" || outcome === "destination_appeared_during_run";
+  return conversionOutcomePassedThenUnpublished(item.result.report.outcome);
 }
 
 /**
@@ -566,13 +569,19 @@ export function ConversionItemJudgements({
           </dd>
         </div>
         <div>
-          <dt>Run identity</dt>
+          {/* "Attempt", not "Run". Rust mints this at the owned attempt
+              boundary, before the provider is invoked, so a stop that arrived
+              after the call and before a process existed carries one beside a
+              process judgement that says the converter was never created.
+              Calling it a run identity there would give a name to something
+              that did not happen -- in the same panel that says it did not. */}
+          <dt>Attempt identity</dt>
           {/* Named as absent rather than left blank. It is what keeps a
-              refusal, a skip or a stop that beat the launch from reading as a
-              run that happened. */}
+              refusal, a skip or a stop that never reached the boundary from
+              reading as an attempt that was made. */}
           <dd data-testid={`${id}-run-identity`}>
             {item.runIdentity === null ? (
-              "No converter run: none was started for this item."
+              "No attempt reached a converter for this item."
             ) : (
               <code className="conversion-run-identity">{item.runIdentity}</code>
             )}

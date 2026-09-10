@@ -562,7 +562,10 @@ describe("queueing selected Thermo RAW conversions", () => {
     });
     // The successful item was not rerun; the retried one counted its attempt.
     const items = within(panel).getAllByRole("listitem");
-    expect(items[0]).not.toHaveTextContent("attempt");
+    // The retry counter itself, not the bare word: the row's own disclosure
+    // names the attempt identity, and a substring check for "attempt" would
+    // answer to that instead of to the thing under test.
+    expect(items[0]).not.toHaveTextContent(/attempt \d/);
     expect(items[1]).toHaveTextContent("attempt 2");
   });
 
