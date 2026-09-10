@@ -1673,6 +1673,25 @@ cross-session identity. M6 leaves the seam; M8 builds the model.
 
 *Downstream:* M6.11.
 
+**Delivered.** The five judgements are separated per item on the wire and on
+screen, and judgement 2 is now taken on every ordinary-failure path of both
+lifecycles — a non-zero exit, an incomplete execution, an integrity refusal, a
+finalization that did not land, and every refusal that had a staging area to
+observe. It is a four-way answer: never created, could not be read at the stated
+phase, read at the stated phase, or published under its final name. A failure
+that staged something and one that staged nothing settle with the same outcome,
+the same clean teardown and the same empty destination, and read differently.
+
+`OperationRunIdentity` is minted immediately before the command reaches the
+process boundary and never for an attempt that reached none; its form is
+persistable and M6 neither persists it nor resolves one across sessions. A set's
+manifest carries each discovered member's own name, state and measurements, and
+a partial set is counted against the population it produced rather than against
+the lifecycle's maximum bound. Adoption stays explicit and partial-tolerant, and
+its result is recorded on the queue it was about so a re-read does not lose it.
+
+See [the M6.9 record](../../ux/M6_9_OUTPUT_COMPLETION_ADOPTION.md).
+
 ### M6.10 — Evidence-gated side routes
 
 *Purpose:* take the conditional branches to a terminal state instead of leaving

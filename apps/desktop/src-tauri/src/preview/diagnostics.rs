@@ -42,7 +42,7 @@ use super::dto::{
     ConversionConflictPolicyDto, ConversionDiagnosticsExportDto, MAX_ERROR_DETAIL_CHARS,
     PreviewErrorDto, bounded_text, invalid_diagnostics_reservation, redact_absolute_paths,
 };
-use super::operation::{CancellationFacts, ItemOutputTopology, ItemState};
+use super::operation::{AttemptFacts, CancellationFacts, ItemOutputTopology, ItemState};
 use super::selection::DatasetSourceKind;
 
 pub(super) mod payload;
@@ -132,10 +132,23 @@ pub(super) struct ConversionFailureDiagnosticTicket {
     refusal: Option<String>,
     /// A bounded, redacted excerpt of whatever detail that refusal carried.
     refusal_detail: Option<String>,
+    /// The scope of the check, stated whether or not a record of one survived.
+    ///
+    /// `None` where the item never reached a conversion at all. A refusal by
+    /// this application names no source posture; a refusal by the *integrity
+    /// judgement* does, and that is the case this exists for.
+    validation_mode: Option<ValidationMode>,
     validation: Option<ValidationFacts>,
     backend: Option<BackendRunFacts>,
     cancellation: Option<CancellationFacts>,
     residue: Option<StagingResidue>,
+    /// What the attempt established about itself, beside its outcome.
+    ///
+    /// The staged half is what makes a diagnosis of an ordinary failure worth
+    /// reading: it says whether the backend had written anything when the run
+    /// ended, which residue cannot answer and which the destination cannot
+    /// either. Counts, never a name.
+    attempt: AttemptFacts,
     /// Redacted where the run knew its own paths, bounded, and possibly
     /// withheld. Absent for an attempt that launched nothing, and absent for a
     /// finalized item whose only trouble was cleanup — the backend succeeded
@@ -162,6 +175,11 @@ pub(super) struct OutputSetDiagnosticFacts {
     pub(super) member_count: usize,
     pub(super) finalized_count: usize,
     pub(super) validated_not_published_count: usize,
+    /// Members the integrity judgement read and refused.
+    ///
+    /// Without it a refused member appeared in none of these counts, and the
+    /// export accounted for fewer members than it said the set had.
+    pub(super) rejected_count: usize,
     pub(super) not_published_count: usize,
     /// How many objects the acquisition was bound to for the run.
     ///
@@ -193,6 +211,7 @@ impl OutputSetDiagnosticFacts {
             member_count: 0,
             finalized_count: 0,
             validated_not_published_count: 0,
+            rejected_count: 0,
             not_published_count: 0,
             // Never bound, so there is no number to report. Zero would say the
             // acquisition was held to no objects, which is a different claim.
@@ -259,10 +278,16 @@ impl ConversionFailureDiagnosticTicket {
             detailed_outcome: report.detailed_outcome_id(),
             refusal: None,
             refusal_detail: None,
+            validation_mode: Some(report.validation_mode()),
             validation: report.validation_facts().cloned(),
             backend: report.backend_facts(),
             cancellation: None,
             residue,
+            attempt: AttemptFacts {
+                process: report.process_outcome(),
+                staged: report.staged_content(),
+                identity: report.run_identity(),
+            },
             // Kept only where it describes something that went wrong. A
             // finalized item with cleanup residue is a run whose backend did
             // its job, and the run itself already declined to retain its text.
@@ -290,11 +315,15 @@ impl ConversionFailureDiagnosticTicket {
         let outcome = report.group_outcome();
         let detailed_outcome = report.refusal_id();
         let backend = report.backend_facts();
+        // Read here, while the report is still borrowed, for the same reason
+        // the counts below are: the settlement is taken mutably further down.
+        let validation_mode = report.validation_mode();
         let facts = OutputSetDiagnosticFacts {
             max_members: MAX_CONVERSION_OUTPUTS_PER_SOURCE,
             member_count: report.members().len(),
             finalized_count: member_count_in(report, "finalized"),
             validated_not_published_count: member_count_in(report, "validated_not_published"),
+            rejected_count: member_count_in(report, "rejected"),
             not_published_count: member_count_in(report, "not_published"),
             bound_source_objects: Some(report.bound_source_objects()),
             completeness: report
@@ -309,6 +338,7 @@ impl ConversionFailureDiagnosticTicket {
                 }),
             not_adoptable: settlement.not_adoptable(),
         };
+        let attempt = settlement.attempt_facts();
         // Taken here rather than borrowed, for the reason the single path takes
         // it: the redacted text is the largest thing on the attempt and two
         // copies of it would be two things to bound.
@@ -321,10 +351,14 @@ impl ConversionFailureDiagnosticTicket {
             detailed_outcome,
             refusal: None,
             refusal_detail: None,
+            // The set report states it in its own right, so a refused member's
+            // diagnostic says what contract it was refused under.
+            validation_mode: Some(validation_mode),
             validation: None,
             backend,
             cancellation: None,
             residue,
+            attempt,
             text: (state == ItemState::Failed).then_some(text).flatten(),
             output_set: Some(facts),
         })
@@ -339,6 +373,7 @@ impl ConversionFailureDiagnosticTicket {
         identity: DiagnosticItemIdentity,
         retryable: bool,
         error: &PreviewErrorDto,
+        attempt: AttemptFacts,
     ) -> Self {
         let output_set = identity.output.diagnostic_shape();
         Self {
@@ -349,10 +384,18 @@ impl ConversionFailureDiagnosticTicket {
             detailed_outcome: None,
             refusal: Some(error.kind.clone()),
             refusal_detail: error.detail.as_deref().map(safe_detail),
+            validation_mode: None,
             validation: None,
             backend: None,
             cancellation: None,
             residue: None,
+            // Carried from the outcome rather than assumed here. Every refusal
+            // this application makes today settles before a provider is
+            // invoked, so this is `NOTHING_RAN` at every call site -- but the
+            // row keeps a real field, and a constant here would let the saved
+            // document and the queue row answer judgements one to three
+            // differently the moment a refusal does reach the boundary.
+            attempt,
             text: None,
             // A refusal reaches every family, so the shape comes from the item
             // rather than from the run it never made.
@@ -371,6 +414,7 @@ impl ConversionFailureDiagnosticTicket {
         identity: DiagnosticItemIdentity,
         state: ItemState,
         facts: CancellationFacts,
+        attempt: AttemptFacts,
         text: Option<Box<BackendDiagnosticText>>,
         output_set: Option<OutputSetDiagnosticFacts>,
     ) -> Option<Self> {
@@ -387,6 +431,7 @@ impl ConversionFailureDiagnosticTicket {
             detailed_outcome: None,
             refusal: None,
             refusal_detail: None,
+            validation_mode: None,
             validation: None,
             // A stopped attempt reports its process through the cancellation
             // facts below rather than through a run report, which it never
@@ -394,6 +439,7 @@ impl ConversionFailureDiagnosticTicket {
             backend: None,
             cancellation: Some(facts),
             residue: facts.staging_residue,
+            attempt,
             text: (state == ItemState::CancellationFailed)
                 .then_some(text)
                 .flatten(),

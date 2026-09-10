@@ -35,6 +35,22 @@ Options:
   -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
 ";
 
+/// The same help, with the output-format option the shipped intent needs
+/// removed.
+///
+/// A plan cannot be expressed against a build that does not offer it, so a run
+/// against these capabilities reaches `NotPlannable` *after* it has created its
+/// staging area and *before* it invokes anything -- which is the one interval
+/// where a reading has a directory to describe and no execution to name.
+const MSCONVERT_HELP_WITHOUT_MZML: &str = r"Usage: msconvert [options] [filemasks]
+Convert mass spec data file formats.
+
+Options:
+  -o [ --outdir ] arg (=.)           : set output directory
+  --outfile arg                      : Override the name of output file.
+  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
+";
+
 struct TestDirectory(PathBuf);
 
 impl TestDirectory {
@@ -123,6 +139,16 @@ fn output_document() -> String {
 }
 
 fn capabilities() -> InstalledHelpCapabilities {
+    capabilities_from(MSCONVERT_HELP)
+}
+
+/// The same capabilities, from a build whose help omits the output-format
+/// option the shipped intent needs.
+fn capabilities_without_mzml_output() -> InstalledHelpCapabilities {
+    capabilities_from(MSCONVERT_HELP_WITHOUT_MZML)
+}
+
+fn capabilities_from(help: &str) -> InstalledHelpCapabilities {
     let executable = fs::canonicalize(std::env::current_exe().expect("test executable"))
         .expect("canonical test executable");
     InstalledHelpCapabilities::parse_unbound_capture_for_tests(
@@ -130,12 +156,7 @@ fn capabilities() -> InstalledHelpCapabilities {
         executable,
         EXECUTABLE_SHA256,
         CompleteHelpCapture::new(
-            CapturedHelpStream::new(
-                MSCONVERT_HELP.as_bytes(),
-                MSCONVERT_HELP.len() as u64,
-                false,
-                FIXTURE_SHA256,
-            ),
+            CapturedHelpStream::new(help.as_bytes(), help.len() as u64, false, FIXTURE_SHA256),
             CapturedHelpStream::new(&[], 0, false, EMPTY_SHA256),
         ),
     )
@@ -5366,8 +5387,11 @@ fn one_bad_member_publishes_nothing() {
         entry_names(&fixture.destination_root).is_empty(),
         "nothing was published"
     );
-    // The member that had already validated says so; the bad one and the one
-    // never reached say they were not published.
+    // Three members, three different things that became of them. The one that
+    // had already validated says so, the bad one says it was read and refused,
+    // and the one the set never reached says only that it was not published --
+    // because nobody looked at it. Spelling the last two the same way is what
+    // made a manifest unable to name which member was the problem.
     let states: Vec<OutputMemberState> = settled
         .members
         .iter()
@@ -5377,7 +5401,7 @@ fn one_bad_member_publishes_nothing() {
         states,
         vec![
             OutputMemberState::ValidatedNotPublished,
-            OutputMemberState::NotPublished,
+            OutputMemberState::Rejected,
             OutputMemberState::NotPublished,
         ]
     );
@@ -6202,7 +6226,7 @@ fn a_request_made_before_the_run_reaches_no_backend_and_creates_no_staging_area(
     assert_eq!(report.observation(), CancellationObservation::BeforeRun);
     assert!(!report.backend_was_run());
     assert_eq!(report.backend(), None);
-    assert_eq!(report.staged_content(), None);
+    assert_eq!(report.staged_content(), StagedOutputEvidence::NotCreated);
     assert_eq!(report.residue(), None);
     assert_eq!(runner.calls(), 0, "a refused run reached the backend");
     assert!(
@@ -6238,7 +6262,7 @@ fn a_request_made_before_the_launch_decision_creates_no_staging_area() {
         !report.backend_was_run(),
         "no process ran, so no backend facts may be reported"
     );
-    assert_eq!(report.staged_content(), None);
+    assert_eq!(report.staged_content(), StagedOutputEvidence::NotCreated);
     assert_eq!(report.residue(), None);
     assert_eq!(runner.calls(), 0, "a refused run reached the backend");
     assert!(
@@ -6269,6 +6293,7 @@ fn a_cancelled_run_removes_its_partial_output_and_finalizes_nothing() {
     assert_eq!(report.surviving_processes(), Some(0));
     let staged_content = report
         .staged_content()
+        .observation()
         .expect("the staging area was observed before it was removed");
     assert_eq!(staged_content.entry_count(), 1);
     assert_eq!(staged_content.directory_count(), 0);
@@ -6310,6 +6335,7 @@ fn a_cancelled_run_removes_a_nested_tree_the_backend_left_behind() {
     };
     let staged_content = report
         .staged_content()
+        .observation()
         .expect("the staging area was observed before it was removed");
     assert_eq!(staged_content.entry_count(), 2);
     assert_eq!(staged_content.directory_count(), 1);
@@ -6397,6 +6423,7 @@ fn a_termination_that_could_not_be_confirmed_is_a_distinct_failure() {
     assert!(
         failure
             .staged_content()
+            .observation()
             .is_some_and(|staged| staged.non_empty_file_observed())
     );
     assert_eq!(attempt.stable_id(), "cancellation_failed");
@@ -6496,6 +6523,7 @@ fn a_refusal_inside_the_runner_reports_no_backend_and_an_empty_staging_area() {
     assert_eq!(report.surviving_processes(), None);
     let staged = report
         .staged_content()
+        .observation()
         .expect("the staging area existed and was observed");
     assert_eq!(staged.entry_count(), 0);
     assert!(!staged.non_empty_file_observed());
@@ -7732,4 +7760,406 @@ fn a_set_that_did_not_publish_whole_is_not_complete() {
         Some(crate::SampleCompletenessRefusal::SetNotFullyPublished),
         "a set that published nothing this run claimed the acquisition converted"
     );
+}
+
+// ---------------------------------------------------------------------------
+// M6.9 — what a run establishes about itself, beside its outcome.
+//
+// Three facts nothing downstream can reconstruct: whether the provider was
+// invoked, what the private staging area held, and which attempt this was. The
+// tests below are about the pairs that used to be indistinguishable.
+// ---------------------------------------------------------------------------
+
+/// **The decisive pair.** Two ordinary failures with the same process outcome
+/// and the same clean teardown, and the staged evidence tells them apart.
+///
+/// This is the case the whole judgement exists for. Both runs exit three, both
+/// have their staging area removed without residue, and neither publishes
+/// anything — so `outcome`, `residue` and the destination folder are identical.
+/// Before this observation was taken on the ordinary-failure paths, a run that
+/// left a half-written document and a run that wrote nothing were the same
+/// answer everywhere downstream.
+#[test]
+fn two_ordinary_failures_differ_by_what_they_staged() {
+    let staged_something = {
+        let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+        let act = |spec: &CommandSpec| {
+            fs::write(staged_destination(spec), b"<indexedmzML partial")
+                .expect("write a partial staged output");
+            Ok(3)
+        };
+        let runner = FakeRunner::new(&act);
+        let report = run_conversion(&fixture.plan, &capabilities(), &runner);
+        assert!(
+            entry_names(&fixture.root).is_empty(),
+            "teardown left something in the destination root"
+        );
+        report
+    };
+    let staged_nothing = {
+        let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+        let act = |_: &CommandSpec| Ok(3);
+        let runner = FakeRunner::new(&act);
+        let report = run_conversion(&fixture.plan, &capabilities(), &runner);
+        assert!(entry_names(&fixture.root).is_empty());
+        report
+    };
+
+    // Identical on every other judgement.
+    assert_eq!(staged_something.outcome(), staged_nothing.outcome());
+    assert_eq!(
+        *staged_something.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::BackendRejected { exit_code: Some(3) })
+    );
+    assert_eq!(staged_something.residue(), None);
+    assert_eq!(staged_nothing.residue(), None);
+    assert!(staged_something.finalized().is_none());
+    assert!(staged_nothing.finalized().is_none());
+
+    // And distinguishable here.
+    assert_ne!(
+        staged_something.staged_content(),
+        staged_nothing.staged_content()
+    );
+    let observed = staged_something
+        .staged_content()
+        .observation()
+        .expect("an ordinary failure now observes its staging area");
+    assert_eq!(observed.entry_count(), 1);
+    assert!(observed.non_empty_file_observed());
+    assert_eq!(
+        staged_something.staged_content().phase(),
+        Some(StagedObservationPhase::ProviderReturned),
+        "the observation is taken where the evidence exists, not after teardown"
+    );
+    let empty = staged_nothing
+        .staged_content()
+        .observation()
+        .expect("an empty staging area is observed rather than assumed");
+    assert_eq!(empty.entry_count(), 0);
+    assert!(!empty.non_empty_file_observed());
+}
+
+/// A zero-byte staged file is an entry, and is not an output document.
+///
+/// The count says something was there; `non_empty_file_observed` is the only
+/// claim about content, and a file holding no bytes does not earn it.
+#[test]
+fn a_zero_byte_staged_file_is_counted_and_is_not_called_an_output() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = |spec: &CommandSpec| {
+        fs::write(staged_destination(spec), b"").expect("write an empty staged output");
+        Ok(4)
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&fixture.plan, &capabilities(), &runner);
+
+    let observed = report
+        .staged_content()
+        .observation()
+        .expect("the staging area was observed");
+    assert_eq!(observed.entry_count(), 1);
+    assert!(
+        !observed.non_empty_file_observed(),
+        "an empty file was reported as staged content"
+    );
+}
+
+/// An integrity refusal observes its staging area, and says when.
+///
+/// Validation reads and removes nothing, so the document the backend wrote is
+/// still there — and the phase distinguishes this reading from one taken after
+/// a publication emptied the directory.
+#[test]
+fn an_integrity_refusal_reports_the_document_it_refused_as_staged() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = |spec: &CommandSpec| {
+        fs::write(staged_destination(spec), b"<not-mzml/>").expect("write a rejected output");
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&fixture.plan, &capabilities(), &runner);
+
+    assert!(matches!(
+        report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(_))
+    ));
+    assert_eq!(
+        report.staged_content().phase(),
+        Some(StagedObservationPhase::OutputRefused)
+    );
+    let observed = report
+        .staged_content()
+        .observation()
+        .expect("a refused output is still staged content");
+    assert!(observed.non_empty_file_observed());
+}
+
+/// A run that settled before a staging area existed says so, and it is not the
+/// same answer as an area observed empty.
+#[test]
+fn a_refusal_before_staging_is_not_an_empty_staging_area() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    // A destination root that is no longer the directory the plan admitted.
+    fs::remove_dir_all(&fixture.root).expect("remove the destination root");
+    let act = |_: &CommandSpec| Ok(0);
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&fixture.plan, &capabilities(), &runner);
+
+    assert_eq!(report.staged_content(), StagedOutputEvidence::NotCreated);
+    assert_eq!(report.staged_content().observation(), None);
+    assert_eq!(report.identity(), None, "nothing was launched to name");
+    assert_eq!(report.process(), ProcessAttemptOutcome::NotAttempted);
+    assert_eq!(runner.calls(), 0);
+}
+
+/// A launch that failed leaves the process outcome *indeterminate*, and does
+/// not report that nothing ran.
+///
+/// The absence of process facts is not evidence about the machine. A run whose
+/// streams could not be captured has nothing to report and may well have
+/// created a process, and the two must not share an answer.
+#[test]
+fn a_failed_launch_is_indeterminate_rather_than_no_process() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = |_: &CommandSpec| {
+        Err(ProcessError::Capture {
+            stream: "stdout",
+            detail: "the pipe closed".to_owned(),
+        })
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&fixture.plan, &capabilities(), &runner);
+
+    assert!(matches!(
+        report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::Backend(_))
+    ));
+    assert_eq!(
+        report.backend(),
+        None,
+        "the runner returned an error, so there are no process facts"
+    );
+    assert_eq!(
+        report.process(),
+        ProcessAttemptOutcome::Indeterminate,
+        "absent process facts were read as a statement that nothing launched"
+    );
+    assert_ne!(report.process(), ProcessAttemptOutcome::NotAttempted);
+    assert!(
+        report.identity().is_some(),
+        "the provider was invoked, so this attempt has an identity"
+    );
+}
+
+/// A finalized run says its staged output was published, and takes no listing.
+#[test]
+fn a_finalized_run_reports_its_staged_output_as_published() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&fixture.plan, &capabilities(), &runner);
+
+    assert!(report.finalized().is_some());
+    assert_eq!(report.staged_content(), StagedOutputEvidence::Published);
+    assert_eq!(
+        report.staged_content().phase(),
+        None,
+        "publication is not an observation and carries no phase"
+    );
+    assert_eq!(
+        report.process(),
+        ProcessAttemptOutcome::Settled {
+            termination: Termination::Exited,
+            exit_code: Some(0),
+        }
+    );
+}
+
+/// Every attempt that reaches the provider gets its own identity, and no two
+/// attempts share one.
+///
+/// The identity names the attempt rather than the result: two runs of the same
+/// plan into the same folder producing the same filename are two runs, and the
+/// filename cannot tell them apart.
+#[test]
+fn each_attempt_that_reaches_the_provider_mints_its_own_identity() {
+    let first = {
+        let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+        let act = |_: &CommandSpec| Ok(3);
+        let runner = FakeRunner::new(&act);
+        run_conversion(&fixture.plan, &capabilities(), &runner)
+            .identity()
+            .expect("a launched attempt has an identity")
+    };
+    let second = {
+        let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+        let act = |_: &CommandSpec| Ok(3);
+        let runner = FakeRunner::new(&act);
+        run_conversion(&fixture.plan, &capabilities(), &runner)
+            .identity()
+            .expect("a launched attempt has an identity")
+    };
+    // Two attempts of one plan, into one folder, producing one filename. The
+    // filename cannot tell them apart and the identity must, which is the whole
+    // of what "not derived from the output's name" has to mean here. Asserting
+    // that a hexadecimal string does not contain "sample" would be true of
+    // every hexadecimal string and would prove nothing.
+    assert_ne!(first, second);
+    assert_eq!(first.to_hex().len(), 32);
+    assert_ne!(first.to_hex(), second.to_hex());
+    assert!(first.to_hex().chars().all(|c| c.is_ascii_hexdigit()));
+    // And the rendering is not this session's launch ordinal in plain
+    // hexadecimal: two consecutive attempts do not differ by one.
+    let low = |identity: OperationRunIdentity| {
+        u64::from_str_radix(&identity.to_hex()[16..], 16).expect("the low half is hexadecimal")
+    };
+    assert_ne!(low(second), low(first).wrapping_add(1));
+}
+
+/// A reading taken where no provider was invoked says so, rather than naming
+/// an execution that did not happen.
+///
+/// The phase is part of the answer, and the wrong one here would put "the
+/// temporary working folder was empty when the converter finished" directly
+/// beside "no converter was started for this item".
+#[test]
+fn a_reading_without_a_launch_does_not_name_a_backend_that_settled() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    // A plan this installation cannot express: the command is never built, so
+    // the provider is never invoked, and the staging area already exists.
+    let capabilities = capabilities_without_mzml_output();
+    let act = |_: &CommandSpec| Ok(0);
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&fixture.plan, &capabilities, &runner);
+
+    assert_eq!(runner.calls(), 0, "the provider was invoked after all");
+    assert_eq!(report.process(), ProcessAttemptOutcome::NotAttempted);
+    assert_eq!(report.identity(), None);
+    assert_eq!(
+        report.staged_content().phase(),
+        Some(StagedObservationPhase::ProviderNotInvoked),
+        "a reading taken with no provider invoked named one that settled"
+    );
+    // Still a reading, not an absence: the directory existed and was observed.
+    assert!(report.staged_content().observation().is_some());
+}
+
+/// A stop observed before the launch mints nothing and stages nothing.
+#[test]
+fn a_stop_before_the_launch_manufactures_no_run() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let cancellation = ConversionCancellation::new();
+    cancellation.request_handle().request();
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::Cancelled(report) = &attempt else {
+        panic!("a request made before the run is a cancellation: {attempt:?}");
+    };
+    assert_eq!(report.identity(), None);
+    assert_eq!(report.process(), ProcessAttemptOutcome::NotAttempted);
+    assert_eq!(report.staged_content(), StagedOutputEvidence::NotCreated);
+}
+
+/// A staging area that cannot be read is **unknown**, and stays distinct from
+/// one observed empty and from one that never existed.
+///
+/// Exercised through the two functions that actually decide it: the observation
+/// itself, which answers `None` when the directory cannot be enumerated, and
+/// the constructor that is the only way either arm is reached. A caller cannot
+/// pass a failed read into the variant that means "empty", because there is no
+/// other constructor to pass it to.
+///
+/// Forcing a real enumeration failure inside a run is not something this suite
+/// can do deterministically, and for a good reason: the staging area is held
+/// open as an object for the whole run, so nothing can take it away. What is
+/// provable is the mapping, and the mapping is where the conflation would live.
+/// A folder past the bound reports a lower bound, and says that it is one.
+///
+/// The reading stops so that a backend which filled the staging area cannot
+/// make a failure settlement pay for the whole listing -- the same reason
+/// discovery refuses an over-large set by *not* enumerating it. What matters
+/// downstream is that the counts it hands back are not totals: the entry count
+/// is a floor, the shape it did not read is not reported as zero, and the flag
+/// that says so is the only thing standing between "held more than 48 entries"
+/// and a fabricated exact count.
+#[test]
+fn a_reading_that_stopped_at_its_bound_reports_a_floor_rather_than_a_total() {
+    let directory = TestDirectory::new();
+    let crowded = directory.path().join("crowded");
+    fs::create_dir(&crowded).expect("create a staging area");
+    // One past what the reading will walk, so the bound is crossed rather than
+    // exactly met. Every entry is a file with content, which is precisely what
+    // the bounded arm must *not* claim to have seen.
+    for index in 0..=super::OBSERVED_STAGED_ENTRY_BOUND {
+        fs::write(crowded.join(format!("member-{index:03}.mzML")), b"content")
+            .expect("write a staged entry");
+    }
+
+    let observed = observe_staged_content(&crowded).expect("a readable directory is observed");
+    assert!(observed.bounded(), "the reading stopped at its bound");
+    assert!(
+        observed.entry_count() > super::OBSERVED_STAGED_ENTRY_BOUND,
+        "the count is a floor above the bound, not the bound itself"
+    );
+    // Deliberately not read, and deliberately not reported as measured zeroes:
+    // the consumer nulls both rather than printing them.
+    assert_eq!(observed.directory_count(), 0);
+    assert!(!observed.non_empty_file_observed());
+
+    // A folder inside the bound is the other answer, taken the same way and
+    // through the same constructor, so the two cannot converge.
+    let small = directory.path().join("small");
+    fs::create_dir(&small).expect("create a small staging area");
+    fs::write(small.join("one.mzML"), b"content").expect("write a staged entry");
+    let exact = observe_staged_content(&small).expect("a readable directory is observed");
+    assert!(!exact.bounded());
+    assert_eq!(exact.entry_count(), 1);
+    assert!(exact.non_empty_file_observed());
+}
+
+#[test]
+fn an_unreadable_staging_area_is_unknown_rather_than_empty() {
+    let directory = TestDirectory::new();
+    let missing = directory.path().join("never-created");
+    assert_eq!(
+        observe_staged_content(&missing),
+        None,
+        "a directory that cannot be enumerated has nothing to report"
+    );
+
+    let unknown = StagedOutputEvidence::of(
+        StagedObservationPhase::ProviderReturned,
+        observe_staged_content(&missing),
+    );
+    assert_eq!(
+        unknown,
+        StagedOutputEvidence::Unobserved(StagedObservationPhase::ProviderReturned)
+    );
+    assert_eq!(
+        unknown.observation(),
+        None,
+        "an unread directory reports no counts"
+    );
+    assert_ne!(unknown, StagedOutputEvidence::NotCreated);
+
+    // And an area that really is empty is a different answer, taken the same
+    // way. Both go through one constructor, so the two cannot converge.
+    let empty = directory.path().join("empty");
+    fs::create_dir(&empty).expect("create an empty staging area");
+    let observed = StagedOutputEvidence::of(
+        StagedObservationPhase::ProviderReturned,
+        observe_staged_content(&empty),
+    );
+    assert_eq!(
+        observed
+            .observation()
+            .map(StagedContentObservation::entry_count),
+        Some(0)
+    );
+    assert_ne!(observed, unknown);
+    assert_ne!(observed, StagedOutputEvidence::NotCreated);
 }

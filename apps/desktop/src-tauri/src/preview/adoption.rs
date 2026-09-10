@@ -726,6 +726,18 @@ impl SciexAttemptSettlement {
         }
     }
 
+    /// What this attempt established about itself, read off its own report.
+    ///
+    /// One origin for the three facts, so a set item and a single-output item
+    /// answer judgements one and two from the same place.
+    pub(super) const fn attempt_facts(&self) -> super::operation::AttemptFacts {
+        super::operation::AttemptFacts {
+            process: self.report.process_outcome(),
+            staged: self.report.staged_content(),
+            identity: self.report.run_identity(),
+        }
+    }
+
     pub(super) const fn state(&self) -> ItemState {
         self.state
     }

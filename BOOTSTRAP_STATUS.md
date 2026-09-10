@@ -7777,4 +7777,131 @@ range can move". They are pre-existing and are recorded rather than absorbed.
 
 The evidence and the 56-path closure are in
 [the M6.8 record](docs/ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md).
-M6.9 has not started.
+M6.9 is recorded below.
+
+## M6.9 output completion and adoption, 2026-09-09
+
+Baseline live-verified before edits: local HEAD/main/origin-main and remote main
+all `96351b2adc0f668f12c26a3ca1ee471ca991f284`, tree
+`7383517e022de64faf90d05340ac2484f8467852`, with clean index/worktree, no
+untracked files, stash or active operation. PR #101 is the published M6.8 true
+merge. No M6.9 branch existed locally or on the remote, so nothing was resumed.
+
+M6.9 makes what a conversion produced legible, per item and per queue. The five
+judgements ADR 0043 locked — process, staged output, finalized output, integrity
+and adoption — are separated on the wire and on screen, and none is derivable
+from another.
+
+**Four of the five were separated in the crate's vocabulary and collapsed only
+on screen. Judgement 2 was not, and it was a model addition.** The
+staged-content observation was taken on the stop paths and on the multi-output
+set-stop and on no other, so an ordinary failure settled with none: a conversion
+that failed after writing part of a document and one that failed having written
+nothing reported the same outcome, the same clean teardown and the same empty
+destination. Both lifecycles now observe on every ordinary-failure path, before
+teardown consumes the evidence. The answer is four-way — never given to a
+provider, unobserved at a stated phase, observed at a stated phase, or published
+under its final name — because "empty" is not one answer and an unread directory
+is unknown. The phase is part of the answer and never asserts an event that did
+not happen.
+
+`OperationRunIdentity` is minted immediately before the command reaches the
+process boundary and never for an attempt that reached none, which is what keeps
+a refusal, a skip or a stop that beat the launch from reading as a run. Within a
+session its uniqueness is by construction; across sessions it is an argument
+from a 64-bit nonce, and the record says so rather than calling it certain.
+Process facts are read from the execution boundary rather than from whether a
+report came back, so a capture failure is indeterminate rather than "no process
+ran". A set's manifest carries each discovered member's own name, state,
+measurements and integrity dispositions, and a partial set is counted against
+the population it produced rather than against the lifecycle's bound. Adoption
+is unchanged and its result is now recorded on the queue it was about, under the
+queue and its settling. A set's members have four states rather than three,
+because a refused member and one nobody examined are opposite facts, and the
+four member counts partition the set. The diagnostics schema moves 2 → 5: a
+boolean over an optional observation left, `cancellation.processLaunched` became
+nullable because a boolean cannot hold "not established", and
+`outputSet.notPublishedCount` narrowed when refusal became its own state. The
+item's own staged evidence, process, run identity, advisory list and rejected
+count arrived beside them.
+
+Implementation is complete and every local gate passes at the reviewed head:
+1685 frontend tests across 70 files, 1554 Rust tests across the workspace with
+23 ignored, lint, both typechecks, the build, `cargo fmt --check`, clippy with
+warnings denied, `check_repo.py` and `git diff --check`.
+
+**Four independent reviews were run — three against the full diff and one
+against the repairs — and the repository's own reviewer raised twenty threads
+across five batches. Every finding was verified against the code before it was
+acted on, and none was suppressed.** They raised two blocking and thirty-one
+should-fix items, and all of them were repaired: a rendered
+sentence that denied the very integrity check that caused the failure; a set
+that produced files reported as having produced none; a partial set told it
+produced nothing adoptable when a policy refused it; one refusal reason asserted
+of all of them; an observation phase that named a backend execution on attempts
+where no provider was invoked; two user-facing documents claiming the run
+identity is never written to disk while the same diff writes it into the
+diagnostics export; a stale doc comment stating the belief this slice exists to
+overturn; the adoption round guard and the rerun's forgetting both untested and
+the guard's answer discarded; the schema increment documented and unproved; a
+changed-path closure that was neither complete nor derived; an advisory list
+that no family this release converts can populate, asserted in fixtures pairing
+it with a mode Rust never pairs it with; and this section, which said the slice
+had not started at a head that ships it.
+
+The later rounds found more of the same class: a refused set member spelled the
+same way as one nobody examined, so a manifest could not say which member was
+the problem; a saved diagnostic that lost a refused member from every count it
+kept; a stop's ending read from the facts beside it rather than from the
+boundary that decided it, wrong in both directions; the fourth list of the
+integrity judgement never written to the export; a rendered sentence claiming a
+folder held nothing but the output it published; and the bounded reading
+asserted at no layer at all.
+
+Rendered QA is browser 7/7 for M6.9 at four inner sizes, plus M6.8 10/10, M6.7
+7/7 and M6.6 8/8, re-run at this head against the bundle this head builds. That
+suite is headless, so a locked session does not block it. Two browser cases fail
+here as they do on the published baseline — `m4.1` "offers all three formats for
+a spectrum that loaded with no peaks" and `m5.2` "still reaches the plot by Tab
+where the range can move". They are pre-existing, they are recorded rather than
+absorbed, and this diff cannot be their cause: it changes no viewer or spectrum
+production file, and every stylesheet rule it adds is scoped to a class name
+this slice introduces.
+
+**Native validation is taken on the build this head produces.** One build, four
+suites, one binary: `target/e2e/release/mscanvas-desktop.exe`,
+SHA-256
+`1d5edc8569c04780ce3de7d0cae0af401c1593a27f5b25b975f6e48bb0030c6d`, WebView2 and
+msedgedriver 152.0.4191.66, against ProteoWizard 3.0.26013.47b13cf 64-bit and
+the approved Thermo fixture. M6.9 1/1 — a real output-only completion of two
+acquisitions, the digest on the wire re-computed from the file on disk, two
+different run identities for two attempts of one plan, the manifest read off the
+rendered disclosure, adoption only when asked, a real changed-output refusal
+that leaves the finalization and its integrity result intact, and a real
+duplicate. Affected regressions on the same binary: M6.6 5/5, M6.7 2/2 and M6.8
+3/3, M6.6 including the real `Escape` at the exact owned folder picker through
+the foreground guard.
+
+**The set was blocked for a stretch, and two runs were discarded.** A locked
+Windows session cannot drive a real dialog, so the suites waited for an
+interactive one rather than being reached another way. One M6.6 run was
+disturbed by stray keyboard input and timed out in its setup. One M6.8 run hit a
+race in that spec's own harness, which reads the running row and then clicks
+*Stop this file*, so the click can land on the row that started in between. All
+three are named rather than absorbed, and the M6.8 harness race is left to
+whichever slice next touches that spec. Sources were
+digest-checked afterwards and are unchanged; nothing outside each run's own
+scratch directory was written. Nothing was weakened to reach any of it — no
+guard relaxed, no `Cancel` substituted for an `Escape`, no focus scripted, no
+policy changed.
+
+**An earlier run found two defects, both mine, and both are fixed.** The adoption's
+answer is recorded on the queue so it survives a re-read — and the document did
+not re-read the queue after adopting, so the row went on saying nobody had
+asked. Recording it also did not advance the slot's ordering key, so even a
+re-read would have been discarded as stale. Neither was visible to the unit, the
+rendered or the review layers; a rendered test and a Rust test now pin each.
+
+The evidence and the changed-path closure are in
+[the M6.9 record](docs/ux/M6_9_OUTPUT_COMPLETION_ADOPTION.md).
+M6.10 has not started.

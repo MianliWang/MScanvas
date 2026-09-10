@@ -388,7 +388,9 @@ with a plan bound to the installation that answered them, and where output goes
 is now a bound policy resolved to admitted directory objects. M6.6's destination
 and conflict UX is published; M6.7 makes selected/all scope explicit; M6.8 closes
 the process-ownership window, measures the installed provider, and settles what a
-user may stop. M6.9 is not started.**
+user may stop; M6.9 makes what a conversion produced legible, with all five
+judgements separated per item and the seams M7 and M8 read. M6.10 is not
+started.**
 
 The route, the live conversion gap audit it was decided from, the nine product
 decisions it surfaces, the twelve exit criteria and the M7/M8 seams are in
@@ -422,7 +424,17 @@ Twelve slices, plus one authority interlude:
   converted and skipping a waiting item are admitted, removing a queued item
   stays refused, and capacity stays 16 with a current rationale. See
   [the M6.8 record](docs/ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md).
-- M6.9 — output completion and adoption.
+- M6.9 — output completion and adoption. **Complete.** Process, staged output,
+  finalized output, integrity and adoption are five separate judgements per
+  item, and the staged one is now answered on the ordinary-failure paths too —
+  so a failure that staged something reads differently from one that staged
+  nothing, which residue alone cannot tell apart. A run identity is minted
+  before the converter is invoked and never for an attempt that reached none. A
+  set's manifest carries each member's own name, state and measurements, and a
+  partial set is counted against what it produced rather than against the
+  lifecycle's bound. Adoption stays explicit and its result is recorded on the
+  queue it was about. See
+  [the M6.9 record](docs/ux/M6_9_OUTPUT_COMPLETION_ADOPTION.md).
 - M6.10 — evidence-gated side routes.
 - M6.11 — closure.
 

@@ -349,6 +349,32 @@ availability, queue, adoption and export contracts.
    MSCanvas will not present them as the acquisition's complete output set. It
    is not offered a retry, and it is never described as though nothing had been
    converted.
+
+   Every settled row also offers `Details`, which answers five questions
+   separately and collapses none of them into success or failure. **Process**:
+   whether a converter ran, and how it ended. **Staged output**: what MSCanvas's
+   own temporary working folder held — answered whether or not anything was
+   published, so a run that failed after writing part of a document reads
+   differently from one that wrote nothing, which the outcome and the empty
+   destination cannot tell apart. A folder that could not be read is reported as
+   unknown rather than as empty; one that was never created is a third answer
+   again. **Finalized output**: what obtained a final name, and for a set how
+   many of the files it actually produced did. **Integrity**: whether the output
+   was compared against a readable source or judged on its own, how many
+   properties were checked, how many were not established and how many could not
+   apply, with advisory observations named apart because they fail nothing —
+   those are recorded only by a source comparison, and no family this release
+   converts is read under one, so the list is empty on every conversion it can
+   currently run.
+   **Adoption**: what an adoption did with that item's outputs, which is history
+   rather than a statement about what the workspace holds now.
+
+   Beside those five, a manifest lists each output file with its byte length,
+   its SHA-256 and its observed spectrum and chromatogram counts, and the row
+   names the attempt that produced them. That name belongs to this session only:
+   nothing keeps it between runs and nothing resolves one from an earlier
+   session. It does appear in a diagnostics file the user chooses to save, which
+   is the only place it leaves the session.
 9. `Retry N failed` reruns only the failures another attempt could change, in
    their original places, into their bound per-item destination objects under
    the same policy. Every destination is revalidated; retry neither re-resolves
@@ -385,6 +411,14 @@ availability, queue, adoption and export contracts.
     still be adopted, and so can a session that has stopped trusting the
     backend, because adding a file launches no process. Replace the queue or
     restart, and the outputs are ordinary mzML files `Add files…` still reaches.
+
+    Afterwards each row says what the adoption did with its own outputs: how
+    many were added, how many were already in the workspace and how many were
+    not, with the reason. That is a record of what happened, not a claim about
+    what the workspace holds now — removing a row later deletes no file and
+    undoes nothing the conversion established, and the roster is where current
+    membership is read. A refusal leaves the finalization and its integrity
+    result exactly where they were.
 
 12. `Export failure diagnostics…` appears for a terminal queue that has
     something to diagnose: an item that failed, one whose stop could not be

@@ -262,6 +262,32 @@ independent settings. This candidate does not change selected/all membership,
 source-family gates, scientific intent, receipt authority or viewer/export
 semantics.
 
+**M6.9 makes what a conversion produced legible.** Every settled row offers a
+compact detail disclosure that answers five separate questions and collapses
+none of them into success or failure: whether a converter ran and how it ended;
+what the private working folder held, answered whether or not anything was
+published; what obtained a final name, including part of a backend-named set;
+how the output was judged, with validation mode, the three property
+dispositions and advisory observations kept apart — advisories are recorded only
+where a source comparison runs, and no family this release converts is read
+under one, so today that list is empty on every conversion; and what an adoption
+did with that item's outputs. Beside the five, never in place of one, a per-output
+manifest carries each file's name, byte length, SHA-256 digest and observed
+spectrum and chromatogram counts, and an opaque run identity names the attempt
+that produced them.
+
+Two failures that ended the same way are no longer one answer. A converter that
+exited non-zero after writing part of a document and one that wrote nothing
+report the same outcome, the same clean teardown and the same empty destination
+— and the row now says which was which. A working folder that could not be read
+is reported as unknown rather than as empty, and one that was never created is a
+third answer again. A partially published set says how many of the files it
+actually produced obtained final names, and continues to be refused as a
+complete output set. Output-only validation stays output-only however many
+checks passed, and nothing here claims byte-for-byte equivalence, losslessness
+or vendor fidelity. See
+[the M6.9 record](../ux/M6_9_OUTPUT_COMPLETION_ADOPTION.md).
+
 A terminal queue that has something to diagnose also offers **Export failure
 diagnostics…**: one local JSON file, saved where the user chooses, holding
 structured facts about each diagnosable attempt and bounded, redacted excerpts of

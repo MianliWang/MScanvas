@@ -38,6 +38,9 @@ use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::attempt::{
+    OperationRunIdentity, ProcessAttemptOutcome, StagedObservationPhase, StagedOutputEvidence,
+};
 use crate::capability::{InstalledHelpCapabilities, Sha256Digest};
 use crate::command::{
     CommandSpec, InputSpelling, PlanError, SourceIdentity, build_msconvert_set_command_for_source,
@@ -58,8 +61,7 @@ use crate::{ConversionCancellation, fs_guard};
 
 use super::{
     BackendExecutionFailure, BackendRunFacts, ConflictPolicy, ConversionSource,
-    ConversionSourceKind, OwnedStagingArea, OwnedTreeDisposition, StagedContentObservation,
-    StagingResidue, finalize,
+    ConversionSourceKind, OwnedStagingArea, OwnedTreeDisposition, StagingResidue, finalize,
 };
 use crate::BackendDiagnosticText;
 use crate::diagnostics::Redactor;
@@ -434,6 +436,16 @@ pub enum OutputMemberState {
     /// Never validated, or its publication never began. Nothing exists for it
     /// at the destination.
     NotPublished,
+    /// Validated and **refused**: the integrity contract read it and did not
+    /// pass it.
+    ///
+    /// Its own member because the alternative collapses two opposite facts. A
+    /// set stops at the first member that fails, so the failed one and every
+    /// member after it -- which were never examined at all -- previously shared
+    /// `NotPublished`, and a manifest listing them could not say which file was
+    /// the problem. "It was checked and refused" and "nobody looked at it" are
+    /// not degrees of one answer.
+    Rejected,
 }
 
 impl OutputMemberState {
@@ -443,6 +455,7 @@ impl OutputMemberState {
             Self::ValidatedNotPublished => "validated_not_published",
             Self::Finalized => "finalized",
             Self::NotPublished => "not_published",
+            Self::Rejected => "rejected",
         }
     }
 }
@@ -500,6 +513,13 @@ pub struct OutputMemberValidation {
     verified: Vec<&'static str>,
     unverified: Vec<&'static str>,
     inapplicable: Vec<&'static str>,
+    /// Descriptive differences that fail nothing.
+    ///
+    /// Kept beside the three dispositions rather than folded into
+    /// `unverified`, because none of them is a check that could have been made
+    /// and was not: each is a difference the measured evidence already shows a
+    /// faithful run can legitimately produce.
+    advisory: Vec<&'static str>,
 }
 
 impl OutputMemberValidation {
@@ -519,6 +539,11 @@ impl OutputMemberValidation {
             verified: ids(valid.verified()),
             unverified: ids(valid.unverified()),
             inapplicable: ids(valid.inapplicable()),
+            advisory: valid
+                .advisory()
+                .iter()
+                .map(|observation| observation.stable_id())
+                .collect(),
         }
     }
 
@@ -560,6 +585,12 @@ impl OutputMemberValidation {
     #[must_use]
     pub fn inapplicable(&self) -> &[&'static str] {
         &self.inapplicable
+    }
+
+    /// Descriptive observations, which are not a fourth disposition.
+    #[must_use]
+    pub fn advisory(&self) -> &[&'static str] {
+        &self.advisory
     }
 }
 
@@ -888,12 +919,23 @@ impl MultiOutputOutcome {
 /// What one multi-output run established. Path-free by construction.
 pub struct MultiOutputConversionReport {
     outcome: MultiOutputOutcome,
-    /// What was in the staging directory when a stop reached this run.
+    /// What the private staging area held, answered whether or not anything
+    /// was published.
     ///
-    /// Taken only on the cancellation paths, because it is the one
-    /// partial-output claim a run makes about itself and a run that reached its
-    /// own end has already said what it published.
-    staged: Option<StagedContentObservation>,
+    /// It used to be taken only on the cancellation paths, which left the
+    /// ordinary failures of a set -- a non-zero exit, an incomplete execution,
+    /// a refused sample audit, a publication that stopped partway -- reporting
+    /// nothing at all about what the backend had written. A clean teardown of
+    /// a directory holding six half-written documents reads exactly like a
+    /// clean teardown of an empty one, so the observation is now taken where
+    /// the evidence still exists and carried from there.
+    staged: StagedOutputEvidence,
+    /// The identity minted for this attempt before the provider was invoked.
+    /// `None` for every refusal ahead of the launch.
+    identity: Option<OperationRunIdentity>,
+    /// What the execution boundary established about the process, read from
+    /// the boundary rather than from whether `backend` is present.
+    process: ProcessAttemptOutcome,
     members: Vec<OutputMemberReport>,
     backend: Option<BackendRunFacts>,
     residue: Option<StagingResidue>,
@@ -912,6 +954,8 @@ impl std::fmt::Debug for MultiOutputConversionReport {
             .field("members", &self.members)
             .field("backend", &self.backend)
             .field("residue", &self.residue)
+            .field("staged", &self.staged)
+            .field("process", &self.process)
             .field("diagnostics_retained", &self.diagnostics.is_some())
             .finish()
     }
@@ -940,10 +984,23 @@ impl MultiOutputConversionReport {
         self.residue
     }
 
-    /// What was staged when a stop reached this run, where one did.
+    /// What the private staging area held, independently of what was
+    /// published and of what teardown reclaimed.
     #[must_use]
-    pub const fn staged_content(&self) -> Option<StagedContentObservation> {
+    pub const fn staged_content(&self) -> StagedOutputEvidence {
         self.staged
+    }
+
+    /// The identity of this attempt, where it reached the provider.
+    #[must_use]
+    pub const fn identity(&self) -> Option<OperationRunIdentity> {
+        self.identity
+    }
+
+    /// What the execution boundary established about the process.
+    #[must_use]
+    pub const fn process(&self) -> ProcessAttemptOutcome {
+        self.process
     }
 
     /// Takes the redacted backend text out of the report.
@@ -1157,6 +1214,7 @@ pub fn run_multi_output_conversion_evidence(
             },
             None,
             None,
+            SetAttemptEvidence::before_staging(),
         );
     }
 
@@ -1165,7 +1223,14 @@ pub fn run_multi_output_conversion_evidence(
     // the backend must convert the bytes that were measured.
     let (pinned_source, facts, canonical_source) = match capture_source_object(source) {
         Ok(captured) => captured,
-        Err(kind) => return refused(MultiOutputFailure::SourceNotCaptured { kind }, None, None),
+        Err(kind) => {
+            return refused(
+                MultiOutputFailure::SourceNotCaptured { kind },
+                None,
+                None,
+                SetAttemptEvidence::before_staging(),
+            );
+        }
     };
 
     run_bound_multi_output(
@@ -1271,17 +1336,28 @@ pub fn run_admitted_multi_output_conversion_seamed(
             },
             None,
             None,
+            SetAttemptEvidence::before_staging(),
         );
     }
 
     if !source.kind().produces_output_set() {
-        return refused(MultiOutputFailure::SourceFamilyNotMultiOutput, None, None);
+        return refused(
+            MultiOutputFailure::SourceFamilyNotMultiOutput,
+            None,
+            None,
+            SetAttemptEvidence::before_staging(),
+        );
     }
     // The same predicate the single-output boundary applies, asked here for the
     // same reason: a family is evidence about the build it was measured on, and
     // an installation that merely calls itself that build is not that build.
     if !super::provider_build_is_evidenced(capabilities, source.kind()) {
-        return refused(MultiOutputFailure::ProviderBuildNotEvidenced, None, None);
+        return refused(
+            MultiOutputFailure::ProviderBuildNotEvidenced,
+            None,
+            None,
+            SetAttemptEvidence::before_staging(),
+        );
     }
 
     let pins = match super::pin_source_bundle(source) {
@@ -1291,6 +1367,7 @@ pub fn run_admitted_multi_output_conversion_seamed(
                 MultiOutputFailure::SourceNotStillAdmitted(failure),
                 None,
                 None,
+                SetAttemptEvidence::before_staging(),
             );
         }
     };
@@ -1422,6 +1499,7 @@ fn run_bound_multi_output(
                 MultiOutputFailure::DestinationRootNotOpened { kind: error.kind() },
                 None,
                 None,
+                SetAttemptEvidence::before_staging(),
             );
         }
     };
@@ -1432,6 +1510,7 @@ fn run_bound_multi_output(
                 MultiOutputFailure::DestinationRootNotOpened { kind: error.kind() },
                 None,
                 None,
+                SetAttemptEvidence::before_staging(),
             );
         }
     };
@@ -1442,21 +1521,42 @@ fn run_bound_multi_output(
     )) {
         Ok(staging) => staging,
         Err(failure) => {
-            return refused(staging_failure(&failure), None, None);
+            return refused(
+                staging_failure(&failure),
+                None,
+                None,
+                SetAttemptEvidence::before_staging(),
+            );
         }
     };
+
+    // Read once, here, because every refusal below it observes this directory
+    // before teardown consumes the staging area that names it.
+    let staging_output = staging.output_directory();
 
     let command = match build_msconvert_set_command_for_source(
         capabilities,
         &canonical_source,
-        &staging.output_directory(),
+        &staging_output,
         &intent,
         InputSpelling::PlainVerified,
     ) {
         Ok(command) => command,
         Err(error) => {
+            // Observed before teardown, not after. A refusal that reached no
+            // provider still says what was in the directory it created rather
+            // than reasoning that nothing can have been.
+            let evidence = SetAttemptEvidence::staged_without_launch(
+                &staging_output,
+                StagedObservationPhase::ProviderNotInvoked,
+            );
             let residue = staging.discard();
-            return refused(MultiOutputFailure::NotPlannable(error), None, residue);
+            return refused(
+                MultiOutputFailure::NotPlannable(error),
+                None,
+                residue,
+                evidence,
+            );
         }
     };
     // The companions never appear in the argv — the backend derives their names
@@ -1465,14 +1565,27 @@ fn run_bound_multi_output(
     let command = match command.with_source_companion_identities(companions) {
         Some(command) => command,
         None => {
+            let evidence = SetAttemptEvidence::staged_without_launch(
+                &staging_output,
+                StagedObservationPhase::ProviderNotInvoked,
+            );
             let residue = staging.discard();
-            return refused(MultiOutputFailure::SourceBundleNotBound, None, residue);
+            return refused(
+                MultiOutputFailure::SourceBundleNotBound,
+                None,
+                residue,
+                evidence,
+            );
         }
     };
 
-    let staging_output = staging.output_directory();
-    let (backend, process_failure, process_output) =
-        run_set_backend(&command, runner, cancellation);
+    let SetBackendRun {
+        backend,
+        failure: process_failure,
+        output: process_output,
+        identity,
+        process,
+    } = run_set_backend(&command, runner, cancellation);
     let diagnostics_of = |output: &Option<ProcessOutput>| {
         output.as_ref().and_then(|output| {
             set_diagnostic_text(
@@ -1486,19 +1599,27 @@ fn run_bound_multi_output(
     };
     if let Some(failure) = process_failure {
         let diagnostics = diagnostics_of(&process_output);
-        // Read before the staging area is taken down, and only where a stop is
-        // what ended the run: this is the run's own account of what it had
-        // written when it was interrupted, and it is the only partial-output
-        // claim it makes.
-        let stopped = matches!(
-            failure,
-            MultiOutputFailure::Cancelled { .. } | MultiOutputFailure::CancellationNotConfirmed(_)
-        );
-        let staged = stopped
-            .then(|| super::observe_staged_content(&staging_output))
-            .flatten();
+        // Read before the staging area is taken down, and on every failure
+        // rather than only on a stop. A set that exited non-zero after writing
+        // four of its six documents was previously indistinguishable from one
+        // that wrote none: both settled with the same outcome, the same absent
+        // publication and the same clean teardown.
+        // The phase follows whether the provider was actually invoked. A stop
+        // that arrived in the window between creating the staging area and
+        // launching settles here with no identity and nothing attempted, and
+        // naming a backend that settled would assert an execution.
+        let phase = if identity.is_some() {
+            StagedObservationPhase::ProviderReturned
+        } else {
+            StagedObservationPhase::ProviderNotInvoked
+        };
+        let evidence = SetAttemptEvidence {
+            staged: StagedOutputEvidence::of(phase, super::observe_staged_content(&staging_output)),
+            identity,
+            process,
+        };
         let residue = staging.discard();
-        return refused_after_stop(failure, backend, residue, diagnostics, staged);
+        return refused_diagnosable(failure, backend, residue, diagnostics, evidence);
     }
 
     // Before discovery, before validation, before any destination name is
@@ -1509,12 +1630,24 @@ fn run_bound_multi_output(
         Ok(proof) => proof,
         Err(refusal) => {
             let diagnostics = diagnostics_of(&process_output);
+            // The backend exited cleanly and the audit refused. Whatever it
+            // wrote is still in the staging area at this moment and is about
+            // to be removed, so this is the last place the fact exists.
+            let evidence = SetAttemptEvidence {
+                staged: StagedOutputEvidence::of(
+                    StagedObservationPhase::ProviderReturned,
+                    super::observe_staged_content(&staging_output),
+                ),
+                identity,
+                process,
+            };
             let residue = staging.discard();
             return refused_diagnosable(
                 MultiOutputFailure::SampleCompletenessNotEstablished(refusal),
                 backend,
                 residue,
                 diagnostics,
+                evidence,
             );
         }
     };
@@ -1557,17 +1690,62 @@ fn run_bound_multi_output(
             SciexSampleCompleteness::NotEstablished(SampleCompletenessRefusal::SetNotFullyPublished)
         }
     });
+    // Publication has run. A fully finalized set moved every member out under
+    // its final name, which settles what was staged without a listing; every
+    // other settlement -- a partial publication, a skipped set, a refusal
+    // after discovery -- leaves the question open and is observed, at the
+    // phase that says the answer is about what remained after publication
+    // rather than about what the backend wrote.
+    let staged = match &settled.outcome {
+        // Every discovered member moved out under its final name, which settles
+        // the judgement without a listing.
+        MultiOutputOutcome::FullyFinalized => StagedOutputEvidence::Published,
+        // Publication ran and stopped partway. The reading is about what it
+        // left, which is why the phase says so.
+        MultiOutputOutcome::PartiallyFinalized { .. } => StagedOutputEvidence::of(
+            StagedObservationPhase::PublicationSettled,
+            super::observe_staged_content(&staging_output),
+        ),
+        // A member was judged and refused. The same event as the single-output
+        // lifecycle's rejection, so it carries the same phase word: two rows
+        // describing one thing must not describe it differently.
+        MultiOutputOutcome::RefusedBeforePublication(MultiOutputFailure::MemberRejected {
+            ..
+        }) => StagedOutputEvidence::of(
+            StagedObservationPhase::OutputRefused,
+            super::observe_staged_content(&staging_output),
+        ),
+        // The first rename did not land. Publication ran -- it is what failed --
+        // so the reading is about what it left, and calling it a backend that
+        // had just returned would put the clock back past the attempt.
+        MultiOutputOutcome::RefusedBeforePublication(MultiOutputFailure::MemberNotFinalized {
+            ..
+        }) => StagedOutputEvidence::of(
+            StagedObservationPhase::PublicationSettled,
+            super::observe_staged_content(&staging_output),
+        ),
+        // Nothing was published: the set stepped aside because every one of its
+        // names was occupied, or it was refused after discovery and before any
+        // name was taken. Naming a publication phase would assert one that did
+        // not happen, and what these readings are about is what the backend
+        // left in the directory.
+        MultiOutputOutcome::SkippedExistingDestinations
+        | MultiOutputOutcome::RefusedBeforePublication(_) => StagedOutputEvidence::of(
+            StagedObservationPhase::ProviderReturned,
+            super::observe_staged_content(&staging_output),
+        ),
+    };
     let residue = staging.discard();
     MultiOutputConversionRun {
         report: MultiOutputConversionReport {
             outcome: settled.outcome,
             members: settled.members,
-            // A run that reached settlement was not stopped inside the backend,
-            // so there is no interrupted staging directory to describe.
-            staged: None,
+            staged,
             backend,
             residue,
             diagnostics,
+            identity,
+            process,
         },
         retained: FinalizedOutputSet {
             outputs: settled.retained,
@@ -1613,27 +1791,46 @@ fn refused_diagnosable(
     backend: Option<BackendRunFacts>,
     residue: Option<StagingResidue>,
     diagnostics: Option<Box<BackendDiagnosticText>>,
+    evidence: SetAttemptEvidence,
 ) -> MultiOutputConversionRun {
-    let mut run = refused(failure, backend, residue);
+    let mut run = refused(failure, backend, residue, evidence);
     run.report.diagnostics = diagnostics;
     run
 }
 
-/// The same refusal, carrying what was staged when a stop reached the run.
+/// What one set attempt established about itself, beside its outcome.
 ///
-/// Only the cancellation paths take this observation, and only they should: it
-/// is the one partial-output claim a run makes about itself, and a run that
-/// reached its own end has already said what it published.
-fn refused_after_stop(
-    failure: MultiOutputFailure,
-    backend: Option<BackendRunFacts>,
-    residue: Option<StagingResidue>,
-    diagnostics: Option<Box<BackendDiagnosticText>>,
-    staged: Option<StagedContentObservation>,
-) -> MultiOutputConversionRun {
-    let mut run = refused_diagnosable(failure, backend, residue, diagnostics);
-    run.report.staged = staged;
-    run
+/// Carried as one value rather than three parameters, and required by every
+/// refusal path, so a refusal added later has to say what was staged, whether
+/// it minted an identity and what became of the process. A default would let
+/// a post-staging refusal report `NotCreated` by forgetting to answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SetAttemptEvidence {
+    staged: StagedOutputEvidence,
+    identity: Option<OperationRunIdentity>,
+    process: ProcessAttemptOutcome,
+}
+
+impl SetAttemptEvidence {
+    /// An attempt that settled before a staging area existed and before the
+    /// provider was invoked.
+    const fn before_staging() -> Self {
+        Self {
+            staged: StagedOutputEvidence::NotCreated,
+            identity: None,
+            process: ProcessAttemptOutcome::NotAttempted,
+        }
+    }
+
+    /// An attempt whose staging area exists and whose provider was never
+    /// invoked. Observed rather than assumed empty.
+    fn staged_without_launch(staging: &Path, phase: StagedObservationPhase) -> Self {
+        Self {
+            staged: StagedOutputEvidence::of(phase, super::observe_staged_content(staging)),
+            identity: None,
+            process: ProcessAttemptOutcome::NotAttempted,
+        }
+    }
 }
 
 /// A refusal that produced no members.
@@ -1641,15 +1838,18 @@ fn refused(
     failure: MultiOutputFailure,
     backend: Option<BackendRunFacts>,
     residue: Option<StagingResidue>,
+    evidence: SetAttemptEvidence,
 ) -> MultiOutputConversionRun {
     MultiOutputConversionRun {
         report: MultiOutputConversionReport {
             outcome: MultiOutputOutcome::RefusedBeforePublication(failure),
             members: Vec::new(),
-            staged: None,
+            staged: evidence.staged,
             backend,
             residue,
             diagnostics: None,
+            identity: evidence.identity,
+            process: evidence.process,
         },
         retained: FinalizedOutputSet {
             outputs: Vec::new(),
@@ -1711,27 +1911,48 @@ fn capture_source_object(
 /// lifecycle's vocabulary. Process supervision itself is untouched: the one
 /// production runner remains the authority for the child, the job object, the
 /// capture and the teardown.
+/// What the set lifecycle's own call on the process boundary produced.
+///
+/// A struct rather than a tuple because two of its members are the answers a
+/// caller must not derive from the others: whether an identity was minted says
+/// whether the provider was invoked at all, and the process outcome says what
+/// became of it -- neither of which is readable from `backend` being absent.
+struct SetBackendRun {
+    backend: Option<BackendRunFacts>,
+    failure: Option<MultiOutputFailure>,
+    output: Option<ProcessOutput>,
+    /// Minted immediately before the provider was invoked, and `None` where it
+    /// never was.
+    identity: Option<OperationRunIdentity>,
+    process: ProcessAttemptOutcome,
+}
+
 fn run_set_backend(
     command: &CommandSpec,
     runner: &dyn ProcessRunner,
     cancellation: Option<&ConversionCancellation>,
-) -> (
-    Option<BackendRunFacts>,
-    Option<MultiOutputFailure>,
-    Option<ProcessOutput>,
-) {
+) -> SetBackendRun {
     if let Some(cancellation) = cancellation
         && cancellation.is_requested()
     {
-        return (
-            None,
-            Some(MultiOutputFailure::Cancelled {
+        return SetBackendRun {
+            backend: None,
+            failure: Some(MultiOutputFailure::Cancelled {
                 surviving_processes: None,
                 owned_tree: OwnedTreeDisposition::NoneLaunched,
             }),
-            None,
-        );
+            output: None,
+            // The request beat the launch. No identity, because there is no
+            // run for one to name.
+            identity: None,
+            process: ProcessAttemptOutcome::NotAttempted,
+        };
     }
+    // Minted here, immediately before the command reaches the process
+    // boundary, and for the reason the single-output lifecycle mints it in the
+    // same place: an identity taken afterwards would name a result, and one
+    // taken on first read would not exist for an attempt nobody looked at.
+    let identity = Some(OperationRunIdentity::mint());
     let result = match cancellation {
         Some(cancellation) => runner.run_cancellable(command, cancellation.token()),
         None => runner.run(command),
@@ -1752,10 +1973,22 @@ fn run_set_backend(
             } else {
                 MultiOutputFailure::Backend(cause)
             };
-            return (None, Some(failure), None);
+            return SetBackendRun {
+                backend: None,
+                failure: Some(failure),
+                output: None,
+                identity,
+                // The provider was invoked and nothing came back to say what
+                // became of the process. Absent facts are not "no process".
+                process: ProcessAttemptOutcome::Indeterminate,
+            };
         }
     };
     let backend = Some(BackendRunFacts::from(&output));
+    let process = backend.map_or(
+        ProcessAttemptOutcome::Indeterminate,
+        ProcessAttemptOutcome::of,
+    );
     if output.termination != Termination::Exited {
         let failure = if !requested {
             MultiOutputFailure::BackendDidNotComplete
@@ -1780,15 +2013,33 @@ fn run_set_backend(
                 ),
             }
         };
-        return (backend, Some(failure), Some(output));
+        return SetBackendRun {
+            backend,
+            failure: Some(failure),
+            output: Some(output),
+            identity,
+            process,
+        };
     }
     if !output.success() {
         let failure = MultiOutputFailure::BackendRejected {
             exit_code: output.exit_code,
         };
-        return (backend, Some(failure), Some(output));
+        return SetBackendRun {
+            backend,
+            failure: Some(failure),
+            output: Some(output),
+            identity,
+            process,
+        };
     }
-    (backend, None, Some(output))
+    SetBackendRun {
+        backend,
+        failure: None,
+        output: Some(output),
+        identity,
+        process,
+    }
 }
 
 /// Bounded, redacted backend text for this run.
@@ -1954,7 +2205,7 @@ pub(crate) fn settle_staged_output_set_seamed(
                             rejection,
                         },
                     ),
-                    members: build_member_reports(&discovered, &facts, &[]),
+                    members: build_member_reports(&discovered, &facts, &[], Some(member.name())),
                     retained: Vec::new(),
                 };
             }
@@ -1985,7 +2236,7 @@ pub(crate) fn settle_staged_output_set_seamed(
             outcome: MultiOutputOutcome::RefusedBeforePublication(
                 MultiOutputFailure::OutputNameClaimedElsewhere { name },
             ),
-            members: build_member_reports(&discovered, &facts, &[]),
+            members: build_member_reports(&discovered, &facts, &[], None),
             retained: Vec::new(),
         };
     }
@@ -2005,7 +2256,7 @@ pub(crate) fn settle_staged_output_set_seamed(
                     outcome: MultiOutputOutcome::RefusedBeforePublication(
                         MultiOutputFailure::DestinationNotInspectable { kind: error.kind() },
                     ),
-                    members: build_member_reports(&discovered, &facts, &[]),
+                    members: build_member_reports(&discovered, &facts, &[], None),
                     retained: Vec::new(),
                 };
             }
@@ -2035,7 +2286,7 @@ pub(crate) fn settle_staged_output_set_seamed(
         };
         return SettledOutputSet {
             outcome,
-            members: build_member_reports(&discovered, &facts, &[]),
+            members: build_member_reports(&discovered, &facts, &[], None),
             retained: Vec::new(),
         };
     }
@@ -2089,7 +2340,7 @@ pub(crate) fn settle_staged_output_set_seamed(
                     }
                 };
                 return SettledOutputSet {
-                    members: build_member_reports(&discovered, &facts, &finalized),
+                    members: build_member_reports(&discovered, &facts, &finalized, None),
                     outcome,
                     retained,
                 };
@@ -2099,7 +2350,7 @@ pub(crate) fn settle_staged_output_set_seamed(
 
     SettledOutputSet {
         outcome: MultiOutputOutcome::FullyFinalized,
-        members: build_member_reports(&discovered, &facts, &finalized),
+        members: build_member_reports(&discovered, &facts, &finalized, None),
         retained,
     }
 }
@@ -2112,6 +2363,7 @@ fn build_member_reports(
     discovered: &[DiscoveredMember],
     facts: &[(OsString, OutputMemberValidation)],
     finalized: &[OsString],
+    rejected: Option<&OsStr>,
 ) -> Vec<OutputMemberReport> {
     discovered
         .iter()
@@ -2128,6 +2380,11 @@ fn build_member_reports(
                 .any(|name| name.as_os_str() == member.name())
             {
                 OutputMemberState::Finalized
+            } else if rejected == Some(member.name()) {
+                // Asked before the validation record, because a refused member
+                // has none: the judgement read it and did not pass it, which is
+                // the opposite of never having been looked at.
+                OutputMemberState::Rejected
             } else if validation.is_some() {
                 OutputMemberState::ValidatedNotPublished
             } else {

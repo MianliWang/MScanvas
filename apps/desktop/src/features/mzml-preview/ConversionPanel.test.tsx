@@ -96,6 +96,36 @@ describe("destination request and queue truth", () => {
     expect(within(panel).getByLabelText("Subfolder name")).toHaveValue("Native QA");
   });
 
+  it("restores Convert focus even when the plan is momentarily gone", async () => {
+    // The commit a cancelled picker returns into does not always have a
+    // pressable button in it. With nothing selected the control reads "Convert
+    // 0 selected…" and is disabled, `focus()` on a disabled button does
+    // nothing, and a restoration that spent itself there left the focus on the
+    // document body for the rest of the session.
+    const picker = deferred<WorkspaceConversionState>();
+    const api = createFakePreviewApi({
+      initialDatasets: [first], availability: availableBackend, conversion: () => picker.promise,
+    });
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const row = await screen.findByRole("option", { name: /run-1\.raw/ });
+    fireEvent.click(row);
+    fireEvent.click(within(panel).getByRole("radio", { name: "Custom local folder" }));
+    await pressConvert(panel, "Convert 1 selected…");
+
+    // The scope empties while the picker is open, so the plan has no question
+    // to answer and the button is not rendered at all.
+    fireEvent.click(row, { ctrlKey: true });
+    await act(async () => picker.resolve({ status: "idle" }));
+    expect(within(panel).getByRole("button", { name: "Convert 0 selected…" })).toBeDisabled();
+
+    // And when the scope comes back, so does the focus.
+    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    await waitFor(() =>
+      expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toHaveFocus(),
+    );
+  });
+
   it.each(["unresolved", "bound"] as const)("renders the queue's %s destination independently of the next request", async (destinationStatus) => {
     const api = createFakePreviewApi({
       initialDatasets: [first], availability: availableBackend,
@@ -235,12 +265,14 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
                   spectrumCount: 0,
                   chromatogramCount: 144,
                 },
+                validationMode: "output_only",
                 validation: {
                   mode: "output_only",
                   fullyVerified: false,
                   verified: ["source_unchanged"],
                   unverified: [],
                   inapplicable: ["spectrum_count"],
+                  advisory: [],
                 },
                 backend: { exitCode: 0, elapsedMilliseconds: 592 },
                 stagingResidue: null,
@@ -447,6 +479,7 @@ describe("queueing selected Thermo RAW conversions", () => {
                 detailedOutcome: "output_contains_no_records",
                 outputFileName: null,
                 output: null,
+                validationMode: "output_only",
                 validation: null,
                 backend: { exitCode: 0, elapsedMilliseconds: 90 },
                 stagingResidue: null,
@@ -529,7 +562,10 @@ describe("queueing selected Thermo RAW conversions", () => {
     });
     // The successful item was not rerun; the retried one counted its attempt.
     const items = within(panel).getAllByRole("listitem");
-    expect(items[0]).not.toHaveTextContent("attempt");
+    // The retry counter itself, not the bare word: the row's own disclosure
+    // names the attempt identity, and a substring check for "attempt" would
+    // answer to that instead of to the thing under test.
+    expect(items[0]).not.toHaveTextContent(/attempt \d/);
     expect(items[1]).toHaveTextContent("attempt 2");
   });
 
@@ -562,12 +598,14 @@ describe("queueing selected Thermo RAW conversions", () => {
                   spectrumCount: 12,
                   chromatogramCount: 3,
                 },
+                validationMode: "output_only",
                 validation: {
                   mode: "output_only",
                   fullyVerified: false,
                   verified: ["source_unchanged"],
                   unverified: [],
                   inapplicable: [],
+                  advisory: [],
                 },
                 backend: { exitCode: 0, elapsedMilliseconds: 568 },
                 // Cleanup failed, and what it left behind is in the folder the
@@ -585,7 +623,12 @@ describe("queueing selected Thermo RAW conversions", () => {
     await screen.findByRole("region", { name: "Convert" });
     // Scoped to the result: the plan beneath it names the same output, because
     // it is offering to convert the same row again.
-    const item = within(queueResult()).getByText("run-1.mzML").closest("li");
+    // Scoped to the row's own output cell. The item's manifest names the same
+    // file, deliberately: the row says what it is called and how large it is,
+    // and the manifest is where its digest lives.
+    const item = within(queueResult())
+      .getByText("run-1.mzML", { selector: ".conversion-queue-output" })
+      .closest("li");
     expect(item).not.toBeNull();
     expect(item).toHaveTextContent("12 spectra");
     expect(item).toHaveTextContent("3 chromatograms");
@@ -622,6 +665,7 @@ describe("queueing selected Thermo RAW conversions", () => {
                 detailedOutcome: "destination_exists",
                 outputFileName: null,
                 output: null,
+                validationMode: "output_only",
                 validation: null,
                 backend: null,
                 stagingResidue: null,

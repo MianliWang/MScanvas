@@ -25,24 +25,26 @@ use mscanvas_proteowizard::{
     CancellationReport, ConflictPolicy, ConversionAttempt, ConversionCancellation,
     ConversionIntent, ConversionPlan, ConversionPlanError, ConversionRunFailure,
     ConversionRunOutcome, ConversionRunReport, ConversionSource, ConversionSourceKind,
-    InstalledHelpCapabilities, IntegrityProperty, OpenFormat, OutputFormat, OwnedTreeDisposition,
-    StagingResidue, ValidationMode, conversion_output_file_name, provider_build_is_evidenced,
+    InstalledHelpCapabilities, IntegrityProperty, OpenFormat, OperationRunIdentity, OutputFormat,
+    OwnedTreeDisposition, ProcessAttemptOutcome, StagedOutputEvidence, StagingResidue,
+    ValidationMode, conversion_output_file_name, provider_build_is_evidenced,
     run_conversion_cancellable,
 };
 // The private multi-output report is built only by the private coordinator,
 // which is itself compiled out of the shipped binary.
 use mscanvas_proteowizard::{
     MAX_CONVERSION_OUTPUTS_PER_SOURCE, MultiOutputConversionReport, MultiOutputOutcome,
-    OutputMemberReport, OutputMemberValidation, SciexSampleCompleteness, StagedContentObservation,
+    OutputMemberReport, OutputMemberValidation, SciexSampleCompleteness,
 };
 
 use super::backend::ConversionBackend;
 use super::dto::BackendAuthorityProjectionDto;
 use super::dto::{
     ConversionBackendFactsDto, ConversionConflictPolicyDto, ConversionOutputDto,
-    ConversionOutputFormatDto, ConversionOutputSetReportDto, ConversionPartialFinalizationDto,
-    ConversionReportDto, ConversionSampleCompletenessDto, ConversionValidationDto, PreviewErrorDto,
-    ValidationModeDto,
+    ConversionOutputFormatDto, ConversionOutputMemberDto, ConversionOutputSetReportDto,
+    ConversionPartialFinalizationDto, ConversionProcessDto, ConversionReportDto,
+    ConversionSampleCompletenessDto, ConversionStagedOutputDto, ConversionValidationDto,
+    PreviewErrorDto, ValidationModeDto,
 };
 use super::selection::{DatasetSourceKind, source_kind_dto};
 
@@ -81,6 +83,11 @@ pub(super) struct WorkspaceConversionReport {
     output: Option<OutputFacts>,
     /// How a finalized output was judged.
     validation: Option<ValidationFacts>,
+    /// The judgement this source posture is read under, whatever became of the
+    /// run. Separate from `validation` because that record travels with a
+    /// finalization: a refused output keeps none, and reporting its check with
+    /// no stated scope is the same collapse in a different field.
+    validation_mode: ValidationMode,
     /// The precise failure, reaching into the plan or integrity error where one
     /// exists. Absent unless the run failed.
     detailed_outcome: Option<&'static str>,
@@ -97,6 +104,15 @@ pub(super) struct WorkspaceConversionReport {
     /// behind is a conversion the caller has to know about, whether or not it
     /// also produced an output.
     residue: Option<StagingResidue>,
+    /// What the private staging area held, answered whether or not anything
+    /// was published. A different question from `residue`, which is what
+    /// teardown could not reclaim.
+    staged: StagedOutputEvidence,
+    /// What the execution boundary established about the process, carried
+    /// rather than read off the presence of `backend`.
+    process: ProcessAttemptOutcome,
+    /// The identity minted for this attempt before the provider was invoked.
+    run_identity: Option<OperationRunIdentity>,
     /// The authority this run was stamped with, read at the moment the backend
     /// gate was taken.
     ///
@@ -136,6 +152,9 @@ pub(super) struct ValidationFacts {
     pub(super) verified: Vec<&'static str>,
     pub(super) unverified: Vec<&'static str>,
     pub(super) inapplicable: Vec<&'static str>,
+    /// Recorded differences that fail nothing, kept beside the three
+    /// dispositions rather than folded into `unverified`.
+    pub(super) advisory: Vec<&'static str>,
     pub(super) fully_verified: bool,
 }
 
@@ -177,17 +196,27 @@ impl WorkspaceConversionReport {
                 spectra: valid.output().facts().observed_spectrum_count(),
                 chromatograms: valid.output().facts().observed_chromatogram_count(),
             }),
+            // From the plan's source, which decided it before anything ran.
+            validation_mode: plan.source().validation_mode(),
             validation: finalized.map(|valid| ValidationFacts {
                 mode: valid.validation_mode(),
                 verified: property_ids(valid.verified()),
                 unverified: property_ids(valid.unverified()),
                 inapplicable: property_ids(valid.inapplicable()),
+                advisory: valid
+                    .advisory()
+                    .iter()
+                    .map(|observation| observation.stable_id())
+                    .collect(),
                 fully_verified: valid.is_fully_verified(),
             }),
             outcome_class: outcome_class(run.outcome()),
             retryable: run_is_retryable(run.residue(), run.outcome()),
             backend: run.backend(),
             residue: run.residue(),
+            staged: run.staged_content(),
+            process: run.process(),
+            run_identity: run.identity(),
             authority,
         }
     }
@@ -233,8 +262,26 @@ impl WorkspaceConversionReport {
         self.residue
     }
 
+    pub(super) const fn validation_mode(&self) -> ValidationMode {
+        self.validation_mode
+    }
+
     pub(super) const fn validation_facts(&self) -> Option<&ValidationFacts> {
         self.validation.as_ref()
+    }
+
+    /// What the private staging area held, for a diagnostic that must be able
+    /// to tell a failure that staged something from one that staged nothing.
+    pub(super) const fn staged_content(&self) -> StagedOutputEvidence {
+        self.staged
+    }
+
+    pub(super) const fn process_outcome(&self) -> ProcessAttemptOutcome {
+        self.process
+    }
+
+    pub(super) const fn run_identity(&self) -> Option<OperationRunIdentity> {
+        self.run_identity
     }
 }
 
@@ -314,11 +361,13 @@ pub(super) struct WorkspaceMultiOutputConversionReport {
     /// reading or a catalog: those are statements about the binding in use, and
     /// this is a statement about the build that ran.
     authority: BackendAuthorityProjectionDto,
-    /// What was in the staging area when a stop reached the run.
-    ///
-    /// Present only for a run a stop ended, because it is the only
-    /// partial-output claim a run makes about itself. Counts, never names.
-    staged: Option<StagedContentObservation>,
+    /// What the private staging area held, answered whether or not anything
+    /// was published. Counts, never names.
+    staged: StagedOutputEvidence,
+    /// What the execution boundary established about the process.
+    process: ProcessAttemptOutcome,
+    /// The identity minted for this attempt before the provider was invoked.
+    run_identity: Option<OperationRunIdentity>,
     /// Whether every sample the reader identified became one of these members.
     ///
     /// A judgement carried beside the publication state, never folded into it.
@@ -355,6 +404,8 @@ impl std::fmt::Debug for WorkspaceMultiOutputConversionReport {
             .field("refusal", &self.refusal)
             .field("owned_tree", &self.owned_tree)
             .field("residue", &self.residue)
+            .field("staged", &self.staged)
+            .field("process", &self.process)
             .field(
                 "completeness",
                 &self
@@ -455,6 +506,21 @@ impl PartialFinalization {
 }
 
 impl WorkspaceMultiOutputConversionReport {
+    /// The judgement this family's outputs are read under.
+    ///
+    /// Stated rather than read from a member, so a run with no validated member
+    /// still says what kind of judgement it got -- which is exactly the run a
+    /// reader most needs it for. It is a constant because a backend-named set
+    /// is admitted only for a bundle acquisition, and a bundle has no mzML
+    /// reading to compare an output against.
+    ///
+    /// One origin, because the wire and the saved diagnostic must not answer
+    /// this differently: the export used to write `null` here while the queue
+    /// row said `output_only`.
+    pub(super) const fn validation_mode(&self) -> ValidationMode {
+        ValidationMode::OutputOnly
+    }
+
     /// Builds a report from the lifecycle's own, adding only what the session
     /// knows and the crate cannot: which dataset this was, what family it was
     /// admitted as, how many objects that acquisition was bound to, and which
@@ -514,6 +580,8 @@ impl WorkspaceMultiOutputConversionReport {
             residue: run.residue(),
             authority,
             staged: run.staged_content(),
+            process: run.process(),
+            run_identity: run.identity(),
             completeness,
         }
     }
@@ -624,9 +692,18 @@ impl WorkspaceMultiOutputConversionReport {
         self.authority
     }
 
-    /// What was staged when a stop reached this run, where one did.
-    pub(super) const fn staged_content(&self) -> Option<StagedContentObservation> {
+    /// What the private staging area held, answered whether or not anything
+    /// was published.
+    pub(super) const fn staged_content(&self) -> StagedOutputEvidence {
         self.staged
+    }
+
+    pub(super) const fn process_outcome(&self) -> ProcessAttemptOutcome {
+        self.process
+    }
+
+    pub(super) const fn run_identity(&self) -> Option<OperationRunIdentity> {
+        self.run_identity
     }
 
     /// This group report, in facts a webview may hold.
@@ -638,11 +715,19 @@ impl WorkspaceMultiOutputConversionReport {
     /// pair the ticket's constructor refuses.
     pub(super) fn to_dto(&self, complete_set_adoptable: bool) -> ConversionOutputSetReportDto {
         let finalized_count = self.published_count();
-        let validated_not_published_count = self
-            .members
-            .iter()
-            .filter(|member| member.state != "finalized" && member.validation.is_some())
-            .count();
+        // Counted by the state each member is actually in, so the four counts
+        // partition the members. Deriving one of them by subtraction made it
+        // mean "everything else", which quietly absorbed a state the lifecycle
+        // added underneath it.
+        let count_in = |state: &str| {
+            self.members
+                .iter()
+                .filter(|member| member.state == state)
+                .count()
+        };
+        let validated_not_published_count = count_in("validated_not_published");
+        let rejected_count = count_in("rejected");
+        let not_published_count = count_in("not_published");
         ConversionOutputSetReportDto {
             dataset_handle: self.dataset.clone(),
             source_kind: source_kind_dto(self.source_kind),
@@ -652,21 +737,17 @@ impl WorkspaceMultiOutputConversionReport {
             member_count: self.members.len(),
             finalized_count,
             validated_not_published_count,
-            not_published_count: self.members.len() - finalized_count,
+            rejected_count,
+            not_published_count,
             // Zero would say the acquisition was held to no objects, which is a
             // different claim from never having been bound at all. Only a run
             // that reached the source has a number to report.
             bound_source_objects: (self.bound_source_objects > 0)
                 .then_some(self.bound_source_objects),
-            member_file_names: self
+            members: self
                 .members
                 .iter()
-                .map(|member| member.file_name.clone())
-                .collect(),
-            member_states: self
-                .members
-                .iter()
-                .map(|member| member.state.to_owned())
+                .map(MultiOutputMemberFacts::to_dto)
                 .collect(),
             backend: self.backend.map(|backend| ConversionBackendFactsDto {
                 exit_code: backend.exit_code(),
@@ -674,9 +755,7 @@ impl WorkspaceMultiOutputConversionReport {
                     .unwrap_or(u64::MAX),
             }),
             staging_residue: self.residue.map(|residue| residue.stable_id().to_owned()),
-            // Stated rather than read from a member, so a run with no validated
-            // member still says what kind of judgement this family gets.
-            validation_mode: ValidationModeDto::OutputOnly,
+            validation_mode: validation_mode_dto(self.validation_mode()),
             completeness: match self.completeness.as_ref() {
                 None => ConversionSampleCompletenessDto::NotPosed,
                 Some(SciexSampleCompleteness::Established(evidence)) => {
@@ -732,6 +811,7 @@ impl MultiOutputMemberFacts {
                 verified: owned_static(facts.verified()),
                 unverified: owned_static(facts.unverified()),
                 inapplicable: owned_static(facts.inapplicable()),
+                advisory: owned_static(facts.advisory()),
                 // Never true for this family and not computed here: an output
                 // judged without a source reading of the same kind cannot be
                 // fully verified, and saying so is the contract's own answer
@@ -742,6 +822,39 @@ impl MultiOutputMemberFacts {
             sha256: validation.map(|facts| facts.sha256().to_owned()),
             spectra: validation.map(OutputMemberValidation::spectrum_count),
             chromatograms: validation.map(OutputMemberValidation::chromatogram_count),
+        }
+    }
+
+    /// This member's manifest entry, as the interface may hold it.
+    ///
+    /// Name, state and measurements together, so nothing downstream has to
+    /// pair separate arrays by index to say what one output is.
+    fn to_dto(&self) -> ConversionOutputMemberDto {
+        ConversionOutputMemberDto {
+            file_name: self.file_name.clone(),
+            state: self.state,
+            // Present exactly where the member was validated. Zeroes would
+            // read as a measured empty document.
+            output: self
+                .byte_length
+                .zip(self.sha256.as_ref())
+                .map(|(byte_length, sha256)| ConversionOutputDto {
+                    byte_length,
+                    sha256: sha256.clone(),
+                    spectrum_count: self.spectra.unwrap_or_default(),
+                    chromatogram_count: self.chromatograms.unwrap_or_default(),
+                }),
+            validation: self
+                .validation
+                .as_ref()
+                .map(|validation| ConversionValidationDto {
+                    mode: validation_mode_dto(validation.mode),
+                    fully_verified: validation.fully_verified,
+                    verified: owned(&validation.verified),
+                    unverified: owned(&validation.unverified),
+                    inapplicable: owned(&validation.inapplicable),
+                    advisory: owned(&validation.advisory),
+                }),
         }
     }
 
@@ -1003,6 +1116,7 @@ impl WorkspaceConversionReport {
                 spectrum_count: output.spectra,
                 chromatogram_count: output.chromatograms,
             }),
+            validation_mode: validation_mode_dto(self.validation_mode),
             validation: self
                 .validation
                 .as_ref()
@@ -1012,6 +1126,7 @@ impl WorkspaceConversionReport {
                     verified: owned(&validation.verified),
                     unverified: owned(&validation.unverified),
                     inapplicable: owned(&validation.inapplicable),
+                    advisory: owned(&validation.advisory),
                 }),
             backend: self.backend.map(|backend| ConversionBackendFactsDto {
                 exit_code: backend.exit_code(),
@@ -1032,6 +1147,45 @@ fn owned(properties: &[&'static str]) -> Vec<String> {
         .iter()
         .map(|property| (*property).to_owned())
         .collect()
+}
+
+/// The wire form of the staged-output judgement.
+///
+/// Total over the crate's own vocabulary, so a fifth arm added there has to be
+/// answered here rather than silently rendering as one of these four.
+pub(super) const fn staged_output_dto(evidence: StagedOutputEvidence) -> ConversionStagedOutputDto {
+    match evidence {
+        StagedOutputEvidence::NotCreated => ConversionStagedOutputDto::NotCreated,
+        StagedOutputEvidence::Unobserved(phase) => ConversionStagedOutputDto::Unobserved {
+            phase: phase.stable_id(),
+        },
+        StagedOutputEvidence::Observed(phase, observation) => ConversionStagedOutputDto::Observed {
+            phase: phase.stable_id(),
+            entry_count: observation.entry_count(),
+            directory_count: observation.directory_count(),
+            non_empty_file_observed: observation.non_empty_file_observed(),
+            bounded: observation.bounded(),
+        },
+        StagedOutputEvidence::Published => ConversionStagedOutputDto::Published,
+    }
+}
+
+/// The wire form of the process judgement.
+///
+/// Read from the boundary's own answer rather than from whether backend facts
+/// came back, which is the distinction this projection exists to preserve.
+pub(super) const fn process_dto(process: ProcessAttemptOutcome) -> ConversionProcessDto {
+    match process {
+        ProcessAttemptOutcome::NotAttempted => ConversionProcessDto::NotAttempted,
+        ProcessAttemptOutcome::Indeterminate => ConversionProcessDto::Indeterminate,
+        ProcessAttemptOutcome::Settled {
+            termination,
+            exit_code,
+        } => ConversionProcessDto::Settled {
+            termination: termination.stable_id(),
+            exit_code,
+        },
+    }
 }
 
 /// The wire name for how an output was judged.

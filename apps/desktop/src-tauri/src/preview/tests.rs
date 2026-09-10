@@ -59,6 +59,10 @@ use super::dto::{
     WorkspaceDropUpdateDto, WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto,
 };
 use super::dto::{
+    ConversionAttemptResultDto, ConversionItemAdoptionDto, ConversionProcessDto,
+    ConversionStagedOutputDto,
+};
+use super::dto::{
     ConversionConflictPolicyDto, ConversionDiagnosticsExportDto, ConversionDiagnosticsStateDto,
     ConversionOutputFormatDto, ConversionQueueDto, ConversionQueueItemStateDto,
     ConversionQueueTerminalReasonDto, DatasetSourceKindDto, ValidationModeDto,
@@ -66,9 +70,11 @@ use super::dto::{
 };
 use super::dto::{MAX_SPECTRUM_POINTS, SpectrumDomainRefusalDto, SpectrumViewportDomainDto};
 use super::installation::InstallationIdentity;
+use super::operation::SettledItemAdoption;
 use super::operation::{
-    AdmittedDestination, CancellationFacts, ClaimedOutputName, ConversionQueue, ConversionSlot,
-    ItemOutcome, ItemState, QueueItem, StopAccepted, TerminalReason, folded_output_name,
+    AdmittedDestination, AttemptFacts, CancellationFacts, ClaimedOutputName, ConversionQueue,
+    ConversionSlot, ItemOutcome, ItemState, QueueItem, StopAccepted, TerminalReason,
+    folded_output_name,
 };
 use super::projection::MAX_PROJECTION_POINTS;
 /// The share-mode probe that answers whether a file is still held open. It
@@ -81,7 +87,7 @@ use super::selection::{
     FileIdentity, accept_mzml_file, accept_shimadzu_lcd_file, accept_thermo_raw_file,
     accept_workspace_file, open_conversion_source, revalidate,
 };
-use super::service::PreviewService;
+use super::service::{PreviewService, stop_process_facts};
 
 const METADATA_OUTPUT: &str = concat!(
     // Printed before any section header, which the parser keeps separately.
@@ -259,6 +265,26 @@ fn confirmed_gone_disposition() -> mscanvas_proteowizard::OwnedTreeDisposition {
         ..completed_process("")
     };
     mscanvas_proteowizard::OwnedTreeDisposition::of_supervised_run_for_test(&supervised)
+}
+
+/// What a stopped attempt establishes about itself, as a fixture.
+///
+/// A launched process, and a staging area read at the moment the backend
+/// settled which held one non-empty document. Written once so every slot
+/// fixture that stops an item states the same thing, and stated at all because
+/// these three facts are the ones no downstream reader can reconstruct.
+fn stopped_attempt_facts() -> AttemptFacts {
+    AttemptFacts {
+        process: mscanvas_proteowizard::ProcessAttemptOutcome::Indeterminate,
+        staged: mscanvas_proteowizard::StagedOutputEvidence::Observed(
+            mscanvas_proteowizard::StagedObservationPhase::ProviderReturned,
+            mscanvas_proteowizard::StagedContentObservation::observed_for_test(1, 0, true),
+        ),
+        // A fixture cannot mint one: the constructor is crate-private, which is
+        // what keeps a caller from stamping a run onto an attempt that never
+        // reached the provider.
+        identity: None,
+    }
 }
 
 fn completed_process(stdout: &str) -> ProcessOutput {
@@ -7202,6 +7228,13 @@ enum BackendAct {
     ConvertChromatogramsOnly,
     /// Fails, as a backend that could not read its input would.
     Fail,
+    /// Fails **after** writing part of a document into staging.
+    ///
+    /// The other half of the pair this milestone exists to tell apart: the same
+    /// exit status and the same clean teardown as `Fail`, and a staging area
+    /// that held something. Labelled as injected: it is a shape a real backend
+    /// can produce and not one this suite measured.
+    FailAfterStaging,
     /// Leaves a process the run owned unaccounted for, with no stop in flight.
     ///
     /// The shape a root that was created and could neither be started nor
@@ -7408,6 +7441,11 @@ impl FakeConversionRunner {
             }
             BackendAct::WriteNothing => 0,
             BackendAct::Fail => 1,
+            BackendAct::FailAfterStaging => {
+                fs::write(destination, b"<indexedmzML partial")
+                    .expect("write a partial staged output");
+                1
+            }
             BackendAct::StrandAnOwnedProcess => {
                 return Err(ProcessError::ResumeOwnedRoot {
                     detail: "injected: the owned root could not be started or reclaimed".to_owned(),
@@ -11583,15 +11621,19 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
     assert_eq!(
         sorted_keys(item),
         vec![
+            "adoption",
             "attempts",
             "cancellation",
             "datasetHandle",
             "error",
             "fileName",
             "output",
+            "process",
             "result",
             "retryable",
+            "runIdentity",
             "sourceKind",
+            "staged",
             "state",
             "stopRequested",
         ],
@@ -11623,6 +11665,9 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "sourceKind",
             "stagingResidue",
             "validation",
+            // The scope of the check, stated beside the record rather than
+            // inside it: a refused output keeps no record and still has one.
+            "validationMode",
         ]
     );
     assert_eq!(
@@ -12332,6 +12377,11 @@ enum StopEnding {
     Unterminated,
     /// The process finished on its own before the request was observed.
     NaturalSuccess,
+    /// The request reached the boundary before it created a process, which the
+    /// production runner answers by not spawning one. A *settled* result whose
+    /// termination is `NotStarted`, with no process facts beside it -- there was
+    /// no process to have facts about.
+    BeforeSpawn,
 }
 
 /// A `msconvert` stand-in that answers a cancellation request.
@@ -12459,6 +12509,26 @@ impl ProcessRunner for StopAwareRunner {
                 tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
             });
         }
+        if self.ending == StopEnding::BeforeSpawn {
+            // Nothing is written, because nothing ran. The staging area exists
+            // -- the run made it before it asked -- and is empty.
+            return Ok(ProcessOutput {
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                stdout_total_bytes: 0,
+                stderr_total_bytes: 0,
+                stdout_truncated: false,
+                stderr_truncated: false,
+                exit_code: None,
+                elapsed: Duration::ZERO,
+                termination: Termination::NotStarted,
+                max_active_processes: None,
+                final_active_processes: None,
+                peak_job_memory_bytes: None,
+                total_owned_processes: Some(1),
+                tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
+            });
+        }
         fs::write(&destination, b"<indexedmzML><mzML").expect("write a partial staged output");
         if self.ending == StopEnding::Unterminated {
             return Err(ProcessError::Terminate {
@@ -12555,6 +12625,54 @@ fn stop_mid_item(
     (fixture, destination, service, update, launches)
 }
 
+/// A stop the boundary answered by creating nothing keeps the ending it decided.
+///
+/// The one path where a *settled* process result comes back with no
+/// `BackendRunFacts` beside it. Both of the row's stop answers used to be read
+/// from those absent facts, so the queue and the export said nothing at all
+/// about how the attempt ended while the item's own process judgement said
+/// `not_started` -- one item answering one question two ways.
+#[test]
+fn a_stop_that_beat_the_process_still_says_how_the_attempt_ended() {
+    let (_fixture, _destination, _service, update, launches) =
+        stop_mid_item(StopEnding::BeforeSpawn);
+
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    let queue = terminal_queue(&update);
+    assert_eq!(queue.items[0].state, ConversionQueueItemStateDto::Cancelled);
+    // The call was made -- that is what `launches` counts -- and it created
+    // nothing, which is a different fact and the one under test.
+    assert_eq!(launches.load(Ordering::SeqCst), 1);
+
+    let facts = queue.items[0]
+        .cancellation
+        .as_ref()
+        .expect("a reached stop reports what it established");
+    assert_eq!(
+        facts.process_launched,
+        Some(false),
+        "the boundary said no process was created, which is settled rather than unknown"
+    );
+    assert_eq!(
+        facts.termination.as_deref(),
+        Some("not_started"),
+        "the ending the boundary decided, not the absence of facts beside it"
+    );
+    assert_eq!(facts.owned_tree, "none_launched");
+    // And the item's own process judgement agrees with both, which is the whole
+    // point: these are one machine event described once.
+    assert!(matches!(
+        queue.items[0].process,
+        ConversionProcessDto::Settled {
+            termination: "not_started",
+            exit_code: None,
+        }
+    ));
+}
+
 /// A stop reaching a running item cancels it, runs nothing after it, and keeps
 /// everything already finished.
 #[test]
@@ -12602,10 +12720,19 @@ fn a_confirmed_stop_cancels_the_running_item_and_runs_no_other() {
         .cancellation
         .as_ref()
         .expect("a stop that reached an attempt says what it established");
-    assert!(facts.process_launched);
+    assert_eq!(facts.process_launched, Some(true));
     assert!(facts.termination_requested);
     assert_eq!(facts.owned_tree, "confirmed_gone");
-    assert!(facts.partial_output_observed);
+    // The staged evidence is the item's own, not the stop's: it is answered
+    // the same way for every settled row, and a boolean over an optional
+    // observation could not tell an unread directory from an empty one.
+    assert!(matches!(
+        cancelled.staged,
+        ConversionStagedOutputDto::Observed {
+            non_empty_file_observed: true,
+            ..
+        }
+    ));
     assert_eq!(facts.staging_residue, None);
     // A not-run item launched nothing, so there is nothing to have established.
     assert!(queue.items[1].cancellation.is_none());
@@ -12732,6 +12859,25 @@ fn an_unconfirmed_stop_quarantines_the_backend_and_refuses_every_operation() {
             facts.owned_tree, "unconfirmed",
             "the whole reason this state exists"
         );
+        // The two endings reach here differently and must not be described the
+        // same way. A job that survived termination returned a real result, so
+        // the launch and the ending are both settled; a boundary that could not
+        // complete the teardown returned an error, and establishes neither. The
+        // absence of `BackendRunFacts` used to answer for both.
+        match ending {
+            StopEnding::Survivors => {
+                assert_eq!(facts.process_launched, Some(true), "{ending:?}");
+                assert_eq!(
+                    facts.termination.as_deref(),
+                    Some("cancelled"),
+                    "{ending:?}"
+                );
+            }
+            _ => {
+                assert_eq!(facts.process_launched, None, "{ending:?}");
+                assert_eq!(facts.termination, None, "{ending:?}");
+            }
+        }
         // No later item ran.
         assert_eq!(launches.load(Ordering::SeqCst), 1);
         assert!(
@@ -12784,6 +12930,52 @@ fn an_unconfirmed_stop_quarantines_the_backend_and_refuses_every_operation() {
         // And the roster is still the user's to read and curate.
         assert_eq!(service.roster().datasets.len(), 3);
         let _ = &fixture;
+    }
+}
+
+/// Both of a stop's answers come from the process boundary's own judgement.
+///
+/// A stop that arrives after the item starts but before the process exists
+/// settles as `NotStarted` and carries no `BackendRunFacts` beside it, because
+/// there was no process to have facts about. Reading either answer from that
+/// absence made the queue and the export disagree with the item's own `process`
+/// judgement: the ending vanished, and an unconfirmed stop that *did* return an
+/// ending reported "not established".
+#[test]
+fn a_stop_reports_the_ending_the_boundary_decided_rather_than_the_facts_beside_it() {
+    use mscanvas_proteowizard::{ProcessAttemptOutcome, Termination};
+
+    // Nothing was ever asked of the boundary, so there is no ending to report.
+    assert_eq!(
+        stop_process_facts(ProcessAttemptOutcome::NotAttempted),
+        (Some(false), None)
+    );
+    // Asked and unanswerable. `None` and not `false`: a boolean cannot tell
+    // "no process was created" from "this was not established".
+    assert_eq!(
+        stop_process_facts(ProcessAttemptOutcome::Indeterminate),
+        (None, None)
+    );
+    // The case this rule exists for. No process was created *and* the boundary
+    // said so, so the ending survives and the launch answer is a settled `false`
+    // rather than an absence.
+    assert_eq!(
+        stop_process_facts(ProcessAttemptOutcome::Settled {
+            termination: Termination::NotStarted,
+            exit_code: None,
+        }),
+        (Some(false), Some(Termination::NotStarted))
+    );
+    // Every other settled ending is a process that existed.
+    for termination in [Termination::Cancelled, Termination::Exited] {
+        assert_eq!(
+            stop_process_facts(ProcessAttemptOutcome::Settled {
+                termination,
+                exit_code: None,
+            }),
+            (Some(true), Some(termination)),
+            "{termination:?}"
+        );
     }
 }
 
@@ -13064,7 +13256,7 @@ fn a_real_queue_stops_the_running_item_and_starts_no_other() {
         .as_ref()
         .expect("a stop that reached a real attempt says what it established");
     println!("cancellation: {facts:?}");
-    assert!(facts.process_launched);
+    assert_eq!(facts.process_launched, Some(true));
     assert_eq!(facts.owned_tree, "confirmed_gone");
     assert_eq!(facts.staging_residue, None, "no staging was left behind");
     // Nothing was finalized and nothing was left in the folder the user chose,
@@ -13377,7 +13569,6 @@ fn the_serialized_stopped_queue_carries_no_location_and_names_no_output() {
         vec![
             "elapsedMilliseconds",
             "ownedTree",
-            "partialOutputObserved",
             "processLaunched",
             "stagingResidue",
             "termination",
@@ -13759,6 +13950,7 @@ fn a_retry_leaves_a_user_skipped_item_where_it_is() {
         operation,
         0,
         ItemOutcome::Refused {
+            attempt: AttemptFacts::NOTHING_RAN,
             retryable: true,
             error: PreviewErrorDto::new("backend_wait_failed", "lost track", true),
         },
@@ -13800,6 +13992,7 @@ fn a_skip_during_a_rerun_keeps_the_failure_the_row_already_earned() {
         operation,
         0,
         ItemOutcome::Refused {
+            attempt: AttemptFacts::NOTHING_RAN,
             retryable: true,
             error: PreviewErrorDto::new("backend_wait_failed", "lost track", true),
         },
@@ -14568,6 +14761,7 @@ fn a_queue_keeps_the_intent_it_was_bound_to_across_a_retry() {
         operation,
         0,
         ItemOutcome::Refused {
+            attempt: AttemptFacts::NOTHING_RAN,
             retryable: true,
             error: PreviewErrorDto::new("file_unreadable", "unreadable", true),
         },
@@ -14626,6 +14820,7 @@ fn a_stopped_retry_keeps_the_failures_it_had_not_reached() {
             operation,
             index,
             ItemOutcome::Refused {
+                attempt: AttemptFacts::NOTHING_RAN,
                 retryable: true,
                 error: PreviewErrorDto::new("file_unreadable", "unreadable", true),
             },
@@ -17888,6 +18083,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
         operation,
         0,
         ItemOutcome::Refused {
+            attempt: AttemptFacts::NOTHING_RAN,
             retryable: true,
             error: PreviewErrorDto::new("file_unreadable", "unreadable", true),
         },
@@ -17898,9 +18094,10 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
         operation,
         1,
         ItemOutcome::Stopped {
+            attempt: stopped_attempt_facts(),
             set: None,
             facts: CancellationFacts {
-                process_launched: true,
+                process_launched: Some(true),
                 // Earned rather than written. The affirmative member cannot be
                 // named outside the crate that decides it, so even a fixture
                 // has to present a run that reaches it -- which is the whole
@@ -17909,7 +18106,6 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
                 owned_tree: confirmed_gone_disposition(),
                 elapsed: Duration::from_millis(5),
                 termination: None,
-                partial_output_observed: false,
                 staging_residue: None,
             },
             diagnostics: None,
@@ -17961,13 +18157,13 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
         operation,
         0,
         ItemOutcome::Stopped {
+            attempt: stopped_attempt_facts(),
             set: None,
             facts: CancellationFacts {
-                process_launched: true,
+                process_launched: Some(true),
                 owned_tree: mscanvas_proteowizard::OwnedTreeDisposition::Unconfirmed,
                 elapsed: Duration::from_millis(7),
                 termination: None,
-                partial_output_observed: true,
                 staging_residue: None,
             },
             diagnostics: None,
@@ -21251,8 +21447,37 @@ fn a_settled_set_carries_bounded_facts_and_the_narrow_completeness_claim() {
         Some(2),
         "primary and companion"
     );
-    assert_eq!(report.member_file_names, names);
-    assert_eq!(report.member_states, vec!["finalized"; 3]);
+    // The manifest, one entry per member, each carrying its own name and its
+    // own measurements rather than being paired with them by index.
+    assert_eq!(
+        report
+            .members
+            .iter()
+            .map(|member| member.file_name.clone())
+            .collect::<Vec<_>>(),
+        names
+    );
+    assert!(
+        report
+            .members
+            .iter()
+            .all(|member| member.state == "finalized")
+    );
+    for member in &report.members {
+        let output = member
+            .output
+            .as_ref()
+            .expect("a finalized member was validated and measured");
+        assert!(output.byte_length > 0);
+        assert_eq!(output.sha256.len(), 64);
+        let validation = member
+            .validation
+            .as_ref()
+            .expect("a validated member carries how it was judged");
+        // Output-only stays output-only however many checks passed.
+        assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
+        assert!(!validation.fully_verified);
+    }
     assert_eq!(report.partial, None);
     assert!(report.complete_set_adoptable);
     assert_eq!(report.validation_mode, ValidationModeDto::OutputOnly);
@@ -21412,9 +21637,45 @@ fn one_sciex_acquisition_is_one_queue_item_with_ten_outputs() {
     assert_eq!(set_adoption_kinds(&again.outcomes), vec!["already"; 10]);
     assert_eq!(service.dataset_count(), 11);
 
-    // And the queue result is exactly what it was.
+    // And the conversion result is exactly what it was. An adoption reads the
+    // queue; it does not rewrite what the run established.
+    //
+    // The fifth judgement is the one thing that moved, and moving is what it is
+    // for: the row now says an adoption ran and reported ten already present,
+    // where before the first one it said nobody had asked. Compared with the
+    // adoption facts set aside, so this assertion keeps meaning what it meant.
     let after = service.conversion_state();
-    assert_eq!(terminal_queue(&after), queue);
+    let without_adoption = |queue: &ConversionQueueDto| {
+        let mut queue = queue.clone();
+        for item in &mut queue.items {
+            item.adoption = ConversionItemAdoptionDto::NotRequested;
+        }
+        queue
+    };
+    assert_eq!(
+        without_adoption(terminal_queue(&after)),
+        without_adoption(queue)
+    );
+    let ConversionItemAdoptionDto::Settled {
+        added,
+        already_in_workspace,
+        refused,
+        ..
+    } = &terminal_queue(&after).items[0].adoption
+    else {
+        panic!("an adoption ran, so the row says what it did");
+    };
+    assert_eq!(*added, 0);
+    assert_eq!(*already_in_workspace, 10);
+    assert_eq!(*refused, 0);
+    // A duplicate is not a newly added output, and it did not overwrite the
+    // finalization the row still reports.
+    let Some(ConversionAttemptResultDto::OutputSet { report }) =
+        terminal_queue(&after).items[0].result.as_ref()
+    else {
+        panic!("the set item still carries the result the run produced");
+    };
+    assert_eq!(report.finalized_count, 10);
 }
 
 /// A private mixed queue keeps its order and never runs two backends at once.
@@ -22014,10 +22275,16 @@ fn a_confirmed_stop_cancels_the_running_set_item() {
         .cancellation
         .as_ref()
         .expect("the cancelled item says what the stop established");
-    assert!(cancellation.process_launched);
+    assert_eq!(cancellation.process_launched, Some(true));
     assert_eq!(cancellation.owned_tree, "confirmed_gone");
     assert!(
-        cancellation.partial_output_observed,
+        matches!(
+            queue.items[0].staged,
+            ConversionStagedOutputDto::Observed {
+                non_empty_file_observed: true,
+                ..
+            }
+        ),
         "the run says what it had staged when it was interrupted"
     );
     assert!(
@@ -22702,11 +22969,49 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
             "{}: primary and companion",
             case.label
         );
+        let member_count = set["memberCount"].as_u64().expect("a member count");
         assert!(
-            set["memberCount"].as_u64().expect("a member count") <= 24,
+            member_count <= 24,
             "{}: bounded by the lifecycle's own bound",
             case.label
         );
+        // Every member is accounted for exactly once. A refused member used to
+        // be spelled `not_published` and was counted there; once it became its
+        // own state it fell out of all three counts, and the export said a set
+        // had more members than it could account for.
+        let counted: u64 = [
+            "finalizedCount",
+            "validatedNotPublishedCount",
+            "rejectedCount",
+            "notPublishedCount",
+        ]
+        .into_iter()
+        .map(|field| {
+            set[field]
+                .as_u64()
+                .unwrap_or_else(|| panic!("{}: {field} is a count", case.label))
+        })
+        .sum();
+        assert_eq!(
+            counted, member_count,
+            "{}: the member states partition the set",
+            case.label
+        );
+        // Every set failure says what contract its outputs were read under, so a
+        // refused member's diagnostic is not a check of unstated scope. The
+        // export used to write `null` here while the queue row said the mode.
+        assert_eq!(
+            item["validationMode"], "output_only",
+            "{}: the scope of the check reaches the document",
+            case.label
+        );
+        if case.detail == Some("multi_output_member_rejected") {
+            assert_eq!(
+                set["rejectedCount"], 1,
+                "{}: the member the judgement refused is named as refused",
+                case.label
+            );
+        }
 
         // The backend's own account of the failure survives, redacted and
         // bounded. Dropping it would leave a document that says which class of
@@ -29134,13 +29439,13 @@ fn a_cancelled_item_that_launched_nothing_says_so_rather_than_claiming_a_tree() 
         operation,
         0,
         ItemOutcome::Stopped {
+            attempt: stopped_attempt_facts(),
             set: None,
             facts: CancellationFacts {
-                process_launched: false,
+                process_launched: Some(false),
                 owned_tree: mscanvas_proteowizard::OwnedTreeDisposition::NoneLaunched,
                 elapsed: Duration::from_millis(1),
                 termination: Some(mscanvas_proteowizard::Termination::NotStarted),
-                partial_output_observed: false,
                 staging_residue: None,
             },
             diagnostics: None,
@@ -29164,7 +29469,7 @@ fn a_cancelled_item_that_launched_nothing_says_so_rather_than_claiming_a_tree() 
         .as_ref()
         .expect("a reached stop reports what it established");
     assert_eq!(facts.owned_tree, "none_launched");
-    assert!(!facts.process_launched);
+    assert_eq!(facts.process_launched, Some(false));
     assert_eq!(facts.termination.as_deref(), Some("not_started"));
     // And the session is not quarantined: nothing of this attempt's can survive.
     assert!(!update.backend_quarantined);
@@ -29339,7 +29644,7 @@ fn ending_the_running_item_settles_it_and_lets_the_queue_convert_the_next() {
         .as_ref()
         .expect("a reached stop reports what it established");
     assert_eq!(facts.owned_tree, "confirmed_gone");
-    assert!(facts.process_launched);
+    assert_eq!(facts.process_launched, Some(true));
     assert!(facts.termination_requested);
     // And the queue carried on: the item behind it really converted, the queue
     // ran to its own end, and the session is not quarantined.
@@ -29552,4 +29857,589 @@ fn m66_retry_retains_the_bound_directory_lease_for_every_policy() {
             "the last queue/adoption owner releases it"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// M6.9 — the five judgements, per item, through the queue and onto the wire.
+// ---------------------------------------------------------------------------
+
+/// **The decisive pair, on the wire.** Two failed items with the same outcome
+/// and the same clean teardown, distinguishable by what they staged.
+///
+/// The queue is the projection a reader actually holds, so proving the
+/// distinction at the conversion boundary is not enough: it has to survive the
+/// report, the queue and the transfer object. Everything else about these two
+/// rows is identical, including the failure identifier and the absent residue.
+#[test]
+fn two_failed_items_differ_on_the_wire_by_what_they_staged() {
+    let fixture = TestFile::new("queue-staged-pair");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::FailAfterStaging),
+    )));
+    let staged = add_one_acquisition(&service, &fixture.thermo_raw("staged.raw"));
+    let with_content = queue_and_run(&service, &[staged], &destination);
+
+    let bare_fixture = TestFile::new("queue-staged-none");
+    let bare_destination = destination_root(&bare_fixture, "out");
+    let bare_service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::Fail),
+    )));
+    let bare = add_one_acquisition(&bare_service, &bare_fixture.thermo_raw("bare.raw"));
+    let without_content = queue_and_run(&bare_service, &[bare], &bare_destination);
+
+    let staged_item = &terminal_queue(&with_content).items[0];
+    let bare_item = &terminal_queue(&without_content).items[0];
+
+    // Identical on every other judgement a reader can see.
+    assert_eq!(staged_item.state, bare_item.state);
+    assert_eq!(staged_item.state, ConversionQueueItemStateDto::Failed);
+    let staged_report = item_report(staged_item).expect("a failed item reports");
+    let bare_report = item_report(bare_item).expect("a failed item reports");
+    assert_eq!(staged_report.outcome, bare_report.outcome);
+    assert_eq!(staged_report.detailed_outcome, bare_report.detailed_outcome);
+    assert_eq!(staged_report.staging_residue, None);
+    assert_eq!(bare_report.staging_residue, None);
+    assert!(entry_names(&destination).is_empty());
+    assert!(entry_names(&bare_destination).is_empty());
+
+    // And distinguishable here, which is the whole point.
+    assert_ne!(staged_item.staged, bare_item.staged);
+    let ConversionStagedOutputDto::Observed {
+        phase,
+        entry_count,
+        non_empty_file_observed,
+        ..
+    } = staged_item.staged
+    else {
+        panic!(
+            "an ordinary failure observes its staging area: {:?}",
+            staged_item.staged
+        );
+    };
+    assert_eq!(phase, "provider_returned");
+    assert_eq!(entry_count, 1);
+    assert!(non_empty_file_observed);
+    let ConversionStagedOutputDto::Observed {
+        entry_count,
+        non_empty_file_observed,
+        ..
+    } = bare_item.staged
+    else {
+        panic!("an empty staging area is observed rather than assumed");
+    };
+    assert_eq!(entry_count, 0);
+    assert!(!non_empty_file_observed);
+
+    // Both ran a converter, and both say how it ended.
+    for item in [staged_item, bare_item] {
+        assert_eq!(
+            item.process,
+            ConversionProcessDto::Settled {
+                termination: "exited",
+                exit_code: Some(1),
+            }
+        );
+        assert!(item.run_identity.is_some(), "a launched attempt is named");
+    }
+    assert_ne!(
+        staged_item.run_identity, bare_item.run_identity,
+        "two attempts are two identities"
+    );
+}
+
+/// A finalized item says its output was published, and every judgement is
+/// answered separately.
+#[test]
+fn a_finalized_item_answers_all_five_judgements_separately() {
+    let fixture = TestFile::new("queue-five");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::Convert),
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    let update = queue_and_run(&service, &[handle], &destination);
+    let item = &terminal_queue(&update).items[0];
+
+    // 1 process.
+    assert_eq!(
+        item.process,
+        ConversionProcessDto::Settled {
+            termination: "exited",
+            exit_code: Some(0),
+        }
+    );
+    // 2 staged output. Published, which is not the same claim as an observation.
+    assert_eq!(item.staged, ConversionStagedOutputDto::Published);
+    // 3 finalized output.
+    let report = item_report(item).expect("a finalized item reports");
+    assert_eq!(report.output_file_name.as_deref(), Some("one.mzML"));
+    // 4 integrity, and it stays output-only whatever passed.
+    let validation = report
+        .validation
+        .as_ref()
+        .expect("a finalized output was judged");
+    assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
+    assert!(!validation.fully_verified);
+    // 5 adoption. Nobody has asked, which is not a refusal.
+    assert_eq!(item.adoption, ConversionItemAdoptionDto::NotRequested);
+    // And the facts that sit beside the five rather than among them.
+    let output = report
+        .output
+        .as_ref()
+        .expect("a finalized output was measured");
+    assert!(output.byte_length > 0);
+    assert_eq!(output.sha256.len(), 64);
+}
+
+/// An item nobody ran is not given a run.
+///
+/// A skip reaches no converter, so it carries no identity and no staging area —
+/// which is what keeps "a run happened" from being manufactured by a queue
+/// decision. Driven through the slot, because that is where the skip is decided.
+#[test]
+fn a_skipped_item_carries_no_run_identity_and_no_staging_area() {
+    let cancellation = ConversionCancellation::new();
+    let (mut slot, operation, _attempt) = running_two_item_slot(cancellation.request_handle());
+
+    slot.skip_pending_item(operation, 1)
+        .expect("a waiting item is skippable");
+
+    let dto = running_queue_dto(&slot);
+    let skipped = &dto.items[1];
+    assert_eq!(skipped.state, ConversionQueueItemStateDto::SkippedByRequest);
+    assert_eq!(skipped.run_identity, None, "a skip manufactured a run");
+    assert_eq!(skipped.process, ConversionProcessDto::NotAttempted);
+    assert_eq!(
+        skipped.staged,
+        ConversionStagedOutputDto::NotCreated,
+        "a skipped row never gave a converter anywhere to write"
+    );
+    assert_eq!(
+        skipped.adoption,
+        ConversionItemAdoptionDto::NothingToAdopt,
+        "a row that produced nothing was never an adoption candidate"
+    );
+    // The plan still holds it: this is an outcome, not a membership change.
+    assert_eq!(dto.item_count, 2);
+}
+
+/// Reading the queue again mints nothing, and a rerun is a different attempt.
+///
+/// The identity names the attempt rather than the result. Reading an unchanged
+/// queue must return the same one — a display that minted on first read would
+/// give every reader a different answer for one run — and a rerun of the same
+/// row into the same folder producing the same filename must not inherit it.
+///
+/// The rerun here starts from a refusal, which is the only failure this queue
+/// treats as retryable: the acquisition was held open by another program.
+/// A refusal reaches no converter, so it carries no identity at all, and the
+/// attempt that follows it mints its own.
+#[test]
+fn a_reread_keeps_the_identity_and_a_rerun_is_a_different_attempt() {
+    let fixture = TestFile::new("queue-identity");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let done = add_one_acquisition(&service, &fixture.thermo_raw("done.raw"));
+    let held = fixture.thermo_raw("held.raw");
+    let blocked = add_one_acquisition(&service, &held);
+
+    let writer = hold_for_writing(&held);
+    let update = queue_and_run(&service, &[done, blocked], &destination);
+    let queue = terminal_queue(&update);
+    let minted = queue.items[0]
+        .run_identity
+        .clone()
+        .expect("the item that converted reached a converter");
+    assert_eq!(
+        queue.items[1].run_identity, None,
+        "a refusal that reached no converter was given a run"
+    );
+    assert_eq!(queue.items[1].process, ConversionProcessDto::NotAttempted);
+    assert_eq!(queue.items[1].staged, ConversionStagedOutputDto::NotCreated);
+
+    // Two more reads, changing nothing.
+    for _ in 0..2 {
+        let again = service.conversion_state();
+        assert_eq!(
+            terminal_queue(&again).items[0].run_identity.as_deref(),
+            Some(minted.as_str()),
+            "reading the queue minted a new identity"
+        );
+        assert_eq!(terminal_queue(&again).items[1].run_identity, None);
+    }
+
+    drop(writer);
+    let retried = service
+        .retry_conversion_queue(current_document(&service))
+        .expect("a retryable refusal can be rerun");
+    let queue = terminal_queue(&retried);
+    assert_eq!(queue.retry_round, 1);
+    assert_eq!(
+        queue.items[0].run_identity.as_deref(),
+        Some(minted.as_str()),
+        "an item that already succeeded was not rerun, so it keeps its identity"
+    );
+    let rerun = queue.items[1]
+        .run_identity
+        .clone()
+        .expect("the rerun reached a converter this time");
+    assert_ne!(rerun, minted, "two attempts share one identity");
+    // The queue's bound membership and order are untouched by either.
+    assert_eq!(queue.item_count, 2);
+    assert_eq!(item_output_name(&queue.items[0]), "done.mzML");
+    assert_eq!(item_output_name(&queue.items[1]), "held.mzML");
+}
+
+/// Every item state is accounted for exactly once in the queue's own totals.
+///
+/// Counted from the states the wire reports rather than from a second sum, so a
+/// state added later that nobody counted fails here.
+#[test]
+fn every_bound_item_is_counted_exactly_once_in_the_primary_totals() {
+    let fixture = TestFile::new("queue-totals");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::Fail),
+    )));
+    let handles: Vec<String> = ["a.raw", "b.raw"]
+        .iter()
+        .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
+        .collect();
+    let update = queue_and_run(&service, &handles, &destination);
+    let queue = terminal_queue(&update);
+
+    let primary = queue.finalized_count
+        + queue.skipped_count
+        + queue.failed_count
+        + queue.cancelled_count
+        + queue.not_run_count
+        + queue.skipped_by_request_count
+        + queue.cancellation_failed_count;
+    assert_eq!(
+        primary, queue.item_count,
+        "the primary state totals must account for every bound item exactly once"
+    );
+    // The sum above is over seven fields; this is over the states the items
+    // actually report. A terminal state that no count names would make the two
+    // disagree, which is what this test is for -- the sum alone would go on
+    // being right about a queue whose items never reached the missing state.
+    let counted = |state: ConversionQueueItemStateDto| -> usize {
+        match state {
+            ConversionQueueItemStateDto::Finalized => queue.finalized_count,
+            ConversionQueueItemStateDto::Skipped => queue.skipped_count,
+            ConversionQueueItemStateDto::Failed => queue.failed_count,
+            ConversionQueueItemStateDto::Cancelled => queue.cancelled_count,
+            ConversionQueueItemStateDto::NotRun => queue.not_run_count,
+            ConversionQueueItemStateDto::SkippedByRequest => queue.skipped_by_request_count,
+            ConversionQueueItemStateDto::CancellationFailed => queue.cancellation_failed_count,
+            // Neither is a terminal state, so neither has a count and neither
+            // may appear on a terminal queue. Reaching this arm is the defect.
+            ConversionQueueItemStateDto::Pending | ConversionQueueItemStateDto::Running => {
+                panic!("a terminal queue reported {state:?}, which no count names")
+            }
+        }
+    };
+    for item in &queue.items {
+        assert!(
+            counted(item.state) > 0,
+            "a terminal item is in a state its own queue counts as zero: {:?}",
+            item.state
+        );
+    }
+    // A retryable failure is a subset of the failures, never an extra item.
+    assert!(queue.retryable_failed_count <= queue.failed_count);
+    assert_eq!(
+        queue.retryable_failed_count + queue.non_retryable_failed_count,
+        queue.failed_count
+    );
+    // A completed queue of nothing but failures is not an all-success queue.
+    assert_eq!(queue.finalized_count, 0);
+    assert_eq!(queue.adoptable_output_count, 0);
+}
+
+/// An adoption writes the fifth judgement back onto the row it was about.
+///
+/// The reply is one message and the queue is read again on every poll, so the
+/// answer has to live on the queue. Repeating the adoption replaces it with
+/// what the second one did — a duplicate, which is not a newly added output.
+#[test]
+fn an_adoption_records_what_it_did_on_each_item_it_was_about() {
+    let fixture = TestFile::new("queue-adoption-judgement");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::Convert),
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("adopt.raw"));
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = operation_of(&update);
+    assert_eq!(
+        terminal_queue(&update).items[0].adoption,
+        ConversionItemAdoptionDto::NotRequested,
+        "nobody has asked yet, which is not a refusal"
+    );
+
+    let result = adopt_visible(&service, operation).expect("a finalized output is adoptable");
+    assert_eq!(result.outcomes.len(), 1);
+
+    let after = service.conversion_state();
+    assert_eq!(
+        terminal_queue(&after).items[0].adoption,
+        ConversionItemAdoptionDto::Settled {
+            added: 1,
+            already_in_workspace: 0,
+            refused: 0,
+            refusals: Vec::new(),
+        }
+    );
+    // The conversion result the row reports is untouched by the adoption.
+    let report = item_report(&terminal_queue(&after).items[0]).expect("the item still reports");
+    assert_eq!(report.output_file_name.as_deref(), Some("adopt.mzML"));
+
+    // Again, and a duplicate is reported as one rather than added twice.
+    adopt_visible(&service, operation).expect("the ticket survives an attempt");
+    let repeated = service.conversion_state();
+    assert_eq!(
+        terminal_queue(&repeated).items[0].adoption,
+        ConversionItemAdoptionDto::Settled {
+            added: 0,
+            already_in_workspace: 1,
+            refused: 0,
+            refusals: Vec::new(),
+        }
+    );
+}
+
+/// A rerun drops what an earlier adoption said about the rows it replaced.
+///
+/// A retry converts the same acquisition again into the same folder, so the
+/// files an earlier adoption reported on are not the files the row now
+/// describes. Carrying the answer forward would attribute an adoption to
+/// outputs that no longer exist.
+#[test]
+fn a_rerun_drops_the_adoption_answer_for_the_rows_it_replaced() {
+    let fixture = TestFile::new("queue-adoption-rerun");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let done = add_one_acquisition(&service, &fixture.thermo_raw("done.raw"));
+    let held = fixture.thermo_raw("held.raw");
+    let blocked = add_one_acquisition(&service, &held);
+
+    let writer = hold_for_writing(&held);
+    let update = queue_and_run(&service, &[done, blocked], &destination);
+    let operation = operation_of(&update);
+    adopt_visible(&service, operation).expect("the finalized row is adoptable");
+
+    let adopted = service.conversion_state();
+    assert_eq!(
+        terminal_queue(&adopted).items[0].adoption,
+        ConversionItemAdoptionDto::Settled {
+            added: 1,
+            already_in_workspace: 0,
+            refused: 0,
+            refusals: Vec::new(),
+        }
+    );
+
+    drop(writer);
+    let retried = service
+        .retry_conversion_queue(current_document(&service))
+        .expect("a retryable refusal can be rerun");
+    let queue = terminal_queue(&retried);
+    // The row that was rerun says nobody has asked about *these* outputs.
+    assert_eq!(
+        queue.items[1].adoption,
+        ConversionItemAdoptionDto::NotRequested,
+        "a rerun row kept an answer about the files it replaced"
+    );
+    // The row that was not rerun keeps the answer that is still true of it: a
+    // retry reruns only the failures, so its outputs are the same objects.
+    assert_eq!(
+        queue.items[0].adoption,
+        ConversionItemAdoptionDto::Settled {
+            added: 1,
+            already_in_workspace: 0,
+            refused: 0,
+            refusals: Vec::new(),
+        }
+    );
+}
+
+/// An answer stamped against one settling is refused by another.
+///
+/// The pairing is what keeps a retry that lands between the two halves of an
+/// adoption from being given the earlier round's answers. Exercised directly,
+/// because the commit refuses first in production and a later reordering that
+/// made this the first check must not do so silently.
+#[test]
+fn an_adoption_answer_is_refused_against_a_different_settling() {
+    let cancellation = ConversionCancellation::new();
+    let (mut slot, operation, attempt) = running_two_item_slot(cancellation.request_handle());
+    slot.release_attempt(operation, 0, attempt);
+    slot.skip_pending_item(operation, 1)
+        .expect("a waiting item is skippable");
+    slot.finish(operation, None, TerminalReason::Completed);
+
+    let settled = [(
+        0_usize,
+        SettledItemAdoption {
+            added: 1,
+            already_in_workspace: 0,
+            refusals: Vec::new(),
+        },
+    )];
+    let round = slot
+        .terminal_retry_round(operation)
+        .expect("a terminal queue names its settling");
+    assert!(
+        slot.record_adoption(operation, round, &settled),
+        "the settling this queue is on accepts its own answer"
+    );
+    assert!(
+        !slot.record_adoption(operation, round.wrapping_add(1), &settled),
+        "an answer from another settling was written onto this one"
+    );
+    assert!(
+        !slot.record_adoption(operation.wrapping_add(1), round, &settled),
+        "an answer from another queue was written onto this one"
+    );
+}
+
+/// The exported document is at the version this release ships, and carries the
+/// fields each increment was earned by.
+///
+/// Nothing pinned the payload's own version or its new members, so the schema
+/// increments ADR 0017 records were documented and unproved. It matters most
+/// where a field **left** or narrowed: a reader written against version two
+/// must not read a later file as though `partialOutputObserved` were merely
+/// absent, and one written against version four must not read
+/// `notPublishedCount` as though it still counted a refused member.
+#[test]
+fn the_exported_diagnostics_are_at_this_releases_version_and_say_what_was_staged() {
+    let fixture = TestFile::new("queue-export-schema");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::FailAfterStaging),
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("staged.raw"));
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = terminal_operation(&update);
+
+    let saved = fixture.directory.join("diagnostics.json");
+    export_diagnostics(&service, &operation, &saved).expect("a failed item is diagnosable");
+    let document = read_export(&saved);
+
+    assert_eq!(document["version"], 5);
+    assert_eq!(document["schema"], "mscanvas.conversion-diagnostics");
+    let item = &document["items"][0];
+
+    // The judgement the increment is about, written for every item rather than
+    // only for one a stop reached.
+    assert_eq!(item["stagedOutput"]["kind"], "observed");
+    assert_eq!(item["stagedOutput"]["phase"], "provider_returned");
+    assert_eq!(item["stagedOutput"]["entryCount"], 1);
+    assert_eq!(item["stagedOutput"]["nonEmptyFileObserved"], true);
+    // The process, read from the boundary rather than from whether facts came
+    // back, and the identity of the attempt that produced it.
+    assert_eq!(item["process"]["kind"], "settled");
+    assert_eq!(item["process"]["termination"], "exited");
+    assert_eq!(item["process"]["exitCode"], 1);
+    let identity = item["runIdentity"]
+        .as_str()
+        .expect("a launched attempt names itself");
+    assert_eq!(identity.len(), 32);
+    assert!(
+        identity
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    );
+
+    // And the boolean that left. Its absence is what the version says.
+    assert!(
+        !std::fs::read_to_string(&saved)
+            .expect("read the export")
+            .contains("partialOutputObserved"),
+        "the field the version increment was earned by is still in the payload"
+    );
+}
+
+/// An item whose staging area was never read reports no counts, not zeroes.
+///
+/// A zero there would be the one reading this field exists to prevent: an
+/// unread directory described as an empty one. Exercised through a refusal that
+/// creates no staging area at all, which is the reachable half of the same rule.
+#[test]
+fn an_export_reports_no_staged_counts_where_nothing_was_observed() {
+    let fixture = TestFile::new("queue-export-not-created");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let held = fixture.thermo_raw("held.raw");
+    let blocked = add_one_acquisition(&service, &held);
+
+    let writer = hold_for_writing(&held);
+    let update = queue_and_run(&service, &[blocked], &destination);
+    let operation = terminal_operation(&update);
+
+    let saved = fixture.directory.join("diagnostics.json");
+    export_diagnostics(&service, &operation, &saved).expect("a refused item is diagnosable");
+    let document = read_export(&saved);
+    drop(writer);
+
+    let item = &document["items"][0];
+    assert_eq!(item["stagedOutput"]["kind"], "not_created");
+    assert!(item["stagedOutput"]["phase"].is_null());
+    assert!(
+        item["stagedOutput"]["entryCount"].is_null(),
+        "an unobserved directory reported a count"
+    );
+    assert!(item["stagedOutput"]["nonEmptyFileObserved"].is_null());
+    // Nothing was launched, so nothing is named.
+    assert_eq!(item["process"]["kind"], "not_attempted");
+    assert!(item["runIdentity"].is_null());
+}
+
+/// Recording the adoption moves the ordering key a reader installs by.
+///
+/// The fifth judgement is recorded on the queue precisely so it survives a
+/// re-read, and a document installs a read only when its sequence is newer than
+/// the one it holds. A terminal queue is not polled, so a record that did not
+/// move the sequence would be written here and never reach the row it is about
+/// — which is exactly what happened on a real native run before this was pinned.
+#[test]
+fn recording_an_adoption_moves_the_sequence_a_reader_installs_by() {
+    let fixture = TestFile::new("queue-adoption-sequence");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::Convert),
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("adopt.raw"));
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = operation_of(&update);
+    let before = service.conversion_state().sequence;
+
+    adopt_visible(&service, operation).expect("a finalized output is adoptable");
+
+    let after = service.conversion_state();
+    assert!(
+        after.sequence > before,
+        "the adoption's answer was recorded without moving the sequence, so no \
+         reader would install it: {before} -> {}",
+        after.sequence
+    );
+    assert_eq!(
+        terminal_queue(&after).items[0].adoption,
+        ConversionItemAdoptionDto::Settled {
+            added: 1,
+            already_in_workspace: 0,
+            refused: 0,
+            refusals: Vec::new(),
+        }
+    );
 }

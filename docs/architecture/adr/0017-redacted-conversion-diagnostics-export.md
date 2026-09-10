@@ -3,9 +3,12 @@
 - **Status:** Accepted. A terminal queue's diagnosable attempts can be saved to
   one local JSON file when the user asks, and never otherwise.
 - **Date:** 2026-08-09
-- Amended: 2026-09-08 (M6.8) — the schema is at **version 2**. A field left, so
-  the version moved by the rule this ADR already states. See *One versioned
-  schema* below.
+- Amended: 2026-09-08 (M6.8) — the schema moved to **version 2**. A field left,
+  so the version moved by the rule this ADR already states.
+- Amended: 2026-09-09 (M6.9) — the schema moved to **version 3**, for the same
+  reason a second time.
+- Amended: 2026-09-09 (M6.9's release review) — the schema is at **version 5**.
+  Two more fields changed meaning. See *One versioned schema* below.
 - **Builds on:** [ADR 0009](0009-mzml-conversion-execution-boundary.md) (the
   execution boundary and its bounded process capture),
   [ADR 0013](0013-serial-conversion-queue.md) (the serial queue),
@@ -214,7 +217,7 @@ different facts.
 ```json
 {
   "schema": "mscanvas.conversion-diagnostics",
-  "version": 2,
+  "version": 5,
   "application": { "name": "MSCanvas", "version": "…" },
   "queue": { "operationId": "…", "terminalReason": "…", "…": "counts" },
   "provider": { "release": "…", "buildDate": "…", "sourceRevision": "…",
@@ -242,6 +245,64 @@ additions beside it — `sampledMaxActiveProcesses`, `totalOwnedProcesses` and
 state identifier `skipped_by_request` — would not have moved it on their own. A reader written
 against version 1 must not read a version 2 file as though the boolean were
 merely absent, which is what the version exists to tell it.
+
+`stagedOutput` carries `countsAreLowerBounds` beside its counts, and where that
+is true the classified fields are `null` rather than zero. The observation stops
+at a bound so a backend that filled the staging area cannot make a failure pay
+for enumerating all of it; exporting the bounded reading as an exact total, with
+"no directories" and "no file with content" beside it, would turn one omitted
+flag into three false facts. An addition, so it did not move the version.
+
+**Amended 2026-09-09 (M6.9's release review): version 4 became version 5.** A
+set's `outputSet.notPublishedCount` narrowed. It counts members in the state
+`not_published`, and a member the integrity judgement read and refused used to
+be in that state. Once refusal became its own state, such a member fell out of
+that count and into none of the others, so the export accounted for fewer
+members than the `memberCount` beside it. `rejectedCount` is new and holds it,
+which is an addition -- but the older field's population is smaller than it was,
+and a reader written against version 4 must not read a version 5 file as though
+`notPublishedCount` still included refused members. The four counts partition
+the set and sum to `memberCount`, and a test asserts that sum over every refusal
+class the private-failure export produces -- the classes where a member can be
+refused at all.
+
+Two of a stop's exported values were corrected under this same version, and
+deliberately without a further increment: `cancellation.termination` now carries
+the ending a stop that beat process creation settled with, and
+`cancellation.processLaunched` is no longer `null` for an unconfirmed stop whose
+boundary did return one. Neither field changed its meaning or its type; both had
+been derived from whether `BackendRunFacts` came back beside them rather than
+from the boundary's own judgement, and were wrong for those two events. Version
+5 had not left this branch when they were repaired, so no document exists that
+carries the old values under it.
+
+**Amended 2026-09-09 (M6.9's release review): version 3 became version 4.** An
+item's `cancellation.processLaunched` became nullable. It was derived from
+whether `BackendRunFacts` came back, so a stop the boundary could not confirm
+reported `false` -- no process launched -- directly beside the same item's
+`process` judgement of `indeterminate`, which says that this is exactly what was
+not established. Two fields of one item answering one question in opposite
+directions is the defect the five judgements exist to prevent, and a boolean
+cannot hold "unknown", so the field holds `null` there. A reader written against
+version 3 must not read a version 4 file as though the field were always
+present.
+
+**Amended 2026-09-09 (M6.9): version 2 became version 3.** An item's
+`cancellation.partialOutputObserved` boolean was removed. It was a boolean over
+an *optional* observation, so it answered `false` both for a staging area read
+and found empty and for one that could not be read at all — the same conflation
+`ownedTree` was introduced to undo one field over. What took its place is the
+item's own `stagedOutput`: a closed four-way answer — never created, unobserved
+at a stated phase, observed at a stated phase with its counts, or published
+under its final name — and it is written for **every** item rather than only for
+one a stop reached, because an ordinary failure is exactly where the question
+matters. `process` and `runIdentity` arrive beside it, and would not have moved
+the version on their own. A reader written against version 2 must not read a
+version 3 file as though the boolean were merely absent.
+
+The counts inside `stagedOutput` are `null` rather than zero where nothing was
+observed. A zero there would be the one reading this field exists to prevent: an
+unread directory described as an empty one.
 
 Serialized by hand rather than through a format crate. Nothing in this
 application's production dependencies renders JSON — `serde` describes shapes and

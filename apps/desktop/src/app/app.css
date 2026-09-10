@@ -2008,3 +2008,102 @@ button:disabled {
 .conversion-setting-choice[data-choice-state="unavailable"] > label {
   color: var(--color-text-muted);
 }
+
+/* The five judgements, one row's worth.
+
+   A disclosure rather than five open cards: sixteen items times five sections
+   is a wall nobody reads, and the row's own label already carries the summary.
+   Full width for the reason every other status line here has it -- these are
+   sentences, and a sentence that has to share a line with a filename is a
+   sentence that gets clipped. */
+.conversion-item-detail {
+  min-width: 0;
+  flex: 1 0 100%;
+  margin-top: 4px;
+  padding-left: 2.2em;
+  font-size: 0.95em;
+}
+
+.conversion-item-detail > summary {
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.conversion-item-detail > summary:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Left-aligned and stacked, unlike the panel's other metadata lists. Those are
+   short values beside short labels; these are sentences, and a right-aligned
+   sentence is one the eye has to find the start of on every line. */
+.conversion-item-judgements {
+  margin-top: 6px;
+  gap: 6px;
+}
+
+.conversion-item-judgements > div {
+  display: grid;
+  grid-template-columns: minmax(7.5em, max-content) 1fr;
+  gap: 10px;
+  justify-content: start;
+}
+
+.conversion-item-judgements dd {
+  text-align: left;
+  font-variant-numeric: normal;
+  overflow-wrap: anywhere;
+}
+
+/* An advisory fails nothing, so it reads as a note rather than as a warning.
+   Colouring it would say something the words do not. */
+.conversion-item-advisories {
+  color: var(--color-text-tertiary);
+}
+
+/* The identity is opaque and fixed width. Wrapping is what keeps it readable at
+   960px rather than pushing the panel sideways. */
+.conversion-run-identity,
+.conversion-item-digest {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+
+/* The manifest scrolls inside its own box. Six columns of measurements do not
+   fit at 960px, and the alternative to an inner scroller is a page that scrolls
+   sideways -- which moves the whole panel to read one digest. */
+.conversion-item-manifest-scroll {
+  margin-top: 8px;
+  overflow-x: auto;
+}
+
+.conversion-item-manifest {
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+
+.conversion-item-manifest caption {
+  padding-bottom: 4px;
+  color: var(--color-text-tertiary);
+  text-align: left;
+}
+
+.conversion-item-manifest th,
+.conversion-item-manifest td {
+  padding: 3px 10px 3px 0;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+/* The name is the one column that must not be a single unbreakable line: a
+   backend-chosen basename embeds sample identifiers and can be long, and a
+   truncated one is not a name anybody can find in a folder. */
+.conversion-item-manifest th[scope="row"] {
+  max-width: 22em;
+  font-weight: 500;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

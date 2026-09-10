@@ -33,6 +33,7 @@ import type {
   ConversionConflictPolicy,
   ConversionDiagnosticsExport,
   ConversionDiagnosticsState,
+  ConversionOutputMember,
   ConversionOutputSetReport,
   ConversionBeginRequest,
   ConversionPlanOutcome,
@@ -1176,7 +1177,120 @@ export function queueItem(
     error: null,
     cancellation: null,
     stopRequested: false,
+    // A row nothing has run for: no provider was invoked, nothing was created,
+    // and no identity exists. Stated rather than left out, so a fixture that
+    // means to describe a run has to say so.
+    //
+    // `nothingToAdopt` is what Rust reports for such a row: it produced no
+    // finalized output, so it was never an adoption candidate. A fixture that
+    // sets `state: "finalized"` must override this to `notRequested`, which is
+    // what Rust reports for a row that holds a ticket nobody has asked about.
+    process: { kind: "notAttempted" },
+    staged: { kind: "notCreated" },
+    runIdentity: null,
+    adoption: { kind: "nothingToAdopt" },
     ...overrides,
+  };
+}
+
+/**
+ * What an attempt that ran to a clean finish established about itself.
+ *
+ * The staged half is `published` rather than an observation: finalization moved
+ * the validated document out of staging under its final name, which settles the
+ * judgement without a directory listing.
+ */
+export function finalizedAttemptFacts(
+  runIdentity = "0000000000000001000000000000000a",
+): Pick<ConversionQueueItem, "process" | "staged" | "runIdentity" | "adoption"> {
+  return {
+    process: { kind: "settled", termination: "exited", exitCode: 0 },
+    staged: { kind: "published" },
+    runIdentity,
+    // A row that finalized holds an adoption ticket, so Rust reports that
+    // nobody has asked rather than that there is nothing to ask about.
+    adoption: { kind: "notRequested" },
+  };
+}
+
+/**
+ * What an attempt a stop reached established about itself.
+ *
+ * A row whose `cancellation` says a process was launched must not carry the
+ * default facts of a row that never ran one: `stop_process_facts` produces
+ * `processLaunched: true` only from a *settled* process result, and a settled
+ * result always carries the termination it settled with. A fixture pairing a
+ * launched stop with `notAttempted` describes a wire Rust cannot produce, and
+ * renders "No converter was started for this item" beside it.
+ */
+export function stoppedAttemptFacts(
+  termination = "cancelled",
+  runIdentity = "0000000000000001000000000000000d",
+): Pick<ConversionQueueItem, "process" | "staged" | "runIdentity"> {
+  return {
+    process: { kind: "settled", termination, exitCode: null },
+    staged: {
+      kind: "observed",
+      phase: "provider_returned",
+      entryCount: 1,
+      directoryCount: 0,
+      nonEmptyFileObserved: true,
+      bounded: false,
+    },
+    runIdentity,
+  };
+}
+
+/**
+ * What a failure established where the reading stopped at its bound.
+ *
+ * The counts are floors. A fixture that spelled them as exact totals would
+ * describe a wire Rust does not produce, and would let the "held more than N"
+ * sentence pass while rendering an invented total.
+ */
+export function boundedAttemptFacts(
+  entryCount: number,
+  runIdentity = "0000000000000001000000000000000c",
+): Pick<ConversionQueueItem, "process" | "staged" | "runIdentity"> {
+  return {
+    process: { kind: "settled", termination: "exited", exitCode: 3 },
+    staged: {
+      kind: "observed",
+      phase: "provider_returned",
+      // A floor, and the two fields the reading did not classify are the
+      // defaults the wire carries for a bounded observation rather than
+      // measurements. Rust nulls them in the export for the same reason.
+      entryCount,
+      directoryCount: 0,
+      nonEmptyFileObserved: false,
+      bounded: true,
+    },
+    runIdentity,
+  };
+}
+
+/**
+ * What an ordinary failure established, with or without staged content.
+ *
+ * The decisive pair: same process outcome, same clean teardown, different
+ * staged facts. A fixture that could not express both would not be able to
+ * describe the case this milestone exists to make legible.
+ */
+export function failedAttemptFacts(
+  stagedSomething: boolean,
+  runIdentity = "0000000000000001000000000000000b",
+): Pick<ConversionQueueItem, "process" | "staged" | "runIdentity"> {
+  return {
+    process: { kind: "settled", termination: "exited", exitCode: 3 },
+    staged: {
+      kind: "observed",
+      phase: "provider_returned",
+      entryCount: stagedSomething ? 1 : 0,
+      directoryCount: 0,
+      nonEmptyFileObserved: stagedSomething,
+      bounded: false,
+    },
+    runIdentity,
   };
 }
 
@@ -1199,6 +1313,53 @@ export function sciexQueueItem(
   });
 }
 
+/**
+ * A manifest whose members ended in the given states, in publication order.
+ *
+ * Measurements are attached exactly to the members that reached a validated
+ * state, because that is the rule Rust applies: an unvalidated member has no
+ * byte length and no digest, and zeroes there would read as a measured empty
+ * document.
+ *
+ * The state strings are the lifecycle's own identifiers. A fixture spelling one
+ * differently would be describing a wire Rust does not produce.
+ */
+export function setMembers(
+  fileNames: readonly string[],
+  states: readonly string[],
+): readonly ConversionOutputMember[] {
+  return fileNames.map((fileName, index) => {
+    const state = states[index] ?? "finalized";
+    const validated = state === "finalized" || state === "validated_not_published";
+    return {
+      fileName,
+      state,
+      output: validated
+        ? {
+            byteLength: 1_048_576 + index,
+            sha256: String(index).repeat(64).slice(0, 64),
+            spectrumCount: 1_200,
+            chromatogramCount: 1,
+          }
+        : null,
+      validation: validated
+        ? {
+            mode: "output_only" as const,
+            fullyVerified: false,
+            verified: ["output_is_well_formed_mzml"],
+            unverified: [],
+            inapplicable: ["source_spectrum_count_preserved"],
+            // Empty, and it has to be: advisory observations are recorded only
+            // by the source comparison, and no family the visible queue accepts
+            // is read under one. A fixture pairing `output_only` with an
+            // advisory would describe a wire Rust cannot produce.
+            advisory: [],
+          }
+        : null,
+    };
+  });
+}
+
 /** A finalized group report over `memberFileNames`, sample-complete. */
 export function outputSetReport(
   handle: string,
@@ -1214,10 +1375,13 @@ export function outputSetReport(
     memberCount: memberFileNames.length,
     finalizedCount: memberFileNames.length,
     validatedNotPublishedCount: 0,
+    rejectedCount: 0,
     notPublishedCount: 0,
     boundSourceObjects: 2,
-    memberFileNames,
-    memberStates: memberFileNames.map(() => "finalized"),
+    members: setMembers(
+      memberFileNames,
+      memberFileNames.map(() => "finalized"),
+    ),
     backend: { exitCode: 0, elapsedMilliseconds: 4_200 },
     stagingResidue: null,
     validationMode: "output_only",
@@ -1245,10 +1409,9 @@ export function outputFileNamesOf(
 ): readonly string[] {
   if (item.result?.kind === "outputSet") {
     return item.result.report.completeSetAdoptable
-      ? item.result.report.memberFileNames.filter(
-          (_, index) => item.result?.kind === "outputSet" &&
-            item.result.report.memberStates[index] === "finalized",
-        )
+      ? item.result.report.members
+          .filter((member) => member.state === "finalized")
+          .map((member) => member.fileName)
       : [];
   }
   return item.output.kind === "knownSingle" ? [item.output.fileName] : [];
@@ -1450,12 +1613,14 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
               spectrumCount: 1,
               chromatogramCount: 1,
             },
+            validationMode: "output_only",
             validation: {
               mode: "output_only",
               fullyVerified: false,
               verified: ["source_unchanged"],
               unverified: [],
               inapplicable: ["spectrum_count"],
+              advisory: [],
             },
             backend: { exitCode: 0, elapsedMilliseconds: 663 },
             stagingResidue: null,
@@ -1996,6 +2161,50 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           };
         },
       );
+      // Modelled as Rust behaves: committing the adoption records what it did
+      // with each item's outputs on the queue that produced them, so a document
+      // that re-reads the slot sees the fifth judgement. The reply itself
+      // carries the roster and not the queue, which is exactly why the record
+      // has to live on the slot.
+      if (conversion.status === "terminal") {
+        const perItem = new Map<number, { added: number; already: number; refusals: string[] }>();
+        for (const outcome of outcomes) {
+          const entry = perItem.get(outcome.itemIndex) ?? {
+            added: 0,
+            already: 0,
+            refusals: [] as string[],
+          };
+          if (outcome.kind === "added") {
+            entry.added += 1;
+          } else if (outcome.kind === "alreadyInWorkspace") {
+            entry.already += 1;
+          } else {
+            entry.refusals.push(outcome.reason);
+          }
+          perItem.set(outcome.itemIndex, entry);
+        }
+        publishConversion({
+          ...conversion,
+          queue: {
+            ...conversion.queue,
+            items: conversion.queue.items.map((item, index) => {
+              const settled = perItem.get(index);
+              return settled === undefined
+                ? item
+                : {
+                    ...item,
+                    adoption: {
+                      kind: "settled" as const,
+                      added: settled.added,
+                      alreadyInWorkspace: settled.already,
+                      refused: settled.refusals.length,
+                      refusals: settled.refusals,
+                    },
+                  };
+            }),
+          },
+        });
+      }
       return {
         operationId,
         retryRound: conversion.status === "terminal" ? conversion.queue.retryRound : 0,

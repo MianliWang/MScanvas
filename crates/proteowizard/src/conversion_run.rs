@@ -47,6 +47,9 @@ use std::time::Duration;
 
 use thiserror::Error;
 
+use crate::attempt::{
+    OperationRunIdentity, ProcessAttemptOutcome, StagedObservationPhase, StagedOutputEvidence,
+};
 use crate::cancellation::{CancellationObservation, ConversionCancellation};
 use crate::capability::{InstalledHelpCapabilities, Sha256Digest};
 use crate::command::{
@@ -55,12 +58,15 @@ use crate::command::{
 use crate::compound_file;
 use crate::conversion::{
     ConversionIntegrityOutcome, ConversionSourceError, ConversionSourceFacts, SourceObjectFacts,
-    ValidConversion, VerifiedConversion, capture_conversion_source, conversion_output_file_name,
-    verify_mzml_conversion_retaining_output, verify_vendor_conversion_retaining_output,
+    ValidConversion, ValidationMode, VerifiedConversion, capture_conversion_source,
+    conversion_output_file_name, verify_mzml_conversion_retaining_output,
+    verify_vendor_conversion_retaining_output,
 };
 use crate::diagnostics::{BackendTextExcerpt, Redactor};
 use crate::finalized_output::FinalizedOutput;
-use crate::fs_guard::{self, OutputEntryKind, RegularFileError, snapshot_output_directory};
+use crate::fs_guard::{
+    self, BoundedSnapshot, OutputEntryKind, RegularFileError, snapshot_output_directory_bounded,
+};
 use crate::intent::ConversionIntent;
 use crate::mzml::{MzmlFacts, MzmlScanError, MzmlScanLimits};
 use crate::process::{
@@ -553,6 +559,20 @@ struct SourceBundleFacts {
 }
 
 impl ConversionSource {
+    /// The judgement this source posture is read under.
+    ///
+    /// Decided by the posture rather than by any result: a source read as mzML
+    /// is compared against, and one that never was is judged on its output
+    /// alone. So a run that produced nothing has one too, which is what keeps a
+    /// refused output from being reported as a check of unstated scope.
+    #[must_use]
+    pub const fn validation_mode(&self) -> ValidationMode {
+        match self.baseline {
+            SourceBaseline::Mzml(_) => ValidationMode::SourceComparison,
+            SourceBaseline::ObjectOnly(_) | SourceBaseline::Bundle(_) => ValidationMode::OutputOnly,
+        }
+    }
+
     /// Opens a regular-file mzML acquisition as a conversion source.
     ///
     /// The file is inspected for posture, canonicalized, bound to its
@@ -1989,6 +2009,28 @@ pub struct ConversionRunReport {
     backend: Option<BackendRunFacts>,
     residue: Option<StagingResidue>,
     diagnostics: Option<BackendDiagnosticText>,
+    /// What the private staging area held, answered whether or not anything
+    /// was published.
+    ///
+    /// The second of the five judgements, and it was the one this boundary
+    /// answered only on the stop paths. An ordinary failure -- a non-zero
+    /// exit, an incomplete execution, a refused output, a rename that did not
+    /// land -- settled with no observation at all, so a run that left a
+    /// half-written document and one that produced nothing reported the same
+    /// clean teardown and the same absent output. They no longer do.
+    staged: StagedOutputEvidence,
+    /// The identity minted for this attempt before the provider was invoked.
+    ///
+    /// `None` for every attempt that settled ahead of the launch: a
+    /// destination refusal, a source that moved, a staging area that could not
+    /// be created. Those never became a run and are not given one.
+    identity: Option<OperationRunIdentity>,
+    /// What the execution boundary established about the process.
+    ///
+    /// Carried rather than read off `backend`, because `backend` is absent for
+    /// two entirely different reasons: nothing was launched, or something was
+    /// launched and the boundary could not report on it.
+    process: ProcessAttemptOutcome,
 }
 
 impl ConversionRunReport {
@@ -2018,6 +2060,25 @@ impl ConversionRunReport {
     #[must_use]
     pub const fn residue(&self) -> Option<StagingResidue> {
         self.residue
+    }
+
+    /// What the private staging area held, independently of what was
+    /// published and of what teardown reclaimed.
+    #[must_use]
+    pub const fn staged_content(&self) -> StagedOutputEvidence {
+        self.staged
+    }
+
+    /// The identity of this attempt, where it reached the provider.
+    #[must_use]
+    pub const fn identity(&self) -> Option<OperationRunIdentity> {
+        self.identity
+    }
+
+    /// What the execution boundary established about the process.
+    #[must_use]
+    pub const fn process(&self) -> ProcessAttemptOutcome {
+        self.process
     }
 
     /// Takes the retained output out of the report, where there was one.
@@ -2056,12 +2117,21 @@ impl ConversionRunReport {
         self.diagnostics.take()
     }
 
+    /// A report for an attempt that settled before a staging area existed.
+    ///
+    /// Every field that would describe a run says so: nothing was staged
+    /// because nothing was created, no identity was minted because the
+    /// provider was never invoked, and the process outcome is the one that
+    /// states no attempt was made.
     const fn settled(outcome: ConversionRunOutcome) -> Self {
         Self {
             outcome,
             backend: None,
             residue: None,
             diagnostics: None,
+            staged: StagedOutputEvidence::NotCreated,
+            identity: None,
+            process: ProcessAttemptOutcome::NotAttempted,
         }
     }
 }
@@ -2079,6 +2149,16 @@ pub struct StagedContentObservation {
     entry_count: usize,
     directory_count: usize,
     non_empty_file_observed: bool,
+    /// Whether the enumeration stopped at its bound, so the counts above are
+    /// lower bounds rather than totals.
+    ///
+    /// A backend that fills the staging area must not make a *failure* pay for
+    /// reading all of it. Discovery already refuses an over-large set without
+    /// enumerating it, and an observation taken on that very refusal that read
+    /// the whole directory would hand the bound straight back. What a reader
+    /// needs from an over-full directory is that it was over-full, and the
+    /// bound answers that without the walk.
+    bounded: bool,
 }
 
 impl StagedContentObservation {
@@ -2098,6 +2178,53 @@ impl StagedContentObservation {
     pub const fn non_empty_file_observed(self) -> bool {
         self.non_empty_file_observed
     }
+
+    /// Whether the enumeration stopped at its bound.
+    ///
+    /// `true` means the counts are lower bounds: there were at least this many
+    /// entries and the reading stopped rather than walking the rest.
+    #[must_use]
+    pub const fn bounded(self) -> bool {
+        self.bounded
+    }
+
+    /// Builds one observation directly, for a fixture that must state what a
+    /// staging area held without running a backend.
+    ///
+    /// Behind `test-support`, on the same terms as every other constructor
+    /// here: off by default, enabled only as a dev-dependency, and refused by
+    /// the crate root in an optimized build. Production has exactly one way to
+    /// obtain an observation, which is to take one.
+    #[cfg(feature = "test-support")]
+    #[must_use]
+    pub const fn observed_for_test(
+        entry_count: usize,
+        directory_count: usize,
+        non_empty_file_observed: bool,
+    ) -> Self {
+        Self {
+            entry_count,
+            directory_count,
+            non_empty_file_observed,
+            bounded: false,
+        }
+    }
+
+    /// A reading that stopped at its bound, for the consumers of one.
+    ///
+    /// Separate from the constructor above rather than a flag on it, because a
+    /// bounded reading is not an exact one with an extra field: its counts are
+    /// lower bounds and the shape it reports is deliberately unread.
+    #[cfg(feature = "test-support")]
+    #[must_use]
+    pub const fn bounded_for_test(entry_count: usize) -> Self {
+        Self {
+            entry_count,
+            directory_count: 0,
+            non_empty_file_observed: false,
+            bounded: true,
+        }
+    }
 }
 
 /// Records the shape of the staging output directory without judging it.
@@ -2106,7 +2233,25 @@ impl StagedContentObservation {
 /// already confirmed its process tree is gone does not become a different
 /// outcome because an observation for the record could not be taken.
 pub(crate) fn observe_staged_content(staging: &Path) -> Option<StagedContentObservation> {
-    let snapshot = snapshot_output_directory(staging).ok()?;
+    // Bounded, and the bound is the lifecycle's own output bound with room for
+    // the entries a run may legitimately leave beside its outputs. A faulty
+    // backend that filled the staging area would otherwise make every failure
+    // settlement pay for the whole listing -- including the over-limit refusal,
+    // which discovery reaches precisely by *not* enumerating it.
+    let snapshot = match snapshot_output_directory_bounded(staging, OBSERVED_STAGED_ENTRY_BOUND) {
+        Ok(BoundedSnapshot::Within(snapshot)) => snapshot,
+        // Over the bound: what the reader needs is that there were more than
+        // this many, and the counts say so by being marked as lower bounds.
+        Ok(BoundedSnapshot::OverBound { observed }) => {
+            return Some(StagedContentObservation {
+                entry_count: observed,
+                directory_count: 0,
+                non_empty_file_observed: false,
+                bounded: true,
+            });
+        }
+        Err(_) => return None,
+    };
     let mut directory_count = 0;
     let mut non_empty_file_observed = false;
     for entry in snapshot.entries() {
@@ -2127,8 +2272,16 @@ pub(crate) fn observe_staged_content(staging: &Path) -> Option<StagedContentObse
         entry_count: snapshot.len(),
         directory_count,
         non_empty_file_observed,
+        bounded: false,
     })
 }
+
+/// How many staging entries one observation will enumerate.
+///
+/// The lifecycle's output bound, doubled, so a run that legitimately produced
+/// its maximum set beside a few incidental entries is still counted exactly
+/// while a directory nothing should have filled is not walked.
+const OBSERVED_STAGED_ENTRY_BOUND: usize = output_set::MAX_CONVERSION_OUTPUTS_PER_SOURCE * 2;
 
 /// What a stop established about the backend process tree of one attempt.
 ///
@@ -2289,8 +2442,15 @@ pub struct CancellationReport {
     backend: Option<BackendRunFacts>,
     surviving_processes: Option<u32>,
     owned_tree: OwnedTreeDisposition,
-    staged: Option<StagedContentObservation>,
+    staged: StagedOutputEvidence,
     residue: Option<StagingResidue>,
+    /// The identity minted for this attempt, where it reached the provider.
+    /// `None` for a stop observed before the launch, which is what keeps a
+    /// request that beat the process from reading as a run that happened.
+    identity: Option<OperationRunIdentity>,
+    /// What the execution boundary established about the process, read from
+    /// the boundary rather than from whether `backend` is present.
+    process: ProcessAttemptOutcome,
 }
 
 impl CancellationReport {
@@ -2334,9 +2494,25 @@ impl CancellationReport {
     }
 
     /// What the staging area held when the cancellation settled.
+    ///
+    /// Typed rather than optional: a read that failed is
+    /// [`StagedOutputEvidence::Unobserved`] and is not the same answer as an
+    /// area observed empty or one that never existed.
     #[must_use]
-    pub const fn staged_content(&self) -> Option<StagedContentObservation> {
+    pub const fn staged_content(&self) -> StagedOutputEvidence {
         self.staged
+    }
+
+    /// The identity of this attempt, where it reached the provider.
+    #[must_use]
+    pub const fn identity(&self) -> Option<OperationRunIdentity> {
+        self.identity
+    }
+
+    /// What the execution boundary established about the process itself.
+    #[must_use]
+    pub const fn process(&self) -> ProcessAttemptOutcome {
+        self.process
     }
 
     /// What identity-bound cleanup could not remove, if anything. A cancelled
@@ -2357,9 +2533,11 @@ impl CancellationReport {
 pub struct CancellationFailure {
     cause: BackendExecutionFailure,
     backend: Option<BackendRunFacts>,
-    staged: Option<StagedContentObservation>,
+    staged: StagedOutputEvidence,
     residue: Option<StagingResidue>,
     diagnostics: Option<BackendDiagnosticText>,
+    identity: Option<OperationRunIdentity>,
+    process: ProcessAttemptOutcome,
 }
 
 impl CancellationFailure {
@@ -2381,8 +2559,24 @@ impl CancellationFailure {
     }
 
     #[must_use]
-    pub const fn staged_content(&self) -> Option<StagedContentObservation> {
+    pub const fn staged_content(&self) -> StagedOutputEvidence {
         self.staged
+    }
+
+    /// The identity of this attempt, where it reached the provider.
+    #[must_use]
+    pub const fn identity(&self) -> Option<OperationRunIdentity> {
+        self.identity
+    }
+
+    /// What the execution boundary established about the process itself.
+    ///
+    /// [`ProcessAttemptOutcome::Indeterminate`] for the failure this type most
+    /// often describes: the boundary could not say how the process ended, and
+    /// the absence of `backend` facts is not a statement that none ran.
+    #[must_use]
+    pub const fn process(&self) -> ProcessAttemptOutcome {
+        self.process
     }
 
     /// Cleanup residue, kept separate from the primary failure above.
@@ -2758,8 +2952,13 @@ pub fn run_conversion_cancellable(
             backend: None,
             surviving_processes: None,
             owned_tree: OwnedTreeDisposition::NoneLaunched,
-            staged: None,
+            // Nothing was created, so there is nothing to have observed --
+            // which is a different answer from an area observed empty, and the
+            // one that is true here.
+            staged: StagedOutputEvidence::NotCreated,
             residue: None,
+            identity: None,
+            process: ProcessAttemptOutcome::NotAttempted,
         });
     }
 
@@ -2794,12 +2993,18 @@ impl RunResult {
                 backend: report.backend,
                 residue: report.residue,
                 diagnostics: None,
+                staged: report.staged,
+                identity: report.identity,
+                process: report.process,
             },
             Self::CancellationFailed(failure) => ConversionRunReport {
                 outcome: ConversionRunOutcome::Failed(ConversionRunFailure::Backend(failure.cause)),
                 backend: failure.backend,
                 residue: failure.residue,
                 diagnostics: failure.diagnostics,
+                staged: failure.staged,
+                identity: failure.identity,
+                process: failure.process,
             },
         }
     }
@@ -2924,8 +3129,12 @@ fn run_admitted(
             backend: None,
             surviving_processes: None,
             owned_tree: OwnedTreeDisposition::NoneLaunched,
-            staged: None,
+            // The staging area is created below this point, so there is still
+            // nothing to have observed.
+            staged: StagedOutputEvidence::NotCreated,
             residue: None,
+            identity: None,
+            process: ProcessAttemptOutcome::NotAttempted,
         });
     }
 
@@ -2955,17 +3164,25 @@ fn run_admitted(
             outcome,
             backend,
             diagnostics,
+            staged,
+            identity,
+            process,
         } => RunResult::Settled(ConversionRunReport {
             outcome,
             backend,
             residue,
             diagnostics,
+            staged,
+            identity,
+            process,
         }),
         StagedResult::Cancelled {
             backend,
             surviving_processes,
             owned_tree,
             staged,
+            identity,
+            process,
         } => RunResult::Cancelled(CancellationReport {
             observation: CancellationObservation::DuringRun,
             backend,
@@ -2973,18 +3190,24 @@ fn run_admitted(
             owned_tree,
             staged,
             residue,
+            identity,
+            process,
         }),
         StagedResult::CancellationFailed {
             cause,
             backend,
             staged,
             diagnostics,
+            identity,
+            process,
         } => RunResult::CancellationFailed(CancellationFailure {
             cause,
             backend,
             staged,
             residue,
             diagnostics,
+            identity,
+            process,
         }),
     }
 }
@@ -3160,28 +3383,50 @@ enum StagedResult {
         /// retaining for. Built here rather than by the caller, because here is
         /// the last place the run knows every path it must remove.
         diagnostics: Option<BackendDiagnosticText>,
+        /// Taken inside this function, which is the last place the evidence
+        /// still exists: the caller's teardown runs the moment this returns.
+        staged: StagedOutputEvidence,
+        identity: Option<OperationRunIdentity>,
+        process: ProcessAttemptOutcome,
     },
     Cancelled {
         backend: Option<BackendRunFacts>,
         surviving_processes: Option<u32>,
         owned_tree: OwnedTreeDisposition,
-        staged: Option<StagedContentObservation>,
+        staged: StagedOutputEvidence,
+        identity: Option<OperationRunIdentity>,
+        process: ProcessAttemptOutcome,
     },
     CancellationFailed {
         cause: BackendExecutionFailure,
         backend: Option<BackendRunFacts>,
-        staged: Option<StagedContentObservation>,
+        staged: StagedOutputEvidence,
         diagnostics: Option<BackendDiagnosticText>,
+        identity: Option<OperationRunIdentity>,
+        process: ProcessAttemptOutcome,
     },
 }
 
 impl StagedResult {
     /// A failure that reached no process, so there is no backend text to keep.
-    fn failed(failure: ConversionRunFailure) -> Self {
+    ///
+    /// The staging area exists on every path that reaches this -- the caller
+    /// created it -- so what it held is observed rather than assumed, at the
+    /// phase the caller names.
+    fn failed(
+        failure: ConversionRunFailure,
+        staging: &Path,
+        phase: StagedObservationPhase,
+        identity: Option<OperationRunIdentity>,
+        process: ProcessAttemptOutcome,
+    ) -> Self {
         Self::Settled {
             outcome: ConversionRunOutcome::Failed(failure),
             backend: None,
             diagnostics: None,
+            staged: StagedOutputEvidence::of(phase, observe_staged_content(staging)),
+            identity,
+            process,
         }
     }
 }
@@ -3262,13 +3507,35 @@ fn run_staged(
         plan.source.kind().input_spelling(),
     ) {
         Ok(command) => command,
-        Err(error) => return StagedResult::failed(ConversionRunFailure::NotPlannable(error)),
+        // The command could not be built, so the provider was never invoked
+        // and no identity was minted. The staging area exists and is observed
+        // all the same: this boundary reports what was there rather than
+        // reasoning that nothing can have been.
+        Err(error) => {
+            return StagedResult::failed(
+                ConversionRunFailure::NotPlannable(error),
+                staging,
+                // The provider was never invoked, so the reading is stamped
+                // with the phase that says so rather than with one that names
+                // an execution.
+                StagedObservationPhase::ProviderNotInvoked,
+                None,
+                ProcessAttemptOutcome::NotAttempted,
+            );
+        }
     };
 
     // The one production runner stays the authority for child creation, the
     // environment, job assignment, stream capture, the wait and process-tree
     // teardown. This chooses which of its two entry points to use and nothing
     // else; there is no second subprocess implementation here.
+    // Minted here, and here is the whole of the decision: the next statement
+    // hands the command to the process boundary. An identity taken after the
+    // run would be a name for a result rather than for an attempt, and one
+    // taken on first read would not exist for an attempt nobody looked at.
+    // Nothing above this line has one, which is what makes its absence a
+    // statement that the provider was never invoked.
+    let identity = Some(OperationRunIdentity::mint());
     let result = match cancellation {
         Some(cancellation) => runner.run_cancellable(&command, cancellation.token()),
         None => runner.run(&command),
@@ -3302,11 +3569,26 @@ fn run_staged(
                     // there are no process facts and no captured streams to
                     // report.
                     backend: None,
-                    staged: observe_staged_content(staging),
+                    staged: StagedOutputEvidence::of(
+                        StagedObservationPhase::ProviderReturned,
+                        observe_staged_content(staging),
+                    ),
                     diagnostics: None,
+                    identity,
+                    // The provider was invoked and the boundary cannot say
+                    // what became of the process. Reporting "no process" from
+                    // the absent facts is exactly the inference this variant
+                    // exists to refuse.
+                    process: ProcessAttemptOutcome::Indeterminate,
                 };
             }
-            return StagedResult::failed(ConversionRunFailure::Backend(cause));
+            return StagedResult::failed(
+                ConversionRunFailure::Backend(cause),
+                staging,
+                StagedObservationPhase::ProviderReturned,
+                identity,
+                ProcessAttemptOutcome::Indeterminate,
+            );
         }
     };
     let backend = Some(BackendRunFacts::from(&output));
@@ -3324,9 +3606,29 @@ fn run_staged(
                 outcome: ConversionRunOutcome::Failed(ConversionRunFailure::BackendDidNotComplete),
                 backend,
                 diagnostics: diagnostic_text(&output, plan, staging, &executable),
+                // An ordinary failure, and one of the two the route names: a
+                // run that did not complete may have written part of a
+                // document, and that is not readable from the outcome, the
+                // destination or a clean teardown.
+                staged: StagedOutputEvidence::of(
+                    StagedObservationPhase::ProviderReturned,
+                    observe_staged_content(staging),
+                ),
+                identity,
+                process: backend.map_or(
+                    ProcessAttemptOutcome::Indeterminate,
+                    ProcessAttemptOutcome::of,
+                ),
             };
         }
-        let staged = observe_staged_content(staging);
+        let staged = StagedOutputEvidence::of(
+            StagedObservationPhase::ProviderReturned,
+            observe_staged_content(staging),
+        );
+        let process = backend.map_or(
+            ProcessAttemptOutcome::Indeterminate,
+            ProcessAttemptOutcome::of,
+        );
         // Decided once, by the one origin, and then carried rather than
         // rediscovered by anything downstream.
         let owned_tree = OwnedTreeDisposition::of(&output);
@@ -3340,6 +3642,11 @@ fn run_staged(
                 surviving_processes: None,
                 owned_tree,
                 staged,
+                identity,
+                // The runner reported a result and it says no process was
+                // created. That is a settled fact about the ending, not an
+                // absence of one.
+                process,
             },
             // A tree existed, so `Cancelled` is a claim that it is gone, and
             // only the process boundary's own origin makes it one. That origin
@@ -3354,6 +3661,8 @@ fn run_staged(
                     surviving_processes: output.final_active_processes,
                     owned_tree,
                     staged,
+                    identity,
+                    process,
                 }
             }
             _ => StagedResult::CancellationFailed {
@@ -3361,6 +3670,8 @@ fn run_staged(
                 backend,
                 staged,
                 diagnostics: diagnostic_text(&output, plan, staging, &executable),
+                identity,
+                process,
             },
         };
     }
@@ -3371,6 +3682,20 @@ fn run_staged(
             }),
             backend,
             diagnostics: diagnostic_text(&output, plan, staging, &executable),
+            // The decisive case. Two runs can end here with the same exit
+            // code and the same clean teardown, one having written a
+            // half-finished document and one having written nothing, and
+            // until this observation the two were indistinguishable
+            // everywhere downstream.
+            staged: StagedOutputEvidence::of(
+                StagedObservationPhase::ProviderReturned,
+                observe_staged_content(staging),
+            ),
+            identity,
+            process: backend.map_or(
+                ProcessAttemptOutcome::Indeterminate,
+                ProcessAttemptOutcome::of,
+            ),
         };
     }
 
@@ -3422,6 +3747,19 @@ fn run_staged(
                 // The process exited cleanly and the document it produced did
                 // not pass. What it said on the way is the only account of why.
                 diagnostics: diagnostic_text(&output, plan, staging, &executable),
+                // Validation reads and removes nothing, so this sees what the
+                // backend actually left -- which for a refusal is the whole
+                // point: a document was staged, it was judged, and it is not
+                // being published.
+                staged: StagedOutputEvidence::of(
+                    StagedObservationPhase::OutputRefused,
+                    observe_staged_content(staging),
+                ),
+                identity,
+                process: backend.map_or(
+                    ProcessAttemptOutcome::Indeterminate,
+                    ProcessAttemptOutcome::of,
+                ),
             };
         }
     };
@@ -3450,6 +3788,16 @@ fn run_staged(
             outcome: ConversionRunOutcome::Finalized(Box::new(valid)),
             backend,
             diagnostics: None,
+            // Not an observation, and it says so. The staged output took its
+            // final name, which is what settles the judgement this evidence
+            // answers -- so no directory listing is taken on the path where a
+            // conversion simply worked, and none is needed.
+            staged: StagedOutputEvidence::Published,
+            identity,
+            process: backend.map_or(
+                ProcessAttemptOutcome::Indeterminate,
+                ProcessAttemptOutcome::of,
+            ),
         },
         Err(error) => StagedResult::Settled {
             outcome: ConversionRunOutcome::Failed(match error.kind() {
@@ -3458,6 +3806,17 @@ fn run_staged(
             }),
             backend,
             diagnostics: diagnostic_text(&output, plan, staging, &executable),
+            // A validated document exists and did not get its name. Observed
+            // after the rename was attempted, because that is when it is true.
+            staged: StagedOutputEvidence::of(
+                StagedObservationPhase::PublicationSettled,
+                observe_staged_content(staging),
+            ),
+            identity,
+            process: backend.map_or(
+                ProcessAttemptOutcome::Indeterminate,
+                ProcessAttemptOutcome::of,
+            ),
         },
     }
 }

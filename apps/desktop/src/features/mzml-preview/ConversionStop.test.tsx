@@ -11,6 +11,7 @@ import {
   previewError,
   queueItem,
   queueOf,
+  stoppedAttemptFacts,
 } from "../../test/previewFixtures";
 import type { FakePreviewApi } from "../../test/previewFixtures";
 import type {
@@ -92,12 +93,14 @@ function converted(handle: string, name: string): ConversionQueueItem {
           spectrumCount: 1,
           chromatogramCount: 1,
         },
+        validationMode: "output_only",
         validation: {
           mode: "output_only",
           fullyVerified: false,
           verified: ["source_unchanged"],
           unverified: [],
           inapplicable: ["spectrum_count"],
+          advisory: [],
         },
         backend: { exitCode: 0, elapsedMilliseconds: 568 },
         stagingResidue: null,
@@ -112,13 +115,15 @@ function cancelled(handle: string, name: string): ConversionQueueItem {
   return queueItem(handle, name, {
     state: "cancelled",
     attempts: 1,
+    // A launched stop's own attempt facts, so the row's five judgements agree
+    // with the cancellation beside them.
+    ...stoppedAttemptFacts(),
     cancellation: {
       processLaunched: true,
       terminationRequested: true,
       ownedTree: "confirmed_gone",
       elapsedMilliseconds: 71,
       termination: "cancelled",
-      partialOutputObserved: true,
       stagingResidue: null,
     },
   });
@@ -766,13 +771,13 @@ describe("stopping a running conversion queue", () => {
           queueItem("file-2", "run-2.raw", {
             state: "cancelled",
             attempts: 1,
+            ...stoppedAttemptFacts(),
             cancellation: {
               processLaunched: true,
               terminationRequested: true,
               ownedTree: "confirmed_gone",
               elapsedMilliseconds: 64,
               termination: "cancelled",
-              partialOutputObserved: true,
               stagingResidue: "directory_remains",
             },
           }),
@@ -1034,13 +1039,16 @@ describe("stopping a running conversion queue", () => {
           queueItem("file-2", "run-2.raw", {
             state: "cancellationFailed",
             attempts: 1,
+            ...stoppedAttemptFacts(),
             cancellation: {
               processLaunched: true,
               terminationRequested: true,
               ownedTree: "unconfirmed",
               elapsedMilliseconds: 5_000,
-              termination: null,
-              partialOutputObserved: true,
+              // The tree is what could not be confirmed. The process's own
+              // ending came back settled, which is why the launch answer is
+              // `true` rather than unknown.
+              termination: "cancelled",
               stagingResidue: null,
             },
           }),

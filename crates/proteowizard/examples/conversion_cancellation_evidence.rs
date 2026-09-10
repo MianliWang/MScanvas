@@ -614,7 +614,21 @@ fn scenario(
             // And the judgement itself, so a reader never has to reconstruct it
             // from the two counts above.
             println!("{label}.owned_tree={}", report.owned_tree().stable_id());
-            match report.staged_content() {
+            // The evidence class first, so a reader can tell an area that was
+            // never created from one that could not be read from one that was
+            // read and found empty. The counts follow only where there are any.
+            println!(
+                "{label}.staged_evidence={}",
+                report.staged_content().stable_id()
+            );
+            println!(
+                "{label}.staged_phase={}",
+                report
+                    .staged_content()
+                    .phase()
+                    .map_or("none", |phase| phase.stable_id())
+            );
+            match report.staged_content().observation() {
                 Some(staged) => {
                     println!("{label}.staged_entry_count={}", staged.entry_count());
                     println!(
@@ -628,6 +642,15 @@ fn scenario(
                 }
                 None => println!("{label}.staged_entry_count=unobserved"),
             }
+            // Minted before the provider was invoked, so its absence is a
+            // statement that this attempt never reached one.
+            println!(
+                "{label}.run_identity={}",
+                report
+                    .identity()
+                    .map_or_else(|| "none".to_owned(), |identity| identity.to_hex())
+            );
+            println!("{label}.process={}", report.process().stable_id());
             println!(
                 "{label}.residue={}",
                 report

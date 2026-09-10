@@ -134,12 +134,14 @@ const FINALIZED_REPORT = {
     spectrumCount: 1,
     chromatogramCount: 1,
   },
+  validationMode: "output_only",
   validation: {
     mode: "output_only",
     fullyVerified: false,
     verified: ["source_unchanged"],
     unverified: [],
     inapplicable: ["spectrum_count"],
+    advisory: [],
   },
   backend: { exitCode: 0, elapsedMilliseconds: 568 },
   stagingResidue: null,
@@ -158,6 +160,12 @@ const CONVERTED_ITEM = {
   error: null,
   cancellation: null,
   stopRequested: false,
+  // A run that exited cleanly and published what it staged. The staged
+  // judgement is settled by the publication rather than by a listing.
+  process: { kind: "settled", termination: "exited", exitCode: 0 },
+  staged: { kind: "published" },
+  runIdentity: "6f1d3c2b9a480000000000000000002a",
+  adoption: { kind: "notRequested" },
 } as const satisfies ConversionQueueItem;
 
 const FAILED_ITEM = {
@@ -177,6 +185,12 @@ const FAILED_ITEM = {
   },
   cancellation: null,
   stopRequested: false,
+  // A refusal this session made before the provider was invoked: no process, no
+  // staging area, and no identity for either to belong to.
+  process: { kind: "notAttempted" },
+  staged: { kind: "notCreated" },
+  runIdentity: null,
+  adoption: { kind: "nothingToAdopt" },
 } as const satisfies ConversionQueueItem;
 
 const QUEUE = {
@@ -208,7 +222,6 @@ const CANCELLATION = {
   ownedTree: "confirmed_gone",
   elapsedMilliseconds: 71,
   termination: "cancelled",
-  partialOutputObserved: true,
   stagingResidue: null,
 } as const satisfies ConversionCancellation;
 
@@ -224,6 +237,20 @@ const CANCELLED_ITEM = {
   error: null,
   cancellation: CANCELLATION,
   stopRequested: false,
+  // A stop that reached a running attempt. The staging area was read before
+  // teardown and held one partly written document — which residue cannot say,
+  // because teardown reclaimed it cleanly.
+  process: { kind: "settled", termination: "cancelled", exitCode: null },
+  staged: {
+    kind: "observed",
+    phase: "provider_returned",
+    entryCount: 1,
+    directoryCount: 0,
+    nonEmptyFileObserved: true,
+    bounded: false,
+  },
+  runIdentity: "6f1d3c2b9a480000000000000000002b",
+  adoption: { kind: "nothingToAdopt" },
 } as const satisfies ConversionQueueItem;
 
 const NOT_RUN_ITEM = {
@@ -238,6 +265,12 @@ const NOT_RUN_ITEM = {
   error: null,
   cancellation: null,
   stopRequested: false,
+  // The queue never began it. Nothing launched and nothing was created, and
+  // `notAttempted` is what says so rather than an absent field.
+  process: { kind: "notAttempted" },
+  staged: { kind: "notCreated" },
+  runIdentity: null,
+  adoption: { kind: "nothingToAdopt" },
 } as const satisfies ConversionQueueItem;
 
 const STOPPED_QUEUE = {
@@ -489,6 +522,13 @@ describe("the conversion wire contract", () => {
         "sourceKind",
         "state",
         "stopRequested",
+        // The three an attempt establishes about itself and nothing downstream
+        // can reconstruct, plus the fifth judgement. On the item rather than on
+        // the report, because a cancelled row has no report.
+        "process",
+        "staged",
+        "runIdentity",
+        "adoption",
       ].sort(),
     );
     // What a stop is allowed to say about an attempt: whether a process ran,
@@ -498,13 +538,18 @@ describe("the conversion wire contract", () => {
       [
         "elapsedMilliseconds",
         "ownedTree",
-        "partialOutputObserved",
         "processLaunched",
         "stagingResidue",
         "termination",
         "terminationRequested",
       ].sort(),
     );
+    // `partialOutputObserved` left, and its absence is the point. It was a
+    // boolean over an optional observation, so it answered `false` both for a
+    // staging area read and found empty and for one that could not be read at
+    // all. The item's own `staged` is the four-way answer that replaced it, and
+    // it is present for every settled row rather than only for a stopped one.
+    expect(Object.keys(CANCELLATION)).not.toContain("partialOutputObserved");
     // A cancelled item finalized nothing, so it names no output file and
     // carries no report to name one from.
     expect(CANCELLED_ITEM.result).toBeNull();
@@ -524,15 +569,39 @@ describe("the conversion wire contract", () => {
         "sourceKind",
         "stagingResidue",
         "validation",
+        // Stated beside the record rather than inside it: the record travels
+        // with a finalization and a refused output keeps none, but the scope of
+        // the check is a property of the source posture either way.
+        "validationMode",
       ].sort(),
     );
     expect(Object.keys(FINALIZED_REPORT.backend)).toEqual(["exitCode", "elapsedMilliseconds"]);
 
     // Nowhere in the whole serialized queue, at any depth.
     const serialized = JSON.stringify({ sequence: 3, state: { status: "terminal", queue: QUEUE } });
-    for (const forbidden of ["path", "root", "stdout", "stderr", "identity"]) {
+    for (const forbidden of ["path", "root", "stdout", "stderr"]) {
       expect(serialized.toLowerCase()).not.toContain(forbidden.toLowerCase());
     }
+    // `identity` used to be forbidden outright, because the only identities
+    // this application had were filesystem ones: a volume serial and a file id,
+    // which locate an object as surely as a path does. Those are still absent,
+    // and the check that they are is now the specific one rather than the word.
+    for (const forbidden of ["fileidentity", "volumeserial", "objectid", "handle:"]) {
+      expect(serialized.toLowerCase()).not.toContain(forbidden);
+    }
+    // The one identity that does cross is the run's, and it is opaque: minted
+    // before the converter was invoked, fixed width, hexadecimal, and derived
+    // from neither the output's name nor the queue. It resolves to nothing on
+    // this machine and nothing in another session.
+    const identities = Object.keys(CONVERTED_ITEM).filter((key) =>
+      key.toLowerCase().includes("identity"),
+    );
+    expect(identities).toEqual(["runIdentity"]);
+    expect(CONVERTED_ITEM.runIdentity).toMatch(/^[0-9a-f]{32}$/);
+    // And an item that never reached the converter has none, which is what
+    // keeps a refusal from reading as a run that happened.
+    expect(FAILED_ITEM.runIdentity).toBeNull();
+    expect(NOT_RUN_ITEM.runIdentity).toBeNull();
     // `stagingResidue` is the one member whose name says "staging", and it says
     // only whether MSCanvas failed to remove its own temporary folder. It is a
     // stable identifier or null, never the folder.

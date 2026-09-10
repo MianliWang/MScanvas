@@ -15,12 +15,34 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+
+/** A port from the environment, or the default this suite ships with. */
+function configuredPort(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (value === undefined) {
+    return fallback;
+  }
+  if (!/^\d+$/u.test(value)) {
+    throw new Error(`${name} must be an integer from 1 to 65535.`);
+  }
+  const port = Number(value);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${name} must be an integer from 1 to 65535.`);
+  }
+  return port;
+}
 // Not Tauri's conventional 1420. Windows reserves dynamic TCP ranges for
 // Hyper-V, and on a machine where one of them covers 1420 a dev server cannot
 // bind it at all -- the failure is `EACCES` before anything under test has run.
-// This suite needs *a* port rather than that one, so it names one outside every
-// reserved range and leaves the application's own configuration alone.
-const DEV_SERVER_URL = "http://127.0.0.1:5273";
+// This suite needs *a* port rather than that one, so it names one outside the
+// reserved ranges and leaves the application's own configuration alone.
+//
+// Overridable, because those ranges are reassigned rather than fixed: a machine
+// can start covering this port too, and the answer to that is a process-local
+// port, not an edited default and not a change to the machine's networking. The
+// native config already works this way.
+const DEV_SERVER_PORT = configuredPort("MSCANVAS_BROWSER_DEV_PORT", 5273);
+const DEV_SERVER_URL = `http://127.0.0.1:${String(DEV_SERVER_PORT)}`;
 
 export const config: WebdriverIO.Config = {
   runner: "local",
@@ -75,7 +97,9 @@ export const config: WebdriverIO.Config = {
         // nothing to do with the application under test. One process, one
         // dependency, one failure mode.
         devServer: {
-          command: "node ./node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5273",
+          command: `node ./node_modules/vite/bin/vite.js --host 127.0.0.1 --port ${String(
+            DEV_SERVER_PORT,
+          )}`,
           cwd: resolve(HERE, "..", "apps", "desktop"),
           timeoutMs: 120_000,
           reuseExistingServer: true,

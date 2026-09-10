@@ -28,7 +28,32 @@ use crate::preview::selection::DatasetSourceKind;
 const SCHEMA: &str = "mscanvas.conversion-diagnostics";
 
 /// Incremented when a field changes meaning or leaves, never for an addition.
-const SCHEMA_VERSION: u64 = 2;
+///
+/// **Five since M6.9's release review**, for a count that narrowed:
+/// `outputSet.notPublishedCount` counts members in the state `not_published`,
+/// and a member the integrity judgement read and refused used to be one of
+/// them. Once refusal became its own state such a member fell out of that count
+/// and into none of the others, so the export accounted for fewer members than
+/// the `memberCount` beside it. `rejectedCount` is new and holds it -- an
+/// addition -- but the older field's population is smaller than it was, and a
+/// reader written against version 4 must not read a version 5 file as though it
+/// still included refused members. The four member counts partition the set.
+///
+/// Four before that, for a field that changed meaning:
+/// `cancellation.processLaunched` became nullable. It was derived from
+/// whether process facts came back, so a stop the boundary could not confirm
+/// reported `false` -- no process launched -- beside a `process` judgement of
+/// `indeterminate`, which says exactly that this was not established. A boolean
+/// cannot hold "unknown", so the field now holds `null` there.
+///
+/// Three before that, and that increment was earned too:
+/// `cancellation.partialOutputObserved` **left**. It was a boolean over an
+/// optional observation, so it answered `false` both for a staging area read
+/// and found empty and for one that could not be read at all -- and a reader
+/// given `false` could not tell the two apart. What replaced it is the item's
+/// own `stagedOutput`, which is a typed four-way answer and is present for
+/// every item rather than only for the ones a stop reached.
+const SCHEMA_VERSION: u64 = 5;
 
 /// The redaction contract this file's excerpts were produced under.
 const REDACTION_SCHEMA: &str = "mscanvas.path-redaction";
@@ -121,6 +146,13 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
     item.optional_string("refusal", ticket.refusal.as_deref());
     item.optional_string("refusalDetail", ticket.refusal_detail.as_deref());
     item.boolean("retryable", ticket.retryable);
+    // Beside the record rather than inside it. A refused output keeps no
+    // record, and a check reported without its scope says less than the
+    // boundary established. `null` only where no conversion was reached.
+    match ticket.validation_mode {
+        Some(mode) => item.string("validationMode", validation_mode_id(mode)),
+        None => item.null("validationMode"),
+    }
     match ticket.validation.as_ref() {
         Some(validation) => item.object("validation", |written| {
             written.string("mode", validation_mode_id(validation.mode));
@@ -128,6 +160,11 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
             written.string_array("verified", &validation.verified);
             written.string_array("unverified", &validation.unverified);
             written.string_array("inapplicable", &validation.inapplicable);
+            // The fourth list, and it is a list rather than a disposition: an
+            // advisory observation is not a check that could have been made and
+            // was not. Dropping it here left a saved diagnostic carrying three
+            // quarters of a judgement the application shows in full.
+            written.string_array("advisory", &validation.advisory);
         }),
         None => item.null("validation"),
     }
@@ -137,7 +174,13 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
     }
     match ticket.cancellation {
         Some(cancellation) => item.object("cancellation", |written| {
-            written.boolean("processLaunched", cancellation.process_launched);
+            // `null` where the boundary could not say, exactly as the wire
+            // carries it. A `false` here would be the export asserting what the
+            // stop itself refused to assert.
+            match cancellation.process_launched {
+                Some(launched) => written.boolean("processLaunched", launched),
+                None => written.null("processLaunched"),
+            }
             written.boolean("terminationRequested", true);
             written.string("ownedTree", cancellation.owned_tree.stable_id());
             written.number(
@@ -150,13 +193,80 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
                     .termination
                     .map(mscanvas_proteowizard::Termination::stable_id),
             );
-            written.boolean(
-                "partialOutputObserved",
-                cancellation.partial_output_observed,
-            );
         }),
         None => item.null("cancellation"),
     }
+    // The two judgements an ordinary failure's diagnosis most needs, and the
+    // two an export could not previously carry for one. Written for every item
+    // rather than only for a stopped one: a run that exited non-zero after
+    // writing half a document and one that wrote nothing are the pair this
+    // whole record exists to tell apart.
+    item.object("process", |written| {
+        written.string("kind", ticket.attempt.process.stable_id());
+        written.optional_string(
+            "termination",
+            ticket
+                .attempt
+                .process
+                .termination()
+                .map(mscanvas_proteowizard::Termination::stable_id),
+        );
+        match ticket.attempt.process.exit_code() {
+            Some(code) => written.signed("exitCode", i64::from(code)),
+            None => written.null("exitCode"),
+        }
+    });
+    item.object("stagedOutput", |written| {
+        written.string("kind", ticket.attempt.staged.stable_id());
+        written.optional_string(
+            "phase",
+            ticket
+                .attempt
+                .staged
+                .phase()
+                .map(mscanvas_proteowizard::StagedObservationPhase::stable_id),
+        );
+        match ticket.attempt.staged.observation() {
+            Some(observation) => {
+                written.count("entryCount", observation.entry_count());
+                // Whether the enumeration stopped at its bound. Dropping it
+                // would export a lower bound as an exact total, and would
+                // export "no directories, no file with content" for a reading
+                // that classified nothing -- three false facts from one absent
+                // field.
+                written.boolean("countsAreLowerBounds", observation.bounded());
+                if observation.bounded() {
+                    written.null("directoryCount");
+                    written.null("nonEmptyFileObserved");
+                } else {
+                    written.count("directoryCount", observation.directory_count());
+                    written.boolean(
+                        "nonEmptyFileObserved",
+                        observation.non_empty_file_observed(),
+                    );
+                }
+            }
+            // Absent rather than zero. A zero here would be the one reading
+            // this field must never produce: an unread directory described as
+            // an empty one.
+            None => {
+                written.null("entryCount");
+                written.null("countsAreLowerBounds");
+                written.null("directoryCount");
+                written.null("nonEmptyFileObserved");
+            }
+        }
+    });
+    // Opaque, session-local, and absent for an attempt that never reached the
+    // provider -- which is what keeps a refusal from reading as a run.
+    item.optional_string(
+        "runIdentity",
+        ticket
+            .attempt
+            .identity
+            .map(mscanvas_proteowizard::OperationRunIdentity::to_hex)
+            .as_deref(),
+    );
     item.optional_string(
         "stagingResidue",
         ticket
@@ -174,6 +284,7 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
                 "validatedNotPublishedCount",
                 facts.validated_not_published_count,
             );
+            written.count("rejectedCount", facts.rejected_count);
             written.count("notPublishedCount", facts.not_published_count);
             written.optional_count("boundSourceObjects", facts.bound_source_objects);
             written.optional_string("sampleCompleteness", facts.completeness);
@@ -509,6 +620,167 @@ mod tests {
         assert_eq!(
             out,
             "\"a\\\"b\\\\c\\nd\\te\\rf\\u0000g\\u001bh\\u007fi 样本\""
+        );
+    }
+
+    /// Every list of the integrity judgement reaches the document.
+    ///
+    /// Written through `write_item`, the function the export actually calls,
+    /// rather than through a second copy of its body -- a test that spells out
+    /// the writer it is checking would pass whatever the writer does.
+    ///
+    /// The advisory list was modelled, projected to the queue and rendered, and
+    /// then dropped here, so a saved diagnostic carried three quarters of
+    /// judgement four while the application showed all of it. No configuration
+    /// this release converts records an advisory, which is exactly why nothing
+    /// noticed.
+    #[test]
+    fn a_validation_reaches_the_document_with_all_four_of_its_lists() {
+        use crate::preview::conversion::ValidationFacts;
+        use crate::preview::diagnostics::DiagnosticItemIdentity;
+        use crate::preview::operation::{AttemptFacts, ItemOutputTopology};
+        use mscanvas_proteowizard::ValidationMode;
+
+        let ticket = ConversionFailureDiagnosticTicket {
+            identity: DiagnosticItemIdentity {
+                operation: 1,
+                item_index: 0,
+                source_file_name: "sample.raw".to_owned(),
+                output: ItemOutputTopology::KnownSingle {
+                    basename: "sample.mzML".to_owned(),
+                },
+                source_kind: DatasetSourceKind::ThermoRaw,
+                attempt: 1,
+            },
+            state: ItemState::Failed,
+            retryable: false,
+            outcome: Some("output_rejected"),
+            detailed_outcome: None,
+            refusal: None,
+            refusal_detail: None,
+            validation_mode: Some(ValidationMode::SourceComparison),
+            validation: Some(ValidationFacts {
+                mode: ValidationMode::SourceComparison,
+                verified: vec!["output_is_well_formed_mzml"],
+                unverified: vec!["source_spectrum_count_preserved"],
+                inapplicable: vec!["source_chromatogram_count_preserved"],
+                advisory: vec!["source_reported_no_chromatograms"],
+                fully_verified: false,
+            }),
+            backend: None,
+            cancellation: None,
+            residue: None,
+            attempt: AttemptFacts::NOTHING_RAN,
+            text: None,
+            output_set: None,
+        };
+
+        let mut out = String::new();
+        let mut root = Members::new(&mut out);
+        root.object("item", |written| write_item(written, &ticket));
+        root.end();
+
+        let document: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        // Stated beside the record, so a refused output -- which keeps no
+        // record at all -- still says what it was checked against.
+        assert_eq!(document["item"]["validationMode"], "source_comparison");
+        let validation = &document["item"]["validation"];
+        let mut keys: Vec<&str> = validation
+            .as_object()
+            .expect("a validation object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "advisory",
+                "fullyVerified",
+                "inapplicable",
+                "mode",
+                "unverified",
+                "verified"
+            ],
+            "every list the judgement records reaches the saved document"
+        );
+        assert_eq!(
+            validation["advisory"][0],
+            "source_reported_no_chromatograms"
+        );
+        assert_eq!(validation["mode"], "source_comparison");
+    }
+
+    /// A bounded reading is exported as a floor, with what it did not read
+    /// written as absent rather than as measured zeroes.
+    ///
+    /// Three facts hang on one flag. Without it the document would carry a
+    /// lower bound as an exact total, and "no directories, no file with
+    /// content" for a reading that classified nothing.
+    #[test]
+    fn a_bounded_reading_is_exported_as_a_floor_and_not_as_measured_zeroes() {
+        use crate::preview::diagnostics::DiagnosticItemIdentity;
+        use crate::preview::operation::{AttemptFacts, ItemOutputTopology};
+        use mscanvas_proteowizard::{
+            ProcessAttemptOutcome, StagedContentObservation, StagedObservationPhase,
+            StagedOutputEvidence, ValidationMode,
+        };
+
+        let bounded = StagedOutputEvidence::Observed(
+            StagedObservationPhase::ProviderReturned,
+            StagedContentObservation::bounded_for_test(49),
+        );
+        let ticket = ConversionFailureDiagnosticTicket {
+            identity: DiagnosticItemIdentity {
+                operation: 1,
+                item_index: 0,
+                source_file_name: "sample.raw".to_owned(),
+                output: ItemOutputTopology::KnownSingle {
+                    basename: "sample.mzML".to_owned(),
+                },
+                source_kind: DatasetSourceKind::ThermoRaw,
+                attempt: 1,
+            },
+            state: ItemState::Failed,
+            retryable: false,
+            outcome: Some("backend_rejected"),
+            detailed_outcome: None,
+            refusal: None,
+            refusal_detail: None,
+            validation_mode: Some(ValidationMode::OutputOnly),
+            validation: None,
+            backend: None,
+            cancellation: None,
+            residue: None,
+            attempt: AttemptFacts {
+                process: ProcessAttemptOutcome::Indeterminate,
+                staged: bounded,
+                identity: None,
+            },
+            text: None,
+            output_set: None,
+        };
+
+        let mut out = String::new();
+        let mut root = Members::new(&mut out);
+        root.object("item", |written| write_item(written, &ticket));
+        root.end();
+
+        let document: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        let staged = &document["item"]["stagedOutput"];
+        assert_eq!(staged["kind"], "observed");
+        assert_eq!(staged["entryCount"], 49);
+        assert_eq!(
+            staged["countsAreLowerBounds"], true,
+            "the reader is told the count is a floor"
+        );
+        assert!(
+            staged["directoryCount"].is_null(),
+            "unread, and absent rather than zero"
+        );
+        assert!(
+            staged["nonEmptyFileObserved"].is_null(),
+            "unclassified, and absent rather than false"
         );
     }
 

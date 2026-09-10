@@ -14,6 +14,7 @@ import { conversionJudgedAnyOutput, SOURCE_KIND_LABEL } from "./contracts";
 import type { ConversionAvailability } from "./conversionAvailability";
 import { ConversionSettings, conversionIntentDisclosures, CONVERSION_VALUE_LABEL } from "./ConversionSettings";
 import { conversionAvailability } from "./conversionAvailability";
+import { ConversionItemJudgements } from "./ConversionItemJudgements";
 import type { ConversionRefusal } from "./conversionNoticeRegistry";
 import { conversionNotices, conversionRefusalNoticeId } from "./conversionNoticeRegistry";
 import { formatByteLength, formatCount, formatDuration } from "./format";
@@ -297,12 +298,34 @@ export function ConversionPanel({
   const terminal = state.status === "terminal";
   const convertButton = useRef<HTMLButtonElement | null>(null);
   const restoreAfterPicker = useRef(false);
+  // Runs after every commit, and is a two-comparison no-op unless a picker was
+  // cancelled. That is deliberate: the control this restores to is not on
+  // screen in every commit, and the commit where it returns is not always one
+  // of the three values a dependency list could name.
   useEffect(() => {
     if (conversion.busy || !restoreAfterPicker.current) return;
-    if (state.status === "idle" && plan.startPlan === "reading") return;
+    // The picker produced a queue rather than a cancellation. There is nothing
+    // to restore to, and the running queue owns the focus from here.
+    if (state.status !== "idle") {
+      restoreAfterPicker.current = false;
+      return;
+    }
+    // The plan has not answered yet. The button may be on screen and disabled,
+    // and focusing it here would land on a control that cannot be pressed.
+    if (plan.startPlan === "reading") return;
+    const button = convertButton.current;
+    // **Not focusable yet, so this is not the commit to give up in.** The
+    // control is present but *disabled* whenever the plan has no question to
+    // answer -- a scope still settling as the picker closes reads "Convert 0
+    // selected…" -- and `focus()` on a disabled button does nothing at all.
+    // Clearing the flag against that left the focus on the document body for
+    // the rest of the session, because the commit where the button becomes
+    // pressable is not one any dependency list here could name. The flag now
+    // survives until the focus actually lands.
+    if (button === null || button.disabled) return;
     restoreAfterPicker.current = false;
-    if (state.status === "idle") convertButton.current?.focus();
-  }, [conversion.busy, plan.startPlan, state.status]);
+    button.focus();
+  });
 
   // The two decisions this panel offers, each projected from the one lane the
   // operation is guarded with. Not a boolean handed down from the workspace:
@@ -1326,6 +1349,26 @@ function QueueState({
                   <span className="conversion-queue-residue">{RESIDUE_EXPLANATION}</span>
                 </>
               )}
+              {/* Where the row's one word stops being the whole answer. The
+                  label above is a projection and is lossy on purpose; the five
+                  judgements it projects from stay inspectable here rather than
+                  being spelled out five times per row on screen.
+
+                  Not offered for a row that has not been attempted: a waiting
+                  item has one honest answer to every one of the five, and a
+                  disclosure that only ever says "nothing yet" teaches its own
+                  uselessness.
+
+                  Attempts, not state. A retry returns every retryable failure
+                  to `pending` and *keeps* its report and its attempt facts
+                  until that item is actually rerun -- the row says so in its
+                  own label -- so hiding on the state alone took the retained
+                  judgements away from every later item for as long as an
+                  earlier conversion was still running. */}
+              {(item.state === "pending" && item.attempts === 0) ||
+              item.state === "running" ? null : (
+                <ConversionItemJudgements index={index} item={item} />
+              )}
             </li>
           );
         })}
@@ -1591,7 +1634,9 @@ function itemOutputSummary(
  * finalized, and this says *which* — which is the prefix that is on disk.
  */
 function finalizedMemberNames(report: ConversionOutputSetReport): readonly string[] {
-  return report.memberFileNames.filter((_, index) => report.memberStates[index] === "finalized");
+  return report.members
+    .filter((member) => member.state === "finalized")
+    .map((member) => member.fileName);
 }
 
 /** What one settled set produced, counted rather than claimed. */
@@ -1714,6 +1759,17 @@ function failureSentence(report: ConversionReport): string {
   // never say that a file was produced and then discarded.
   if (report.outcome === "output_rejected") {
     return "The converted file did not pass MSCanvas' integrity checks, so it was discarded.";
+  }
+  // The two failures that happen strictly *after* the check returned a valid
+  // output. A file was written and judged, and only giving it its final name
+  // failed -- so the generic "the conversion did not finish, so no file was
+  // written" below is false of both, and contradicts the item's own staged and
+  // integrity judgements.
+  if (report.outcome === "output_not_finalized") {
+    return "The converted file passed MSCanvas' integrity checks, and giving it its final name failed, so it was not published.";
+  }
+  if (report.outcome === "destination_appeared_during_run") {
+    return "A file of that name appeared in that folder while the conversion was running, so the converted file was left unpublished rather than replacing it.";
   }
   switch (report.detailedOutcome) {
     case "destination_exists":

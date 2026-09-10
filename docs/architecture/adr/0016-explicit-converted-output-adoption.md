@@ -15,6 +15,18 @@
   the same code for both paths — exact object and exact bytes per output, one
   refusal not abandoning the rest, duplicate before capacity, hashing outside
   the workspace lock, and the reserved generation.
+- **Extended by:** M6.9, 2026-09-09. Every rule below is unchanged: adoption is
+  still asked for, still per terminal queue, still partial-tolerant, and still
+  proves the exact object and the exact bytes before a row exists. What M6.9
+  adds is that the *result* is recorded on the queue it was about — which output
+  was added, which was already in the workspace, which was refused and why —
+  under the queue **and its settling**, so a rerun that lands between the two
+  halves of an adoption cannot be given the earlier round's answers, and a new
+  attempt drops them because it replaces the files they described. That record
+  is the `AdoptionRelation` [ADR 0043](0043-conversion-completion-route.md)
+  lists among the facts M8 reads. It is history rather than a statement about
+  current workspace membership, it lives as long as the queue and no longer, and
+  no adoption history is persisted.
 
 ## Context
 
