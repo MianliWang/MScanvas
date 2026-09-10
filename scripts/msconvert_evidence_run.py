@@ -680,7 +680,14 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
             for spectrum in results[case]["inspected"]["spectra"]
         ]
 
-    note("X1 declares the source's point counts", [14, 7, 21, 7], declared("X1"))
+    note(
+        "X1 declares the source's point counts",
+        [len(source(i, "mz")) for i in range(len(plan))],
+        declared("X1"),
+    )
+    # The one literal here, and it is deliberate: this is the figure the record
+    # states about `X5`, so the check is against the record rather than against
+    # another derivation of the same output.
     note("X5 declares the picker's, and they are the record's", [4, 1, 7, 1], declared("X5"))
     note(
         "X5's apex counts sit under its declared lengths, the surplus being padding",

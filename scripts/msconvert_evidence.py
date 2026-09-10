@@ -827,7 +827,14 @@ def declared_count_defect(
     rule; the records rule is production's alone.
     """
     if not present:
-        return None
+        # No container is legal only where there is nothing to put in one.
+        # Records outside any list are a defect, and keying this on the record
+        # count alone let a document carrying four spectra and no
+        # `<spectrumList>` read clean -- the reader finds them with an unscoped
+        # search, so it sees records the document never declared.
+        if written == 0:
+            return None
+        return f"{what} is absent, and {written} {noun} elements are outside any list"
     if declared is None:
         return f"{what} declares no {attribute} over {written} {noun} elements"
     try:
