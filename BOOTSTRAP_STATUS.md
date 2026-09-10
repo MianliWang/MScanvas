@@ -7968,4 +7968,50 @@ fail, and three cases the driver ran and read back for nobody.
 
 The evidence, the four dispositions and the changed-path closure are in
 [the M6.10 record](docs/spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md).
-M6.11 has not started.
+## M6.11 — closure and handoff
+
+**`M6 COMPLETE`.** All twelve exit criteria are proved and the three
+milestone-wide conditions hold. Criterion 11 passes because every route in its
+closed set reached a terminal disposition; **none of the four is admitted, and
+none had to be.** The closure record is
+[ADR 0045](docs/architecture/adr/0045-conversion-completion-closure-and-handoff.md),
+which is the single matrix and carries the citations.
+
+**The baseline was not the M6.10 anchor, and the difference is accounted for.**
+Two separately authorized Dependabot merges landed between them, touching only
+lockfiles, two `package.json` files and one exact pin. That is a changed build
+input even inside one major release, so the gate set `AGENTS.md` names under
+**Required checks** was re-run on the closure baseline with lockfiles unchanged
+before the audit began: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`,
+`cargo fmt --all --check`, `cargo clippy --workspace --all-targets
+--all-features -D warnings`, `cargo test --workspace` and
+`python scripts/check_repo.py` all pass. No gate was redefined and none dropped.
+
+**The one finding that needed a determination rather than a summary** is the
+centroiding setting M6.10 measured. Its evidence was taken on mzML fixtures; the
+visible product converts only vendor acquisitions; and on the one vendor family
+measured the bare filter selects the vendor picker and the integrity contract
+refuses. The closure checked which branch that refusal actually takes, from the
+retained output of M6.10's measurement: the processing reference resolves, so the
+run **fails closed with a truthful reason** rather than finalizing an output
+centroided by an algorithm the product never admitted. It is carried as a scoped
+residual with an owner and a re-entry condition, and the record explains why it
+does not defeat criterion 2 — chiefly that the disqualifying principle would
+unship the product's own default, since all nine admitted rows rest on the same
+mzML fixtures.
+
+**Two statements in ADR 0043 had gone stale and are amended in that document**,
+dated, with the superseded wording quoted rather than deleted: M6.6's
+*publication pending*, and the M6.1 lane's *eight facts* / *eleven reasons*
+counts, which ADR 0044's Decision 10 had already superseded in substance.
+
+Review was two independent read-only reviewers, one on criterion and evidence
+coverage and one on document and handoff consistency. The first reversed this
+slice's initial determination, which had read criterion 2 as family-scoped; the
+argument that changed it is recorded in ADR 0045 rather than summarized here.
+
+**Two browser cases still fail**, `m4.1` and `m5.2`, on this baseline and on the
+published one alike. Neither is a conversion requirement or an M6 control, and
+both keep their existing owners and their actual failing status.
+
+Post-M6 XIC Provider / Runtime Interlude has not started. M7 has not started.

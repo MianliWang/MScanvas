@@ -1,6 +1,7 @@
 # ADR 0043 — Conversion Completion is the next milestone, and this is its route
 
-Status: accepted, amended 2026-09-04, twice on 2026-09-06, and 2026-09-08
+Status: accepted, amended 2026-09-04, twice on 2026-09-06, 2026-09-08, and
+twice on 2026-09-10 by M6.11
 Date: 2026-09-01
 Related: [0002](0002-external-proteowizard.md),
 [0009](0009-mzml-conversion-execution-boundary.md),
@@ -505,9 +506,19 @@ change. This slice makes an existing set of controls truthful.
 
 *Downstream:* M6.4A, and through it M6.4 and every slice that adds a control.
 
-*Delivered.* `conversionAvailability.ts` holds one `ConversionLane` of eight
-facts, one `ConversionAction` discriminated by `start` and `retry`, and one
-`ConversionAvailability` carrying eleven stable reasons with a message each.
+*Delivered.* `conversionAvailability.ts` holds one `ConversionLane`, one
+`ConversionAction` discriminated by `start` and `retry`, and one
+`ConversionAvailability` carrying a closed set of stable reasons with a message
+each.
+
+> **Amended 2026-09-10 by M6.11.** This paragraph read *"one `ConversionLane` of
+> eight facts"* and *"eleven stable reasons"*. Both were true of the module M6.1
+> shipped and neither is now: [ADR 0044](0044-conversion-configuration-authority.md)'s
+> Decision 10 added `configurationProbing`, and later slices added reasons with
+> it. The live module holds **nine** lane facts and **seventeen** reasons. The
+> counts are removed rather than restated, because the property this paragraph
+> is about is that there is **one** lane and one registry over it — a number that
+> moves with every slice that adds a control was never the claim.
 `useConversionOperation` exposes the lane a render sees and reads the same lane
 from refs at dispatch, so `convert` and `retry` are projections of the authority
 rather than expressions beside it; the ad-hoc `canConvert` is gone from
@@ -1221,10 +1232,17 @@ the refusal is a recorded decision with its evidence, not an omission.
 
 *Downstream:* M6.7.
 
-**M6.6 candidate continuation (publication pending).** The accepted v5.11
+**M6.6 candidate continuation.** The accepted v5.11
 destination/conflict organization continues within the existing conversion
 surface and owned components; it does not replace the application shell or
 admit prototype simulations. Custom local folder remains the shipped default.
+> **Amended 2026-09-10 by M6.11.** This heading read *"M6.6 candidate
+> continuation (publication pending)"*. It was accurate when written and describes
+> the candidate's state at that moment; M6.6 was published by PR #99 and
+> `ROADMAP.md` has recorded it complete since. The parenthetical is withdrawn and
+> quoted here rather than deleted, because the four stops the first M6.4 attempt
+> took are history this route deliberately keeps.
+
 The three policy descriptions distinguish requested policy from resolved
 directory authority; a named subfolder is one name validated by Rust, and
 unresolved destinations and backend-named output sets are not presented as known

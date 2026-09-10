@@ -380,7 +380,14 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 
 ## M6 — Conversion Completion
 
-**Started. The route is locked, the conversion lane has one availability
+**Complete.** All twelve exit criteria are proved and the three milestone-wide
+conditions hold; the closure record is
+[ADR 0045](docs/architecture/adr/0045-conversion-completion-closure-and-handoff.md).
+None of criterion 11's four conditional routes is admitted, and none had to be.
+**The Post-M6 XIC Provider / Runtime Interlude is the recorded preferred next
+route before M7, and has not started.**
+
+The route was locked, the conversion lane has one availability
 authority, the installed `msconvert` has been measured against M6's finite
 candidate set, what a conversion is asked to do is now a type, the ownership
 boundary the visible settings sit on is decided, those settings are on screen
@@ -390,8 +397,8 @@ and conflict UX is published; M6.7 makes selected/all scope explicit; M6.8 close
 the process-ownership window, measures the installed provider, and settles what a
 user may stop; M6.9 makes what a conversion produced legible, with all five
 judgements separated per item and the seams M7 and M8 read. M6.10 takes the four conditional side
-routes to a terminal disposition, none of them admitted. M6.11 is not
-started.**
+routes to a terminal disposition, none of them admitted; and M6.11 answers the
+exit criteria from that published evidence and hands M6 to M7.**
 
 The route, the live conversion gap audit it was decided from, the nine product
 decisions it surfaces, the twelve exit criteria and the M7/M8 seams are in
@@ -453,7 +460,12 @@ Twelve slices, plus one authority interlude:
   whole 29-case ledger re-run with it, every confirmation agreeing and no
   classification changed. See
   [the M6.10 record](docs/spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md).
-- M6.11 — closure.
+- M6.11 — closure. **Complete.** Twelve criteria proved, three milestone-wide
+  conditions held, four conditional routes carried by citation from M6.10's
+  ledger rather than re-decided. The centroiding family gap M6.10 measured is
+  carried as a scoped residual with an owner and a re-entry condition, and ADR
+  0043 is amended where two of its own statements had gone stale. See
+  [ADR 0045](docs/architecture/adr/0045-conversion-completion-closure-and-handoff.md).
 
 **M6.4 was attempted once, and what shipped is the replacement.** The first
 attempt is on `feat/m6.4-visible-conversion-settings` / PR #95, which stopped
