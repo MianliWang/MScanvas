@@ -982,6 +982,21 @@ def _decode_array(array: ElementTree.Element) -> dict[str, object]:
         else:
             count = len(raw) // stride
             values = list(struct.unpack(f"<{count}{code}", raw))
+    encoded_length = array.get("encodedLength")
+    actual_encoded = len(
+        "".join(character for character in encoded if character not in BASE64_LAYOUT)
+    )
+    if malformed is None:
+        stated_encoded = declared_length(encoded_length)
+        if encoded_length is None:
+            malformed = "declares no encodedLength"
+        elif stated_encoded is None:
+            malformed = f"declares encodedLength={encoded_length!r}, which is not a number"
+        elif stated_encoded != actual_encoded:
+            malformed = (
+                f"declares encodedLength={stated_encoded} and carries "
+                f"{actual_encoded} base64 characters"
+            )
     return {
         "kind": kind,
         # mzML lets an array state its own length, which overrides the
@@ -990,9 +1005,7 @@ def _decode_array(array: ElementTree.Element) -> dict[str, object]:
         "declared_length": array.get("arrayLength"),
         "bits": None if width is None else width[0],
         "compression": compression,
-        "encoded_bytes": len(
-            "".join(character for character in encoded if character not in BASE64_LAYOUT)
-        ),
+        "encoded_bytes": actual_encoded,
         "decoded_bytes": len(raw),
         "length": len(values),
         "malformed": malformed,
@@ -1310,10 +1323,25 @@ def inspect_mzxml(root: ElementTree.Element) -> dict[str, object]:
 #: The only document roots this reader will read. Anything else is refused.
 DOCUMENT_ROOTS: tuple[str, ...] = ("mzML", "indexedmzML", "mzXML")
 
+#: The namespace an mzML root has to be in.
+#:
+#: Checked for `mzML` and `indexedmzML` and **not** for `mzXML`, and the
+#: asymmetry is deliberate: mzXML's namespace carries its schema revision, so
+#: pinning one would refuse the other revisions of a format this reader handles
+#: identically. mzML has one namespace, so a root wearing the name in a
+#: different one is not an mzML document however well its insides read.
+MZML_ROOT_NAMESPACE = MZML_NS
+
 
 def inspect(path: Path) -> dict[str, object]:
     root = ElementTree.parse(path).getroot()
     tag = root.tag.rsplit("}", 1)[-1]
+    namespace = root.tag.split("}")[0].strip("{") if "}" in root.tag else ""
+    if tag in ("mzML", "indexedmzML") and namespace != MZML_ROOT_NAMESPACE:
+        raise ValueError(
+            f"document root {tag!r} is in namespace {namespace!r}, not "
+            f"{MZML_ROOT_NAMESPACE!r}"
+        )
     if tag not in DOCUMENT_ROOTS:
         # Refused rather than read. The mzML reader searches descendants, so a
         # complete mzML wrapped in any other element came back with all its

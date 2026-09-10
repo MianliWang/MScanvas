@@ -452,7 +452,8 @@ than a patch per instance**, and it is done that way.
 
 | Property | Before | Now |
 | --- | --- | --- |
-| Document root | any root fell through to the mzML reader, whose descendant search then recovered every spectrum — so a complete mzML wrapped in anything at all read as a clean mzML | only `mzML`, `indexedmzML` and `mzXML` are read; every other root is refused |
+| Document root | any root fell through to the mzML reader, whose descendant search then recovered every spectrum — so a complete mzML wrapped in anything at all read as a clean mzML | only `mzML`, `indexedmzML` and `mzXML` are read, and the first two are required to be in the mzML namespace, because a root wearing the name in another one is not an mzML document however well its insides read |
+| Encoded length | `encodedLength` is required of every array and was computed and never compared | an absent, unreadable or disagreeing declaration is reported |
 | Contradictory declarations | two compression terms, two float widths, or two array roles on one array silently took whichever appeared first | an array that declares two of any of them is reported rather than decoded under one of them |
 | Trailing bytes | a valid zlib stream with bytes appended decoded to the stream and said nothing about the suffix | an incomplete stream and a non-empty suffix are each reported |
 | Per-array length | mzML's optional `arrayLength` override was discarded, so a document using it legitimately read as corrupt | each array is held to its own declared length where it states one, and a present override that is not a number is a defect rather than a reason to fall back |
