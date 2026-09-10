@@ -525,6 +525,49 @@ describe("the five judgements of one queue item", () => {
     ).toBeVisible();
   });
 
+  it("does not tell a skipped set that nothing was written", async () => {
+    // A set is skipped only after its members were written into the working
+    // folder and validated there: the occupied names are compared against the
+    // *validated* ones. So the converter did write, and the staged judgement
+    // right above this says so. What is true is that nothing was published.
+    const skipped = outputSetReport("file-14", ["c-S1.mzML", "c-S2.mzML"], {
+      groupOutcome: "skipped_existing_destinations",
+      finalizedCount: 0,
+      validatedNotPublishedCount: 2,
+      notPublishedCount: 0,
+      members: setMembers(
+        ["c-S1.mzML", "c-S2.mzML"],
+        ["validated_not_published", "validated_not_published"],
+      ),
+      completeness: { kind: "notPosed" },
+      completeSetAdoptable: false,
+    });
+    const api = terminalApi(
+      [
+        sciexQueueItem("file-14", "Enolase_skipped.wiff", {
+          state: "skipped",
+          attempts: 1,
+          retryable: false,
+          result: { kind: "outputSet", report: skipped },
+          ...failedAttemptFacts(true, "000000000000000100000000000000f2"),
+        }),
+      ],
+      [bundle],
+    );
+    renderApp(api);
+    const result = await queueResult();
+
+    const details = openDetails(rowFor(result, "Enolase_skipped.wiff"));
+    expect(
+      within(details).getByText(
+        /No output obtained a final name: files of all of its output names were already there/,
+      ),
+    ).toBeVisible();
+    // The two sentences must not contradict each other in the same panel.
+    expect(details.textContent).not.toContain("Nothing was written.");
+    expect(details.textContent).toContain("The temporary working folder held");
+  });
+
   it("states the scope for a set that discovered one member and refused it", async () => {
     // One discovered member means one output, so the item takes the singular
     // sentence rather than the set one. The scope has to survive that branch

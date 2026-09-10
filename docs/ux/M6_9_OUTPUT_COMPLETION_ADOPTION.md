@@ -280,6 +280,15 @@ backend-named set is admitted only for a bundle acquisition and a bundle has no
 mzML reading to compare against. The projection and the export read the same
 function, so they cannot say different things.
 
+**And a skipped set was not a set that wrote nothing.** The two cardinalities
+step aside at different moments: a single output is skipped on the destination
+check before the converter is invoked, so nothing was written and the sentence
+says exactly that; a set is skipped only after its members were written into the
+working folder and validated there, because the occupied names are compared
+against the validated ones. Telling that set "nothing was written" contradicted
+the staged judgement printed directly above it. What is true of it is that no
+output obtained a final name.
+
 **A refused output is not an unchecked one.** A run whose output failed the
 contract retains no validation record — the record travels with a finalization,
 and there was none — so the naive reading of an absent record is "nothing was
@@ -422,7 +431,7 @@ and the M7/M8 seams it freezes), `0016` (the adoption relation this records),
 
 ## Validation
 
-Local gates at this head: frontend lint, typecheck, 1678 tests
+Local gates at this head: frontend lint, typecheck, 1679 tests
 across 70 files, build; `cargo fmt --all --check`; `cargo clippy
 --locked --workspace --all-targets --all-features -- -D warnings`; `cargo test
 --locked --workspace --all-targets` (1554 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.

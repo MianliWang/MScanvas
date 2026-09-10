@@ -195,11 +195,20 @@ export function finalizedSentence(item: ConversionQueueItem): string {
   // The conflict policy's own skip is answered first, and for both
   // cardinalities. A set reaches it only when *every* one of its names was
   // occupied, so a count of zero finalized would be arithmetically true and
-  // would say nothing about why nothing was written.
+  // would say nothing about why nothing took a final name.
+  //
+  // The two cardinalities do not skip at the same moment, and the sentence has
+  // to respect that. A single output is skipped on the destination check
+  // *before* the converter is invoked, so nothing was written and saying so is
+  // exact. A set is skipped only after its members were written into the
+  // working folder and validated there -- the occupied names are compared
+  // against the validated ones -- so "nothing was written" would contradict the
+  // staged judgement directly above it, which says the folder held documents.
+  // What is true of the set is that no member was published.
   if (item.state === "skipped") {
     return set === null
       ? "Nothing was written. A file of that name was already there and was left alone."
-      : "Nothing was written. Files of all of its output names were already there and were left alone.";
+      : "No output obtained a final name: files of all of its output names were already there and were left alone.";
   }
   if (set !== null) {
     // What this surface knows is what the run *discovered* and published, not
