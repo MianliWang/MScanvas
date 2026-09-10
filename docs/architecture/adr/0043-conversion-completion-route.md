@@ -1722,6 +1722,32 @@ XIC.
 
 *Downstream:* M6.11.
 
+*Delivered 2026-09-10.* Every acceptance clause above holds. **Four routes, four
+terminal dispositions, none admitted and none left open**: mzXML
+`REFUSED_WITH_EVIDENCE` on the source/output comparison CNV-002 states, which is
+CNV-D1's `MZXML_REFUSED`; vendor-format direct preview `EVIDENCE_BLOCKED` with
+its missing scientific input and the party who supplies it, recorded after
+measuring that this build *does* serve the preview operations directly from one
+lawful vendor acquisition; a further vendor family `REFUSED_WITH_EVIDENCE` on
+ADR 0007's standing decision and its fourteen unmet prerequisites, which is a
+scope choice and not a claim that any family failed; and VIEW-007's re-entry
+`REFUSED_WITH_EVIDENCE`, the `msaccess` identity having been re-observed as
+byte-identical to the one M5.4 refused, so the trigger did not fire and M5.4's
+refusal is retained rather than re-derived.
+
+The evidence-tooling correction M6.2 assigned to this slice is closed as one pass
+over the inspector, the runner and the guard, and the whole 29-case ledger was
+re-run with it, **every confirmation agreeing and no classification changed.** One
+shipped claim was repaired — the picker name three places asserted unconditionally
+was measured here to be wrong for the one vendor family measured, and is
+unestablished for the other two — and no admission, gate, argv or family was
+changed by it. The consequence that a Thermo acquisition converted under the
+admitted centroiding intent is refused by the integrity contract is recorded there
+as a non-blocking residual with an owner.
+
+See [the M6.10 record](../../spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md), which is
+the single authority for criterion 11.
+
 ### M6.11 — Closure
 
 *Purpose:* answer the exit criteria from published evidence and hand M6 to M7.
@@ -1777,7 +1803,7 @@ DEFERRED_WITH_OWNER             not M6's, and the owner is named
 
 ### CNV-D1 — output formats
 
-**Status: mzML `LOCKED`. mzXML `EVIDENCE_REQUIRED`, owner M6.2, terminal in M6.10.**
+**Status: mzML `LOCKED`. mzXML `MZXML_REFUSED`, terminal, 2026-09-10.**
 
 mzML is the product's format and stays the default. `ConversionOutputFormatDto`
 is deliberately a one-member union so that adding a second is a change to a
@@ -1805,11 +1831,22 @@ CNV-002 states, because a format that can drop spectra at exit `0` is the exact
 case the five-judgement lifecycle exists for. `ValidationMode::OutputOnly` cannot
 carry that; only a source comparison can.
 
-**The admission is not decided, and must not be assumed either way.** The
+**The admission was not decided here, and was not assumed either way.** The
 measurement above is of pwiz `master` sources and of build `3.0.26204` in CI.
 Neither is the installed `3.0.26013`, and **evidence does not transfer between
-executables**. M6.2 measures the installed build or M6.10 closes the branch
-`EVIDENCE_BLOCKED`.
+executables**. M6.2 measured the installed build; M6.10 made the disposition.
+
+**Terminated `MZXML_REFUSED` on 2026-09-10**, on the installed build and on the
+gate CNV-002 states. On a two-source document the writer dropped both spectra of
+the non-default source at exit `0` with empty stderr, and then wrote
+`msRun/@scanCount="4"` over the two `<scan>` elements it emitted; the mzML
+control on the same document kept all four and preserved their attribution.
+Single-source mzXML is faithful and that result is kept at its own scope: a
+narrower admission would need an enforceable single-source precondition, the
+applicable integrity gates, and the output-naming and directory behaviour of the
+non-mzML path, none of which is established. **mzXML stays unconstructible.** The
+evidence, the reproduction and the limits are in
+[the M6.10 record](../../spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md).
 
 Also recorded, from the same source reading and awaiting measurement: format
 availability is a **build** property (`mz5` and `mzMLb` are conditionally
@@ -2713,6 +2750,13 @@ by that fact and no XIC work is owed — and in criterion 11's vocabulary that
 closure is a **refusal carried with evidence**, the evidence being a measured
 identity match to the build M5.4 already refused, rather than a fourth kind of
 ending.
+
+**Re-observed 2026-09-10 by M6.10, and unchanged.** The installed `msaccess.exe`
+still hashes to `85681B20…D1F4` at the same `12,898,816` bytes, its help capture
+reproduces M5.4's recorded stderr digest exactly, and the sibling `msconvert`
+still hashes to `9BB6F5D5…D590BD`. **The new-identity trigger never fired**, so
+the route closes as a refusal carried with evidence and M5.4's measurements stand
+as M5.4's — nothing about XIC was re-run.
 
 **At this baseline, no new identity exists.** The installed `msaccess.exe`
 hashes to `85681B20…D1F4` — byte-identical to the digest

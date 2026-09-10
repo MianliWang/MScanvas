@@ -223,6 +223,25 @@ describe("the four control groups", () => {
     expect(note?.textContent).toContain("MSCanvas has not qualified that combination");
   });
 
+  it("state the loss centroiding causes without naming an algorithm", () => {
+    // M6.10 measured the bare `peakPicking` filter on a lawful vendor
+    // acquisition and found this build selecting the vendor picker there, not
+    // the local-maximum one this sentence used to name. The loss is supported
+    // for every source; the implementation is measured per source family, so
+    // the sentence claims the first and not the second.
+    render(<ConversionSettings
+        configuration={view(ready())}
+        onChoose={vi.fn()}
+        refusalNoticeId={null}
+      />);
+    const control = within(groupFor("processing")).getByLabelText("Centroid all MS levels");
+    const note = document.getElementById(control.getAttribute("aria-describedby") ?? "");
+    expect(note?.textContent).toContain("Lossy.");
+    expect(note?.textContent).toContain("replaces the recorded profile points");
+    expect(note?.textContent).not.toContain("local-maximum");
+    expect(note?.textContent).not.toContain("vendor");
+  });
+
   it("never call the chooser for a value that cannot be chosen", () => {
     const onChoose = vi.fn();
     render(<ConversionSettings

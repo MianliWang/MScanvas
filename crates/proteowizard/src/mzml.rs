@@ -51,6 +51,13 @@ const PEAK_PICKING: &[u8] = b"MS:1000035";
 ///
 /// Build-qualified: M6.2 measured this exact string on the exact executable the
 /// evidence is bound to. It is compared, never stored.
+///
+/// **Qualified by source family too, which M6.10 measured and M6.2 could not.**
+/// The bare `peakPicking` filter selects this algorithm where the source has no
+/// vendor reader behind it, and selects the *vendor* picker where it does. So an
+/// output naming this string is one converted from a source this build read
+/// without a vendor library -- and a vendor acquisition converted under the same
+/// request names something else, which is why the table below is not decoration.
 const DEFAULT_PICKER_NAME: &str = "local maximum peak picker";
 
 /// Implementation names this repository recognizes and has not admitted, each
@@ -60,13 +67,27 @@ const DEFAULT_PICKER_NAME: &str = "local maximum peak picker";
 /// one, and telling the rejected ones apart matters too: an output that gains a
 /// `vendor` method over a source that already carried `cwt` has gained an
 /// algorithm, and one identity covering both would subtract it away.
+///
+/// **Both entries are measured strings.** The wavelet name is M6.2's, from the
+/// cases that ran `peakPicking cwt`. The vendor name is M6.10's, and it replaced
+/// an assumed one: `"vendor peak picking"` sat here from a source reading, no
+/// run of this build has ever produced it, and the string this build actually
+/// writes when the vendor path is reached is the one below -- measured on the
+/// lawful Thermo acquisition ADR 0010 admitted, under both `peakPicking` and
+/// `peakPicking vendor`.
+///
+/// It is therefore **family-qualified as well as build-qualified**. It is what
+/// the Thermo reader names itself in this build. Another vendor reader names
+/// itself something else, and until that string is measured it classifies as
+/// [`ProcessingAlgorithm::Unrecognized`] -- which is the fail-closed answer and
+/// not a gap to be filled by guessing.
 const KNOWN_OTHER_PICKER_NAMES: [(&str, ProcessingAlgorithm); 2] = [
     (
         "CantWaiT (continuous wavelet transform) peak picker",
         ProcessingAlgorithm::WaveletCantWait,
     ),
     (
-        "vendor peak picking",
+        "Thermo/Xcalibur peak picking",
         ProcessingAlgorithm::VendorPeakPicking,
     ),
 ];
@@ -148,7 +169,10 @@ pub enum ProcessingAlgorithm {
     DefaultLocalMaximum = 0,
     /// The continuous-wavelet picker, which M6.2 measured and rejected.
     WaveletCantWait = 1,
-    /// The vendor picker, which M6.2 could not reach and left blocked.
+    /// The vendor picker, reached and named. M6.2 could not exercise this path
+    /// and left it blocked; M6.10 measured it on a lawful Thermo acquisition,
+    /// where this build both selects it and records its name. The identity is
+    /// one algorithm family, not one vendor's: only the Thermo name is measured.
     VendorPeakPicking = 2,
     /// A `peak picking` method was recorded whose implementation name is not one
     /// of the strings the evidence qualified.

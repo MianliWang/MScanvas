@@ -81,8 +81,15 @@ const COMPRESSION_LABEL: Record<ConversionCompression, string> = {
 const PROCESSING_NOTE: Record<ConversionProcessing, string> = {
   no_additional_centroiding:
     "MSCanvas adds no peak picking. Profile spectra are converted as the instrument recorded them.",
+  // The algorithm is deliberately not named. It was, until M6.10 measured the
+  // bare `peakPicking` filter on a lawful vendor acquisition and found this
+  // build selecting the *vendor* picker there rather than the local-maximum one
+  // this sentence used to claim. The loss is what a reader needs and is what
+  // the evidence supports for every source; the implementation is not, and a
+  // sentence that named it was right about mzML sources and wrong about the
+  // three vendor families this product exists to convert.
   unscoped_default_centroiding:
-    "Lossy. Default local-maximum peak picking replaces the recorded profile points, and the " +
+    "Lossy. Peak picking replaces the recorded profile points, and the " +
     "profile cannot be recovered from the converted file. It applies to every MS level and " +
     "cannot be limited to one.",
 };

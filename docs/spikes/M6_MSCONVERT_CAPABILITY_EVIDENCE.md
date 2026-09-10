@@ -2,6 +2,16 @@
 
 **Route outcome: `MSCONVERT_CAPABILITY_MEASURED`.**
 
+> **Amended 2026-09-10 by M6.10, and amended is the right word.** Nothing below
+> is rewritten. The tooling this record owed its successor was corrected, the
+> whole 29-case set was re-run against the same executable with it, and **no
+> classification changed** — 66 independent confirmations, all agreeing, against
+> the 33 this record reproduced. The two blocked items below and the mzXML
+> disposition now have their answers, and they are
+> [M6.10's](M6_10_EVIDENCE_GATED_SIDE_ROUTES.md) to state rather than this
+> record's. Where a conclusion of this record is affected, the amendment says so
+> at the place it is affected; everywhere else this document stands as written.
+
 Twelve candidates, twelve terminal states, none left pending. **Nine**
 `MEASURED_ADMISSIBLE` on a decoded output, **two** `MEASURED_REJECTED` on a
 decoded output, **one** `EVIDENCE_BLOCKED` with what is missing and who owns it.
@@ -582,6 +592,12 @@ twenty-nine cases**, and the repository worktree was unchanged. The driver does
 not yet *pin* that directory — see the residual below — so this is recorded as
 the measurement it is rather than as a property the tooling enforces.
 
+**M6.10 pinned it.** Every case now runs from one working directory created empty
+for the purpose, the driver's report is written outside it, and the directory is
+enumerated afterwards: **zero entries** across all twenty-nine cases. What this
+section recorded as a measurement is now a property the tooling enforces, and the
+driver's own report is no longer one of the entries the question is about.
+
 ## The set was re-run from the committed driver
 
 The evidence above was first produced by an operator running the published argv.
@@ -661,6 +677,23 @@ meeting the blocked list does not have to work out which is which.
 | `peakPicking vendor` performing the vendor algorithm | A lawful vendor acquisition of an admitted family, plus authorization to exercise the vendor DLL path. What was measured is the fallback on an open source, which is evidence about the fallback and not about the algorithm. | **M6.10**, which owns the milestone's evidence-gated dispositions. **M6.3 may not type a vendor centroiding intent** while this stands. |
 | mzXML's second drop condition — a Thermo spectrum outside `controllerType=0 controllerNumber=1` | A lawful Thermo acquisition with more than one controller. | **M6.10**. The classification of `mzXML output` does not depend on it: the source-file condition alone fails CNV-002's gate. |
 
+**Both were answered by M6.10, and neither answer is a simple close.**
+
+The vendor path **was reached**, on the lawful Thermo acquisition ADR 0010
+admitted: this build selects the vendor picker there and records its name, under
+`peakPicking vendor` and under the bare `peakPicking` alike. So the substitution
+this record observed is a property of the **source** rather than of the request.
+What the vendor algorithm *computes* stays blocked, because that acquisition is
+already centroided and no picker had profile data to act on — **M6.3 may still
+not type a vendor centroiding intent.** The measurement also corrected a shipped
+claim; see [M6.10's record](M6_10_EVIDENCE_GATED_SIDE_ROUTES.md).
+
+The **second mzXML drop condition stays `EVIDENCE_BLOCKED`**, now for a specific
+reason rather than a general one: that same acquisition carries one spectrum, and
+its native identifier is `controllerType=0 controllerNumber=1` — the very
+controller the writer keeps. It cannot exercise the condition. The sentence above
+still holds: `mzXML output`'s classification never depended on it.
+
 ## Unverified assumptions
 
 - **The peak-picking algorithms' behaviour on instrument-shaped data.** Both
@@ -720,6 +753,14 @@ one*, which this slice never needed and a later one might.
 strict base64 validation, a required-array check, and the run-level count read
 beside the per-spectrum ones — not four separate patches.
 
+**Done, 2026-09-10, in that shape.** Base64 is validated strictly, a spectrum's
+required array roles are checked by name, and both `msRun/@scanCount` and mzML's
+`spectrumList/@count` are read beside the elements actually written. Every
+document now carries a defect list, so a numeric agreement no longer makes a
+malformed document healthy — and each of those decisions is exercised against the
+smallest input that would defeat it. The set was re-run with the corrected reader
+and **no conclusion in this record changed.**
+
 ### `verify()` re-answers the required confirmations, not every basis
 
 **The distinction matters and is stated rather than left to be inferred.** The
@@ -752,6 +793,14 @@ the runner and the guard rather than a patch per instance: pin the working
 directory, compare every declared posture, fold in the order pair and `K12`, and
 widen the picker, MS-level, precision and compression checks to every spectrum
 and both arrays — then have the guard compare every ledger field rather than two.
+
+**Done, 2026-09-10, as one pass.** Every gap in the table above is closed, the
+guard compares all seven declared fields through one rendering contract, and an
+equality taken over an array that decoded to nothing is now a disagreement rather
+than a vacuous pass. The rerun produced **66 confirmations, all agreeing**, and
+changed no classification. The table above therefore reads as history: it is what
+was true of the harness this record shipped with, not of the one in the tree
+today.
 
 ## What this record does not do
 

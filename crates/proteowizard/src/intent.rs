@@ -27,8 +27,10 @@
 //!   two-source document the writer silently dropped the spectra of the
 //!   non-default source and then declared a scan count it had not written.
 //!   [`OutputFormat`] therefore has one variant. The lower-level
-//!   [`OpenFormat::MzXml`](crate::OpenFormat) stays where it is, because M6.10
-//!   still owns that disposition; it simply cannot be reached from an intent.
+//!   [`OpenFormat::MzXml`](crate::OpenFormat) stays where it is: **M6.10 made the
+//!   disposition terminal as `MZXML_REFUSED`**, and a refusal is not deleted
+//!   because nothing reaches it -- that is how a format returns without one. It
+//!   simply cannot be reached from an intent.
 //! - **No scoped centroiding is constructible**, and this is an entailment
 //!   rather than a preference. `msLevel=` is positional after the picker token
 //!   and is *silently discarded* without one; the installed grammar admits only
@@ -78,8 +80,24 @@ pub enum ProcessingIntent {
     /// MSCanvas inserts no peak-picking filter. The product's standing rule,
     /// and the only processing posture the shipped product has ever had.
     NoAdditionalCentroiding,
-    /// Centroiding by the build's default local-maximum picker, across every MS
-    /// level, because that picker cannot be scoped — see the module note.
+    /// Centroiding by whichever picker the build's **bare** `peakPicking` filter
+    /// selects, across every MS level, because that form cannot be scoped -- see
+    /// the module note.
+    ///
+    /// Not one algorithm, and M6.10 is why the wording changed. M6.2 measured
+    /// the bare form on mzML sources, where it runs the local-maximum picker,
+    /// and this said so. M6.10 measured it on a lawful Thermo acquisition, where
+    /// the same form runs the **vendor** picker and records its name. The intent
+    /// names the request MSCanvas issues, which is stable; the algorithm the
+    /// provider selects for it depends on the source family, which is measured
+    /// per family and not assumed.
+    ///
+    /// One consequence is recorded rather than left to be met: on this build a
+    /// vendor acquisition converted under this intent is **refused** by the
+    /// integrity contract, because the algorithm it runs is not the one M6.2
+    /// admitted. The refusal is fail-closed and correct. Whether the product
+    /// should offer this combination for a vendor row at all is a product
+    /// decision this type does not make.
     UnscopedDefaultCentroiding,
 }
 

@@ -3867,13 +3867,85 @@ mod tests {
     /// history the output merely repeats establishes nothing rather than either
     /// answer, and only an algorithm this run added can satisfy or refuse the
     /// request.
+    /// The name this build writes on a **vendor** acquisition, measured.
+    ///
+    /// M6.2 could not reach the vendor path and left it blocked; M6.10 measured
+    /// it on the lawful Thermo acquisition ADR 0010 admitted, and the answer
+    /// changes what this table has to hold. On that acquisition, on this exact
+    /// build, both `--filter peakPicking` and `--filter "peakPicking vendor"`
+    /// record `Thermo/Xcalibur peak picking` -- the vendor picker, named by the
+    /// vendor -- and neither records the local-maximum name that
+    /// [`ProcessingIntent::UnscopedDefaultCentroiding`] asks for.
+    ///
+    /// Two facts follow, and they are separate. The name is now a measured
+    /// identity rather than an assumed one. And a vendor acquisition converted
+    /// under that intent is **refused** by this contract, because the algorithm
+    /// the request names is not the algorithm this build runs there. The refusal
+    /// is the contract working: nothing wrong is certified. What it is not is a
+    /// fact anybody had written down.
+    #[cfg(windows)]
+    #[test]
+    fn a_vendor_acquisition_records_the_vendor_picker_and_does_not_satisfy_the_request() {
+        const THERMO_VENDOR: &str = "Thermo/Xcalibur peak picking";
+        const PICKED: [SpectrumFixture; 2] =
+            [SpectrumFixture::centroided_ms1(15), SpectrumFixture::ms2(8)];
+        let picked = intensity_at_64(&output_document(&PICKED, 1));
+        let centroiding = admitted(
+            ProcessingIntent::UnscopedDefaultCentroiding,
+            SpectrumPopulation::All,
+            NumericPrecision::Mz64Intensity64,
+            CompressionIntent::Zlib,
+        );
+
+        // `None` is the vendor case exactly: an acquisition this product cannot
+        // read as mzML is judged output-only, so the output's whole history is
+        // what this run added.
+        let output = claiming_pickers(&picked, &[THERMO_VENDOR]);
+        let after = mzml::inspect_reader(output.as_bytes(), MzmlScanLimits::default())
+            .expect("scan the output");
+        let mut report = IntegrityReport::default();
+        assert_eq!(
+            check_requested_processing(&after, None, centroiding, &mut report),
+            Some(ConversionIntegrityOutcome::ProcessingAlgorithmMismatch {
+                requested: ProcessingIntent::UnscopedDefaultCentroiding,
+                observed: ProcessingAlgorithm::VendorPeakPicking,
+                spectrum_index: 0,
+            }),
+            "the measured vendor picker name is not classified as the vendor picker"
+        );
+
+        // And the string that was in this table before it was measured does not
+        // occur. Kept as an assertion rather than a deletion note, so a future
+        // edit that restores it has to argue with a test.
+        assert_eq!(
+            check_requested_processing(
+                &mzml::inspect_reader(
+                    claiming_pickers(&picked, &["vendor peak picking"]).as_bytes(),
+                    MzmlScanLimits::default(),
+                )
+                .expect("scan the output"),
+                None,
+                centroiding,
+                &mut IntegrityReport::default(),
+            ),
+            Some(ConversionIntegrityOutcome::ProcessingAlgorithmMismatch {
+                requested: ProcessingIntent::UnscopedDefaultCentroiding,
+                observed: ProcessingAlgorithm::Unrecognized,
+                spectrum_index: 0,
+            }),
+            "a name no run of this build has ever produced is still recognized"
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn a_processing_claim_is_classified_and_only_the_admitted_algorithm_satisfies_it() {
         const PICKED: [SpectrumFixture; 2] =
             [SpectrumFixture::centroided_ms1(15), SpectrumFixture::ms2(8)];
         const WAVELET: &str = "CantWaiT (continuous wavelet transform) peak picker";
-        const VENDOR: &str = "vendor peak picking";
+        // The measured vendor name, not the assumed one M6.10 replaced. See
+        // `a_vendor_acquisition_records_the_vendor_picker_and_does_not_satisfy_the_request`.
+        const VENDOR: &str = "Thermo/Xcalibur peak picking";
         const DEFAULT: &str = "local maximum peak picker";
         let source = source_document(&TWO_SPECTRA, 1);
         let picked = intensity_at_64(&output_document(&PICKED, 1));
