@@ -450,7 +450,7 @@ Twelve slices, plus one authority interlude:
   re-entry is refused with evidence: the `msaccess` identity was re-observed and
   is byte-identical to the one M5.4 refused, so the trigger did not fire. The
   evidence tooling M6.2 assigned to this slice was corrected in one pass and the
-  whole 29-case ledger re-run with it — 60 confirmations, all agreeing, no
+  whole 29-case ledger re-run with it, every confirmation agreeing and no
   classification changed. See
   [the M6.10 record](docs/spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md).
 - M6.11 — closure.

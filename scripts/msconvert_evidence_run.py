@@ -649,9 +649,28 @@ def verify(results: dict[str, dict[str, Any]], work: Path) -> list[dict[str, Any
             ),
         )
     note(
-        "X5 carries the picker's output, not the source's",
-        [len(source_apexes(i)) for i in range(len(plan))],
-        [len(nonzero("X5", i)) for i in range(len(plan))],
+        "X5 carries the picker's apexes, m/z and intensity, not the source's points",
+        [source_apexes(i) for i in range(len(plan))],
+        [nonzero("X5", i) for i in range(len(plan))],
+    )
+    # The declared lengths the record states, guarded rather than asserted. The
+    # surplus over the apex counts is the default picker's zero-intensity
+    # padding, which is why the two figures differ and why both are recorded.
+    note(
+        "X5 declares the picked lengths, not the source's",
+        [len(source(i, "mz")) for i in range(len(plan))],
+        [int(s["declared_length"]) for s in results["X1"]["inspected"]["spectra"]],
+    )
+    note(
+        "and X5's are shorter in every spectrum",
+        [True] * len(plan),
+        [
+            int(x5["declared_length"]) < int(x1["declared_length"])
+            for x5, x1 in zip(
+                results["X5"]["inspected"]["spectra"],
+                results["X1"]["inspected"]["spectra"],
+            )
+        ],
     )
 
     # ------------------------------------------------- structural health per case
@@ -792,12 +811,13 @@ def main() -> int:
         # this measurement is about.
         provider_cwd = work / "cwd"
         provider_cwd.mkdir()
-        # No runtime guard is needed and one would be unfalsifiable: this
-        # directory lives under a temporary tree created a line ago, so no
-        # `--report` path an operator can type is inside it. The property is
-        # structural, and it is stated rather than checked because a check that
-        # cannot fail is not evidence that the report is outside.
-        assert report_at != provider_cwd and provider_cwd not in report_at.parents
+        # The report is outside this directory structurally rather than by a
+        # check: `work` is a temporary tree created a line ago under a random
+        # name, so no `--report` path an operator can type is inside it. An
+        # assertion here would be unfalsifiable, and `python -O` would strip it
+        # anyway -- neither is evidence. If a `--work` option is ever added, the
+        # property stops being structural and needs a real check.
+        _ = report_at
         fixtures = work / "fixtures"
         written = EV.generate(fixtures)
         fixture_facts = {}

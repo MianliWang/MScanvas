@@ -5,7 +5,7 @@
 > **Amended 2026-09-10 by M6.10, and amended is the right word.** Nothing below
 > is rewritten. The tooling this record owed its successor was corrected, the
 > whole 29-case set was re-run against the same executable with it, and **no
-> classification changed** — 60 independent confirmations, all agreeing, against
+> classification changed** — 62 independent confirmations, all agreeing, against
 > the 33 this record reproduced. The two blocked items below and the mzXML
 > disposition now have their answers, and they are
 > [M6.10's](M6_10_EVIDENCE_GATED_SIDE_ROUTES.md) to state rather than this
@@ -797,7 +797,7 @@ and both arrays — then have the guard compare every ledger field rather than t
 **Done, 2026-09-10, as one pass.** Every gap in the table above is closed, the
 guard compares all seven declared fields through one rendering contract, and an
 equality taken over an array that decoded to nothing is now a disagreement rather
-than a vacuous pass. The rerun produced **60 confirmations, all agreeing**, and
+than a vacuous pass. The rerun produced **62 confirmations, all agreeing**, and
 changed no classification. The table above therefore reads as history: it is what
 was true of the harness this record shipped with, not of the one in the tree
 today.

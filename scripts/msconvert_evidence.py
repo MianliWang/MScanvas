@@ -768,7 +768,12 @@ def strict_base64(text: str) -> tuple[bytes, str | None]:
 
 def decompress(raw: bytes, compression: str) -> tuple[bytes, str | None]:
     """The payload as stored, or the reason its declared compression is a lie."""
-    if compression != "zlib":
+    if compression != "zlib" or not raw:
+        # An empty payload is not a compression lie. A zero-length array is
+        # written as `encodedLength="0"` with an empty `<binary>`, and
+        # `zlib.decompress(b"")` reports a truncated stream for it -- which
+        # diagnosed a legitimate empty array as a document that lied about its
+        # encoding.
         return raw, None
     try:
         return zlib.decompress(raw), None
@@ -787,7 +792,15 @@ def declared_count_defect(
     raised out of the reader instead of reporting it. The production contract
     already refuses an output that declares no count while carrying records, so
     this reader says the same thing rather than a quieter one.
+
+    **And it says it only where there is something to declare.** A conversion
+    that yields no spectra is written with no `<spectrumList>` at all, which is
+    a legal exit-`0` output; demanding a count of it reported a healthy document
+    as defective. The rule matches production exactly: a declared count is owed
+    by a document that carries records, and by no other.
     """
+    if written == 0 and declared is None:
+        return None
     if declared is None:
         return f"{what} declares no {attribute} over {written} {noun} elements"
     try:
@@ -807,8 +820,8 @@ def role_defects(arrays: list[dict[str, object]], where: str) -> list[str]:
     of course, and reporting them as structural faults would make a healthy
     document read as broken the moment this inspector is pointed at one -- which
     M6.10 does. What matters is that the two arrays every numeric claim here is
-    *about* are present, once each. Anything else is counted and reported beside
-    the spectrum as information.
+    *about* are present, once each. Anything else is listed in the spectrum's
+    `array_roles` as information and is not a defect.
     """
     roles = [array["kind"] for array in arrays]
     found: list[str] = []
@@ -865,7 +878,15 @@ def _decode_array(array: ElementTree.Element) -> dict[str, object]:
     # its bytes are stored, and every numeric claim over it would be a claim
     # about bytes this reader guessed at.
     if malformed is None and compression == "unknown":
-        malformed = "no compression cvParam"
+        # Said precisely, because the two cases are different and the old
+        # message merged them. A numpress array *does* carry a compression
+        # cvParam; what it does not carry is one this reader can undo. Either
+        # way no numeric claim may rest on the bytes.
+        unknown = sorted(set(params) - set(ARRAY_ACCESSIONS) - set(FLOAT_ACCESSIONS))
+        malformed = (
+            "declares no compression this reader decodes"
+            + (f"; other cvParams present: {', '.join(unknown)}" if unknown else "")
+        )
     values: list[float] = []
     if malformed is not None:
         pass
@@ -1037,11 +1058,20 @@ def inspect_mzxml(root: ElementTree.Element) -> dict[str, object]:
             # a scan that happens to decode to nothing.
             malformed = "scan carries no peaks element"
         else:
-            bits = int(peaks.get("precision", "32"))
+            declared_bits = peaks.get("precision", "32")
             compression = peaks.get("compressionType", "none")
+            try:
+                bits = int(declared_bits)
+            except ValueError:
+                bits = None
             raw, malformed = strict_base64(peaks.text or "")
             if malformed is None:
                 raw, malformed = decompress(raw, compression)
+            if malformed is None and bits not in (32, 64):
+                malformed = (
+                    f"scan declares precision={declared_bits!r}, which is not a width this "
+                    "reader decodes"
+                )
             # Read rather than assumed. This reader unpacks network byte order
             # and an interleaved m/z-intensity pair list; a scan declaring
             # anything else would decode to numbers under a rule it did not
@@ -1055,7 +1085,7 @@ def inspect_mzxml(root: ElementTree.Element) -> dict[str, object]:
                     f"scan declares contentType={content!r}, which this reader does not decode"
                 )
             code = "d" if bits == 64 else "f"
-            stride = bits // 8
+            stride = (bits or 32) // 8
             # Refused rather than rounded down, and the pairing is checked as
             # well: mzXML interleaves m/z with intensity, so an odd number of
             # values is a torn spectrum however whole the byte count looks.

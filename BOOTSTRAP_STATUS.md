@@ -7948,7 +7948,7 @@ is byte-identical to the one M5.4 refused, help capture included. No XIC science
 was re-run.
 
 **The evidence tooling M6.2 assigned to this slice is corrected in one pass**, and
-the whole 29-case ledger was re-run with it: **60 confirmations, all agreeing**,
+the whole 29-case ledger was re-run with it, **every confirmation agreeing**,
 executable stable, the newly pinned process working directory empty afterwards,
 and no classification changed.
 
@@ -7956,8 +7956,10 @@ and no classification changed.
 recognized vendor picker name had never been produced by any run of this build;
 the measured one replaces it. The consequence — that a Thermo acquisition
 converted under the admitted centroiding intent is refused by the integrity
-contract, fail-closed and now accurately diagnosed — is recorded with **M6.11** as
-the owner of the product decision it raises.
+contract, fail-closed and now accurately diagnosed — is recorded as a
+non-blocking residual **M6.11 carries**, with the product decision it raises left
+to the first slice that revisits conversion processing. M6.11 is documentation
+only and decides nothing.
 
 Review was two independent read-only reviewers with complementary
 responsibilities. Their findings are repaired in the same branch, including a

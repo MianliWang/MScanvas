@@ -77,8 +77,8 @@ reproduces M5.4's recorded stderr digest exactly.
 ### The decisive comparison, reproduced with the corrected tooling
 
 The whole M6.2 ledger was re-run against the executable above with the
-strengthened inspector and driver this slice delivers. **29 cases, 60
-independent confirmations, all 60 agree, no classification changed.**
+strengthened inspector and driver this slice delivers. **29 cases, 62
+independent confirmations, all 62 agree, no classification changed.**
 
 | Case | Source | argv between source and `--outdir` | Exit | `<scan>`/`<spectrum>` written | Run-level declaration | Survivor identities |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -506,7 +506,7 @@ python -B scripts/msconvert_evidence_run.py --report <file>
 | mzXML-producing cases, derived from the ledger | `4` — `X1`, `X2`, `X4`, `X5` |
 | Parsed outputs carrying a structural defect | `1` — `X2`, and its one defect is the run-level misdeclaration |
 | Entries in the pinned process working directory afterwards | **`0`** |
-| Independent confirmations recomputed from this run | **60 / 60 agree** |
+| Independent confirmations recomputed from this run | **62 / 62 agree** |
 | Executable identity checked **after** the run | byte length, digest, release and build date unchanged |
 
 **No classification changed.** The corrected tooling reproduced every M6.2
@@ -514,14 +514,21 @@ conclusion and revealed no prior measurement error; what it added is the ability
 to *see* the one defect M6.2 had to describe in prose, and to fail if any of the
 newly covered comparisons ever stops holding.
 
-**Two of the confirmations were removed rather than counted.** An earlier
+**Two of the confirmations were rewritten rather than dropped.** An earlier
 revision of this driver compared the ledger's own derivation of the mzXML cases
 against a copy of itself, and the number of cases run against the length of a
-dict built by iterating those cases. Neither could fail. They are replaced by
-comparisons against what the run actually wrote — the output names on disk, and
-the set of cases that produced a document — because a check that cannot fail
-inflates a count without adding a confirmation, which is the defect this driver
-exists to prevent. M6.2's own conclusions stay as they
+dict built by iterating those cases. Neither could fail. Both are still checks
+and both are still in the count; what changed is what they compare against — the
+output names on disk, and the set of cases that produced a document. A check
+that cannot fail inflates a count without adding a confirmation, which is the
+defect this driver exists to prevent.
+
+**The count itself is not guarded, and cannot honestly be.** It is what the run
+printed, and reproducing it requires the executable, which repository validation
+does not have. So the number is stated **here**, where the run is described, and
+the summaries elsewhere link to this record rather than restating it — a figure
+repeated in five documents and derivable in none is the shape of the defect this
+slice spent its tooling budget removing. M6.2's own conclusions stay as they
 were written, and this record does not rewrite them.
 
 **The working-directory result is now a property the tooling enforces**, not a

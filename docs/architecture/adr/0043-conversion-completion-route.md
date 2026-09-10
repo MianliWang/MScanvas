@@ -1737,7 +1737,7 @@ refusal is retained rather than re-derived.
 
 The evidence-tooling correction M6.2 assigned to this slice is closed as one pass
 over the inspector, the runner and the guard, and the whole 29-case ledger was
-re-run with it: **60 confirmations, all agreeing, no classification changed.** One
+re-run with it, **every confirmation agreeing and no classification changed.** One
 shipped claim was repaired — the picker name three places asserted unconditionally
 was measured here to be wrong for the one vendor family measured, and is
 unestablished for the other two — and no admission, gate, argv or family was
