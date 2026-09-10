@@ -453,9 +453,9 @@ than a patch per instance**, and it is done that way.
 | Property | Before | Now |
 | --- | --- | --- |
 | Document root | any root fell through to the mzML reader, whose descendant search then recovered every spectrum — so a complete mzML wrapped in anything at all read as a clean mzML | only `mzML`, `indexedmzML` and `mzXML` are read; every other root is refused |
-| Contradictory declarations | two compression terms, or two float widths, silently took whichever appeared first | an array that declares two of either is reported rather than decoded under one of them |
+| Contradictory declarations | two compression terms, two float widths, or two array roles on one array silently took whichever appeared first | an array that declares two of any of them is reported rather than decoded under one of them |
 | Trailing bytes | a valid zlib stream with bytes appended decoded to the stream and said nothing about the suffix | an incomplete stream and a non-empty suffix are each reported |
-| Per-array length | mzML's optional `arrayLength` override was discarded, so a document using it legitimately read as corrupt | each array is held to its own declared length where it states one |
+| Per-array length | mzML's optional `arrayLength` override was discarded, so a document using it legitimately read as corrupt | each array is held to its own declared length where it states one, and a present override that is not a number is a defect rather than a reason to fall back |
 | Base64 syntax | `b64decode` **silently discarded** characters outside the alphabet, so a payload with a stray `$` decoded to aligned bytes and read as healthy | Layout whitespace is removed; anything else — a stray character, a length that is not a multiple of four, wrong padding — is reported and the array decodes to nothing |
 | Declared compression | a payload declaring `zlib` that does not decompress raised | reported as a defect on the array that carries it |
 | Required arrays | a spectrum with **no intensity array at all** carried no malformed flag and no length disagreement | each spectrum's array **roles** are checked by name: a missing one, a duplicated one and an unrecognised one are each a named defect |

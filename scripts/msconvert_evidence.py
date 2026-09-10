@@ -916,7 +916,7 @@ def _decode_array(array: ElementTree.Element) -> dict[str, object]:
     compression = (
         COMPRESSION_ACCESSIONS[compressions[0]] if len(compressions) == 1 else "unknown"
     )
-    contradiction = None
+    contradiction: str | None = None
     if len(widths) > 1:
         contradiction = (
             "declares " + ", ".join(sorted(widths)) + ", which are two float widths"
@@ -925,7 +925,14 @@ def _decode_array(array: ElementTree.Element) -> dict[str, object]:
         contradiction = (
             "declares " + ", ".join(sorted(compressions)) + ", which are two compressions"
         )
-    kind = next((ARRAY_ACCESSIONS[a] for a in params if a in ARRAY_ACCESSIONS), "other")
+    roles = [a for a in params if a in ARRAY_ACCESSIONS]
+    kind = ARRAY_ACCESSIONS[roles[0]] if len(roles) == 1 else "other"
+    if contradiction is None and len(roles) > 1:
+        contradiction = (
+            "declares "
+            + ", ".join(sorted(ARRAY_ACCESSIONS[a] for a in roles))
+            + ", which are two array roles"
+        )
     node = array.find(f"{{{MZML_NS}}}binary")
     encoded = (node.text or "") if node is not None else ""
     # Order matters here. Decoding first diagnosed an array with no `<binary>`
@@ -1033,9 +1040,25 @@ def inspect_mzml(root: ElementTree.Element) -> dict[str, object]:
         stated = declared_length(declared)
 
         def effective(array: dict[str, object]) -> int | None:
-            """The length this array is actually held to: its own, or the default."""
-            own = declared_length(array.get("declared_length"))
-            return stated if own is None else own
+            """The length this array is actually held to: its own, or the default.
+
+            The default is a fallback for an *absent* override, never for a
+            present one that could not be read. Falling back from a malformed
+            `arrayLength` let the array pass whenever its payload happened to
+            match the spectrum's default -- a defect certified by a coincidence.
+            """
+            own = array.get("declared_length")
+            if own is None:
+                return stated
+            return declared_length(own)
+
+        malformed_overrides = [
+            f"{array['kind']} array declares arrayLength="
+            f"{array['declared_length']!r}, which is not a number"
+            for array in arrays
+            if array.get("declared_length") is not None
+            and declared_length(array["declared_length"]) is None
+        ]
 
         mismatched = [
             # A malformed array decoded to nothing, and "declares 14 and stores
@@ -1053,6 +1076,7 @@ def inspect_mzml(root: ElementTree.Element) -> dict[str, object]:
             defects.append(
                 f"{where} declares defaultArrayLength={declared!r}, which is not a number"
             )
+        defects += [f"{where} {defect}" for defect in malformed_overrides]
         if declared is None and arrays:
             # Required by the mzML schema, and required here for the same reason
             # the production contract refuses an output without it: with no
