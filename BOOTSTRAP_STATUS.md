@@ -7871,7 +7871,7 @@ this slice introduces.
 **Native validation is taken on the build this head produces.** One build, four
 suites, one binary: `target/e2e/release/mscanvas-desktop.exe`,
 SHA-256
-`abf01f41bcb4373b693ee8e05748347012442608c9014570ba3a6fbedb96ff28`, WebView2 and
+`1d5edc8569c04780ce3de7d0cae0af401c1593a27f5b25b975f6e48bb0030c6d`, WebView2 and
 msedgedriver 152.0.4191.66, against ProteoWizard 3.0.26013.47b13cf 64-bit and
 the approved Thermo fixture. M6.9 1/1 — a real output-only completion of two
 acquisitions, the digest on the wire re-computed from the file on disk, two
