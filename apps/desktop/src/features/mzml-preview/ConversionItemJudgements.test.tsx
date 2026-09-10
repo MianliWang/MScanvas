@@ -525,6 +525,50 @@ describe("the five judgements of one queue item", () => {
     ).toBeVisible();
   });
 
+  it("states the scope of a check that passed and then could not be published", async () => {
+    // The record travels with a finalization, so a rename that did not land
+    // keeps none -- and the sentence must still say what the output passed
+    // *against*, which the report carries in its own right.
+    const api = terminalApi(
+      [
+        queueItem("file-8", "run-8.raw", {
+          state: "failed",
+          attempts: 1,
+          retryable: false,
+          result: {
+            kind: "single" as const,
+            report: {
+              datasetHandle: "file-8",
+              sourceKind: "thermo_raw",
+              outcome: "output_not_finalized",
+              detailedOutcome: "output_not_finalized",
+              outputFileName: null,
+              output: null,
+              validationMode: "output_only",
+              validation: null,
+              backend: { exitCode: 0, elapsedMilliseconds: 700 },
+              stagingResidue: null,
+              receipt: 1,
+            },
+          },
+          ...failedAttemptFacts(true, "000000000000000100000000000000f3"),
+        }),
+      ],
+      [acquisition(8)],
+    );
+    renderApp(api);
+    const result = await queueResult();
+
+    const details = openDetails(rowFor(result, "run-8.raw"));
+    expect(details.textContent).toContain("Output-only.");
+    expect(
+      within(details).getByText(
+        /The output passed this contract, and what failed was giving it its final name/,
+      ),
+    ).toBeVisible();
+    expect(details.textContent).not.toContain("Nothing was checked");
+  });
+
   it("does not tell a skipped set that nothing was written", async () => {
     // A set is skipped only after its members were written into the working
     // folder and validated there: the occupied names are compared against the
@@ -566,6 +610,33 @@ describe("the five judgements of one queue item", () => {
     // The two sentences must not contradict each other in the same panel.
     expect(details.textContent).not.toContain("Nothing was written.");
     expect(details.textContent).toContain("The temporary working folder held");
+  });
+
+  it("counts a refused member as a judgement the queue summary may claim", async () => {
+    // The shared predicate behind every "Output-only validation" disclosure. A
+    // set refused at its only member has nothing finalized and no validation
+    // record, and a predicate that reads only those two would say no check ran
+    // on the one item where the check is the whole story.
+    const refused = refusedSet("file-15", ["rejected"]);
+    const api = terminalApi(
+      [
+        sciexQueueItem("file-15", "Enolase_judged.wiff", {
+          state: "failed",
+          attempts: 1,
+          retryable: false,
+          result: { kind: "outputSet", report: refused },
+          ...failedAttemptFacts(true, "000000000000000100000000000000f4"),
+        }),
+      ],
+      [bundle],
+    );
+    renderApp(api);
+    await queueResult();
+
+    // The disclosure the predicate gates, on the terminal panel.
+    expect(
+      screen.getAllByText(/Output-only validation/).length,
+    ).toBeGreaterThan(0);
   });
 
   it("states the scope for a set that discovered one member and refused it", async () => {

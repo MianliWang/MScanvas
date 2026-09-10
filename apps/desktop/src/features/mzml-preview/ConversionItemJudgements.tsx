@@ -283,7 +283,13 @@ export function integritySentence(
     // the properties are gone — but the judgement ran and passed, and the
     // surface says which of the two happened rather than denying both.
     if (passedThenUnpublished) {
-      return "The output was checked and passed. What failed was giving it its final name, so its detailed result was not kept.";
+      // The scope belongs here for the same reason it belongs on a refusal:
+      // "checked and passed" without saying against what states less than the
+      // boundary established, and the report carries the mode whether or not a
+      // record of the check survived.
+      return scope === null
+        ? "The output was checked and passed. What failed was giving it its final name, so its detailed result was not kept."
+        : `${scope}. The output passed this contract, and what failed was giving it its final name, so its detailed result was not kept.`;
     }
     return "Nothing was checked, because nothing was validated.";
   }

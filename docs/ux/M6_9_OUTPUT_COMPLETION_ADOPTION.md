@@ -253,6 +253,13 @@ returned a real ending. The set lifecycle keeps its facts through the same
 event, which is why it was already right — and it now reads the same helper
 anyway, so the two cannot drift apart again.
 
+**A refused member is a check that ran.** The shared predicate behind every
+"output-only validation" disclosure reads what an item judged, and it read only
+finalized and validated-not-published members. A set refused at its only member
+has neither, because a refusal keeps no record and publishes nothing — so the
+one item whose whole story is the check reported that no check had happened.
+`rejectedCount` counts there now.
+
 **A publication failure is not an unchecked run either.** A rename that did not
 land, and a name something else took during the run, both happen strictly after
 the judgement returned a valid output — and neither retains the record, because
@@ -431,7 +438,7 @@ and the M7/M8 seams it freezes), `0016` (the adoption relation this records),
 
 ## Validation
 
-Local gates at this head: frontend lint, typecheck, 1679 tests
+Local gates at this head: frontend lint, typecheck, 1681 tests
 across 70 files, build; `cargo fmt --all --check`; `cargo clippy
 --locked --workspace --all-targets --all-features -- -D warnings`; `cargo test
 --locked --workspace --all-targets` (1554 passed, 23 ignored); `python -B scripts/check_repo.py`; `git diff --check`; E2E typecheck.

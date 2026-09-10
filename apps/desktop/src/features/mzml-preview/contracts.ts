@@ -1776,8 +1776,14 @@ export function conversionJudgedAnyOutput(item: ConversionQueueItem): boolean {
   if (result.kind === "single") {
     return result.report.validation !== null;
   }
+  // A refused member counts. The judgement ran on it and did not pass it, which
+  // is a check having happened rather than one having been skipped -- and it is
+  // the case where a set carries no other evidence of one, because a refusal
+  // keeps no validation record and publishes nothing.
   return (
-    result.report.finalizedCount > 0 || result.report.validatedNotPublishedCount > 0
+    result.report.finalizedCount > 0 ||
+    result.report.validatedNotPublishedCount > 0 ||
+    result.report.rejectedCount > 0
   );
 }
 
