@@ -451,9 +451,9 @@ adoption result, no duplicate ids and no horizontal overflow at any of the four.
 Plus M6.8 10/10, M6.7 7/7 and M6.6 8/8 on the same head. Screenshots and console
 records inspected; console empty.
 
-Run against the bundle this head builds: `index-Bq8WFNDI.js`,
-SHA-256 prefix `b462536b0abd61af`, beside `index-Cq2IHovW.css`
-(`683071bfc1a0e39d`) and `index.html` (`b1ba5dfc886a728d`). The suite is
+Run against the bundle this head builds: `index-CCxQEKEk.js`,
+SHA-256 prefix `8b30e08177e511e6`, beside `index-Cq2IHovW.css`
+(`683071bfc1a0e39d`) and `index.html` (`9ca216f87341f8db`). The suite is
 headless, so it does not need an unlocked session — but it does need a port it
 can bind, and the one it names is now inside a Windows reserved range on this
 machine. The port is overridable for exactly that reason, the same way the
@@ -522,16 +522,16 @@ not about the code, and it is reported rather than re-aimed silently.
 
 **Complete, on the binary this head builds, and that binary is named rather than
 assumed.** `target/e2e/release/mscanvas-desktop.exe`, SHA-256
-`5f03f8c36be88ddd0f9cd483b28abe47d20b9578e3a233111f10e39b3683c73d`, 16,083,456
+`abf01f41bcb4373b693ee8e05748347012442608c9014570ba3a6fbedb96ff28`, 16,083,456
 bytes — the value the run recorded in its own identity entry, not one read
 beside it. WebView2 and msedgedriver 152.0.4191.66. Provider: ProteoWizard
 3.0.26013.47b13cf 64-bit, `msconvert.exe` SHA-256 prefix `9bb6f5d5033bb8ea`.
 Approved Thermo fixture SHA-256 `b3d97b38…2bd6dd7b`, recorded the same way.
 
-Seven earlier complete runs — `d9d3eb8404a6aca5…`, `942af64835219b0e…`,
+Eight earlier complete runs — `d9d3eb8404a6aca5…`, `942af64835219b0e…`,
 `60c208d2adcf81a6…`, `c89b3270a9f2c30c…`, `5342b711fd477523…`,
-`45f812e533740c2e…` and `84d2e6706a03a699…` — are what found the defects
-recorded below. Each was superseded by a repair that changed conversion result
+`45f812e533740c2e…`, `84d2e6706a03a699…` and `5f03f8c36be88ddd…` — are what
+found the defects recorded below. Each was superseded by a repair that changed conversion result
 handling or the surface, and the suites were taken again every time rather than
 carried forward. None of them is
 the evidence for this head: the repairs after them changed a phase identifier,
@@ -595,11 +595,11 @@ Nothing was weakened at any point: no guard relaxed, no `Cancel` substituted for
 an `Escape`, no focus scripted after cancellation, no security policy changed,
 and no browser result counted as native evidence.
 
-Evidence at this head: `D:/tmp/mscanvas-m69-final7/m69-native-MCFDgl/`, and
+Evidence at this head: `D:/tmp/mscanvas-m69-final8/m69-native-lpGjq0/`, and
 `regress/m66/`, `regress/m67/`, `regress/m68/` beside it. The earlier runs that
 found the defects are under `D:/tmp/mscanvas-m69-20260909/`,
 `D:/tmp/mscanvas-m69-final/`, `D:/tmp/mscanvas-m69-final2/`,
-`D:/tmp/mscanvas-m69-final3/` through `D:/tmp/mscanvas-m69-final6/`.
+`D:/tmp/mscanvas-m69-final3/` through `D:/tmp/mscanvas-m69-final7/`.
 
 ## Residuals
 
