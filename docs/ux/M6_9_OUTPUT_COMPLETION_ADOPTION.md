@@ -435,7 +435,7 @@ adoption result, no duplicate ids and no horizontal overflow at any of the four.
 Plus M6.8 10/10, M6.7 7/7 and M6.6 8/8 on the same head. Screenshots and console
 records inspected; console empty.
 
-Run at this head against the bundle this head builds: `index-BSI5y-Q1.js`,
+Run against the bundle this head builds: `index-BSI5y-Q1.js`,
 SHA-256 prefix `ae2178adc5a59a4e`, beside `index-Cq2IHovW.css`
 (`683071bfc1a0e39d`) and `index.html` (`40c1c3e382631134`). The suite is
 headless, so it does not need an unlocked session — but it does need a port it
@@ -506,15 +506,15 @@ not about the code, and it is reported rather than re-aimed silently.
 
 **Complete, on the binary this head builds, and that binary is named rather than
 assumed.** `target/e2e/release/mscanvas-desktop.exe`, SHA-256
-`45f812e533740c2e20d486842a0bfaebb4a97d5e926824433018faac278a63c7`, 16,083,456
+`84d2e6706a03a699ba463d69b567e0744a21511020ca411a4644209c502c11e7`, 16,083,456
 bytes — the value the run recorded in its own identity entry, not one read
 beside it. WebView2 and msedgedriver 152.0.4191.66. Provider: ProteoWizard
 3.0.26013.47b13cf 64-bit, `msconvert.exe` SHA-256 prefix `9bb6f5d5033bb8ea`.
 Approved Thermo fixture SHA-256 `b3d97b38…2bd6dd7b`, recorded the same way.
 
-Five earlier complete runs, at `d9d3eb8404a6aca5…`, `942af64835219b0e…`,
-`60c208d2adcf81a6…`, `c89b3270a9f2c30c…` and `5342b711fd477523…`, are what found
-the defects recorded below. None of them is
+Six earlier complete runs, at `d9d3eb8404a6aca5…`, `942af64835219b0e…`,
+`60c208d2adcf81a6…`, `c89b3270a9f2c30c…`, `5342b711fd477523…` and
+`45f812e533740c2e…`, are what found the defects recorded below. None of them is
 the evidence for this head: the repairs after them changed a phase identifier,
 several rendered sentences, the member states, the member counts, both of a
 stop's answers and the scope a refused set states, so every suite was taken
@@ -576,11 +576,12 @@ Nothing was weakened at any point: no guard relaxed, no `Cancel` substituted for
 an `Escape`, no focus scripted after cancellation, no security policy changed,
 and no browser result counted as native evidence.
 
-Evidence at this head: `D:/tmp/mscanvas-m69-final5/m69-native-QwwSfs/`, and
+Evidence at this head: `D:/tmp/mscanvas-m69-final6/m69-native-dPLC3l/`, and
 `regress/m66/`, `regress/m67/`, `regress/m68/` beside it. The earlier runs that
 found the defects are under `D:/tmp/mscanvas-m69-20260909/`,
 `D:/tmp/mscanvas-m69-final/`, `D:/tmp/mscanvas-m69-final2/`,
-`D:/tmp/mscanvas-m69-final3/` and `D:/tmp/mscanvas-m69-final4/`.
+`D:/tmp/mscanvas-m69-final3/`, `D:/tmp/mscanvas-m69-final4/` and
+`D:/tmp/mscanvas-m69-final5/`.
 
 ## Residuals
 
