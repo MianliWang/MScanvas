@@ -68,7 +68,7 @@ level, over one snapshot, aggregated one way.
 | Duplicate retention times | Preserved as separate result points in source order. Never merged, never summed together, never reordered |
 
 **A measured zero is not any other answer.** Per scan the result is exactly one
-of seven states, and the first of them carries a point count so that two
+of eight states, and the first of them carries a point count so that two
 different zeros stay different:
 
 | State | What it means |
@@ -79,6 +79,7 @@ different zeros stay different:
 | `NoUsableArrays` | The scan does not carry a paired m/z and intensity array of equal length — one absent, or the two disagreeing. A spectrum with **no intensity array at all** is a case this repository has already measured, and it is not an m/z-domain problem |
 | `Unreadable` | Both arrays are present and could not be decoded |
 | `Missing` | The run's index declares the scan and the reader could not obtain it at all |
+| `NonFiniteIntensity` | The window contains a point whose intensity is not finite. **Whether this state is produced, or such a point is excluded and the scan stays `Measured`, is XIC-S4** — the state exists so that either decision is representable without reopening this contract |
 | `Absent` | The run's index does not declare the scan. Reachable only where a caller names an index; an enumeration over the run never produces it |
 
 **Ordering is not a precondition, and the viewport's drawability rule is
@@ -107,8 +108,8 @@ are not an implementer's to guess:
 | --- | --- | --- |
 | **XIC-S1** | Whether a profile source's point sum is offered at all in the first scope, or withheld pending an integration semantics. PX.2 may compute one, labelled a point sum | **PX.4**, on PX.3's profile evidence. Blocks PX.6 |
 | **XIC-S2** | The unit posture where a source declares no m/z unit — reported as unreported, or the source refused for this query | **PX.1**, because it is a property of what a reader exposes. Blocks PX.3's oracle |
-| **XIC-S3** | The agreement criterion: what counts as matching the oracle, and in what arithmetic. The accumulation domain must be named — M5.4's pinned low-intensity fixture is five points of `1e-5`, where single and double precision differ materially | **PX.3**, fixed **with the oracle and before any candidate runs**. Without it §6's rule against more permissive thresholds has nothing to bite on |
-| **XIC-S4** | What a non-finite intensity **inside** the window means — a refusal for that scan, or a measurement that carries it | **PX.3**, before any candidate runs. Distinct from the drawability rule, which refuses on one anywhere in the scan |
+| **XIC-S3** | The agreement criterion: what counts as matching the oracle, and in what arithmetic. The accumulation domain must be named — M5.4's pinned low-intensity fixture is five points of `1e-5`, where single and double precision differ materially | **PX.3**, fixed with the oracle and **before PX.3's first scored run**. Derived from the fixture by construction and from §1's semantics, **never from observed candidate output** — PX.2 answers expressibility and produces no scored number, so nothing it emits may be used to set this. Without it §6's rule against more permissive thresholds has nothing to bite on |
+| **XIC-S4** | What a non-finite intensity **inside** the window means — a refusal for that scan, or a measurement that carries it | **PX.3**, before its first scored run, and on the same no-candidate-output rule as XIC-S3. Distinct from the drawability rule, which refuses on one anywhere in the scan |
 
 ## 2. Bounded candidate directions
 
@@ -170,7 +171,7 @@ The finite future matrix covers these subjects and no others:
 | 3 | Duplicate retention times | Two scans at one time stay two result points with their own sums, **in source order**. M5.4's fixture puts them at non-adjacent indices precisely so a reordering is as visible as a merge |
 | 4 | MS-level exclusion | An excluded scan is `ExcludedByMsLevel`, never a zero, and a scan declaring no level is `MsLevelUndeclared` |
 | 5 | Empty windows | `points_in_window: 0` with `sum: 0`, and no scan dropped from the result |
-| 6 | Representative inputs for the proposed domain | **MS1** acquisitions, one profile and one centroided |
+| 6 | Representative inputs for the proposed domain | **MS1** acquisitions, one profile and one centroided. PX.3 also **records observed wall time and peak memory** per candidate here — as observations attributed to their host and build, **never as thresholds** |
 | 7 | Malformed input | Truncated and invalid sources, a reversed window, a non-finite bound, and **a non-finite intensity inside the window** — the case **XIC-S4** must answer, which none of the inherited fixtures carries. **Exit code is never semantic evidence** |
 | 8 | Reproducibility | Repeats of one invocation on one snapshot agree byte for byte |
 | 9 | **Scan-identity reconciliation** | Index and id survive the MS-level operand — M5.4 measured a build that **renumbered** them under a filter — and an omitted scan stays distinguishable from one the run does not have. §1's identity, order, `Missing` and `Absent` all rest on this, so the matrix cannot decide without it |
@@ -216,8 +217,11 @@ runtime, and any new persistence model. Also unchanged and unnamed elsewhere
 here: a backend is invoked through a **typed argv array, never a shell string**;
 a rendered trace consumes the **shared semantic plot/figure specification**; and
 a dependency needs approval **with a rationale**, not approval alone.
-**Performance budgets are not invented here.** Each is justified in the slice
-that measures it — and the worked example is a warning rather than a precedent:
+**Performance budgets are not invented here, and the question is not left
+unowned either**: PX.3 records the observations on the representative inputs and
+PX.4 judges practicality against them, so no slice inherits an unmeasured
+threshold. Each budget is justified in the slice that measures it — and the
+worked example is a warning rather than a precedent:
 the selection timings sometimes reached for are **M0's**, recorded there as
 advisory and never as thresholds. They are not M5's, and they are not an XIC
 budget.
@@ -292,7 +296,7 @@ extended here. **A route lock is none of them.**
 
 | Outcome | What it establishes | What it permits next | What it does not do |
 | --- | --- | --- | --- |
-| `XIC_PROVIDER_ADMITTED` | A candidate has **implementable semantics and evidence for the actual source domain** — not merely a promising API or a successful compilation | PX.5 may be *authorized*; PX.6 only after PX.5 is published and separately authorized | Does not implement anything, and does not itself authorize PX.5 |
+| `XIC_PROVIDER_ADMITTED` | A candidate has **implementable semantics and evidence for the actual source domain** — not merely a promising API or a successful compilation. **It must also be practical at the scale PX.3 observed**, judged against those observations rather than a number invented earlier; a candidate that is numerically correct and impractical is not admitted, and routes to `EVIDENCE_BLOCKED` or `ARCHITECTURE_DECISION_REQUIRED` instead | PX.5 may be *authorized*; PX.6 only after PX.5 is published and separately authorized | Does not implement anything, and does not itself authorize PX.5 |
 | `XIC_PROVIDER_REFUSED` | No candidate in the matrix serves the §1 query at the required fidelity, with the located reason | **M7 proceeds under an explicit recorded handoff.** XIC stays unavailable with a stated reason | Does not start a replacement-provider search, and does not revoke `M6 COMPLETE` |
 | `EVIDENCE_BLOCKED` | The question could not be decided on obtainable evidence — typically a fixture permission or an absent representative acquisition, named exactly, with its owner | **M7 proceeds.** Re-entry is a new scope decision naming the missing input | No PX.5, no PX.6, no unattended acquisition, no relaxed threshold |
 | `ARCHITECTURE_DECISION_REQUIRED` | A candidate is scientifically viable but its runtime placement is an architecture question this interlude may not settle alone | A named architecture decision in its own record. **M7 proceeds** meanwhile | No PX.5 and no PX.6. **Terminal, and it ends the interlude like the other two non-admission outcomes**: the architecture record may authorize a fresh slice, and it does not resume PX.5, which takes `XIC_PROVIDER_ADMITTED` and nothing else |
