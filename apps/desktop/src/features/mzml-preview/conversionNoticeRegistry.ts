@@ -115,6 +115,11 @@ const NOTICE_ORDER: readonly ConversionUnavailableReason[] = [
   "plan-failed",
   "plan-settings-unknown",
   "plan-selection-unavailable",
+  // Beside its twin, because it refuses the same action for a different reason.
+  // A reason absent from this list renders no sentence at all -- this array is
+  // a list rather than a total mapping, so nothing made its omission a compile
+  // error, and the disabled `Convert` was left with no explanation.
+  "plan-selection-not-evidenced",
   "queue-not-retryable",
   "nothing-to-retry",
 ];
