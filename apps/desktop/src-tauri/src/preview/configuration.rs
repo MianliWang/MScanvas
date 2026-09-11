@@ -90,8 +90,9 @@ pub(crate) struct CatalogRow {
 /// sentences and only one of them is a refusal a reader can act on by changing
 /// installation. A missing catalog is not an unavailable row: it says this
 /// binding's grammar has not been read, which is an obligation rather than a
-/// verdict. A row no converted source is evidenced for is not one either: the
-/// binding is fine and the measurement is the thing that is missing.
+/// verdict. A row no converted source is evidenced for is not one either: what
+/// is missing is a measurement, and this answer says nothing about the grammar
+/// in either direction, because it is decided before the grammar is asked.
 ///
 /// There is no arm for "the catalog has no such row", and there never was. A
 /// catalog is always every row of `ConversionIntent::ADMITTED`, and the only
