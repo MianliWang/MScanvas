@@ -183,8 +183,8 @@ BinaryCompressionType`, `name: ArrayType`, `params: Option<Box<Vec<Param>>>` and
 **without rounding conversion**. That is the property M5.4's measured build
 lacked. **documented**, not yet tested.
 
-**Two declaration-versus-default losses, and both are recoverable.** This is the
-part a name in a shortlist cannot tell you:
+**Two declaration-versus-default losses, and they do not have the same answer.**
+This is the part a name in a shortlist cannot tell you:
 
 - `Unit::Unknown` is simultaneously the sentinel for an unrecognized unit and the
   `Default`, so `unit` alone cannot separate *the file declared none* from *the
@@ -251,16 +251,19 @@ ADR 0046 requires, not on candidate convenience:
    role. An m/z array missing a `unitAccession` is still declared an m/z array;
    the absent attribute is a labelling fact, not an ambiguous quantity.
    **source-inspected.**
-2. **The product already has a shipped answer for this exact situation, and it
-   is not refusal.** `mscanvas-plot-spec`'s `UnitState` is
-   `{ Known { unit }, Unreported, Dimensionless }`, and the `Unreported` variant
-   is documented *"The file reported no unit. Nothing may be displayed as one."*
-   That is the case at hand, already modelled and already served. Separately, the
-   **preview** crate has its own single-variant `UnitState::NotEmitted`, because
-   the provider text it parses carries no units at all — so refusing
-   unit-undeclared m/z sources would refuse sources the viewer displays today
-   while itself reporting every value unit-unreported. **Two distinct types share
-   the name**; the decision rests on the plot-spec one. **source-inspected.**
+2. **The honest state already exists, even though the decision does not.**
+   `mscanvas-plot-spec`'s `UnitState` is `{ Known { unit }, Unreported,
+   Dimensionless }`, and `Unreported` is documented *"The file reported no unit.
+   Nothing may be displayed as one."* So the answer this decision reaches is
+   **representable without inventing a state**. **It is not an inherited
+   decision**, and saying so matters: the preview crate's own single-variant
+   `UnitState::NotEmitted` means the formatter emitted no unit, and the scanner
+   retains `unitAccession` only on the retention-time path. **The shipped viewer
+   therefore maps a source that declares an m/z unit and one that omits it to the
+   same `Unreported`, because it never reads that declaration either way.** The
+   existing behaviour supplies a representation, not a precedent. **Two distinct
+   types share the name `UnitState`**; this rests on the plot-spec one.
+   **source-inspected.**
 3. **The existing model already separates absence from a value elsewhere.**
    `RetentionTimeUnitMarker` is `{Second, Minute, Unrecognized, NotEmitted}`, so
    this codebase already treats "no unit emitted" as a first-class recorded fact
@@ -273,11 +276,17 @@ retention time or intensity, remain refusals. Uniform absence on the retention
 time and intensity axes keeps its separate stated posture.
 
 **Effect on viability and on PX.3.** A candidate must be able to report that the
-unit was *not declared* rather than assert one. That is satisfiable in all three
-directions only through the raw parameter lists — for B this is the adapter named
-above; for A the cvParams survive on the array. PX.3 scores subject 7's
-missing-m/z-unit fixture against **preserved-as-unreported**, which is now the
-fixed expected result rather than a branch.
+unit was *not declared* rather than assert one. For **A** the cvParams survive on
+the array, so the distinction is available. For **B** it is exactly the blocker
+named above and is **unresolved**. PX.3 scores subject 7's missing-m/z-unit
+fixture against **preserved-as-unreported**, which is now the fixed expected
+result rather than a branch.
+
+**And it is new work for this product, which is worth stating plainly.** The
+scanner captures `unitAccession` — but only on the retention-time path, where it
+feeds `RetentionTimeUnitMarker`. **No m/z-array unit declaration is retained
+anywhere**, so implementing this policy means reading a declaration the product
+does not read today. That is PX.5's, not something this audit claims exists.
 
 This is an audit-based semantics decision. **No fidelity was measured.**
 
