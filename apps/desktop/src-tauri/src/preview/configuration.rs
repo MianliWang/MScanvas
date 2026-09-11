@@ -20,7 +20,13 @@ use super::dto::{
     ConversionCatalogRowDto, ConversionConfigurationDto, ConversionIntentDto, PreviewErrorDto,
 };
 
-/// Whether one admitted combination can run on the bound installation.
+/// Whether one admitted combination is offered, and where it is not, why.
+///
+/// Two questions rather than one since CNV-D2: whether the product's evidence
+/// for the row covers a source this workflow converts, and whether the bound
+/// installation can run it. The first is asked first, and the variants below
+/// keep the answers apart because the remedies differ -- one is a different
+/// ProteoWizard release, and the other is a measurement no release supplies.
 ///
 /// Decision 7: availability is a property of a *row*, never of an axis value.
 /// M6.3 established that individual capability support does not imply arbitrary
@@ -80,10 +86,12 @@ pub(crate) struct CatalogRow {
 
 /// What the bound build's catalog says about one admitted combination.
 ///
-/// Three answers rather than a boolean, because the three lead to three
-/// different sentences and only one of them is a refusal a reader can act on.
-/// A missing catalog is not an unavailable row: it says this binding's grammar
-/// has not been read, which is an obligation rather than a verdict.
+/// Four answers rather than a boolean, because they lead to four different
+/// sentences and only one of them is a refusal a reader can act on by changing
+/// installation. A missing catalog is not an unavailable row: it says this
+/// binding's grammar has not been read, which is an obligation rather than a
+/// verdict. A row no converted source is evidenced for is not one either: the
+/// binding is fine and the measurement is the thing that is missing.
 ///
 /// There is no fourth arm for "the catalog has no such row". A catalog is
 /// always every row of `ConversionIntent::ADMITTED`, and the only way to obtain
@@ -113,27 +121,34 @@ pub(crate) enum RowAdmission {
     Available,
 }
 
-/// Every admitted combination, judged against one installation's grammar.
+/// Every admitted combination, judged against this product's source evidence
+/// and then against one installation's grammar.
 ///
 /// Always all nine rows, in the order `ConversionIntent::ADMITTED` states them.
 /// A catalog that omitted its unavailable rows could not answer the question
 /// Decision 7's one-axis edit asks -- *does a row for this combination exist at
-/// all, and if so is it available here?* -- and the two answers are different
-/// sentences: one is about the product's evidence, the other about this build.
+/// all, and if so is it available here?* -- and the answers are different
+/// sentences: whether the product measured the combination at all, whether the
+/// measurement covers the kinds of acquisition this workflow converts, and
+/// whether this build can express it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConversionCatalog {
     rows: Vec<CatalogRow>,
 }
 
 impl ConversionCatalog {
-    /// Judges every admitted row against the bound build's msconvert grammar.
+    /// Judges every admitted row, on the two questions
+    /// [`Self::availability_of`] asks in the order it asks them: whether the
+    /// product's evidence for the row covers a source this workflow converts,
+    /// and then whether the bound build's msconvert grammar can express it.
     ///
-    /// Asked row by row, through `require_conversion_intent`, which reads the
-    /// same segments the intent's own argv is built from. Nothing here asks
-    /// whether an *axis value* is supported, because no such question has an
-    /// answer: `--64` being declared says nothing about whether the row that
-    /// uses it is one the evidence admits, and the peak-picking grammar being
-    /// absent says nothing about zlib.
+    /// The grammar question is asked row by row, through
+    /// `require_conversion_intent`, which reads the same segments the intent's
+    /// own argv is built from. Nothing here asks whether an *axis value* is
+    /// supported, because no such question has an answer: `--64` being declared
+    /// says nothing about whether the row that uses it is one the evidence
+    /// admits, and the peak-picking grammar being absent says nothing about
+    /// zlib.
     pub(crate) fn of(capabilities: &InstalledHelpCapabilities) -> Self {
         Self {
             rows: ConversionIntent::ADMITTED
@@ -188,7 +203,8 @@ pub(crate) enum ConversionConfiguration {
     /// never because preview became unusable, which is a different judgement
     /// about a build that is still there.
     UnavailableForBinding,
-    /// An installed binding whose grammar has not been read yet.
+    /// An installed binding whose grammar has not been read yet, so no row can
+    /// be judged against it.
     ///
     /// An obligation, not a resting state. A session left here has a first read
     /// still owed, and the stimulus that re-issues it is named in Decision 4b
@@ -210,8 +226,8 @@ pub(crate) enum ConversionConfiguration {
 /// a build that is not there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ReadAnswer {
-    /// The read's own discovery was still `Available` and its grammar yields a
-    /// catalog.
+    /// The read's own discovery was still `Available` and its grammar, judged
+    /// beside the product's source evidence, yields a catalog.
     Cataloged(ConversionCatalog),
     /// The read's own discovery was still `Available` and that grammar cannot
     /// be used: the bound help will not parse, or `require_conversion` refuses.

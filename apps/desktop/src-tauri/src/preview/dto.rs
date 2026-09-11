@@ -2427,10 +2427,12 @@ pub fn dataset_not_convertible() -> PreviewErrorDto {
 /// cover answers with.
 ///
 /// **A different fact from every refusal beside it, and the sentence says so.**
-/// The row converts, the installation can express the request, and the
-/// combination is one the measured vocabulary holds. What is missing is evidence
-/// that the measurement behind it is about *this kind of acquisition* — which
-/// for peak picking it is not, because the picker is chosen by the reader.
+/// The row converts and the combination is one the measured vocabulary holds.
+/// What is missing is evidence that the measurement behind it is about *this
+/// kind of acquisition* — which for peak picking it is not, because the picker
+/// is chosen by the reader. It says nothing about the installation in either
+/// direction: applicability is decided before the grammar is consulted, so a
+/// build that also could not express the row still answers with this.
 ///
 /// One sentence about the combination, never about an axis value: telling a
 /// reader that 64-bit intensity or zlib is unsupported here would be three false
@@ -3385,7 +3387,11 @@ pub struct ConversionIntentDto {
     pub compression: String,
 }
 
-/// One row of the admitted table, and whether this installation can run it.
+/// One row of the admitted table, and whether the product offers it here.
+///
+/// Two questions since CNV-D2, and `availability` below says which one refused:
+/// whether the row's evidence covers a source this workflow converts, and
+/// whether this installation can run it.
 ///
 /// Availability belongs to the row. There is deliberately no per-axis-value
 /// availability anywhere in this contract: a build lacking only the

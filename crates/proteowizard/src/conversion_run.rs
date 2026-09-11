@@ -1094,6 +1094,10 @@ pub struct ConversionPlan {
 impl ConversionPlan {
     /// Plans one mzML conversion of `source` into `destination_root`.
     ///
+    /// Refused first, before anything is derived or inspected, where the
+    /// intent's evidence was not measured on this source's family — see
+    /// [`ConversionIntent::evidence_covers_source`](crate::ConversionIntent::evidence_covers_source).
+    ///
     /// The output name is derived from the source, never supplied: the stem is
     /// preserved and the extension always comes from the format. mzML is the
     /// only format this constructor can express, so no caller can select a
