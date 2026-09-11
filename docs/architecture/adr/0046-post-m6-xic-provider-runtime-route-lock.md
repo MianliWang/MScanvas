@@ -250,7 +250,9 @@ and nothing here revises the feature contract.
 none of it is designed or reopened here. **The one placement question this route
 does own is XIC-D5** — where the XIC is drawn and against which value axis —
 because it is a property of the quantity rather than of the shell, and ADR 0037
-requires it answered before the runtime it governs renders anything. **What was accepted of v5.11 is a
+requires it answered before the runtime it governs renders anything.
+
+**What was accepted of v5.11 is a
 destination/conflict organization inside the existing conversion surface** — the
 prototype explicitly does **not** authorize its shell, its simulated capabilities
 or its style overrides, and nothing in this record promotes it to an approved
