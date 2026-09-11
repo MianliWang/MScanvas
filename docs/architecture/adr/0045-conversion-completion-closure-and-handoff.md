@@ -29,16 +29,28 @@ retold.
 
 ## Baselines this audit was taken on
 
-**Two, and the second is why the verdict moved.** The matrix was first decided on
-`P`. The repair criterion 2 was blocked on was then published as `R`, and every
-row this record re-decided was re-decided on `R`.
+**Three, and each verdict names the one it rests on.** The matrix was first
+decided on `P`. The repair criterion 2 was blocked on was published as `R`, and
+criterion 2, condition A and every other re-decided row rest on `R`. **Condition
+B rests on `S`**, and cannot rest on `R`: proving the fourth of the repair's
+sentences is what established that it did not render, so the evidence and its
+repair are both later than `R`.
 
 | Fact | Value |
 | --- | --- |
-| Re-decision baseline `R` | `be247b4697de1cff493164ef97c08c5117e092b0` — the true merge of PR #107 |
-| `P` is an ancestor of `R` | yes |
-| Between them | one repair branch, two commits, published through a protected true merge with exact-head CI green and natural-main CI green |
+| Repair baseline `R` | `be247b4697de1cff493164ef97c08c5117e092b0` — the true merge of PR #107 |
+| Condition B baseline `S` | `2f520a04a4ae8c9c0a0977d5768b74889245127a` — the true merge of PR #108 |
+| `P` is an ancestor of `R`, and `R` of `S` | yes |
+| `P` → `R` | one repair branch, two commits |
+| `R` → `S` | one branch, two commits: the three-target rendered evidence, and the one-line `NOTICE_ORDER` repair that evidence forced |
+| Both published | protected true merge, exact-head CI green, natural-main CI green |
 | What `R` changed | admission gained a source dimension; nothing else. No dependency manifest moved, and no process, cancellation, native-dialog, filesystem-identity or provider-argv path was touched — see [the repair record](../../ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md) |
+| What `S` changed | one rendered spec and one line of `NOTICE_ORDER`. No admission, no plan, no queue and no dependency |
+
+**Condition B on `R` alone would have been `NOT PROVED`**, and this record says
+so rather than back-dating the evidence. It is stated here because a reader
+reconstructing the audit from `R` would otherwise find a `Convert` control that
+is disabled and silent, and be unable to reproduce the verdict.
 
 | Fact | Value |
 | --- | --- |
@@ -102,7 +114,7 @@ restated here.
 | | Condition | Verdict | Basis |
 | --- | --- | --- | --- |
 | **A** | No unimplemented capability described as implemented, and no delivered one described as missing | **PASS on `R`** (`NOT PROVED` on `P`) | The blocking fact is gone: the centroiding setting is no longer offered on families the evidence does not reach, and the documents say which refusal applies. `R` qualified `docs/product/FEATURE_CATALOG.md`'s nine-combination passage and its CNV-005 row; this closure additionally corrected `README.md`, which still described **two** refusals and an unqualified nine. Re-audited across `README.md`, `ROADMAP.md`, `BOOTSTRAP_STATUS.md`, `PROJECT_PROPOSAL.md`, `docs/product/FEATURE_CATALOG.md`, `docs/product/PRIMARY_WORKFLOWS.md` and the accepted conversion ADRs. Two passages state the admitted table without qualifying it by source family — `FEATURE_CATALOG.md`'s "nine combinations, each admitted by a named M6.2 measurement" and its CNV-005 sentence. Both now carry the source qualification rather than merely being true as written. `docs/architecture/ARTIFACT_MODEL.md` describes Project/Artifact/Run/lineage as a **design model**, not as shipped state, and is read as such. `PROJECT_PROPOSAL.md` is read the same way — it states intended scope, including centroid presets that are `EVIDENCE_REQUIRED`, and claims nothing about what ships |
-| **B** | Inherited interaction, accessibility and responsive obligations at all three targets | **PASS — partly on reused evidence, partly on new** | Carried from the slices that shipped each control, at their own rendered validation. Two later changes touched an M6 control, and neither is waved through. M6.10 rewrote the centroiding disclosure in `ConversionSettings.tsx`: a string constant with no layout, state or role effect, covered by a rendered assertion added in the same commit. **`R` added four new user-visible sentences across two components**, not one, and each is accounted for below rather than folded into "a new notice variant". **This condition was not relaxed to accommodate the repair's reduced QA scope**: that scope covers the wider suite and the native campaign, not this condition |
+| **B** | Inherited interaction, accessibility and responsive obligations at all three targets | **PASS on `S`** (`NOT PROVED` on `R`) | Carried from the slices that shipped each control, at their own rendered validation. Two later changes touched an M6 control, and neither is waved through. M6.10 rewrote the centroiding disclosure in `ConversionSettings.tsx`: a string constant with no layout, state or role effect, covered by a rendered assertion added in the same commit. **`R` added four new user-visible sentences across two components**, not one, and each is accounted for below rather than folded into "a new notice variant". **This condition was not relaxed to accommodate the repair's reduced QA scope**: that scope covers the wider suite and the native campaign, not this condition |
 
 **Condition B, sentence by sentence.** The repair's four new sentences live in
 two components, and three of them speak only when the *selected* row is withheld
@@ -140,7 +152,7 @@ unreachable in `CONVERSION_MESSAGES` — which *is* a total `Record` and therefo
 compiled. This is recorded rather than smoothed over: condition B's own
 measurement is what found it, which is the argument for taking the measurement
 rather than reasoning that an unreachable sentence needs none.
-| **C** | The local gate set passes unchanged | **PASS on `R`, and on this closure candidate** | Re-run in full on the repair candidate and again on the documentation head of this branch. The gate set is the one `AGENTS.md` names under **Required checks** — `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, `python scripts/check_repo.py`. All pass on `P` with lockfiles unchanged, recorded in `BOOTSTRAP_STATUS.md`'s M6.11 entry. **No gate was redefined and none was dropped**; the browser and native suites are `qa:*` rendered-verification scripts rather than members of that set, and the two that fail are [inventoried below](#environment-and-qa-residuals-inventoried-rather-than-hidden) as failing |
+| **C** | The local gate set passes unchanged | **PASS on `R`, on `S`, and on this closure candidate** | Re-run in full on the repair candidate and again on the documentation head of this branch. The gate set is the one `AGENTS.md` names under **Required checks** — `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, `python scripts/check_repo.py`. All pass on `P` with lockfiles unchanged, recorded in `BOOTSTRAP_STATUS.md`'s M6.11 entry. **No gate was redefined and none was dropped**; the browser and native suites are `qa:*` rendered-verification scripts rather than members of that set, and the two that fail are [inventoried below](#environment-and-qa-residuals-inventoried-rather-than-hidden) as failing |
 
 ## The finding that defeated criterion 2, and the repair that closed it
 

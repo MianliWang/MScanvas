@@ -8131,7 +8131,8 @@ what condition B asks of an M6 control. The last three were published separately
 as a test-only change so this closure's diff stays documentation-only — and
 asserting the fourth found that it did not render at all: the reason was missing
 from `NOTICE_ORDER`, so the disabled `Convert` was silent. Repaired with that
-evidence. **No four-viewport sweep was run,
+evidence. **Condition B therefore rests on that later baseline rather than on the
+repair's own**, and the audit names both rather than back-dating the evidence. **No four-viewport sweep was run,
 and the M6.6–M6.9 native campaign was NOT RE-RUN** — recorded as not re-run
 rather than as passed, waived or satisfied by browser-mocked evidence, with the
 production UI/integration slice that next touches this path as its owner. No
