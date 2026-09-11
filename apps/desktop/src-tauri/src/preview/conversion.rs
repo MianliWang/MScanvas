@@ -1282,24 +1282,15 @@ pub(super) fn planned_output_name(file_name: &str, intent: ConversionIntent) -> 
         .map(|name| name.to_string_lossy().into_owned())
 }
 
-/// The conversion boundary's name for a family the session accepted.
-///
-/// A total function over the session's families, so a family added to the
-/// session without a conversion boundary that knows it is a compile error
-/// rather than a run-time surprise. There is deliberately no fallback: a family
-/// the crate cannot name is a family it cannot convert, and guessing one would
-/// admit an acquisition under another family's rules.
-///
-/// Production since M3.9: the queue's provider-evidence gate asks it for every
-/// distinct family a queue holds, before the picker and again before any item
-/// stages.
 /// Every dataset family the roster can hold.
 ///
-/// Listed once so the derivations below can iterate it, and kept honest by
-/// [`dataset_source_kind_index`]: a variant added to the enum forces an arm
-/// there, and the test that every index is produced exactly once by this array
-/// then fails until the variant is listed here too. Nothing infers a family
-/// from a name, a path or an extension.
+/// Listed once so the derivations below can iterate it. A variant added to
+/// `DatasetSourceKind` forces an arm in [`dataset_source_kind_index`], which is
+/// the *prompt* to add it here -- not a proof that it was added, because
+/// nothing in Rust can enumerate an enum's variants without a derive macro and
+/// none was added for this. A family missing from this array is refused rather
+/// than admitted, so the residual fails closed. Nothing infers a family from a
+/// name, a path or an extension.
 pub(super) const ALL_DATASET_SOURCE_KINDS: [DatasetSourceKind; 4] = [
     DatasetSourceKind::Mzml,
     DatasetSourceKind::ThermoRaw,
@@ -1307,11 +1298,14 @@ pub(super) const ALL_DATASET_SOURCE_KINDS: [DatasetSourceKind; 4] = [
     DatasetSourceKind::SciexWiff,
 ];
 
-/// A distinct position per family, so the list above cannot go stale silently.
+/// A distinct position per family, so the list above and this function cannot
+/// disagree.
 ///
-/// Test-only, because keeping the list honest is what it is for: a variant added
-/// to the enum forces an arm here, and the exhaustiveness test then fails until
-/// the array carries it too. Production reads the list rather than this.
+/// Test-only. A variant added to the enum forces an arm here, which is the
+/// prompt to list it above; the test that reads this catches the array
+/// disagreeing with it -- a duplicate, a stale index, or an index naming a
+/// different family -- and cannot catch a family absent from both. Production
+/// reads the list rather than this.
 #[cfg(test)]
 pub(super) const fn dataset_source_kind_index(kind: DatasetSourceKind) -> usize {
     match kind {
@@ -1335,6 +1329,18 @@ pub(super) fn convertible_source_kinds() -> impl Iterator<Item = ConversionSourc
         .map(conversion_source_kind)
 }
 
+/// The conversion boundary's name for a family the session accepted.
+///
+/// A total function over the session's families, so a family added to the
+/// session without a conversion boundary that knows it is a compile error
+/// rather than a run-time surprise. There is deliberately no fallback: a family
+/// the crate cannot name is a family it cannot convert, and guessing one would
+/// admit an acquisition under another family's rules.
+///
+/// Production since M3.9: the queue's provider-evidence gate asks it for every
+/// distinct family a queue holds, before the picker and again before any item
+/// stages. Since CNV-D2 the `BEGIN` preflight and [`convertible_source_kinds`]
+/// ask it too, for the same reason: one name for one family, minted once.
 pub(super) const fn conversion_source_kind(kind: DatasetSourceKind) -> ConversionSourceKind {
     match kind {
         DatasetSourceKind::Mzml => ConversionSourceKind::MzmlFile,
@@ -1432,12 +1438,6 @@ pub(super) fn plan_conversion(
 /// Matched by name rather than through a catch-all for the same reason a
 /// refused admission is: a plan error added later has to be answered here.
 fn not_plannable(error: ConversionPlanError) -> PreviewErrorDto {
-    // Answered before the shared sentence, because it is not that sentence. The
-    // name could be derived and the folder could be used; what could not be
-    // established is that the settings' evidence is about this family.
-    if matches!(error, ConversionPlanError::IntentNotEvidencedForSource) {
-        return super::dto::conversion_settings_not_evidenced_for_source();
-    }
     let message = match error {
         // The last one is answered with the others because it is the same
         // sentence about a different cause: for a family whose backend names
@@ -1455,8 +1455,11 @@ fn not_plannable(error: ConversionPlanError) -> PreviewErrorDto {
         | ConversionPlanError::DestinationRootNotADirectory => {
             "MSCanvas could not use that destination folder."
         }
-        // Answered above, and kept as a compiled arm so a later reader sees that
-        // it was not forgotten.
+        // Its own sentence rather than the shared one, because it is not the
+        // shared one: the name could be derived and the folder could be used,
+        // and what could not be established is that the settings' evidence is
+        // about this family. Returned from inside the `match` so there is
+        // exactly one place this error is answered.
         ConversionPlanError::IntentNotEvidencedForSource => {
             return super::dto::conversion_settings_not_evidenced_for_source();
         }

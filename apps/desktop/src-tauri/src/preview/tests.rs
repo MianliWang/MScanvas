@@ -30447,15 +30447,17 @@ fn recording_an_adoption_moves_the_sequence_a_reader_installs_by() {
     );
 }
 
-/// The family list the source-applicability derivation iterates names every
-/// family, exactly once.
+/// The family list the source-applicability derivation iterates agrees with its
+/// index function, and repeats nobody.
 ///
-/// Without this the list could go stale silently: a variant added to
-/// `DatasetSourceKind` forces an arm in `dataset_source_kind_index`, and this
-/// then fails until the array carries it too. A missing family would be a family
-/// the catalog never asked the applicability rule about.
+/// **Not an exhaustiveness proof, and not named as one.** `seen` is sized from
+/// the array under test, so a family absent from the array is absent from this
+/// loop too. What it catches is the array disagreeing with
+/// `dataset_source_kind_index`. The prompt to list a new variant is the compile
+/// error that function raises; a family missing from both is refused rather
+/// than admitted, so the residual fails closed.
 #[test]
-fn the_dataset_family_list_names_every_family_exactly_once() {
+fn the_dataset_family_list_and_its_index_agree() {
     let mut seen = vec![false; ALL_DATASET_SOURCE_KINDS.len()];
     for kind in ALL_DATASET_SOURCE_KINDS {
         let index = dataset_source_kind_index(kind);
@@ -30464,11 +30466,15 @@ fn the_dataset_family_list_names_every_family_exactly_once() {
             "{kind:?} has index {index}, past the end of the family list"
         );
         assert!(!seen[index], "two families share index {index}");
+        assert_eq!(
+            ALL_DATASET_SOURCE_KINDS[index], kind,
+            "index {index} names a different family than the one at it"
+        );
         seen[index] = true;
     }
     assert!(
         seen.iter().all(|listed| *listed),
-        "the family list does not name every family: {seen:?}"
+        "the family list does not name every family it indexes: {seen:?}"
     );
 }
 
@@ -30509,7 +30515,9 @@ fn no_centroiding_combination_is_evidenced_for_a_family_the_workflow_converts() 
     use mscanvas_proteowizard::{ConversionIntent, ProcessingIntent};
 
     for admitted in ConversionIntent::ADMITTED {
-        if admitted.intent().processing() != ProcessingIntent::UnscopedDefaultCentroiding {
+        // Every processing that asks for a picker, not one variant by name, so
+        // a scoped MS-level preset added later is covered without an edit here.
+        if admitted.intent().processing() == ProcessingIntent::NoAdditionalCentroiding {
             continue;
         }
         for kind in convertible_source_kinds() {
@@ -30529,7 +30537,8 @@ fn every_writer_side_combination_is_still_evidenced_for_the_families_converted()
     use mscanvas_proteowizard::{ConversionIntent, ProcessingIntent};
 
     for admitted in ConversionIntent::ADMITTED {
-        if admitted.intent().processing() == ProcessingIntent::UnscopedDefaultCentroiding {
+        // The writer-side rows are the ones that ask for no picker at all.
+        if admitted.intent().processing() != ProcessingIntent::NoAdditionalCentroiding {
             continue;
         }
         for kind in convertible_source_kinds() {
@@ -30539,5 +30548,233 @@ fn every_writer_side_combination_is_still_evidenced_for_the_families_converted()
                 admitted.intent()
             );
         }
+    }
+}
+
+/// The centroiding combination this repair withholds from the vendor workflow.
+fn centroiding_intent() -> ConversionIntent {
+    ConversionIntent::admitted(
+        OutputFormat::MzMl,
+        ProcessingIntent::UnscopedDefaultCentroiding,
+        SpectrumPopulation::All,
+        NumericPrecision::Mz64Intensity64,
+        CompressionIntent::Zlib,
+    )
+    .expect("the centroiding combination is admitted")
+}
+
+/// `BEGIN` refuses a vendor acquisition under an intent measured only on mzML,
+/// and refuses it before anything is committed.
+///
+/// **Two assertions that are not the returned error, and both are load-bearing.**
+/// The slot is still idle, so nothing was reserved and no picker can be claimed
+/// against this request. And the backend was never resolved: `prove_begin` is
+/// what resolves it, and it runs after the plan pass this check sits in, so an
+/// unchanged resolution count places the refusal ahead of the receipt proof, the
+/// workspace mutation gate and `ConversionQueue::new`.
+///
+/// Deliberately *not* asserted here: an empty destination directory and a zero
+/// provider launch count. `BEGIN` carries no destination and launches nothing
+/// under any ordering, so both would hold with this check moved to the last line
+/// of `begin_conversion_queue` -- which is the same vacuity the crate-side
+/// ordering test was rewritten to avoid.
+#[test]
+fn begin_refuses_a_vendor_queue_under_an_intent_measured_only_on_mzml() {
+    let fixture = TestFile::new("begin-not-evidenced-for-source");
+    let provider = ConvertingProvider::faithful();
+    let bindings = provider.bindings();
+    let service = PreviewService::new(Box::new(provider));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+    let document = current_document(&service);
+    let receipt = current_receipt(&service);
+    let resolved_before = bindings.load(Ordering::SeqCst);
+
+    let answered = service.begin_conversion_queue(
+        &begin_request(
+            &[handle],
+            centroiding_intent(),
+            ConversionConflictPolicyDto::Fail,
+            receipt,
+        ),
+        document,
+    );
+
+    assert_eq!(
+        begin_refusal(&answered).kind,
+        "conversion_settings_not_evidenced_for_source",
+        "the entry point named the wrong refusal"
+    );
+    assert!(
+        matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Idle
+        ),
+        "a refused BEGIN left a reservation behind"
+    );
+    assert_eq!(
+        bindings.load(Ordering::SeqCst),
+        resolved_before,
+        "BEGIN resolved the backend before refusing, so the refusal is not free"
+    );
+}
+
+/// The accepted twin resolves the backend, which is what makes the assertion
+/// above mean something.
+///
+/// Without this, an unchanged resolution count could equally mean `BEGIN` never
+/// resolves the backend at all, and the ordering proof would be vacuous.
+#[test]
+fn an_accepted_begin_does_resolve_the_backend() {
+    let fixture = TestFile::new("begin-resolves-the-backend");
+    let provider = ConvertingProvider::faithful();
+    let bindings = provider.bindings();
+    let service = PreviewService::new(Box::new(provider));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+    let document = current_document(&service);
+    let receipt = current_receipt(&service);
+    let resolved_before = bindings.load(Ordering::SeqCst);
+
+    let answered = service.begin_conversion_queue(
+        &begin_request(
+            &[handle],
+            ConversionIntent::SHIPPED,
+            ConversionConflictPolicyDto::Fail,
+            receipt,
+        ),
+        document,
+    );
+
+    assert!(
+        matches!(answered.outcome, ConversionBeginOutcomeDto::Reserved { .. }),
+        "the shipped posture stopped reserving a vendor queue: {:?}",
+        answered.outcome
+    );
+    assert!(
+        bindings.load(Ordering::SeqCst) > resolved_before,
+        "an accepted BEGIN did not resolve the backend, so the refusal test proves nothing"
+    );
+}
+
+/// The same acquisition under the shipped posture still reserves a queue, so the
+/// refusal above is about the intent's evidence rather than about the family.
+#[test]
+fn begin_still_reserves_a_vendor_queue_under_an_intent_whose_evidence_covers_it() {
+    let fixture = TestFile::new("begin-evidenced-for-source");
+    let provider = ConvertingProvider::faithful();
+    let service = PreviewService::new(Box::new(provider));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+    let document = current_document(&service);
+    let receipt = current_receipt(&service);
+
+    let answered = service.begin_conversion_queue(
+        &begin_request(
+            &[handle],
+            ConversionIntent::SHIPPED,
+            ConversionConflictPolicyDto::Fail,
+            receipt,
+        ),
+        document,
+    );
+
+    assert!(
+        matches!(answered.outcome, ConversionBeginOutcomeDto::Reserved { .. }),
+        "the shipped posture stopped reserving a vendor queue: {:?}",
+        answered.outcome
+    );
+}
+
+/// A plan asked for the same combination answers with the same refusal.
+///
+/// The one that would otherwise be wrong. A plan is judged against the catalog
+/// before it reaches the queue builder, and a catalog answer that arrived as a
+/// bare *unavailable* would be reported as this installation not offering the
+/// combination -- which would send a reader after a ProteoWizard release that
+/// behaves identically, because what is missing is a measurement.
+#[test]
+fn a_plan_for_an_intent_measured_only_on_mzml_names_the_evidence_not_the_build() {
+    let fixture = TestFile::new("plan-not-evidenced-for-source");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+    let receipt = current_receipt(&service);
+
+    let refused = service
+        .conversion_queue_plan(&plan_request(
+            &[handle],
+            centroiding_intent(),
+            ConversionConflictPolicyDto::Fail,
+            receipt,
+        ))
+        .expect_err("a plan for a combination no converted source is evidenced for is refused");
+
+    assert_eq!(refused.kind, "conversion_settings_not_evidenced_for_source");
+}
+
+/// The catalog the webview receives states which of the three answers each row
+/// got, on the wire rather than only in Rust.
+///
+/// **Read off a real configuration read and serialized through the production
+/// DTO.** A discriminator that existed only as a Rust enum would leave the
+/// surface with one boolean and two facts to explain with it, and a test that
+/// built the reply by hand would be asserting about its own fixture.
+///
+/// This installation's help declares mzML and zlib and nothing else, so the
+/// snapshot carries all three answers at once: the shipped row runs, the rows
+/// needing grammar it lacks are refused for the installation, and the two
+/// centroiding rows are refused for absent source evidence.
+#[test]
+fn the_catalog_wire_states_which_of_the_three_answers_each_row_got() {
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let snapshot = service
+        .read_conversion_configuration()
+        .expect("a read that resolves a build answers for it");
+    let wire = serde_json::to_value(&snapshot).expect("the snapshot serializes");
+
+    let rows = wire["configuration"]["catalog"]
+        .as_array()
+        .expect("a ready configuration carries a catalog on the wire")
+        .clone();
+    assert_eq!(rows.len(), ConversionIntent::ADMITTED.len());
+
+    for row in &rows {
+        let availability = row["availability"]
+            .as_str()
+            .expect("every row states which answer it got");
+        let available = row["available"]
+            .as_bool()
+            .expect("every row keeps the boolean beside it");
+        // The boolean and the discriminator are one decision, not two.
+        assert_eq!(available, availability == "available");
+        let centroiding = row["intent"]["processing"]
+            .as_str()
+            .expect("every row names its processing")
+            == "unscoped_default_centroiding";
+        if centroiding {
+            assert_eq!(
+                availability, "not_evidenced_for_conversion_sources",
+                "a centroiding row was refused for the wrong reason on the wire"
+            );
+        } else {
+            assert_ne!(
+                availability, "not_evidenced_for_conversion_sources",
+                "a writer-side row was refused for absent source evidence"
+            );
+        }
+    }
+
+    // All three answers really are present, so the cases above are exercised
+    // rather than vacuously satisfied by a catalog that refused everything.
+    let answers: Vec<&str> = rows
+        .iter()
+        .map(|row| row["availability"].as_str().expect("an answer"))
+        .collect();
+    for expected in [
+        "available",
+        "unsupported_by_installation",
+        "not_evidenced_for_conversion_sources",
+    ] {
+        assert!(
+            answers.contains(&expected),
+            "no row on this wire answered {expected:?}: {answers:?}"
+        );
     }
 }

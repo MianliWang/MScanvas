@@ -453,15 +453,18 @@ Twelve slices, plus one authority interlude:
   whole 29-case ledger re-run with it, every confirmation agreeing and no
   classification changed. See
   [the M6.10 record](docs/spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md).
-- M6.11 — closure. **Audited, not published.** The draft audit reported eleven
-  criteria proved and **criterion 2 unproved**, on the centroiding rows M6.10
-  measured. Its prerequisite repair is published — see below — and the audit is
-  to be resumed against the new baseline.
+- M6.11 — closure. **Audited, not published.** The audit lives on
+  `docs/m6.11-conversion-completion-closure` / PR #106 and is not on `main`
+  yet, which is why no record is linked here. It reported criterion 2 unproved,
+  on the centroiding rows M6.10 measured. Its prerequisite repair is published
+  — see below — and the audit is to be resumed against the new baseline, which
+  is where the criteria are re-decided.
 - **CNV-D2 prerequisite — source-qualified centroiding admission. Complete.**
   A processing measurement is now evidence about the source families it was
   taken on. The two `UnscopedDefaultCentroiding` rows are admitted for mzML
-  alone, so the vendor workflow offers seven of the nine measured combinations;
-  the withheld two keep their identity and say which refusal applies. The
+  alone, so the vendor workflow reaches seven of the nine measured combinations
+  and offers as many of them as the installed grammar can express; the withheld
+  two keep their identity and say which refusal applies. The
   integrity contract is unchanged, no family was added, no combination was
   admitted or excluded, and Shimadzu LCD and SCIEX WIFF are withheld for absent
   evidence rather than as measured failures. See

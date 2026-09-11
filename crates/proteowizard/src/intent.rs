@@ -751,8 +751,16 @@ pub struct AdmittedIntent {
 /// now say which sources they were measured on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidenceSourceDomain {
-    /// The measured semantic is writer-side, so the measurement carries to every
-    /// admitted source family.
+    /// The measured semantic is writer-side, so the measurement carries to
+    /// every source family.
+    ///
+    /// **It answers `true` for any family, including one added after this was
+    /// written**, and the name says *admitted* because admitting a family is a
+    /// different gate: [`provider_build_is_evidenced`](crate::provider_build_is_evidenced)
+    /// is asked per family and refuses one whose reader nobody measured on this
+    /// build. A family therefore reaches these rows only after that gate lets
+    /// it convert at all, which is why this variant does not repeat the check
+    /// -- two lists of admitted families would be one more thing to drift.
     ///
     /// **Not a claim that all future writer-side behaviour is source-independent.**
     /// It is this table's seven rows, on the axes M6.2 measured, and a new axis
@@ -831,6 +839,57 @@ mod tests {
         ConversionSourceKind::SciexWiffBundle,
     ];
 
+    /// A distinct position per family.
+    ///
+    /// **What this does and does not buy, stated exactly.** A variant added to
+    /// [`ConversionSourceKind`] fails to compile here until it is answered, so
+    /// the author is *prompted*. It is not a proof: Rust cannot enumerate an
+    /// enum's variants without a derive macro, and no dependency was added for
+    /// one, so an author who answers here and forgets `SOURCE_KINDS` leaves the
+    /// array short and nothing fails. The test below therefore claims only what
+    /// it holds -- that the array and this function agree about the families
+    /// the array does name.
+    const fn source_kind_index(kind: ConversionSourceKind) -> usize {
+        match kind {
+            ConversionSourceKind::MzmlFile => 0,
+            ConversionSourceKind::ThermoRawFile => 1,
+            ConversionSourceKind::ShimadzuLcdFile => 2,
+            ConversionSourceKind::SciexWiffBundle => 3,
+        }
+    }
+
+    /// The family list and the index function agree, and the list repeats
+    /// nobody.
+    ///
+    /// **Deliberately not named as an exhaustiveness proof, because it is not
+    /// one.** `seen` is sized from the array under test, so a variant absent
+    /// from the array is absent from this loop too and nothing here can notice.
+    /// What it does catch is the array disagreeing with `source_kind_index` --
+    /// a duplicate entry, a stale index, or an entry whose index names a
+    /// different family. The prompt to add a new variant to the array is the
+    /// compile error in `source_kind_index`; it is a prompt, not a guarantee,
+    /// and the record says so.
+    #[test]
+    fn the_family_list_and_its_index_agree() {
+        let mut seen = [false; SOURCE_KINDS.len()];
+        for kind in SOURCE_KINDS {
+            let index = source_kind_index(kind);
+            assert!(
+                !seen[index],
+                "two families share index {index}, so one of them is missing"
+            );
+            assert_eq!(
+                SOURCE_KINDS[index], kind,
+                "index {index} names a different family than the one at it"
+            );
+            seen[index] = true;
+        }
+        assert!(
+            seen.iter().all(|listed| *listed),
+            "the family list does not name every family it indexes: {seen:?}"
+        );
+    }
+
     /// Every admitted row says which sources its measurement covers, and the two
     /// reader-sensitive ones say `mzML` and nothing else.
     ///
@@ -842,9 +901,13 @@ mod tests {
     #[test]
     fn each_admitted_row_states_the_sources_its_evidence_covers() {
         for admitted in ConversionIntent::ADMITTED {
-            let reader_sensitive = matches!(
+            // Keyed on *asking for a picker*, not on one variant's name. A
+            // scoped MS-level preset added later is reader-sensitive for the
+            // same reason, and would have to carry a measured domain rather
+            // than trip this test into demanding the writer-side one.
+            let reader_sensitive = !matches!(
                 admitted.intent().processing(),
-                ProcessingIntent::UnscopedDefaultCentroiding
+                ProcessingIntent::NoAdditionalCentroiding
             );
             match (reader_sensitive, admitted.sources()) {
                 (false, EvidenceSourceDomain::AnyAdmittedSource) => {}
@@ -870,9 +933,9 @@ mod tests {
     fn evidence_applicability_is_answered_per_row_and_per_source_family() {
         for admitted in ConversionIntent::ADMITTED {
             let intent = admitted.intent();
-            let centroiding = matches!(
+            let centroiding = !matches!(
                 intent.processing(),
-                ProcessingIntent::UnscopedDefaultCentroiding
+                ProcessingIntent::NoAdditionalCentroiding
             );
             for kind in SOURCE_KINDS {
                 let covered = intent.evidence_covers_source(kind);
@@ -911,12 +974,16 @@ mod tests {
         assert_eq!(any.len(), 7, "writer-side rows");
         assert_eq!(mzml_only.len(), 2, "reader-sensitive rows");
         for admitted in mzml_only {
-            assert!(
-                admitted
-                    .intent()
-                    .evidence_covers_source(ConversionSourceKind::MzmlFile),
-                "a reader-sensitive row lost the family it was measured on"
-            );
+            // *Only* mzML, asserted family by family. The partition above only
+            // establishes "misses at least one", so a row widened to mzML plus
+            // one vendor family would still land here and still look right.
+            for kind in SOURCE_KINDS {
+                assert_eq!(
+                    admitted.intent().evidence_covers_source(kind),
+                    kind == ConversionSourceKind::MzmlFile,
+                    "a reader-sensitive row covers {kind:?}, which nobody measured it on"
+                );
+            }
         }
     }
 

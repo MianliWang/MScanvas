@@ -81,8 +81,12 @@ export type ConversionChoiceRefusal =
   /** The row exists; the installed ProteoWizard does not declare what it emits. */
   | "unavailableHere"
   /**
-   * The row exists and this build can express it; MSCanvas has not measured it
-   * on the kinds of acquisition this workflow converts.
+   * The row exists, and MSCanvas has not measured it on the kinds of
+   * acquisition this workflow converts.
+   *
+   * Rust decides this before it consults the installed grammar, so it is not a
+   * claim that the build could otherwise run the row — it is a claim that no
+   * measurement covers the sources in hand, which no release changes.
    *
    * A third refusal because it is a third fact. The first two are about the
    * product's vocabulary and about this installation; this one is about which
@@ -138,8 +142,35 @@ export function selectionIsUnavailable(
   catalog: readonly ConversionCatalogRow[],
   selectedId: string,
 ): boolean {
+  return selectionRefusal(catalog, selectedId) !== null;
+}
+
+/**
+ * Why the current selection cannot run, or `null` where it can.
+ *
+ * **The reason, not a boolean, because the two refusals send a reader to
+ * different places.** A selection survives an installation change, so a retained
+ * combination that is now unavailable is a state this surface has to explain —
+ * and explaining "the installed ProteoWizard cannot run this" about a row the
+ * installation runs perfectly well would send them after a build that behaves
+ * identically. What is missing there is a measurement, and no release supplies
+ * one.
+ *
+ * `notQualified` is impossible here and is not returned: a selection is looked
+ * up by identity, so a combination the catalog does not hold has no row to be
+ * unavailable.
+ */
+export function selectionRefusal(
+  catalog: readonly ConversionCatalogRow[],
+  selectedId: string,
+): ConversionChoiceRefusal | null {
   const selected = catalogRow(catalog, selectedId);
-  return selected !== null && !selected.available;
+  if (selected === null || selected.available) {
+    return null;
+  }
+  return selected.availability === "not_evidenced_for_conversion_sources"
+    ? "notEvidencedForSources"
+    : "unavailableHere";
 }
 
 /**

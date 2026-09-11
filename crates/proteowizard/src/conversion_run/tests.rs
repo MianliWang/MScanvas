@@ -8178,13 +8178,9 @@ fn centroiding_intent() -> ConversionIntent {
 
 /// A Thermo acquisition cannot be planned under an intent measured only on mzML.
 ///
-/// **Refused before anything happens, and the destination proves it.** The plan
-/// canonicalizes the destination root, derives a name and inspects the folder
-/// only after this check, so a directory that is still empty afterwards is the
-/// observable difference between refusing and refusing late. M6.10 measured why
-/// the refusal is owed: on a real Thermo acquisition the bare `peakPicking`
-/// filter selects the vendor picker, which the requested-processing contract
-/// then rejects — after the provider has already run.
+/// M6.10 measured why the refusal is owed: on a real Thermo acquisition the bare
+/// `peakPicking` filter selects the vendor picker, which the requested-processing
+/// contract then rejects — after the provider has already run.
 #[test]
 fn a_vendor_source_cannot_be_planned_under_an_intent_measured_only_on_mzml() {
     let directory = TestDirectory::new();
@@ -8202,12 +8198,33 @@ fn a_vendor_source_cannot_be_planned_under_an_intent_measured_only_on_mzml() {
         .map(|_| ()),
         Err(ConversionPlanError::IntentNotEvidencedForSource)
     );
+}
+
+/// And it is refused *before* the destination root is touched at all.
+///
+/// **The ordering needs a destination the plan would itself refuse.** Asserting
+/// that an existing root is empty afterwards proves nothing here: `to_mzml`
+/// creates nothing under any ordering, so that assertion holds even for a check
+/// moved to the very end. Pointing it at a root that does not exist does prove
+/// it — canonicalizing is the first thing this constructor does to the world,
+/// and reaching it would answer `DestinationRootNotInspectable`. Getting the
+/// applicability refusal instead is the observable difference between refusing
+/// early and refusing late.
+#[test]
+fn the_applicability_refusal_precedes_every_look_at_the_destination() {
+    let directory = TestDirectory::new();
+    let source = open_thermo(&write_thermo_source(directory.path(), "acquisition.raw"));
+    let absent = directory.path().join("no-such-destination");
+
     assert_eq!(
-        fs::read_dir(&destination)
-            .expect("read the destination root")
-            .count(),
-        0,
-        "a refused plan created something in the destination"
+        ConversionPlan::to_mzml(source, &absent, ConflictPolicy::Fail, centroiding_intent(),)
+            .map(|_| ()),
+        Err(ConversionPlanError::IntentNotEvidencedForSource),
+        "the plan inspected the destination before answering applicability"
+    );
+    assert!(
+        !absent.exists(),
+        "a refused plan created the destination root"
     );
 }
 

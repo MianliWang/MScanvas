@@ -9,6 +9,7 @@ import {
   recoveryIntent,
   reselect,
   selectionIsUnavailable,
+  selectionRefusal,
 } from "./conversionIntentSelection";
 import { admittedIntents, shippedIntent } from "../../test/previewFixtures";
 import type { ConversionCatalogRow } from "./contracts";
@@ -39,9 +40,10 @@ function withoutRunning(...ids: readonly string[]): readonly ConversionCatalogRo
  * The same nine rows, with the named ones unavailable for absent source
  * evidence.
  *
- * The shape the vendor workflow actually produces: the installation is fine and
- * the combination is one MSCanvas measured, and no acquisition this product
- * converts is one that measurement was taken on.
+ * The shape the vendor workflow actually produces: the combination is one
+ * MSCanvas measured, and no acquisition this product converts is one that
+ * measurement was taken on. It says nothing about the installation either way —
+ * Rust decides source applicability before it consults the grammar.
  */
 function withoutSourceEvidence(...ids: readonly string[]): readonly ConversionCatalogRow[] {
   return COMPLETE.map((row) => ({
@@ -317,6 +319,15 @@ describe("a combination this product has no source evidence for", () => {
     // A scientific request survives; it does not get quietly rewritten.
     expect(reselect(catalog, shippedIntent.id, CENTROIDED_64)).toBe(CENTROIDED_64);
     expect(selectionIsUnavailable(catalog, CENTROIDED_64)).toBe(true);
+  });
+
+  it("tells a retained selection which refusal applies to it", () => {
+    // The state this repair creates, and the one a boolean loses. Sending a
+    // reader after another ProteoWizard release would send them after a build
+    // that behaves identically, because what is missing is a measurement.
+    expect(selectionRefusal(catalog, CENTROIDED_64)).toBe("notEvidencedForSources");
+    expect(selectionRefusal(withoutRunning(CENTROIDED_64), CENTROIDED_64)).toBe("unavailableHere");
+    expect(selectionRefusal(COMPLETE, CENTROIDED_64)).toBeNull();
   });
 
   it("offers an ordinary one-axis way out rather than an explicit reset", () => {

@@ -1853,8 +1853,15 @@ M63_INTENT_ROW = re.compile(
     # The source domain, captured because it is now part of what a row
     # asserts. A row that dropped it stops matching, and one that widened it
     # is compared below against the rule this repair exists to hold.
+    #
+    # `[\s\S]+?` rather than `[^,]+` or `[^\n]+`: a domain naming two families
+    # carries a comma of its own, and `rustfmt` wraps it across lines because
+    # this repository sets `max_width = 100`. Either narrower pattern makes the
+    # row stop matching entirely, which is then reported as a table that lost a
+    # row -- a true-sounding message about the wrong thing. Lazy, and anchored
+    # on the row's own closing brace, so it cannot run on into the next row.
     r"(?://[^\n]*\n\s*)*"
-    r"sources:\s*EvidenceSourceDomain::(?P<sources>[^,]+),\s*"
+    r"sources:\s*EvidenceSourceDomain::(?P<sources>[\s\S]+?),\s*"
     r"\}",
 )
 

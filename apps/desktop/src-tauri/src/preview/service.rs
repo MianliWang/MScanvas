@@ -1697,6 +1697,14 @@ impl PreviewService {
         match admission {
             RowAdmission::Available => {}
             RowAdmission::Unavailable => return Err(conversion_intent_unavailable()),
+            // The same fact `BEGIN`'s own preflight refuses on, answered here
+            // with the same sentence. A plan is where a reader is told what a
+            // conversion would do, and telling them their installation does not
+            // offer a combination it offers perfectly well would send them
+            // after a build that behaves identically.
+            RowAdmission::NotEvidencedForSources => {
+                return Err(conversion_settings_not_evidenced_for_source());
+            }
             RowAdmission::NoCatalog => return Err(conversion_configuration_unread()),
         }
         // The same validated decision BEGIN consumes. Planning creates nothing

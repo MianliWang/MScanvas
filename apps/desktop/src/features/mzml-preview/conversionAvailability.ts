@@ -134,6 +134,7 @@ export type ConversionUnavailableReason =
   | "plan-capacity-exceeded"
   | "plan-settings-unknown"
   | "plan-selection-unavailable"
+  | "plan-selection-not-evidenced"
   | "queue-not-retryable"
   | "nothing-to-retry";
 
@@ -208,6 +209,13 @@ const CONVERSION_MESSAGES: Record<ConversionUnavailableReason, string> = {
   "plan-selection-unavailable":
     "The installed ProteoWizard does not offer the conversion settings you chose, " +
     "so there is nothing to convert with. Choose settings it offers above.",
+  // The fourth sentence, and the one a different build would not change.
+  // Naming the installation here would send a reader after a release that
+  // behaves identically, because what is missing is a measurement.
+  "plan-selection-not-evidenced":
+    "MSCanvas has not measured the conversion settings you chose on the kinds of " +
+    "acquisition it converts, so there is nothing to convert with. Choose settings " +
+    "it has measured above.",
   "queue-not-retryable":
     "A stopped queue is not rerun in place. Convert those acquisitions again from the list.",
   "nothing-to-retry": "Nothing in this queue would change on another attempt.",
@@ -338,6 +346,8 @@ function planReason(plan: ConversionStartPlan): ConversionUnavailableReason | nu
       return "plan-settings-unknown";
     case "selectionUnavailable":
       return "plan-selection-unavailable";
+    case "selectionNotEvidenced":
+      return "plan-selection-not-evidenced";
     case "absent":
       // Rows were asked about and the plan says none were. Unreachable past
       // the count above, and answered here rather than left to fall through:

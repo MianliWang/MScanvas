@@ -40,10 +40,18 @@ pub(crate) enum RowAvailability {
     /// No source this product converts is one this row's evidence covers.
     ///
     /// A fact about the *evidence*, and a different sentence entirely. The
-    /// installation is fine and the combination is one the measured vocabulary
-    /// holds; what is missing is a measurement taken on the kinds of acquisition
-    /// the visible workflow accepts. Peak picking is the axis this reaches,
-    /// because the picker is chosen by the reader rather than by the writer.
+    /// combination is one the measured vocabulary holds; what is missing is a
+    /// measurement taken on the kinds of acquisition the visible workflow
+    /// accepts. Peak picking is the axis this reaches, because the picker is
+    /// chosen by the reader rather than by the writer.
+    ///
+    /// **It says nothing about the installation, in either direction.** This
+    /// answer is decided before the grammar is consulted, deliberately: a row
+    /// no convertible family is evidenced for is not made available by a build
+    /// that happens to accept its argv. So a build that also could not express
+    /// the row reports this rather than the grammar refusal, and that is the
+    /// right way round -- the reader's remedy is the same either way, and it is
+    /// not a different ProteoWizard release.
     NotEvidencedForConversionSources,
 }
 
@@ -88,6 +96,20 @@ pub(crate) enum RowAdmission {
     NoCatalog,
     /// The row exists and the installed build cannot run it.
     Unavailable,
+    /// The row exists, and no source this product converts is one the row's
+    /// evidence covers.
+    ///
+    /// **A third arm rather than a second meaning for `Unavailable`.** The two
+    /// refusals send a reader to different places: one is about this
+    /// installation and another ProteoWizard release can change it; this one is
+    /// about the product's evidence, and no release supplies a measurement.
+    /// Collapsing them here is how the distinction the catalog draws would stop
+    /// travelling one call before the sentence that states it.
+    ///
+    /// Says nothing about the grammar in either direction: the catalog decides
+    /// applicability before it asks the build, so a row this build also could
+    /// not express still arrives here.
+    NotEvidencedForSources,
     Available,
 }
 
@@ -355,11 +377,16 @@ impl ConversionConfigurations {
             .rows
             .iter()
             .find(|row| row.intent == *intent)
-            .map_or(RowAdmission::NoCatalog, |row| {
-                if row.availability.is_available() {
-                    RowAdmission::Available
-                } else {
-                    RowAdmission::Unavailable
+            .map_or(RowAdmission::NoCatalog, |row| match row.availability {
+                // Matched rather than reduced to a boolean, so the catalog's
+                // three answers reach the caller as three. A row refused for
+                // absent source evidence that arrived here as `Unavailable`
+                // would be answered with a sentence about the installation --
+                // which is the exact misdirection this repair exists to stop.
+                RowAvailability::Available => RowAdmission::Available,
+                RowAvailability::UnsupportedByInstallation => RowAdmission::Unavailable,
+                RowAvailability::NotEvidencedForConversionSources => {
+                    RowAdmission::NotEvidencedForSources
                 }
             })
     }

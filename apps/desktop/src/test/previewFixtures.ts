@@ -269,11 +269,44 @@ export function planIdentity(
   };
 }
 
+/**
+ * Every admitted row, runnable.
+ *
+ * **A deliberate hypothetical, and since CNV-D2 it says so.** No installation
+ * bound to the visible workflow can emit this: the two `unscoped_default_centroiding`
+ * rows are refused for absent source evidence on every vendor acquisition this
+ * product converts, whatever build is installed. It is kept because it isolates
+ * one variable — a test about the lane, the plan or a destination should not
+ * also be a test about which rows are offered — and because the rows it makes
+ * available are what a test narrows from.
+ *
+ * Use {@link vendorWorkflowCatalog} where the shape itself is the subject.
+ */
 export const completeCatalog: readonly ConversionCatalogRow[] = admittedIntents.map((row) => ({
   intent: row,
   available: true,
   availability: "available",
 }));
+
+/**
+ * The catalog the vendor workflow actually receives from a build that can
+ * express every row.
+ *
+ * The seven writer-side rows run; the two centroiding rows are refused, and
+ * refused for the *source evidence* rather than for the installation. Derived
+ * from the processing axis rather than listed by identity, so a row added to the
+ * admitted table lands on the side its own semantic puts it on.
+ */
+export const vendorWorkflowCatalog: readonly ConversionCatalogRow[] = admittedIntents.map(
+  (row) => {
+    const readerSensitive = row.processing === "unscoped_default_centroiding";
+    return {
+      intent: row,
+      available: !readerSensitive,
+      availability: readerSensitive ? "not_evidenced_for_conversion_sources" : "available",
+    };
+  },
+);
 
 /**
  * What a session that lost track of a converter reports about the backend.

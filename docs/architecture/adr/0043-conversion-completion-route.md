@@ -1872,8 +1872,9 @@ processing `LOCKED`, 2026-09-10. Two new rules `LOCKED` below.**
 > MS-level population that carries to any admitted family, because those are
 > decided by the **writer** and act on whatever spectra the reader produced.
 > Peak picking is decided by the **reader** — which this decision already records
-> from the provider's own sources, in the `dynamic_cast` paragraph above — so a
-> measurement of it on one family is not evidence about another.
+> from the provider's own sources, in the `dynamic_cast` paragraph further down
+> this section — so a measurement of it on one family is not evidence about
+> another.
 >
 > M6.10 measured the consequence on a lawful Thermo acquisition: the same bare
 > `peakPicking` argv selects the vendor picker there, and the
@@ -1900,10 +1901,14 @@ processing `LOCKED`, 2026-09-10. Two new rules `LOCKED` below.**
 > that all future writer-side behaviour is source-independent: seven rows carry
 > that domain on the axes M6.2 measured, and a new axis earns it by argument.
 >
-> **This strengthens criterion 2 and does not rewrite it.** The criterion asks
-> that every admitted setting be evidence-backed; what this adds is that being
-> backed includes being backed *for the sources the product converts*. It is not
-> permission to offer a known mismatch.
+> **This decision does not edit criterion 2, and does not presume its reading.**
+> Criterion 2's text is unchanged and is quoted where it stands. What this
+> amendment adds is a property of the product, not a clause of that criterion:
+> admission is now qualified by the source families a measurement was taken on.
+> Whether a criterion that asks for a live measurement of the bound build is
+> satisfied on this baseline is the closure audit's call, and this decision
+> deliberately leaves it open rather than answering it in advance. It is in no
+> case permission to offer a known mismatch.
 >
 > Recorded in
 > [the repair record](../../ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md).
