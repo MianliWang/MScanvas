@@ -1370,8 +1370,20 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
         "The installed ProteoWizard does not offer the conversion settings you chose",
       );
 
-      // Convert is refused, and refused for that reason rather than another.
+      // Convert is refused, and the fourth sentence is the one explaining it.
+      // Asserted by its own notice rather than by the button's disabled state:
+      // a registry that stopped emitting this reason would leave the control
+      // disabled and silent, and every other assertion here would still pass.
       expect(await browser.$(CONVERT).isEnabled()).toBe(false);
+      const noticeId = "conversion-availability-plan-selection-not-evidenced";
+      expect(await owners(noticeId)).toBe(1);
+      expect(
+        await browser.execute(
+          (id: string) => document.getElementById(id)?.textContent ?? "",
+          noticeId,
+        ),
+      ).toContain("has not measured the conversion settings you chose");
+      expect(await describedBy(CONVERT)).toContain(noticeId);
 
       // Laid out rather than clipped, inside the panel, and not a cause of
       // sideways scrolling at this width.
