@@ -198,8 +198,9 @@ earlier notice — so the statement below is per case rather than per suite.
   output-set lifecycle, the desktop `plan_items` and the catalog admission the
   plan command reads — plus a `ConversionPlanError` variant, a
   `MultiOutputFailure` variant, a `RowAvailability` variant, a `RowAdmission`
-  variant, a DTO error kind, a new field on the catalog row DTO, a fourth plan
-  block reason, and three rendered sentences. It touches **no** process
+  variant, a DTO error kind, a new field on the catalog row DTO, a third
+  plan-block reason with the eighteenth unavailable-reason beside it, and four
+  rendered sentences. It touches **no** process
   supervision, cancellation, native dialog or focus plumbing, filesystem
   identity, cleanup or finalization, provider argv or algorithm, and no
   dependency manifest. **Next owner: the production UI/integration slice that

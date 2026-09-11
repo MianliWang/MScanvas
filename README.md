@@ -185,9 +185,20 @@ spectra included, numeric precision, array compression — edit one dimension ea
 over one combination. Nine combinations have been measured and admitted; the
 other thirty-nine the axes span are unconstructible, and a control that would
 produce one is refused with a sentence naming the *combination* rather than the
-value. The two refusals are different claims: MSCanvas has never qualified this
-combination, which no installation changes, or the installed ProteoWizard does
-not offer it, which a different one would. A choice that reduces what is written
+value. The three refusals are different claims: MSCanvas has never qualified this
+combination, which no installation changes; the installed ProteoWizard does not
+offer it, which a different one would; or MSCanvas has not measured it on the
+kinds of acquisition this workflow converts, which no release changes either.
+
+**The last of those is why the two centroiding combinations are not offered
+here.** Peak picking is chosen by the file *reader*, so a measurement of it on
+one kind of acquisition is not evidence about another — and both were measured
+on generated mzML files, which this workflow does not convert. Seven of the nine
+therefore reach a vendor acquisition, as many of them as the installed build can
+express. The withheld two keep their place in the list and say which refusal
+applies, rather than disappearing or borrowing the installation's sentence.
+
+A choice that reduces what is written
 says so where it is made — centroiding is marked lossy and says it cannot be
 limited to one MS level, a population filter says which spectra are left out, a
 narrower store says what it rounds — and a combination that reduces nothing says

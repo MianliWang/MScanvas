@@ -7992,8 +7992,13 @@ rather than only proving a returned error. The single-output plan is aimed at a
 destination root that does not exist and still answers applicability instead of
 `DestinationRootNotInspectable`, which pins the check ahead of the first thing
 the constructor does to the world. The set lifecycle is given a runner that
-panics if called, and ends with zero calls and an empty destination. `BEGIN`
-ends with an idle slot, an empty destination and zero provider launches. The catalog keeps all nine rows and distinguishes *this
+panics if called, and ends with zero calls and an empty destination. `BEGIN` ends
+with an idle slot and an unchanged backend-resolution count, which places the
+refusal ahead of the receipt proof; its destination and launch counts are
+deliberately not asserted, because `BEGIN` carries no destination and launches
+nothing under any ordering.
+
+The catalog keeps all nine rows and distinguishes *this
 build cannot express it* from *no source this product converts is one this row's
 evidence covers* — two refusals, two sentences, both about the combination and
 never about an axis value.
@@ -8029,8 +8034,9 @@ of the wider suite for reassurance**, and the
 equivalent to browser-mocked evidence, which replaces the Tauri boundary at
 `invoke` and can say nothing about a native window. What supports omitting it is
 diff inspection. The change adds four production refusal sites, five new typed
-variants, a DTO error kind, a new field on the catalog row DTO, a fourth plan
-block reason and three rendered sentences — and touches no process supervision,
+variants, a DTO error kind, a new field on the catalog row DTO, a third
+plan-block reason with the eighteenth unavailable-reason beside it, and four
+rendered sentences — and touches no process supervision,
 cancellation, native dialog or focus plumbing, filesystem identity, cleanup or
 finalization, provider argv or algorithm, and no dependency manifest. **Its next owner is the production UI/integration slice
 that next touches this path.** No old binary evidence is attributed to the
@@ -8042,3 +8048,113 @@ This is a prerequisite under CNV-D2 and renumbers no M6 slice. **M6.11's closure
 audit is to be resumed against this baseline** to decide whether criterion 2 and
 condition A are now proved; that decision is the audit's, not this repair's.
 M6 is not complete. Post-M6 XIC interlude and M7 have not started.
+
+## M6.11 — closure audit
+
+**`M6 COMPLETE`.** All twelve exit criteria are proved on published evidence and
+the three milestone-wide conditions hold. The audit is
+[ADR 0045](docs/architecture/adr/0045-conversion-completion-closure-and-handoff.md),
+now **accepted**.
+
+**It did not close on its first baseline, and the record keeps that.** Criterion
+2 was `NOT PROVED` and condition A failed on the same fact — two admitted
+centroiding rows offered on source families their evidence never covered. The
+audit named the exact owning repair and refused three defences by name:
+fail-closed, an assigned owner and pre-existing are not exemptions. **That repair
+is published**, and the audit was re-decided against it rather than rewritten to
+agree with itself.
+
+**The baseline was not the M6.10 anchor, and the difference is accounted for.**
+Two separately authorized Dependabot merges landed between them, touching only
+lockfiles, two `package.json` files and one exact pin. That is a changed build
+input even inside one major release, so the gate set `AGENTS.md` names under
+**Required checks** was re-run on the closure baseline with lockfiles unchanged
+before the audit began: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`,
+`cargo fmt --all --check`, `cargo clippy --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --workspace` and
+`python scripts/check_repo.py` all pass. No gate was redefined and none dropped.
+
+**And re-run twice more.** The same eight gates pass on the published repair
+candidate, and again on this branch's documentation head: `cargo test
+--workspace` at 1 555 passed / 23 ignored / 0 failed, `pnpm test` at 70 files and
+1 694 passed, with `pnpm build` and the repository validator green on both. That
+is what condition C's verdict rests on.
+
+**The finding.** M6.10 measured that the shipped centroiding setting is evidenced
+only on generated mzML fixtures; that the visible product converts vendor
+acquisitions only, mzML being non-convertible by design; and that on Thermo the
+bare filter selects the vendor picker. This audit checked which branch the
+resulting refusal actually takes, from the retained output of that measurement:
+the processing reference resolves, so the run **fails closed with a truthful
+reason** rather than finalizing an output centroided by an algorithm the product
+never admitted. So no unsafe output is published — and that is not what criterion
+2 asks.
+
+**The determination was reached, reversed, and reached again, and the record
+keeps the argument rather than only the conclusion.** The first reversal came
+from a correct objection: a principle disqualifying mzML evidence wholesale
+proves too much, because all nine admitted rows rest on the same fixtures,
+including the posture every vendor conversion has ever run under. What undoes the
+reversal is the narrower principle from the same objection — **peak picking is
+the one admitted axis decided by the reader**, per CNV-D2's reading of the
+provider's sources, while format, precision, compression and population are
+writer-side. That rescues the other seven rows and convicts these two. Three
+defences were considered and refused by name: fail-closed, an assigned owner, and
+pre-existing are not exemptions.
+
+**The owning repair was route 1, and it is published.** Qualify the admitted
+centroiding rows by source family, so the catalog does not offer a combination
+whose evidence does not reach the families the product converts. Admission gained
+a source dimension; the integrity contract was **not** widened, nothing was
+admitted or excluded, no family was added and no dependency moved. The refusal is
+carried as its own answer to the catalog, the plan command, the `BEGIN`
+preflight, the single-output plan and the output-set lifecycle, and as its own
+sentence to the note beside the control, the banner, the plan area and the
+disabled `Convert`. ADR 0043's owed amendment now exists in its CNV-D2 section.
+See [the repair record](docs/ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md).
+
+**Three statements in ADR 0043 had gone stale and are amended in that document**,
+dated, with the superseded wording quoted rather than deleted: M6.6's
+*publication pending*; the M6.1 lane's *eight facts* / *eleven reasons* counts,
+which ADR 0044's Decision 10 had already superseded in substance and which the
+repair moved again to eighteen reasons; and CNV-D2 naming M6.2 as the owner of an
+admission dimension M6.2 never had. **`README.md` was corrected here** rather
+than carried as a residual: it described two refusals where the product now gives
+three, and stated the nine admitted combinations without the source
+qualification. Both are condition A matters.
+
+**What was and was not measured for the repair, carried honestly into this
+closure.** The repair added **four** user-visible sentences across two
+components, not one. Its rendered evidence is one behavioural case at the
+reference window plus three-target layout checks covering all four, which is
+what condition B asks of an M6 control. The last three were published separately
+as a test-only change so this closure's diff stays documentation-only — and
+asserting the fourth found that it did not render at all: the reason was missing
+from `NOTICE_ORDER`, so the disabled `Convert` was silent. Repaired with that
+evidence. **Condition B therefore rests on that later baseline rather than on the
+repair's own, and condition A rests on this closure**, which is what corrects the
+four documents that still described the product as it was before the repair. The
+audit names five baselines and binds each verdict to the earliest one a reader
+could re-derive it from, rather than back-dating any of them. **No four-viewport sweep was run,
+and the M6.6–M6.9 native campaign was NOT RE-RUN** — recorded as not re-run
+rather than as passed, waived or satisfied by browser-mocked evidence, with the
+production UI/integration slice that next touches this path as its owner. No
+criterion or condition names that campaign as its requirement, and no verdict
+here rests on it.
+
+Review across both stages was two independent read-only reviewers per stage plus
+the repository's automated PR review. In the audit stage the first reviewer
+produced the objection that caused the reversal and the automated review produced
+the objection that undid it. In the repair stage the reviews found the plan area
+and the disabled `Convert` still carrying the installation sentence beneath a
+corrected banner, and `RowAdmission` flattening the two refusals one call before
+the sentence that states them; both are repaired in the published branch.
+
+**Two browser cases still fail**, `m4.1` and `m5.2`, on every baseline here.
+Neither is a conversion requirement or an M6 control, and both keep their
+existing owners and their actual failing status.
+
+M6 is complete. The Post-M6 XIC Provider / Runtime Interlude's `M6 COMPLETE` gate
+is therefore met, which is not the same as entering it: it has **not started**,
+it needs its own route lock and authorization, and nothing here schedules it.
+**M7 has not started.**

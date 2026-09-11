@@ -335,18 +335,21 @@ those are decided by the writer. Peak picking is decided by the **reader**, so
 the two centroiding rows are admitted for mzML sources alone — and the visible
 workflow converts vendor acquisitions, so **the vendor workflow offers seven of
 the nine**, conditional as ever on the installed grammar. The withheld two are
-still rows of the catalog, still carry their identity, and say which of the two
-refusals applies. See
+still rows of the catalog, still carry their identity, and carry the **third**
+refusal below rather than borrowing either of the first two. See
 [the repair record](../ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md).
 
 **M6.4 put those nine on screen, and nothing else.** Four control groups edit one
 axis each, and a choice either selects the admitted combination that differs from
 the current one in exactly that dimension or is refused with a reason — so a
 reader cannot assemble one of the thirty-nine, because there is no path that
-assembles a combination at all. The two refusals are different sentences with
-different owners: *not qualified*, which is a fact about this product's evidence
-and no build changes, and *not available on this installation*, which a different
-build would change. Both name the **combination**, never the value: a build that
+assembles a combination at all. The **three** refusals are different sentences
+with different owners: *not qualified*, which is a fact about this product's
+evidence and no build changes; *not available on this installation*, which a
+different build would change; and, since the CNV-D2 source-qualified centroiding
+repair, *not measured on the kinds of acquisition this workflow converts*, which
+is a fact about the product's evidence for a **source family** and which no build
+changes either. All three name the **combination**, never the value: a build that
 lacks only the peak-picking grammar makes no claim about 64-bit intensity, all
 spectra or zlib, each of which appears in rows it runs. Availability belongs to
 the row, so an unrunnable choice is said once above the groups rather than four

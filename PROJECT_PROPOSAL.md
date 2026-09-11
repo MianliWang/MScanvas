@@ -264,6 +264,19 @@ Normal mode provides semantic controls:
 - zlib compression;
 - output conflict policy: Fail by default, or Skip; automatic rename and explicit overwrite are refused by [ADR 0043, CNV-D4](docs/architecture/adr/0043-conversion-completion-route.md#cnv-d4--conflict-and-overwrite).
 
+The CNV-D2 source-qualified centroiding repair supersedes this proposal's
+centroiding list in one respect. **Scoped MS-level centroid presets were never
+constructible** — the installed grammar discards `msLevel=` without a picker
+token, and neither admissible token is admitted — so "centroid MS2" and "centroid
+MS1+MS2" remain unbuilt. What the product measured instead is unscoped
+centroiding, and since 2026-09-10 that is admitted only for the source families
+its measurement covers, which is mzML alone. Peak picking is chosen by the file
+reader, so a measurement of it on one kind of acquisition is not evidence about
+another. The visible workflow converts vendor acquisitions, so it offers no
+centroiding at all; the two combinations keep their place in the catalog and say
+which refusal applies. See
+[the repair record](docs/ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md).
+
 The M6.6 decision supersedes this proposal's earlier automatic-rename and
 confirmed-overwrite promise. An existing destination remains untouched; a
 backend-named output set applies Fail/Skip to the whole set, and Skip refuses a

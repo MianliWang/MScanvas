@@ -228,9 +228,14 @@ availability, queue, adoption and export contracts.
    groups — peak processing, spectra included, numeric precision, array
    compression — edit one dimension each, over one combination. A choice either
    selects the admitted combination that differs in exactly that dimension, or is
-   refused with a reason that names the **combination**: either that MSCanvas has
-   never qualified it, which no installation changes, or that the installed
-   ProteoWizard does not offer it, which a different one would. Unavailable
+   refused with a reason that names the **combination**, and there are three of
+   them: that MSCanvas has never qualified it, which no installation changes;
+   that the installed ProteoWizard does not offer it, which a different one
+   would; or that MSCanvas has not measured it on the kinds of acquisition this
+   workflow converts, which no installation changes either. The last is why the
+   two centroiding combinations are not offered for a vendor acquisition: peak
+   picking is chosen by the file reader, and both were measured on generated
+   mzML files this workflow does not convert. Unavailable
    values stay on screen, disabled, with the reason beside them, because that
    these dimensions do not compose freely is a measured fact worth seeing.
 

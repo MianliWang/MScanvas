@@ -380,7 +380,22 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 
 ## M6 — Conversion Completion
 
-**Started. The route is locked, the conversion lane has one availability
+**Complete.** M6.11 audited the twelve exit criteria; all twelve are proved and
+the three milestone-wide conditions hold. The audit is
+[ADR 0045](docs/architecture/adr/0045-conversion-completion-closure-and-handoff.md),
+accepted.
+
+**It did not close on its first pass, and that is kept rather than tidied away.**
+Criterion 2 and condition A both failed on one fact: two admitted centroiding
+settings were offered on source families their evidence never covered. The audit
+named the exact owning repair and refused fail-closed, an assigned owner and
+pre-existing as exemptions. That repair is published, and the audit was
+re-decided against it. None of criterion 11's four conditional routes is
+admitted, and none had to be. **The Post-M6 XIC Provider / Runtime Interlude's
+`M6 COMPLETE` gate is now met, which is not the same as entering it: it has not
+started, and neither has M7.**
+
+The route was locked, the conversion lane has one availability
 authority, the installed `msconvert` has been measured against M6's finite
 candidate set, what a conversion is asked to do is now a type, the ownership
 boundary the visible settings sit on is decided, those settings are on screen
@@ -390,8 +405,8 @@ and conflict UX is published; M6.7 makes selected/all scope explicit; M6.8 close
 the process-ownership window, measures the installed provider, and settles what a
 user may stop; M6.9 makes what a conversion produced legible, with all five
 judgements separated per item and the seams M7 and M8 read. M6.10 takes the four conditional side
-routes to a terminal disposition, none of them admitted. M6.11 is not
-started.**
+routes to a terminal disposition, none of them admitted; and M6.11 answers the
+exit criteria from that published evidence and hands M6 to M7.**
 
 The route, the live conversion gap audit it was decided from, the nine product
 decisions it surfaces, the twelve exit criteria and the M7/M8 seams are in
@@ -453,12 +468,6 @@ Twelve slices, plus one authority interlude:
   whole 29-case ledger re-run with it, every confirmation agreeing and no
   classification changed. See
   [the M6.10 record](docs/spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md).
-- M6.11 — closure. **Audited, not published.** The audit lives on
-  `docs/m6.11-conversion-completion-closure` / PR #106 and is not on `main`
-  yet, which is why no record is linked here. It reported criterion 2 unproved,
-  on the centroiding rows M6.10 measured. Its prerequisite repair is published
-  — see below — and the audit is to be resumed against the new baseline, which
-  is where the criteria are re-decided.
 - **CNV-D2 prerequisite — source-qualified centroiding admission. Complete.**
   A processing measurement is now evidence about the source families it was
   taken on. The two `UnscopedDefaultCentroiding` rows are admitted for mzML
@@ -469,6 +478,16 @@ Twelve slices, plus one authority interlude:
   admitted or excluded, and Shimadzu LCD and SCIEX WIFF are withheld for absent
   evidence rather than as measured failures. See
   [the repair record](docs/ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md).
+- M6.11 — closure. **Complete. `M6 COMPLETE`.** All twelve criteria are proved
+  and the three milestone-wide conditions hold. The audit first reported
+  criterion 2 unproved — the two admitted centroiding rows were evidenced only
+  on a source class the product cannot convert, and peak picking is the one
+  admitted axis decided by the reader, so that evidence does not transfer the way
+  the other seven rows' does — and it refused fail-closed, an assigned owner and
+  pre-existing as exemptions. The repair it named is published above, and the
+  audit is re-decided against it. ADR 0043 is amended where three of its own
+  statements had gone stale. See
+  [ADR 0045](docs/architecture/adr/0045-conversion-completion-closure-and-handoff.md).
 
 **M6.4 was attempted once, and what shipped is the replacement.** The first
 attempt is on `feat/m6.4-visible-conversion-settings` / PR #95, which stopped
