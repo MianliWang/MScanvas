@@ -173,7 +173,7 @@ formats, at `github.com/mobiusklein/mzdata`. One candidate only; no catalogue.
 | Licence | **Apache-2.0** | documented |
 | Version on docs.rs at audit | **0.66.7** | documented |
 | Latest tagged release | **v0.66.6**, published 2026-08-30, twelve days before this audit | documented |
-| Declared dependencies | At `v0.66.6`: **42** under `[dependencies]` — 16 required and 26 optional — plus **6** dev-dependencies. Includes `base64-simd`, `flate2`, `chrono`, `regex`, `bytemuck`, `mzpeaks` and the `mzdata-*` companion crates. **Direct declarations only**; the transitive closure is larger and depends on which features are enabled, and this audit did not resolve it | documented |
+| Declared dependencies | At `v0.66.6`: **16 required** and **26 optional** under `[dependencies]`, plus 6 dev-dependencies. **Only the required ones, plus whichever optionals a chosen feature set enables, reach a downstream build** — dev-dependencies never do, and disabled optionals never do. Required ones include `base64-simd`, `flate2`, `bytemuck`, `mzpeaks` and the `mzdata-*` companion crates. **Direct declarations only**; the transitive closure is larger, is feature-dependent, and this audit did not resolve it | documented |
 | mzML support | "mzML and indexedmzML" listed among supported formats | documented |
 
 **The numeric contract is the right shape.** `DataArray` holds
@@ -211,12 +211,14 @@ absent-versus-default caution. **documented.**
 **Dependency weight is a real constraint, not an aesthetic one.** This
 repository's policy prefers project-owned components and small focused
 libraries, and forbids adding a production dependency without explicit approval
-and a rationale. **42 direct declarations, 16 of them required**, is a
-substantial surface for one window sum and **is the main argument against B**,
-separate from its technical fit. The transitive closure is the number that would
-actually be vendored into a build, it is larger than that, and **this audit did
-not count it** — resolving it against a chosen feature set is PX.2's, along with
-the approval itself.
+and a rationale. **16 required direct dependencies**, before any optional feature
+is switched on, is a substantial surface for one window sum and **is the main
+argument against B**, separate from its technical fit. That figure is the honest
+one to weigh: dev-dependencies and disabled optionals do not enter a downstream
+build, so counting them would overstate it. The number that would actually be
+vendored is the transitive closure under a chosen feature set, which is larger
+still and which **this audit did not resolve** — that resolution, and the
+approval, are PX.2's.
 
 ## XIC-S2 — decided
 
