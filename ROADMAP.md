@@ -391,9 +391,11 @@ settings were offered on source families their evidence never covered. The audit
 named the exact owning repair and refused fail-closed, an assigned owner and
 pre-existing as exemptions. That repair is published, and the audit was
 re-decided against it. None of criterion 11's four conditional routes is
-admitted, and none had to be. **The Post-M6 XIC Provider / Runtime Interlude's
-`M6 COMPLETE` gate is now met, which is not the same as entering it: it has not
-started, and neither has M7.**
+admitted, and none had to be. **M6's closure met the Post-M6 XIC Provider /
+Runtime Interlude's `M6 COMPLETE` gate without entering it, and scheduled
+nothing.** That interlude has since been entered under its own authorization —
+see [its section below](#post-m6-xic-provider--runtime-interlude). **M7 has not
+started.**
 
 The route was locked, the conversion lane has one availability
 authority, the installed `msconvert` has been measured against M6's finite
@@ -666,8 +668,10 @@ guard had been unable to see.
 **Entered. `PX.0 COMPLETE`; PX.1 next and not started.** The route is locked by
 [ADR 0046](docs/architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md),
 which is the single owner of the slice dependencies, the evidence matrix and the
-four PX.4 outcome branches. They are not restated here. Entry was separately
-authorized: `M6 COMPLETE` is the gate, and meeting a gate is not entering it.
+four PX.4 outcome branches. **What follows is a pointer, not a second
+authority**: where this section and that record differ, the record governs, and a
+decision changes there rather than here. Entry was separately authorized:
+`M6 COMPLETE` is the gate, and meeting a gate is not entering it.
 
 **No provider is admitted and no XIC exists.** A route lock is none of PX.4's
 provider outcomes, and it reports no performance or scientific-correctness

@@ -8168,8 +8168,9 @@ gate.** M6.11 met `M6 COMPLETE` and deliberately did not schedule anything; entr
 came from its own instruction. The route is locked by
 [ADR 0046](docs/architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md),
 which owns the slice dependencies, the scientific scope, the evidence matrix, the
-runtime boundary and the four PX.4 outcome branches. **This entry restates none
-of them** and neither does `ROADMAP.md`; both link.
+runtime boundary and the four PX.4 outcome branches. **Where this entry or
+`ROADMAP.md` summarizes one of them, the record governs**: a decision changes
+there, and these two follow.
 
 **What PX.0 does not claim.** No provider is admitted, no runtime is selected,
 and no XIC exists. A route lock is none of PX.4's four provider outcomes, and

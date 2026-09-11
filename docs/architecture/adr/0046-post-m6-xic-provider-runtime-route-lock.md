@@ -9,7 +9,8 @@ Related: [0045](0045-conversion-completion-closure-and-handoff.md),
 [0041](0041-viewer-selection-availability.md),
 [0038](0038-spectrum-viewport-authority-and-screen-projection.md),
 [0037](0037-viewer-completion-route.md),
-[0005](0005-mzml-preview-boundary.md)
+[0005](0005-mzml-preview-boundary.md),
+[M6.10's terminal ledger](../../spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md#the-terminal-ledger)
 
 **This record locks the route for the Post-M6 XIC Provider / Runtime Interlude
 and does nothing else.** It admits no provider, selects no runtime, implements no
@@ -49,8 +50,10 @@ once each, and stops.
 **Start from the admitted boundary and widen nothing.** The source is a local
 mzML file the session has already admitted and can already preview under
 [ADR 0005](0005-mzml-preview-boundary.md). **Direct vendor preview is not
-reopened** — it is M6.10's route 2, disposed `EVIDENCE_BLOCKED` — and **no RAW
-family is added**. The proposed first query is one closed m/z window, at one MS
+reopened** — it is route 2 of
+[M6.10's terminal ledger](../../spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md#the-terminal-ledger),
+disposed `EVIDENCE_BLOCKED` there rather than here — and **no RAW family is
+added**. The proposed first query is one closed m/z window, at one MS
 level, over one snapshot, aggregated one way.
 
 | Semantic | The proposal |
@@ -115,7 +118,7 @@ Unused slots stay unused; none of the three is required to survive PX.1.
 | | Direction | What it is, and what it is not |
 | --- | --- | --- |
 | **A** | A corrected or differently-versioned ProteoWizard interface | A *different measured executable identity*, or a ProteoWizard interface that does not serialize through the passive analyzers. The four-decimal defect is a source-level literal, so a candidate here must be a build or an interface where that is not the path a value takes. **A candidate that is a different measured `msaccess` identity is VIEW-007's own re-entry trigger and must additionally satisfy M5.4's three-part gate in full** — a covered executable identity and help/capability grammar, a resolved numeric-fidelity answer, and re-measurement of everything that record establishes. **This route does not narrow that gate** |
-| **B** | A mature reader or API behind a local worker | Maintained, lawfully licensed, run in a project-owned worker under Rust's existing process and filesystem ownership. A name in a shortlist is **not** proof of compatibility or admission: PX.1 establishes licence, maintenance, API surface and numeric contract before any name is carried forward |
+| **B** | A mature reader or API behind a local worker | Maintained, lawfully licensed, run in a project-owned worker under Rust's existing process and filesystem ownership. A name in a shortlist is **not** proof of compatibility or admission: PX.1 establishes licence, maintenance, API surface and numeric contract before any name is carried forward. **The standing prohibition on vendoring proprietary SDKs, DLLs or restricted vendor readers applies here unchanged** — this is the direction it governs, and no licence finding relaxes it |
 | **C** | Minimal aggregation over a lawful full-data source the project already reads | A narrow, project-owned per-scan window sum over mzML arrays this product already reads. **Not** permission to reimplement a proprietary reader, and not a general analysis engine |
 
 **The refused `msaccess` binary is a control, not a contender.** Its identity is
@@ -193,12 +196,12 @@ a smoothed preview or rounded text is never the scientific source.**
 
 | Reuse point | What is already there |
 | --- | --- |
-| Filesystem and process ownership | Rust owns both. The webview holds an opaque handle and a display name, never a path, and never spawns a process |
+| Filesystem and process ownership | Rust owns both. The webview holds an opaque handle and a display name, **never an absolute path**, and never spawns a process |
 | Retained full data and bounded reads | Rust retains the complete spectrum as the scientific source, with the scanner's existing bounded-read limits |
 | Transfer bounds | A screen projection is a **drawing** bounded for a display; scientific export is a sibling projection taken from the complete arrays. An XIC result is a scientific result and carries its own bound, not the drawing's |
 | Resource limits and cancellation | The conversion runner's ownership disposition and fail-closed cancellation are the precedent. **An XIC query is not a queue and must not become one** |
 | Source identity | The per-operation revalidation the preview already performs against `FileIdentity` |
-| Stale-reply rejection | [ADR 0044's](0044-conversion-configuration-authority.md) three-way split: an **identity** compared only for equality, an **ordering revision** where a lower value is stale and cannot replace a higher, and a **state** saying whether a verdict exists. An XIC query reuses that shape rather than a counter |
+| Stale-reply rejection | [ADR 0044's](0044-conversion-configuration-authority.md) three-way split: an **identity** compared only for equality, an **ordering revision** where a lower value is stale and cannot replace a higher, and a **state** saying whether a verdict exists. An XIC query reuses that shape. What is refused is a bare counter whose meaning each caller supplies, not a monotonic token |
 
 **Query identity is not freshness.** A query's identity is its operands —
 snapshot identity, MS level, `low`, `high`, aggregation. Two queries with equal
@@ -209,22 +212,36 @@ recompute the science and do not mint a new query.
 
 **Refused outright**: a generic plugin ABI, a global scheduler, UI-owned process
 spawning, silent fallback between providers, forced migration of an existing
-runtime, and any new persistence model. **Performance budgets are not invented
-here.** Each is justified in the slice that measures it; M5's recorded selection
-timings are M5's and are not an XIC budget.
+runtime, and any new persistence model. Also unchanged and unnamed elsewhere
+here: a backend is invoked through a **typed argv array, never a shell string**;
+a rendered trace consumes the **shared semantic plot/figure specification**; and
+a dependency needs approval **with a rationale**, not approval alone.
+**Performance budgets are not invented here.** Each is justified in the slice
+that measures it — and the worked example is a warning rather than a precedent:
+the selection timings sometimes reached for are **M0's**, recorded there as
+advisory and never as thresholds. They are not M5's, and they are not an XIC
+budget.
 
 ## 5. User and product handoff
 
 **PX.6, if it is ever reached, delivers one minimal honest XIC interaction in the
-existing surface.** It consumes one scientific result and the **existing**
-scan-selection authority from [ADR 0041](0041-viewer-selection-availability.md).
-It adds no selection authority and no second availability rule.
+existing surface.** It consumes one scientific result, and where it commits a
+scan it goes through the **existing** selection-start authority —
+`canStartSpectrumSelection`, from
+[ADR 0041](0041-viewer-selection-availability.md). **It adds no second selection
+authority.** Stated precisely, because ADR 0041 governs *committing a scan* and
+deliberately decided nothing about XIC, and §1's query carries no scan operand at
+all: any availability question an XIC raises is **PX.6's to answer inside that
+one authority**, not something ADR 0041 has already answered.
 
-**M7 owns the approved v5.11-style shell**, motion, grouped dragging,
-localization and overall layout. None of that is redesigned here, and the
-completed frontend-stack preflight is not restarted. **M8 owns durable artifact,
-run and lineage models. A reusable XIC artifact or export stays M9's**, on M8
-artifact identity, exactly as ADR 0042 routed it.
+**M7 owns the application shell**, motion, localization and overall layout, and
+none of it is designed or reopened here. **What was accepted of v5.11 is a
+destination/conflict organization inside the existing conversion surface** — the
+prototype explicitly does **not** authorize its shell, its simulated capabilities
+or its style overrides, and nothing in this record promotes it to an approved
+shell. The locked frontend stack is not reopened either. **M8 owns durable
+artifact, run and lineage models. A reusable XIC artifact or export stays M9's**,
+on M8 artifact identity, exactly as ADR 0042 routed it.
 
 **A rejected or blocked route leaves an explicit unavailable state** — a stated
 reason in the existing availability posture — **not a simulated trace**, not a
@@ -254,7 +271,7 @@ rather than restating them.
 | --- | --- | --- | --- | --- | --- | --- |
 | **PX.0** route lock | What is the bounded route, and what decides it? | This record | `M6 COMPLETE`, plus explicit entry authorization | Markdown only | The six subjects answered once each; the route and outcome branches consistent with this table | Complete on publication. It admits nothing |
 | **PX.1** provider / API audit | Which of the at most three directions is viable enough to prototype? | A viability finding per direction, with licence, maintenance, API surface and numeric contract; **XIC-S2** decided | PX.0 | Markdown; no dependency added | Each direction reaches viable or not-viable with a located reason. A shortlist name alone is never a finding | Zero viable directions ends the interlude at PX.4 as `XIC_PROVIDER_REFUSED`. A viable direction does **not** authorize PX.2 by itself |
-| **PX.2** bounded prototypes | Can a viable direction express the query of §1 at all? | A throwaway prototype per selected direction, outside the product | PX.1 viability; explicit approval for any install | Prototype code outside the shipped product; Markdown | The prototype computes the §1 query on a fixture whose oracle already exists | A prototype that cannot express the query stops that direction; every direction stopping here reaches PX.4 directly. **Compiling is not evidence** |
+| **PX.2** bounded prototypes | Can a viable direction express the query of §1 at all? | A throwaway prototype per selected direction, outside the product | PX.1 viability, **and its own authorization** — needed even for a direction requiring no install; plus explicit approval for any install | Prototype code outside the shipped product; Markdown | The prototype computes the §1 query on a fixture whose oracle already exists | A prototype that cannot express the query stops that direction; every direction stopping here reaches PX.4 directly. **Compiling is not evidence** |
 | **PX.3** comparative evidence | What does each prototype actually measure, against an independent oracle? | The completed evidence matrix, per direction | PX.2; the oracle established first; fixture permissions recorded | Markdown; evidence files | Every cell is a located result or an explicit not-applicable with its reason | A missing permission or absent representative input is recorded as such and routes PX.4 to `EVIDENCE_BLOCKED` |
 | **PX.4** provider / runtime decision | Which one of the four outcomes does the evidence support? | One terminal outcome, with the semantics and evidence it rests on | PX.3 complete over the finite matrix, **or** every direction already exhausted in PX.1 or PX.2 — **early exhaustion reaches PX.4 directly**, and the matrix is then empty by record rather than unfinished | Markdown | The outcome is derivable from what the earlier slices recorded by a reader who re-checks it | Every outcome is terminal for this interlude. **None of them revokes `M6 COMPLETE`** |
 | **PX.5** runtime, **only if admitted** | What is the minimal runtime that serves one query inside the existing boundary? | A narrow typed operation behind the existing boundary | `XIC_PROVIDER_ADMITTED`, **and its own authorization** | Rust, types, tests, under the §4 boundary | The boundary rules of §4 hold, proved rather than asserted | Does **not** run merely because PX.4 admitted. No plugin ABI, no scheduler, no persistence |
@@ -270,7 +287,7 @@ extended here. **A route lock is none of them.**
 | `XIC_PROVIDER_ADMITTED` | A candidate has **implementable semantics and evidence for the actual source domain** — not merely a promising API or a successful compilation | PX.5 may be *authorized*; PX.6 only after PX.5 is published and separately authorized | Does not implement anything, and does not itself authorize PX.5 |
 | `XIC_PROVIDER_REFUSED` | No candidate in the matrix serves the §1 query at the required fidelity, with the located reason | **M7 proceeds under an explicit recorded handoff.** XIC stays unavailable with a stated reason | Does not start a replacement-provider search, and does not revoke `M6 COMPLETE` |
 | `EVIDENCE_BLOCKED` | The question could not be decided on obtainable evidence — typically a fixture permission or an absent representative acquisition, named exactly, with its owner | **M7 proceeds.** Re-entry is a new scope decision naming the missing input | No PX.5, no PX.6, no unattended acquisition, no relaxed threshold |
-| `ARCHITECTURE_DECISION_REQUIRED` | A candidate is scientifically viable but its runtime placement is an architecture question this interlude may not settle alone | A named architecture decision in its own record. **M7 proceeds** meanwhile | No PX.5 and no PX.6 until that decision exists |
+| `ARCHITECTURE_DECISION_REQUIRED` | A candidate is scientifically viable but its runtime placement is an architecture question this interlude may not settle alone | A named architecture decision in its own record. **M7 proceeds** meanwhile | No PX.5 and no PX.6. **This outcome is terminal for this interlude like the other three**: the architecture record may authorize a fresh slice, and it does not resume PX.5, which takes `XIC_PROVIDER_ADMITTED` and nothing else |
 
 **All four are handoff exits.** Rejection, missing evidence and an unresolved
 architecture decision each end with a next owner rather than another search.
@@ -285,8 +302,9 @@ scientific-correctness claim of any kind.
 **M6's published results are carried unchanged**: the CNV-D2 source-domain
 qualification, the typed conversion intent, the output-only validation limit, the
 five per-item judgements, explicit adoption, M6.8's runtime, type and policy
-distinctions, and all four of M6.10's dispositions. This record changes no M6
-exit criterion.
+distinctions, and all four dispositions of
+[M6.10's ledger](../../spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md#the-terminal-ledger),
+which stays their sole authority. This record changes no M6 exit criterion.
 
 ## Residual carried into this route
 
