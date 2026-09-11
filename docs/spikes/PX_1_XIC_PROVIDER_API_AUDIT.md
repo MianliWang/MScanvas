@@ -26,7 +26,7 @@ API surface as implementation evidence:
 
 | | Direction | Verdict | The one fact that decides it |
 | --- | --- | --- | --- |
-| **A** | ProteoWizard interface that does not serialize through the passive analyzers | **VIABLE for PX.2**, on a stated trust-boundary question | At the same revision `47b13cf` whose `RegionTIC.cpp:156` writes the fixed four decimals, the data layer exposes `double` arrays with their cvParams — and the installed distribution ships that layer as `pwiz_bindings_cli.dll` |
+| **A** | ProteoWizard interface that does not serialize through the passive analyzers | **VIABLE for PX.2, conditionally** — a trust-boundary question **and** the same unit blocker as B | At the same revision `47b13cf` whose `RegionTIC.cpp:156` writes the fixed four decimals, the data layer exposes `double` arrays with their cvParams, and the installed distribution ships that layer as `pwiz_bindings_cli.dll` — but `CVParam` stores the unit as a `CVID`, so a declared-but-unrecognized unit is `CVID_Unknown` like an absent one |
 | **B** | Mature reader or API behind a local worker | **VIABLE for PX.2, conditionally** — one blocker must be cleared first | `mzdata` decodes mzML binary arrays to raw `f64`/`f32` without rounding, is Apache-2.0 and actively maintained — but **its documented API cannot distinguish an undeclared unit from an unrecognized one**, which ADR 0046 §3 subject 7 forbids, and whether a lower-level path recovers it is **not established here** |
 | **C** | Minimal aggregation over a lawful full-data source the project already reads | **NOT VIABLE for PX.2 as written** | The premise is false: this product does not read mzML arrays. Its scanner never decodes a binary payload, and its only array access is the refused provider's rounded text, one scan per process |
 
@@ -154,9 +154,19 @@ it, because a directory listing supports fewer conclusions than it appears to:
    ADR 0046 already requires for that slice, and direction A cannot be prototyped
    without it.
 
-A is viable to prototype. What PX.2 would establish is unknown here and is not
-claimed: whether the managed binding can be driven from a project-owned worker
-under Rust's process ownership, and what it costs.
+**A fourth constraint, shared with B.** `CVParam` holds `CVID cvid`,
+`std::string value` and `CVID units`, and `UserParam` likewise stores its unit as
+a `CVID`; **no raw `unitAccession` or `unitName` string is retained**, and
+`CVID_Unknown` is the sentinel for an unrecognized term as well as the default.
+So "the cvParams survive" does **not** establish that a declared-but-unrecognized
+unit can be told from an absent one, which ADR 0046 §3 subject 7 requires.
+**source-inspected**, revision `47b13cf`.
+
+A is viable to prototype **conditionally**: the trust-boundary decision and the
+unit blocker both precede it. What PX.2 would establish is unknown here and is
+not claimed — whether any pwiz path surfaces the raw attribute, whether the
+managed binding can be driven from a project-owned worker under Rust's process
+ownership, and what it costs.
 
 **A candidate that is a different `msaccess` executable is a separate matter.**
 None is proposed. ADR 0046 keeps the refused digest as a control, and any such
@@ -276,9 +286,20 @@ retention time or intensity, remain refusals. Uniform absence on the retention
 time and intensity axes keeps its separate stated posture.
 
 **Effect on viability and on PX.3.** A candidate must be able to report that the
-unit was *not declared* rather than assert one. For **A** the cvParams survive on
-the array, so the distinction is available. For **B** it is exactly the blocker
-named above and is **unresolved**. PX.3 scores subject 7's missing-m/z-unit
+unit was *not declared* rather than assert one. **Neither A nor B is
+established to do so**, and the symmetry is the finding:
+pwiz's `CVParam` holds `CVID cvid`, `std::string value` and `CVID units` with no
+raw `unitAccession` string, so `CVID_Unknown` conflates unrecognized with absent
+exactly as `Unit::Unknown` does. **source-inspected**, revision `47b13cf`. Saying
+"the cvParams survive" does not answer this: they survive with the unit already
+normalized.
+
+**Both mature readers normalize the unit at parse time**, which suggests the
+requirement is harder to meet than a reader's feature list implies — an
+observation for PX.2 and PX.3 to weigh, not a decision this slice may take. The
+one direction that would not have this limitation is **C**, whose own scanner
+already captures `unitAccession` as a raw string on the retention-time path —
+and C is the direction whose premise fails. PX.3 scores subject 7's missing-m/z-unit
 fixture against **preserved-as-unreported**, which is now the fixed expected
 result rather than a branch.
 
@@ -312,14 +333,16 @@ B needs no trust-boundary decision to begin. It is **not part of PX.1's
 deliverable and binds nothing**, and it is not a ranking of accuracy or
 performance, neither of which was measured.
 
-These are **falsification experiments, not PX.2's acceptance bar**: ADR 0046
+**Both rows now lead with the same blocker**, which is the single question most
+likely to end either direction. These are **falsification experiments, not
+PX.2's acceptance bar**: ADR 0046
 makes PX.2 acceptance *“the prototype computes the §1 query on a fixture whose
 oracle already exists”*, which is strictly more than any row below.
 
 | Direction | Smallest experiment that could falsify viability | Permission it needs |
 | --- | --- | --- |
 | **B** | **First, the blocker**: establish whether any `mzdata` path — a lower-level parse, not the convenience types — can tell a **declared-but-unrecognized** unit from an **absent** one. If none can, B fails on ADR 0046 §3 subject 7 regardless of its numeric contract. Only then: decode one committed synthetic fixture's arrays and read back index, id, MS level and retention time | Approval to add `mzdata` as a prototype-only dependency, outside the shipped product |
-| **A** | Load `pwiz_bindings_cli.dll` from the user's existing installation in a throwaway host and call `spectrum(index, true)`, confirming `double` arrays and surviving cvParams | **A trust-boundary decision** on loading that distribution's assemblies into a process MSCanvas owns, plus whatever .NET runtime the host needs |
+| **A** | **First, the same blocker**: establish whether any pwiz path surfaces a raw `unitAccession`, since `CVParam` normalizes it to a `CVID`. Only then: load `pwiz_bindings_cli.dll` from the user's existing installation in a throwaway host and call `spectrum(index, true)`, confirming `double` arrays and surviving cvParams | **A trust-boundary decision** on loading that distribution's assemblies into a process MSCanvas owns, plus whatever .NET runtime the host needs |
 | **C** | None. Not carried forward | — |
 
 No new representative acquisition is requested by this slice. The two MS1
