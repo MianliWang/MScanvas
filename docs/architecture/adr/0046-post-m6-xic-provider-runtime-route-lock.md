@@ -62,7 +62,7 @@ level, over one snapshot, aggregated one way.
 | Scan identity and order | The source's own `index` and `id`, in **source order**. Retention time is never the key: M5.4 measured two spectra sharing one retention time and kept them as two rows, with `rt` reading non-monotonically |
 | MS-level selection | Exactly one MS level, stated as an operand. There is no implicit "all levels", and no default |
 | m/z bounds and endpoint policy | A closed interval `[low, high]`, **both endpoints inclusive**, compared against the source's stored values without rounding. `low == high` is a legal zero-width window. **`low > high` and any non-finite bound are both refusals**, never an empty result. Both halves are needed: `low > high` is false for a NaN, so a policy refusing only the reversed case would let a malformed request fall through into a certified `Measured { sum: 0 }`. M5.4 measured both failures on the refused build — a reversed window exiting `0` with no output, and a non-finite window silently returning the **unwindowed** result |
-| Units | The unit the source declares for its m/z array. Where the source declares none, the proposal is that the window is expressed in the source's own numeric domain and the result carries that as unreported, as the viewer's existing unit posture does — but **whether such a source is served at all is open, and is XIC-S2 below**. **No ppm and no centre-plus-radius form in the first scope** |
+| Units | The unit the source declares for its m/z array. Where the source declares none, the proposal is that the window is expressed in the source's own numeric domain and the result carries that as unreported, as the viewer's existing unit posture does — but **whether such a source is served at all is open, and is XIC-S2 below**. **No ppm in the first scope.** The query's operands are `low` and `high` and only those; where a surface takes a **centre and an absolute tolerance** — which is what VIEW-007's acceptance row asks a user to type — it normalizes to that closed interval *before* a query exists, so one input form does not become a second semantics |
 | Aggregation | The **sum** of the intensities of source points whose m/z lies in the closed window, per scan. Nothing else. Not a baseline correction, not an interpolated apex, not a fitted peak |
 | Retention-time association | Each result point carries its scan's declared retention time as an **attribute of the scan**, never as an identity or an ordering key. Where a source declares no retention time, or no retention-time unit, the result carries that as declared-absent rather than substituting a number — the scanner already models both, including a unit that was not emitted |
 | Duplicate retention times | Preserved as separate result points in source order. Never merged, never summed together, never reordered |
@@ -233,6 +233,12 @@ authority.** Stated precisely, because ADR 0041 governs *committing a scan* and
 deliberately decided nothing about XIC, and §1's query carries no scan operand at
 all: any availability question an XIC raises is **PX.6's to answer inside that
 one authority**, not something ADR 0041 has already answered.
+
+**VIEW-007's acceptance row still governs what a user types.** It asks for typed
+m/z and tolerance with explicit units and settings; §1 keeps `low` and `high` as
+the only query operands and normalizes a centre-and-tolerance input to them at
+the boundary. PX.6 therefore satisfies that row rather than quietly narrowing it,
+and nothing here revises the feature contract.
 
 **M7 owns the application shell**, motion, localization and overall layout, and
 none of it is designed or reopened here. **What was accepted of v5.11 is a

@@ -8177,7 +8177,7 @@ and no XIC exists. A route lock is none of PX.4's four provider outcomes, and
 nothing here reports performance or scientific correctness. The M5 refusal stands
 on its own measurements, and this route re-enters the *question* rather than
 reviving those findings — it is bounded to at most three architectural
-directions, eight evidence subjects and a finite fixture set, with a decision
+directions, nine evidence subjects and a finite fixture set, with a decision
 checkpoint at PX.4.
 
 **One residual is recorded rather than lost.** `ConversionPanel.test.tsx`'s
