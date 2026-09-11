@@ -68,7 +68,7 @@ level, over one snapshot, aggregated one way.
 | Duplicate retention times | Preserved as separate result points in source order. Never merged, never summed together, never reordered |
 
 **A measured zero is not any other answer.** Per scan the result is exactly one
-of nine states, and the first of them carries a point count so that two
+of eight states, and the first of them carries a point count so that two
 different zeros stay different:
 
 | State | What it means |
@@ -81,9 +81,17 @@ different zeros stay different:
 | `Missing` | The run's index declares the scan and the reader could not obtain it at all |
 | `NonFiniteIntensity` | The window contains a point whose intensity is not finite. **Which of XIC-S4's two answers applies is XIC-S4's to decide** — this state, or exclusion of that point with the scan staying `Measured`. The state exists so both are representable without reopening this contract |
 | `SumNotRepresentable` | Every in-window intensity is finite, and their sum is not representable in the chosen accumulation domain. It exists so the rule above holds without exception: **a `sum` is never non-finite**, and an overflow is reported rather than returned as one |
-| `Absent` | The run's index does not declare the scan. Reachable only where a caller names an index; an enumeration over the run never produces it |
 
-**Ordering is not a precondition, and the viewport's drawability rule is
+**The states are resolved in this order, and the first that applies wins.**
+`Missing`, then the MS-level operand on **declared metadata without decoding any
+array** (`MsLevelUndeclared`, or `ExcludedByMsLevel`), then `NoUsableArrays`,
+then `Unreadable`, then accumulation (`NonFiniteIntensity` or
+`SumNotRepresentable`), then `Measured`. Without this an excluded scan with an
+undecodable array matches two states at once, and a candidate that filters
+before decoding disagrees with one that decodes before filtering **on the same
+input** — which would make the oracle ambiguous rather than the candidate wrong.
+
+**Ordering of the m/z array is not a precondition, and the viewport's drawability rule is
 deliberately not reused.** A sum is taken over a set, so a legal mzML spectrum
 whose m/z array is unsorted has a well-defined in-window sum even though the
 existing rule refuses to *draw* it — that rule also refuses on a non-finite value
@@ -110,7 +118,7 @@ are not an implementer's to guess:
 | **XIC-S1** | Whether a profile source's point sum is offered at all in the first scope, or withheld pending an integration semantics. PX.2 may compute one, labelled a point sum | **PX.4**, on PX.3's profile evidence. Blocks PX.6 |
 | **XIC-S2** | The unit posture where a source declares no m/z unit — reported as unreported, or the source refused for this query | **PX.1**, because it is a property of what a reader exposes. Blocks PX.3's oracle |
 | **XIC-S3** | The agreement criterion: what counts as matching the oracle, and in what arithmetic. The accumulation domain must be named — M5.4's pinned low-intensity fixture is five points of `1e-5`, where single and double precision differ materially — **together with the input domain over which a sum stays representable in it**, which is what makes `SumNotRepresentable` reachable by rule rather than by accident | **PX.3**, fixed with the oracle and **before PX.3's first scored run**. Derived from the fixture by construction and from §1's semantics, **never from observed candidate output** — PX.2 answers expressibility and produces no scored number, so nothing it emits may be used to set this. Without it §6's rule against more permissive thresholds has nothing to bite on |
-| **XIC-D5** | **ADR 0037's own open decision, carried under its own name.** Where the XIC is drawn and against which value axis — a trace inside the existing chromatogram panel, or its own panel with its own value domain. Nothing in the evidence settles it and the consequence is severe: a total ion current sums every ion in every scan while an XIC sums one narrow window, so on a shared linear intensity axis the XIC is a flat baseline line for most real acquisitions | **PX.6**, answered **before it renders**, with the chosen placement's height cost measured at all three responsive targets. **Not M7's**: M7 owns the shell and overall layout, not where this one quantity is drawn |
+| **XIC-D5** | **ADR 0037's own open decision, carried under its own name.** Where the XIC is drawn and against which value axis — a trace inside the existing chromatogram panel, or its own panel with its own value domain. Nothing in the evidence settles it and the consequence is severe: a total ion current sums every ion in every scan while an XIC sums one narrow window, so on a shared linear intensity axis the XIC is a flat baseline line for most real acquisitions | **PX.6**, as its **first act, before it renders anything** — it is PX.6's own output rather than a prerequisite it could not satisfy — with the chosen placement's height cost measured at all three responsive targets. **Not M7's**: M7 owns the shell and overall layout, not where this one quantity is drawn |
 | **XIC-S4** | What a non-finite intensity **inside** the window means. **Exactly two answers, and no third**: the scan reports `NonFiniteIntensity`, or the non-finite point is excluded from the sum and the scan stays `Measured` with `points_in_window` counting only finite points. **A `sum` never carries a non-finite value** | **PX.3**, before its first scored run, and on the same no-candidate-output rule as XIC-S3. Distinct from the drawability rule, which refuses on one anywhere in the scan |
 
 ## 2. Bounded candidate directions
@@ -171,12 +179,12 @@ The finite future matrix covers these subjects and no others:
 | 1 | Window endpoints | A point exactly at `low` and one exactly at `high` are both in |
 | 2 | Fractional and low intensities | A positive sum below the candidate's representation or serialization resolution stays distinguishable from zero. This is the requirement M5.4's measured build failed |
 | 3 | Duplicate retention times | Two scans at one time stay two result points with their own sums, **in source order**. M5.4's fixture puts them at non-adjacent indices precisely so a reordering is as visible as a merge |
-| 4 | MS-level exclusion | An excluded scan is `ExcludedByMsLevel`, never a zero, and a scan declaring no level is `MsLevelUndeclared` |
+| 4 | MS-level exclusion | An excluded scan is `ExcludedByMsLevel`, never a zero, and a scan declaring no level is `MsLevelUndeclared`. **Includes the overlapping case**: a scan that is both excluded and undecodable reports the earlier state in the stated order, so filter-first and decode-first candidates cannot disagree |
 | 5 | Empty windows | `points_in_window: 0` with `sum: 0`, and no scan dropped from the result |
 | 6 | Representative inputs for the proposed domain | **MS1** acquisitions, one profile and one centroided. PX.3 also **records observed wall time and peak memory** per candidate here — as observations attributed to their host and build, **never as thresholds** |
 | 7 | Malformed input | Truncated and invalid sources, a reversed window, a non-finite bound, **a non-finite intensity inside the window** — the case **XIC-S4** must answer — and **finite intensities whose sum is not representable**, which must reach `SumNotRepresentable` rather than an infinite `sum`. Neither case is carried by any inherited fixture. **Exit code is never semantic evidence** |
 | 8 | Reproducibility | Repeats of one invocation on one snapshot agree byte for byte |
-| 9 | **Scan-identity reconciliation** | Index and id survive the MS-level operand — M5.4 measured a build that **renumbered** them under a filter — and an omitted scan stays distinguishable from one the run does not have. §1's identity, order, `Missing` and `Absent` all rest on this, so the matrix cannot decide without it |
+| 9 | **Scan-identity reconciliation** | Index and id survive the MS-level operand — M5.4 measured a build that **renumbered** them under a filter — and an omitted scan stays distinguishable from one the run does not have. §1's identity, order and `Missing` all rest on this, so the matrix cannot decide without it |
 
 **Two borrowings are forbidden by name.** The pinned representative acquisition
 is **MS2-only** and is not MS1 evidence. A centroided acquisition is not profile
@@ -295,7 +303,7 @@ rather than restating them.
 | **PX.3** comparative evidence | What does each prototype actually measure, against an independent oracle? | The completed evidence matrix, per direction | PX.2; the oracle established first; fixture permissions recorded | Markdown; evidence files | Every cell is a located result or an explicit not-applicable with its reason | A missing permission or absent representative input is recorded as such and routes PX.4 to `EVIDENCE_BLOCKED` |
 | **PX.4** provider / runtime decision | Which one of the four outcomes does the evidence support? | One terminal outcome, with the semantics and evidence it rests on | PX.3 complete over the finite matrix, **or** every direction already exhausted in PX.1 or PX.2 — **early exhaustion reaches PX.4 directly**, and the matrix is then empty by record rather than unfinished | Markdown | The outcome is derivable from what the earlier slices recorded by a reader who re-checks it | **Every outcome is terminal for PX.4** — it is the interlude's one decision and is not retaken. Three of the four also end the interlude; `XIC_PROVIDER_ADMITTED` ends the decision and leaves the conditional implementation branch open, which PX.5 may enter only under its own authorization. **None of them revokes `M6 COMPLETE`** |
 | **PX.5** runtime, **only if admitted** | What is the minimal runtime that serves one query inside the existing boundary? | A narrow typed operation behind the existing boundary | `XIC_PROVIDER_ADMITTED`, **and its own authorization** | Rust, types, tests, under the §4 boundary | The boundary rules of §4 hold, proved rather than asserted — **and the partial question is answered here rather than improvised later**, exactly as [ADR 0037](0037-viewer-completion-route.md) assigns it to the runtime slice: establish whether the admitted source can return a partial or truncated result at all, and if it can, carry **typed coverage and completeness facts**; otherwise **refuse partial output rather than present it as a complete success** | Does **not** run merely because PX.4 admitted. No plugin ABI, no scheduler, no persistence |
-| **PX.6** minimal visible XIC, **only if admitted** | What is the smallest honest visible interaction over one result? | One interaction in the existing surface | PX.5 published, **and its own authorization**, **and XIC-D5 answered** | Frontend, tests, rendered validation | **[ADR 0037's visible-XIC obligations, carried by citation and not replaced](0037-viewer-completion-route.md)**: keyboard equivalence for the input and the trace, and rendered evidence at all three viewports for an invalid draft, loading, a successful trace, a successful empty result, a retryable error, a retry, a superseded request, and linked selection unavailable. This table owns the route's dependencies, **not** the rendered-validation obligations, which stay where they were written | Does **not** run merely because PX.5 passed. No layout redesign; M7 still owns the shell |
+| **PX.6** minimal visible XIC, **only if admitted** | What is the smallest honest visible interaction over one result? | **XIC-D5 answered first**, then one interaction in the existing surface | PX.5 published, **and its own authorization** | Frontend, tests, rendered validation | **[ADR 0037's visible-XIC obligations, carried by citation and not replaced](0037-viewer-completion-route.md)**: keyboard equivalence for the input and the trace, and rendered evidence at all three viewports for an invalid draft, loading, a successful trace, a successful empty result, a retryable error, a retry, a superseded request, and linked selection unavailable. This table owns the route's dependencies, **not** the rendered-validation obligations, which stay where they were written | Does **not** run merely because PX.5 passed. No layout redesign; M7 still owns the shell |
 
 ## PX.4's four outcomes, and what each permits
 
