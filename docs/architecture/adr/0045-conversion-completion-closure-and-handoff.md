@@ -39,25 +39,35 @@ to be sitting at.
 | First decision `P` | `6a04d6bb1ac9169ac15cf9d9815d1aa74bc23555` | The ten criteria that never moved, and the original `NOT PROVED` verdicts |
 | Repair `R` | `be247b4697de1cff493164ef97c08c5117e092b0` — the true merge of PR #107 | **Criterion 2.** It is a claim about admission behaviour, and the behaviour is there |
 | Rendered evidence `S` | `2f520a04a4ae8c9c0a0977d5768b74889245127a` — the true merge of PR #108 | **Condition B.** Not `R`: proving the fourth of the repair's sentences is what established it did not render, so the evidence and its repair are both later |
-| This closure `T` | the head this record is published at, PR #106 | **Condition A.** Not `R` and not `S`: `README.md`, `FEATURE_CATALOG.md`, `PRIMARY_WORKFLOWS.md` and `PROJECT_PROPOSAL.md` still described the product as it was before the repair, and this record is what corrects them |
+| Source comments `U` | `4c6a21badd8721f0696f21e2f21ed09fed8693d4` — the true merge of PR #109 | Part of **condition A**: two comments in `conversionPlanAuthority.ts` described the third plan block as not existing |
+| This closure `T` | the head this record is published at, PR #106 | The rest of **condition A**: `README.md`, `FEATURE_CATALOG.md`, `PRIMARY_WORKFLOWS.md` and `PROJECT_PROPOSAL.md` still described the product as it was before the repair, and this record is what corrects them |
 
 | Fact | Value |
 | --- | --- |
-| `P` is an ancestor of `R`, `R` of `S`, and `S` of `T` | yes |
+| `P` is an ancestor of `R`, `R` of `S`, `S` of `U`, and `U` of `T` | yes |
 | `P` → `R` | one repair branch, two commits |
 | `R` → `S` | one branch, two commits: the three-target rendered evidence, and the one-line `NOTICE_ORDER` repair that evidence forced |
 | `R` and `S` published | protected true merge, exact-head CI green, natural-main CI green |
 | What `R` changed | admission gained a source dimension; nothing else. No dependency manifest moved, and no process, cancellation, native-dialog, filesystem-identity or provider-argv path was touched — see [the repair record](../../ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md) |
 | What `S` changed | one rendered spec and one line of `NOTICE_ORDER`. No admission, no plan, no queue and no dependency |
+| What `U` changed | three source comments. No behaviour, no types, no tests |
 | What `T` changes | documentation only |
 | Tree at `P` | `9e1e2b1ce76f38bac985b9acfd4b79ec2e28cb37` |
 
 **Stated rather than back-dated.** On `R` alone, condition A and condition B
 would both still read `NOT PROVED` — a reader checking out `R` would find a
-`Convert` control that is disabled and silent, and four documents describing two
-refusals where the product gives three. Recording that is the point: a closure
-whose conditions cannot be re-derived from the commits it names is not a closure
+`Convert` control that is disabled and silent, four documents describing two
+refusals where the product gives three, and two source comments saying the third
+plan block does not exist. Recording that is the point: a closure whose
+conditions cannot be re-derived from the commits it names is not a closure
 anybody can check.
+
+**Condition A reaches source comments, and this record learned that the hard
+way.** It first carried the stale comments as a residual. The repository's
+automated review answered that a residual is the wrong disposition for a
+sentence contradicting the very condition being closed — the condition says
+*anywhere in the repository*, and a comment is in the repository. That is
+correct, the comments were corrected in `U`, and the residual is withdrawn.
 
 | Fact | Value |
 | --- | --- |
@@ -118,7 +128,7 @@ restated here.
 
 | | Condition | Verdict | Basis |
 | --- | --- | --- | --- |
-| **A** | No unimplemented capability described as implemented, and no delivered one described as missing | **PASS on `T`** (`NOT PROVED` on `P` and on `R`) | The blocking fact is gone: the centroiding setting is no longer offered on families the evidence does not reach, and the documents say which refusal applies. `R` qualified `docs/product/FEATURE_CATALOG.md`'s nine-combination passage and its CNV-005 row; this closure additionally corrected `README.md`, which still described **two** refusals and an unqualified nine. Re-audited across `README.md`, `ROADMAP.md`, `BOOTSTRAP_STATUS.md`, `PROJECT_PROPOSAL.md`, `docs/product/FEATURE_CATALOG.md`, `docs/product/PRIMARY_WORKFLOWS.md` and the accepted conversion ADRs. Two passages state the admitted table without qualifying it by source family — `FEATURE_CATALOG.md`'s "nine combinations, each admitted by a named M6.2 measurement" and its CNV-005 sentence. Both now carry the source qualification rather than merely being true as written. `docs/architecture/ARTIFACT_MODEL.md` describes Project/Artifact/Run/lineage as a **design model**, not as shipped state, and is read as such. `PROJECT_PROPOSAL.md` is read the same way — it states intended scope, including centroid presets that are `EVIDENCE_REQUIRED`, and claims nothing about what ships |
+| **A** | No unimplemented capability described as implemented, and no delivered one described as missing | **PASS on `T`** (`NOT PROVED` on `P`, on `R` and on `S`) | The blocking fact is gone: the centroiding setting is no longer offered on families the evidence does not reach, and the documents say which refusal applies. `R` qualified `docs/product/FEATURE_CATALOG.md`'s nine-combination passage and its CNV-005 row; this closure additionally corrected `README.md`, which still described **two** refusals and an unqualified nine. Re-audited across `README.md`, `ROADMAP.md`, `BOOTSTRAP_STATUS.md`, `PROJECT_PROPOSAL.md`, `docs/product/FEATURE_CATALOG.md`, `docs/product/PRIMARY_WORKFLOWS.md` and the accepted conversion ADRs. Two passages state the admitted table without qualifying it by source family — `FEATURE_CATALOG.md`'s "nine combinations, each admitted by a named M6.2 measurement" and its CNV-005 sentence. Both now carry the source qualification rather than merely being true as written. `docs/architecture/ARTIFACT_MODEL.md` describes Project/Artifact/Run/lineage as a **design model**, not as shipped state, and is read as such. `PROJECT_PROPOSAL.md` is read the same way — it states intended scope, including centroid presets that are `EVIDENCE_REQUIRED`, and claims nothing about what ships |
 | **B** | Inherited interaction, accessibility and responsive obligations at all three targets | **PASS on `S`** (`NOT PROVED` on `R`) | Carried from the slices that shipped each control, at their own rendered validation. Two later changes touched an M6 control, and neither is waved through. M6.10 rewrote the centroiding disclosure in `ConversionSettings.tsx`: a string constant with no layout, state or role effect, covered by a rendered assertion added in the same commit. **`R` added four new user-visible sentences across two components**, not one, and each is accounted for below rather than folded into "a new notice variant". **This condition was not relaxed to accommodate the repair's reduced QA scope**: that scope covers the wider suite and the native campaign, not this condition |
 | **C** | The local gate set passes unchanged | **PASS on `R`, on `S` and on `T`** | Re-run in full on the repair candidate and again on the documentation head of this branch. The gate set is the one `AGENTS.md` names under **Required checks** — `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, `python scripts/check_repo.py`. All pass on `P` with lockfiles unchanged, recorded in `BOOTSTRAP_STATUS.md`'s M6.11 entry. **No gate was redefined and none was dropped**; the browser and native suites are `qa:*` rendered-verification scripts rather than members of that set, and the two that fail are [inventoried below](#environment-and-qa-residuals-inventoried-rather-than-hidden) as failing |
 
@@ -440,7 +450,6 @@ Each is scoped, owned, and mapped to the criterion it does not defeat.
 | Three call sites covered only by their extracted functions | Driving the sites needs a real process failure | The process boundary, when a fault-injecting `ProcessRunner` exists | The decisions themselves are tested directly |
 | The suspended launch has no degradation path | Narrowed: a thread that cannot be opened or resumed, and a root whose threads misreport their suspend count | M6.8, unchanged | Fail-closed; criterion 7 asks for exactly that |
 | Whether a **different** `msconvert` build spawns children | Unestablished by M6.8's measurement | The re-observation gate | Criterion 7's measurement is bound to the measured build |
-| A stale doc comment the repair left in `conversionPlanAuthority.ts` | The comment over `ConversionPlanBlock` still opens *"Two, and they are different sentences"* where the union now has three arms | The next slice that touches that module | A comment, not behaviour. Not corrected here because this closure's net diff is documentation-only by contract. Recorded rather than left to be rediscovered |
 | `NOTICE_ORDER` is a list, so a reason missing from it renders nothing | It is `readonly ConversionUnavailableReason[]` rather than a total mapping, which is how the source-evidence reason came to have a message and no notice | The next slice that touches that registry | The specific omission is repaired and held by a rendered assertion at three viewports. The *shape* that allowed it is not: `CONVERSION_MESSAGES` beside it is a total `Record` and would have failed to compile, which is the pattern a repair would follow |
 | The current-status guard does not read the M6 milestone summary | `validate_current_status_documents_describe_the_shipped_product` is scoped to `## M5 — Viewer Completion`, so a stale M6 verdict in `ROADMAP.md` passes it | The next slice that touches that guard | Condition A is proved by audit here, not by that guard. It is recorded because this closure **did** carry exactly such a stale verdict for one commit, found by review rather than by the guard — which is the argument for widening it |
 
