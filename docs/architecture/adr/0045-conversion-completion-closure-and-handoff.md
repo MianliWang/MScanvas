@@ -1,7 +1,7 @@
 # ADR 0045 — Conversion Completion closure and handoff
 
 Status: **accepted. `M6 COMPLETE`.**
-Date: 2026-09-10, re-decided 2026-09-11 on the published repair
+Date: 2026-09-10, re-decided the same day on the published repair
 Related: [0043](0043-conversion-completion-route.md),
 [0044](0044-conversion-configuration-authority.md),
 [0042](0042-viewer-completion-closure-and-handoff.md),
@@ -62,8 +62,12 @@ from `0.23.0` to `0.24.1`, where for a `0.x` crate the minor is the breaking
 component — and `quick-xml` and `miniz_oxide` each gained a second,
 incompatible-range entry beside the one already there. The npm side moved no
 major and no `0.x` minor. **The mzML scanner every conversion judgement rests on
-is not affected**: `crates/proteowizard` pins `quick-xml = "=0.41.0"` exactly, so
-the added `0.42.0` entry is another crate's.
+is not affected**: the workspace root pins `quick-xml = "=0.41.0"` exactly and
+`crates/proteowizard` takes it with `quick-xml.workspace = true`, so the added
+`0.42.0` entry is another crate's. The enumeration above is of the **in-place**
+`0.x`-minor moves, which are the ones a leading-integer reading would miss; it is
+not a full inventory of the lock diff, which also adds crates and edges that were
+already present at some version.
 
 **A dependency change is a changed build input even inside one major release**,
 so the local gate set was re-run on `P` with the lockfiles unchanged before this
@@ -80,26 +84,63 @@ restated here.
 
 | # | Criterion, owner | Verdict | Implementation authority | Current consumer | Discriminating evidence | Limits and conflicts |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | One availability authority — **M6.1** | **PASS** | `apps/desktop/src/features/mzml-preview/conversionAvailability.ts` — one `ConversionLane` of nine facts and a closed set of **eighteen** unavailable-reasons since `R` | `ConversionAction` is `start` and `retry`; both the controls and `useConversionOperation`'s dispatch resolve them from that one module | `conversionAvailability.test.ts`; the reason registry is exhaustive over the union, so a lane fact added without a sentence fails to compile — and it **did**, on `R`: the fourth plan-block reason failed the typecheck until every mapping answered it, which is the property working rather than being asserted | Stop is gated by its own `canStop` boolean rather than by `ConversionAction`, which is the shape M6.8 shipped. The settings catalog is a **separate** judgement by design — see [the finding below](#the-finding-that-defeated-criterion-2-and-the-repair-that-closed-it) |
+| 1 | One availability authority — **M6.1** | **PASS** | `apps/desktop/src/features/mzml-preview/conversionAvailability.ts` — one `ConversionLane` of nine facts and a closed set of **eighteen** unavailable-reasons since `R` | `ConversionAction` is `start` and `retry`; both the controls and `useConversionOperation`'s dispatch resolve them from that one module | `conversionAvailability.test.ts`; `CONVERSION_MESSAGES` is a total `Record` over `ConversionUnavailableReason`, so a reason added without a sentence fails to compile — and it **did**, on `R`: the eighteenth reason failed the typecheck until every mapping answered it, which is the property working rather than being asserted. The rule is stated over *reasons*, which is what the `Record` is keyed on; the lane's own fields are consumed by an ordered sequence of tests rather than by a total mapping, and `R` added no lane field | Stop is gated by its own `canStop` boolean rather than by `ConversionAction`, which is the shape M6.8 shipped. The settings catalog is a **separate** judgement by design — see [the finding below](#the-finding-that-defeated-criterion-2-and-the-repair-that-closed-it) |
 | 2 | Evidence-backed typed settings — **M6.2**, **M6.3**, **M6.4** | **PASS on `R`** (`NOT PROVED` on `P`) | `crates/proteowizard/src/intent.rs` — `ConversionIntent::ADMITTED`, nine rows, private fields, `admitted(..)` the only constructor, and since `R` an `EvidenceSourceDomain` per row | `ConversionCatalog::of`, the plan command, the `BEGIN` preflight, the single-output plan and the output-set lifecycle, all through `evidence_covers_source` | `scripts/check_repo.py`'s `validate_the_admitted_intent_table_cites_measurements_that_support_it` holds every row against the committed M6.2 ledger — the case must exist, have produced mzML, have exited zero, and have run argv consistent with the row — and since `R` also holds each row's **source domain**, re-proved against a widened centroiding row and a narrowed writer-side row | Admission is now qualified by the families a measurement was taken on, so no setting is offered where its evidence does not reach. The two centroiding rows remain admitted **for mzML**, which is the source they were measured on. See [below](#the-finding-that-defeated-criterion-2-and-the-repair-that-closed-it) |
 | 3 | The visible plan is the bound plan — **M6.3**–**M6.7** | **PASS** | The queue's bound facts, captured under the workspace mutation gate at `BEGIN` | The plan summary and the running queue project the same bound values | Moving any control after `BEGIN` changes nothing about the running queue, pinned per fact in the preview suites | Of the four facts the criterion names, **destructive authorization is vacuously satisfied**: CNV-D4 is `OVERWRITE_REFUSED`, so nothing destructive can be bound. Recorded for the same reason criterion 4's unexercisable halves are |
 | 4 | Destination authority — **M6.5** | **PASS**, on its named exception | The destination resolved to an admitted directory object, with the policy that chose it | The queue planner and every per-item claim and revalidation | Aliasing refused on object identity and an ancestry walk compared by identity at each step, never on a path prefix; retry revalidates every identity it will use | The aliasing and vendor-dataset-root halves stay **unexercisable** — no admitted family is directory-shaped. This is CNV-D3's explicitly named exception, carried unchanged, not a gap found here |
 | 5 | Selected and all are deterministic and bound — **M6.7** | **PASS** | The scope decision and its membership capture | The scope controls and the queue | [The M6.7 record](../../ux/M6_7_CONVERSION_SCOPE.md): visible order, explicit ineligible-row treatment, capacity refusal before commitment, membership immutable after `BEGIN` | None found |
-| 6 | Conflict and destructive behaviour — **M6.6** | **PASS** | The conflict policy resolved on the typed request before launch | Every entry path resolves it identically | Terminal `OVERWRITE_REFUSED` recorded with its reason; `Fail`/`Skip` stand; the provider stays confined to staging under either answer | ADR 0043's M6.6 section still read *publication pending*; [amended](#amendments-this-closure-makes) |
-| 7 | Cancellation fails closed — **M6.8** | **PASS** | The ownership disposition and the claim derived from it | Item states, queue counts, their mirrored wire fields, the diagnostics payload key and the session quarantine reason | `scripts/check_repo.py`'s `validate_the_cancellation_claim_has_one_origin`, a guard over the semantic rather than a site list, proved against thirty deliberate bypasses | The bypass suite is a proof about **this repository's** spellings, not a theorem about all Rust programs. Stated in [the M6.8 record](../../ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md) and unchanged |
-| 8 | Progress contains no fabricated precision — **M6.8** | **PASS** | Item counts, per-state counts and the current item's state | The queue surface | No percentage and no ETA is computed anywhere in the product; every occurrence of the words is a comment explaining the absence | None found |
+| 6 | Conflict and destructive behaviour — **M6.6** | **PASS** | The conflict policy resolved on the typed request before launch | Every entry path resolves it identically | Terminal `OVERWRITE_REFUSED` recorded with its reason; `Fail`/`Skip` stand; the provider stays confined to staging under either answer | ADR 0043's M6.6 section still read *publication pending*; [amended](#amendments-this-record-makes) |
+| 7 | Cancellation fails closed — **M6.8** | **PASS** | The ownership disposition and the claim derived from it | Item states, queue counts, their mirrored wire fields, the diagnostics payload key and the session quarantine reason | `scripts/check_repo.py`'s `validate_the_cancellation_claim_has_one_origin`, a guard over the semantic rather than a site list, proved against thirty-five deliberate bypasses | The bypass suite is a proof about **this repository's** spellings, not a theorem about all Rust programs. Stated in [the M6.8 record](../../ux/M6_8_CANCELLATION_CAPACITY_PROGRESS.md) and unchanged |
+| 8 | Progress contains no fabricated precision — **M6.8** | **PASS** | Item counts, per-state counts and the current item's state | The queue surface | No progress percentage and no ETA is computed anywhere in the product: `eta` appears nowhere in `apps/` or `crates/`, and the surviving occurrences of *percent* are a chromatogram peak-width identifier and a tolerance comment, neither of which is progress | None found |
 | 9 | Five distinct judgements — **M6.9** | **PASS** | Five separate observations per item, on the wire and on screen | `ConversionItemJudgements` and the item DTOs | [The M6.9 record](../../ux/M6_9_OUTPUT_COMPLETION_ADOPTION.md): staged output answerable independently of publication and on the ordinary-failure paths; a **missing** observation distinct from an empty staging area; clean residue distinct from nothing staged | None found |
 | 10 | Multi-output completion is truthful — **M6.6**, **M6.9** | **PASS** | The output manifest, per member | The set and adoption surfaces | A partial set is neither a success nor a failure; collisions and adoption are answered as a set rather than by a one-file rule | None found |
 | 11 | Every conditional route has a terminal disposition — **M6.10** | **PASS** | [The M6.10 terminal ledger](../../spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md#the-terminal-ledger) | Criterion 11 is answered from that ledger and nowhere else; `scripts/check_repo.py`'s `validate_the_m610_side_routes_are_all_terminal` holds the four routes to the closed disposition vocabulary | Four routes, four terminal dispositions, none admitted and none left open | The inner dispositions are reproduced [below](#criterion-11-by-citation) **by citation**; this record does not re-decide them |
-| 12 | M7 and M8 receive stable seams — **M6.3**, **M6.5**, **M6.9**, **M6.11** | **PASS** | The reads ADR 0043 lists | [Each named below](#the-m7-and-m8-seams) with its real consumer | Every read reaches a current consumer, and eight of the nine reach a visible surface | `Run`, `Artifact`, `Lineage` and `Provenance` are deliberately **not built**. `DestinationIdentity`'s resolved object has a Rust consumer only, by design — see that row |
+| 12 | M7 and M8 receive stable seams — **M6.3**, **M6.5**, **M6.9**, **M6.11** | **PASS** | The reads ADR 0043 lists | [Each named below](#the-m7-and-m8-seams) with its real consumer | Every read reaches a current consumer, and every seam reaches a visible surface except where the privacy rule forbids it — which is not a missing consumer but one of `DestinationIdentity`'s **two** reads, the resolved object, deliberately never crossing the boundary | `Run`, `Artifact`, `Lineage` and `Provenance` are deliberately **not built**. `DestinationIdentity`'s resolved object has a Rust consumer only, by design — see that row |
 
 ### Milestone-wide A, B and C
 
 | | Condition | Verdict | Basis |
 | --- | --- | --- | --- |
 | **A** | No unimplemented capability described as implemented, and no delivered one described as missing | **PASS on `R`** (`NOT PROVED` on `P`) | The blocking fact is gone: the centroiding setting is no longer offered on families the evidence does not reach, and the documents say which refusal applies. `R` qualified `docs/product/FEATURE_CATALOG.md`'s nine-combination passage and its CNV-005 row; this closure additionally corrected `README.md`, which still described **two** refusals and an unqualified nine. Re-audited across `README.md`, `ROADMAP.md`, `BOOTSTRAP_STATUS.md`, `PROJECT_PROPOSAL.md`, `docs/product/FEATURE_CATALOG.md`, `docs/product/PRIMARY_WORKFLOWS.md` and the accepted conversion ADRs. Two passages state the admitted table without qualifying it by source family — `FEATURE_CATALOG.md`'s "nine combinations, each admitted by a named M6.2 measurement" and its CNV-005 sentence. Both now carry the source qualification rather than merely being true as written. `docs/architecture/ARTIFACT_MODEL.md` describes Project/Artifact/Run/lineage as a **design model**, not as shipped state, and is read as such. `PROJECT_PROPOSAL.md` is read the same way — it states intended scope, including centroid presets that are `EVIDENCE_REQUIRED`, and claims nothing about what ships |
-| **B** | Inherited interaction, accessibility and responsive obligations at all three targets | **PASS — partly on reused evidence, partly on new** | Carried from the slices that shipped each control, at their own rendered validation. Two later changes touched an M6 control, and neither is waved through. M6.10 rewrote the centroiding disclosure in `ConversionSettings.tsx`: a string constant with no layout, state or role effect, covered by a rendered assertion added in the same commit. `R` added a **new notice variant** to the same control, which is rendered UI work rather than a constant — so its layout was measured at **1920×1080, 1366×768 and 960×640** in the shipped bundle, each checking that the note is laid out rather than clipped, stays inside the panel, causes no sideways scrolling, and leaves the recovery control enabled and focusable. Its behaviour was measured once, at the reference window. No other M6 control changed. **This condition was not relaxed to accommodate the repair's reduced QA scope**: the reduced scope covers the wider suite and the native campaign, not this condition |
-| **C** | The local gate set passes unchanged | **PASS on `R`, and on this closure candidate** | Re-run in full on the repair candidate and again on the documentation head of this branch. The gate set is the one `AGENTS.md` names under **Required checks** — `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -D warnings`, `cargo test --workspace`, `python scripts/check_repo.py`. All pass on `P` with lockfiles unchanged, recorded in `BOOTSTRAP_STATUS.md`'s M6.11 entry. **No gate was redefined and none was dropped**; the browser and native suites are `qa:*` rendered-verification scripts rather than members of that set, and the two that fail are [inventoried below](#environment-and-qa-residuals-inventoried-rather-than-hidden) as failing |
+| **B** | Inherited interaction, accessibility and responsive obligations at all three targets | **PASS — partly on reused evidence, partly on new** | Carried from the slices that shipped each control, at their own rendered validation. Two later changes touched an M6 control, and neither is waved through. M6.10 rewrote the centroiding disclosure in `ConversionSettings.tsx`: a string constant with no layout, state or role effect, covered by a rendered assertion added in the same commit. **`R` added four new user-visible sentences across two components**, not one, and each is accounted for below rather than folded into "a new notice variant". **This condition was not relaxed to accommodate the repair's reduced QA scope**: that scope covers the wider suite and the native campaign, not this condition |
+
+**Condition B, sentence by sentence.** The repair's four new sentences live in
+two components, and three of them speak only when the *selected* row is withheld
+— a state the shipped catalog cannot produce, because it withholds only
+reader-sensitive rows and the shipped posture is writer-side. They are measured
+anyway: a sentence that is in the bundle can be rendered by a later catalog, and
+this condition is about the controls the milestone ships.
+
+| Sentence | Where | Rendered evidence |
+| --- | --- | --- |
+| The note beside a refused choice | `ConversionSettings.tsx`, `REFUSAL_NOTE` | Behaviour once at 1366×768; layout at **1920×1080, 1366×768 and 960×640** |
+| The banner above the groups | `ConversionSettings.tsx`, `SELECTION_UNAVAILABLE_NOTE` | Layout and wording at **all three targets**, driven from a catalog whose shipped row is withheld |
+| The plan area's sentence | `ConversionPanel.tsx`, `PlanPending` | Same three-target case |
+| The refused `Convert`'s reason | `conversionAvailability.ts`, `CONVERSION_MESSAGES` | Same three-target case, which also asserts `Convert` is refused |
+
+Each of the three-target checks asserts the sentence is the source-evidence one
+and **not** the grammar one, that the element is laid out rather than clipped,
+that it stays inside the panel, that the document does not scroll sideways, and
+that the way out stays enabled and focusable. The refused `Convert` is held by
+its **own notice** rather than by its disabled state: the notice exists exactly
+once, says the source-evidence sentence, and is named by the control's
+`aria-describedby`. Twenty-four cases pass in the conversion-settings browser
+suite.
+
+**The last three were published separately, and asserting the fourth found a
+defect.** They arrived as a test-only change plus a one-line repair rather than
+inside this record, so that this closure's net diff against `main` stays
+documentation-only. Asserting the `Convert` notice directly — which the
+repository's automated review asked for — established that it did not exist:
+`NOTICE_ORDER` in `conversionNoticeRegistry.ts` is a plain list rather than a
+total mapping, the source-evidence reason was never added to it, and
+`conversionNotices` filters through that list. So the control was **disabled and
+silent**, with nothing for `aria-describedby` to name, while the message sat
+unreachable in `CONVERSION_MESSAGES` — which *is* a total `Record` and therefore
+compiled. This is recorded rather than smoothed over: condition B's own
+measurement is what found it, which is the argument for taking the measurement
+rather than reasoning that an unreachable sentence needs none.
+| **C** | The local gate set passes unchanged | **PASS on `R`, and on this closure candidate** | Re-run in full on the repair candidate and again on the documentation head of this branch. The gate set is the one `AGENTS.md` names under **Required checks** — `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, `python scripts/check_repo.py`. All pass on `P` with lockfiles unchanged, recorded in `BOOTSTRAP_STATUS.md`'s M6.11 entry. **No gate was redefined and none was dropped**; the browser and native suites are `qa:*` rendered-verification scripts rather than members of that set, and the two that fail are [inventoried below](#environment-and-qa-residuals-inventoried-rather-than-hidden) as failing |
 
 ## The finding that defeated criterion 2, and the repair that closed it
 
@@ -129,8 +170,20 @@ picker there, recording `Thermo/Xcalibur peak picking`.
 
 **Which branch that produces was checked, not assumed, because the two branches
 are very different.** A vendor source is judged output-only, so its processing
-history is whatever the run wrote. Read from the retained output of that
-measurement: its `spectrumList` carries
+history is whatever the run wrote.
+
+**Where this observation lives, stated plainly on re-decision.** It was read from
+the output M6.10's S1 run retained, which is **not in this repository** — the
+M6.10 record names the picker per case and stops there, so a reader cannot
+re-check the three facts below from the worktree. The *mechanism* they turn on is
+checkable and was re-checked: `check_requested_processing` in
+`crates/proteowizard/src/conversion.rs` returns `ProcessingAlgorithmMismatch` for
+a `Resolved` history whose additions contain vendor peak picking, and records the
+property as merely unverified otherwise. This record's rule is that a measurement
+is linked rather than retold; this one is retold because there is nothing here to
+link, and saying so is the honest form.
+
+Read from that retained output: its `spectrumList` carries
 `defaultDataProcessingRef="pwiz_Reader_Thermo_conversion"`, that `dataProcessing`
 carries `MS:1000035 peak picking` with the vendor `userParam`, and the spectrum
 declares no override — so the reference **resolves**, and
@@ -224,8 +277,8 @@ implementation authorization and their own evidence.
 | --- | --- |
 | **Scope** | The two `UnscopedDefaultCentroiding` rows, on this provider build. Measured for Thermo RAW; unmeasured for Shimadzu LCD and SCIEX WIFF |
 | **Evidence** | [M6.10's S1 measurement and its shipped-claim repair](../../spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md#one-shipped-claim-repaired); `a_vendor_acquisition_records_the_vendor_picker_and_does_not_satisfy_the_request` in `crates/proteowizard/src/conversion.rs`, which pins the classification and the refusal; and the retained output whose resolved processing reference settles which branch is taken |
-| **Owner** | A new slice under CNV-D2's authority, which is where processing-intent admission lives. **CNV-D2's status line names M6.2 as its owner and is stale in that respect**: M6.2 is complete, and what remains is a family dimension it never had |
-| **What must be true to close criterion 2** | Every admitted setting is backed by evidence covering a source the product can convert |
+| **Owner** | A new slice under CNV-D2's authority, which is where processing-intent admission lives. **CNV-D2's status line named M6.2 as its owner and was stale in that respect**: M6.2 is complete, and what remained was a family dimension it never had. *Re-decided 2026-09-10: the published repair took that dimension and amended the status line, which now carries evidence applicability for reader-sensitive processing as `LOCKED`, owned by the repair rather than by M6.2* |
+| **What must be true to close criterion 2** | *As written when this was blocked:* every admitted setting is backed by evidence covering a source the product can convert. **Amended on re-decision, and the amendment is the narrower claim rather than the looser one:** every setting the product **offers** is backed by evidence covering a source it converts, and every row of the admitted table is admitted only for the families its measurement covers. The two centroiding rows are still in the table, admitted for mzML and offered nowhere — which is the first wording's intent, since a table row that cannot be selected, planned or run is not a setting anybody is offered. Stated explicitly because the first wording, read literally, would require deleting measured rows, and deleting evidence is not what qualifying it means |
 
 **ADR 0043 also owes an amendment here**, and this record does not make it: its
 M6.2 evidence standard has no source-family dimension, and peak picking is the
@@ -247,10 +300,10 @@ required is what it does.
 | What the finding required | What `R` does | How this audit checked it |
 | --- | --- | --- |
 | The catalog must not offer a combination whose evidence does not reach the families the product converts | `EvidenceSourceDomain` per row; `ConversionCatalog::availability_of` asks `evidence_covers_source` over the families `is_convertible` admits, and answers `not_evidenced_for_conversion_sources` | `no_centroiding_combination_is_evidenced_for_a_family_the_workflow_converts`, asked through the crate's own rule rather than against a list of rows |
-| The refusal must not be the installation's sentence, because no release supplies a measurement | A third catalog answer, a third `RowAdmission` arm, a third choice refusal and a fourth plan-block reason, so the note beside the control, the banner, the plan area and the disabled `Convert` all read the same discriminator | `a_plan_for_an_intent_measured_only_on_mzml_names_the_evidence_not_the_build`; the rendered case asserts the sentence is the source-evidence one and is *not* the grammar one |
+| The refusal must not be the installation's sentence, because no release supplies a measurement | A third catalog answer, a third `RowAdmission` arm, a third choice refusal and a third plan-block reason, so the note beside the control, the banner, the plan area and the disabled `Convert` all read the same discriminator | `a_plan_for_an_intent_measured_only_on_mzml_names_the_evidence_not_the_build`; the rendered case asserts the sentence is the source-evidence one and is *not* the grammar one |
 | The integrity contract must not be widened to accept whichever algorithm a reader uses | Untouched. `ProcessingAlgorithmMismatch` and its comparison are not in the diff | The test that pins the vendor-picker refusal is unchanged and passing |
 | Nothing may be admitted or excluded by the repair | Nine admitted, thirty-nine excluded, recounted from the cross-product | `the_measured_vocabulary_is_unchanged_by_source_qualification` |
-| Shimadzu LCD and SCIEX WIFF must not be recorded as measured failures | Withheld for **absent evidence**, with a distinct assertion | `a_shimadzu_source_is_refused_for_absent_evidence_rather_than_a_measured_failure` |
+| Shimadzu LCD and SCIEX WIFF must not be recorded as measured failures | Withheld for **absent evidence**. There is no *measured failure* state in the vocabulary to be distinguished from: the refusal vocabulary has three members and none of them means that | `a_shimadzu_source_is_refused_for_absent_evidence_rather_than_a_measured_failure` asserts the same `IntentNotEvidencedForSource` a Thermo source gets, which is the point — the product makes **one** claim about both families, and it is *not measured*, not *measured to fail*. The name and this record carry that meaning; the assertion does not discriminate it, and nothing in the product does either |
 | The refusal must cost the user nothing | Refused before the destination is looked at, before the source is captured, and before `BEGIN` resolves the backend | Three ordering proofs, each written so that moving the check later would fail them |
 
 **What this audit does not claim about the repair.** Its rendered evidence is one
@@ -370,6 +423,9 @@ Each is scoped, owned, and mapped to the criterion it does not defeat.
 | Three call sites covered only by their extracted functions | Driving the sites needs a real process failure | The process boundary, when a fault-injecting `ProcessRunner` exists | The decisions themselves are tested directly |
 | The suspended launch has no degradation path | Narrowed: a thread that cannot be opened or resumed, and a root whose threads misreport their suspend count | M6.8, unchanged | Fail-closed; criterion 7 asks for exactly that |
 | Whether a **different** `msconvert` build spawns children | Unestablished by M6.8's measurement | The re-observation gate | Criterion 7's measurement is bound to the measured build |
+| A stale doc comment the repair left in `conversionPlanAuthority.ts` | The comment over `ConversionPlanBlock` still opens *"Two, and they are different sentences"* where the union now has three arms | The next slice that touches that module | A comment, not behaviour. Not corrected here because this closure's net diff is documentation-only by contract. Recorded rather than left to be rediscovered |
+| `NOTICE_ORDER` is a list, so a reason missing from it renders nothing | It is `readonly ConversionUnavailableReason[]` rather than a total mapping, which is how the source-evidence reason came to have a message and no notice | The next slice that touches that registry | The specific omission is repaired and held by a rendered assertion at three viewports. The *shape* that allowed it is not: `CONVERSION_MESSAGES` beside it is a total `Record` and would have failed to compile, which is the pattern a repair would follow |
+| The current-status guard does not read the M6 milestone summary | `validate_current_status_documents_describe_the_shipped_product` is scoped to `## M5 — Viewer Completion`, so a stale M6 verdict in `ROADMAP.md` passes it | The next slice that touches that guard | Condition A is proved by audit here, not by that guard. It is recorded because this closure **did** carry exactly such a stale verdict for one commit, found by review rather than by the guard — which is the argument for widening it |
 
 ### Environment and QA residuals, inventoried rather than hidden
 
@@ -397,7 +453,10 @@ failing, with their owners and their actual status.
 
 ## Amendments this record makes
 
-**Three statements in ADR 0043 were true when written and are not now.** Each is
+**Three statements in ADR 0043 were true when written and are not now.** **Two
+of the three are this record's**; the third was made by the published repair and
+is listed so a reader of this section has the whole set, not so this record takes
+credit for it. ADR 0043's status line credits each to its actual author. Each is
 corrected in that document, dated, with the superseded wording quoted there
 rather than deleted — which is where this repository puts an amendment, so that a
 reader of ADR 0043 is not left following a pointer from somewhere else.

@@ -380,13 +380,20 @@ cache, and vendor-format direct preview. Each is deferred below with its owner.
 
 ## M6 — Conversion Completion
 
-**Not complete.** M6.11 audited the twelve exit criteria and eleven are proved;
-**criterion 2 is not**, so the milestone does not close. The audit, the
-determination and the exact owning repair are in
+**Complete.** M6.11 audited the twelve exit criteria; all twelve are proved and
+the three milestone-wide conditions hold. The audit is
 [ADR 0045](docs/architecture/adr/0045-conversion-completion-closure-and-handoff.md),
-which is kept as a draft rather than accepted. None of criterion 11's four
-conditional routes is admitted, and none had to be. **The Post-M6 XIC Provider /
-Runtime Interlude is gated on `M6 COMPLETE` and has not started.**
+accepted.
+
+**It did not close on its first pass, and that is kept rather than tidied away.**
+Criterion 2 and condition A both failed on one fact: two admitted centroiding
+settings were offered on source families their evidence never covered. The audit
+named the exact owning repair and refused fail-closed, an assigned owner and
+pre-existing as exemptions. That repair is published, and the audit was
+re-decided against it. None of criterion 11's four conditional routes is
+admitted, and none had to be. **The Post-M6 XIC Provider / Runtime Interlude's
+`M6 COMPLETE` gate is now met, which is not the same as entering it: it has not
+started, and neither has M7.**
 
 The route was locked, the conversion lane has one availability
 authority, the installed `msconvert` has been measured against M6's finite

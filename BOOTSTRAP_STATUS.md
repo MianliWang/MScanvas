@@ -7992,8 +7992,13 @@ rather than only proving a returned error. The single-output plan is aimed at a
 destination root that does not exist and still answers applicability instead of
 `DestinationRootNotInspectable`, which pins the check ahead of the first thing
 the constructor does to the world. The set lifecycle is given a runner that
-panics if called, and ends with zero calls and an empty destination. `BEGIN`
-ends with an idle slot, an empty destination and zero provider launches. The catalog keeps all nine rows and distinguishes *this
+panics if called, and ends with zero calls and an empty destination. `BEGIN` ends
+with an idle slot and an unchanged backend-resolution count, which places the
+refusal ahead of the receipt proof; its destination and launch counts are
+deliberately not asserted, because `BEGIN` carries no destination and launches
+nothing under any ordering.
+
+The catalog keeps all nine rows and distinguishes *this
 build cannot express it* from *no source this product converts is one this row's
 evidence covers* — two refusals, two sentences, both about the combination and
 never about an axis value.
@@ -8029,8 +8034,9 @@ of the wider suite for reassurance**, and the
 equivalent to browser-mocked evidence, which replaces the Tauri boundary at
 `invoke` and can say nothing about a native window. What supports omitting it is
 diff inspection. The change adds four production refusal sites, five new typed
-variants, a DTO error kind, a new field on the catalog row DTO, a fourth plan
-block reason and three rendered sentences — and touches no process supervision,
+variants, a DTO error kind, a new field on the catalog row DTO, a third
+plan-block reason with the eighteenth unavailable-reason beside it, and four
+rendered sentences — and touches no process supervision,
 cancellation, native dialog or focus plumbing, filesystem identity, cleanup or
 finalization, provider argv or algorithm, and no dependency manifest. **Its next owner is the production UI/integration slice
 that next touches this path.** No old binary evidence is attributed to the
@@ -8065,8 +8071,14 @@ input even inside one major release, so the gate set `AGENTS.md` names under
 **Required checks** was re-run on the closure baseline with lockfiles unchanged
 before the audit began: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`,
 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
---all-features -D warnings`, `cargo test --workspace` and
+--all-features -- -D warnings`, `cargo test --workspace` and
 `python scripts/check_repo.py` all pass. No gate was redefined and none dropped.
+
+**And re-run twice more.** The same eight gates pass on the published repair
+candidate, and again on this branch's documentation head: `cargo test
+--workspace` at 1 555 passed / 23 ignored / 0 failed, `pnpm test` at 70 files and
+1 694 passed, with `pnpm build` and the repository validator green on both. That
+is what condition C's verdict rests on.
 
 **The finding.** M6.10 measured that the shipped centroiding setting is evidenced
 only on generated mzML fixtures; that the visible product converts vendor
@@ -8112,9 +8124,14 @@ three, and stated the nine admitted combinations without the source
 qualification. Both are condition A matters.
 
 **What was and was not measured for the repair, carried honestly into this
-closure.** Its rendered evidence is one behavioural case at the reference window
-plus a three-target layout check of the new notice, which is what condition B
-asks of a new notice variant in an M6 control. **No four-viewport sweep was run,
+closure.** The repair added **four** user-visible sentences across two
+components, not one. Its rendered evidence is one behavioural case at the
+reference window plus three-target layout checks covering all four, which is
+what condition B asks of an M6 control. The last three were published separately
+as a test-only change so this closure's diff stays documentation-only — and
+asserting the fourth found that it did not render at all: the reason was missing
+from `NOTICE_ORDER`, so the disabled `Convert` was silent. Repaired with that
+evidence. **No four-viewport sweep was run,
 and the M6.6–M6.9 native campaign was NOT RE-RUN** — recorded as not re-run
 rather than as passed, waived or satisfied by browser-mocked evidence, with the
 production UI/integration slice that next touches this path as its owner. No
