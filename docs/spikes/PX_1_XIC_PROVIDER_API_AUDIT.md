@@ -27,7 +27,7 @@ API surface as implementation evidence:
 | | Direction | Verdict | The one fact that decides it |
 | --- | --- | --- | --- |
 | **A** | ProteoWizard interface that does not serialize through the passive analyzers | **VIABLE for PX.2**, on a stated trust-boundary question | At the same revision `47b13cf` whose `RegionTIC.cpp:156` writes the fixed four decimals, the data layer exposes `double` arrays with their cvParams — and the installed distribution ships that layer as `pwiz_bindings_cli.dll` |
-| **B** | Mature reader or API behind a local worker | **VIABLE for PX.2**, with a named adapter obligation | `mzdata` decodes mzML binary arrays to raw `f64`/`f32` without rounding, is Apache-2.0 and actively maintained — but its `Unit` and `ms_level` types lose declaration-versus-default distinctions that ADR 0046 §1 requires, recoverably |
+| **B** | Mature reader or API behind a local worker | **VIABLE for PX.2, conditionally** — one blocker must be cleared first | `mzdata` decodes mzML binary arrays to raw `f64`/`f32` without rounding, is Apache-2.0 and actively maintained — but **its documented API cannot distinguish an undeclared unit from an unrecognized one**, which ADR 0046 §3 subject 7 forbids, and whether a lower-level path recovers it is **not established here** |
 | **C** | Minimal aggregation over a lawful full-data source the project already reads | **NOT VIABLE for PX.2 as written** | The premise is false: this product does not read mzML arrays. Its scanner never decodes a binary payload, and its only array access is the refused provider's rounded text, one scan per process |
 
 ## C — the premise does not hold, and saying so is the finding
@@ -163,7 +163,7 @@ None is proposed. ADR 0046 keeps the refused digest as a control, and any such
 candidate still owes M5.4's three-part re-entry gate in full; this audit narrows
 nothing there.
 
-## B — one named reader, with a named adapter obligation
+## B — one named reader, with one blocker to clear
 
 The candidate is **`mzdata`**, a Rust library for reading mass-spectrometry data
 formats, at `github.com/mobiusklein/mzdata`. One candidate only; no catalogue.
@@ -196,13 +196,30 @@ part a name in a shortlist cannot tell you:
   cannot express ADR 0046's `MsLevelUndeclared` state, which this repository's
   own scanner models as `Option<u32>`.
 
-Neither is irrecoverable, and that distinction is the finding: `DataArray.params`
-retains the original cvParams, and `SpectrumDescription` is `ParamDescribed`, so
-a **narrow adapter reading the raw parameter lists rather than the convenience
-types** can restore both distinctions. That adapter is **a finding PX.2's
-authorization must weigh, not an obligation this document imposes** — ADR 0046's
-slice table owns those — and without it a prototype that trusts `unit` and
-`ms_level` would silently fabricate declarations.
+**The two halves do not have the same answer, and the difference is the finding.**
+
+For the **MS level**, reading the spectrum's parameters rather than the
+convenience field is a plausible recovery, since an undeclared level is an absent
+cvParam rather than a normalized value. **This audit did not establish that the
+parser retains that cvParam after populating `ms_level`**, so it is a question,
+not a solution.
+
+For the **unit**, recovery through `params` **does not work**, and my first
+reading of this was wrong. `Param` carries `name`, `value`, `accession:
+Option<u32>`, `controlled_vocabulary` and `unit: Unit` — **the unit is already
+normalized at the parameter level, and no raw `unitAccession` or `unitName`
+string is retained anywhere in the type**. So a declared-but-unrecognized unit
+and a wholly absent unit both arrive as `Unit::Unknown`, through `params` exactly
+as through `DataArray.unit`. **documented.**
+
+That is not a style question. ADR 0046 §3 subject 7 requires that **no declared
+unit may be dropped**, and the run-level refusal in §1 requires telling a declared
+unit apart from an undeclared one within a single run. A candidate that cannot
+make that distinction cannot satisfy either. Whether `mzdata` offers a
+lower-level parse path that surfaces the raw attributes is **not established by
+this audit**, and it is now **the first thing PX.2 must falsify** — recorded as a
+finding its authorization must weigh, since ADR 0046's slice table owns
+obligations, not this document.
 
 `SignalContinuity` is `{Unknown, Centroid, Profile}` with `Unknown` as default,
 so an undeclared representation is expressible — carrying the same
@@ -292,7 +309,7 @@ oracle already exists”*, which is strictly more than any row below.
 
 | Direction | Smallest experiment that could falsify viability | Permission it needs |
 | --- | --- | --- |
-| **B** | Decode one committed synthetic fixture's arrays through `mzdata` and read back index, id, MS level, retention time and all three unit declarations **from the raw parameter lists**, confirming an undeclared unit is reported as undeclared | Approval to add `mzdata` and its subtree as a prototype-only dependency, outside the shipped product |
+| **B** | **First, the blocker**: establish whether any `mzdata` path — a lower-level parse, not the convenience types — can tell a **declared-but-unrecognized** unit from an **absent** one. If none can, B fails on ADR 0046 §3 subject 7 regardless of its numeric contract. Only then: decode one committed synthetic fixture's arrays and read back index, id, MS level and retention time | Approval to add `mzdata` as a prototype-only dependency, outside the shipped product |
 | **A** | Load `pwiz_bindings_cli.dll` from the user's existing installation in a throwaway host and call `spectrum(index, true)`, confirming `double` arrays and surviving cvParams | **A trust-boundary decision** on loading that distribution's assemblies into a process MSCanvas owns, plus whatever .NET runtime the host needs |
 | **C** | None. Not carried forward | — |
 
