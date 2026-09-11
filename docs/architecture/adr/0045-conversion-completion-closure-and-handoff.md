@@ -39,7 +39,7 @@ to be sitting at.
 | First decision `P` | `6a04d6bb1ac9169ac15cf9d9815d1aa74bc23555` | The ten criteria that never moved, and the original `NOT PROVED` verdicts |
 | Repair `R` | `be247b4697de1cff493164ef97c08c5117e092b0` — the true merge of PR #107 | **Criterion 2.** It is a claim about admission behaviour, and the behaviour is there |
 | Rendered evidence `S` | `2f520a04a4ae8c9c0a0977d5768b74889245127a` — the true merge of PR #108 | **Condition B.** Not `R`: proving the fourth of the repair's sentences is what established it did not render, so the evidence and its repair are both later |
-| Source comments `U` | `327f9151cab8577a657a2fedf32d32cd6ba42012` — the true merges of PR #109 and PR #110 | Part of **condition A**: five comments across `conversionPlanAuthority.ts`, `conversionIntentSelection.ts`, `ConversionSettings.tsx` and `intent.rs` still described the pre-repair product — a third plan block that did not exist, two choice refusals where there are three, a banner record counted as two, and a vendor acquisition refused by the integrity contract *after* the provider ran |
+| Source comments `U` | `204a9b7965b2dda801944f1fb1a50d0a39a1cde1` — the true merges of PR #109, #110 and #111 | Part of **condition A**: thirteen comments across the changed surface still described the pre-repair product — a third plan block that did not exist, two choice refusals where there are three, a catalog judged on grammar alone, `RowAdmission` counted as three answers, a DTO row that said *this installation*, and a vendor acquisition refused by the integrity contract *after* the provider ran |
 | This closure `T` | the head this record is published at, PR #106 | The rest of **condition A**: `README.md`, `FEATURE_CATALOG.md`, `PRIMARY_WORKFLOWS.md` and `PROJECT_PROPOSAL.md` still described the product as it was before the repair, and this record is what corrects them |
 
 | Fact | Value |
@@ -50,7 +50,7 @@ to be sitting at.
 | `R` and `S` published | protected true merge, exact-head CI green, natural-main CI green |
 | What `R` changed | admission gained a source dimension; nothing else. No dependency manifest moved, and no process, cancellation, native-dialog, filesystem-identity or provider-argv path was touched — see [the repair record](../../ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md) |
 | What `S` changed | one rendered spec and one line of `NOTICE_ORDER`. No admission, no plan, no queue and no dependency |
-| What `U` changed | five source comments, over two pull requests. No behaviour, no types, no tests |
+| What `U` changed | thirteen source comments, over three pull requests. No behaviour, no types, no tests |
 | What `T` changes | documentation only |
 | Tree at `P` | `9e1e2b1ce76f38bac985b9acfd4b79ec2e28cb37` |
 
@@ -67,10 +67,11 @@ way.** It first carried the stale comments as a residual. The repository's
 automated review answered that a residual is the wrong disposition for a
 sentence contradicting the very condition being closed — the condition says
 *anywhere in the repository*, and a comment is in the repository. That is
-correct, the comments were corrected in `U`, and the residual is withdrawn. The
-first correction was prompted by review; the rest came from sweeping the modules
-the repair touched rather than waiting to be told again, which is how the
-`intent.rs` note describing a refusal that can no longer be reached was found.
+correct, the comments were corrected in `U`, and the residual is withdrawn. Four
+review rounds each surfaced one, because the first sweeps grepped for phrases
+rather than reading; the rest came from reading every doc comment on the changed
+surface, which is how the catalog described as judged on grammar alone was
+found. Recorded that way round because the lesson is the method, not the count.
 
 | Fact | Value |
 | --- | --- |
