@@ -26,8 +26,8 @@ API surface as implementation evidence:
 
 | | Direction | Verdict | The one fact that decides it |
 | --- | --- | --- | --- |
-| **A** | ProteoWizard interface that does not serialize through the passive analyzers | **VIABLE for PX.2, conditionally** — a trust-boundary question **and** the same unit blocker as B | At the same revision `47b13cf` whose `RegionTIC.cpp:156` writes the fixed four decimals, the data layer exposes `double` arrays with their cvParams, and the installed distribution ships that layer as `pwiz_bindings_cli.dll` — but `CVParam` stores the unit as a `CVID`, so a declared-but-unrecognized unit is `CVID_Unknown` like an absent one |
-| **B** | Mature reader or API behind a local worker | **VIABLE for PX.2, conditionally** — one blocker must be cleared first | `mzdata` decodes mzML binary arrays to raw `f64`/`f32` without rounding, is Apache-2.0 and actively maintained — but **its documented API cannot distinguish an undeclared unit from an unrecognized one**, which ADR 0046 §3 subject 7 forbids, and whether a lower-level path recovers it is **not established here** |
+| **A** | ProteoWizard interface that does not serialize through the passive analyzers | **VIABLE for PX.2**, on a stated trust-boundary question | At the same revision `47b13cf` whose `RegionTIC.cpp:156` writes the fixed four decimals, the data layer exposes `double` arrays with their cvParams, and the installed distribution ships that layer as `pwiz_bindings_cli.dll` |
+| **B** | Mature reader or API behind a local worker | **VIABLE for PX.2**, with the unit declaration read by this project rather than by the candidate | `mzdata` decodes mzML binary arrays to raw `f64`/`f32` without rounding, is Apache-2.0 and actively maintained. **Neither it nor pwiz preserves a raw unit accession** — both normalize at parse time — but this repository's own scanner already captures one generally, and already implements the exact four-way distinction for retention time |
 | **C** | Minimal aggregation over a lawful full-data source the project already reads | **NOT VIABLE for PX.2 as written** | The premise is false: this product does not read mzML arrays. Its scanner never decodes a binary payload, and its only array access is the refused provider's rounded text, one scan per process |
 
 ## C — the premise does not hold, and saying so is the finding
@@ -160,20 +160,20 @@ a `CVID`; **no raw `unitAccession` or `unitName` string is retained**, and
 `CVID_Unknown` is the sentinel for an unrecognized term as well as the default.
 So "the cvParams survive" does **not** establish that a declared-but-unrecognized
 unit can be told from an absent one, which ADR 0046 §3 subject 7 requires.
-**source-inspected**, revision `47b13cf`.
+**source-inspected**, revision `47b13cf`. The resolution is the same as B's and
+is recorded under XIC-S2 below: **this project's scanner reads the declaration**.
 
-A is viable to prototype **conditionally**: the trust-boundary decision and the
-unit blocker both precede it. What PX.2 would establish is unknown here and is
-not claimed — whether any pwiz path surfaces the raw attribute, whether the
-managed binding can be driven from a project-owned worker under Rust's process
-ownership, and what it costs.
+A is viable to prototype, with the trust-boundary decision preceding it. What
+PX.2 would establish is unknown here and is not claimed — whether the managed
+binding can be driven from a project-owned worker under Rust's process ownership,
+and what it costs.
 
 **A candidate that is a different `msaccess` executable is a separate matter.**
 None is proposed. ADR 0046 keeps the refused digest as a control, and any such
 candidate still owes M5.4's three-part re-entry gate in full; this audit narrows
 nothing there.
 
-## B — one named reader, with one blocker to clear
+## B — one named reader, with the unit read beside it
 
 The candidate is **`mzdata`**, a Rust library for reading mass-spectrometry data
 formats, at `github.com/mobiusklein/mzdata`. One candidate only; no catalogue.
@@ -215,7 +215,8 @@ parser retains that cvParam after populating `ms_level`**, so it is a question,
 not a solution.
 
 For the **unit**, recovery through `params` **does not work**, and my first
-reading of this was wrong. `Param` carries `name`, `value`, `accession:
+reading of this was wrong; the resolution is the project-owned one recorded under
+XIC-S2 below, not a `mzdata` path. `Param` carries `name`, `value`, `accession:
 Option<u32>`, `controlled_vocabulary` and `unit: Unit` — **the unit is already
 normalized at the parameter level, and no raw `unitAccession` or `unitName`
 string is retained anywhere in the type**. So a declared-but-unrecognized unit
@@ -225,11 +226,13 @@ as through `DataArray.unit`. **documented.**
 That is not a style question. ADR 0046 §3 subject 7 requires that **no declared
 unit may be dropped**, and the run-level refusal in §1 requires telling a declared
 unit apart from an undeclared one within a single run. A candidate that cannot
-make that distinction cannot satisfy either. Whether `mzdata` offers a
-lower-level parse path that surfaces the raw attributes is **not established by
-this audit**, and it is now **the first thing PX.2 must falsify** — recorded as a
-finding its authorization must weigh, since ADR 0046's slice table owns
-obligations, not this document.
+make that distinction cannot satisfy either. `mzdata` offers no such path: its
+reader converts the attribute while parsing and
+discards the string, with no public hook for raw attributes. **source-inspected**,
+`v0.66.6`. **That does not end B**, because the unit declaration does not have to
+come from the candidate — this repository's scanner already captures it. The
+separation, and its one-snapshot-two-readers consequence, are recorded under
+XIC-S2 below.
 
 `SignalContinuity` is `{Unknown, Centroid, Profile}` with `Unknown` as default,
 so an undeclared representation is expressible — carrying the same
@@ -286,28 +289,39 @@ retention time or intensity, remain refusals. Uniform absence on the retention
 time and intensity axes keeps its separate stated posture.
 
 **Effect on viability and on PX.3.** A candidate must be able to report that the
-unit was *not declared* rather than assert one. **Neither A nor B is
-established to do so**, and the symmetry is the finding:
-pwiz's `CVParam` holds `CVID cvid`, `std::string value` and `CVID units` with no
-raw `unitAccession` string, so `CVID_Unknown` conflates unrecognized with absent
-exactly as `Unit::Unknown` does. **source-inspected**, revision `47b13cf`. Saying
-"the cvParams survive" does not answer this: they survive with the unit already
-normalized.
+unit was *not declared* rather than assert one. **Neither candidate can, and the
+resolution is not to wait for one.**
 
-**Both mature readers normalize the unit at parse time**, which suggests the
-requirement is harder to meet than a reader's feature list implies — an
-observation for PX.2 and PX.3 to weigh, not a decision this slice may take. The
-one direction that would not have this limitation is **C**, whose own scanner
-already captures `unitAccession` as a raw string on the retention-time path —
-and C is the direction whose premise fails. PX.3 scores subject 7's missing-m/z-unit
-fixture against **preserved-as-unreported**, which is now the fixed expected
-result rather than a branch.
+The symmetry first. pwiz's `CVParam` holds `CVID cvid`, `std::string value` and
+`CVID units`, with no raw `unitAccession` string, so `CVID_Unknown` conflates
+unrecognized with absent exactly as `Unit::Unknown` does — **source-inspected**,
+revision `47b13cf`. And `mzdata`'s mzML reader converts the attribute to a `Unit`
+while parsing and **discards the string**, exposing no public hook for raw
+attributes — **source-inspected**, `v0.66.6`. "The cvParams survive" does not
+answer this: they survive with the unit already normalized. **Both mature readers
+normalize at parse time**, which is a property of this class of library rather
+than a defect in either.
 
-**And it is new work for this product, which is worth stating plainly.** The
-scanner captures `unitAccession` — but only on the retention-time path, where it
-feeds `RetentionTimeUnitMarker`. **No m/z-array unit declaration is retained
-anywhere**, so implementing this policy means reading a declaration the product
-does not read today. That is PX.5's, not something this audit claims exists.
+**This project already reads what neither of them keeps.** `capture_attributes`
+in `crates/proteowizard/src/mzml.rs` captures `unit_accession` as a raw
+`Cow<str>` on **every** cvParam it processes, and the scanner already turns that
+into the exact four-way distinction ADR 0046 needs — for retention time, as
+`RetentionTimeUnitMarker::{Second, Minute, Unrecognized, NotEmitted}`, where
+`Unrecognized` is documented *"a unit accession was emitted but is not one this
+contract recognizes"* and `NotEmitted` *"no unit accession was emitted"*. **The
+capture is general; only the consumption branch for the m/z and intensity arrays
+is missing.** **source-inspected.**
+
+So the unit declaration is read by **this project's scanner** while the candidate
+supplies decoded arrays. That separation is open to A and B alike, uses machinery
+that already ships, and is a **narrow located extension rather than new reader
+work**. It does mean one snapshot is read twice, by two readers, which is a real
+design consequence and **PX.5's to settle** — not something this audit designs,
+and not something it claims already exists.
+
+PX.3 scores subject 7's missing-m/z-unit fixture against
+**preserved-as-unreported**, which is now the fixed expected result rather than a
+branch.
 
 This is an audit-based semantics decision. **No fidelity was measured.**
 
@@ -333,16 +347,16 @@ B needs no trust-boundary decision to begin. It is **not part of PX.1's
 deliverable and binds nothing**, and it is not a ranking of accuracy or
 performance, neither of which was measured.
 
-**Both rows now lead with the same blocker**, which is the single question most
-likely to end either direction. These are **falsification experiments, not
-PX.2's acceptance bar**: ADR 0046
+Neither row carries the unit question: PX.1 answered it, and the answer is that
+**this project reads the declaration**. These are **falsification experiments,
+not PX.2's acceptance bar**: ADR 0046
 makes PX.2 acceptance *“the prototype computes the §1 query on a fixture whose
 oracle already exists”*, which is strictly more than any row below.
 
 | Direction | Smallest experiment that could falsify viability | Permission it needs |
 | --- | --- | --- |
-| **B** | **First, the blocker**: establish whether any `mzdata` path — a lower-level parse, not the convenience types — can tell a **declared-but-unrecognized** unit from an **absent** one. If none can, B fails on ADR 0046 §3 subject 7 regardless of its numeric contract. Only then: decode one committed synthetic fixture's arrays and read back index, id, MS level and retention time | Approval to add `mzdata` as a prototype-only dependency, outside the shipped product |
-| **A** | **First, the same blocker**: establish whether any pwiz path surfaces a raw `unitAccession`, since `CVParam` normalizes it to a `CVID`. Only then: load `pwiz_bindings_cli.dll` from the user's existing installation in a throwaway host and call `spectrum(index, true)`, confirming `double` arrays and surviving cvParams | **A trust-boundary decision** on loading that distribution's assemblies into a process MSCanvas owns, plus whatever .NET runtime the host needs |
+| **B** | Decode one committed synthetic fixture's arrays through `mzdata` and read back index, id, MS level and retention time, **while the project's own scanner supplies the unit declarations** — confirming the two readers agree on scan identity over one snapshot | Approval to add `mzdata` as a prototype-only dependency, outside the shipped product |
+| **A** | Load `pwiz_bindings_cli.dll` from the user's existing installation in a throwaway host and call `spectrum(index, true)`, confirming `double` arrays and scan identity, **with the unit declarations again supplied by the project's scanner** | **A trust-boundary decision** on loading that distribution's assemblies into a process MSCanvas owns, plus whatever .NET runtime the host needs |
 | **C** | None. Not carried forward | — |
 
 No new representative acquisition is requested by this slice. The two MS1
