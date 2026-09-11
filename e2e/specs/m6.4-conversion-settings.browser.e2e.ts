@@ -1310,4 +1310,106 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
       expect(await unexpectedConsole()).toEqual([]);
     });
   }
+
+  /**
+   * The other three sentences the repair added, at the three responsive targets.
+   *
+   * **A state the shipped catalog cannot produce, rendered on purpose.** The
+   * banner, the plan area and the explanation of a disabled `Convert` only speak
+   * when the *selected* row is withheld, and production withholds only
+   * reader-sensitive rows — never the shipped posture, which is writer-side. So
+   * this drives a catalog whose shipped row is withheld, which is the one way to
+   * put all three on screen.
+   *
+   * It is defence in depth rather than a journey, and it is measured anyway for
+   * two reasons: condition B asks about the controls this milestone ships rather
+   * than about the paths a reader can reach today, and a sentence that is in the
+   * bundle can be rendered by a later catalog. What it must never say is that
+   * the installation cannot run the combination.
+   */
+  const withheldShipped = vendorWorkflowCatalog.map((row) =>
+    row.intent.id === shippedIntent.id
+      ? {
+          ...row,
+          available: false,
+          availability: "not_evidenced_for_conversion_sources" as const,
+        }
+      : row,
+  );
+
+  for (const viewport of [
+    { name: "1920x1080", width: 1_920, height: 1_080 },
+    { name: "1366x768", width: 1_366, height: 768 },
+    { name: "960x640", width: 960, height: 640 },
+  ] as const) {
+    it(`fits the banner, the plan sentence and the refused Convert at ${viewport.name}`, async () => {
+      await openTheWorkspace({
+        read_conversion_configuration: configuration(AUTHORITY_A, withheldShipped),
+      });
+      await browser.setWindowSize(viewport.width, viewport.height);
+      await awaitSettings("ready");
+
+      const banner = "#conversion-settings-selection-unavailable";
+      await browser.$(banner).waitForExist({ timeout: 30_000 });
+
+      // Each of the three says the evidence is missing, and none of them sends
+      // the reader after a different ProteoWizard release.
+      const sentences = await browser.execute((selector: string) => {
+        const text = (node: Element | null) => node?.textContent?.trim() ?? "";
+        return {
+          banner: text(document.querySelector(selector)),
+          plan: text(document.querySelector(".empty-state")),
+          body: document.body.textContent ?? "",
+        };
+      }, banner);
+      expect(sentences.banner).toContain("has not measured the conversion settings you chose");
+      expect(sentences.banner).not.toContain("ProteoWizard installation");
+      expect(sentences.plan).toContain("has not measured the conversion settings you chose");
+      expect(sentences.plan).not.toContain("installed ProteoWizard does not offer");
+      expect(sentences.body).not.toContain(
+        "The installed ProteoWizard does not offer the conversion settings you chose",
+      );
+
+      // Convert is refused, and the fourth sentence is the one explaining it.
+      // Asserted by its own notice rather than by the button's disabled state:
+      // a registry that stopped emitting this reason would leave the control
+      // disabled and silent, and every other assertion here would still pass.
+      expect(await browser.$(CONVERT).isEnabled()).toBe(false);
+      const noticeId = "conversion-availability-plan-selection-not-evidenced";
+      expect(await owners(noticeId)).toBe(1);
+      expect(
+        await browser.execute(
+          (id: string) => document.getElementById(id)?.textContent ?? "",
+          noticeId,
+        ),
+      ).toContain("has not measured the conversion settings you chose");
+      expect(await describedBy(CONVERT)).toContain(noticeId);
+
+      // Laid out rather than clipped, inside the panel, and not a cause of
+      // sideways scrolling at this width.
+      const bannerBox = await boxOf(banner);
+      const panelBox = await boxOf(SETTINGS);
+      expect(bannerBox.height).toBeGreaterThan(0);
+      expect(bannerBox.left).toBeGreaterThanOrEqual(panelBox.left - 1);
+      expect(bannerBox.right).toBeLessThanOrEqual(panelBox.right + 1);
+      const fit = await browser.execute((selector: string) => {
+        const element = document.querySelector(selector);
+        return element === null
+          ? null
+          : {
+              scrollHeight: element.scrollHeight,
+              clientHeight: element.clientHeight,
+              scrollWidth: element.scrollWidth,
+              clientWidth: element.clientWidth,
+            };
+      }, banner);
+      expect(fit).not.toBeNull();
+      expect(fit!.scrollHeight).toBeLessThanOrEqual(fit!.clientHeight + 1);
+      expect(fit!.scrollWidth).toBeLessThanOrEqual(fit!.clientWidth + 1);
+      const overflow = await horizontalOverflow();
+      expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth + 1);
+
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+  }
 });
