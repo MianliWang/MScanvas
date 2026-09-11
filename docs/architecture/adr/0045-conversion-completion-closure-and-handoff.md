@@ -29,7 +29,7 @@ retold.
 
 ## Baselines this audit was taken on
 
-**Four, and every verdict names the one it can be reproduced from.** The rule
+**Five, and every verdict names the one it can be reproduced from.** The rule
 this section follows is that a verdict belongs to the earliest baseline a reader
 could check it out and re-derive it on — not to the baseline the audit happened
 to be sitting at.
