@@ -31,9 +31,12 @@ Baseline: `91bedca35de5165d67edef7586b8bc7b3a1c6dc5`. Documentation only.
 [M5.4](../../spikes/M5_XIC_SOURCE_EVIDENCE.md) ended `XIC_SOURCE_REFUSED`. That
 refusal is about **one measured executable's implementation**, not about the
 science: the decisive defect is a literal `setprecision(4)` in `RegionTIC.cpp:156`
-at ProteoWizard revision `47b13cf`, with a second build-specific abort recorded
-beside it, and the spike found no precision control anywhere in the installed
-help. An extracted-ion chromatogram remains a legitimate scientific quantity.
+at ProteoWizard revision `47b13cf` — a revision that executable does not itself
+report, which is why the gate is its digest — with a second build-specific abort
+recorded beside it, and **no supported way to request greater `tic` precision in
+that build**. The installed help's only `precision` token belongs to a different
+analyzer that cannot express an m/z window.
+An extracted-ion chromatogram remains a legitimate scientific quantity.
 Whether *another* provider or a different runtime can serve it at the precision
 required is a question worth asking once, in its own place.
 
@@ -52,27 +55,36 @@ level, over one snapshot, aggregated one way.
 
 | Semantic | The proposal |
 | --- | --- |
-| Source snapshot identity | The dataset identity the session already resolves — `FileIdentity` (volume serial plus the whole Windows file ID) and the content digest. A result names the snapshot it ran on; a changed identity invalidates the result rather than silently re-running it |
+| Source snapshot identity | **Exactly what the session resolves for an mzML row today**, and no more: `FileIdentity` (volume serial plus the whole Windows file ID), and the retained source generation the preview already revalidates against — identity, byte length and modification time. **No content digest is taken for an mzML source.** `accept_mzml_file` records none, only a SCIEX bundle carries one, and [ADR 0005](0005-mzml-preview-boundary.md) records why: hashing the file around every preview would cost more than the preview. A result names the snapshot it ran on and a changed generation invalidates it rather than silently re-running. **Closing the remaining in-place-rewrite window needs digest capture, which is new work PX.5 would owe** — it is not something this boundary already provides, and this record does not claim it does |
 | Scan identity and order | The source's own `index` and `id`, in **source order**. Retention time is never the key: M5.4 measured two spectra sharing one retention time and kept them as two rows, with `rt` reading non-monotonically |
 | MS-level selection | Exactly one MS level, stated as an operand. There is no implicit "all levels", and no default |
-| m/z bounds and endpoint policy | A closed interval `[low, high]`, **both endpoints inclusive**, compared against the source's stored values without rounding. `low == high` is a legal zero-width window. `low > high` is a **refusal**, never an empty result — M5.4 measured a reversed window exiting `0` with no output, which is the failure this policy forbids |
-| Units | The unit the source declares for its m/z array. Where the source declares none the window is expressed in the source's own numeric domain and the result carries that as unreported, exactly as the viewer's existing unit posture does. **No ppm and no centre-plus-radius form in the first scope** |
+| m/z bounds and endpoint policy | A closed interval `[low, high]`, **both endpoints inclusive**, compared against the source's stored values without rounding. `low == high` is a legal zero-width window. **`low > high` and any non-finite bound are both refusals**, never an empty result. Both halves are needed: `low > high` is false for a NaN, so a policy refusing only the reversed case would let a malformed request fall through into a certified `Measured { sum: 0 }`. M5.4 measured both failures on the refused build — a reversed window exiting `0` with no output, and a non-finite window silently returning the **unwindowed** result |
+| Units | The unit the source declares for its m/z array. Where the source declares none, the proposal is that the window is expressed in the source's own numeric domain and the result carries that as unreported, as the viewer's existing unit posture does — but **whether such a source is served at all is open, and is XIC-S2 below**. **No ppm and no centre-plus-radius form in the first scope** |
 | Aggregation | The **sum** of the intensities of source points whose m/z lies in the closed window, per scan. Nothing else. Not a baseline correction, not an interpolated apex, not a fitted peak |
-| Retention-time association | Each result point carries its scan's declared retention time as an **attribute of the scan**, never as an identity or an ordering key |
+| Retention-time association | Each result point carries its scan's declared retention time as an **attribute of the scan**, never as an identity or an ordering key. Where a source declares no retention time, or no retention-time unit, the result carries that as declared-absent rather than substituting a number — the scanner already models both, including a unit that was not emitted |
 | Duplicate retention times | Preserved as separate result points in source order. Never merged, never summed together, never reordered |
 
 **A measured zero is not any other answer.** Per scan the result is exactly one
-of six states, and the first of them carries a point count so that two different
-zeros stay different:
+of seven states, and the first of them carries a point count so that two
+different zeros stay different:
 
 | State | What it means |
 | --- | --- |
 | `Measured { sum, points_in_window }` | The scan was read and the window evaluated. `sum` may be `0`; `points_in_window` may be `0`. These are measurements |
-| `ExcludedByMsLevel` | The scan exists and the query's own MS-level operand filtered it out |
-| `NoMzDomain` | The scan carries no authoritative finite forward m/z domain. The existing projection rule already refuses one rather than inventing endpoints, and this state carries that refusal instead of reporting a sum |
-| `Unreadable` | The scan's arrays are present and could not be decoded |
+| `ExcludedByMsLevel` | The scan **declares** an MS level and the query's own MS-level operand filtered it out |
+| `MsLevelUndeclared` | The scan declares no MS level, so the operand neither matched nor excluded it. The existing mzML scanner already models an undeclared level as a first-class case and counts it; this state carries that rather than guessing a level in either direction |
+| `NoUsableArrays` | The scan does not carry a paired m/z and intensity array of equal length — one absent, or the two disagreeing. A spectrum with **no intensity array at all** is a case this repository has already measured, and it is not an m/z-domain problem |
+| `Unreadable` | Both arrays are present and could not be decoded |
 | `Missing` | The run's index declares the scan and the reader could not obtain it at all |
 | `Absent` | The run's index does not declare the scan. Reachable only where a caller names an index; an enumeration over the run never produces it |
+
+**Ordering is not a precondition, and the viewport's drawability rule is
+deliberately not reused.** A sum is taken over a set, so a legal mzML spectrum
+whose m/z array is unsorted has a well-defined in-window sum even though the
+existing rule refuses to *draw* it — that rule also refuses on a non-finite value
+anywhere in either array, including far outside the window. Borrowing it here
+would answer a refusal where a measurement exists, against §4's own rule that a
+scientific result is not the drawing's.
 
 **Profile and centroided data are both in scope, and the quantity is named
 honestly for each.** The aggregation is the same in both: a sum of in-window
@@ -81,15 +93,19 @@ profile data it is a **point sum and not an integrated peak area**, and no
 surface, wire field or document may call it one. **Nothing centroids silently** —
 that is a standing product rule, not a new one. Where the source declares
 neither acquisition mode the result reports the declaration as unreported and the
-quantity keeps its name.
+quantity keeps its name. **The declaration is taken as declared and is not
+verified by this query** — M5.4's pinned synthetic fixture is a measured case
+where stored metadata and the actual arrays disagree.
 
-**Two scientific choices are open, and each has a named decision owner.** They
+**Four scientific choices are open, and each has a named decision owner.** They
 are not an implementer's to guess:
 
 | | Open choice | Decision owner |
 | --- | --- | --- |
 | **XIC-S1** | Whether a profile source's point sum is offered at all in the first scope, or withheld pending an integration semantics. PX.2 may compute one, labelled a point sum | **PX.4**, on PX.3's profile evidence. Blocks PX.6 |
 | **XIC-S2** | The unit posture where a source declares no m/z unit — reported as unreported, or the source refused for this query | **PX.1**, because it is a property of what a reader exposes. Blocks PX.3's oracle |
+| **XIC-S3** | The agreement criterion: what counts as matching the oracle, and in what arithmetic. The accumulation domain must be named — M5.4's pinned low-intensity fixture is five points of `1e-5`, where single and double precision differ materially | **PX.3**, fixed **with the oracle and before any candidate runs**. Without it §6's rule against more permissive thresholds has nothing to bite on |
+| **XIC-S4** | What a non-finite intensity **inside** the window means — a refusal for that scan, or a measurement that carries it | **PX.3**, before any candidate runs. Distinct from the drawability rule, which refuses on one anywhere in the scan |
 
 ## 2. Bounded candidate directions
 
@@ -98,13 +114,14 @@ Unused slots stay unused; none of the three is required to survive PX.1.
 
 | | Direction | What it is, and what it is not |
 | --- | --- | --- |
-| **A** | A corrected or differently-versioned ProteoWizard interface | A *different measured executable identity*, or a ProteoWizard interface that does not serialize through the passive analyzers. The four-decimal defect is a source-level literal, so a candidate here must be a build or an interface where that is not the path a value takes |
+| **A** | A corrected or differently-versioned ProteoWizard interface | A *different measured executable identity*, or a ProteoWizard interface that does not serialize through the passive analyzers. The four-decimal defect is a source-level literal, so a candidate here must be a build or an interface where that is not the path a value takes. **A candidate that is a different measured `msaccess` identity is VIEW-007's own re-entry trigger and must additionally satisfy M5.4's three-part gate in full** — a covered executable identity and help/capability grammar, a resolved numeric-fidelity answer, and re-measurement of everything that record establishes. **This route does not narrow that gate** |
 | **B** | A mature reader or API behind a local worker | Maintained, lawfully licensed, run in a project-owned worker under Rust's existing process and filesystem ownership. A name in a shortlist is **not** proof of compatibility or admission: PX.1 establishes licence, maintenance, API surface and numeric contract before any name is carried forward |
 | **C** | Minimal aggregation over a lawful full-data source the project already reads | A narrow, project-owned per-scan window sum over mzML arrays this product already reads. **Not** permission to reimplement a proprietary reader, and not a general analysis engine |
 
 **The refused `msaccess` binary is a control, not a contender.** Its identity is
 pinned by M5.4's re-entry gate and was re-observed unchanged by M6.10. It is
-carried as a historical counterexample and is not rerun until it passes.
+carried as a historical counterexample, and what would reopen it is M5.4's
+re-entry gate on a **different digest**, never another run of the same binary.
 **A different executable inherits its result in neither direction**: a new build
 is neither admitted for resembling a measured one nor refused for sharing its
 name.
@@ -115,18 +132,31 @@ needs it**, under the standing dependency policy.
 
 ## 3. Evidence that can actually decide
 
-**M5.4's defects and re-entry requirements are carried by citation, not
-retold** — the low-positive/zero serialization problem, the window failure,
-and the aggregation and scan-identity questions all live in
-[the spike](../../spikes/M5_XIC_SOURCE_EVIDENCE.md), whose dimension vocabulary
-is [ADR 0037's](0037-viewer-completion-route.md#m54-candidate-evidence-dimensions)
-and is validator-held.
+**M5.4's defects and re-entry requirements are carried by citation** — the
+low-positive/zero serialization problem, the window failures, and the aggregation
+and scan-identity questions all live in
+[the spike](../../spikes/M5_XIC_SOURCE_EVIDENCE.md), whose matrix answers
+[ADR 0037's](0037-viewer-completion-route.md#m54-candidate-evidence-dimensions)
+thirteen dimensions and is validator-held **against that vocabulary**. The
+subjects below are derived from those dimensions for this route's question; they
+are **not** that vocabulary and are not validator-held.
+
+**Help text is not implementation evidence.** M5.4's durable governance output
+applies here unchanged: a query name, a signature, a filter grammar, a declared
+capability and a release string are each insufficient. PX.1's audit reads
+documentation and produces **viability**, never admission — both of M5.4's
+decisive defects were invisible in help text.
 
 **The oracle is established before a candidate runs.** It is either a fixture
 whose arrays are known by construction, with its expected window sum derived
 independently of every candidate, or a representative acquisition with an
 independently derived reference. **A candidate agreeing with itself is not a
 reference**, and two candidates agreeing is corroboration rather than an oracle.
+**Where no independent reference for a representative acquisition can be
+obtained, that arm is simply unavailable** and PX.4 routes to `EVIDENCE_BLOCKED`
+naming it — substituting a second candidate is the move the previous sentence
+forbids. Obtaining such a reference is a repository-owner decision, like the
+fixture permissions.
 
 The finite future matrix covers these subjects and no others:
 
@@ -134,12 +164,13 @@ The finite future matrix covers these subjects and no others:
 | --- | --- | --- |
 | 1 | Window endpoints | A point exactly at `low` and one exactly at `high` are both in |
 | 2 | Fractional and low intensities | A positive sum below the candidate's representation or serialization resolution stays distinguishable from zero. This is the requirement M5.4's measured build failed |
-| 3 | Duplicate retention times | Two scans at one time stay two result points with their own sums |
-| 4 | MS-level exclusion | An excluded scan is `ExcludedByMsLevel`, never a zero |
+| 3 | Duplicate retention times | Two scans at one time stay two result points with their own sums, **in source order**. M5.4's fixture puts them at non-adjacent indices precisely so a reordering is as visible as a merge |
+| 4 | MS-level exclusion | An excluded scan is `ExcludedByMsLevel`, never a zero, and a scan declaring no level is `MsLevelUndeclared` |
 | 5 | Empty windows | `points_in_window: 0` with `sum: 0`, and no scan dropped from the result |
 | 6 | Representative inputs for the proposed domain | **MS1** acquisitions, one profile and one centroided |
 | 7 | Malformed input | Truncated and invalid sources, a reversed window, a non-finite bound. **Exit code is never semantic evidence** |
 | 8 | Reproducibility | Repeats of one invocation on one snapshot agree byte for byte |
+| 9 | **Scan-identity reconciliation** | Index and id survive the MS-level operand — M5.4 measured a build that **renumbered** them under a filter — and an omitted scan stays distinguishable from one the run does not have. §1's identity, order, `Missing` and `Absent` all rest on this, so the matrix cannot decide without it |
 
 **Two borrowings are forbidden by name.** The pinned representative acquisition
 is **MS2-only** and is not MS1 evidence. A centroided acquisition is not profile
@@ -147,8 +178,10 @@ evidence. **Mathematical synthetic fixtures and representative acquisitions
 answer different questions** and neither substitutes for the other: a synthetic
 fixture establishes arithmetic, an acquisition establishes behaviour at scale.
 
-**Identity is preserved on every result.** Source snapshot digest, provider
-identity — an executable digest, or a library version *and* build — and runtime,
+**Identity is preserved on every result.** Source snapshot digest — **hashed
+deliberately for an evidence run, as M5.4 did for all four of its sources, not
+read from the product boundary, which takes no mzML digest** — plus provider
+identity, an executable digest or a library version *and* build, and runtime,
 recorded per result. **No result inherits another build's evidence.** Any new
 representative acquisition needs its licence and provenance recorded before use;
 no acquisition is downloaded unattended. **A truncated webview array, plot pixels,
@@ -200,10 +233,10 @@ placeholder plot, and not an automatic broader research phase.
 ## 6. Bounded completion
 
 **The initial matrix is finite and is the whole of it**: at most three candidate
-directions, against the eight evidence subjects above, over the two pinned
+directions, against the nine evidence subjects above, over the two pinned
 fixtures, M5.4's two generated fixtures, and **at most two** new representative
 acquisitions — one MS1 profile, one MS1 centroided — each subject to a recorded
-permission decision.
+permission decision **owned by the repository owner**.
 
 **The decision checkpoint is PX.4.** Missing permissions or data, and failed
 candidates, produce a **recorded answer with a next owner**. They do not cause
@@ -221,9 +254,9 @@ rather than restating them.
 | --- | --- | --- | --- | --- | --- | --- |
 | **PX.0** route lock | What is the bounded route, and what decides it? | This record | `M6 COMPLETE`, plus explicit entry authorization | Markdown only | The six subjects answered once each; the route and outcome branches consistent with this table | Complete on publication. It admits nothing |
 | **PX.1** provider / API audit | Which of the at most three directions is viable enough to prototype? | A viability finding per direction, with licence, maintenance, API surface and numeric contract; **XIC-S2** decided | PX.0 | Markdown; no dependency added | Each direction reaches viable or not-viable with a located reason. A shortlist name alone is never a finding | Zero viable directions ends the interlude at PX.4 as `XIC_PROVIDER_REFUSED`. A viable direction does **not** authorize PX.2 by itself |
-| **PX.2** bounded prototypes | Can a viable direction express the query of §1 at all? | A throwaway prototype per selected direction, outside the product | PX.1 viability; explicit approval for any install | Prototype code outside the shipped product; Markdown | The prototype computes the §1 query on a fixture whose oracle already exists | A prototype that cannot express the query stops that direction. **Compiling is not evidence** |
+| **PX.2** bounded prototypes | Can a viable direction express the query of §1 at all? | A throwaway prototype per selected direction, outside the product | PX.1 viability; explicit approval for any install | Prototype code outside the shipped product; Markdown | The prototype computes the §1 query on a fixture whose oracle already exists | A prototype that cannot express the query stops that direction; every direction stopping here reaches PX.4 directly. **Compiling is not evidence** |
 | **PX.3** comparative evidence | What does each prototype actually measure, against an independent oracle? | The completed evidence matrix, per direction | PX.2; the oracle established first; fixture permissions recorded | Markdown; evidence files | Every cell is a located result or an explicit not-applicable with its reason | A missing permission or absent representative input is recorded as such and routes PX.4 to `EVIDENCE_BLOCKED` |
-| **PX.4** provider / runtime decision | Which one of the four outcomes does the evidence support? | One terminal outcome, with the semantics and evidence it rests on | PX.3 complete over the finite matrix | Markdown | The outcome is derivable from the matrix by a reader who re-checks it | Every outcome is terminal for this interlude. **None of them revokes `M6 COMPLETE`** |
+| **PX.4** provider / runtime decision | Which one of the four outcomes does the evidence support? | One terminal outcome, with the semantics and evidence it rests on | PX.3 complete over the finite matrix, **or** every direction already exhausted in PX.1 or PX.2 — **early exhaustion reaches PX.4 directly**, and the matrix is then empty by record rather than unfinished | Markdown | The outcome is derivable from what the earlier slices recorded by a reader who re-checks it | Every outcome is terminal for this interlude. **None of them revokes `M6 COMPLETE`** |
 | **PX.5** runtime, **only if admitted** | What is the minimal runtime that serves one query inside the existing boundary? | A narrow typed operation behind the existing boundary | `XIC_PROVIDER_ADMITTED`, **and its own authorization** | Rust, types, tests, under the §4 boundary | The boundary rules of §4 hold, proved rather than asserted | Does **not** run merely because PX.4 admitted. No plugin ABI, no scheduler, no persistence |
 | **PX.6** minimal visible XIC, **only if admitted** | What is the smallest honest visible interaction over one result? | One interaction in the existing surface | PX.5 published, **and its own authorization** | Frontend, tests, rendered validation | Rendered validation of the real interaction, including its unavailable state | Does **not** run merely because PX.5 passed. No layout redesign; M7 still owns the shell |
 
