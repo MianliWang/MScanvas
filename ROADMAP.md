@@ -665,7 +665,8 @@ guard had been unable to see.
 
 ## Post-M6 XIC Provider / Runtime Interlude
 
-**Entered. `PX.0 COMPLETE`; PX.1 next and not started.** The route is locked by
+**Entered. `PX.0 COMPLETE`; `PX.1 COMPLETE`; PX.2 next and not started, and
+not authorized by PX.1.** The route is locked by
 [ADR 0046](docs/architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md),
 which is the single owner of the slice dependencies, the evidence matrix and the
 four PX.4 outcome branches. **What follows is a pointer, not a second
@@ -680,6 +681,12 @@ result. `XIC_PROVIDER_REFUSED`, `EVIDENCE_BLOCKED` and
 reason and let M7 proceed under a recorded handoff. **None of the four revokes
 `M6 COMPLETE`**, and PX.5 and PX.6 each need their own authorization even where
 the preceding slice passed.
+
+**PX.1 audited the three bounded directions and decided XIC-S2.** Two are viable
+to prototype and one is not, on located evidence rather than on names; the
+m/z-unit posture is settled as served-and-unreported. Nothing is admitted and no
+provider is chosen, which stays PX.4's. See
+[the PX.1 audit](docs/spikes/PX_1_XIC_PROVIDER_API_AUDIT.md).
 
 ## M7 — UI/UX and public product hardening
 
