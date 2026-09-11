@@ -730,9 +730,14 @@ cache are deferred here, the second only on a measurement showing a need.
 - **A reusable XIC export**, if an XIC ever exists. M5 measured
   `XIC_SOURCE_REFUSED` and built neither a trace nor an artifact, so the
   condition this entry was written under — *if M5 admitted one* — can no longer
-  be met. It is **not** thereby closed: re-entry is M6's, behind the spike's
-  three-part gate, and if a measured build admits a source the visible trace
-  becomes a viewer slice scheduled then. An XIC is a derived analytical quantity
+  be met. It is **not** thereby closed. **Re-entry now has two owners, and they
+  are different questions.** A *different measured `msaccess` identity* stays
+  behind the spike's three-part gate, which M6 re-observed and did not trigger;
+  it is carried as a condition on Direction A of
+  [ADR 0046](docs/architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md).
+  Whether *another* provider or runtime could serve an XIC belongs to the Post-M6
+  interlude that record routes, which admits nothing. Either way the visible
+  trace is a slice scheduled then. An XIC is a derived analytical quantity
   rather than a second view of something the file contains, so its reusable form
   still belongs with the milestone that owns derived analytical results, on top
   of M8's artifact identity. See
