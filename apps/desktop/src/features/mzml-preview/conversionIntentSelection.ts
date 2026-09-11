@@ -79,7 +79,24 @@ export type ConversionChoiceRefusal =
   /** No row of the catalog names the combination this choice would produce. */
   | "notQualified"
   /** The row exists; the installed ProteoWizard does not declare what it emits. */
-  | "unavailableHere";
+  | "unavailableHere"
+  /**
+   * The row exists, and MSCanvas has not measured it on the kinds of
+   * acquisition this workflow converts.
+   *
+   * Rust decides this before it consults the installed grammar, so it is not a
+   * claim that the build could otherwise run the row — it is a claim that no
+   * measurement covers the sources in hand, which no release changes.
+   *
+   * A third refusal because it is a third fact. The first two are about the
+   * product's vocabulary and about this installation; this one is about which
+   * sources the measurement behind a row was taken on. Peak picking is the axis
+   * it reaches, because the picker is chosen by the reader rather than by the
+   * writer — so a measurement on one kind of source is not evidence about
+   * another, and offering the row anyway would be offering an outcome nobody
+   * has observed.
+   */
+  | "notEvidencedForSources";
 
 /**
  * What one value of one axis can currently do.
@@ -125,8 +142,35 @@ export function selectionIsUnavailable(
   catalog: readonly ConversionCatalogRow[],
   selectedId: string,
 ): boolean {
+  return selectionRefusal(catalog, selectedId) !== null;
+}
+
+/**
+ * Why the current selection cannot run, or `null` where it can.
+ *
+ * **The reason, not a boolean, because the two refusals send a reader to
+ * different places.** A selection survives an installation change, so a retained
+ * combination that is now unavailable is a state this surface has to explain —
+ * and explaining "the installed ProteoWizard cannot run this" about a row the
+ * installation runs perfectly well would send them after a build that behaves
+ * identically. What is missing there is a measurement, and no release supplies
+ * one.
+ *
+ * `notQualified` is impossible here and is not returned: a selection is looked
+ * up by identity, so a combination the catalog does not hold has no row to be
+ * unavailable.
+ */
+export function selectionRefusal(
+  catalog: readonly ConversionCatalogRow[],
+  selectedId: string,
+): ConversionChoiceRefusal | null {
   const selected = catalogRow(catalog, selectedId);
-  return selected !== null && !selected.available;
+  if (selected === null || selected.available) {
+    return null;
+  }
+  return selected.availability === "not_evidenced_for_conversion_sources"
+    ? "notEvidencedForSources"
+    : "unavailableHere";
 }
 
 /**
@@ -248,6 +292,13 @@ export function choiceState<A extends ConversionAxis>(
   });
   if (row === null) {
     return { status: "unavailable", reason: "notQualified" };
+  }
+  // Read from the row's own answer rather than from the boolean beside it, so
+  // the two refusals stay two sentences. A reader told "this installation does
+  // not offer it" about a row their installation offers perfectly well would go
+  // looking for a different ProteoWizard release, and find nothing.
+  if (row.availability === "not_evidenced_for_conversion_sources") {
+    return { status: "unavailable", reason: "notEvidencedForSources" };
   }
   if (!row.available) {
     return { status: "unavailable", reason: "unavailableHere" };

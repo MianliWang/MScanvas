@@ -103,7 +103,16 @@ export type ConversionPlanBlock =
   /** No binding, or a binding whose conversion settings are not known. */
   | "settingsUnknown"
   /** The settings are known, and the chosen combination cannot run on them. */
-  | "selectionUnavailable";
+  | "selectionUnavailable"
+  /**
+   * The settings are known, this build can express them, and no acquisition
+   * this product converts is one the combination's evidence was measured on.
+   *
+   * A third block because it is a third thing to do about it. The other two are
+   * a wait and a setting to change on a build that could be swapped; this one
+   * no ProteoWizard release changes, because what is missing is a measurement.
+   */
+  | "selectionNotEvidenced";
 
 /**
  * What this document is asking about right now.
@@ -206,8 +215,21 @@ export function planQuestion(inputs: ConversionPlanInputs): ConversionPlanQuesti
   // from a combination the product never measured — which is why the lookup
   // answers with the row rather than with a boolean.
   const row = catalogRow(configuration.catalog, inputs.selectedIntentId);
-  if (row === null || !row.available) {
+  if (row === null) {
     return { kind: "blocked", reason: "selectionUnavailable" };
+  }
+  if (!row.available) {
+    // The row's own answer, not the boolean beside it. The settings panel says
+    // which refusal applies; a plan area that said "the installed ProteoWizard
+    // does not offer this" underneath it would be the contradicting sentence,
+    // and it would be attached to the primary action.
+    return {
+      kind: "blocked",
+      reason:
+        row.availability === "not_evidenced_for_conversion_sources"
+          ? "selectionNotEvidenced"
+          : "selectionUnavailable",
+    };
   }
   return {
     kind: "ask",
@@ -431,6 +453,12 @@ export type ConversionStartPlan =
    * installation cannot run. The reader changes a setting.
    */
   | "selectionUnavailable"
+  /**
+   * No question can be posed, because the chosen combination was never
+   * measured on the kinds of acquisition this product converts. The reader
+   * changes a setting; changing installation would not help.
+   */
+  | "selectionNotEvidenced"
   /** No rows were asked about. */
   | "absent";
 

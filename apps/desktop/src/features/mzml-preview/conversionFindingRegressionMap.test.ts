@@ -86,7 +86,14 @@ const CENTROIDED_32 = id("unscoped_default_centroiding", "all", "mz32_intensity3
 const CENTROIDED_64 = id("unscoped_default_centroiding", "all", "mz64_intensity64", "zlib");
 
 function withoutRunning(...ids: readonly string[]): readonly ConversionCatalogRow[] {
-  return completeCatalog.map((row) => ({ ...row, available: !ids.includes(row.intent.id) }));
+  // The discriminator moves with the boolean. A row that said `available: false`
+  // beside `availability: "available"` is a reply Rust cannot produce, and a
+  // fixture that emits one is testing against a shape the product does not have.
+  return completeCatalog.map((row) => ({
+    ...row,
+    available: !ids.includes(row.intent.id),
+    availability: ids.includes(row.intent.id) ? "unsupported_by_installation" : "available",
+  }));
 }
 
 function intentOf(catalog: readonly ConversionCatalogRow[], intentId: string) {

@@ -1282,6 +1282,53 @@ pub(super) fn planned_output_name(file_name: &str, intent: ConversionIntent) -> 
         .map(|name| name.to_string_lossy().into_owned())
 }
 
+/// Every dataset family the roster can hold.
+///
+/// Listed once so the derivations below can iterate it. A variant added to
+/// `DatasetSourceKind` forces an arm in [`dataset_source_kind_index`], which is
+/// the *prompt* to add it here -- not a proof that it was added, because
+/// nothing in Rust can enumerate an enum's variants without a derive macro and
+/// none was added for this. A family missing from this array is refused rather
+/// than admitted, so the residual fails closed. Nothing infers a family from a
+/// name, a path or an extension.
+pub(super) const ALL_DATASET_SOURCE_KINDS: [DatasetSourceKind; 4] = [
+    DatasetSourceKind::Mzml,
+    DatasetSourceKind::ThermoRaw,
+    DatasetSourceKind::ShimadzuLcd,
+    DatasetSourceKind::SciexWiff,
+];
+
+/// A distinct position per family, so the list above and this function cannot
+/// disagree.
+///
+/// Test-only. A variant added to the enum forces an arm here, which is the
+/// prompt to list it above; the test that reads this catches the array
+/// disagreeing with it -- a duplicate, a stale index, or an index naming a
+/// different family -- and cannot catch a family absent from both. Production
+/// reads the list rather than this.
+#[cfg(test)]
+pub(super) const fn dataset_source_kind_index(kind: DatasetSourceKind) -> usize {
+    match kind {
+        DatasetSourceKind::Mzml => 0,
+        DatasetSourceKind::ThermoRaw => 1,
+        DatasetSourceKind::ShimadzuLcd => 2,
+        DatasetSourceKind::SciexWiff => 3,
+    }
+}
+
+/// Every family the visible workflow converts, as the conversion crate names
+/// them.
+///
+/// **Derived, never listed.** It asks [`is_convertible`] rather than repeating
+/// its answer, so a family the product starts or stops converting moves this set
+/// with it and no second taxonomy exists to drift from the first.
+pub(super) fn convertible_source_kinds() -> impl Iterator<Item = ConversionSourceKind> {
+    ALL_DATASET_SOURCE_KINDS
+        .into_iter()
+        .filter(|kind| is_convertible(*kind))
+        .map(conversion_source_kind)
+}
+
 /// The conversion boundary's name for a family the session accepted.
 ///
 /// A total function over the session's families, so a family added to the
@@ -1292,7 +1339,8 @@ pub(super) fn planned_output_name(file_name: &str, intent: ConversionIntent) -> 
 ///
 /// Production since M3.9: the queue's provider-evidence gate asks it for every
 /// distinct family a queue holds, before the picker and again before any item
-/// stages.
+/// stages. Since CNV-D2 the `BEGIN` preflight and [`convertible_source_kinds`]
+/// ask it too, for the same reason: one name for one family, minted once.
 pub(super) const fn conversion_source_kind(kind: DatasetSourceKind) -> ConversionSourceKind {
     match kind {
         DatasetSourceKind::Mzml => ConversionSourceKind::MzmlFile,
@@ -1406,6 +1454,14 @@ fn not_plannable(error: ConversionPlanError) -> PreviewErrorDto {
         ConversionPlanError::DestinationRootNotInspectable { .. }
         | ConversionPlanError::DestinationRootNotADirectory => {
             "MSCanvas could not use that destination folder."
+        }
+        // Its own sentence rather than the shared one, because it is not the
+        // shared one: the name could be derived and the folder could be used,
+        // and what could not be established is that the settings' evidence is
+        // about this family. Returned from inside the `match` so there is
+        // exactly one place this error is answered.
+        ConversionPlanError::IntentNotEvidencedForSource => {
+            return super::dto::conversion_settings_not_evidenced_for_source();
         }
     };
     PreviewErrorDto::new("conversion_not_plannable", message, false)

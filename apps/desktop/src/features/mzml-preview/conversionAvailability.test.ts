@@ -268,6 +268,8 @@ function planFor(reason: ConversionUnavailableReason): ConversionStartPlan {
       return "settingsUnknown";
     case "plan-selection-unavailable":
       return "selectionUnavailable";
+    case "plan-selection-not-evidenced":
+      return "selectionNotEvidenced";
     default:
       return "ready";
   }
@@ -301,6 +303,7 @@ function laneFor(reason: ConversionUnavailableReason): Partial<ConversionLane> {
     case "plan-failed":
     case "plan-settings-unknown":
     case "plan-selection-unavailable":
+    case "plan-selection-not-evidenced":
     case "queue-not-retryable":
     case "nothing-to-retry":
       return {};

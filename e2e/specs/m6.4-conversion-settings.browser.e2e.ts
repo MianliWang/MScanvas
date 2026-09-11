@@ -42,6 +42,7 @@ import {
   queueOf,
   settledAt,
   shippedIntent,
+  vendorWorkflowCatalog,
 } from "../../apps/desktop/src/test/previewFixtures";
 import type {
   ConversionCatalogRow,
@@ -79,9 +80,20 @@ function intentOf(id: string): ConversionIntentDescriptor {
   return found;
 }
 
-/** The nine admitted rows, with the named ones marked unrunnable on this build. */
+/**
+ * The nine admitted rows, with the named ones unrunnable on this build.
+ *
+ * The discriminator moves with the boolean, because `available: false` beside
+ * `availability: "available"` is a reply Rust cannot produce.
+ */
 function withoutRunning(...ids: readonly string[]): readonly ConversionCatalogRow[] {
-  return completeCatalog.map((row) => ({ ...row, available: !ids.includes(row.intent.id) }));
+  return completeCatalog.map((row) => ({
+    ...row,
+    available: !ids.includes(row.intent.id),
+    availability: ids.includes(row.intent.id)
+      ? ("unsupported_by_installation" as const)
+      : ("available" as const),
+  }));
 }
 
 function configuration(
@@ -1098,4 +1110,204 @@ describe("M6.4 — one lane fact, many refused actions, one notice", () => {
     });
     expect(await unexpectedConsole()).toEqual([]);
   });
+});
+
+describe("M6.4 — CNV-D2: a combination this product has no source evidence for", () => {
+  /**
+   * The catalog the vendor workflow really receives, on a build that can express
+   * every row. The two centroiding rows are refused, and refused for the source
+   * evidence rather than for the installation.
+   *
+   * What only a browser can add here is that the sentence, the control and the
+   * layout agree in the shipped bundle: the unit suites pin the rule, and they
+   * cannot see a disabled control that is still in the tab order, a note that is
+   * clipped, or a panel that scrolls sideways to show it.
+   */
+  const FLAT_64 = intentId("no_additional_centroiding", "all", "mz64_intensity64", "zlib");
+  const REFUSED = 'input[name="conversion-setting-processing"][value="unscoped_default_centroiding"]';
+  const NOTE_ID = "conversion-choice-processing-unscoped_default_centroiding";
+
+  /** The sentence one refused choice carries, read from the note it names. */
+  async function refusalNote(): Promise<string> {
+    return browser.execute(
+      (id: string) => document.getElementById(id)?.textContent ?? "",
+      NOTE_ID,
+    ) as Promise<string>;
+  }
+
+  it("is not runnable, says why at combination level, and costs no other choice", async () => {
+    await openTheWorkspace({
+      read_conversion_configuration: configuration(AUTHORITY_A, vendorWorkflowCatalog),
+    });
+    await awaitSettings("ready");
+    await awaitPlan();
+
+    // One axis first, to a row this catalog runs, so there is a deliberate
+    // non-default choice for the refusal below to preserve.
+    await setInvokeResult(
+      "describe_workspace_conversion_queue",
+      plannedAs(intentOf(FLAT_64), A),
+    );
+    await chooseAxisValue("precision", "mz64_intensity64");
+    await browser.waitUntil(
+      async () => (await axisStates("precision")).mz64_intensity64 === "selected",
+      { timeout: 30_000, timeoutMsg: "the 64/64 row was never selected" },
+    );
+
+    // Not runnable, and not merely unselected.
+    expect(await axisStates("processing")).toMatchObject({
+      unscoped_default_centroiding: "unavailable",
+    });
+    expect(await browser.$(REFUSED).isEnabled()).toBe(false);
+
+    // The sentence is about the combination, and it is not the grammar one. A
+    // reader told the installed build does not offer this would go looking for
+    // another ProteoWizard release and find one that behaves identically.
+    const note = await refusalNote();
+    expect(note).toContain("Not available with the other settings you have chosen");
+    expect(note).toContain("MSCanvas has not measured that combination");
+    expect(note).not.toContain("installed ProteoWizard build");
+
+    // Nothing else moved, and no other axis is blamed for it. 64-bit intensity,
+    // all spectra and zlib all appear in rows this catalog runs.
+    expect(await axisStates("precision")).toMatchObject({ mz64_intensity64: "selected" });
+    expect(await axisStates("population")).toMatchObject({ all: "selected" });
+    expect(await axisStates("compression")).toMatchObject({ zlib: "selected" });
+    for (const axis of ["population", "precision", "compression"]) {
+      const refused = Object.entries(await axisStates(axis)).filter(
+        ([, state]) => state === "unavailable",
+      );
+      expect(refused).toEqual([]);
+    }
+
+    // The way out is the ordinary control, so no explicit reset is offered and
+    // the conversion the reader can actually run stays offered.
+    expect(await browser.$(".conversion-settings-recovery").isExisting()).toBe(false);
+    expect(await browser.$(CONVERT).isEnabled()).toBe(true);
+
+    // Keyboard: the refused value is out of the tab order rather than focusable
+    // and inert, the way out takes focus, and the sentence is associated with
+    // the control it is about rather than only placed near it.
+    const keyboard = await browser.execute(() => {
+      const group = document.querySelector('[data-axis="processing"]');
+      const inputs = [...(group?.querySelectorAll("input") ?? [])] as HTMLInputElement[];
+      const refused = inputs.find((input) => input.value === "unscoped_default_centroiding");
+      const wayOut = inputs.find((input) => input.value === "no_additional_centroiding");
+      wayOut?.focus();
+      return {
+        refusedDisabled: refused?.disabled ?? null,
+        refusedDescribedBy: refused?.getAttribute("aria-describedby") ?? null,
+        wayOutDisabled: wayOut?.disabled ?? null,
+        wayOutFocused: document.activeElement === wayOut,
+      };
+    });
+    expect(keyboard.refusedDisabled).toBe(true);
+    expect(keyboard.wayOutDisabled).toBe(false);
+    expect(keyboard.wayOutFocused).toBe(true);
+    expect(keyboard.refusedDescribedBy).toBe(NOTE_ID);
+
+    // The new sentence is laid out rather than clipped, and showing it does not
+    // make the document scroll sideways at this viewport.
+    const noteBox = await boxOf(`#${NOTE_ID}`);
+    const panelBox = await boxOf(SETTINGS);
+    expect(noteBox.width).toBeGreaterThan(0);
+    expect(noteBox.height).toBeGreaterThan(0);
+    expect(noteBox.left).toBeGreaterThanOrEqual(panelBox.left - 1);
+    expect(noteBox.right).toBeLessThanOrEqual(panelBox.right + 1);
+    const fit = await browser.execute(
+      (id: string) => {
+        const element = document.getElementById(id);
+        return element === null
+          ? null
+          : {
+              scrollHeight: element.scrollHeight,
+              clientHeight: element.clientHeight,
+              scrollWidth: element.scrollWidth,
+              clientWidth: element.clientWidth,
+            };
+      },
+      NOTE_ID,
+    );
+    expect(fit).not.toBeNull();
+    expect(fit!.scrollHeight).toBeLessThanOrEqual(fit!.clientHeight + 1);
+    expect(fit!.scrollWidth).toBeLessThanOrEqual(fit!.clientWidth + 1);
+    const overflow = await horizontalOverflow();
+    expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth);
+
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  for (const viewport of [
+    { name: "1920x1080", width: 1_920, height: 1_080 },
+    { name: "1366x768", width: 1_366, height: 768 },
+    { name: "960x640", width: 960, height: 640 },
+  ] as const) {
+    it(`fits the source-evidence note at ${viewport.name}`, async () => {
+      // Condition A of this milestone is not what this is for. ADR 0043's
+      // milestone-wide condition B asks that every M6 control satisfy the
+      // inherited interaction principles at all three responsive targets, and
+      // this repair adds a notice variant to an M6 control. The behavioural
+      // case above is measured once, at the reference window; what is repeated
+      // here is only the layout question a narrower or wider column can change.
+      await openTheWorkspace({
+        read_conversion_configuration: configuration(AUTHORITY_A, vendorWorkflowCatalog),
+      });
+      await browser.setWindowSize(viewport.width, viewport.height);
+      await awaitSettings("ready");
+      await setInvokeResult(
+        "describe_workspace_conversion_queue",
+        plannedAs(intentOf(FLAT_64), A),
+      );
+      await chooseAxisValue("precision", "mz64_intensity64");
+      await browser.waitUntil(
+        async () => (await axisStates("precision")).mz64_intensity64 === "selected",
+        { timeout: 30_000, timeoutMsg: "the 64/64 row was never selected" },
+      );
+
+      // The note is still the source-evidence one, still laid out rather than
+      // clipped, still inside the panel, and still not a cause of sideways
+      // scrolling.
+      expect(await refusalNote()).toContain("MSCanvas has not measured that combination");
+      const noteBox = await boxOf(`#${NOTE_ID}`);
+      const panelBox = await boxOf(SETTINGS);
+      expect(noteBox.height).toBeGreaterThan(0);
+      expect(noteBox.left).toBeGreaterThanOrEqual(panelBox.left - 1);
+      expect(noteBox.right).toBeLessThanOrEqual(panelBox.right + 1);
+      const fit = await browser.execute(
+        (id: string) => {
+          const element = document.getElementById(id);
+          return element === null
+            ? null
+            : {
+                scrollHeight: element.scrollHeight,
+                clientHeight: element.clientHeight,
+                scrollWidth: element.scrollWidth,
+                clientWidth: element.clientWidth,
+              };
+        },
+        NOTE_ID,
+      );
+      expect(fit).not.toBeNull();
+      expect(fit!.scrollHeight).toBeLessThanOrEqual(fit!.clientHeight + 1);
+      expect(fit!.scrollWidth).toBeLessThanOrEqual(fit!.clientWidth + 1);
+      const overflow = await horizontalOverflow();
+      expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth + 1);
+
+      // And the way out is still enabled and still takes focus at this width.
+      const wayOut = await browser.execute(() => {
+        const group = document.querySelector('[data-axis="processing"]');
+        const inputs = [...(group?.querySelectorAll("input") ?? [])] as HTMLInputElement[];
+        const control = inputs.find((input) => input.value === "no_additional_centroiding");
+        control?.focus();
+        return {
+          disabled: control?.disabled ?? null,
+          focused: document.activeElement === control,
+        };
+      });
+      expect(wayOut.disabled).toBe(false);
+      expect(wayOut.focused).toBe(true);
+
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+  }
 });

@@ -49,6 +49,8 @@
 
 use std::ffi::OsString;
 
+use crate::conversion_run::ConversionSourceKind;
+
 /// The output format an intent may ask for.
 ///
 /// One variant, and that is the encoding rather than an oversight: mzXML is
@@ -329,6 +331,7 @@ impl ConversionIntent {
                 compression: CompressionIntent::Zlib,
             },
             evidence: "D1",
+            sources: EvidenceSourceDomain::AnyAdmittedSource,
         },
         AdmittedIntent {
             intent: ConversionIntent {
@@ -339,6 +342,7 @@ impl ConversionIntent {
                 compression: CompressionIntent::Zlib,
             },
             evidence: "P4, P1, L3, C1",
+            sources: EvidenceSourceDomain::AnyAdmittedSource,
         },
         AdmittedIntent {
             intent: ConversionIntent {
@@ -349,6 +353,7 @@ impl ConversionIntent {
                 compression: CompressionIntent::Zlib,
             },
             evidence: "P3, P2",
+            sources: EvidenceSourceDomain::AnyAdmittedSource,
         },
         AdmittedIntent {
             intent: ConversionIntent {
@@ -359,6 +364,7 @@ impl ConversionIntent {
                 compression: CompressionIntent::Zlib,
             },
             evidence: "P5",
+            sources: EvidenceSourceDomain::AnyAdmittedSource,
         },
         // The one case that measured compression off, and the only combination
         // it therefore admits.
@@ -371,6 +377,7 @@ impl ConversionIntent {
                 compression: CompressionIntent::NoCompression,
             },
             evidence: "C2",
+            sources: EvidenceSourceDomain::AnyAdmittedSource,
         },
         AdmittedIntent {
             intent: ConversionIntent {
@@ -381,6 +388,7 @@ impl ConversionIntent {
                 compression: CompressionIntent::Zlib,
             },
             evidence: "L1",
+            sources: EvidenceSourceDomain::AnyAdmittedSource,
         },
         AdmittedIntent {
             intent: ConversionIntent {
@@ -391,6 +399,7 @@ impl ConversionIntent {
                 compression: CompressionIntent::Zlib,
             },
             evidence: "L2",
+            sources: EvidenceSourceDomain::AnyAdmittedSource,
         },
         // The two rows that compose processing with anything. Both carry a
         // *global* precision posture, which is the whole reason the per-array
@@ -404,6 +413,9 @@ impl ConversionIntent {
                 compression: CompressionIntent::Zlib,
             },
             evidence: "K1, K8",
+            // Reader-sensitive: measured on mzML sources only. M6.10 measured
+            // that a vendor reader selects its own picker for this same argv.
+            sources: EvidenceSourceDomain::MeasuredOn(&[ConversionSourceKind::MzmlFile]),
         },
         AdmittedIntent {
             intent: ConversionIntent {
@@ -414,6 +426,9 @@ impl ConversionIntent {
                 compression: CompressionIntent::Zlib,
             },
             evidence: "K12",
+            // Reader-sensitive: measured on mzML sources only. M6.10 measured
+            // that a vendor reader selects its own picker for this same argv.
+            sources: EvidenceSourceDomain::MeasuredOn(&[ConversionSourceKind::MzmlFile]),
         },
     ];
 
@@ -425,6 +440,25 @@ impl ConversionIntent {
     /// nothing in the repository had ever named. This is one value, and it is
     /// the first row of [`Self::ADMITTED`].
     pub const SHIPPED: Self = Self::ADMITTED[0].intent;
+
+    /// Whether this intent's evidence is evidence about `kind`.
+    ///
+    /// **The third question, asked once.** `admitted(..)` answers whether the
+    /// measured vocabulary contains a combination; the installed build's grammar
+    /// answers whether it can be expressed; this answers whether the measurement
+    /// behind it covers the source in hand. All three must hold before a
+    /// conversion may be planned, and none of them substitutes for another.
+    ///
+    /// A `ConversionIntent` can only exist by having been looked up in
+    /// [`Self::ADMITTED`], so the row is always found; `false` for an intent that
+    /// somehow is not in the table is the fail-closed answer rather than a panic.
+    #[must_use]
+    pub fn evidence_covers_source(self, kind: ConversionSourceKind) -> bool {
+        Self::ADMITTED
+            .iter()
+            .find(|admitted| admitted.intent == self)
+            .is_some_and(|admitted| admitted.sources.covers(kind))
+    }
 
     /// The intent for this combination, or `None` where the evidence does not
     /// admit it.
@@ -685,6 +719,72 @@ pub struct AdmittedIntent {
     intent: ConversionIntent,
     /// The M6.2 case identifier(s) that measured this combination.
     evidence: &'static str,
+    /// Which source families that measurement is evidence *about*.
+    sources: EvidenceSourceDomain,
+}
+
+/// The source families one row's measurement actually covers.
+///
+/// **A third question, and the reason it is separate from the other two.** Until
+/// now a combination had two: does the measured vocabulary contain it, and can
+/// the installed build express it. Both are answered without reference to what
+/// is being converted, and for most of this table that is right.
+///
+/// It is not right for peak picking. M6.2 measured every row on generated mzML
+/// fixtures, and for output format, numeric precision, compression and MS-level
+/// population that generalizes: those are decided by the **writer**, downstream
+/// of whichever reader produced the spectra. Peak picking is decided by the
+/// **reader** -- [CNV-D2](../../../docs/architecture/adr/0043-conversion-completion-route.md#cnv-d2--processing-intent)
+/// records from the provider's own sources that vendor centroiding is selected
+/// by a `dynamic_cast` on the immediately inner spectrum list -- so a
+/// measurement of it on one source family says nothing about another.
+///
+/// M6.10 then measured what that means in practice: on a lawful Thermo
+/// acquisition the bare `peakPicking` filter selects the *vendor* picker, which
+/// the requested-processing contract correctly refuses. The repair is to stop
+/// offering the combination where its evidence does not reach, **not** to widen
+/// the contract to accept whichever algorithm a reader happens to use.
+///
+/// Membership of [`ConversionIntent::ADMITTED`] therefore no longer asserts
+/// source applicability on its own. The nine measured combinations and the
+/// thirty-nine they exclude are unchanged; what changed is that two of the nine
+/// now say which sources they were measured on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvidenceSourceDomain {
+    /// The measured semantic is writer-side, so the measurement carries to
+    /// every source family.
+    ///
+    /// **It answers `true` for any family, including one added after this was
+    /// written**, and the name says *admitted* because admitting a family is a
+    /// different gate: [`provider_build_is_evidenced`](crate::provider_build_is_evidenced)
+    /// is asked per family and refuses one whose reader nobody measured on this
+    /// build. A family therefore reaches these rows only after that gate lets
+    /// it convert at all, which is why this variant does not repeat the check
+    /// -- two lists of admitted families would be one more thing to drift.
+    ///
+    /// **Not a claim that all future writer-side behaviour is source-independent.**
+    /// It is this table's seven rows, on the axes M6.2 measured, and a new axis
+    /// gets this variant only by argument.
+    AnyAdmittedSource,
+    /// The measured semantic is reader-sensitive, and these are the families it
+    /// was measured on. Every other family -- admitted, unadmitted or not yet
+    /// recognized -- is outside it.
+    MeasuredOn(&'static [ConversionSourceKind]),
+}
+
+impl EvidenceSourceDomain {
+    /// Whether a measurement in this domain is evidence about `kind`.
+    #[must_use]
+    pub fn covers(self, kind: ConversionSourceKind) -> bool {
+        match self {
+            Self::AnyAdmittedSource => true,
+            // A linear scan of a list of at most a few entries, and deliberately
+            // not a set: the lists are literal, and a family is named or it is
+            // not. Nothing here infers a family from a name, a path, an
+            // extension or a caller-supplied flag.
+            Self::MeasuredOn(families) => families.contains(&kind),
+        }
+    }
 }
 
 impl AdmittedIntent {
@@ -696,6 +796,12 @@ impl AdmittedIntent {
     #[must_use]
     pub const fn evidence(&self) -> &'static str {
         self.evidence
+    }
+
+    /// Which source families this row's evidence covers.
+    #[must_use]
+    pub const fn sources(&self) -> EvidenceSourceDomain {
+        self.sources
     }
 }
 
@@ -723,6 +829,189 @@ mod tests {
     ];
     const COMPRESSIONS: [CompressionIntent; 2] =
         [CompressionIntent::Zlib, CompressionIntent::NoCompression];
+
+    /// Every source family, so the applicability tests below cannot silently
+    /// stop covering one when a variant is added.
+    const SOURCE_KINDS: [ConversionSourceKind; 4] = [
+        ConversionSourceKind::MzmlFile,
+        ConversionSourceKind::ThermoRawFile,
+        ConversionSourceKind::ShimadzuLcdFile,
+        ConversionSourceKind::SciexWiffBundle,
+    ];
+
+    /// A distinct position per family.
+    ///
+    /// **What this does and does not buy, stated exactly.** A variant added to
+    /// [`ConversionSourceKind`] fails to compile here until it is answered, so
+    /// the author is *prompted*. It is not a proof: Rust cannot enumerate an
+    /// enum's variants without a derive macro, and no dependency was added for
+    /// one, so an author who answers here and forgets `SOURCE_KINDS` leaves the
+    /// array short and nothing fails. The test below therefore claims only what
+    /// it holds -- that the array and this function agree about the families
+    /// the array does name.
+    const fn source_kind_index(kind: ConversionSourceKind) -> usize {
+        match kind {
+            ConversionSourceKind::MzmlFile => 0,
+            ConversionSourceKind::ThermoRawFile => 1,
+            ConversionSourceKind::ShimadzuLcdFile => 2,
+            ConversionSourceKind::SciexWiffBundle => 3,
+        }
+    }
+
+    /// The family list and the index function agree, and the list repeats
+    /// nobody.
+    ///
+    /// **Deliberately not named as an exhaustiveness proof, because it is not
+    /// one.** `seen` is sized from the array under test, so a variant absent
+    /// from the array is absent from this loop too and nothing here can notice.
+    /// What it does catch is the array disagreeing with `source_kind_index` --
+    /// a duplicate entry, a stale index, or an entry whose index names a
+    /// different family. The prompt to add a new variant to the array is the
+    /// compile error in `source_kind_index`; it is a prompt, not a guarantee,
+    /// and the record says so.
+    #[test]
+    fn the_family_list_and_its_index_agree() {
+        let mut seen = [false; SOURCE_KINDS.len()];
+        for kind in SOURCE_KINDS {
+            let index = source_kind_index(kind);
+            assert!(
+                !seen[index],
+                "two families share index {index}, so one of them is missing"
+            );
+            assert_eq!(
+                SOURCE_KINDS[index], kind,
+                "index {index} names a different family than the one at it"
+            );
+            seen[index] = true;
+        }
+        assert!(
+            seen.iter().all(|listed| *listed),
+            "the family list does not name every family it indexes: {seen:?}"
+        );
+    }
+
+    /// Every admitted row says which sources its measurement covers, and the two
+    /// reader-sensitive ones say `mzML` and nothing else.
+    ///
+    /// The distinction this pins is the whole repair. M6.2 measured all nine
+    /// rows on generated mzML fixtures. For seven of them that generalizes,
+    /// because the semantic is decided by the writer. For the two centroiding
+    /// rows it does not, because the picker is chosen by the reader -- and M6.10
+    /// measured a vendor reader choosing its own.
+    #[test]
+    fn each_admitted_row_states_the_sources_its_evidence_covers() {
+        for admitted in ConversionIntent::ADMITTED {
+            // Keyed on *asking for a picker*, not on one variant's name. A
+            // scoped MS-level preset added later is reader-sensitive for the
+            // same reason, and would have to carry a measured domain rather
+            // than trip this test into demanding the writer-side one.
+            let reader_sensitive = !matches!(
+                admitted.intent().processing(),
+                ProcessingIntent::NoAdditionalCentroiding
+            );
+            match (reader_sensitive, admitted.sources()) {
+                (false, EvidenceSourceDomain::AnyAdmittedSource) => {}
+                (true, EvidenceSourceDomain::MeasuredOn(families)) => {
+                    assert_eq!(
+                        families,
+                        [ConversionSourceKind::MzmlFile],
+                        "a centroiding row claims a source family nobody measured it on: {:?}",
+                        admitted.intent()
+                    );
+                }
+                (reader_sensitive, domain) => panic!(
+                    "row {:?} is reader_sensitive={reader_sensitive} and carries {domain:?}",
+                    admitted.intent()
+                ),
+            }
+        }
+    }
+
+    /// Each affected intent against every source family, and each unaffected one
+    /// too, so the field cannot be read as a blanket narrowing.
+    #[test]
+    fn evidence_applicability_is_answered_per_row_and_per_source_family() {
+        for admitted in ConversionIntent::ADMITTED {
+            let intent = admitted.intent();
+            let centroiding = !matches!(
+                intent.processing(),
+                ProcessingIntent::NoAdditionalCentroiding
+            );
+            for kind in SOURCE_KINDS {
+                let covered = intent.evidence_covers_source(kind);
+                let expected = !centroiding || kind == ConversionSourceKind::MzmlFile;
+                assert_eq!(
+                    covered, expected,
+                    "{intent:?} on {kind:?}: expected covered={expected}"
+                );
+            }
+        }
+    }
+
+    /// `SHIPPED` converts every admitted family, and the repair does not touch
+    /// it. If this fails, the product's default posture has been narrowed.
+    #[test]
+    fn the_shipped_posture_still_covers_every_source_family() {
+        for kind in SOURCE_KINDS {
+            assert!(
+                ConversionIntent::SHIPPED.evidence_covers_source(kind),
+                "the shipped posture stopped covering {kind:?}"
+            );
+        }
+    }
+
+    /// The seven writer-side rows keep every family, and the two centroiding
+    /// rows keep exactly one. Counted rather than described, so a row that
+    /// changed sides is a failure rather than a re-reading.
+    #[test]
+    fn seven_rows_cover_every_family_and_two_cover_only_mzml() {
+        let (any, mzml_only): (Vec<&AdmittedIntent>, Vec<&AdmittedIntent>) =
+            ConversionIntent::ADMITTED.iter().partition(|admitted| {
+                SOURCE_KINDS
+                    .iter()
+                    .all(|kind| admitted.intent().evidence_covers_source(*kind))
+            });
+        assert_eq!(any.len(), 7, "writer-side rows");
+        assert_eq!(mzml_only.len(), 2, "reader-sensitive rows");
+        for admitted in mzml_only {
+            // *Only* mzML, asserted family by family. The partition above only
+            // establishes "misses at least one", so a row widened to mzML plus
+            // one vendor family would still land here and still look right.
+            for kind in SOURCE_KINDS {
+                assert_eq!(
+                    admitted.intent().evidence_covers_source(kind),
+                    kind == ConversionSourceKind::MzmlFile,
+                    "a reader-sensitive row covers {kind:?}, which nobody measured it on"
+                );
+            }
+        }
+    }
+
+    /// Adding the applicability field admitted no combination and excluded none.
+    ///
+    /// The nine measured combinations and the thirty-nine the cross-product
+    /// excludes are M6.2's, and this repair is about *sources*, not about the
+    /// vocabulary. A field that quietly changed the table would be a different
+    /// change wearing this one's clothes.
+    #[test]
+    fn the_measured_vocabulary_is_unchanged_by_source_qualification() {
+        assert_eq!(ConversionIntent::ADMITTED.len(), 9);
+        let admitted_count = cross_product()
+            .into_iter()
+            .filter(|(format, processing, population, precision, compression)| {
+                ConversionIntent::admitted(
+                    *format,
+                    *processing,
+                    *population,
+                    *precision,
+                    *compression,
+                )
+                .is_some()
+            })
+            .count();
+        assert_eq!(admitted_count, 9, "admitted combinations");
+        assert_eq!(cross_product().len() - admitted_count, 39, "excluded");
+    }
 
     fn cross_product() -> Vec<(
         OutputFormat,

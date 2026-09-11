@@ -7968,4 +7968,77 @@ fail, and three cases the driver ran and read back for nobody.
 
 The evidence, the four dispositions and the changed-path closure are in
 [the M6.10 record](docs/spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md).
-M6.11 has not started.
+M6.11 had not started when this was written; it has since been drafted on its
+own branch and is not on `main`. The section below is the prerequisite repair
+that draft asked for.
+
+## CNV-D2 prerequisite — source-qualified centroiding admission
+
+**A processing measurement is evidence about the source families it was taken
+on**, and since this repair that is executable rather than implied. M6.2
+measured every admitted combination on generated mzML fixtures; for output
+format, numeric precision, compression and MS-level population that carries,
+because those are decided by the writer. Peak picking is decided by the
+**reader**, so the two `UnscopedDefaultCentroiding` rows are admitted for mzML
+alone — and because the visible workflow converts vendor acquisitions, the
+vendor workflow now reaches seven of the nine measured combinations, of which it
+offers as many as the installed grammar can express.
+
+One applicability answer reaches the Rust-authored catalog, the plan command,
+the `BEGIN` preflight, the single-output plan and the output-set lifecycle. Each
+refuses before queue commitment, before a destination picker or folder creation,
+before private staging and before the provider runs — and the tests prove that
+rather than only proving a returned error. The single-output plan is aimed at a
+destination root that does not exist and still answers applicability instead of
+`DestinationRootNotInspectable`, which pins the check ahead of the first thing
+the constructor does to the world. The set lifecycle is given a runner that
+panics if called, and ends with zero calls and an empty destination. `BEGIN`
+ends with an idle slot, an empty destination and zero provider launches. The catalog keeps all nine rows and distinguishes *this
+build cannot express it* from *no source this product converts is one this row's
+evidence covers* — two refusals, two sentences, both about the combination and
+never about an axis value.
+
+**What did not change.** The integrity contract still rejects a vendor-picker
+output against a request for the measured local-maximum behaviour. The other
+seven rows, `SHIPPED`, every stable identity, and the nine-admitted /
+thirty-nine-excluded vocabulary are untouched. No source family was added, no
+vendor algorithm was exercised, no dependency changed, and mzML conversion was
+not added to the desktop roster. Shimadzu LCD and SCIEX WIFF are withheld for
+**absent evidence**, not as measured failures.
+
+The repository guard now holds each row's source domain and was proved against
+both reversions — widening a centroiding row and narrowing a writer-side one —
+in isolated copies, with the tree restored afterwards.
+
+**QA was scoped down at the owner's direction**, because the conversion surface
+is expected to change substantially in later work. What was taken: every local
+static, type, lint, build and test check, the repository validator, and the
+conversion-settings browser suite in the shipped bundle, where 21 cases passed.
+The repair's behavioural case runs once, at **1366×768** — the withheld
+combination is not runnable, its sentence is about the combination and is not
+the grammar sentence, no other axis moves, the refused control is out of the tab
+order while the way out takes focus, and the new note is neither clipped nor a
+cause of sideways scrolling. The **layout** of the new note is measured at all
+three responsive targets, because ADR 0043's milestone-wide condition B asks
+that of every M6 control and this change adds a notice variant to one; that
+condition is not relaxed here.
+
+What was not taken, and is not claimed: **no four-viewport sweep and no re-run
+of the wider suite for reassurance**, and the
+**M6.6–M6.9 native campaign was NOT RE-RUN** — not passed, not waived, and not
+equivalent to browser-mocked evidence, which replaces the Tauri boundary at
+`invoke` and can say nothing about a native window. What supports omitting it is
+diff inspection. The change adds four production refusal sites, five new typed
+variants, a DTO error kind, a new field on the catalog row DTO, a fourth plan
+block reason and three rendered sentences — and touches no process supervision,
+cancellation, native dialog or focus plumbing, filesystem identity, cleanup or
+finalization, provider argv or algorithm, and no dependency manifest. **Its next owner is the production UI/integration slice
+that next touches this path.** No old binary evidence is attributed to the
+changed source, and nothing here is attributed to rendered or native evidence
+that was not produced. The full account is in
+[the repair record](docs/ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md).
+
+This is a prerequisite under CNV-D2 and renumbers no M6 slice. **M6.11's closure
+audit is to be resumed against this baseline** to decide whether criterion 2 and
+condition A are now proved; that decision is the audit's, not this repair's.
+M6 is not complete. Post-M6 XIC interlude and M7 have not started.

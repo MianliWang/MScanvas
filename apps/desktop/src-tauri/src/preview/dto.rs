@@ -2423,6 +2423,30 @@ pub fn dataset_not_convertible() -> PreviewErrorDto {
     )
 }
 
+/// What a conversion asked for under settings this source's evidence does not
+/// cover answers with.
+///
+/// **A different fact from every refusal beside it, and the sentence says so.**
+/// The row converts, the installation can express the request, and the
+/// combination is one the measured vocabulary holds. What is missing is evidence
+/// that the measurement behind it is about *this kind of acquisition* — which
+/// for peak picking it is not, because the picker is chosen by the reader.
+///
+/// One sentence about the combination, never about an axis value: telling a
+/// reader that 64-bit intensity or zlib is unsupported here would be three false
+/// statements beside the controls they need to recover with.
+pub fn conversion_settings_not_evidenced_for_source() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_settings_not_evidenced_for_source",
+        concat!(
+            "MSCanvas has not measured those conversion settings on this kind of ",
+            "acquisition. Choose settings that add no peak picking, or convert a ",
+            "different file."
+        ),
+        false,
+    )
+}
+
 /// One Rust-issued claim on the current document's bounded drop subscriber.
 ///
 /// The identifier is opaque and path-free. It grants no filesystem authority
@@ -3373,6 +3397,16 @@ pub struct ConversionIntentDto {
 pub struct ConversionCatalogRowDto {
     pub intent: ConversionIntentDto,
     pub available: bool,
+    /// Which of the three answers this row got, so an unavailable one carries
+    /// the sentence it needs rather than one shared word.
+    ///
+    /// `available` stays beside it and stays the same boolean: every existing
+    /// reader keeps working, and a reader that needs to explain the refusal has
+    /// something to explain it with. The two refusals are different facts --
+    /// this installation cannot express the request, or no source this product
+    /// converts is one the row's evidence covers -- and a boolean explained only
+    /// as "unsupported by this installation" would state the wrong one.
+    pub availability: String,
 }
 
 /// What is known about conversion settings for the binding the authority in the

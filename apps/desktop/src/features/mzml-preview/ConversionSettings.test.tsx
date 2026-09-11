@@ -11,6 +11,7 @@ afterEach(cleanup);
 const COMPLETE: readonly ConversionCatalogRow[] = admittedIntents.map((intent) => ({
   intent,
   available: true,
+  availability: "available",
 }));
 
 const id = (
@@ -25,7 +26,14 @@ const CENTROIDED_32 = id("unscoped_default_centroiding", "all", "mz32_intensity3
 const FLAT_32 = id("no_additional_centroiding", "all", "mz32_intensity32", "zlib");
 
 function withoutRunning(...ids: readonly string[]): readonly ConversionCatalogRow[] {
-  return COMPLETE.map((row) => ({ ...row, available: !ids.includes(row.intent.id) }));
+  // The discriminator moves with the boolean; the pair is one decision in Rust.
+  return COMPLETE.map((row) => ({
+    ...row,
+    available: !ids.includes(row.intent.id),
+    availability: ids.includes(row.intent.id)
+      ? ("unsupported_by_installation" as const)
+      : ("available" as const),
+  }));
 }
 
 function view(
@@ -221,6 +229,31 @@ describe("the four control groups", () => {
     expect(control).toBeDisabled();
     const note = document.getElementById(control.getAttribute("aria-describedby") ?? "");
     expect(note?.textContent).toContain("MSCanvas has not qualified that combination");
+  });
+
+  it("names the source-evidence refusal for a retained selection, not the installation", () => {
+    // A retained centroiding choice on a catalog whose two centroiding rows are
+    // withheld for absent source evidence. The banner must not send the reader
+    // after a different ProteoWizard build: this one runs the row fine, and what
+    // is missing is a measurement no release supplies.
+    const withoutSourceEvidence = COMPLETE.map((row) => ({
+      ...row,
+      available: row.intent.processing !== "unscoped_default_centroiding",
+      availability:
+        row.intent.processing === "unscoped_default_centroiding"
+          ? ("not_evidenced_for_conversion_sources" as const)
+          : ("available" as const),
+    }));
+    render(<ConversionSettings
+        configuration={view(ready(withoutSourceEvidence), {
+          selectedIntentId: CENTROIDED_64,
+        })}
+        onChoose={vi.fn()}
+        refusalNoticeId={null}
+      />);
+    const note = document.getElementById("conversion-settings-selection-unavailable");
+    expect(note?.textContent).toContain("has not measured");
+    expect(note?.textContent).not.toContain("ProteoWizard installation");
   });
 
   it("state the loss centroiding causes without naming an algorithm", () => {

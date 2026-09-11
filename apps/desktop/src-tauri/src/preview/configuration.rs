@@ -32,12 +32,42 @@ use super::dto::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RowAvailability {
     Available,
-    Unavailable,
+    /// The installed build's grammar cannot express this row's argv.
+    ///
+    /// A fact about the installation. Choosing another ProteoWizard release can
+    /// change it.
+    UnsupportedByInstallation,
+    /// No source this product converts is one this row's evidence covers.
+    ///
+    /// A fact about the *evidence*, and a different sentence entirely. The
+    /// combination is one the measured vocabulary holds; what is missing is a
+    /// measurement taken on the kinds of acquisition the visible workflow
+    /// accepts. Peak picking is the axis this reaches, because the picker is
+    /// chosen by the reader rather than by the writer.
+    ///
+    /// **It says nothing about the installation, in either direction.** This
+    /// answer is decided before the grammar is consulted, deliberately: a row
+    /// no convertible family is evidenced for is not made available by a build
+    /// that happens to accept its argv. So a build that also could not express
+    /// the row reports this rather than the grammar refusal, and that is the
+    /// right way round -- the reader's remedy is the same either way, and it is
+    /// not a different ProteoWizard release.
+    NotEvidencedForConversionSources,
 }
 
 impl RowAvailability {
     pub(crate) const fn is_available(self) -> bool {
         matches!(self, Self::Available)
+    }
+
+    /// The identity the webview receives, so the two refusals stay two
+    /// sentences rather than one boolean.
+    pub(crate) const fn stable_id(self) -> &'static str {
+        match self {
+            Self::Available => "available",
+            Self::UnsupportedByInstallation => "unsupported_by_installation",
+            Self::NotEvidencedForConversionSources => "not_evidenced_for_conversion_sources",
+        }
     }
 }
 
@@ -66,6 +96,20 @@ pub(crate) enum RowAdmission {
     NoCatalog,
     /// The row exists and the installed build cannot run it.
     Unavailable,
+    /// The row exists, and no source this product converts is one the row's
+    /// evidence covers.
+    ///
+    /// **A third arm rather than a second meaning for `Unavailable`.** The two
+    /// refusals send a reader to different places: one is about this
+    /// installation and another ProteoWizard release can change it; this one is
+    /// about the product's evidence, and no release supplies a measurement.
+    /// Collapsing them here is how the distinction the catalog draws would stop
+    /// travelling one call before the sentence that states it.
+    ///
+    /// Says nothing about the grammar in either direction: the catalog decides
+    /// applicability before it asks the build, so a row this build also could
+    /// not express still arrives here.
+    NotEvidencedForSources,
     Available,
 }
 
@@ -96,16 +140,37 @@ impl ConversionCatalog {
                 .iter()
                 .map(|admitted| CatalogRow {
                     intent: admitted.intent(),
-                    availability: if capabilities
-                        .require_conversion_intent(&admitted.intent())
-                        .is_ok()
-                    {
-                        RowAvailability::Available
-                    } else {
-                        RowAvailability::Unavailable
-                    },
+                    availability: Self::availability_of(admitted.intent(), capabilities),
                 })
                 .collect(),
+        }
+    }
+
+    /// The three answers for one row, in the order that makes each true.
+    ///
+    /// **Source applicability first**, because it is a fact about the product's
+    /// evidence and holds whatever installation is bound: a row no convertible
+    /// family is evidenced for is not made available by a build that happens to
+    /// accept its argv. The grammar question follows and is about this
+    /// installation alone.
+    ///
+    /// Derived rather than listed. Nothing here names a vendor family or copies
+    /// the admitted graph; it asks the crate's own rule about the families the
+    /// visible workflow converts, so a family admitted or withdrawn later moves
+    /// this answer with it.
+    fn availability_of(
+        intent: ConversionIntent,
+        capabilities: &InstalledHelpCapabilities,
+    ) -> RowAvailability {
+        if !super::conversion::convertible_source_kinds()
+            .any(|kind| intent.evidence_covers_source(kind))
+        {
+            return RowAvailability::NotEvidencedForConversionSources;
+        }
+        if capabilities.require_conversion_intent(&intent).is_ok() {
+            RowAvailability::Available
+        } else {
+            RowAvailability::UnsupportedByInstallation
         }
     }
 }
@@ -179,6 +244,7 @@ impl ConversionCatalog {
             .map(|row| ConversionCatalogRowDto {
                 intent: intent_dto(&row.intent),
                 available: row.availability.is_available(),
+                availability: row.availability.stable_id().to_owned(),
             })
             .collect()
     }
@@ -311,11 +377,16 @@ impl ConversionConfigurations {
             .rows
             .iter()
             .find(|row| row.intent == *intent)
-            .map_or(RowAdmission::NoCatalog, |row| {
-                if row.availability.is_available() {
-                    RowAdmission::Available
-                } else {
-                    RowAdmission::Unavailable
+            .map_or(RowAdmission::NoCatalog, |row| match row.availability {
+                // Matched rather than reduced to a boolean, so the catalog's
+                // three answers reach the caller as three. A row refused for
+                // absent source evidence that arrived here as `Unavailable`
+                // would be answered with a sentence about the installation --
+                // which is the exact misdirection this repair exists to stop.
+                RowAvailability::Available => RowAdmission::Available,
+                RowAvailability::UnsupportedByInstallation => RowAdmission::Unavailable,
+                RowAvailability::NotEvidencedForConversionSources => {
+                    RowAdmission::NotEvidencedForSources
                 }
             })
     }
@@ -702,11 +773,21 @@ This filter performs centroiding on spectra with the selected <ms levels>.
         let rows = catalog_of(&ConversionConfiguration::Ready {
             catalog: ConversionCatalog::of(&help_without("--64")),
         });
+        // Filtered on the *reason*, not on unavailability. Two rows are
+        // unavailable for a different reason entirely -- no source this product
+        // converts is one their evidence covers -- and lumping the two together
+        // is what this repair exists to stop.
         assert!(
             rows.iter()
-                .filter(|row| !row.available)
+                .filter(|row| row.availability == "unsupported_by_installation")
                 .all(|row| row.intent.precision == "mz64_intensity64"),
             "a row that does not emit --64 was refused for it"
+        );
+        assert!(
+            rows.iter()
+                .filter(|row| row.availability == "not_evidenced_for_conversion_sources")
+                .all(|row| row.intent.processing == "unscoped_default_centroiding"),
+            "a row was refused for absent source evidence that does not ask for a picker"
         );
         assert_eq!(row(&rows, &ConversionIntent::SHIPPED), Some(true));
     }
