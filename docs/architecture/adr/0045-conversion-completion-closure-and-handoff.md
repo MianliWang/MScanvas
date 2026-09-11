@@ -29,33 +29,38 @@ retold.
 
 ## Baselines this audit was taken on
 
-**Three, and each verdict names the one it rests on.** The matrix was first
-decided on `P`. The repair criterion 2 was blocked on was published as `R`, and
-criterion 2, condition A and every other re-decided row rest on `R`. **Condition
-B rests on `S`**, and cannot rest on `R`: proving the fourth of the repair's
-sentences is what established that it did not render, so the evidence and its
-repair are both later than `R`.
+**Four, and every verdict names the one it can be reproduced from.** The rule
+this section follows is that a verdict belongs to the earliest baseline a reader
+could check it out and re-derive it on — not to the baseline the audit happened
+to be sitting at.
+
+| Baseline | Value | What rests on it |
+| --- | --- | --- |
+| First decision `P` | `6a04d6bb1ac9169ac15cf9d9815d1aa74bc23555` | The ten criteria that never moved, and the original `NOT PROVED` verdicts |
+| Repair `R` | `be247b4697de1cff493164ef97c08c5117e092b0` — the true merge of PR #107 | **Criterion 2.** It is a claim about admission behaviour, and the behaviour is there |
+| Rendered evidence `S` | `2f520a04a4ae8c9c0a0977d5768b74889245127a` — the true merge of PR #108 | **Condition B.** Not `R`: proving the fourth of the repair's sentences is what established it did not render, so the evidence and its repair are both later |
+| This closure `T` | the head this record is published at, PR #106 | **Condition A.** Not `R` and not `S`: `README.md`, `FEATURE_CATALOG.md`, `PRIMARY_WORKFLOWS.md` and `PROJECT_PROPOSAL.md` still described the product as it was before the repair, and this record is what corrects them |
 
 | Fact | Value |
 | --- | --- |
-| Repair baseline `R` | `be247b4697de1cff493164ef97c08c5117e092b0` — the true merge of PR #107 |
-| Condition B baseline `S` | `2f520a04a4ae8c9c0a0977d5768b74889245127a` — the true merge of PR #108 |
-| `P` is an ancestor of `R`, and `R` of `S` | yes |
+| `P` is an ancestor of `R`, `R` of `S`, and `S` of `T` | yes |
 | `P` → `R` | one repair branch, two commits |
 | `R` → `S` | one branch, two commits: the three-target rendered evidence, and the one-line `NOTICE_ORDER` repair that evidence forced |
-| Both published | protected true merge, exact-head CI green, natural-main CI green |
+| `R` and `S` published | protected true merge, exact-head CI green, natural-main CI green |
 | What `R` changed | admission gained a source dimension; nothing else. No dependency manifest moved, and no process, cancellation, native-dialog, filesystem-identity or provider-argv path was touched — see [the repair record](../../ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md) |
 | What `S` changed | one rendered spec and one line of `NOTICE_ORDER`. No admission, no plan, no queue and no dependency |
+| What `T` changes | documentation only |
+| Tree at `P` | `9e1e2b1ce76f38bac985b9acfd4b79ec2e28cb37` |
 
-**Condition B on `R` alone would have been `NOT PROVED`**, and this record says
-so rather than back-dating the evidence. It is stated here because a reader
-reconstructing the audit from `R` would otherwise find a `Convert` control that
-is disabled and silent, and be unable to reproduce the verdict.
+**Stated rather than back-dated.** On `R` alone, condition A and condition B
+would both still read `NOT PROVED` — a reader checking out `R` would find a
+`Convert` control that is disabled and silent, and four documents describing two
+refusals where the product gives three. Recording that is the point: a closure
+whose conditions cannot be re-derived from the commits it names is not a closure
+anybody can check.
 
 | Fact | Value |
 | --- | --- |
-| Frozen closure baseline `P` | `6a04d6bb1ac9169ac15cf9d9815d1aa74bc23555` |
-| Tree at `P` | `9e1e2b1ce76f38bac985b9acfd4b79ec2e28cb37` |
 | M6.10 published anchor | `24f7ce437cf83a014bfc99f293c765506f51574d` |
 | Anchor is an ancestor of `P` | yes |
 | Commits between them | five, **all dependency maintenance**, no source change |
@@ -97,7 +102,7 @@ restated here.
 | # | Criterion, owner | Verdict | Implementation authority | Current consumer | Discriminating evidence | Limits and conflicts |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | One availability authority — **M6.1** | **PASS** | `apps/desktop/src/features/mzml-preview/conversionAvailability.ts` — one `ConversionLane` of nine facts and a closed set of **eighteen** unavailable-reasons since `R` | `ConversionAction` is `start` and `retry`; both the controls and `useConversionOperation`'s dispatch resolve them from that one module | `conversionAvailability.test.ts`; `CONVERSION_MESSAGES` is a total `Record` over `ConversionUnavailableReason`, so a reason added without a sentence fails to compile — and it **did**, on `R`: the eighteenth reason failed the typecheck until every mapping answered it, which is the property working rather than being asserted. The rule is stated over *reasons*, which is what the `Record` is keyed on; the lane's own fields are consumed by an ordered sequence of tests rather than by a total mapping, and `R` added no lane field | Stop is gated by its own `canStop` boolean rather than by `ConversionAction`, which is the shape M6.8 shipped. The settings catalog is a **separate** judgement by design — see [the finding below](#the-finding-that-defeated-criterion-2-and-the-repair-that-closed-it) |
-| 2 | Evidence-backed typed settings — **M6.2**, **M6.3**, **M6.4** | **PASS on `R`** (`NOT PROVED` on `P`) | `crates/proteowizard/src/intent.rs` — `ConversionIntent::ADMITTED`, nine rows, private fields, `admitted(..)` the only constructor, and since `R` an `EvidenceSourceDomain` per row | `ConversionCatalog::of`, the plan command, the `BEGIN` preflight, the single-output plan and the output-set lifecycle, all through `evidence_covers_source` | `scripts/check_repo.py`'s `validate_the_admitted_intent_table_cites_measurements_that_support_it` holds every row against the committed M6.2 ledger — the case must exist, have produced mzML, have exited zero, and have run argv consistent with the row — and since `R` also holds each row's **source domain**, re-proved against a widened centroiding row and a narrowed writer-side row | Admission is now qualified by the families a measurement was taken on, so no setting is offered where its evidence does not reach. The two centroiding rows remain admitted **for mzML**, which is the source they were measured on. See [below](#the-finding-that-defeated-criterion-2-and-the-repair-that-closed-it) |
+| 2 | Evidence-backed typed settings — **M6.2**, **M6.3**, **M6.4** | **PASS on `R`** (`NOT PROVED` on `P`) — a claim about admission behaviour, reproducible from `R` | `crates/proteowizard/src/intent.rs` — `ConversionIntent::ADMITTED`, nine rows, private fields, `admitted(..)` the only constructor, and since `R` an `EvidenceSourceDomain` per row | `ConversionCatalog::of`, the plan command, the `BEGIN` preflight, the single-output plan and the output-set lifecycle, all through `evidence_covers_source` | `scripts/check_repo.py`'s `validate_the_admitted_intent_table_cites_measurements_that_support_it` holds every row against the committed M6.2 ledger — the case must exist, have produced mzML, have exited zero, and have run argv consistent with the row — and since `R` also holds each row's **source domain**, re-proved against a widened centroiding row and a narrowed writer-side row | Admission is now qualified by the families a measurement was taken on, so no setting is offered where its evidence does not reach. The two centroiding rows remain admitted **for mzML**, which is the source they were measured on. See [below](#the-finding-that-defeated-criterion-2-and-the-repair-that-closed-it) |
 | 3 | The visible plan is the bound plan — **M6.3**–**M6.7** | **PASS** | The queue's bound facts, captured under the workspace mutation gate at `BEGIN` | The plan summary and the running queue project the same bound values | Moving any control after `BEGIN` changes nothing about the running queue, pinned per fact in the preview suites | Of the four facts the criterion names, **destructive authorization is vacuously satisfied**: CNV-D4 is `OVERWRITE_REFUSED`, so nothing destructive can be bound. Recorded for the same reason criterion 4's unexercisable halves are |
 | 4 | Destination authority — **M6.5** | **PASS**, on its named exception | The destination resolved to an admitted directory object, with the policy that chose it | The queue planner and every per-item claim and revalidation | Aliasing refused on object identity and an ancestry walk compared by identity at each step, never on a path prefix; retry revalidates every identity it will use | The aliasing and vendor-dataset-root halves stay **unexercisable** — no admitted family is directory-shaped. This is CNV-D3's explicitly named exception, carried unchanged, not a gap found here |
 | 5 | Selected and all are deterministic and bound — **M6.7** | **PASS** | The scope decision and its membership capture | The scope controls and the queue | [The M6.7 record](../../ux/M6_7_CONVERSION_SCOPE.md): visible order, explicit ineligible-row treatment, capacity refusal before commitment, membership immutable after `BEGIN` | None found |
@@ -113,7 +118,7 @@ restated here.
 
 | | Condition | Verdict | Basis |
 | --- | --- | --- | --- |
-| **A** | No unimplemented capability described as implemented, and no delivered one described as missing | **PASS on `R`** (`NOT PROVED` on `P`) | The blocking fact is gone: the centroiding setting is no longer offered on families the evidence does not reach, and the documents say which refusal applies. `R` qualified `docs/product/FEATURE_CATALOG.md`'s nine-combination passage and its CNV-005 row; this closure additionally corrected `README.md`, which still described **two** refusals and an unqualified nine. Re-audited across `README.md`, `ROADMAP.md`, `BOOTSTRAP_STATUS.md`, `PROJECT_PROPOSAL.md`, `docs/product/FEATURE_CATALOG.md`, `docs/product/PRIMARY_WORKFLOWS.md` and the accepted conversion ADRs. Two passages state the admitted table without qualifying it by source family — `FEATURE_CATALOG.md`'s "nine combinations, each admitted by a named M6.2 measurement" and its CNV-005 sentence. Both now carry the source qualification rather than merely being true as written. `docs/architecture/ARTIFACT_MODEL.md` describes Project/Artifact/Run/lineage as a **design model**, not as shipped state, and is read as such. `PROJECT_PROPOSAL.md` is read the same way — it states intended scope, including centroid presets that are `EVIDENCE_REQUIRED`, and claims nothing about what ships |
+| **A** | No unimplemented capability described as implemented, and no delivered one described as missing | **PASS on `T`** (`NOT PROVED` on `P` and on `R`) | The blocking fact is gone: the centroiding setting is no longer offered on families the evidence does not reach, and the documents say which refusal applies. `R` qualified `docs/product/FEATURE_CATALOG.md`'s nine-combination passage and its CNV-005 row; this closure additionally corrected `README.md`, which still described **two** refusals and an unqualified nine. Re-audited across `README.md`, `ROADMAP.md`, `BOOTSTRAP_STATUS.md`, `PROJECT_PROPOSAL.md`, `docs/product/FEATURE_CATALOG.md`, `docs/product/PRIMARY_WORKFLOWS.md` and the accepted conversion ADRs. Two passages state the admitted table without qualifying it by source family — `FEATURE_CATALOG.md`'s "nine combinations, each admitted by a named M6.2 measurement" and its CNV-005 sentence. Both now carry the source qualification rather than merely being true as written. `docs/architecture/ARTIFACT_MODEL.md` describes Project/Artifact/Run/lineage as a **design model**, not as shipped state, and is read as such. `PROJECT_PROPOSAL.md` is read the same way — it states intended scope, including centroid presets that are `EVIDENCE_REQUIRED`, and claims nothing about what ships |
 | **B** | Inherited interaction, accessibility and responsive obligations at all three targets | **PASS on `S`** (`NOT PROVED` on `R`) | Carried from the slices that shipped each control, at their own rendered validation. Two later changes touched an M6 control, and neither is waved through. M6.10 rewrote the centroiding disclosure in `ConversionSettings.tsx`: a string constant with no layout, state or role effect, covered by a rendered assertion added in the same commit. **`R` added four new user-visible sentences across two components**, not one, and each is accounted for below rather than folded into "a new notice variant". **This condition was not relaxed to accommodate the repair's reduced QA scope**: that scope covers the wider suite and the native campaign, not this condition |
 
 **Condition B, sentence by sentence.** The repair's four new sentences live in
@@ -152,7 +157,7 @@ unreachable in `CONVERSION_MESSAGES` — which *is* a total `Record` and therefo
 compiled. This is recorded rather than smoothed over: condition B's own
 measurement is what found it, which is the argument for taking the measurement
 rather than reasoning that an unreachable sentence needs none.
-| **C** | The local gate set passes unchanged | **PASS on `R`, on `S`, and on this closure candidate** | Re-run in full on the repair candidate and again on the documentation head of this branch. The gate set is the one `AGENTS.md` names under **Required checks** — `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, `python scripts/check_repo.py`. All pass on `P` with lockfiles unchanged, recorded in `BOOTSTRAP_STATUS.md`'s M6.11 entry. **No gate was redefined and none was dropped**; the browser and native suites are `qa:*` rendered-verification scripts rather than members of that set, and the two that fail are [inventoried below](#environment-and-qa-residuals-inventoried-rather-than-hidden) as failing |
+| **C** | The local gate set passes unchanged | **PASS on `R`, on `S` and on `T`** | Re-run in full on the repair candidate and again on the documentation head of this branch. The gate set is the one `AGENTS.md` names under **Required checks** — `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, `python scripts/check_repo.py`. All pass on `P` with lockfiles unchanged, recorded in `BOOTSTRAP_STATUS.md`'s M6.11 entry. **No gate was redefined and none was dropped**; the browser and native suites are `qa:*` rendered-verification scripts rather than members of that set, and the two that fail are [inventoried below](#environment-and-qa-residuals-inventoried-rather-than-hidden) as failing |
 
 ## The finding that defeated criterion 2, and the repair that closed it
 
