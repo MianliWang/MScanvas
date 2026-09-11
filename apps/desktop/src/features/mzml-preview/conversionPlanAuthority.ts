@@ -94,10 +94,10 @@ export function sameDestination(left: DestinationPolicy, right: DestinationPolic
 /**
  * Why no plan question can be posed for rows that were asked about.
  *
- * Two, and they are different sentences with different owners. The settings
+ * Three, and they are different sentences with different owners. The settings
  * panel above already says which configuration state the session is in and
- * which combination is unrunnable here; what the plan adds is only that it
- * therefore has nothing to describe.
+ * which combination is unrunnable here, and which of the two refusals that is;
+ * what the plan adds is only that it therefore has nothing to describe.
  */
 export type ConversionPlanBlock =
   /** No binding, or a binding whose conversion settings are not known. */
@@ -470,11 +470,13 @@ export function startPlan(
     case "none":
       return "absent";
     case "blocked":
-      // The reason travels, because the two are different situations with
+      // The reason travels, because the three are different situations with
       // different things for a reader to do -- one is waiting for an answer
-      // that is coming, the other is a setting to change. Collapsing them
-      // would put the wrong sentence beside the control in one of the two,
-      // which is the shape this whole machine exists to remove.
+      // that is coming, one is a setting to change on a build that could be
+      // swapped, and one is a setting to change because no build supplies the
+      // missing measurement. Collapsing any of them would put the wrong
+      // sentence beside the control, which is the shape this machine exists to
+      // remove.
       return question.reason;
     case "ask":
       if (state.status === "capacityExceeded" && sameQuestion(state.identity, question.identity)) {

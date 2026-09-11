@@ -294,9 +294,11 @@ export function choiceState<A extends ConversionAxis>(
     return { status: "unavailable", reason: "notQualified" };
   }
   // Read from the row's own answer rather than from the boolean beside it, so
-  // the two refusals stay two sentences. A reader told "this installation does
-  // not offer it" about a row their installation offers perfectly well would go
-  // looking for a different ProteoWizard release, and find nothing.
+  // the two refusals a *row* can carry stay two sentences -- the third, for a
+  // combination no row holds, is answered above. A reader told "this
+  // installation does not offer it" about a row their installation offers
+  // perfectly well would go looking for a different ProteoWizard release, and
+  // find nothing.
   if (row.availability === "not_evidenced_for_conversion_sources") {
     return { status: "unavailable", reason: "notEvidencedForSources" };
   }
