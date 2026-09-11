@@ -46,6 +46,19 @@
 //! - **Centroiding does not compose with a population filter.** The measured
 //!   order pair used `cwt`, which is rejected, so the admitted picker has never
 //!   been measured beside an `msLevel` filter.
+//!
+//! ## Admission is qualified by source family
+//!
+//! Membership of [`ConversionIntent::ADMITTED`] does not by itself say a
+//! combination may be used on the source in hand. Every row was measured on
+//! generated mzML fixtures; for output format, numeric precision, compression
+//! and MS-level population that carries, because those are decided by the
+//! **writer**. Peak picking is decided by the **reader**, so each row also
+//! carries an [`EvidenceSourceDomain`], and
+//! [`ConversionIntent::evidence_covers_source`] is the one place it is asked.
+//! The two `UnscopedDefaultCentroiding` rows are admitted for mzML alone.
+//! Nothing was added to the table and nothing removed; what changed is that two
+//! of the nine now say which sources they were measured on.
 
 use std::ffi::OsString;
 

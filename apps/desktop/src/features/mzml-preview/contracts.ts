@@ -122,7 +122,11 @@ export type ConversionRowAvailability =
   | "not_evidenced_for_conversion_sources";
 
 /**
- * One row of the admitted table, and whether the bound installation can run it.
+ * One row of the admitted table, and whether the product offers it here.
+ *
+ * Two questions since CNV-D2, and `availability` says which one refused:
+ * whether the row's evidence covers a source this workflow converts, and
+ * whether the bound installation can run it.
  *
  * Availability belongs to the row. There is deliberately no per-axis-value
  * availability in this contract: a build lacking only the peak-picking grammar
