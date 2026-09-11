@@ -94,12 +94,20 @@ pub enum ProcessingIntent {
     /// provider selects for it depends on the source family, which is measured
     /// per family and not assumed.
     ///
-    /// One consequence is recorded rather than left to be met: on this build a
-    /// vendor acquisition converted under this intent is **refused** by the
-    /// integrity contract, because the algorithm it runs is not the one M6.2
-    /// admitted. The refusal is fail-closed and correct. Whether the product
-    /// should offer this combination for a vendor row at all is a product
-    /// decision this type does not make.
+    /// **A vendor acquisition is no longer converted under this intent at all.**
+    /// The CNV-D2 source-qualified centroiding repair gave admission a source
+    /// dimension, and this intent's [`EvidenceSourceDomain`] is mzML alone — so
+    /// [`ConversionPlan::to_mzml`](crate::ConversionPlan::to_mzml), the
+    /// output-set lifecycle and the desktop `BEGIN` preflight each refuse it
+    /// for a vendor source **before the provider is launched**.
+    ///
+    /// What that supersedes is recorded rather than deleted. It used to be
+    /// reachable, and the integrity contract refused the result *after* the run:
+    /// the algorithm the provider selected was not the one M6.2 admitted. That
+    /// refusal is fail-closed, correct, and still in place for anything that
+    /// reaches it; what changed is that nothing does. The question of whether
+    /// the product should offer this combination for a vendor row was a product
+    /// decision this type did not make, and now it is one this type carries.
     UnscopedDefaultCentroiding,
 }
 
