@@ -661,6 +661,22 @@ guard had been unable to see.
   [ADR 0042](docs/architecture/adr/0042-viewer-completion-closure-and-handoff.md)
   and [the spike](docs/spikes/M5_XIC_SOURCE_EVIDENCE.md).
 
+## Post-M6 XIC Provider / Runtime Interlude
+
+**Entered. `PX.0 COMPLETE`; PX.1 next and not started.** The route is locked by
+[ADR 0046](docs/architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md),
+which is the single owner of the slice dependencies, the evidence matrix and the
+four PX.4 outcome branches. They are not restated here. Entry was separately
+authorized: `M6 COMPLETE` is the gate, and meeting a gate is not entering it.
+
+**No provider is admitted and no XIC exists.** A route lock is none of PX.4's
+provider outcomes, and it reports no performance or scientific-correctness
+result. `XIC_PROVIDER_REFUSED`, `EVIDENCE_BLOCKED` and
+`ARCHITECTURE_DECISION_REQUIRED` each leave the XIC unavailable with a stated
+reason and let M7 proceed under a recorded handoff. **None of the four revokes
+`M6 COMPLETE`**, and PX.5 and PX.6 each need their own authorization even where
+the preceding slice passed.
+
 ## M7 — UI/UX and public product hardening
 
 M5 hands it the interaction principles it proved rather than asserted:
