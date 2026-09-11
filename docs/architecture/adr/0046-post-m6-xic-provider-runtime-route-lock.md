@@ -65,7 +65,7 @@ level, over one snapshot, aggregated one way.
 | Units | The unit the source declares for its m/z array. Where the source declares none, the proposal is that the window is expressed in the source's own numeric domain and the result carries that as unreported, as the viewer's existing unit posture does — but **whether such a source is served at all is open, and is XIC-S2 below**. **No ppm in the first scope.** The query's operands are `low` and `high` and only those; where a surface takes a **centre and an absolute tolerance** — which is what VIEW-007's acceptance row asks a user to type — it normalizes to that closed interval *before* a query exists, so one input form does not become a second semantics |
 | Aggregation | The **sum** of the intensities of source points whose m/z lies in the closed window, per scan. Nothing else. Not a baseline correction, not an interpolated apex, not a fitted peak |
 | Retention-time association | Each result point carries its scan's declared retention time as an **attribute of the scan**, never as an identity or an ordering key. Where a source declares no retention time, or no retention-time unit, the result carries that as declared-absent rather than substituting a number — the scanner already models both, including a unit that was not emitted. **A run whose scans declare *differing* retention-time units, or differing intensity units, is refused for this query rather than converted**: the scanner recognizes seconds and minutes and already has a name for the disagreement, and plotting raw values across it would put 60 seconds after 2 minutes. Conversion is a transformation this product has not admitted, so the first scope fails closed; admitting one is a later decision, not an implementer's. **A scan with no declared retention time cannot be placed on a retention-time axis**, so it is excluded from a plotted trace and **counted as a coverage gap** in the completeness facts PX.5 owns. It is **never silently dropped**, and PX.6 discloses the gap rather than presenting the trace as a complete success. **The same holds for every state that is not `Measured` — except `ExcludedByMsLevel`**: none of the others carries a plottable value, each counts as a coverage gap, and PX.6 may not connect neighbouring measurements across one and call the trace complete. **Coverage is measured over the in-scope scans only.** A scan the MS-level operand correctly excluded is not missing data, and counting it would report a complete MS1 trace over a mixed run as almost entirely gaps. `MsLevelUndeclared` **does** count, because whether it belonged in scope is precisely what is unknown |
-| Duplicate retention times | Preserved as separate result points in source order. Never merged, never summed together, never reordered |
+| Duplicate retention times | Preserved as separate result points in source order. Never merged, never summed together, never reordered **in the result**. **The drawing is a different question**: the shared plot contract requires a non-decreasing domain axis, so a result whose retention times run non-monotonically — which M5.4's duplicate-RT fixture produces — cannot be handed to it as-is. PX.6 derives a **stable retention-time-ordered screen projection** from the authoritative result, which keeps source order, scan identity and the original order among equal times. Neither reordering the result nor bypassing the axis rule is admitted: the first loses identity, the second draws a line running backwards in time |
 
 **A measured zero is not any other answer.** Per scan the result is exactly one
 of eight states, and the first of them carries a point count so that two
@@ -283,12 +283,15 @@ cases none of the inherited four does, split so that no case masks another**.
 The two mixed-unit runs are refused whole by §1, so each needs its own file or it
 would hide every per-scan case beside it: one whose scans declare differing
 retention-time units, and one whose scans declare differing intensity units.
-The remaining eight may share a file: a non-finite intensity inside the window;
+The **missing m/z-array unit** case needs its own file too, because XIC-S2 may
+answer that such a source is refused, which would mask everything beside it —
+putting it alone keeps the fixture set valid under either branch. The remaining
+seven may share a file: a non-finite intensity inside the window;
 an extreme finite intensity whose sum overflows the accumulation domain; a `NaN`
 in the m/z array and an infinity outside the window, which must be told apart; a
-scan declaring no retention time; a scan declaring no MS level at all; a source
-declaring no m/z-array unit; one with retention-time values but no
-retention-time unit; and one declaring no intensity unit.
+scan declaring no retention time; a scan declaring no MS level at all; one with
+retention-time values but no retention-time unit; and one declaring no intensity
+unit.
 
 **Plus truncated and invalid copies derived from those fixtures**, which subject
 7 scores **for honesty rather than for shape**: the oracle is that a candidate
