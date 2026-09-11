@@ -95,8 +95,8 @@ pub use fs_guard::{
     is_reparse_point, snapshot_output_directory,
 };
 pub use intent::{
-    AdmittedIntent, CompressionIntent, ConversionIntent, FilterInvocation, NumericPrecision,
-    OutputFormat, ProcessingIntent, ProviderFeature, SpectrumPopulation,
+    AdmittedIntent, CompressionIntent, ConversionIntent, EvidenceSourceDomain, FilterInvocation,
+    NumericPrecision, OutputFormat, ProcessingIntent, ProviderFeature, SpectrumPopulation,
 };
 pub use mzml::{
     ArrayKind, ArrayKindSet, CompressionMarker, CompressionSet, EffectiveProcessing,

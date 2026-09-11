@@ -19,7 +19,7 @@ import {
   catalogRow,
   CONVERSION_AXES,
   recoveryIntent,
-  selectionIsUnavailable,
+  selectionRefusal,
 } from "./conversionIntentSelection";
 import type { ConversionConfigurationView } from "./useConversionConfiguration";
 
@@ -131,6 +131,9 @@ const REFUSAL_NOTE: Record<ConversionChoiceRefusal, string> = {
   unavailableHere:
     "Not available with the other settings you have chosen: the installed ProteoWizard build " +
     "does not offer that combination.",
+  notEvidencedForSources:
+    "Not available with the other settings you have chosen: MSCanvas has not measured that " +
+    "combination on the kinds of acquisition it converts.",
 };
 
 /**
@@ -151,6 +154,28 @@ const FORMAT_NOTE = "mzML is the format MSCanvas has qualified, and the only one
  */
 const SETTINGS_FAILURE_ID = "conversion-settings-failure";
 const SELECTION_UNAVAILABLE_ID = "conversion-settings-selection-unavailable";
+
+/**
+ * What the settings-level banner says about a retained selection that cannot
+ * run, in terms of what the reader can do about it.
+ *
+ * **Two sentences, because the two refusals have different remedies.** One is
+ * about this installation and another ProteoWizard release can change it; the
+ * other is about the product's evidence, and no release can — pointing a reader
+ * at their installation for that one sends them after a build that would behave
+ * exactly the same way.
+ *
+ * `notQualified` cannot reach here: a selection is a row of the catalog, so
+ * there is always a row to be unavailable.
+ */
+const SELECTION_UNAVAILABLE_NOTE: Record<ConversionChoiceRefusal, string> = {
+  notQualified: "MSCanvas has not qualified the conversion settings you chose.",
+  unavailableHere:
+    "The conversion settings you chose cannot run with this ProteoWizard installation.",
+  notEvidencedForSources:
+    "MSCanvas has not measured the conversion settings you chose on the kinds of acquisition " +
+    "it converts.",
+};
 const RECOVERY_REASON_ID = "conversion-settings-recovery-reason";
 
 function labelFor<A extends ConversionAxis>(axis: A, value: ConversionAxisValues[A]): string {
@@ -318,13 +343,14 @@ export function ConversionSettings({
       </div>
     );
   }
-  const unavailable = selectionIsUnavailable(held.catalog, selected.intent.id);
+  const refusal = selectionRefusal(held.catalog, selected.intent.id);
+  const unavailable = refusal !== null;
   const recovery = recoveryIntent(held.catalog, held.shipped, selected.intent.id);
   return (
     <div className="conversion-settings" data-settings-state="ready">
       {unavailable ? (
         <p className="conversion-settings-unavailable" id={SELECTION_UNAVAILABLE_ID} role="note">
-          The conversion settings you chose cannot run with this ProteoWizard installation.
+          {SELECTION_UNAVAILABLE_NOTE[refusal]}
         </p>
       ) : null}
       {recovery === null ? null : (

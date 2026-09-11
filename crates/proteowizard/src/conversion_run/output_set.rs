@@ -602,6 +602,15 @@ impl OutputMemberValidation {
 pub enum MultiOutputFailure {
     /// The command could not be planned against these capabilities.
     NotPlannable(PlanError),
+    /// The intent is an admitted combination whose evidence was not taken on
+    /// this source's family.
+    ///
+    /// The set lifecycle's twin of
+    /// [`ConversionPlanError::IntentNotEvidencedForSource`](crate::ConversionPlanError).
+    /// It is refused before the source object is captured, so a request for a
+    /// combination this evidence does not cover costs no pin, no staging area
+    /// and no provider process.
+    IntentNotEvidencedForSource,
     /// The source object could not be captured or pinned.
     SourceNotCaptured { kind: io::ErrorKind },
     /// The destination root could not be opened and pinned.
@@ -691,6 +700,7 @@ impl MultiOutputFailure {
     pub const fn stable_id(&self) -> &'static str {
         match self {
             Self::NotPlannable(_) => "multi_output_not_plannable",
+            Self::IntentNotEvidencedForSource => "multi_output_intent_not_evidenced_for_source",
             Self::SourceNotCaptured { .. } => "multi_output_source_not_captured",
             Self::DestinationRootNotOpened { .. } => "multi_output_destination_root_not_opened",
             Self::StagingNotCreated { .. } => "multi_output_staging_not_created",
@@ -839,9 +849,9 @@ impl std::fmt::Debug for MultiOutputFailure {
                 .field("member", &"<redacted>")
                 .field("kind", kind)
                 .finish(),
-            Self::StagingTargetExists | Self::BackendDidNotComplete => {
-                formatter.write_str(self.stable_id())
-            }
+            Self::StagingTargetExists
+            | Self::BackendDidNotComplete
+            | Self::IntentNotEvidencedForSource => formatter.write_str(self.stable_id()),
         }
     }
 }
@@ -1334,6 +1344,19 @@ pub fn run_admitted_multi_output_conversion_seamed(
                 surviving_processes: None,
                 owned_tree: OwnedTreeDisposition::NoneLaunched,
             },
+            None,
+            None,
+            SetAttemptEvidence::before_staging(),
+        );
+    }
+
+    // Beside the family check and for the same reason: both are knowable from
+    // the request alone, and both must cost the user nothing. Asked before the
+    // source object is captured, so a combination this evidence does not cover
+    // reaches no pin, no staging area and no provider process.
+    if !intent.evidence_covers_source(source.kind()) {
+        return refused(
+            MultiOutputFailure::IntentNotEvidencedForSource,
             None,
             None,
             SetAttemptEvidence::before_staging(),

@@ -1014,6 +1014,11 @@ function PlanPending({ plan }: { readonly plan: ConversionPlanView }): ReactElem
           The installed ProteoWizard does not offer the conversion settings you chose, so there is
           nothing to describe. Choose settings it offers above.
         </span>
+      ) : plan.startPlan === "selectionNotEvidenced" ? (
+        <span>
+          MSCanvas has not measured the conversion settings you chose on the kinds of acquisition
+          it converts, so there is nothing to describe. Choose settings it has measured above.
+        </span>
       ) : plan.startPlan === "settingsUnknown" ? (
         <span>
           MSCanvas does not yet know what this ProteoWizard installation can convert, so there is

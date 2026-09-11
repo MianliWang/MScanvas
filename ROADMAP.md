@@ -461,13 +461,23 @@ Twelve slices, plus one authority interlude:
   whole 29-case ledger re-run with it, every confirmation agreeing and no
   classification changed. See
   [the M6.10 record](docs/spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md).
+- **CNV-D2 prerequisite — source-qualified centroiding admission. Complete.**
+  A processing measurement is now evidence about the source families it was
+  taken on. The two `UnscopedDefaultCentroiding` rows are admitted for mzML
+  alone, so the vendor workflow reaches seven of the nine measured combinations
+  and offers as many of them as the installed grammar can express; the withheld
+  two keep their identity and say which refusal applies. The
+  integrity contract is unchanged, no family was added, no combination was
+  admitted or excluded, and Shimadzu LCD and SCIEX WIFF are withheld for absent
+  evidence rather than as measured failures. See
+  [the repair record](docs/ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md).
 - M6.11 — closure. **Audited; M6 does not close.** Eleven criteria proved and the
   three milestone-wide conditions held; **criterion 2 is not proved.** The two
   admitted centroiding rows are evidenced only on a source class the product
   cannot convert, and on the one shipped family measured the setting is refused
   by the integrity contract after the provider has run. Peak picking is the one
   admitted axis decided by the reader, so that evidence does not transfer the way
-  the other seven rows''' does. The exact owning repair, and why fail-closed and an
+  the other seven rows' does. The exact owning repair, and why fail-closed and an
   assigned owner are not exemptions, are in
   [ADR 0045](docs/architecture/adr/0045-conversion-completion-closure-and-handoff.md).
   ADR 0043 is amended where two of its own statements had gone stale.

@@ -212,7 +212,7 @@ Where each of those is owned, and why, is fixed by
 | CNV-002 | mzXML output | P1 | Disabled until representative multi-source source/output spectrum counts pass; if enabled later, clearly labels legacy chromatogram/metadata limits. **Answered `MZXML_REFUSED` by M6.10, 2026-09-10, and terminal:** on the installed build a two-source document lost both spectra of the non-default source at exit `0` under a header declaring the full count, while the mzML control on the same document kept all four. Unplannable by type meanwhile. The acceptance above is what a re-opening build would still have to satisfy, labelling obligation included. |
 | CNV-003 | Output location | P0 | Source sibling/subfolder/custom choices never write inside recognized vendor dataset roots. |
 | CNV-004 | No additional centroiding | P0 | No peak-picking filter is inserted by this option. |
-| CNV-005 | Explicit centroid presets | P0 | MS2 or MS1+MS2 changes are visibly marked as lossy. |
+| CNV-005 | Explicit centroid presets | P0 | MS2 or MS1+MS2 changes are visibly marked as lossy. **Scoped MS-level presets remain unconstructible** (CNV-D2). Unscoped centroiding is admitted for the source families its measurement covers, which since 2026-09-10 is mzML alone; it is not offered as runnable for the vendor families the visible workflow converts. |
 | CNV-006 | MS-level filter | P0 | All/MS1/MS2 intent maps predictably to the backend. |
 | CNV-007 | Compression | P0 | zlib on/off is explicit and reflected in the command summary. |
 | CNV-008 | Conflict policy | P0 | Fail by default or Skip; automatic rename and explicit overwrite are refused by ADR 0043 CNV-D4. Internal batch claims and partially existing output sets are distinct conflicts. |
@@ -327,6 +327,18 @@ centroiding, MS-level population, numeric precision and compression are
 constructible, each admitted by a named M6.2 measurement, and the other
 thirty-nine of the forty-eight the axes span are unconstructible.
 
+**Nine measured is not nine offered, and since 2026-09-10 the difference is
+executable.** A measurement is evidence about the source families it was taken
+on. M6.2 measured every row on generated mzML fixtures; for output format,
+numeric precision, compression and MS-level population that carries, because
+those are decided by the writer. Peak picking is decided by the **reader**, so
+the two centroiding rows are admitted for mzML sources alone — and the visible
+workflow converts vendor acquisitions, so **the vendor workflow offers seven of
+the nine**, conditional as ever on the installed grammar. The withheld two are
+still rows of the catalog, still carry their identity, and say which of the two
+refusals applies. See
+[the repair record](../ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md).
+
 **M6.4 put those nine on screen, and nothing else.** Four control groups edit one
 axis each, and a choice either selects the admitted combination that differs from
 the current one in exactly that dimension or is refused with a reason — so a
@@ -341,7 +353,9 @@ the row, so an unrunnable choice is said once above the groups rather than four
 times beside controls that are fine.
 
 CNV-005's unscoped centroiding is marked lossy where it is chosen, and says that
-it applies to every MS level and cannot be limited to one. CNV-006's MS-level
+it applies to every MS level and cannot be limited to one. Where the acquisitions
+this product converts are outside the sources its measurement covers, it is not
+offered as runnable at all, and the sentence says which refusal that is. CNV-006's MS-level
 filter says which spectra are left out. Reduced numeric precision says what it
 rounds. CNV-007's zlib is a choice now rather than a fixed default, and is
 described as a packing decision because that is what M6.2 measured when precision

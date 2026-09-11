@@ -130,7 +130,9 @@ describe("the plan question", () => {
 
   it("is blocked when the chosen combination is one this build cannot run", () => {
     const narrow = completeCatalog.map((row) =>
-      row.intent.id === OTHER_INTENT.id ? { ...row, available: false } : row,
+      row.intent.id === OTHER_INTENT.id
+        ? { ...row, available: false, availability: "unsupported_by_installation" as const }
+        : row,
     );
     expect(
       planQuestion(
