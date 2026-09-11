@@ -8158,3 +8158,55 @@ M6 is complete. The Post-M6 XIC Provider / Runtime Interlude's `M6 COMPLETE` gat
 is therefore met, which is not the same as entering it: it has **not started**,
 it needs its own route lock and authorization, and nothing here schedules it.
 **M7 has not started.**
+
+## PX.0 — XIC provider and runtime route lock, 2026-09-11
+
+Baseline `91bedca35de5165d67edef7586b8bc7b3a1c6dc5`. Documentation only.
+
+**The interlude is entered, and the authorization for that is separate from the
+gate.** M6.11 met `M6 COMPLETE` and deliberately did not schedule anything; entry
+came from its own instruction. The route is locked by
+[ADR 0046](docs/architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md),
+which owns the slice dependencies, the scientific scope, the evidence matrix, the
+runtime boundary and the four PX.4 outcome branches. **Where this entry or
+`ROADMAP.md` summarizes one of them, the record governs**: a decision changes
+there, and these two follow.
+
+**What PX.0 does not claim.** No provider is admitted, no runtime is selected,
+and no XIC exists. A route lock is none of PX.4's four provider outcomes, and
+nothing here reports performance or scientific correctness. The M5 refusal stands
+on its own measurements, and this route re-enters the *question* rather than
+reviving those findings — it is bounded to at most three architectural
+directions, nine evidence subjects and a finite fixture set, with a decision
+checkpoint at PX.4.
+
+**One residual is recorded rather than lost.** `ConversionPanel.test.tsx`'s
+*restores Convert focus even when the plan is momentarily gone* fails
+intermittently. It failed on **attempt 1** of the `Frontend` run `34569185719` at
+this baseline and passed on attempt 2 — the failed attempt is kept as a failure,
+not relabelled by its rerun — and the failing assertion is the case's final
+`toHaveFocus`, with focus on `<body>`. **Root cause is undetermined**, the
+reported local rate is a lead rather than a measurement, and the Markdown-only
+closure diff makes a regression implausible without establishing an
+environment-only cause. Tracked in
+[issue #112](https://github.com/MianliWang/MScanvas/issues/112); owner is the
+first production UI/integration slice touching `ConversionPanel` or its
+focus-restoration path, expected in M7. No stress or reproduction campaign was
+run, and no code was changed for it here.
+
+**Validation.** `python -B scripts/check_repo.py` and `git diff --check` on the
+branch head. No four-viewport sweep, native campaign, provider measurement or
+benchmark is claimed: the source scope is Markdown, and no such evidence is owed
+by a route lock. The two browser cases `m4.1` and `m5.2` keep their existing
+owners and their actual failing status.
+
+**Metadata correction.** PR #106 carried the superseded `M6 NOT COMPLETE` title
+and a body whose criterion-2 argument the published repair had overtaken. Its
+title and a dated final-closeout statement now point at accepted ADR 0045 and
+`91bedca`. The historical discussion, the failed audit and the P/R/S/U/T
+attribution are preserved; the pull request was not reopened or remerged, and no
+commit was created for it.
+
+`PX.0` is complete. **PX.1 — provider / API audit — is next and has not
+started.** No provider is admitted, no XIC is implemented, `M6 COMPLETE` stands,
+and **M7 has not started**.

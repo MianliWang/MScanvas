@@ -391,9 +391,11 @@ settings were offered on source families their evidence never covered. The audit
 named the exact owning repair and refused fail-closed, an assigned owner and
 pre-existing as exemptions. That repair is published, and the audit was
 re-decided against it. None of criterion 11's four conditional routes is
-admitted, and none had to be. **The Post-M6 XIC Provider / Runtime Interlude's
-`M6 COMPLETE` gate is now met, which is not the same as entering it: it has not
-started, and neither has M7.**
+admitted, and none had to be. **M6's closure met the Post-M6 XIC Provider /
+Runtime Interlude's `M6 COMPLETE` gate without entering it, and scheduled
+nothing.** That interlude has since been entered under its own authorization —
+see [its section below](#post-m6-xic-provider--runtime-interlude). **M7 has not
+started.**
 
 The route was locked, the conversion lane has one availability
 authority, the installed `msconvert` has been measured against M6's finite
@@ -661,6 +663,24 @@ guard had been unable to see.
   [ADR 0042](docs/architecture/adr/0042-viewer-completion-closure-and-handoff.md)
   and [the spike](docs/spikes/M5_XIC_SOURCE_EVIDENCE.md).
 
+## Post-M6 XIC Provider / Runtime Interlude
+
+**Entered. `PX.0 COMPLETE`; PX.1 next and not started.** The route is locked by
+[ADR 0046](docs/architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md),
+which is the single owner of the slice dependencies, the evidence matrix and the
+four PX.4 outcome branches. **What follows is a pointer, not a second
+authority**: where this section and that record differ, the record governs, and a
+decision changes there rather than here. Entry was separately authorized:
+`M6 COMPLETE` is the gate, and meeting a gate is not entering it.
+
+**No provider is admitted and no XIC exists.** A route lock is none of PX.4's
+provider outcomes, and it reports no performance or scientific-correctness
+result. `XIC_PROVIDER_REFUSED`, `EVIDENCE_BLOCKED` and
+`ARCHITECTURE_DECISION_REQUIRED` each leave the XIC unavailable with a stated
+reason and let M7 proceed under a recorded handoff. **None of the four revokes
+`M6 COMPLETE`**, and PX.5 and PX.6 each need their own authorization even where
+the preceding slice passed.
+
 ## M7 — UI/UX and public product hardening
 
 M5 hands it the interaction principles it proved rather than asserted:
@@ -710,9 +730,14 @@ cache are deferred here, the second only on a measurement showing a need.
 - **A reusable XIC export**, if an XIC ever exists. M5 measured
   `XIC_SOURCE_REFUSED` and built neither a trace nor an artifact, so the
   condition this entry was written under — *if M5 admitted one* — can no longer
-  be met. It is **not** thereby closed: re-entry is M6's, behind the spike's
-  three-part gate, and if a measured build admits a source the visible trace
-  becomes a viewer slice scheduled then. An XIC is a derived analytical quantity
+  be met. It is **not** thereby closed. **Re-entry now has two owners, and they
+  are different questions.** A *different measured `msaccess` identity* stays
+  behind the spike's three-part gate, which M6 re-observed and did not trigger;
+  it is carried as a condition on Direction A of
+  [ADR 0046](docs/architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md).
+  Whether *another* provider or runtime could serve an XIC belongs to the Post-M6
+  interlude that record routes, which admits nothing. Either way the visible
+  trace is a slice scheduled then. An XIC is a derived analytical quantity
   rather than a second view of something the file contains, so its reusable form
   still belongs with the milestone that owns derived analytical results, on top
   of M8's artifact identity. See
