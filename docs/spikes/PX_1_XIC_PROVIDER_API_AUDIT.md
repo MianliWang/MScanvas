@@ -63,15 +63,19 @@ launch**. **source-inspected.**
 Two independent rules already close that route. ADR 0046 §3 holds that rounded
 provider text is never the scientific source, and M5.4's refusal conditions list
 **"no per-scan backend process"** among the pseudo-XIC substitutions it refused
-to make. **historically measured**, cited not re-run.
+to make. Both are **standing commitments, not measurements**, and are cited as
+written rather than re-derived.
 
 **What C would actually require.** A project-owned base64 decoder, a zlib
 inflater, little-endian `f32`/`f64` conversion, and full-run traversal to reach
 every spectrum rather than one selected index. The crate's manifest declares
 `quick-xml` and `thiserror` and nothing else; the workspace declares no base64
-and no compression crate. That is **new reader work plus at least one new
-dependency**, not minimal aggregation over something already read, and ADR 0046
-requires it be said rather than hidden under that phrase. **source-inspected.**
+and no compression crate. That is **new reader work**, not minimal aggregation
+over something already read, and ADR 0046 requires it be said rather than hidden
+under that phrase. It would also need at least one new dependency — **a
+consequence, not the grounds** — since ADR 0046 makes dependency approval a
+per-slice matter for every direction, and B carries a far larger one while
+staying viable. **source-inspected.**
 
 C is therefore not viable *as written*. It is not refused as an idea: a later
 scope decision could authorize a bounded mzML array decoder, and the existing
@@ -82,7 +86,10 @@ with its own dependency approval, and PX.1 has no authority to open it.
 ## A — the defect is in the text path, not in the data layer
 
 M5.4 refused `msaccess` because `RegionTIC.cpp:156` at revision `47b13cf` writes
-`sumIntensity` through `fixed << setprecision(4)`. **historically measured.**
+`sumIntensity` through `fixed << setprecision(4)` — a pinned line M5.4 quotes
+(**source-inspected**, by M5.4) whose consequence it then measured, recording
+`1e-6` and `4e-5` both serializing as `0.0000` (**historically measured**, cited
+not re-run).
 The question ADR 0046 poses is whether ProteoWizard offers a path where the value
 does not travel that way. It does, at the same revision:
 
@@ -95,6 +102,12 @@ does not travel that way. It does, at the same revision:
   `property BinaryDataDouble^ data`, `Spectrum` with `int index` and
   `String^ id`, and `virtual Spectrum^ spectrum(int index, bool getBinaryData)`.
   **source-inspected**, same revision.
+
+**Maintenance**, which ADR 0046 requires per direction: ProteoWizard is a
+long-running, actively released project, and the installed build here is dated
+`Jan 13 2026` from release `3.0.26013` — **historically measured** by M5.4 and
+re-observed unchanged by M6.10. This audit did **not** establish a current
+upstream release cadence, and no such claim is made.
 
 So the four-decimal literal is a property of the passive analyzers' **text
 serialization**, not of ProteoWizard's data model. cvParams survive on both the
@@ -109,27 +122,37 @@ revision M5.4 inferred from `msconvert` — finds `pwiz_bindings_cli.dll` at
 path is recorded here, following M5.4's convention.
 
 **Three facts constrain how A could be used, and none of them is a release
-number.** **locally observed:**
+number.** Each separates what was **locally observed** from what is inferred from
+it, because a directory listing supports fewer conclusions than it appears to:
 
 1. **There is no native library surface.** The distribution ships 18 executables
-   and 163 DLLs, and the only pwiz libraries among them are the managed binding
-   and `pwiz.CommonUtil.dll`. There is no `pwiz_data_msdata.dll`; the native C++
-   library is linked into the executables. Reaching the data layer therefore
-   means loading a **mixed-mode C++/CLI assembly**, which implies a .NET runtime —
-   `Microsoft.Extensions.*` assemblies ship alongside it.
+   and 163 DLLs, and the only files whose names contain `pwiz` are the managed
+   binding and `pwiz.CommonUtil.dll`; there is no `pwiz_data_msdata.dll`.
+   **locally observed.** That the native C++ library is therefore linked into the
+   executables, and that the 15 MB binding is a mixed-mode assembly, are
+   **inferences** from those names and sizes — nothing was opened or run. What the
+   observation does support on its own is that **no separate native library is
+   offered to link against**, so reaching the data layer goes through the managed
+   binding, beside which `Microsoft.Extensions.*` assemblies ship. **locally
+   observed.**
 2. **The distribution bundles proprietary vendor readers.** `Clearcore2.*` and
    `Sciex.*`, `MassLynxRaw.dll`, `Shimadzu.LabSolutions.IO.IoModule.dll`,
-   `timsdata.dll`, and Bruker-built boost 1.37 binaries. It ships `EULA.MHDAC`
-   and `EULA.RawFileReader`; no Apache licence file is present in that directory.
+   `timsdata.dll`, and boost 1.37 binaries whose filenames carry a `BDAL` build
+   tag. It ships `EULA.MHDAC` and `EULA.RawFileReader`, and no file in that
+   directory matches a licence, notice or copying name. **locally observed**;
+   reading `BDAL` as Bruker Daltonics is an inference from the filename.
    ProteoWizard's own position is that core code is Apache-2.0 while vendor
-   libraries carry vendor-specific licences. **documented.**
+   libraries carry vendor-specific licences, set out per vendor at
+   `proteowizard.sourceforge.io/licenses.html`. **documented.**
 3. **That changes the product's relationship to the distribution.** MSCanvas
    today *launches* `msaccess.exe` and `msconvert.exe` as external processes.
    Loading `pwiz_bindings_cli.dll` into a process MSCanvas owns is a different
    relationship to the same user-installed files. It is **not** vendoring, since
    the user installs the distribution and nothing is redistributed — but it is a
-   **trust-boundary change, and this audit does not make it**. It needs its own
-   authorization before PX.2 exercises it.
+   **trust-boundary change, and this audit does not make it**. Recorded with an
+   owner rather than left loose: it belongs to **whoever authorizes PX.2**, which
+   ADR 0046 already requires for that slice, and direction A cannot be prototyped
+   without it.
 
 A is viable to prototype. What PX.2 would establish is unknown here and is not
 claimed: whether the managed binding can be driven from a project-owned worker
@@ -150,7 +173,7 @@ formats, at `github.com/mobiusklein/mzdata`. One candidate only; no catalogue.
 | Licence | **Apache-2.0** | documented |
 | Version on docs.rs at audit | **0.66.7** | documented |
 | Latest tagged release | **v0.66.6**, published 2026-08-30, twelve days before this audit | documented |
-| Declared dependencies | **41** across normal, optional and dev, including `base64-simd`, `flate2`, `chrono`, `regex`, `bytemuck`, `mzpeaks` and the `mzdata-*` companion crates | documented |
+| Declared dependencies | At `v0.66.6`: **42** under `[dependencies]` — 16 required and 26 optional — plus **6** dev-dependencies. Includes `base64-simd`, `flate2`, `chrono`, `regex`, `bytemuck`, `mzpeaks` and the `mzdata-*` companion crates. **Direct declarations only**; the transitive closure is larger and depends on which features are enabled, and this audit did not resolve it | documented |
 | mzML support | "mzML and indexedmzML" listed among supported formats | documented |
 
 **The numeric contract is the right shape.** `DataArray` holds
@@ -176,8 +199,10 @@ part a name in a shortlist cannot tell you:
 Neither is irrecoverable, and that distinction is the finding: `DataArray.params`
 retains the original cvParams, and `SpectrumDescription` is `ParamDescribed`, so
 a **narrow adapter reading the raw parameter lists rather than the convenience
-types** can restore both distinctions. PX.2 owes that adapter; a prototype that
-trusts `unit` and `ms_level` would silently fabricate declarations.
+types** can restore both distinctions. That adapter is **a finding PX.2's
+authorization must weigh, not an obligation this document imposes** — ADR 0046's
+slice table owns those — and without it a prototype that trusts `unit` and
+`ms_level` would silently fabricate declarations.
 
 `SignalContinuity` is `{Unknown, Centroid, Profile}` with `Unknown` as default,
 so an undeclared representation is expressible — carrying the same
@@ -186,9 +211,12 @@ absent-versus-default caution. **documented.**
 **Dependency weight is a real constraint, not an aesthetic one.** This
 repository's policy prefers project-owned components and small focused
 libraries, and forbids adding a production dependency without explicit approval
-and a rationale. A 41-dependency subtree is a substantial surface for one window
-sum and **is the main argument against B**, separate from its technical fit. That
-approval belongs to PX.2, not here.
+and a rationale. **42 direct declarations, 16 of them required**, is a
+substantial surface for one window sum and **is the main argument against B**,
+separate from its technical fit. The transitive closure is the number that would
+actually be vendored into a build, it is larger than that, and **this audit did
+not count it** — resolving it against a chosen feature set is PX.2's, along with
+the approval itself.
 
 ## XIC-S2 — decided
 
@@ -204,13 +232,16 @@ ADR 0046 requires, not on candidate convenience:
    role. An m/z array missing a `unitAccession` is still declared an m/z array;
    the absent attribute is a labelling fact, not an ambiguous quantity.
    **source-inspected.**
-2. **Refusal would be stricter than the shipped viewer.** `UnitState` in
-   `crates/proteowizard/src/preview.rs` has exactly one variant, `NotEmitted`,
-   documented as "the formatter emitted a numeric value without a unit". The
-   product has **no unit-bearing state at all** today, because the text it reads
-   carries none. Refusing unit-undeclared m/z sources for this query would refuse
-   sources the viewer already displays, while the viewer itself reports every
-   value unit-unreported. **source-inspected.**
+2. **The product already has a shipped answer for this exact situation, and it
+   is not refusal.** `mscanvas-plot-spec`'s `UnitState` is
+   `{ Known { unit }, Unreported, Dimensionless }`, and the `Unreported` variant
+   is documented *"The file reported no unit. Nothing may be displayed as one."*
+   That is the case at hand, already modelled and already served. Separately, the
+   **preview** crate has its own single-variant `UnitState::NotEmitted`, because
+   the provider text it parses carries no units at all — so refusing
+   unit-undeclared m/z sources would refuse sources the viewer displays today
+   while itself reporting every value unit-unreported. **Two distinct types share
+   the name**; the decision rests on the plot-spec one. **source-inspected.**
 3. **The existing model already separates absence from a value elsewhere.**
    `RetentionTimeUnitMarker` is `{Second, Minute, Unrecognized, NotEmitted}`, so
    this codebase already treats "no unit emitted" as a first-class recorded fact
@@ -244,10 +275,18 @@ are PX.3's.
 ## PX.2 handoff
 
 **PX.2 is next, is not started, and is not authorized by this audit.** Both
-survivors reach it only under separate authorization. Preferred prototype order
-is **B then A**, on the single ground that B needs no trust-boundary decision to
-begin; this is an ordering, not a ranking of accuracy or performance, neither of
-which was measured.
+viable directions reach it only under separate authorization. They are not
+*survivors* in ADR 0046's sense — that word is reserved there for the numerically
+correct candidates PX.3 leaves, a later and narrower set.
+
+A preferred prototype order of **B then A** is offered on the single ground that
+B needs no trust-boundary decision to begin. It is **not part of PX.1's
+deliverable and binds nothing**, and it is not a ranking of accuracy or
+performance, neither of which was measured.
+
+These are **falsification experiments, not PX.2's acceptance bar**: ADR 0046
+makes PX.2 acceptance *“the prototype computes the §1 query on a fixture whose
+oracle already exists”*, which is strictly more than any row below.
 
 | Direction | Smallest experiment that could falsify viability | Permission it needs |
 | --- | --- | --- |
