@@ -93,10 +93,10 @@ pub(crate) struct CatalogRow {
 /// verdict. A row no converted source is evidenced for is not one either: the
 /// binding is fine and the measurement is the thing that is missing.
 ///
-/// There is no fourth arm for "the catalog has no such row". A catalog is
-/// always every row of `ConversionIntent::ADMITTED`, and the only way to obtain
-/// a [`ConversionIntent`] is to look one up in that same table -- so a resolved
-/// intent is a row of every catalog that exists.
+/// There is no arm for "the catalog has no such row", and there never was. A
+/// catalog is always every row of `ConversionIntent::ADMITTED`, and the only
+/// way to obtain a [`ConversionIntent`] is to look one up in that same table --
+/// so a resolved intent is a row of every catalog that exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RowAdmission {
     /// This binding has no catalog: unread, refused, or a binding that names no
