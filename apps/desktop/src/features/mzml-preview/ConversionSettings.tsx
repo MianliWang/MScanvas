@@ -159,13 +159,15 @@ const SELECTION_UNAVAILABLE_ID = "conversion-settings-selection-unavailable";
  * What the settings-level banner says about a retained selection that cannot
  * run, in terms of what the reader can do about it.
  *
- * **Two sentences, because the two refusals have different remedies.** One is
- * about this installation and another ProteoWizard release can change it; the
- * other is about the product's evidence, and no release can — pointing a reader
- * at their installation for that one sends them after a build that would behave
- * exactly the same way.
+ * **Three entries, of which two are reachable, because the two refusals a row
+ * can carry have different remedies.** One is about this installation and
+ * another ProteoWizard release can change it; the other is about the product's
+ * evidence, and no release can — pointing a reader at their installation for
+ * that one sends them after a build that would behave exactly the same way.
  *
- * `notQualified` cannot reach here: a selection is a row of the catalog, so
+ * The record is total over [`ConversionChoiceRefusal`] rather than over the two,
+ * so a refusal added later cannot reach this banner without a sentence.
+ * `notQualified` is the unreachable one: a selection is a row of the catalog, so
  * there is always a row to be unavailable.
  */
 const SELECTION_UNAVAILABLE_NOTE: Record<ConversionChoiceRefusal, string> = {
