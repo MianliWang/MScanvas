@@ -516,10 +516,14 @@ each.
 > eight facts"* and *"eleven stable reasons"*. Both were true of the module M6.1
 > shipped and neither is now: [ADR 0044](0044-conversion-configuration-authority.md)'s
 > Decision 10 added `configurationProbing`, and later slices added reasons with
-> it. The live module holds **nine** lane facts and **seventeen** reasons. The
-> counts are removed rather than restated, because the property this paragraph
-> is about is that there is **one** lane and one registry over it — a number that
-> moves with every slice that adds a control was never the claim.
+> it. At that amendment the live module held **nine** lane facts and
+> **seventeen** reasons; the CNV-D2 source-qualified centroiding repair has since
+> added an eighteenth, for a combination this product has no source evidence for.
+> The counts are removed rather than restated, because the property this
+> paragraph is about is that there is **one** lane and one registry over it — a
+> number that moves with every slice that adds a control was never the claim.
+> That the count moved again, and that the registry's exhaustiveness refused to
+> compile until every mapping answered the new member, is the property working.
 `useConversionOperation` exposes the lane a render sees and reads the same lane
 from refs at dispatch, so `convert` and `retry` are projections of the authority
 rather than expressions beside it; the ad-hoc `canConvert` is gone from

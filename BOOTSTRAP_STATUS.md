@@ -8045,13 +8045,18 @@ M6 is not complete. Post-M6 XIC interlude and M7 have not started.
 
 ## M6.11 — closure audit
 
-**`M6 NOT COMPLETE`.** Eleven of the twelve exit criteria are proved on published
-evidence and the three milestone-wide conditions hold. **Criterion 2 is not
-proved**, and ADR 0043 is explicit that a core criterion which cannot be proved
-means the milestone does not close. The audit, the determination and the exact
-owning repair are in
+**`M6 COMPLETE`.** All twelve exit criteria are proved on published evidence and
+the three milestone-wide conditions hold. The audit is
 [ADR 0045](docs/architecture/adr/0045-conversion-completion-closure-and-handoff.md),
-kept as a **draft** rather than accepted. No PASS closure was published.
+now **accepted**.
+
+**It did not close on its first baseline, and the record keeps that.** Criterion
+2 was `NOT PROVED` and condition A failed on the same fact — two admitted
+centroiding rows offered on source families their evidence never covered. The
+audit named the exact owning repair and refused three defences by name:
+fail-closed, an assigned owner and pre-existing are not exemptions. **That repair
+is published**, and the audit was re-decided against it rather than rewritten to
+agree with itself.
 
 **The baseline was not the M6.10 anchor, and the difference is accounted for.**
 Two separately authorized Dependabot merges landed between them, touching only
@@ -8085,25 +8090,50 @@ writer-side. That rescues the other seven rows and convicts these two. Three
 defences were considered and refused by name: fail-closed, an assigned owner, and
 pre-existing are not exemptions.
 
-**Owning repair, and it is not documentation.** Either qualify the admitted
-centroiding rows by source family, or reconcile the intent and the integrity
-contract on one algorithm semantic and measure it on the shipped families. Both
-are production changes to admission and availability under CNV-D2's authority,
-and both need their own implementation authorization. ADR 0043 separately owes an
-amendment: its M6.2 evidence standard has no source-family dimension.
+**The owning repair was route 1, and it is published.** Qualify the admitted
+centroiding rows by source family, so the catalog does not offer a combination
+whose evidence does not reach the families the product converts. Admission gained
+a source dimension; the integrity contract was **not** widened, nothing was
+admitted or excluded, no family was added and no dependency moved. The refusal is
+carried as its own answer to the catalog, the plan command, the `BEGIN`
+preflight, the single-output plan and the output-set lifecycle, and as its own
+sentence to the note beside the control, the banner, the plan area and the
+disabled `Convert`. ADR 0043's owed amendment now exists in its CNV-D2 section.
+See [the repair record](docs/ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md).
 
-**Two statements in ADR 0043 had gone stale and are amended in that document**,
+**Three statements in ADR 0043 had gone stale and are amended in that document**,
 dated, with the superseded wording quoted rather than deleted: M6.6's
-*publication pending*, and the M6.1 lane's *eight facts* / *eleven reasons*
-counts, which ADR 0044's Decision 10 had already superseded in substance.
+*publication pending*; the M6.1 lane's *eight facts* / *eleven reasons* counts,
+which ADR 0044's Decision 10 had already superseded in substance and which the
+repair moved again to eighteen reasons; and CNV-D2 naming M6.2 as the owner of an
+admission dimension M6.2 never had. **`README.md` was corrected here** rather
+than carried as a residual: it described two refusals where the product now gives
+three, and stated the nine admitted combinations without the source
+qualification. Both are condition A matters.
 
-Review was two independent read-only reviewers plus the repository's automated PR
-review. The first reviewer produced the objection that caused the reversal; the
-automated review produced the objection that undid it.
+**What was and was not measured for the repair, carried honestly into this
+closure.** Its rendered evidence is one behavioural case at the reference window
+plus a three-target layout check of the new notice, which is what condition B
+asks of a new notice variant in an M6 control. **No four-viewport sweep was run,
+and the M6.6–M6.9 native campaign was NOT RE-RUN** — recorded as not re-run
+rather than as passed, waived or satisfied by browser-mocked evidence, with the
+production UI/integration slice that next touches this path as its owner. No
+criterion or condition names that campaign as its requirement, and no verdict
+here rests on it.
 
-**Two browser cases still fail**, `m4.1` and `m5.2`, on this baseline and on the
-published one alike. Neither is a conversion requirement or an M6 control, and
-both keep their existing owners and their actual failing status.
+Review across both stages was two independent read-only reviewers per stage plus
+the repository's automated PR review. In the audit stage the first reviewer
+produced the objection that caused the reversal and the automated review produced
+the objection that undid it. In the repair stage the reviews found the plan area
+and the disabled `Convert` still carrying the installation sentence beneath a
+corrected banner, and `RowAdmission` flattening the two refusals one call before
+the sentence that states them; both are repaired in the published branch.
 
-Post-M6 XIC Provider / Runtime Interlude is gated on `M6 COMPLETE` and has not
-started. M7 has not started.
+**Two browser cases still fail**, `m4.1` and `m5.2`, on every baseline here.
+Neither is a conversion requirement or an M6 control, and both keep their
+existing owners and their actual failing status.
+
+M6 is complete. The Post-M6 XIC Provider / Runtime Interlude's `M6 COMPLETE` gate
+is therefore met, which is not the same as entering it: it has **not started**,
+it needs its own route lock and authorization, and nothing here schedules it.
+**M7 has not started.**

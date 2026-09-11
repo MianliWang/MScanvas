@@ -471,16 +471,16 @@ Twelve slices, plus one authority interlude:
   admitted or excluded, and Shimadzu LCD and SCIEX WIFF are withheld for absent
   evidence rather than as measured failures. See
   [the repair record](docs/ux/CNV_D2_SOURCE_QUALIFIED_CENTROIDING.md).
-- M6.11 — closure. **Audited; M6 does not close.** Eleven criteria proved and the
-  three milestone-wide conditions held; **criterion 2 is not proved.** The two
-  admitted centroiding rows are evidenced only on a source class the product
-  cannot convert, and on the one shipped family measured the setting is refused
-  by the integrity contract after the provider has run. Peak picking is the one
+- M6.11 — closure. **Complete. `M6 COMPLETE`.** All twelve criteria are proved
+  and the three milestone-wide conditions hold. The audit first reported
+  criterion 2 unproved — the two admitted centroiding rows were evidenced only
+  on a source class the product cannot convert, and peak picking is the one
   admitted axis decided by the reader, so that evidence does not transfer the way
-  the other seven rows' does. The exact owning repair, and why fail-closed and an
-  assigned owner are not exemptions, are in
+  the other seven rows' does — and it refused fail-closed, an assigned owner and
+  pre-existing as exemptions. The repair it named is published above, and the
+  audit is re-decided against it. ADR 0043 is amended where three of its own
+  statements had gone stale. See
   [ADR 0045](docs/architecture/adr/0045-conversion-completion-closure-and-handoff.md).
-  ADR 0043 is amended where two of its own statements had gone stale.
 
 **M6.4 was attempted once, and what shipped is the replacement.** The first
 attempt is on `feat/m6.4-visible-conversion-settings` / PR #95, which stopped
