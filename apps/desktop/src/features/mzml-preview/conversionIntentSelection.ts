@@ -14,16 +14,21 @@
  * not admit, because there is no code path here that assembles one at all. A
  * choice is either a row of the catalog or it is refused with a reason.
  *
- * Two refusals, and they are not the same thing:
+ * Three refusals, and they are not the same thing:
  *
  * - **not qualified** — no row of the catalog names this combination. MSCanvas
  *   has never measured it, and no ProteoWizard build changes that.
  * - **unavailable on this installation** — the row exists, and the executable
  *   installed right now does not declare an option or a filter grammar it
  *   emits. A different build would offer it.
+ * - **not evidenced for the sources this workflow converts** — the row exists
+ *   and MSCanvas measured it, on a kind of acquisition this workflow does not
+ *   convert. Peak picking is chosen by the reader, so that measurement is not
+ *   evidence here, and no ProteoWizard build supplies the missing one.
  *
- * A reader can act on the second and cannot act on the first, so they are
- * carried separately all the way to the sentence beside the control.
+ * A reader can act on the second by changing installation and cannot act on the
+ * first or the third that way, so all three are carried separately to the
+ * sentence beside the control.
  *
  * **And every one of those sentences is about a *combination*, never about a
  * value.** A build lacking only the peak-picking grammar must not be able to
