@@ -7,7 +7,8 @@ Amended: 2026-09-11 (PX.1) — **XIC-S2 is closed** at its row below, on baselin
 struck through there rather than deleted. Three statements that depended on that
 choice being open — the §1 units row, §3's subject 7, and §6's fixture split —
 are corrected with it. The PX.1 clarification below distinguishes genuine unit
-absence from incomplete declarations without changing that answer.
+absence from incomplete declarations without changing that answer, and names
+their derived invalid-input cases and refusal oracle in §6.
 **No other decision in this record is touched**, and the
 route is unchanged. See [the PX.1 audit](../../spikes/PX_1_XIC_PROVIDER_API_AUDIT.md)
 Related: [0045](0045-conversion-completion-closure-and-handoff.md),
@@ -130,7 +131,9 @@ closed by PX.1 and the remaining four are not an implementer's to guess:**
 | **XIC-S4** | What a non-finite intensity **inside** the window means. **Exactly two answers, and no third**: the scan reports `NonFiniteIntensity`, or the non-finite point is excluded from the sum and the scan stays `Measured` with `points_in_window` counting only finite points. **A `sum` never carries a non-finite value** | **PX.3**, before its first scored run, and on the same no-candidate-output rule as XIC-S3. Distinct from the drawability rule, which refuses on one anywhere in the scan |
 
 **XIC-S2 declaration boundary, clarified by PX.1.** Undeclared means all unit
-attributes are absent. A missing `unitAccession` with `unitName` or `unitCvRef`
+attributes are absent after resolving direct and referenced parameters at their
+source use site; an unexpanded parameter-group reference is not absence.
+A missing `unitAccession` with `unitName` or `unitCvRef`
 present, or an empty/whitespace-only accession, is an incomplete declaration:
 refuse it under subject 7's invalid-input boundary, retaining the observed
 attributes, rather than treating it as served-and-unreported. An unrecognized
@@ -138,9 +141,10 @@ nonempty accession is still declared and its value must be preserved. Future
 metadata support must keep presence and values for all three attributes on m/z,
 RT and intensity declarations; the current scanner's temporary accession capture
 and interpreted RT markers do not supply that record. This is required future
-work, not an implemented reader or a measured result. The existing invalid-copy
-cases in subject 7 cover this distinction; the fifteen-case fixture set and all
-other decision owners remain unchanged.
+work, not an implemented reader or a measured result. The incomplete-unit
+derivatives and their refusal oracle are explicitly enumerated in §6; the
+generic truncated-read oracle does not establish this distinction. Other
+decision owners remain unchanged.
 
 ## 2. Bounded candidate directions
 
@@ -299,8 +303,11 @@ placeholder plot, and not an automatic broader research phase.
 
 **The initial matrix is finite and is the whole of it**: at most three candidate
 directions, against the nine evidence subjects above, over the two pinned
-fixtures, M5.4's two generated fixtures, and **generated fixtures carrying fifteen
-cases none of the inherited four does, split so that no case masks another**.
+fixtures, M5.4's two generated fixtures, and **generated fixtures carrying thirty
+named cases none of the inherited four does, split so that no case masks
+another**: the original fifteen cases below, plus fifteen incomplete-unit
+derivatives named after them. PX.1 makes those invalid-input derivatives explicit
+within subject 7; it adds no candidate direction or acquisition.
 The unit-disagreement runs are refused whole by §1, so each needs its own file —
 and **one per refusal condition, not one per axis**, because a file that refuses
 the query proves only the condition it carries. That is **six**: for each of m/z,
@@ -320,11 +327,35 @@ declares an intensity unit. The two unit-absence cases are uniform deliberately:
 a run mixing a declared unit with an undeclared one is refused, and each such
 run has its own fixture above.
 
-**Plus truncated and invalid copies derived from those fixtures**, which subject
-7 scores **for honesty rather than for shape**: the oracle is that a candidate
+**Fifteen incomplete-unit derivatives, with a fixed refusal oracle.** For each
+of the five variants below, derive one otherwise valid single-scan mzML copy
+for each axis: **m/z, retention time and intensity**. Keep its array role, MS
+level, RT value and numeric payload valid, and alter only the named unit
+attributes on the selected axis. Each of the **five variants times three axes**
+has its own file, so another invalid declaration or a mixed-unit run cannot
+mask it. These are the additional fifteen named cases, making **thirty** with
+the original fifteen. They are derived synthetic inputs, not new acquisitions.
+
+| Variant | Source unit attributes on the selected axis | Expected result for each of the three axes |
+| --- | --- | --- |
+| Empty accession | Set `unitAccession=""`; retain the fixture's other unit attributes | Whole query refused for incomplete unit declaration; observed attribute presence and values retained |
+| Whitespace accession | Set `unitAccession=" "`; retain the other unit attributes | Same refusal and retention |
+| Name without accession | Remove `unitAccession` and `unitCvRef`; retain `unitName` | Same refusal and retention |
+| CV reference without accession | Remove `unitAccession` and `unitName`; retain `unitCvRef` | Same refusal and retention |
+| Name and CV reference without accession | Remove `unitAccession`; retain both `unitName` and `unitCvRef` | Same refusal and retention |
+
+For every row, a served result labelled unreported, a measured zero, or a silent
+partial success **fails subject 7**. The original genuinely undeclared m/z case
+remains served-as-unreported; it is not one of these invalid declarations. No
+fixture is generated or executed by PX.1.
+
+**Plus other truncated and invalid copies derived from those fixtures**, which
+subject 7 scores **for honesty rather than for shape**: for truncation the oracle
+is that a candidate
 **does not present a truncated read as a complete result**, which a whole-query
 refusal and a typed partial carrying coverage both satisfy and a silent prefix
-fails. That is decidable before PX.3's first scored run and does **not**
+fails. This does not replace the stricter explicit refusal oracle for the
+incomplete-unit derivatives above. That is decidable before PX.3's first scored run and does **not**
 pre-empt the typed partial contract, which stays PX.5's. Derived rather than newly
 acquired, so the set stays closed. **And at most two** new representative
 acquisitions — one MS1 profile, one MS1 centroided — each subject to a recorded

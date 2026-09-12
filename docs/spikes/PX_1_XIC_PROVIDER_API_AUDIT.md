@@ -354,8 +354,26 @@ authority, and retain the source RT values and declared MS-level presence
 described under B. This is a located metadata extension, not a new binary-array decoder
 and not an existing public API.
 
+**Attribute capture alone does not resolve referenced declarations.** Legal mzML
+can supply these parameters through `referenceableParamGroupRef`. The scanner's
+`begin` branch (`mzml.rs:1364–1372`) only sets
+`parameter_group_reference_observed`; it neither retains group definitions nor
+the target's `ref` attribute, and `apply_cv_param` does not apply parameters from
+a group definition to a referencing spectrum, scan or array. The proposed
+metadata support must therefore also retain `referenceableParamGroup`
+definitions by their source `id`, capture each target's group references, and
+resolve those references before determining array role, units, MS level or RT
+declaration presence. The existing XML element/attribute events locate that
+extension path; **definition retention and reference resolution are missing
+implementation**, not existing scanner capabilities. Unresolved or invalid
+references must not be treated as absent declarations or replaced by candidate
+defaults. This requirement keeps indirectly declared mzML in the audited source
+scope; it does not silently exclude it. **source-inspected**; no reference
+resolution or two-reader integration has been implemented or tested.
+
 For XIC-S2, **undeclared means all unit attributes are absent**, not merely that
-`unitAccession` is absent, empty or unrecognized. An empty accession, or
+`unitAccession` is absent, empty or unrecognized. This is determined after
+resolving direct and referenced declarations at the source use site. An empty accession, or
 `unitName`/`unitCvRef` without an accession, is an incomplete declaration and must
 be refused under subject 7's invalid-input boundary, with the observed attributes
 retained; it must not enter the served-as-unreported case. A nonempty unknown
@@ -363,6 +381,9 @@ accession remains a declared value, preserved literally rather than replaced by
 a default. No declared information may be discarded to make a source appear
 uniformly undeclared. This applies the existing no-inference and no-dropped-unit
 rules; it does not convert units or relax the mixed-unit refusal.
+ADR 0046 §6 names the corresponding incomplete-unit fixture variants and their
+whole-query refusal oracle; a generic truncated-read check is not proof of this
+distinction.
 
 The proposed combination uses this metadata support beside A's or B's decoded
 arrays. **Neither the extension nor the combination has been implemented or
