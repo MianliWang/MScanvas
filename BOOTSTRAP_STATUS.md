@@ -8210,3 +8210,55 @@ commit was created for it.
 `PX.0` is complete. **PX.1 — provider / API audit — is next and has not
 started.** No provider is admitted, no XIC is implemented, `M6 COMPLETE` stands,
 and **M7 has not started**.
+
+## PX.1 — XIC provider / API audit, 2026-09-11
+
+Baseline `6c324aa94a4c34e626d6bc2a79af1f8b125426d8`. Documentation only.
+
+**Two of ADR 0046's three bounded directions are viable to prototype, one is
+not, and XIC-S2 is decided.** The audit is
+[docs/spikes/PX_1_XIC_PROVIDER_API_AUDIT.md](docs/spikes/PX_1_XIC_PROVIDER_API_AUDIT.md),
+which owns the findings; this entry does not restate them and the route record
+owns the decision.
+
+**Nothing was installed, compiled, prototyped or executed**, and no numeric
+fidelity, latency or memory figure was measured. The audit reads source,
+official documentation and — read-only — the ProteoWizard distribution this
+repository already discovers. It produces **viability, never admission**: no
+provider is chosen, which remains PX.4's.
+
+**The finding worth carrying** is that direction C's premise does not hold. Its
+wording assumes a per-scan window sum over "mzML arrays this product already
+reads", and this product does not read them: the mzML reader is a metadata
+scanner whose own test asserts that a payload which is neither valid base64 nor
+valid zlib still inspects cleanly, and the only array access in the product is
+the refused provider's decimal text, one scan per process launch — which M5.4's
+refusal conditions already exclude as a pseudo-XIC substitution. Building C means
+a new decoder and at least one new dependency, which is a separate scope
+decision nobody has taken.
+
+**Direction A's defect is located in the text path rather than the data layer.**
+At the same revision whose passive analyzer writes four fixed decimals, the
+ProteoWizard data model holds `double` arrays with their cvParams, and the
+installed distribution ships that layer as a managed binding. Using it would
+change the product's relationship to that distribution from launching its
+executables to loading its assemblies — **a trust-boundary question this audit
+states and does not decide**.
+
+**XIC-S2 is closed at its source in ADR 0046**: a source whose m/z unit is
+uniformly undeclared is served, with the unit preserved as unreported. It
+licenses no inference, default or conversion, and leaves the mixed-unit refusal
+untouched. Genuine absence is distinguished there from an empty, incomplete or
+unrecognized declaration. The audit locates future project-owned metadata
+support for A and B; complete declaration retention and reconciliation with
+candidate-decoded arrays have not been implemented or tested.
+
+**Validation.** `python -B scripts/check_repo.py` and `git diff --check` on the
+branch head. No four-viewport sweep, native suite, scientific rerun or benchmark:
+the source scope is Markdown and no such evidence is owed by an audit. Issue #112
+keeps its existing M7 owner, and the M6.6–M6.9 native campaign keeps its recorded
+`NOT RE-RUN` status with the same owner.
+
+`PX.1` is complete. **PX.2 — bounded prototypes — is next, has not started, and
+is not authorized by this audit.** No provider is admitted, no XIC is
+implemented, `M6 COMPLETE` stands, and **M7 has not started**.

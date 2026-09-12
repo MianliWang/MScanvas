@@ -2,6 +2,15 @@
 
 Status: **accepted. `PX.0 COMPLETE`.**
 Date: 2026-09-11
+Amended: 2026-09-11 (PX.1) — **XIC-S2 is closed** at its row below, on baseline
+`6c324aa94a4c34e626d6bc2a79af1f8b125426d8`. The superseded wording is kept
+struck through there rather than deleted. Three statements that depended on that
+choice being open — the §1 units row, §3's subject 7, and §6's fixture split —
+are corrected with it. The PX.1 clarification below distinguishes genuine unit
+absence from incomplete declarations without changing that answer, and names
+their derived invalid-input cases and refusal oracle in §6.
+**No other decision in this record is touched**, and the
+route is unchanged. See [the PX.1 audit](../../spikes/PX_1_XIC_PROVIDER_API_AUDIT.md)
 Related: [0045](0045-conversion-completion-closure-and-handoff.md),
 [0043](0043-conversion-completion-route.md),
 [0042](0042-viewer-completion-closure-and-handoff.md),
@@ -62,7 +71,7 @@ level, over one snapshot, aggregated one way.
 | Scan identity and order | The source's own `index` and `id`, in **source order**. Retention time is never the key: M5.4 measured two spectra sharing one retention time and kept them as two rows, with `rt` reading non-monotonically |
 | MS-level selection | Exactly one MS level, stated as an operand. There is no implicit "all levels", and no default |
 | m/z bounds and endpoint policy | A closed interval `[low, high]`, **both endpoints inclusive**, compared against the source's stored values without rounding. `low == high` is a legal zero-width window. **`low > high` and any non-finite bound are both refusals**, never an empty result. Both halves are needed: `low > high` is false for a NaN, so a policy refusing only the reversed case would let a malformed request fall through into a certified `Measured { sum: 0 }`. M5.4 measured both failures on the refused build — a reversed window exiting `0` with no output, and a non-finite window silently returning the **unwindowed** result |
-| Units | The unit the source declares for its m/z array. Where the source declares none, the proposal is that the window is expressed in the source's own numeric domain and the result carries that as unreported, as the viewer's existing unit posture does — but **whether such a source is served at all is open, and is XIC-S2 below**. **No ppm in the first scope.** The query's operands are `low` and `high` and only those; where a surface takes a **centre and an absolute tolerance** — which is what VIEW-007's acceptance row asks a user to type — it normalizes to that closed interval *before* a query exists, so one input form does not become a second semantics |
+| Units | The unit the source declares for its m/z array. Where the source declares none, the proposal is that the window is expressed in the source's own numeric domain and the result carries that as unreported, as the viewer's existing unit posture does. **Whether such a source is served at all was XIC-S2, and PX.1 closed it: it is served, with the unit preserved as unreported.** See the row below. **No ppm in the first scope.** The query's operands are `low` and `high` and only those; where a surface takes a **centre and an absolute tolerance** — which is what VIEW-007's acceptance row asks a user to type — it normalizes to that closed interval *before* a query exists, so one input form does not become a second semantics |
 | Aggregation | The **sum** of the intensities of source points whose m/z lies in the closed window, per scan. Nothing else. Not a baseline correction, not an interpolated apex, not a fitted peak |
 | Retention-time association | Each result point carries its scan's declared retention time as an **attribute of the scan**, never as an identity or an ordering key. Where a source declares no retention time, or no retention-time unit, the result carries that as declared-absent rather than substituting a number — the scanner already models both, including a unit that was not emitted. **A run is refused for this query, rather than converted or mixed, when its scans disagree about a unit on *any* of the three axes — m/z, retention time or intensity — whether by *differing* declared units or by a declared unit beside an undeclared one**: the scanner recognizes seconds and minutes and already has a name for the disagreement, plotting raw values across it would put 60 seconds after 2 minutes, and one `UnitState` per axis cannot honestly label a trace whose points are partly known and partly unreported. **The m/z axis matters most and is easiest to miss**: applying one `[low, high]` across scans whose m/z units differ accumulates physically different windows into a single number. XIC-S2 is a narrower question — what to do when the **whole source** declares no m/z unit — and does not reach disagreement within one run. Conversion is a transformation this product has not admitted, so the first scope fails closed; admitting one is a later decision, not an implementer's. **A scan with no declared retention time cannot be placed on a retention-time axis**, so it is excluded from a plotted trace and **counted as a coverage gap** in the completeness facts PX.5 owns. It is **never silently dropped**, and PX.6 discloses the gap rather than presenting the trace as a complete success. **The same holds for every state that is not `Measured` — except `ExcludedByMsLevel`**: none of the others carries a plottable value, each counts as a coverage gap, and PX.6 may not connect neighbouring measurements across one and call the trace complete. **The shared plot contract cannot express that today** — a chromatogram connects adjacent points, a series refuses a non-finite separator, and a panel refuses two series in one role — so a **gap-aware representation in the shared semantic specification is work PX.5 owes**, with PX.6 consuming it. Bypassing the shared contract is not the alternative: that rule is a standing architecture rule, and drawing across a gap is the dishonesty this row exists to prevent. **Coverage is measured over the in-scope scans only.** A scan the MS-level operand correctly excluded is not missing data, and counting it would report a complete MS1 trace over a mixed run as almost entirely gaps. `MsLevelUndeclared` **does** count, because whether it belonged in scope is precisely what is unknown |
 | Duplicate retention times | Preserved as separate result points in source order. Never merged, never summed together, never reordered **in the result**. **The drawing is a different question**: the shared plot contract requires a non-decreasing domain axis, so a result whose retention times run non-monotonically — which M5.4's duplicate-RT fixture produces — cannot be handed to it as-is. PX.6 derives a **stable retention-time-ordered screen projection** from the authoritative result, which keeps source order, scan identity and the original order among equal times. Neither reordering the result nor bypassing the axis rule is admitted: the first loses identity, the second draws a line running backwards in time |
@@ -110,16 +119,32 @@ quantity keeps its name. **The declaration is taken as declared and is not
 verified by this query** — M5.4's pinned synthetic fixture is a measured case
 where stored metadata and the actual arrays disagree.
 
-**Five choices are open, and each has a named decision owner.** They
-are not an implementer's to guess:
+**Five choices were open, each with a named decision owner — XIC-S2 is now
+closed by PX.1 and the remaining four are not an implementer's to guess:**
 
-| | Open choice | Decision owner |
+| | Choice | Decision owner |
 | --- | --- | --- |
 | **XIC-S1** | Whether a profile source's point sum is offered at all in the first scope, or withheld pending an integration semantics. PX.2 may compute one, labelled a point sum | **PX.4**, on PX.3's profile evidence. Blocks PX.6 |
-| **XIC-S2** | The unit posture where a source declares no m/z unit — reported as unreported, or the source refused for this query | **PX.1**, because it is a property of what a reader exposes. Blocks PX.3's oracle |
+| **XIC-S2** | ~~The unit posture where a source declares no m/z unit — reported as unreported, or the source refused for this query.~~ **DECIDED by PX.1, 2026-09-11: a source whose m/z unit is uniformly undeclared is served, with the unit preserved as unreported.** The dimension is established by the array's own controlled-vocabulary role, which this repository's scanner already reads as `ArrayKind::Mz`, so genuine absence of a unit declaration is a labelling fact rather than an ambiguous quantity — and the answer is representable without inventing a state, since `mscanvas-plot-spec`'s `UnitState::Unreported` is documented *“The file reported no unit. Nothing may be displayed as one.”* **This is a new semantic policy, not an inherited one**: the shipped viewer never reads the m/z unit declaration at all, so it cannot have decided this. **It licenses no inference, default or conversion**, and does not touch the mixed-unit refusal beside it. PX.3 now scores subject 7's missing-m/z-unit fixture against that fixed answer rather than against a branch | **PX.1 — closed.** See [the PX.1 audit](../../spikes/PX_1_XIC_PROVIDER_API_AUDIT.md#xic-s2--decided) |
 | **XIC-S3** | The agreement criterion: what counts as matching the oracle, and in what arithmetic. The accumulation domain must be named — M5.4's pinned low-intensity fixture is five points of `1e-5`, where single and double precision differ materially — **together with the input domain over which a sum stays representable in it**, which is what makes `SumNotRepresentable` reachable by rule rather than by accident | **PX.3**, fixed with the oracle and **before PX.3's first scored run**. Derived from the fixture by construction and from §1's semantics, **never from observed candidate output** — PX.2 answers expressibility and produces no scored number, so nothing it emits may be used to set this. Without it §6's rule against more permissive thresholds has nothing to bite on |
 | **XIC-D5** | **ADR 0037's own open decision, carried under its own name.** Where the XIC is drawn and against which value axis — a trace inside the existing chromatogram panel, or its own panel with its own value domain. Nothing in the evidence settles it and the consequence is severe: a total ion current sums every ion in every scan while an XIC sums one narrow window, so on a shared linear intensity axis the XIC is a flat baseline line for most real acquisitions **Answered after PX.4 and before PX.5 is authorized**, on PX.3's evidence, with the chosen placement's height cost measured at all three responsive targets — **in a bounded throwaway rendering outside the product, on the same footing as PX.2's prototypes**, since PX.4 writes only Markdown and PX.6 comes after the slice this decision gates. The measurement is evidence for a decision, not a product change. **Not PX.5's to make and not deferred to PX.6**: ADR 0037 states that its runtime slice *cannot start until these decisions are answered*, and a typed operation, DTO and service path frozen before the value-axis posture is settled is exactly what that forbids. It is a decision alongside XIC-D4, not a slice. **Not M7's**: M7 owns the shell and overall layout, not where this one quantity is drawn |
 | **XIC-S4** | What a non-finite intensity **inside** the window means. **Exactly two answers, and no third**: the scan reports `NonFiniteIntensity`, or the non-finite point is excluded from the sum and the scan stays `Measured` with `points_in_window` counting only finite points. **A `sum` never carries a non-finite value** | **PX.3**, before its first scored run, and on the same no-candidate-output rule as XIC-S3. Distinct from the drawability rule, which refuses on one anywhere in the scan |
+
+**XIC-S2 declaration boundary, clarified by PX.1.** Undeclared means all unit
+attributes are absent after resolving direct and referenced parameters at their
+source use site; an unexpanded parameter-group reference is not absence.
+A missing `unitAccession` with `unitName` or `unitCvRef`
+present, or an empty/whitespace-only accession, is an incomplete declaration:
+refuse it under subject 7's invalid-input boundary, retaining the observed
+attributes, rather than treating it as served-and-unreported. An unrecognized
+nonempty accession is still declared and its value must be preserved. Future
+metadata support must keep presence and values for all three attributes on m/z,
+RT and intensity declarations; the current scanner's temporary accession capture
+and interpreted RT markers do not supply that record. This is required future
+work, not an implemented reader or a measured result. The incomplete-unit
+derivatives and their refusal oracle are explicitly enumerated in §6; the
+generic truncated-read oracle does not establish this distinction. Other
+decision owners remain unchanged.
 
 ## 2. Bounded candidate directions
 
@@ -182,7 +207,7 @@ The finite future matrix covers these subjects and no others:
 | 4 | MS-level exclusion | An excluded scan is `ExcludedByMsLevel`, never a zero **and never a coverage gap**, and a scan **declaring no level at all** is `MsLevelUndeclared`, which no inherited fixture carries — a candidate that guesses a level, drops the scan or returns zero must fail here. **Includes the overlapping case**: a scan that is both excluded and undecodable reports the earlier state in the stated order, so filter-first and decode-first candidates cannot disagree |
 | 5 | Empty windows | `points_in_window: 0` with `sum: 0`, and no scan dropped from the result |
 | 6 | Representative inputs for the proposed domain | **MS1** acquisitions, one profile and one centroided. PX.3 also **records observed wall time and peak memory** per candidate here — as observations attributed to their host and build, **never as thresholds** |
-| 7 | Malformed and under-declared input | Truncated and invalid sources, a reversed window, a non-finite bound, **a source declaring no m/z-array unit, one with retention-time values but no retention-time unit, one declaring no intensity unit, and runs whose scans declare *differing* retention-time or intensity units** — the differing-unit runs must be **refused**; the retention-time and intensity omissions must be **preserved** rather than silently supplied, and no declared unit may be dropped; and **the missing m/z-array unit's expected result is whichever answer XIC-S2 gives** — preserved as unreported, or the source refused — scored against that answer rather than against a fixed one, since a candidate correctly refusing under the refusal branch is not a failure. All of it is scored because these postures are otherwise provable only from an API surface this record refuses as evidence — **a non-finite intensity inside the window** — the case **XIC-S4** must answer — and **finite intensities whose sum is not representable**, which must reach `SumNotRepresentable` rather than an infinite `sum`. Neither case is carried by any inherited fixture. **Exit code is never semantic evidence** |
+| 7 | Malformed and under-declared input | Truncated and invalid sources, a reversed window, a non-finite bound, **a source declaring no m/z-array unit, one with retention-time values but no retention-time unit, one declaring no intensity unit, and runs whose scans declare *differing* retention-time or intensity units** — the differing-unit runs must be **refused**; the retention-time and intensity omissions must be **preserved** rather than silently supplied, and no declared unit may be dropped; and **the missing m/z-array unit is scored against XIC-S2's decided answer: preserved as unreported**, PX.1 having closed that choice, so a candidate that refuses such a source now fails this subject rather than satisfying a branch. All of it is scored because these postures are otherwise provable only from an API surface this record refuses as evidence — **a non-finite intensity inside the window** — the case **XIC-S4** must answer — and **finite intensities whose sum is not representable**, which must reach `SumNotRepresentable` rather than an infinite `sum`. Neither case is carried by any inherited fixture. **Exit code is never semantic evidence** |
 | 8 | Reproducibility | Repeats of one invocation on one snapshot agree byte for byte |
 | 9 | **Scan-identity reconciliation** | Index and id survive the MS-level operand — M5.4 measured a build that **renumbered** them under a filter — and an omitted scan stays distinguishable from one the run does not have. **A scan declaring no retention time is reported as a coverage gap, never omitted.** §1's identity, order and `Missing` all rest on this, so the matrix cannot decide without it |
 
@@ -278,19 +303,22 @@ placeholder plot, and not an automatic broader research phase.
 
 **The initial matrix is finite and is the whole of it**: at most three candidate
 directions, against the nine evidence subjects above, over the two pinned
-fixtures, M5.4's two generated fixtures, and **generated fixtures carrying fifteen
-cases none of the inherited four does, split so that no case masks another**.
+fixtures, M5.4's two generated fixtures, and **generated fixtures carrying thirty
+named cases none of the inherited four does, split so that no case masks
+another**: the original fifteen cases below, plus fifteen incomplete-unit
+derivatives named after them. PX.1 makes those invalid-input derivatives explicit
+within subject 7; it adds no candidate direction or acquisition.
 The unit-disagreement runs are refused whole by §1, so each needs its own file —
 and **one per refusal condition, not one per axis**, because a file that refuses
 the query proves only the condition it carries. That is **six**: for each of m/z,
 retention time and intensity, one run with differing declared units and one where
 a declared unit sits beside an undeclared one.
-The **missing m/z-array unit** case needs its own file too, because XIC-S2 may
-answer that such a source is refused, which would mask everything beside it —
-putting it alone keeps the fixture set usable under either branch, and subject 7
-scores it against whichever answer XIC-S2 gives rather than a fixed one. The
-remaining eight may share a file: a non-finite intensity inside the window; an
-extreme finite intensity whose sum overflows the accumulation domain; a `NaN` in
+The **missing m/z-array unit** case needed its own file only while XIC-S2 might
+have answered that such a source is refused. **PX.1 decided it is served**, so it
+no longer refuses the query, no longer masks anything, and rejoins the shared
+file. The remaining nine may share a file: a source declaring no m/z-array unit,
+whose expected result is XIC-S2's decided answer; a non-finite intensity inside
+the window; an extreme finite intensity whose sum overflows the accumulation domain; a `NaN` in
 the m/z array and an infinity outside the window, which must be told apart; an
 **unsorted m/z array**, whose window sum must still be taken over the set; a
 scan declaring no retention time; a scan declaring no MS level at all; a run
@@ -299,11 +327,35 @@ declares an intensity unit. The two unit-absence cases are uniform deliberately:
 a run mixing a declared unit with an undeclared one is refused, and each such
 run has its own fixture above.
 
-**Plus truncated and invalid copies derived from those fixtures**, which subject
-7 scores **for honesty rather than for shape**: the oracle is that a candidate
+**Fifteen incomplete-unit derivatives, with a fixed refusal oracle.** For each
+of the five variants below, derive one otherwise valid single-scan mzML copy
+for each axis: **m/z, retention time and intensity**. Keep its array role, MS
+level, RT value and numeric payload valid, and alter only the named unit
+attributes on the selected axis. Each of the **five variants times three axes**
+has its own file, so another invalid declaration or a mixed-unit run cannot
+mask it. These are the additional fifteen named cases, making **thirty** with
+the original fifteen. They are derived synthetic inputs, not new acquisitions.
+
+| Variant | Source unit attributes on the selected axis | Expected result for each of the three axes |
+| --- | --- | --- |
+| Empty accession | Set `unitAccession=""`; retain the fixture's other unit attributes | Whole query refused for incomplete unit declaration; observed attribute presence and values retained |
+| Whitespace accession | Set `unitAccession=" "`; retain the other unit attributes | Same refusal and retention |
+| Name without accession | Remove `unitAccession` and `unitCvRef`; retain `unitName` | Same refusal and retention |
+| CV reference without accession | Remove `unitAccession` and `unitName`; retain `unitCvRef` | Same refusal and retention |
+| Name and CV reference without accession | Remove `unitAccession`; retain both `unitName` and `unitCvRef` | Same refusal and retention |
+
+For every row, a served result labelled unreported, a measured zero, or a silent
+partial success **fails subject 7**. The original genuinely undeclared m/z case
+remains served-as-unreported; it is not one of these invalid declarations. No
+fixture is generated or executed by PX.1.
+
+**Plus other truncated and invalid copies derived from those fixtures**, which
+subject 7 scores **for honesty rather than for shape**: for truncation the oracle
+is that a candidate
 **does not present a truncated read as a complete result**, which a whole-query
 refusal and a typed partial carrying coverage both satisfy and a silent prefix
-fails. That is decidable before PX.3's first scored run and does **not**
+fails. This does not replace the stricter explicit refusal oracle for the
+incomplete-unit derivatives above. That is decidable before PX.3's first scored run and does **not**
 pre-empt the typed partial contract, which stays PX.5's. Derived rather than newly
 acquired, so the set stays closed. **And at most two** new representative
 acquisitions — one MS1 profile, one MS1 centroided — each subject to a recorded
