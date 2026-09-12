@@ -8334,3 +8334,35 @@ identity/natural main CI and local closeout; scientific completion is not that p
 A remains viable, not prototyped, not rejected and outside this set. **PX.4 NOT STARTED;
 separate authorization required. XIC PROVIDER NOT ADMITTED; PRODUCTION XIC NOT
 IMPLEMENTED. M6 COMPLETE; M7 NOT STARTED.**
+
+## PX.4 — B-only provider decision and M7 handoff, 2026-09-12
+
+Decision baseline: `64c721159421da84cef1cb85e34141d6769fd307`, published PX.3
+supplement ([PR #117](https://github.com/MianliWang/MScanvas/pull/117)). The earlier
+PX.3 not-started PX.4 statements are historical. The owner separately authorized
+this Markdown decision and its normal protected publication.
+
+**XIC_PROVIDER_REFUSED — AUTHORIZED B-ONLY EVALUATION.** The
+[PX.4 record](docs/spikes/PX_4_XIC_PROVIDER_RUNTIME_DECISION.md) owns the ordered
+decision, exact candidate/evidence identity, archive readback and bounded handoff.
+The complete published evidence contains an applicable source-domain failure;
+admission practicality and runtime selection are not reached. A remains viable,
+not prototyped, not rejected and outside this set. S2/S3/S4 and conditional
+decision ownership remain unchanged.
+
+Only the decision record, ADR 0046's dated outcome, ROADMAP and this status entry
+change. No scientific matrix, candidate, source input, product code or dependency
+was modified or rerun. Preparation validation: direct
+`python -B scripts/check_repo.py` passed (exit 0, 139.71 seconds); the four-path
+Markdown scope and full-task whitespace checks passed. One isolated read-only
+review admitted the evidence-to-decision and scope. The actual committed head
+still requires its own PR checks and completed review before protected merge.
+The PX.4 PR publication record owns the actual reviewed head, merge parents/tree,
+natural main CI and ff-only/task-branch closeout; those results are recorded there
+when obtained, not inferred from this decision or a preview merge.
+
+**POST-M6 XIC INTERLUDE COMPLETE — NON-ADMISSION BRANCH. PX.5 / PX.6 NOT
+ENTERED. XIC PROVIDER NOT ADMITTED; PRODUCTION XIC NOT IMPLEMENTED.
+M6 COMPLETE. M7 — ROUTE / FIRST-RELEASE-SCOPE DECISION — NEXT / NOT STARTED;
+separate authorization required.** Issue #112 and native NOT RE-RUN ownership
+are unchanged; this handoff starts no M7 work.

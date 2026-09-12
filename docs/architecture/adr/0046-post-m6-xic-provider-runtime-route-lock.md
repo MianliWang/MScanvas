@@ -30,6 +30,18 @@ Related: [0045](0045-conversion-completion-closure-and-handoff.md),
 [0005](0005-mzml-preview-boundary.md),
 [M6.10's terminal ledger](../../spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md#the-terminal-ledger)
 
+Outcome recorded: **2026-09-12 (PX.4) — `XIC_PROVIDER_REFUSED` for the
+separately authorized B-only evaluation.** The [PX.4 decision and M7 handoff](../../spikes/PX_4_XIC_PROVIDER_RUNTIME_DECISION.md)
+consume the published complete PX.3 evidence in the ordered gates below. The
+interlude ends on its non-admission branch; PX.5 / PX.6 are **NOT ENTERED**.
+A remains viable, not prototyped, not rejected and outside this evaluation.
+No profile XIC is offered (S1); D4 selection and D5 placement are not reached on
+this branch. S2/S3/S4 and the conditional decision owners remain unchanged.
+**M6 COMPLETE; M7 route / first-release-scope decision NEXT / NOT STARTED.**
+The route-only claims and earlier not-started statements below and in prior
+amendments describe their original stages; this dated outcome supersedes their
+status, preserving the route rules and history rather than rewriting them.
+
 **This record locks the route for the Post-M6 XIC Provider / Runtime Interlude
 and does nothing else.** It admits no provider, selects no runtime, implements no
 XIC, and reports no performance or scientific-correctness result. A route lock is

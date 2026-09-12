@@ -665,10 +665,11 @@ guard had been unable to see.
 
 ## Post-M6 XIC Provider / Runtime Interlude
 
-**Entered. `PX.0 COMPLETE`; `PX.1 COMPLETE`; the separately authorized PX.2
-B-only prototype scope is complete. Separately authorized PX.3 B-only evidence is
-complete over the authorized finite matrix, with an applicable candidate failure.
-PX.4 is not started and requires separate authorization.**
+**Complete on the non-admission branch. PX.0 through PX.4 are complete within
+their separately authorized scopes. PX.4 records `XIC_PROVIDER_REFUSED` for the
+B-only evaluation; PX.5 / PX.6 are NOT ENTERED.** The
+[PX.4 decision and M7 handoff](docs/spikes/PX_4_XIC_PROVIDER_RUNTIME_DECISION.md)
+own the evidence-to-outcome reasoning and its limits.
 The route is locked by
 [ADR 0046](docs/architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md),
 which is the single owner of the slice dependencies, the evidence matrix and the
@@ -677,18 +678,16 @@ authority**: where this section and that record differ, the record governs, and 
 decision changes there rather than here. Entry was separately authorized:
 `M6 COMPLETE` is the gate, and meeting a gate is not entering it.
 
-**No provider is admitted and no XIC exists.** A route lock is none of PX.4's
-provider outcomes, and it reports no performance or scientific-correctness
-result. `XIC_PROVIDER_REFUSED`, `EVIDENCE_BLOCKED` and
-`ARCHITECTURE_DECISION_REQUIRED` each leave the XIC unavailable with a stated
-reason and let M7 proceed under a recorded handoff. **None of the four revokes
-`M6 COMPLETE`**, and PX.5 and PX.6 each need their own authorization even where
-the preceding slice passed.
+**No provider is admitted and production XIC is not implemented.** This pinned
+B candidate does not meet the frozen source-domain contract. A remains viable,
+not prototyped, not rejected and outside the evaluation. The interlude is finished,
+not waiting for A or an automatic candidate repair. **M6 COMPLETE** stands;
+the existing viewer, converter and figure export keep their published boundaries.
 
 **PX.1 audited the three bounded directions and decided XIC-S2.** Two are viable
 to prototype and one is not, on located evidence rather than on names; the
-m/z-unit posture is settled as served-and-unreported. Nothing is admitted and no
-provider is chosen, which stays PX.4's. See
+m/z-unit posture is settled as served-and-unreported. That audit admitted and
+selected no production provider. See
 [the PX.1 audit](docs/spikes/PX_1_XIC_PROVIDER_API_AUDIT.md).
 
 **PX.2 demonstrated the query on named synthetic fixtures in a standalone
@@ -699,16 +698,20 @@ exact lock, pre-run oracle, observed results and limits. Production XIC remains
 unimplemented, and M7 has not started.
 
 **PX.3 fixed S3/S4 before scoring and completed the B-only evidence matrix.**
-All thirty named cases pass; the complete 77-row ledger is 76 PASS / 1 FAIL / 0 MISSING.
 The approved-input supplement fills the initial four gaps with exact-content inherited
 fixtures and independently referenced MS1 profile/centroid acquisitions, including
 three serial resource observations per representative. The pinned reader's legal
 namespace-prefixed mzML failure remains. See [the complete evidence and preserved
-initial gap history](docs/spikes/PX_3_XIC_COMPARATIVE_EVIDENCE.md). This is a complete
-evidence handoff, not a PX.4 provider/practicality outcome or production admission.
-A remains viable, not prototyped, not rejected and outside this evaluation.
+initial gap history](docs/spikes/PX_3_XIC_COMPARATIVE_EVIDENCE.md). PX.4 consumes
+that complete evidence and refuses this candidate before the admission practicality
+and runtime filters. No XIC follow-up is a prerequisite for M7.
 
 ## M7 — UI/UX and public product hardening
+
+**Route / first-release-scope decision — NEXT / NOT STARTED.** The
+[PX.4 handoff](docs/spikes/PX_4_XIC_PROVIDER_RUNTIME_DECISION.md#terminal-handoff-and-publication)
+ends the preceding interlude. M7 requires separate authorization; this pointer
+starts no design, implementation, stack change or release preparation.
 
 M5 hands it the interaction principles it proved rather than asserted:
 availability means activating would do what it says; an unavailable action has
