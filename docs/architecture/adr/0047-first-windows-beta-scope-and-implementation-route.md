@@ -165,7 +165,7 @@ changed surface. M7.5 closes coverage over every remaining delivered UI string.
 | **M7.1 — Localized settings and shared controls** | Desktop settings dialog, existing roster and figure-setting consumers; M7.0 | Localized resources/policy, owned fields/dialog, session UI preference, focused tests; precise i18n/Dialog cohort | Preflight proof 2: offline settings → real table → language switch; cancel/reset, focus/IME, missing-resource failure; acceptance below |
 | **M7.2 — Workbench shell and roster organization** | Shell/roster adapter over dataset IDs and existing scope resolver; M7.1 | Shell, virtual organization, grouped drag, selected/all presentation, Motion/dnd only with approval | Proof 1: grouped multi-drag, folded target, scroll/virtual rows, keyboard, Escape, invalid drop, concurrent roster revision and safe undo; native OS drop remains separate |
 | **M7.3 — Viewer, scans and committed gestures** | SpectrumTable, scan model, linked reducers/adapters, Rust retained snapshot/export reader; M7.2 | Viewer presentation, explicit adapter/ADR amendments, focused tests; no new scientific provider/query | Proof 3: real mzML → scan/sort/filter → pending/commit → current/full export; axis/revision isolation, empty/refused/late response recovery; physical input checks |
-| **M7.4 — Conversion, results and figures** | ConversionPanel, conversion availability/scope, ConversionItemJudgements, adoption and FigureSettingsFields; M7.3 | Consolidate existing projections/actions; narrow Rust/Tauri output-opening adapter; focused integration/native evidence | Real selected/all conversion through result/open/adopt/export; file/folder opening and launch-error recovery; source/build refusals, picker cancel, Fail/Skip/collision, stop/quarantine, partial output and retry |
+| **M7.4 — Conversion, results and figures** | ConversionPanel, conversion availability/scope, ConversionItemJudgements, adoption and FigureSettingsFields; M7.3 | Consolidate projections/actions; narrow Rust/Tauri output-opening and guarded staging-recovery operations; focused integration/native evidence | Real conversion/result/open/adopt/export; locked-staging recovery and safe refusals; file/folder opening failures; source/build refusals, picker cancel, Fail/Skip/collision, stop/quarantine, partial output and retry |
 | **M7.5 — Preferences and first-run recovery** | Existing settings consumers, Rust narrow preference storage and backend discovery/diagnostics; M7.4 | Allowlisted local persistence, onboarding/help, remaining localization/accessibility; no scientific store | Restart/default/reset/corrupt/version-invalid/unwritable preference tests; missing/unsupported backend recovery; offline bilingual task; no restored operation/authority |
 | **M7.6 — Installer and release integration** | Tauri bundle/build configuration and release QA/package records; M7.5 plus external decisions at their deadlines | Separately authorized packaging/build/release tests, notices/provenance and candidate preparation; upload only with release consent | Clean standard-user installation, real-build integrated task, uninstall/rollback and artifact verification; diagnose setup failure without modifying sources |
 
@@ -184,6 +184,23 @@ shell command. Missing/replaced outputs and unavailable file associations give
 actionable refusal, with folder access where still valid. Opening neither adopts
 an output nor upgrades a partial set's integrity/completeness. M7.6 exercises
 both actions and their failures in the installed application.
+
+M7.4 also owns [ADR 0043's G18](0043-conversion-completion-route.md): failed
+cleanup can strand a deterministic staging name, and `reclaim_staging_area`
+currently has only test callers. Provide explicit application recovery, not an
+automatic pre-launch delete. A narrow reclaim command must require Rust-held
+same-session ownership of the staging/destination objects and confirmed process
+quiescence, revalidating objects at deletion. A name or the forgeable marker
+alone is insufficient authority; exposing the existing helper unchanged is not
+acceptance. Busy/quarantined, replaced, linked or unproved targets stay untouched.
+After a transient lock clears, the user can retry owned cleanup and then make a
+fresh reviewed conversion. If ownership cannot be proved, including after
+restart, refuse cleanup and offer a different destination/new plan when backend
+authority permits. No source or finalized output is deleted. M8 retains G16's
+cross-session authenticated-ownership question; it is not a beta prerequisite.
+M7.6 tests lock → cleanup failure → unlock → reclaim → successful conversion,
+plus forged/replaced/linked targets, busy/quarantine refusal and the safe
+new-destination path, covering single-output/set mechanisms where affected.
 
 M7.1 schedules the narrow root language-policy amendment: localized UI resource
 **values** may use their declared language. Keys, identifiers, comments, test
@@ -225,7 +242,7 @@ Windows/WebView2/provider identities, lawful fixtures and raw results.
 
 | Release exit | Implementation and evidence owners | Required concrete result |
 | --- | --- | --- |
-| Complete supported task | M7.2/3/4/5 implement; M7.6 integrates | Installed real application completes import/view/convert/result/open-file-or-folder/adopt/figure/data export; missing/replaced output and handler-failure recovery; actionable unsupported input/build and missing-backend recovery; outputs checked and source bytes unchanged |
+| Complete supported task | M7.2/3/4/5 implement; M7.6 integrates | Installed real application completes import/view/convert/result/open-file-or-folder/adopt/figure/data export; stranded-staging cleanup/replan, missing/replaced output and handler-failure recovery; actionable unsupported input/build and missing-backend recovery; outputs checked and source bytes unchanged |
 | Offline, readable, accessible UI | M7.1–5 own changed surfaces; M7.6 audits all delivered UI | Complete local en/zh-CN including recovery/aria/live regions; keyboard/focus and physical pointer/touch results separately recorded; three viewport targets, scaling, reduced motion and bounded-data disclosures pass |
 | Safe preference lifetime | M7.5 implements/tests; M7.6 repeats installed restart | Allowlisted locale/density/appearance/layout defaults and explicit reset; corrupt, unsupported-version and write-failure recovery; valid panel sizes on changed display; no paths, dataset roster, scientific drafts, receipts, queue, classification or live work restored |
 | Installable Windows x64 candidate | M7.6 packaging and clean-machine QA | One real installer; standard user with no Node/Rust/Git installs, launches and uninstalls; WebView2 present/missing/offline paths, user-installed provider setup, denied permissions and Unicode/space paths tested; sources and finalized scientific outputs survive uninstall |
@@ -247,6 +264,7 @@ The existing residuals have first consumers, rather than a new audit campaign:
 | ADR 0045's failing M4.1 empty-spectrum export and M5.2 Tab cases | M7.3 owns viewport Tab; M7.4 owns empty-spectrum export, or earlier touched consumer. Diagnose test versus product and prove intended semantics; baseline failure is not green |
 | M6.6–M6.9 native campaign NOT RE-RUN; stop-row harness race; save-dialog/clipboard/window-focus limits | First changed mechanism: M7.1 dialog/focus, M7.2 OS drop, M7.3 input/export, M7.4 conversion/adoption; M7.6 integrated native smoke. Retain measured driver/port facts and attribution; manual native evidence where automation cannot observe |
 | `NOTICE_ORDER` coverage and advisory-code presentation | M7.4, or earlier localization consumer, must keep every applicable reason visible and translated; unknown structured codes remain inspectable without invented meaning |
+| ADR 0043 G18, no application-reachable staging reclaim | M7.4 owns the guarded cleanup/replan flow above; M7.6 owns installed fault/recovery proof. It is a required conversion recovery exit, not a non-blocking residual; G16's forgeable marker cannot be borrowed as deletion authority |
 | Closed evidence gates, source-family lists, hypothetical retry/fault/cost questions | Keep ADR 0045's named owners. No source-family expansion, overwrite cure, provider investigation or cache work is required by this UI route; any new observed release-critical defect still blocks release |
 
 Select tests by changed mechanism. Text/token work does not rerun every old
