@@ -98,7 +98,7 @@ different zeros stay different:
 | `Unreadable` | Both arrays are present and could not be decoded |
 | `Missing` | The run's index declares the scan and the reader could not obtain it at all |
 | `NonFiniteIntensity` | The window contains a point whose intensity is not finite. **XIC-S4 was decided before PX.3 scoring: report this state, with no sum; do not silently exclude the in-window nonfinite point.** A nonfinite intensity outside the window alone does not fail the scan |
-| `SumNotRepresentable` | Every in-window intensity is finite, and their sum is not representable in the chosen accumulation domain. It exists so the rule above holds without exception: **a `sum` is never non-finite**, and an overflow is reported rather than returned as one |
+| `SumNotRepresentable` | Every in-window intensity is finite, and their final exact sum lies outside the chosen finite output range, as fixed by XIC-S3. It exists so the rule above holds without exception: **a `sum` is never non-finite**, and an overflow is reported rather than returned as one |
 
 **The states are resolved in this order, and the first that applies wins.**
 `Missing`, then the MS-level operand on **declared metadata without decoding any
@@ -336,7 +336,7 @@ have answered that such a source is refused. **PX.1 decided it is served**, so i
 no longer refuses the query, no longer masks anything, and rejoins the shared
 file. The remaining nine may share a file: a source declaring no m/z-array unit,
 whose expected result is XIC-S2's decided answer; a non-finite intensity inside
-the window; an extreme finite intensity whose sum overflows the accumulation domain; a `NaN` in
+the window; an extreme finite intensity whose final exact sum exceeds the chosen finite output range; a `NaN` in
 the m/z array and an infinity outside the window, which must be told apart; an
 **unsorted m/z array**, whose window sum must still be taken over the set; a
 scan declaring no retention time; a scan declaring no MS level at all; a run
