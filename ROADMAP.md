@@ -667,8 +667,8 @@ guard had been unable to see.
 
 **Entered. `PX.0 COMPLETE`; `PX.1 COMPLETE`; the separately authorized PX.2
 B-only prototype scope is complete. Separately authorized PX.3 B-only evidence is
-recorded with an applicable candidate failure and required evidence missing; the full
-matrix is incomplete. PX.4 is not started and requires separate authorization.**
+complete over the authorized finite matrix, with an applicable candidate failure.
+PX.4 is not started and requires separate authorization.**
 The route is locked by
 [ADR 0046](docs/architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md),
 which is the single owner of the slice dependencies, the evidence matrix and the
@@ -698,12 +698,15 @@ not prototyped and not rejected; C's disposition is unchanged. See
 exact lock, pre-run oracle, observed results and limits. Production XIC remains
 unimplemented, and M7 has not started.
 
-**PX.3 fixed S3/S4 before scoring and recorded B-only evidence.** All thirty
-named cases pass, while legal namespace-prefixed mzML fails for the pinned reader.
-The original lowint/duprt bytes and owner-approved MS1 profile/centroid representative
-inputs/references remain missing. See [the evidence and exact gaps](docs/spikes/PX_3_XIC_COMPARATIVE_EVIDENCE.md).
-This is an evidence-blocked handoff for a separately authorized PX.4, not a PX.4
-outcome. A remains viable, not prototyped, not rejected and outside this evaluation.
+**PX.3 fixed S3/S4 before scoring and completed the B-only evidence matrix.**
+All thirty named cases pass; the complete 77-row ledger is 76 PASS / 1 FAIL / 0 MISSING.
+The approved-input supplement fills the initial four gaps with exact-content inherited
+fixtures and independently referenced MS1 profile/centroid acquisitions, including
+three serial resource observations per representative. The pinned reader's legal
+namespace-prefixed mzML failure remains. See [the complete evidence and preserved
+initial gap history](docs/spikes/PX_3_XIC_COMPARATIVE_EVIDENCE.md). This is a complete
+evidence handoff, not a PX.4 provider/practicality outcome or production admission.
+A remains viable, not prototyped, not rejected and outside this evaluation.
 
 ## M7 — UI/UX and public product hardening
 
