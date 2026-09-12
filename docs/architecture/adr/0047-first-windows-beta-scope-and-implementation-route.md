@@ -39,7 +39,7 @@ accepts M7 entry for planning only.
 | --- | --- | --- | --- |
 | Home, imports, roster | Native file picker admits mzML and evidenced Thermo RAW, Shimadzu LCD, SCIEX WIFF bundles; folder/Explorer drop admits mzML only; non-destructive remove/clear | M7.2 shell and session virtual folders over stable dataset IDs | New RAW families, directory acquisitions, scientific classification persistence |
 | TIC/BPC, spectrum, scans | mzML linked selection, bounded table, admitted RT/m/z viewports; TIC/BPC from a complete loaded scan table, with unreported units preserved | M7.3 whole-row activation, bounded search/sort, range adapter | Direct vendor preview, whole-file scan query, XIC, overlays/comparison |
-| Compact configuration and results | Source-qualified typed intent, selected/all queue, destination policies, cancellation, five judgements, explicit adoption | M7.4 basic/advanced views of one intent and compact result/details | Arbitrary methods/graphs, additional centroiding admission, mzXML, overwrite, ETA |
+| Compact configuration and results | Source-qualified typed intent, selected/all queue, destination policies, cancellation, five judgements, explicit adoption | M7.4 basic/advanced views, compact result/details and the currently unbuilt Open file / Open folder actions | Arbitrary methods/graphs, additional centroiding admission, mzXML, overwrite, ETA |
 | Figures/data | Rust full-source/current-range SVG, PNG, Copy plot, CSV/TSV; linked figure with full-source lower spectrum | M7.4 shared figure controls; M7.3 proves committed-range handoff | New formats, feature/statistics export, saved FigureSpec/composer |
 | Settings and layout | Session backend choice and existing figure settings | M7.1 real localized settings; M7.5 allowlisted UI preferences/restoration | Durable project/artifact/run/classification/provenance store; scientific-run resume |
 | Analysis, nodes, code, AI | No production consumer | Omit future navigation or state honest unavailability where context requires it | Smoothing, peak detection/alignment/gap filling, matching, statistics, arbitrary execution, Python/R and AI automation |
@@ -165,7 +165,7 @@ changed surface. M7.5 closes coverage over every remaining delivered UI string.
 | **M7.1 — Localized settings and shared controls** | Desktop settings dialog, existing roster and figure-setting consumers; M7.0 | Localized resources/policy, owned fields/dialog, session UI preference, focused tests; precise i18n/Dialog cohort | Preflight proof 2: offline settings → real table → language switch; cancel/reset, focus/IME, missing-resource failure; acceptance below |
 | **M7.2 — Workbench shell and roster organization** | Shell/roster adapter over dataset IDs and existing scope resolver; M7.1 | Shell, virtual organization, grouped drag, selected/all presentation, Motion/dnd only with approval | Proof 1: grouped multi-drag, folded target, scroll/virtual rows, keyboard, Escape, invalid drop, concurrent roster revision and safe undo; native OS drop remains separate |
 | **M7.3 — Viewer, scans and committed gestures** | SpectrumTable, scan model, linked reducers/adapters, Rust retained snapshot/export reader; M7.2 | Viewer presentation, explicit adapter/ADR amendments, focused tests; no new scientific provider/query | Proof 3: real mzML → scan/sort/filter → pending/commit → current/full export; axis/revision isolation, empty/refused/late response recovery; physical input checks |
-| **M7.4 — Conversion, results and figures** | ConversionPanel, conversion availability/scope, ConversionItemJudgements, adoption and FigureSettingsFields; M7.3 | Consolidate existing projections/actions; focused integration and native evidence | Real selected/all conversion through result/adopt/export; source/build refusals, picker cancel, Fail/Skip/collision, stop/quarantine, partial output and retry; recover in place |
+| **M7.4 — Conversion, results and figures** | ConversionPanel, conversion availability/scope, ConversionItemJudgements, adoption and FigureSettingsFields; M7.3 | Consolidate existing projections/actions; narrow Rust/Tauri output-opening adapter; focused integration/native evidence | Real selected/all conversion through result/open/adopt/export; file/folder opening and launch-error recovery; source/build refusals, picker cancel, Fail/Skip/collision, stop/quarantine, partial output and retry |
 | **M7.5 — Preferences and first-run recovery** | Existing settings consumers, Rust narrow preference storage and backend discovery/diagnostics; M7.4 | Allowlisted local persistence, onboarding/help, remaining localization/accessibility; no scientific store | Restart/default/reset/corrupt/version-invalid/unwritable preference tests; missing/unsupported backend recovery; offline bilingual task; no restored operation/authority |
 | **M7.6 — Installer and release integration** | Tauri bundle/build configuration and release QA/package records; M7.5 plus external decisions at their deadlines | Separately authorized packaging/build/release tests, notices/provenance and candidate preparation; upload only with release consent | Clean standard-user installation, real-build integrated task, uninstall/rollback and artifact verification; diagnose setup failure without modifying sources |
 
@@ -176,6 +176,14 @@ defaults and returning to row activation must work in the running product.
 Until M7.5 persistence lands, it explicitly says settings last for this session.
 Shared fields must serve this dialog and an existing settings consumer, such as
 FigureSettingsFields; a component inventory alone fails acceptance.
+
+M7.4 owns WF-004's unimplemented Open file / Open folder recovery. A narrow
+operation takes a finalized-output identity; Rust resolves and revalidates the
+stored object before invoking the platform handler. React receives no path or
+shell command. Missing/replaced outputs and unavailable file associations give
+actionable refusal, with folder access where still valid. Opening neither adopts
+an output nor upgrades a partial set's integrity/completeness. M7.6 exercises
+both actions and their failures in the installed application.
 
 M7.1 schedules the narrow root language-policy amendment: localized UI resource
 **values** may use their declared language. Keys, identifiers, comments, test
@@ -217,7 +225,7 @@ Windows/WebView2/provider identities, lawful fixtures and raw results.
 
 | Release exit | Implementation and evidence owners | Required concrete result |
 | --- | --- | --- |
-| Complete supported task | M7.2/3/4/5 implement; M7.6 integrates | Installed real application completes import/view/convert/result/adopt/figure/data export; actionable unsupported input/build and missing-backend recovery; outputs checked and source bytes unchanged |
+| Complete supported task | M7.2/3/4/5 implement; M7.6 integrates | Installed real application completes import/view/convert/result/open-file-or-folder/adopt/figure/data export; missing/replaced output and handler-failure recovery; actionable unsupported input/build and missing-backend recovery; outputs checked and source bytes unchanged |
 | Offline, readable, accessible UI | M7.1–5 own changed surfaces; M7.6 audits all delivered UI | Complete local en/zh-CN including recovery/aria/live regions; keyboard/focus and physical pointer/touch results separately recorded; three viewport targets, scaling, reduced motion and bounded-data disclosures pass |
 | Safe preference lifetime | M7.5 implements/tests; M7.6 repeats installed restart | Allowlisted locale/density/appearance/layout defaults and explicit reset; corrupt, unsupported-version and write-failure recovery; valid panel sizes on changed display; no paths, dataset roster, scientific drafts, receipts, queue, classification or live work restored |
 | Installable Windows x64 candidate | M7.6 packaging and clean-machine QA | One real installer; standard user with no Node/Rust/Git installs, launches and uninstalls; WebView2 present/missing/offline paths, user-installed provider setup, denied permissions and Unicode/space paths tested; sources and finalized scientific outputs survive uninstall |
