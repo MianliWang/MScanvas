@@ -1,3 +1,5 @@
+import { validateFigureDraft } from "./figureSettingsValidation";
+import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 /**
  * The selected spectrum's one export affordance.
  *
@@ -9,7 +11,7 @@
  * hook test would not see.
  */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type {
@@ -63,6 +65,7 @@ function renderPanel(
       {...NO_VIEWPORT}
       exportState={exportState}
       figureSettings={draft}
+      figureSettingsValidation={validateFigureDraft(draft)}
       onCopyPlot={onCopyPlot}
       onDismissExport={onDismiss}
       onExport={onExport}
@@ -131,6 +134,7 @@ describe("selected spectrum export affordance", () => {
           {...NO_VIEWPORT}
           exportState={{ status: "idle" }}
           figureSettings={DEFAULT_DRAFT}
+          figureSettingsValidation={validateFigureDraft(DEFAULT_DRAFT)}
           onCopyPlot={() => undefined}
           onDismissExport={() => undefined}
           onExport={() => undefined}
@@ -579,6 +583,7 @@ describe("the selected spectrum's range chooser", () => {
         committedDomain={committedDomain}
         exportState={{ status: "idle" }}
         figureSettings={DEFAULT_DRAFT}
+        figureSettingsValidation={validateFigureDraft(DEFAULT_DRAFT)}
         onCopyPlot={() => undefined}
         onDismissExport={() => undefined}
         onExport={() => undefined}
@@ -675,6 +680,7 @@ describe("the selected spectrum's range chooser", () => {
         committedDomain={null}
         exportState={{ status: "idle" }}
         figureSettings={DEFAULT_DRAFT}
+        figureSettingsValidation={validateFigureDraft(DEFAULT_DRAFT)}
         onCopyPlot={() => undefined}
         onDismissExport={() => undefined}
         onExport={() => undefined}
@@ -719,6 +725,7 @@ describe("the selected spectrum's range chooser", () => {
         committedDomain={mzDomain(105.0, 130.0)}
         exportState={{ status: "running", operation: "csv", namesVisibleRun: true }}
         figureSettings={DEFAULT_DRAFT}
+        figureSettingsValidation={validateFigureDraft(DEFAULT_DRAFT)}
         onCopyPlot={() => undefined}
         onDismissExport={() => undefined}
         onExport={() => undefined}
@@ -845,6 +852,7 @@ describe("what a finished range export is allowed to claim", () => {
         committedDomain={mzDomain(105.25, 130.5)}
         exportState={outcome}
         figureSettings={DEFAULT_DRAFT}
+        figureSettingsValidation={validateFigureDraft(DEFAULT_DRAFT)}
         onCopyPlot={() => undefined}
         onDismissExport={() => undefined}
         onExport={() => undefined}
@@ -868,6 +876,7 @@ describe("what a finished range export is allowed to claim", () => {
         committedDomain={mzDomain(900.0, 950.0)}
         exportState={outcome}
         figureSettings={DEFAULT_DRAFT}
+        figureSettingsValidation={validateFigureDraft(DEFAULT_DRAFT)}
         onCopyPlot={() => undefined}
         onDismissExport={() => undefined}
         onExport={() => undefined}

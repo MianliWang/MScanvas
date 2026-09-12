@@ -1868,12 +1868,10 @@ describe("the session workspace roster", () => {
     renderApp(api);
     const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
     await screen.findByRole("button", { name: "Add files…" });
-    // Six, all mounted for the life of the application: what the viewer is
-    // doing, what the search found, what the last workspace action did,
-    // whether a folder scan is running, what native drop is doing, and what
-    // the one conversion is doing.
+    // Existing workspace/operation announcements and the session Settings
+    // announcement all stay mounted for the life of this application.
     const applicationRegions = regions();
-    expect(applicationRegions).toHaveLength(8);
+    expect(applicationRegions).toHaveLength(9);
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
@@ -2256,7 +2254,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
     const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
-    expect(regions()).toHaveLength(8);
+    expect(regions()).toHaveLength(9);
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC" },
@@ -2269,7 +2267,7 @@ describe("the session workspace roster", () => {
     // A search that found nothing is not an empty workspace, and the two must
     // not sound alike.
     expect(spoken).not.toContain("The workspace is empty.");
-    expect(regions()).toHaveLength(8);
+    expect(regions()).toHaveLength(9);
   });
 
   it("says the search was cleared rather than falling silent", async () => {

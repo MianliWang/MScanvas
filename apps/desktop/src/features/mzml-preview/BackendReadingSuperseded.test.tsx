@@ -1,3 +1,4 @@
+import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 /**
  * What the banner says between an observation and the reading that describes it.
  *
@@ -14,7 +15,7 @@
  * about rather than the repair.
  */
 
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { PreviewApi } from "./api";

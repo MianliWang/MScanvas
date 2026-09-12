@@ -1,3 +1,4 @@
+import type { FigureSettingsValidation } from "./figureSettingsValidation";
 import { memo } from "react";
 
 import type {
@@ -136,6 +137,7 @@ export interface SelectedSpectrumPanelProps {
   readonly onCopyPlot: () => void;
   readonly onDismissExport: () => void;
   readonly figureSettings: FigureSettingsDraft;
+  readonly figureSettingsValidation: FigureSettingsValidation;
   readonly renderSettingsProblem: string | null;
   readonly pngDpiProblem: string | null;
   readonly onFigureSetting: (field: FigureSettingsField, value: string) => void;
@@ -177,6 +179,7 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel({
   onCopyPlot,
   onDismissExport,
   figureSettings,
+  figureSettingsValidation,
   renderSettingsProblem,
   pngDpiProblem,
   onFigureSetting,
@@ -201,6 +204,7 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel({
             committedDomain={committedDomain}
             exportState={exportState}
             figureSettings={figureSettings}
+            figureSettingsValidation={figureSettingsValidation}
             onCopyPlot={onCopyPlot}
             onDismiss={onDismissExport}
             onExport={onExport}
@@ -239,6 +243,7 @@ function SpectrumExportActions({
   onCopyPlot,
   onDismiss,
   figureSettings,
+  figureSettingsValidation,
   renderSettingsProblem,
   pngDpiProblem,
   onFigureSetting,
@@ -254,6 +259,7 @@ function SpectrumExportActions({
   readonly onCopyPlot: () => void;
   readonly onDismiss: () => void;
   readonly figureSettings: FigureSettingsDraft;
+  readonly figureSettingsValidation: FigureSettingsValidation;
   readonly renderSettingsProblem: string | null;
   readonly pngDpiProblem: string | null;
   readonly onFigureSetting: (field: FigureSettingsField, value: string) => void;
@@ -342,8 +348,7 @@ function SpectrumExportActions({
         idPrefix={FIGURE_PREFIX}
         onFigureSetting={onFigureSetting}
         onFigureTheme={onFigureTheme}
-        pngDpiProblem={pngDpiProblem}
-        renderSettingsProblem={renderSettingsProblem}
+        validation={figureSettingsValidation}
         settings={figureSettings}
       />
       <fieldset className="spectrum-figure-actions">

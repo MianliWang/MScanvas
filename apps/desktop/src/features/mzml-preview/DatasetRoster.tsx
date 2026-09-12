@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useRef } from "react";
+import { useSessionPreferences } from "../preferences/SessionPreferencesProvider";
 import type { ChangeEvent, KeyboardEvent, MouseEvent } from "react";
 
 import { SOURCE_KIND_LABEL, isConvertibleSourceKind } from "./contracts";
@@ -170,6 +171,7 @@ export const DatasetRoster = memo(function DatasetRoster({
   restoreAddFilesFocusToken,
   restoreAddFolderFocusToken,
 }: DatasetRosterProps) {
+  const preferences = useSessionPreferences();
   const listRef = useRef<HTMLUListElement | null>(null);
   const addFilesRef = useRef<HTMLButtonElement | null>(null);
   const addFolderRef = useRef<HTMLButtonElement | null>(null);
@@ -789,6 +791,7 @@ export const DatasetRoster = memo(function DatasetRoster({
       aria-busy={folderBusy || dropBusy}
       aria-labelledby="dataset-roster-heading"
       className="panel dataset-roster-panel"
+      data-density={preferences.effective.density}
     >
       <header className="panel-header compact">
         <div>

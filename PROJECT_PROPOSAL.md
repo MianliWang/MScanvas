@@ -649,7 +649,11 @@ converter and figure-export product, continuing the accepted v5.11 design.
 owns the ordered visible slices, complete local en/zh-CN UI, accessibility,
 preferences, installer/native release evidence and external release decisions.
 UI preference persistence does not restore projects or scientific runs. M7.0 is
-the route lock; M7.1 implementation is next and needs its own authorization.
+the historical route lock. The authorized M7.1 candidate implements session-only
+localized Settings, roster density and shared figure controls; required native
+validation remains pending in its
+[implementation record](docs/ux/M7_1_LOCALIZED_SETTINGS_SHARED_CONTROLS.md).
+M7.2 remains next and not started. This source slice builds or releases no public beta.
 
 ### M8 — Artifact, run and QC foundation
 

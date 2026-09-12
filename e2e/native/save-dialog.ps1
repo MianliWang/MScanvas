@@ -26,6 +26,7 @@ param(
   [Parameter(Mandatory = $true)][string] $Title,
   [Parameter(Mandatory = $true)][ValidateSet('save', 'cancel')][string] $Action,
   [string] $Path = '',
+  [ValidateRange(0, 2147483647)][int] $ApplicationProcessId = 0,
   [int] $TimeoutSeconds = 60
 )
 
@@ -49,12 +50,13 @@ function Find-Dialog {
   $deadline = (Get-Date).AddSeconds($Seconds)
   while ((Get-Date) -lt $deadline) {
     $found = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $byName)
-    if ($null -ne $found) { return $found }
+    if ($null -ne $found -and ($ApplicationProcessId -eq 0 -or $found.Current.ProcessId -eq $ApplicationProcessId)) { return $found }
 
     $windows = $root.FindAll(
       [System.Windows.Automation.TreeScope]::Children,
       [System.Windows.Automation.Condition]::TrueCondition)
     foreach ($window in $windows) {
+      if ($ApplicationProcessId -ne 0 -and $window.Current.ProcessId -ne $ApplicationProcessId) { continue }
       if ($null -ne $window.FindFirst(
             [System.Windows.Automation.TreeScope]::Descendants, $byFileNameField)) {
         return $window
@@ -77,6 +79,7 @@ function Find-ById {
 $result = [ordered]@{
   title    = $Title
   action   = $Action
+  processId = $ApplicationProcessId
   found    = $false
   named    = $false
   invoked  = $false
