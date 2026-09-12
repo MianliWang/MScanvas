@@ -90,6 +90,12 @@ not an architecture to port.
 
 The existing [design system](../../ux/DESIGN_SYSTEM.md),
 [UX process](../../ux/UX_PROCESS.md) and repository UI skills remain owners.
+The design system's [durable v5.11 baseline](../../ux/DESIGN_SYSTEM.md#durable-v511-reference-baseline)
+captures the relevant visual tokens, layout and Settings consumer in tracked
+Markdown. A fresh checkout uses that baseline and this route for implementation
+and rendered review; task-local originals are supplemental provenance, not a
+fresh-clone dependency. Exact original-image comparisons require the actual
+images and must be identified separately from contract-based rendered evidence.
 M7 uses accepted-reference continuation instead of another three-concept contest.
 Each slice still frames its task, baseline, interaction budget, recovery and
 rendered evidence. External skills are scoped advice; no template or skill

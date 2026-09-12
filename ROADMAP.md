@@ -394,8 +394,9 @@ re-decided against it. None of criterion 11's four conditional routes is
 admitted, and none had to be. **M6's closure met the Post-M6 XIC Provider /
 Runtime Interlude's `M6 COMPLETE` gate without entering it, and scheduled
 nothing.** That interlude has since been entered under its own authorization —
-see [its section below](#post-m6-xic-provider--runtime-interlude). **M7 has not
-started.**
+see [its section below](#post-m6-xic-provider--runtime-interlude). **At M6's
+closure, M7 had not started.** The [current M7 status](#m7--uiux-and-public-product-hardening)
+records its later planning entry and separate implementation boundary.
 
 The route was locked, the conversion lane has one availability
 authority, the installed `msconvert` has been measured against M6's finite
