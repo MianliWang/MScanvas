@@ -11,6 +11,15 @@
 
 This document is the authoritative high-level reference for product, UX, architecture and development decisions. Before non-trivial work, Codex and human contributors must read this file, the nearest applicable `AGENTS.md`, and the focused specifications linked below. Detailed feature acceptance criteria live in `docs/product/FEATURE_CATALOG.md`; this proposal defines the intent and boundaries those details must preserve.
 
+**M7 planning amendment, 2026-09-12:**
+[ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md)
+fixes the first Windows x64 beta boundary and implementation route, continuing
+the accepted v5.11 interaction/design direction. It distinguishes current
+capabilities from proposed UI work and later analysis/persistence. M7.0 is route
+publication only; implementation and binary release require separate authority.
+The longer capability lists below remain product targets, not additional beta
+prerequisites or assertions that they are already implemented.
+
 ---
 
 ## 1. Executive summary
@@ -380,13 +389,15 @@ Left data/artifact context | Main evidence workspace | Contextual inspector
 Bottom compact/expandable Runs panel
 ```
 
-The first UX spike compares three structures:
+The initial UX spike considered three candidate structures:
 
 1. workspace-first: data left, linked viewer center, inspector right, runs bottom;
 2. viewer-first: maximum plot area with collapsible supporting panes;
 3. mode-based: Data / Explore / Convert / Figures / Runs views.
 
-The choice is based on representative tasks at 1366×768, not visual preference alone.
+For M7, the owner has accepted v5.11 as the continuation reference. Do not reopen
+these alternatives; validate each real migrated task and its recovery at the
+existing viewport targets under ADR 0047 and the design system.
 
 Product patterns to study:
 
@@ -413,7 +424,7 @@ Major workflows follow:
 2. document the baseline tool path and recovery cost;
 3. perform hierarchical task analysis;
 4. define action, decision, navigation and hidden-state budgets;
-5. generate three structurally different concepts;
+5. generate three structurally different concepts unless an accepted-reference continuation is recorded;
 6. compare evidence area, discoverability, constrained-window behavior, keyboard path and recovery;
 7. prototype realistic empty/loading/error/running states;
 8. conduct a cognitive walkthrough;
@@ -632,7 +643,13 @@ Conversion settings the interface can express, queue and output work beyond the 
 
 ### M7 — UI/UX and public product hardening
 
-Consolidation and redesign of the completed surfaces; Windows packaging/signing plan, accessibility, diagnostics, lawful fixtures and layout/settings persistence; touch semantics; a preview cache only where a measurement shows one is needed.
+An installable, release-validated first Windows x64 beta of the existing viewer,
+converter and figure-export product, continuing the accepted v5.11 design.
+[ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md)
+owns the ordered visible slices, complete local en/zh-CN UI, accessibility,
+preferences, installer/native release evidence and external release decisions.
+UI preference persistence does not restore projects or scientific runs. M7.0 is
+the route lock; M7.1 implementation is next and needs its own authorization.
 
 ### M8 — Artifact, run and QC foundation
 

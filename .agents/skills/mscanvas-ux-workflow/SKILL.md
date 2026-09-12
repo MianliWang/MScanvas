@@ -10,7 +10,7 @@ description: Define or redesign a major MSCanvas user workflow through task anal
 3. Document the baseline path and failure/recovery cost in the current/reference tool.
 4. Build a hierarchical task analysis including decisions, hidden state and feedback.
 5. Propose an interaction budget.
-6. Produce three structurally different concepts; do not present three cosmetic variants.
+6. Produce three structurally different concepts unless an accepted-reference continuation is recorded in `docs/ux/UX_PROCESS.md`; do not present three cosmetic variants. For M7, continue the owner-accepted v5.11 reference under ADR 0047 without reopening alternatives. Preserve task, recovery and rendered-validation work.
 7. Compare task steps, discoverability, main-evidence area, 1366×768 behavior, error recovery, keyboard path and future extensibility.
 8. Prototype realistic data plus empty/loading/error/running states.
 9. Conduct a cognitive walkthrough and, when possible, representative task testing.

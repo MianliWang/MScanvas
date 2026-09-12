@@ -1,8 +1,9 @@
 # Repository and publishing workflow
 
-The canonical repository is the private GitHub repository
+The canonical repository is the GitHub repository
 [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas). Its default branch is
-`main`.
+`main`. Live API inspection on 2026-09-12 reports **public** visibility,
+superseding the earlier private-repository description. M7.0 changes no visibility.
 
 ## Clone the repository
 
@@ -11,8 +12,8 @@ git clone https://github.com/MianliWang/MScanvas.git
 cd MScanvas
 ```
 
-An authenticated GitHub account with repository access is required while the
-repository remains private.
+Writing requires an authenticated GitHub account with repository access.
+Public source visibility does not authorize distributing a beta binary.
 
 ## Normal contribution flow
 
@@ -45,7 +46,14 @@ infer a runtime result from a successful build.
 
 ## Repository protection
 
-After the first fully green CI run:
+On 2026-09-12, effective `main` ruleset **19660027** requires PRs, resolved
+review threads and strict up-to-date Frontend/Rust/Repository quality checks,
+and prevents deletion/non-fast-forward updates. The classic branch-protection
+endpoint returns 404; effective rules must be read from the rulesets API.
+Rebind live conditions for each publication. Normal task publication must not
+use an administrator bypass.
+
+The original bootstrap protection policy was:
 
 - require pull requests for `main`;
 - require the Frontend, Rust and Repository quality checks;
@@ -55,11 +63,19 @@ After the first fully green CI run:
 
 ## Release publishing
 
-There is no supported binary release yet. Do not publish npm packages, Cargo crates or
-GitHub Releases from the bootstrap skeleton. A release workflow must first define:
+There is no supported binary release yet.
+[ADR 0047](../architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md)
+is the authoritative first Windows x64 beta route. M7.6 owns an actual installer,
+clean standard-user install/launch/uninstall evidence, production configuration,
+version/changelog, hashes/source/build-input provenance, notices, lawful samples,
+vendor distribution boundary, diagnostics/feedback and rollback evidence. Its
+external-decision table names the owner and deadlines for Windows support,
+signing or an explicitly approved unsigned posture, host/audience, samples and
+actual release consent.
 
-- versioning and changelog policy;
-- Windows signing and artifact provenance;
-- third-party and vendor-license review;
-- reproducible build inputs;
-- release smoke tests and rollback procedures.
+M7.0 is Markdown-only route publication: no build, signing access, tag, upload,
+dependency installation or distribution is authorized. M7.1 and later need
+their own implementation authority. A beta-release-ready candidate is not a
+published beta; actual distribution requires consent for its exact artifacts.
+No automatic updater or cloud telemetry is required. Do not publish npm
+packages, Cargo crates or a GitHub Release from this planning task.

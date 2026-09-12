@@ -1,6 +1,32 @@
 # Design system foundation
 
-Status: **bootstrap hypothesis**. Tokens and component rules must evolve through prototype testing rather than aesthetic churn.
+Status: **existing foundation, with accepted M7 reference continuation**.
+M7.0 accepts a production migration plan, not an implemented redesign. Tokens
+and components evolve through real task validation under this document.
+
+## M7 reference and implementation ownership
+
+[ADR 0047](../architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md)
+owns the v5.11 provenance, current/proposed/later capability mapping, interactions
+and release obligations. This foundation and the existing repository UI skills
+remain the design owners; no parallel style system or new three-concept contest
+is introduced. The prototype's globals, CSS patches, synthetic science and ETA
+budgets are not production implementation authority.
+
+M7.1 begins with a real localized settings/shared-control consumer. M7.2 carries
+the single Home action, distinct viewed/drag-selected/conversion-scope states,
+session-only virtual organization and one drag transform/hit-test owner. M7.3
+owns whole-row scan activation and the pending-range gesture: release does not
+zoom; later explicit activation/Enter commits once; Escape cancels, with
+discoverable keyboard/non-gesture equivalents and no permanent mode strip.
+M7.4 consolidates typed configuration, result details and figure settings.
+
+Motion must be interruptible, useful and compatible with reduced motion. Drag
+feedback uses group/gap highlighting and compact counts. Preserve legibility,
+units and bounded-data scope through reflow/collapse rather than shrinking text.
+The en/zh-CN resource-value policy exception, canonical numeric-input rules and
+language-preserving state tests are scheduled with M7.1; complete delivered-UI
+coverage closes in M7.5. Nothing here declares those controls or tests shipped.
 
 ## Experience qualities
 
