@@ -8285,3 +8285,26 @@ evidence matrix, a benchmark or an admission. Issue #112 and the native
 **PX.3 NOT STARTED; separate authorization and evaluation-scope confirmation
 required. XIC PROVIDER NOT ADMITTED; PRODUCTION XIC NOT IMPLEMENTED.
 M6 COMPLETE; M7 NOT STARTED.**
+
+## PX.3 — separately authorized B-only evidence, 2026-09-12
+
+Baseline: `39955ebb4c5ca8885bf9507dd07a3704ed0f2aff` (PX.2 published).
+The separately authorized evaluation set is B only. S3 and S4 were fixed before
+scoring; [ADR 0046](docs/architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md)
+remains the semantic and decision-owner authority. The prior PX.2 status above is
+historical, and its source record and publication are unchanged.
+
+[The PX.3 evidence record](docs/spikes/PX_3_XIC_COMPARATIVE_EVIDENCE.md) owns the
+frozen protocol/oracle, exact source/build/lock identities, complete case ledger,
+verified local archive, measured failure and missing-input requests. The final
+standalone candidate passes all 30 named cases; its 77-row ledger records 72 PASS
+(including three negative controls), one applicable prefixed-mzML failure and four
+MISSING rows. Original lowint/duprt bytes and authorized MS1 profile/centroid
+representative inputs/references are missing. No representative resource result
+is claimed, and the full matrix is incomplete.
+
+**PX3_DIRECTION_B_EVIDENCE_RECORDED — REQUIRED EVIDENCE MISSING.** This is a
+PX.4 evidence-blocked handoff, not PX.4's outcome or a full PX.3 PASS. A remains
+viable, not prototyped, not rejected and outside this evaluation. **PX.4 NOT STARTED;
+separate authorization required.** No provider is admitted; production XIC is not
+implemented. M6 remains complete; M7 has not started.
