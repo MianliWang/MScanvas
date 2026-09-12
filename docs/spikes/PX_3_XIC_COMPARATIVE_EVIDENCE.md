@@ -13,6 +13,10 @@ not prototyped and not rejected; it is outside this evaluation set.** No compari
 establishes that B is better than A. C's earlier disposition is unchanged. A later
 PX.4 decision must consume this declared evaluation set and the missing evidence;
 it cannot count A as failed or exhausted. PX.4 requires separate authorization.
+The ADR prerequisite explicitly accepts this published terminal missing-evidence
+handoff for the owner-authorized B-only evaluation, consistent with its existing
+missing-evidence-first route. This closes the prerequisite wording gap without
+calling the incomplete matrix a completed/PASS experiment or issuing PX.4's outcome.
 
 [ADR 0046](../architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md)
 remains the route/semantic owner. The [PX.1 audit](PX_1_XIC_PROVIDER_API_AUDIT.md)
