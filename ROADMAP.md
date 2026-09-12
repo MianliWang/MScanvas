@@ -394,8 +394,9 @@ re-decided against it. None of criterion 11's four conditional routes is
 admitted, and none had to be. **M6's closure met the Post-M6 XIC Provider /
 Runtime Interlude's `M6 COMPLETE` gate without entering it, and scheduled
 nothing.** That interlude has since been entered under its own authorization —
-see [its section below](#post-m6-xic-provider--runtime-interlude). **M7 has not
-started.**
+see [its section below](#post-m6-xic-provider--runtime-interlude). **At M6's
+closure, M7 had not started.** The [current M7 status](#m7--uiux-and-public-product-hardening)
+records its later planning entry and separate implementation boundary.
 
 The route was locked, the conversion lane has one availability
 authority, the installed `msconvert` has been measured against M6's finite
@@ -695,7 +696,7 @@ direction-B prototype.** It selects no production provider. A remains viable,
 not prototyped and not rejected; C's disposition is unchanged. See
 [the bounded B-only record](docs/spikes/PX_2_XIC_BOUNDED_PROTOTYPES.md) for the
 exact lock, pre-run oracle, observed results and limits. Production XIC remains
-unimplemented, and M7 has not started.
+unimplemented; M7 had not started at that PX.2 stage.
 
 **PX.3 fixed S3/S4 before scoring and completed the B-only evidence matrix.**
 The approved-input supplement fills the initial four gaps with exact-content inherited
@@ -708,10 +709,21 @@ and runtime filters. No XIC follow-up is a prerequisite for M7.
 
 ## M7 — UI/UX and public product hardening
 
-**Route / first-release-scope decision — NEXT / NOT STARTED.** The
-[PX.4 handoff](docs/spikes/PX_4_XIC_PROVIDER_RUNTIME_DECISION.md#terminal-handoff-and-publication)
-ends the preceding interlude. M7 requires separate authorization; this pointer
-starts no design, implementation, stack change or release preparation.
+**M7 IN PROGRESS; implementation NOT STARTED.** The separately authorized
+M7.0 first-beta route is accepted in
+[ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md),
+the single owner of scope, implementation order and release exits. M7 delivers
+an installable, release-validated Windows x64 viewer/converter/figure beta by
+continuing the accepted v5.11 direction. M7.0 publishes the route only; it builds
+and releases no beta. The completed [PX.4 handoff](docs/spikes/PX_4_XIC_PROVIDER_RUNTIME_DECISION.md#terminal-handoff-and-publication)
+adds no XIC prerequisite.
+
+The route proceeds through localized settings/shared controls, shell/roster,
+viewer/scan gestures, conversion/results/figures, preferences/onboarding, then
+installer/release integration. **M7.1 — Localized settings and shared controls —
+NEXT / NOT STARTED; requires its own implementation authorization.** M8/M9/M10
+remain later owners. External support/signing/distribution/sample/release
+decisions have explicit owner deadlines in ADR 0047; they are not waived.
 
 M5 hands it the interaction principles it proved rather than asserted:
 availability means activating would do what it says; an unavailable action has
@@ -721,12 +733,13 @@ ownership. M5.7's single selection-unavailability posture is the pattern to
 generalize outside the viewer. Chromatogram touch semantics and a bounded preview
 cache are deferred here, the second only on a measurement showing a need.
 
-- Consolidation and redesign of the surfaces M5 and M6 complete, owning the
-  principles M5.0 froze rather than inheriting drift across them.
-- Windows installer/signing plan, accessibility pass, crash/error diagnostics and
-  public fixtures.
-- Saved settings, layout persistence and beta feedback instrumentation that
-  remains local-first.
+- Consolidation of completed surfaces under the accepted design, preserving
+  scientific and runtime authorities.
+- A real Windows installer and clean standard-user validation, accessibility,
+  offline localization, consent/redaction diagnostics and lawful sample handling.
+- Local UI settings/layout restoration, with corruption/reset recovery; no
+  scientific history or restored live authority. A feedback channel, with no
+  required updater or cloud telemetry.
 - **Touch gestures over the chromatogram.** The plot declares
   `touch-action: none`, so a touch drag over it scrolls nothing, and unlike a
   wheel that is a static declaration rather than a claim made per event. Closing

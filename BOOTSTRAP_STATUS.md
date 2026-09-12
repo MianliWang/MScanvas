@@ -4,9 +4,17 @@
 
 **Canonical repository:** [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas)
 
-**Visibility:** Private
+**Visibility:** Public (live API observation, 2026-09-12; initially private).
+M7.0 changed no repository visibility.
 
 **Default branch:** `main`
+
+**Current route, 2026-09-12:** M7 IN PROGRESS; implementation NOT STARTED.
+[ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md)
+accepts the first Windows x64 beta scope and implementation sequence. M7.1 —
+Localized settings and shared controls — is NEXT / NOT STARTED and requires its
+own implementation authorization. M7.0 builds/releases no public beta. The dated
+entries below retain their original milestone and validation context.
 
 ## Completed
 

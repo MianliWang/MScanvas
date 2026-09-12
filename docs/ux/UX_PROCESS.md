@@ -9,7 +9,7 @@ MSCanvas uses evidence-led product design so maintainers do not need to prescrib
 3. **Map the baseline** — document the current tool path, friction and recovery cost.
 4. **Perform hierarchical task analysis** — observable steps, decisions, feedback and failure points.
 5. **Set interaction budgets** — actions, decisions, context changes and hidden state.
-6. **Generate three structural alternatives** — different information architectures, not merely different colors.
+6. **Generate three structural alternatives** — different information architectures, not merely different colors, unless an accepted-reference continuation is recorded below.
 7. **Compare alternatives** — task paths, evidence area, discoverability, small-window behavior and recovery.
 8. **Prototype with realistic states/data** — include empty/loading/error and batch scale.
 9. **Run a cognitive walkthrough** — goal visibility, control discoverability, mapping and feedback.
@@ -26,6 +26,23 @@ At every step ask:
 2. Is the relevant control or evidence discoverable?
 3. Can the user connect it to the goal using current terminology?
 4. Does the result provide timely, unambiguous feedback and recovery?
+
+## M7 accepted-reference continuation
+
+The owner's M7.0 authorization accepts v5.11 as the reference for the existing
+viewer, converter and figure product. [ADR 0047](../architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md)
+owns its bounded production mapping, slice order and release exits. Steps 6–7
+do not restart a design competition for that scope. Keep task/baseline analysis,
+interaction budgets, recovery, cognitive walkthroughs and implementation QA.
+Historical prototype screenshots and simulated data are reference evidence only.
+
+The preflight's localized settings/dialog proof belongs to M7.1, grouped internal
+drag versus native OS drop to M7.2, and real viewer/scan/export proof to M7.3.
+Each changed consumer supplies focused rendered/native evidence; M7.6 verifies
+the installed integrated task. M7.0 runs none of these implementation proofs.
+The first consumer changing ConversionPanel/focus restoration must investigate
+[issue #112](https://github.com/MianliWang/MScanvas/issues/112) before accepting
+that flow; its root cause remains undetermined.
 
 ## Visual-pattern policy
 
