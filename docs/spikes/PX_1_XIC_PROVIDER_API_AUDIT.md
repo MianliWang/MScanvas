@@ -27,7 +27,7 @@ API surface as implementation evidence:
 | | Direction | Verdict | The one fact that decides it |
 | --- | --- | --- | --- |
 | **A** | ProteoWizard interface that does not serialize through the passive analyzers | **VIABLE for PX.2**, on a stated trust-boundary question | At the same revision `47b13cf` whose `RegionTIC.cpp:156` writes the fixed four decimals, the data layer exposes `double` arrays with their cvParams, and the installed distribution ships that layer as `pwiz_bindings_cli.dll` |
-| **B** | Mature reader or API behind a local worker | **VIABLE for PX.2**, with the unit declaration read by this project rather than by the candidate | `mzdata` decodes mzML binary arrays to raw `f64`/`f32` without rounding, is Apache-2.0 and actively maintained. **Neither it nor pwiz preserves a raw unit accession** — both normalize at parse time — but this repository's own scanner already captures one generally, and already implements the exact four-way distinction for retention time |
+| **B** | Mature reader or API behind a local worker | **VIABLE for PX.2**, with project-owned source-metadata support to be implemented | `mzdata` decodes mzML binary arrays to raw `f64`/`f32` without rounding, is Apache-2.0 and actively maintained. The inspected candidate APIs normalize unit declarations; the project's existing XML attribute loop provides a located extension point for retaining them, not an already exposed per-array metadata API |
 | **C** | Minimal aggregation over a lawful full-data source the project already reads | **NOT VIABLE for PX.2 as written** | The premise is false: this product does not read mzML arrays. Its scanner never decodes a binary payload, and its only array access is the refused provider's rounded text, one scan per process |
 
 ## C — the premise does not hold, and saying so is the finding
@@ -161,7 +161,9 @@ a `CVID`; **no raw `unitAccession` or `unitName` string is retained**, and
 So "the cvParams survive" does **not** establish that a declared-but-unrecognized
 unit can be told from an absent one, which ADR 0046 §3 subject 7 requires.
 **source-inspected**, revision `47b13cf`. The resolution is the same as B's and
-is recorded under XIC-S2 below: **this project's scanner reads the declaration**.
+is recorded under XIC-S2 below: **extend the project's metadata scanner to retain
+the source declarations beside candidate-decoded arrays**. This support does not
+exist yet.
 
 A is viable to prototype, with the trust-boundary decision preceding it. What
 PX.2 would establish is unknown here and is not claimed — whether the managed
@@ -193,7 +195,7 @@ BinaryCompressionType`, `name: ArrayType`, `params: Option<Box<Vec<Param>>>` and
 **without rounding conversion**. That is the property M5.4's measured build
 lacked. **documented**, not yet tested.
 
-**Two declaration-versus-default losses, and they do not have the same answer.**
+**Two declaration-versus-default losses require source metadata.**
 This is the part a name in a shortlist cannot tell you:
 
 - `Unit::Unknown` is simultaneously the sentinel for an unrecognized unit and the
@@ -206,13 +208,31 @@ This is the part a name in a shortlist cannot tell you:
   cannot express ADR 0046's `MsLevelUndeclared` state, which this repository's
   own scanner models as `Option<u32>`.
 
-**The two halves do not have the same answer, and the difference is the finding.**
+For the **MS level**, the pinned reader answers the API question:
+[`fill_spectrum` at v0.66.6](https://github.com/mobiusklein/mzdata/blob/v0.66.6/src/io/mzml/reader.rs#L609-L630)
+consumes the standard `ms level` parameter into `ms_level`; only its fallback
+branch retains a parameter in `params`. The builder defaults the `u8` to zero
+and moves that field and the remaining parameters separately into the spectrum
+description. **Reading `params` is therefore not a reliable declaration-presence
+recovery, and zero must not be interpreted as proof of absence.**
+**source-inspected**, `v0.66.6`, lines 535–630. The project's scanner instead
+matches `MS:1000511` and exposes `MzmlSpectrumRecord::ms_level() -> Option<u32>`
+(`mzml.rs`, lines 470–472 and 1446–1450). The proposed combination must retain
+that source-declaration distinction beside the decoded arrays; its runtime
+reconciliation is not established here.
 
-For the **MS level**, reading the spectrum's parameters rather than the
-convenience field is a plausible recovery, since an undeclared level is an absent
-cvParam rather than a normalized value. **This audit did not establish that the
-parser retains that cvParam after populating `ms_level`**, so it is a question,
-not a solution.
+**RT also needs source metadata, not a normalized convenience value.** In the
+same pinned reader, the `scan start time` branches convert seconds to minutes
+by dividing by 60 and milliseconds by 60,000; they populate `start_time` rather
+than retaining that parameter (`reader.rs:803–817,1154–1172`). Pairing this value
+with an original seconds unit would mislabel it. The project scanner currently
+checks the source RT value for finiteness but does not retain it. Future metadata
+support must therefore preserve per-scan source RT presence and value alongside
+its unit declaration, without borrowing the candidate's converted time as proof
+of the source numeric domain. **source-inspected**; no runtime behaviour tested.
+
+The `v0.66.6` source checks above bind to commit
+`4927c4e9845386239af1b4313436927354644e93`.
 
 For the **unit**, recovery through `params` **does not work**, and my first
 reading of this was wrong; the resolution is the project-owned one recorded under
@@ -226,13 +246,21 @@ as through `DataArray.unit`. **documented.**
 That is not a style question. ADR 0046 §3 subject 7 requires that **no declared
 unit may be dropped**, and the run-level refusal in §1 requires telling a declared
 unit apart from an undeclared one within a single run. A candidate that cannot
-make that distinction cannot satisfy either. `mzdata` offers no such path: its
-reader converts the attribute while parsing and
-discards the string, with no public hook for raw attributes. **source-inspected**,
+make that distinction cannot satisfy either. The standard `mzdata` mzML reader
+converts the attribute while parsing and discards the string; its output does
+not expose the raw declaration. **source-inspected**,
 `v0.66.6`. **That does not end B**, because the unit declaration does not have to
-come from the candidate — this repository's scanner already captures it. The
-separation, and its one-snapshot-two-readers consequence, are recorded under
-XIC-S2 below.
+come from the candidate. The existing XML attribute loop supplies a located
+extension point for project-owned metadata support. The required extension and
+the untested two-reader combination are recorded under XIC-S2 below.
+
+This is a finding about the standard reader's output, not the absence of every
+low-level XML API in the crate. `io/mzml/mod.rs` publicly re-exports SAX and
+builder traits, but `MzMLReaderType::_parse_into` is `pub(crate)` and its public
+`read_into` constructs the built-in `MzMLSpectrumBuilder`. Those traits do not
+make the standard read preserve raw unit attributes or expose a custom
+accumulator callback. **source-inspected**, `v0.66.6`, `mod.rs:25–36` and
+`reader.rs:1632–1637,1779–1783`.
 
 `SignalContinuity` is `{Unknown, Centroid, Profile}` with `Unknown` as default,
 so an undeclared representation is expressible — carrying the same
@@ -262,7 +290,9 @@ ADR 0046 requires, not on candidate convenience:
    attribute.** This repository's scanner classifies arrays as
    `ArrayKind::{Mz, Intensity, Time, Unrecognized}` by their controlled-vocabulary
    role. An m/z array missing a `unitAccession` is still declared an m/z array;
-   the absent attribute is a labelling fact, not an ambiguous quantity.
+   a genuinely absent unit declaration is a labelling fact, not an ambiguous
+   quantity. A missing accession alone does not establish absence: other unit
+   attributes may still be present. The distinction is specified below.
    **source-inspected.**
 2. **The honest state already exists, even though the decision does not.**
    `mscanvas-plot-spec`'s `UnitState` is `{ Known { unit }, Unreported,
@@ -271,7 +301,7 @@ ADR 0046 requires, not on candidate convenience:
    **representable without inventing a state**. **It is not an inherited
    decision**, and saying so matters: the preview crate's own single-variant
    `UnitState::NotEmitted` means the formatter emitted no unit, and the scanner
-   retains `unitAccession` only on the retention-time path. **The shipped viewer
+   retains interpreted unit information only on the retention-time path. **The shipped viewer
    therefore maps a source that declares an m/z unit and one that omits it to the
    same `Unreported`, because it never reads that declaration either way.** The
    existing behaviour supplies a representation, not a precedent. **Two distinct
@@ -288,36 +318,59 @@ differing declared units, or a declared unit beside an undeclared one, on m/z,
 retention time or intensity, remain refusals. Uniform absence on the retention
 time and intensity axes keeps its separate stated posture.
 
-**Effect on viability and on PX.3.** A candidate must be able to report that the
-unit was *not declared* rather than assert one. **Neither candidate can, and the
-resolution is not to wait for one.**
+**Effect on viability and on PX.3.** The proposed combination must report source
+declarations without substituting candidate defaults. The candidate APIs alone
+do not establish that distinction; project-owned metadata support is required.
 
 The symmetry first. pwiz's `CVParam` holds `CVID cvid`, `std::string value` and
 `CVID units`, with no raw `unitAccession` string, so `CVID_Unknown` conflates
 unrecognized with absent exactly as `Unit::Unknown` does — **source-inspected**,
-revision `47b13cf`. And `mzdata`'s mzML reader converts the attribute to a `Unit`
-while parsing and **discards the string**, exposing no public hook for raw
-attributes — **source-inspected**, `v0.66.6`. "The cvParams survive" does not
-answer this: they survive with the unit already normalized. **Both mature readers
-normalize at parse time**, which is a property of this class of library rather
-than a defect in either.
+revision `47b13cf`. And `mzdata`'s standard mzML reader converts the attribute to
+a `Unit` while parsing and **discards the string** from its returned parameters
+and arrays — **source-inspected**, `v0.66.6`. "The cvParams survive" does not
+answer this: they survive with the unit already normalized. This finding is
+limited to these inspected implementations, not every scientific reader.
 
-**This project already reads what neither of them keeps.** `capture_attributes`
-in `crates/proteowizard/src/mzml.rs` captures `unit_accession` as a raw
-`Cow<str>` on **every** cvParam it processes, and the scanner already turns that
-into the exact four-way distinction ADR 0046 needs — for retention time, as
-`RetentionTimeUnitMarker::{Second, Minute, Unrecognized, NotEmitted}`, where
-`Unrecognized` is documented *"a unit accession was emitted but is not one this
-contract recognizes"* and `NotEmitted` *"no unit accession was emitted"*. **The
-capture is general; only the consumption branch for the m/z and intensity arrays
-is missing.** **source-inspected.**
+**The existing scanner supplies an extension point, not the completed support.**
+In `crates/proteowizard/src/mzml.rs`, `capture_attributes` (lines 1775–1833)
+iterates the XML attributes and temporarily captures `unit_accession` as an
+`Option<Cow<str>>`, after XML attribute normalization. Its private
+`CapturedAttributes` does not capture `unitName` or `unitCvRef`. The array branch
+of `apply_cv_param` (lines 1462–1478) consumes roles, precision and compression,
+not units. The RT branch (lines 1487–1504) retains only interpreted run-level
+`RetentionTimeUnitMarker` values: seconds, minutes, unrecognized and not emitted.
+It drops an unrecognized accession's literal value and folds an empty or
+whitespace-only accession into `NotEmitted`. Thus even that four-way marker is
+**not a lossless declaration record**. Temporary general capture is not retained
+per-array metadata. **source-inspected**, at this audit's repository baseline.
 
-So the unit declaration is read by **this project's scanner** while the candidate
-supplies decoded arrays. That separation is open to A and B alike, uses machinery
-that already ships, and is a **narrow located extension rather than new reader
-work**. It does mean one snapshot is read twice, by two readers, which is a real
-design consequence and **PX.5's to settle** — not something this audit designs,
-and not something it claims already exists.
+**What the proposed extension must preserve.** The same attribute iterator can
+expose the source's `unitAccession`, `unitName` and `unitCvRef`; those keys are
+currently discarded or only temporarily held. Future metadata support must
+retain each attribute's presence and value, including empty values and
+unrecognized accessions, associated with its source spectrum, array and role.
+It must retain RT declarations too, rather than use the lossy marker as its unit
+authority, and retain the source RT values and declared MS-level presence
+described under B. This is a located metadata extension, not a new binary-array decoder
+and not an existing public API.
+
+For XIC-S2, **undeclared means all unit attributes are absent**, not merely that
+`unitAccession` is absent, empty or unrecognized. An empty accession, or
+`unitName`/`unitCvRef` without an accession, is an incomplete declaration and must
+be refused under subject 7's invalid-input boundary, with the observed attributes
+retained; it must not enter the served-as-unreported case. A nonempty unknown
+accession remains a declared value, preserved literally rather than replaced by
+a default. No declared information may be discarded to make a source appear
+uniformly undeclared. This applies the existing no-inference and no-dropped-unit
+rules; it does not convert units or relax the mixed-unit refusal.
+
+The proposed combination uses this metadata support beside A's or B's decoded
+arrays. **Neither the extension nor the combination has been implemented or
+tested.** PX.1 locates the API path; a separately authorized PX.2 prototype would
+have to exercise it while computing the query. Scan-identity reconciliation and
+proof that both readers consumed the same snapshot are untested. PX.3 retains
+its evidence subjects, and PX.5 retains the production snapshot, revalidation
+and runtime boundaries in ADR 0046; this audit does not design them.
 
 PX.3 scores subject 7's missing-m/z-unit fixture against
 **preserved-as-unreported**, which is now the fixed expected result rather than a
@@ -331,7 +384,9 @@ Stated so nothing here is read as more than it is. **Not yet tested:** whether
 either viable candidate computes a correct window sum; any numeric agreement with
 an oracle; any latency or memory figure; whether the managed binding can be
 hosted in a project-owned worker at all; whether `mzdata` builds on this
-toolchain; cancellation, resource limits and stale-reply behaviour, which remain
+toolchain; preservation of complete source declarations by the proposed metadata
+extension, scan-identity agreement and identical-snapshot consumption across the
+two readers; cancellation, resource limits and stale-reply behaviour, which remain
 PX.5's to establish; and every one of ADR 0046 §3's nine evidence subjects, which
 are PX.3's.
 
@@ -347,16 +402,17 @@ B needs no trust-boundary decision to begin. It is **not part of PX.1's
 deliverable and binds nothing**, and it is not a ranking of accuracy or
 performance, neither of which was measured.
 
-Neither row carries the unit question: PX.1 answered it, and the answer is that
-**this project reads the declaration**. These are **falsification experiments,
+PX.1 locates the source-metadata path and its missing implementation; it does not
+leave discovery of a candidate raw-unit API to PX.2. The proposed metadata support
+still needs runtime verification. These are **falsification experiments,
 not PX.2's acceptance bar**: ADR 0046
 makes PX.2 acceptance *“the prototype computes the §1 query on a fixture whose
 oracle already exists”*, which is strictly more than any row below.
 
 | Direction | Smallest experiment that could falsify viability | Permission it needs |
 | --- | --- | --- |
-| **B** | Decode one committed synthetic fixture's arrays through `mzdata` and read back index, id, MS level and retention time, **while the project's own scanner supplies the unit declarations** — confirming the two readers agree on scan identity over one snapshot | Approval to add `mzdata` as a prototype-only dependency, outside the shipped product |
-| **A** | Load `pwiz_bindings_cli.dll` from the user's existing installation in a throwaway host and call `spectrum(index, true)`, confirming `double` arrays and scan identity, **with the unit declarations again supplied by the project's scanner** | **A trust-boundary decision** on loading that distribution's assemblies into a process MSCanvas owns, plus whatever .NET runtime the host needs |
+| **B** | Decode one committed synthetic fixture's arrays through `mzdata` and read back index, id, MS level and retention time, with the proposed project-owned metadata extension retaining source declarations; verify declaration preservation and scan identity over one snapshot | Approval to add `mzdata` as a prototype-only dependency, outside the shipped product |
+| **A** | Load `pwiz_bindings_cli.dll` from the user's existing installation in a throwaway host and call `spectrum(index, true)`, confirming `double` arrays and scan identity, with the same proposed metadata support and declaration-preservation check | **A trust-boundary decision** on loading that distribution's assemblies into a process MSCanvas owns, plus whatever .NET runtime the host needs |
 | **C** | None. Not carried forward | — |
 
 No new representative acquisition is requested by this slice. The two MS1

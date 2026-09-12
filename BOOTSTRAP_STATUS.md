@@ -8248,7 +8248,10 @@ states and does not decide**.
 **XIC-S2 is closed at its source in ADR 0046**: a source whose m/z unit is
 uniformly undeclared is served, with the unit preserved as unreported. It
 licenses no inference, default or conversion, and leaves the mixed-unit refusal
-untouched.
+untouched. Genuine absence is distinguished there from an empty, incomplete or
+unrecognized declaration. The audit locates future project-owned metadata
+support for A and B; complete declaration retention and reconciliation with
+candidate-decoded arrays have not been implemented or tested.
 
 **Validation.** `python -B scripts/check_repo.py` and `git diff --check` on the
 branch head. No four-viewport sweep, native suite, scientific rerun or benchmark:
