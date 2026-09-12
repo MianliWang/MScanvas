@@ -12,7 +12,7 @@ MSCanvas aims to be a Windows-first, local-first desktop application for importi
 > build evidenced for it. It is not yet the batch workspace described under
 > [Product scope](#product-scope).
 
-Canonical repository: [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas) (currently private).
+Canonical repository: [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas) (public; visibility verified 2026-09-12).
 
 ## What works today
 
