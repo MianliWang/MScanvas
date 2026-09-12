@@ -122,5 +122,8 @@ function initializeLocalInstance(usable: { en: unknown; "zh-CN": unknown }): i18
 
 export function restoreLocalBundle(instance: i18n, locale: UiLocale): void {
   validateBundle(locale, UI_RESOURCES[locale]);
+  // Neither shallow nor deep addResourceBundle removes unexpected old keys.
+  // Callers guard their own recovery notifications around this replacement.
+  instance.removeResourceBundle(locale, "ui");
   instance.addResourceBundle(locale, "ui", structuredClone(UI_RESOURCES[locale]), true, true);
 }

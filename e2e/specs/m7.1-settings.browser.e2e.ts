@@ -13,7 +13,7 @@ const evidence: unknown[] = [];
 let output = "";
 
 async function openSettings() {
-  await browser.$("[data-settings-entry]").scrollIntoView({ block: "center" });
+  await browser.execute(() => document.querySelector("[data-settings-entry]")!.scrollIntoView({ block: "nearest" }));
   await browser.$("[data-settings-entry]").click();
   await browser.$(DIALOG).waitForDisplayed();
 }
@@ -35,13 +35,14 @@ async function cdp(cmd: string, params: Record<string, unknown>) {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ cmd, params }),
   });
-  const result = await response.json() as { value?: { error?: string } };
+  const result = await response.json() as { value?: Record<string, unknown> };
   if (!response.ok || result.value?.error) throw new Error(`Chrome command refused: ${JSON.stringify(result)}`);
+  return result.value ?? {};
 }
 
 async function metrics(width: number, height: number, dpr = 1) {
   await cdp("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: dpr, mobile: false, screenWidth: Math.round(width * dpr), screenHeight: Math.round(height * dpr) });
-  await browser.waitUntil(() => browser.execute((w, h) => innerWidth === w && innerHeight === h, width, height));
+  await browser.waitUntil(() => browser.execute((w, h, scale) => innerWidth === w && innerHeight === h && devicePixelRatio === scale, width, height, dpr));
 }
 
 async function connectivityProbe(label: string) {
@@ -55,7 +56,7 @@ async function connectivityProbe(label: string) {
   return result.reached;
 }
 
-async function capture(label: string) {
+async function capture(label: string, expectedDpr?: number) {
   const state = await browser.execute(() => {
     const dialog = document.querySelector<HTMLElement>("[data-settings-dialog]");
     const rect = dialog?.getBoundingClientRect();
@@ -72,7 +73,20 @@ async function capture(label: string) {
       externalResources: performance.getEntriesByType("resource").map(entry => entry.name).filter(url => /^https?:/u.test(url) && new URL(url).origin !== location.origin),
     };
   });
-  evidence.push({ label, kind: "browser mock IPC; CDP DPR emulation, browser zoom 100%; not Windows scaling", ...state });
+  // Capture the existing Chrome session directly and measure before/after.
+  // The earlier interaction/capture sequence did not retain its requested DPR.
+  const shot = await cdp("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false });
+  if (typeof shot.data !== "string") throw new Error("Chrome did not return screenshot bytes.");
+  const png = Buffer.from(shot.data, "base64");
+  const raster = { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
+  const afterScreenshot = await browser.execute(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio }));
+  evidence.push({ label, kind: "browser mock IPC; CDP DPR emulation, browser zoom 100%; not Windows scaling", ...state, raster, afterScreenshot });
+  writeFileSync(join(output, `${label}.png`), png);
+  expect(png.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+  expect(afterScreenshot).toEqual({ ...state.cssViewport, dpr: state.devicePixelRatio });
+  if (expectedDpr !== undefined) expect(state.devicePixelRatio).toBe(expectedDpr);
+  expect(Math.abs(raster.width - state.cssViewport.width * state.devicePixelRatio)).toBeLessThanOrEqual(1);
+  expect(Math.abs(raster.height - state.cssViewport.height * state.devicePixelRatio)).toBeLessThanOrEqual(1);
   if (state.dialog) {
     expect(state.dialog.left).toBeGreaterThanOrEqual(0);
     expect(state.dialog.top).toBeGreaterThanOrEqual(0);
@@ -81,7 +95,6 @@ async function capture(label: string) {
     expect(state.dialog.scrollWidth).toBeLessThanOrEqual(state.dialog.clientWidth + 1);
   }
   expect(state.externalResources).toEqual([]);
-  await browser.saveScreenshot(join(output, `${label}.png`));
   return state;
 }
 
@@ -187,7 +200,7 @@ describe("M7.1 localized Settings and real shared consumers", () => {
 
   it("keeps Settings readable across four viewports and explicit 100/125/150/200 percent DPR emulation", async () => {
     await loadWorkspace();
-    await openSettings();
+    await browser.$("#chromatogram-export-toggle").click();
     const cases = [
       [1366, 768, 1], [1920, 1080, 1], [960, 640, 1], [1200, 800, 1],
       [1093, 614, 1.25], [1280, 720, 1.5], [480, 320, 2],
@@ -195,25 +208,52 @@ describe("M7.1 localized Settings and real shared consumers", () => {
     for (let index = 0; index < cases.length; index++) {
       const [width, height, dpr] = cases[index];
       await metrics(width, height, dpr);
+      await openSettings();
       await cdp("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: dpr === 2 ? "reduce" : "no-preference" }] });
       await choose(index % 2 === 0 ? "zh-CN" : "en");
-      await capture(`layout-${width}x${height}-dpr-${dpr}`);
+      await capture(`layout-${width}x${height}-dpr-${dpr}`, dpr);
       // Scroll the dialog's own surface and reach its last action by keyboard.
       for (let step = 0; step < 8; step++) await browser.keys("Tab");
       expect(await browser.execute(() => document.querySelector("[data-settings-dialog]")?.contains(document.activeElement))).toBe(true);
       if (dpr === 2) {
-        await browser.$(DIALOG).$(`button=${zh.apply}`).scrollIntoView({ block: "center" });
+        await browser.execute(() => document.querySelector(".settings-dialog-actions .primary-button")!.scrollIntoView({ block: "center" }));
         const visible = await browser.execute(() => {
           const target = document.querySelector<HTMLElement>(".settings-dialog-actions .primary-button")!;
           const rect = target.getBoundingClientRect();
           return rect.top >= 0 && rect.bottom <= innerHeight;
         });
         expect(visible).toBe(true);
-        await capture("layout-480x320-dpr-2-footer");
+        await capture("layout-480x320-dpr-2-footer", dpr);
       }
+      await press(index % 2 === 0 ? zh.apply : en.apply);
+      await returned();
+      // Both actual field instances must remain pointer/focus reachable at the
+      // same scale after modal return, including their existing scroll owners.
+      for (const panel of [".spectrum-panel", ".chromatogram-export-panel"]) {
+        const input = browser.$(`${panel} input[id$="-widthPx"]`);
+        // The pinned WDIO helper wheels at viewport (0, 0), outside these
+        // nested scrollports. Use the DOM scroll operation, then a real click.
+        await browser.execute((selector) => document.querySelector(`${selector} input[id$="-widthPx"]`)!.scrollIntoView({ block: "center" }), panel);
+        await input.click();
+        const field = await browser.execute((selector) => {
+          const input = document.querySelector<HTMLInputElement>(`${selector} input[id$="-widthPx"]`)!;
+          const rect = input.getBoundingClientRect();
+          return { focused: document.activeElement === input, dpr: devicePixelRatio, fontSize: getComputedStyle(input).fontSize,
+            rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right },
+            scrollOwners: [...(function* () { for (let node = input.parentElement; node; node = node.parentElement) yield node; })()]
+              .filter(node => node.scrollHeight > node.clientHeight)
+              .map(node => ({ className: node.className, scrollTop: node.scrollTop, clientHeight: node.clientHeight, scrollHeight: node.scrollHeight, overflow: getComputedStyle(node).overflow })),
+            visible: rect.top >= 0 && rect.bottom <= innerHeight && rect.left >= 0 && rect.right <= innerWidth };
+        }, panel);
+        evidence.push({ kind: "scaled shared consumer", panel, width, height, expectedDpr: dpr, ...field });
+        if (!field.visible) await capture(`consumer-diagnostic-${width}x${height}-${panel.slice(1)}`, dpr);
+        expect(field.focused).toBe(true);
+        expect(field.visible).toBe(true);
+        expect(field.dpr).toBe(dpr);
+        expect(field.fontSize).toBe("13px");
+      }
+      await capture(`consumers-${width}x${height}-dpr-${dpr}`, dpr);
     }
-    await browser.keys("Escape");
-    await returned();
     await metrics(1366, 768);
   });
 

@@ -6,7 +6,7 @@ import { PreviewApiProvider } from "../mzml-preview/api";
 import { WorkspaceDropTransportProvider } from "../mzml-preview/dropTransport";
 import type { SelectedSpectrumOutcome } from "../mzml-preview/contracts";
 import { availableBackend, unavailableBackend, buildSpectrum, createFakePreviewApi, createFakeWorkspaceDropTransport, deferred, type FakePreviewApi } from "../../test/previewFixtures";
-import { createUiRuntime, UI_RESOURCES, type UiRuntime } from "./i18n";
+import { createUiRuntime, UI_RESOURCES, validateBundle, type UiRuntime } from "./i18n";
 
 const en = UI_RESOURCES.en;
 const zh = UI_RESOURCES["zh-CN"];
@@ -181,6 +181,55 @@ describe("session Settings in the real application composition", () => {
     press(dialog, en.cancel);
     expect(document.documentElement.lang).toBe("zh-CN");
     expect(density()).toBe("compact");
+  });
+
+  it.each(["removed", "empty"] as const)("recovers an active %s bundle without a key dump or abandoned preview", async (fault) => {
+    const runtime = createUiRuntime();
+    const api = createFakePreviewApi({ availability: unavailableBackend });
+    mount(api, runtime);
+    await screen.findByText("ProteoWizard is not available");
+    await waitFor(() => expect(api.calls()).toContain("readConversionConfiguration"));
+    let dialog = openSettings();
+    choose(dialog, en.simplifiedChinese);
+    choose(dialog, zh.compact);
+    press(dialog, zh.apply);
+    dialog = openSettings();
+    if (fault === "removed") {
+      choose(dialog, zh.english);
+      choose(dialog, en.comfortable);
+    }
+    const calls = [...api.calls()];
+    await act(async () => {
+      if (fault === "removed") runtime.instance.removeResourceBundle("en", "ui");
+      else runtime.instance.addResourceBundle("zh-CN", "ui", { settings: "" }, true, true);
+    });
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    expect(dialog).toHaveAccessibleName(zh.settings);
+    expect(document.documentElement.lang).toBe("zh-CN");
+    expect(density()).toBe("compact");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(fault === "removed" ? "RESOURCE_MISSING" : "RESOURCE_EMPTY");
+    expect(within(dialog).getByRole("button", { name: zh.apply })).toBeDisabled();
+    press(dialog, zh.recover);
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+    expect(within(dialog).getByRole("button", { name: zh.apply })).toBeEnabled();
+    expect(api.calls()).toEqual(calls);
+  });
+
+  it("replaces an invalid bundle exactly so recovery does not retain unexpected keys", async () => {
+    const runtime = createUiRuntime();
+    mount(createFakePreviewApi({ availability: unavailableBackend }), runtime);
+    await screen.findByText("ProteoWizard is not available");
+    const dialog = openSettings();
+    await act(async () => { runtime.instance.addResourceBundle("zh-CN", "ui", { unexpected: "Injected unexpected key" }, true, true); });
+    choose(dialog, en.simplifiedChinese);
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("RESOURCE_KEYS");
+    press(dialog, en.recover);
+    expect(() => validateBundle("zh-CN", runtime.instance.getResourceBundle("zh-CN", "ui"))).not.toThrow();
+    choose(dialog, en.simplifiedChinese);
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+    press(dialog, zh.apply);
+    expect(within(openSettings()).queryByRole("alert")).toBeNull();
+    expect(document.documentElement.lang).toBe("zh-CN");
   });
 
   it("keeps both figure instances, raw drafts, caret and error targets across a locale preview", async () => {

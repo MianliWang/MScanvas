@@ -64,7 +64,11 @@ completion cannot revive a cancelled preview. `document.lang` follows the same
 projection. Invalid input bundles and initialization faults retain an observable
 error beside independently validated baseline resources. Supported-bundle faults
 retain applied preferences and expose Restore bundled resources; Apply stays
-unavailable until recovery. Unknown figure reasons display their structured code
+unavailable until recovery. The provider observes active resource-store changes,
+including faults that occur while Settings is already open. Recovery replaces
+the namespace exactly and validates read-back before declaring success; it does
+not deep-merge unexpected keys into a supposedly repaired bundle.
+Unknown figure reasons display their structured code
 with a neutral localized message, without matching English error text.
 
 ## Approved dependency cohort
@@ -88,8 +92,8 @@ was added or enabled. Development `prepare` declarations are recorded separately
 Intentional exact-pin install and subsequent `pnpm install --frozen-lockfile`
 passed under pnpm 11.15.1. No unrelated version, toolchain or lock resolution was
 changed. The `expect-webdriverio` 6.0.10 versus `@wdio/globals` ^5.6.5 peer warning
-is present in the saved pre-install lock. Vite's current 518.38 kB JS bundle emits
-its >500 kB advisory; it was not hidden or converted into a build failure.
+is present in the saved pre-install lock. Vite's frontend bundle emits its
+>500 kB advisory; it was not hidden or converted into a build failure.
 `dependency-closure-proof.json` and the registry/distribution records hold the
 complete graph and compatibility details. This is not binary-distribution QA.
 
@@ -121,14 +125,18 @@ post-picker forced focus is accepted as that proof.
 Raw logs retain actual exits and all earlier failures. Frontend full-suite attempt
 1 had five stale-contract/settlement assertions and one LinkedViewer 5s timeout.
 The affected 56-test run passed after updating real consumer assertions. The
-complete suite then passed with two workers: 73 files / 1723 tests, unchanged
-scope, assertions and timeouts. The timeout's precise historical cause is not
+complete suite then passed with two workers: 73 files / 1723 tests. Adding the
+three demonstrated resource regressions brought the repaired full suite to
+73 files / 1726 passing tests, without weakening assertions or timeouts.
+The timeout's precise historical cause is not
 declared environment-only. Focused resource, draft, IME, async-work, no-extra-read,
 numeric/canonical and uniqueness tests use real resources and isolated runtimes.
 
-Lint, typecheck, frontend build, e2e typecheck and Rust fmt/clippy/tests have
-passed during implementation; final candidate attribution and repository/diff
-checks remain to be recorded. Rust behavior was not changed by this UI slice.
+Lint, typecheck, frontend build, e2e typecheck, repository/diff checks and Rust
+fmt/clippy/tests passed on the original implementation candidate. The review
+delta's final gates and build attribution are retained in the external checkpoint.
+Rust sources, manifests and toolchain are unchanged from the baseline, explicitly
+binding the earlier Rust results to this slice; no new Rust behavior is claimed.
 
 Browser attempt 1 exposed the pinned WDIO `btoa` preload's Unicode limitation.
 The existing harness now JSON-escapes UTF-16 code units for transport and parses
@@ -143,9 +151,28 @@ CDP networking was offline, and reached it after restoration. Both locales and
 preference changes worked during that actual disconnection, with no external
 resource entries or application console errors. The earlier `navigator.onLine`
 preload is not counted as disconnected networking. Final screenshots were
-inspected, including the shared numeric error, CJK layout and the scrolled 200%
-emulation footer with reachable actions; the recorded reduced-motion dialog has
-no animation. Browser-service warnings remain distinct from application errors.
+inspected, including the shared numeric error and CJK layout. Review found that
+the old footer capture had reverted to DPR 1 despite its DPR 2 label: it proves
+480 x 320 CSS reflow, not 200% capture or interaction. The repaired suite measures
+DPR before and after direct Chrome capture and records the PNG's actual raster
+dimensions. The new consumer scale assertions passed in the repaired run below.
+The recorded reduced-motion dialog has no animation. Browser-service warnings
+remain distinct from application errors.
+
+The independent review's three P2 findings were accepted: active-bundle faults,
+inexact recovery and overstated DPR evidence. New controlled resource tests first
+failed three assertions on the original candidate, then passed after repair.
+The repaired rendered run (`browser-Gh2v9E`) passed all three groups. Its 14
+shared-consumer records verify both inputs' real pointer focus, visible rectangles
+and unchanged 13px type at every viewport/scale. Before/after DPR and actual PNG
+dimensions now agree, including a 960 x 640 footer image at DPR 2. These final
+images were inspected. The strengthened checks also exposed the pinned WDIO
+scroll helper's viewport-origin wheel behavior; the test uses DOM scrolling into
+the actual owner followed by a real click, without forcing focus. A measured
+fractional-edge clipping case led to an 8px shared numeric scroll margin, retaining
+the focus ring rather than weakening the geometry assertion. Earlier failing
+runs and their diagnostics remain retained. The object-bound review verdict and
+final candidate attribution are retained in the external checkpoint.
 
 | Browser CSS viewport | DPR emulation | Coverage |
 | --- | --- | --- |
@@ -155,7 +182,7 @@ no animation. Browser-service warnings remain distinct from application errors.
 | 1200 x 800 | 1 | English intermediate layout |
 | 1093 x 614 | 1.25 | Approximate 1366 x 768 physical-pixel presentation |
 | 1280 x 720 | 1.5 | 1920 x 1080 physical-pixel presentation |
-| 480 x 320 | 2 | 960 x 640 presentation, single-column dialog, scrollable footer/reduced motion |
+| 480 x 320 | 2 | Single-column dialog, scrolled footer/reduced motion and both shared consumers; actual raster 960 x 640 |
 
 Browser zoom and CSS zoom remain 100%; these DPR cases are **not Windows scaling
 or physical-device evidence**. Actual Windows input desktop was readable as
@@ -180,7 +207,7 @@ PNG and canonical argv-independent numeric settings, then cancels the real
 conversion folder picker and checks natural return. Sources and new outputs are
 retained. No scientific data acquisition or mock provider success is substituted.
 
-Required closeout still includes attributable native success, one isolated
-read-only full-diff review and dispositions, final gates, protected reviewed-head
-true merge, ordered-parent/tree proof, natural main push CI and ff-only local
-cleanup. Until those complete, **M7.1 is not complete**.
+Publication still requires attributable native success and GO from the final
+gates and review dispositions, followed by protected reviewed-head true merge,
+ordered-parent/tree proof, natural main push CI and ff-only local cleanup.
+Until those complete, **M7.1 is not complete**.
