@@ -666,8 +666,10 @@ guard had been unable to see.
 ## Post-M6 XIC Provider / Runtime Interlude
 
 **Entered. `PX.0 COMPLETE`; `PX.1 COMPLETE`; the separately authorized PX.2
-B-only prototype scope is complete. PX.3 is not started and requires separate
-authorization and evaluation-scope confirmation.** The route is locked by
+B-only prototype scope is complete. Separately authorized PX.3 B-only evidence is
+recorded with an applicable candidate failure and required evidence missing; the full
+matrix is incomplete. PX.4 is not started and requires separate authorization.**
+The route is locked by
 [ADR 0046](docs/architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md),
 which is the single owner of the slice dependencies, the evidence matrix and the
 four PX.4 outcome branches. **What follows is a pointer, not a second
@@ -695,6 +697,13 @@ not prototyped and not rejected; C's disposition is unchanged. See
 [the bounded B-only record](docs/spikes/PX_2_XIC_BOUNDED_PROTOTYPES.md) for the
 exact lock, pre-run oracle, observed results and limits. Production XIC remains
 unimplemented, and M7 has not started.
+
+**PX.3 fixed S3/S4 before scoring and recorded B-only evidence.** All thirty
+named cases pass, while legal namespace-prefixed mzML fails for the pinned reader.
+The original lowint/duprt bytes and owner-approved MS1 profile/centroid representative
+inputs/references remain missing. See [the evidence and exact gaps](docs/spikes/PX_3_XIC_COMPARATIVE_EVIDENCE.md).
+This is an evidence-blocked handoff for a separately authorized PX.4, not a PX.4
+outcome. A remains viable, not prototyped, not rejected and outside this evaluation.
 
 ## M7 — UI/UX and public product hardening
 
