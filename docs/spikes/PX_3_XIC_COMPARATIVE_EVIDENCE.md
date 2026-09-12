@@ -1,22 +1,22 @@
 # PX.3 — Direction B evidence, with a bounded evaluation set
 
-Status: **evidence recorded; required evidence missing. Full matrix incomplete.**
-Date: 2026-09-12. Product baseline: `39955ebb4c5ca8885bf9507dd07a3704ed0f2aff`.
+Status: **authorized scientific matrix complete; B fails the defined scientific checks.**
+Date: 2026-09-12. Initial product baseline: `39955ebb4c5ca8885bf9507dd07a3704ed0f2aff`.
+Approved-input supplement baseline: `6fc680405e9805c3dae8430d9f57227f553520e6` (PR #116).
 
-The final standalone B candidate passes all **30 ADR named cases**, but fails one
-applicable legal namespace-prefixed mzML input. Four required evidence rows remain
-missing. This is a scientific evidence report with a negative result and named
-input gaps, **not full PX.3 PASS, a PX.4 outcome or provider admission**.
+The unchanged final standalone B candidate has **76 PASS / 1 FAIL / 0 MISSING**
+across all 77 ledger rows, including three passing fault controls. All **30 ADR
+named cases pass**. The applicable legal namespace-prefixed mzML case still fails;
+this complete evidence matrix does not make B a passing candidate or admit a provider.
+The two representative file approvals arrived after the initial evidence-gap record
+was merged. That history and its immutable archive are retained below; the authorized
+supplement fills only the four formerly missing rows with newly obtained evidence.
 
-**The owner explicitly selected only B for this evaluation. A remains viable,
-not prototyped and not rejected; it is outside this evaluation set.** No comparison
-establishes that B is better than A. C's earlier disposition is unchanged. A later
-PX.4 decision must consume this declared evaluation set and the missing evidence;
-it cannot count A as failed or exhausted. PX.4 requires separate authorization.
-The ADR prerequisite explicitly accepts this published terminal missing-evidence
-handoff for the owner-authorized B-only evaluation, consistent with its existing
-missing-evidence-first route. This closes the prerequisite wording gap without
-calling the incomplete matrix a completed/PASS experiment or issuing PX.4's outcome.
+**The owner explicitly selected only B. A remains viable, not prototyped and not
+rejected; it is outside this evaluation set.** There is no comparative superiority
+finding. PX.4 must name this evaluation set and consume the actual evidence; it cannot
+count A as failed or exhausted. PX.4 and its provider/practicality decision require
+separate authorization. S1/D4/D5 and all other decision owners remain unchanged.
 
 [ADR 0046](../architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md)
 remains the route/semantic owner. The [PX.1 audit](PX_1_XIC_PROVIDER_API_AUDIT.md)
@@ -24,7 +24,149 @@ and [PX.2 prototype record](PX_2_XIC_BOUNDED_PROTOTYPES.md) are unchanged.
 [M5.4](M5_XIC_SOURCE_EVIDENCE.md) supplies the inherited input identities and the
 old executable's refusal, not this candidate's scientific or resource evidence.
 
-## Recovered baseline and final candidate identity
+## Approved-input supplement and complete evidence
+
+PR #116 published the honest initial 72 PASS / 1 FAIL / 4 MISSING record at
+`6fc680405e9805c3dae8430d9f57227f553520e6`, with its actual two-parent/tree proof,
+natural main CI and ff-only/task-branch closeout verified. The owner subsequently
+approved both exact representative requests and directed the task to recover the
+inherited inputs. The supplement was prepared in a separate owned scratch; no old
+archive, old result or frozen scientific rule was overwritten.
+
+The supplement froze at **2026-09-12T07:08:39.670038Z**, before any of its candidate
+invocations. `protocol/SUPPLEMENT-FROZEN.json` binds 43 files; its SHA256 is
+`3de43a2b748ad9001f2ff9c628773f8669363b449bc4b8fa5956ea8fc0f3967a`.
+The supplement protocol SHA256 is
+`4bc66a30dc53f8482288874e8d713cfd8a34af4103af9d6d4d28a7d614bb4747`,
+its four-row ledger is `6a754c4c0c83fd25088fb91d5ef3d4634a59531c4dc2dacc32055a79e46be813`,
+and its independent answers are
+`4ef2a622db92ab93bca6b357a96cff5368bf701081c8f6f3c26e7210a225e41e`.
+The original protocol, oracle, comparator, full lock, final source and executable
+remain byte-identical to the identities below. No rebuild or fresh dependency
+resolution was needed. Two isolated read-only reviewers admitted the bound protocol,
+source roles, arithmetic/reference independence and provenance before scoring.
+
+Only the four formerly missing rows were run: two serial repeats each for lowint
+and duprt, three each for profile and centroid. **All ten pass.** The other 73 rows
+are retained results of the identical repaired-v1 executable; passing baseline-build
+results are never substituted. The supplemental runner SHA256 is
+`940114fa909d583fa63a686f887019f89ad6e561de29fe7b2109cd6c44435475`;
+it imports the unchanged independent oracle and comparison/OS-memory helpers.
+
+### Obtained inputs and their provenance
+
+| Required row | Actual bytes and SHA256 | Obtained evidence |
+| --- | --- | --- |
+| inherited lowint | 14,540; `e00e390a33d4028e638897f8abc3f608d2b2e9ff1a579f30b7f07468743680da` | 8 MS1 scans; [100,101]; exact source values and point counts pass twice |
+| inherited duprt | 10,023; `87731cb1c49a2d4398d282365dc846e21fd095e4e0d49424ecd356b0e4b6c548` | 5 MS1 scans; [500,502]; duplicate/non-monotonic RT preserves separate identities and sums twice |
+| MS1 profile | 17,703,110; `fc019c5a7c7dd657d19d9a163a55d490db6eea55be7588799ae2618ab6c39a8b` | 931 source-declared MS1 Profile scans, 1,679,804 selected points; [105,134]; all 931 sums nonzero; three agreements |
+| MS1 centroid | 39,965,112; `880678820f34af2b7b7af6c0879e0c196cb1ed658da04b50ea1c141cbc67b713` | 4,627 source-declared MS1 Centroid scans plus 2,975 MS2 exclusions; [100,102] selects 11,090 points, 4,625 nonzero sums; three agreements |
+
+The original physical lowint/duprt files are still absent. The original M5.4 session
+retains complete `Write` records for two deterministic generators and independent
+historical output size/hash records. Each **unmodified historical generator was
+executed once** into the supplement scratch. The actual resulting byte lengths and
+SHA256 matched the two historical identities exactly. This recovers identical content,
+not the old physical files, and inherits **no historical scientific result**.
+No script or output was adjusted to chase a hash. Generator content SHA256:
+`make_lowint.py` (5,397 bytes)
+`45513105a483ee67b4b2f445c51e5464cb5c74215bf2923380d9b5f3c4476984`;
+`make_duprt.py` (6,913 bytes)
+`f6eb4991f6b98eac0aa2c372c2b039419ebd810320257dd03f730c220ae61071`.
+The original output proofs are timestamped 2026-08-30T02:54:01.522Z and
+2026-08-30T07:41:48.319Z. Preserved extracts, original script content, fresh commands,
+outputs and computed digests are in the supplement's `provenance/` directory.
+The scripts only use stdlib constants/base64/struct and write UTF8/LF XML; no old
+provider, msaccess, .NET or measurement campaign was invoked.
+
+The owner approved the exact [profile file](https://zenodo.org/records/20729183)
+and [PestMix centroid file](https://zenodo.org/records/20729093) previously requested
+below. Downloads matched their published sizes and MD5 values; independent SHA256
+identities are above. Both are CC-BY-SA-4.0: profile attribution Johannes Rainer,
+Sigurdur Smarason and Giuseppe Paglia; centroid attribution Michael Witting and
+Johannes Rainer. Source declarations, rather than the filenames, establish both
+roles. The profile query was bound to its publicly described m/z105–134 subset
+before payload inspection/scoring; the initial [100,102] placeholder was outside
+that subset. The original protocol explicitly allows file-specific acquisition/query
+binding before a row's first run. No scientific rule or threshold changed. The
+centroid query and both inherited queries retain their original ledger operands.
+
+Fresh source-only ElementTree/base64/zlib/struct/Fraction answers preceded every
+supplemental candidate run. All source scans are reconciled. The centroid file's
+1,158,865 declared MS1 array elements yield 11,090 window points; MS2 scans remain
+explicit exclusions with no array decode. The candidate makes exactly 931 profile
+or 4,627 centroid decode attempts per run. Profile remains a point sum, not an area.
+
+### Resource observations at these two file scales
+
+The unchanged dev/debug Windows MSVC executable ran serially. Wall time spans
+process launch through file reading, metadata and pinned-reader traversal, selected
+array decode/query, stdout and original-snapshot serialization; independent oracle
+work and subsequent comparison are outside it. Peak is the process's final Windows
+`GetProcessMemoryInfo.PeakWorkingSetSize` high-water resident working set, not system
+RAM or a guessed sampling maximum. Every run retained exit, stderr, host, size,
+OS peak and source-matching snapshot; no timeout or missing metric occurred.
+
+| Source | Three wall times (seconds) | Three final OS peaks (bytes) |
+| --- | --- | --- |
+| representative_profile | 2.104389 / 2.057480 / 2.137877 | 219738112 / 219721728 / 219738112 |
+| representative_centroid | 8.563209 / 8.305431 / 8.012550 | 683020288 / 682995712 / 683016192 |
+
+Host: `Windows-11-10.0.26200-SP0`, processor `Intel64 Family 6 Model 154 Stepping 3, GenuineIntel`. The 300-second
+watchdog is operational protection, not a performance requirement. The profile file
+is a publisher-defined m/z105–134 / RT0–260-second subset. These observations do not
+establish bounded production memory, large-acquisition performance or an acceptable
+latency budget. **Practicality remains PX.4's decision and has not been decided.**
+
+### Current complete denominators and archive
+
+The same 77-row ledger now has 76 PASS, one applicable FAIL and no MISSING rows:
+73/74 normal scientific rows pass and all three fault controls behave as expected.
+All 30 named cases pass. All **153 planned invocations** are now executed; 151 pass
+and the two prefixed repeats fail. **74/74 canonical repeat groups agree**, including
+that repeatable wrong refusal. There are 380 explicit assertion groups (306 outcome
+and snapshot groups, plus 74 repeat groups); 378 pass and two scientific comparisons
+fail. The 77 input paths comprise 71 task synthetic, four inherited and two representative
+paths, with 70 distinct source hashes. The expected source inventory once across
+case rows is 44,986 records, **not 44,986 measured MS1 XIC points**.
+
+`evidence/combined-summary.json` and the final ledger below derive these counts from
+the original and supplemental ledgers/results, independently of returned-success rows.
+The original case ledger and its 30 named cases are unchanged; only its four missing
+rows gain file/reference/query bindings and located results. The task's explicit
+pre-execution instruction included determining indexed/prefixed-root and multi-scan
+applicability. The legal prefixed row stays a scored reader limitation, not N/A.
+
+The supplement archive is
+`D:/MSCanvas-PX3-Representatives-20260912/px3-approved-input-evidence-v2.zip`:
+**102,171,819 bytes; SHA256 `74194d5f44202e839fb33c00c91bde0bc22302e0a42ea22eda5dfda0f75c431d`**.
+All 107 ZIP entries were read back against the manifest, whose SHA256 is
+`1f36b1ca1a4a2c5cda30d52e95fa2866c90f0c1a06c7c76e5fc6e3e8d9450819`. It preserves the unchanged candidate source/executable/lock,
+references, source inventories, all four inputs, pre-run freeze, fresh provenance,
+all ten stdout/stderr/snapshot/science/diagnostic records and the combined ledger.
+Together with the unchanged initial archive below, it locates every matrix result.
+Both remain local, as authorized; no public download or redistribution is claimed.
+Publication reviews and actual merge/main-CI/local-closeout evidence are separate
+appendable sidecars and the follow-up PR's publication record.
+
+Final evidence review found that the initial combined-summary derivation retained
+obsolete `availability` keys by updating old missing rows. The corrected derivation
+selects each complete frozen supplement row instead. All raw scores, frozen bindings,
+counts and resource observations are unchanged; no candidate was rerun. The first
+supplement archive is preserved as superseded (`px3-approved-input-evidence.zip`,
+102,156,474 bytes, SHA256
+`1d28ea0d6aaec3b153db216fac13821192300daa8d4eb34ea50d6d7a4bc7a64a`).
+The current v2 archive contains the corrected combined record, explicit correction
+history and the preserved v1 summary/manifest/identity. Initial missing states remain
+in historical evidence, without appearing as the current four rows' availability.
+
+This supplement changes only this Markdown evidence summary and the owned
+ROADMAP/BOOTSTRAP status pointers. Production code, dependencies, lockfiles,
+workflows, toolchain, source semantics and other decision owners are unchanged.
+Scientific evidence is complete and **B FAILS THE DEFINED SCIENTIFIC CHECKS** for
+prefixed mzML. This is not a PX.4 outcome, superiority over A or provider admission.
+
+## Recovered baseline and unchanged final candidate identity
 
 Before any prototype work, the repository root, remote, local HEAD/main/origin/main
 and remote main were rebound to the baseline above, tree
@@ -163,9 +305,10 @@ from timings, PID, traversal diagnostics and stderr. The known base64 decoder pa
 is caught narrowly and its diagnostic retained; this proves no production worker,
 cancellation or process-isolation guarantee. No process is spawned per scan.
 
-## Results and exact denominators
+## Initial result and repair history (PR #116)
 
-The single ledger has **77 case rows**, including exactly **30 unique ADR named
+The following counts are the preserved initial evidence, before the approved-input
+supplement above. The single ledger has **77 case rows**, including exactly **30 unique ADR named
 cases**. There are 71 task-owned synthetic file paths (including 12 unchanged PX.2
 fixture copies), two recovered inherited file paths, two missing inherited file paths
 and two unassigned representative roles. The 73 available paths contain 66 distinct
@@ -236,7 +379,10 @@ by upgrading/patching/vendoring the reader, stripping prefixes or introducing an
 decoder. Indexed-root and equal-multiple-scan controls **do pass** after adapter
 repair; those PX.2 limitations were not relabelled as a narrower legal source domain.
 
-## Input identities, permission and remaining gaps
+## Initial input recovery and permission gaps (PR #116)
+
+This section preserves the as-of initial publication state. The four gaps and pending
+requests below are resolved by the later supplement above; they are not current gaps.
 
 The exact tiny bytes (25,072 bytes, SHA256
 `711ac14b666f14817c208bd4d39b738e96ac827574c4639d8f8f6eebbfde9c83`) were recovered
@@ -282,7 +428,7 @@ independent stdlib/Fraction references and three serial resource observations:
   explicitly includes that verification; a mismatch would leave the role missing,
   without automatically authorizing a replacement file.
 
-No answer granting these file-specific requests was received before this record's
+No answer granting these file-specific requests was received before the initial record's
 scientific closeout. **Neither file was downloaded or processed.** Public availability
 is not approval. The reference plan is recorded, not an obtained independent answer.
 
@@ -295,7 +441,7 @@ A 300-second watchdog is operational protection, not a scientific acceptance thr
 There are **no representative observations to report**, and synthetic/inherited-MS2
 telemetry is not substituted for them. PX.4's practicality judgment remains unstarted.
 
-## Reproducible evidence and publication boundary
+## Initial archive and publication boundary (PR #116)
 
 The new local scientific archive is `D:/MSCanvas-PX3-20260912/px3-b-evidence.zip`:
 **SHA256 `be25076e6f9ef06acf482b92e2d9141bd68ca13c3eaeba98595736412c981977`**, `168,611,147` bytes.
@@ -309,7 +455,7 @@ The mutable Cargo build cache is excluded; exact scored executables and sources 
 included. Prior PX.2 state is unchanged. Publication/closeout records are separate
 appendable local sidecars; no source commit is needed to record the eventual merge.
 
-This PR changes only this record, focused ADR0046 S3/S4 and B-only scope/status text,
+The initial PR #116 changed only this record, focused ADR0046 S3/S4 and B-only scope/status text,
 and ROADMAP/BOOTSTRAP pointers. No product code, validator, workflow, production test,
 lock or dependency change is included. Local repository validation is recorded with
 its real result; the actual reviewed head must also satisfy Frontend, Rust and
@@ -318,7 +464,7 @@ The PR publication record owns the actual merge SHA, ordered parents/tree, natur
 `push` / `main` workflow runs, ff-only local synchronization and cleanup of only
 this task branch. A merge preview or PR CI is not that publication evidence.
 
-The scientific handoff is:
+The initial scientific handoff, before the later owner replies and supplement, was:
 
 ```text
 PX3_DIRECTION_B_EVIDENCE_RECORDED — REQUIRED EVIDENCE MISSING
@@ -331,13 +477,12 @@ XIC PROVIDER NOT ADMITTED; PRODUCTION XIC NOT IMPLEMENTED
 M6 COMPLETE; M7 NOT STARTED
 ```
 
-## Complete ledger
+## Current complete ledger
 
-The table below is generated from the frozen case ledger and final results. Subject
-numbers are associations; a row's overall FAIL does not erase a separately successful
-repeatability assertion. Fault rows pass only when the named injected error is detected.
-The original 15 and additional 15 named cases are visible individually, without a
-mixed-unit refusal masking another invalid-unit condition.
+This table combines the original 73 available rows and four newly obtained rows on
+the identical final candidate. An overall FAIL does not erase its separately successful
+repeat comparison. Fault rows pass only when the injected error is detected. The
+original named cases remain unchanged, and no invalid-unit condition is masked.
 
 | Ledger row | ADR named case | Subjects | Final status | Runs |
 | --- | --- | --- | --- | --- |
@@ -414,7 +559,7 @@ mixed-unit refusal masking another invalid-unit condition.
 | `normalized_metadata_fault` | supplemental / inherited | 3,4,9 | PASS | 1 |
 | `inherited_tiny.pwiz.1.1.mzML` | supplemental / inherited | 7,9,8 | PASS | 2 |
 | `inherited_BBM_506_P110_31_MIA_004_30_calibrated.mzML` | supplemental / inherited | 4,9,8 | PASS | 2 |
-| `inherited_lowint.mzML` | supplemental / inherited | 1,2,8,9 | MISSING | 0 |
-| `inherited_duprt.mzML` | supplemental / inherited | 3,8,9 | MISSING | 0 |
-| `representative_profile` | supplemental / inherited | 6,8 | MISSING | 0 |
-| `representative_centroid` | supplemental / inherited | 6,8 | MISSING | 0 |
+| `inherited_lowint.mzML` | supplemental / inherited | 1,2,8,9 | PASS | 2 |
+| `inherited_duprt.mzML` | supplemental / inherited | 3,8,9 | PASS | 2 |
+| `representative_profile` | supplemental / inherited | 6,8 | PASS | 3 |
+| `representative_centroid` | supplemental / inherited | 6,8 | PASS | 3 |

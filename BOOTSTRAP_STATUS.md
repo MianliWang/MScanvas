@@ -8286,7 +8286,7 @@ evidence matrix, a benchmark or an admission. Issue #112 and the native
 required. XIC PROVIDER NOT ADMITTED; PRODUCTION XIC NOT IMPLEMENTED.
 M6 COMPLETE; M7 NOT STARTED.**
 
-## PX.3 — separately authorized B-only evidence, 2026-09-12
+## PX.3 — initial B-only evidence-gap publication, 2026-09-12
 
 Baseline: `39955ebb4c5ca8885bf9507dd07a3704ed0f2aff` (PX.2 published).
 The separately authorized evaluation set is B only. S3 and S4 were fixed before
@@ -8308,3 +8308,29 @@ PX.4 evidence-blocked handoff, not PX.4's outcome or a full PX.3 PASS. A remains
 viable, not prototyped, not rejected and outside this evaluation. **PX.4 NOT STARTED;
 separate authorization required.** No provider is admitted; production XIC is not
 implemented. M6 remains complete; M7 has not started.
+
+
+## PX.3 — approved-input supplement and complete scientific evidence, 2026-09-12
+
+Supplement baseline: `6fc680405e9805c3dae8430d9f57227f553520e6` (PR #116). The
+initial gap publication above is historical and preserved. The owner's later exact-file
+approvals enabled two MS1 representative references and three serial resource runs each.
+The original lowint/duprt physical files remain absent, but one unmodified historical
+generator execution each reproduced the exact original size/SHA256; new independent
+answers and new runs verify those actual bytes, without inheriting old provider results.
+
+[The single PX.3 evidence record](docs/spikes/PX_3_XIC_COMPARATIVE_EVIDENCE.md) owns
+both immutable archives, provenance, protocol, candidate/lock/binary identities and the
+complete combined ledger. The unchanged final candidate records **76 PASS / 1 FAIL /
+0 MISSING** over77 rows, including three passing fault controls; all30 named cases pass.
+All153 planned calls ran, and74/74 canonical repeat groups agree. The pinned reader's
+legal prefixed-mzML failure remains a scientific failure. Representative resource
+observations are attributed to their exact files, host and dev/debug build, without a
+practicality threshold or production-scale claim.
+
+**The authorized B-only scientific evaluation is complete; B FAILS THE DEFINED
+SCIENTIFIC CHECKS.** The supplement's PR owns protected publication, actual merge
+identity/natural main CI and local closeout; scientific completion is not that proof.
+A remains viable, not prototyped, not rejected and outside this set. **PX.4 NOT STARTED;
+separate authorization required. XIC PROVIDER NOT ADMITTED; PRODUCTION XIC NOT
+IMPLEMENTED. M6 COMPLETE; M7 NOT STARTED.**
