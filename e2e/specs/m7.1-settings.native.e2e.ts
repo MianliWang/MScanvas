@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
+import { nativeResourceOrigins } from "../support/nativeResourceOrigins";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "../..");
@@ -16,6 +17,13 @@ const MZML_SHA = "a1228c104790670515f948f523dfe43caa7085cedb7d57d19ed07cbca5775e
 const RAW_SHA = "b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe152bd6dd7b";
 const evidence: unknown[] = [];
 let output = "", mzml = "", raw = "", processId = 0;
+let expectedDpi = 0;
+const windowsViewports = new Map([
+  [96, { width: 1920, height: 1080 }],
+  [120, { width: 1200, height: 800 }],
+  [144, { width: 1366, height: 768 }],
+  [192, { width: 960, height: 640 }],
+]);
 const digest = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex");
 
 async function calls() { return browser.execute(() => (window as unknown as { __mscanvasIpcCalls__: { command: string; args: Record<string, unknown> }[] }).__mscanvasIpcCalls__); }
@@ -48,13 +56,19 @@ async function capture(label: string) {
     visualViewportScale: visualViewport?.scale, cssZoom: getComputedStyle(document.documentElement).zoom,
     locale: document.documentElement.lang, density: document.querySelector("[data-density]")?.getAttribute("data-density"),
     documentHasFocus: document.hasFocus(), activeId: document.activeElement?.id,
+    activeTag: document.activeElement?.tagName, activeText: document.activeElement?.textContent,
+    activeIsConvert: document.activeElement?.matches(".conversion-plan button.primary-button"),
     rows: [...document.querySelectorAll<HTMLElement>('.dataset-roster-list [role="option"]')].map(row => ({ handle: row.dataset.handle, height: row.getBoundingClientRect().height, name: row.textContent })),
-    externalResources: performance.getEntriesByType("resource").map(entry => entry.name).filter(url => /^https?:/u.test(url) && new URL(url).origin !== location.origin),
+    applicationOrigin: location.origin,
+    resourceUrls: performance.getEntriesByType("resource").map(entry => entry.name),
   }));
-  evidence.push({ kind: "actual Windows/Tauri", label, metrics, ...state });
-  expect(metrics.dpi).toBeGreaterThan(0);
-  expect(state.externalResources).toEqual([]);
+  const resources = nativeResourceOrigins(state.resourceUrls, state.applicationOrigin);
+  evidence.push({ kind: "actual Windows/Tauri", label, metrics, expectedDpi, ...state, ...resources });
+  // Retain the rendered state even when a subsequent observation fails.
   await browser.saveScreenshot(join(output, `${label}.png`));
+  expect(metrics.dpi).toBe(expectedDpi);
+  expect(state.cssViewport).toEqual(windowsViewports.get(expectedDpi));
+  expect(resources.externalResources).toEqual([]);
   return state;
 }
 async function openSettings() {
@@ -104,6 +118,9 @@ describe("M7.1 focused real Windows Settings, figure and picker integration", ()
     const metrics = windowMetrics();
     expect(realpathSync(metrics.executable)).toBe(realpathSync(resolve(REPO, "target/e2e/release/mscanvas-desktop.exe")));
     evidence.push({ kind: "identity", sourceHead: process.env["MSCANVAS_M71_SOURCE_HEAD"], binarySha256: digest(metrics.executable), mzmlSha256: digest(mzml), rawSha256: digest(raw), capabilities, metrics });
+    expectedDpi = Number(process.env["MSCANVAS_M71_EXPECTED_DPI"] ?? metrics.dpi);
+    if (!windowsViewports.has(expectedDpi)) throw new Error("M7.1 requires a measured 96/120/144/192-DPI native test window.");
+    expect(metrics.dpi).toBe(expectedDpi);
     // Establish initial user-visible foreground once. Never call this after a
     // picker closes or as a repair for a failed focus assertion.
     if (process.env["MSCANVAS_M71_MANUAL_FOREGROUND"] === "1") {
@@ -136,7 +153,8 @@ describe("M7.1 focused real Windows Settings, figure and picker integration", ()
   });
 
   it("applies, cancels, resets and dismisses Settings in the actual app", async () => {
-    await browser.setWindowSize(1366, 768);
+    const viewport = windowsViewports.get(expectedDpi)!;
+    await browser.setWindowSize(viewport.width, viewport.height);
     await openSettings();
     await choose("zh-CN");
     await choose("compact");
