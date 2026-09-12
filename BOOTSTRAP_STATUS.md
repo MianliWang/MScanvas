@@ -8262,3 +8262,26 @@ keeps its existing M7 owner, and the M6.6–M6.9 native campaign keeps its recor
 `PX.1` is complete. **PX.2 — bounded prototypes — is next, has not started, and
 is not authorized by this audit.** No provider is admitted, no XIC is
 implemented, `M6 COMPLETE` stands, and **M7 has not started**.
+
+## PX.2 — separately authorized B-only bounded prototype, 2026-09-12
+
+Baseline `12f807231c01188e0ca985e7954a6380be94963e` (PR #114). The preceding
+PX.1 entry is historical; the owner separately authorized this experiment.
+
+**The authorized B-only prototype scope is complete.** The standalone scratch
+package combines source declarations with `mzdata =0.66.6` arrays and computes
+the explicit inclusive-window query on pre-established synthetic answers. The
+[PX.2 record](docs/spikes/PX_2_XIC_BOUNDED_PROTOTYPES.md) owns the exact package,
+lock/build identities, dependency-resolution failure and repair, decode-panic
+containment, 7 focused test groups / 17 query invocations, identity/unit proof,
+reproduction archive and untested limits. This repository change is Markdown
+only; no product dependency or implementation was added.
+
+**A remains VIABLE / NOT PROTOTYPED / NOT REJECTED.** C's PX.1 disposition is
+unchanged. This demonstration is not a production provider choice, PX.3's full
+evidence matrix, a benchmark or an admission. Issue #112 and the native
+`NOT RE-RUN` residual retain their existing owners.
+
+**PX.3 NOT STARTED; separate authorization and evaluation-scope confirmation
+required. XIC PROVIDER NOT ADMITTED; PRODUCTION XIC NOT IMPLEMENTED.
+M6 COMPLETE; M7 NOT STARTED.**

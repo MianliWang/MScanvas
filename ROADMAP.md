@@ -665,8 +665,9 @@ guard had been unable to see.
 
 ## Post-M6 XIC Provider / Runtime Interlude
 
-**Entered. `PX.0 COMPLETE`; `PX.1 COMPLETE`; PX.2 next and not started, and
-not authorized by PX.1.** The route is locked by
+**Entered. `PX.0 COMPLETE`; `PX.1 COMPLETE`; the separately authorized PX.2
+B-only prototype scope is complete. PX.3 is not started and requires separate
+authorization and evaluation-scope confirmation.** The route is locked by
 [ADR 0046](docs/architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md),
 which is the single owner of the slice dependencies, the evidence matrix and the
 four PX.4 outcome branches. **What follows is a pointer, not a second
@@ -687,6 +688,13 @@ to prototype and one is not, on located evidence rather than on names; the
 m/z-unit posture is settled as served-and-unreported. Nothing is admitted and no
 provider is chosen, which stays PX.4's. See
 [the PX.1 audit](docs/spikes/PX_1_XIC_PROVIDER_API_AUDIT.md).
+
+**PX.2 demonstrated the query on named synthetic fixtures in a standalone
+direction-B prototype.** It selects no production provider. A remains viable,
+not prototyped and not rejected; C's disposition is unchanged. See
+[the bounded B-only record](docs/spikes/PX_2_XIC_BOUNDED_PROTOTYPES.md) for the
+exact lock, pre-run oracle, observed results and limits. Production XIC remains
+unimplemented, and M7 has not started.
 
 ## M7 — UI/UX and public product hardening
 
