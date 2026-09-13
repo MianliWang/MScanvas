@@ -169,27 +169,34 @@ function Find-FileName {
   param($Dialog)
   if ($ApplicationProcessId -eq 0) { return Find-ById -Dialog $Dialog -AutomationId '1148' }
 
-  # Observed in native-run05: the save dialog's Edit1001 lives under this
-  # host. A toolbar elsewhere also has ID1001, so neither ID nor any Edit
-  # anywhere in the dialog is sufficient identification.
+  # The UIA provider and native HWND tree need not expose identical parentage.
+  # Bind the observed filename host to its exact native Edit1001 child, then
+  # bridge that HWND into UIA. A toolbar elsewhere also has ID1001.
+  $script:filenameLookup = 'filename host not found'
   $hostControl = Find-ById -Dialog $Dialog -AutomationId 'FileNameControlHost'
   if ($null -eq $hostControl -or $hostControl.Current.ProcessId -ne $ApplicationProcessId) { return $null }
-  $byId = New-Object System.Windows.Automation.PropertyCondition(
-    [System.Windows.Automation.AutomationElement]::AutomationIdProperty, '1001')
-  $byClass = New-Object System.Windows.Automation.PropertyCondition(
-    [System.Windows.Automation.AutomationElement]::ClassNameProperty, 'Edit')
-  $condition = New-Object System.Windows.Automation.AndCondition($byId, $byClass)
-  $edit = $hostControl.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
-  if ($null -eq $edit) { return $null }
-  Assert-OwnedControl -Dialog $Dialog -Control $edit -Id 1001
   $hostHandle = [IntPtr] $hostControl.Current.NativeWindowHandle
   $hostOwner = 0
   [void] [MSCanvasSaveDialog.Native]::GetWindowThreadProcessId($hostHandle, [ref] $hostOwner)
   if ($hostHandle -eq [IntPtr]::Zero -or $hostOwner -ne $ApplicationProcessId -or
-      -not [MSCanvasSaveDialog.Native]::IsChild([IntPtr] $Dialog.Current.NativeWindowHandle, $hostHandle) -or
-      -not [MSCanvasSaveDialog.Native]::IsChild($hostHandle, [IntPtr] $edit.Current.NativeWindowHandle)) {
-    throw 'The filename edit is not inside the exact owned FileNameControlHost.'
+      -not [MSCanvasSaveDialog.Native]::IsChild([IntPtr] $Dialog.Current.NativeWindowHandle, $hostHandle)) {
+    throw 'FileNameControlHost is not inside the exact owned save dialog.'
   }
+  $matches = @([MSCanvasSaveDialog.Native]::OwnedControls([IntPtr] $Dialog.Current.NativeWindowHandle, $ApplicationProcessId) | Where-Object {
+    $_.id -eq 1001 -and $_.className -ceq 'Edit' -and $_.visible -and
+    [MSCanvasSaveDialog.Native]::IsChild($hostHandle, [IntPtr] $_.handle)
+  })
+  if ($matches.Count -gt 1) { throw 'The owned filename host has more than one matching native edit.' }
+  $script:filenameLookup = 'exact native filename edit not found'
+  if ($matches.Count -eq 0) { return $null }
+  $editHandle = [IntPtr] $matches[0].handle
+  $edit = [System.Windows.Automation.AutomationElement]::FromHandle($editHandle)
+  if ($null -eq $edit -or $edit.Current.ProcessId -ne $ApplicationProcessId -or
+      [IntPtr] $edit.Current.NativeWindowHandle -ne $editHandle) {
+    throw 'The filename UIA bridge did not retain its verified native identity.'
+  }
+  Assert-OwnedControl -Dialog $Dialog -Control $edit -Id 1001
+  $script:filenameLookup = 'exact native filename edit bridged to UIA'
   return $edit
 }
 
@@ -281,9 +288,11 @@ if ($ApplicationProcessId -ne 0) {
     $button = Find-ById -Dialog $dialog -AutomationId $buttonId
     $valuePattern = $null
     $edit = if ($Action -eq 'save') { Find-FileName -Dialog $dialog } else { $null }
+    $hasValuePattern = $null -ne $edit -and $edit.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref] $valuePattern)
+    $result.readiness = [ordered]@{ filenameLookup = $script:filenameLookup; editFound = $null -ne $edit; valuePatternAvailable = $hasValuePattern; buttonFound = $null -ne $button; buttonEnabled = ($null -ne $button -and $button.Current.IsEnabled) }
     if ($null -ne $button -and $button.Current.IsEnabled -and ($Action -eq 'cancel' -or
         ($null -ne $edit -and $edit.Current.IsEnabled -and
-         $edit.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref] $valuePattern)))) {
+         $hasValuePattern))) {
       $ready = $true
       break
     }
