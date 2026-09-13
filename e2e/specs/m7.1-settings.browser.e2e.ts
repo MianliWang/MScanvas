@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { consoleEntries, holdInvoke, installIpcBoundary, ipcCalls, releaseInvokeHold, setInvokeResult } from "../support/harness";
 import { ipcTable } from "../support/fixtures";
+import { activateFigureFieldByLabel } from "../support/figureLabelActivation";
 import { selectedFile, unavailableBackend } from "../../apps/desktop/src/test/previewFixtures";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
@@ -133,6 +134,16 @@ describe("M7.1 localized Settings and real shared consumers", () => {
     await browser.$('.spectrum-panel input[id$="-widthPx"]').setValue("00640");
     await browser.$('.spectrum-panel input[id$="-heightPx"]').setValue("480");
     await browser.$('.spectrum-panel input[id$="-pngDpi"]').setValue("1e");
+    for (const panel of [".spectrum-panel", ".chromatogram-export-panel"]) {
+      for (const field of ["widthPx", "heightPx", "pngDpi"] as const) {
+        const activation = await activateFigureFieldByLabel(panel, field);
+        evidence.push(activation);
+        if (!activation.focused) await capture(`label-activation-${panel.slice(1)}-${field}`);
+        expect(activation.focused).toBe(true);
+        expect(activation.labelFor).toBe(activation.inputId);
+        expect(activation.valueAfter).toBe(activation.valueBefore);
+      }
+    }
     const before = await capture("01-comfortable-figure-draft");
     await browser.execute(() => {
       const target = window as unknown as { m71Nodes: Element[] };
@@ -251,6 +262,15 @@ describe("M7.1 localized Settings and real shared consumers", () => {
         expect(field.visible).toBe(true);
         expect(field.dpr).toBe(dpr);
         expect(field.fontSize).toBe("13px");
+        for (const name of ["widthPx", "heightPx", "pngDpi"] as const) {
+          const activation = await activateFigureFieldByLabel(panel, name);
+          evidence.push(activation);
+          if (!activation.focused) await capture(`scaled-label-${width}x${height}-${panel.slice(1)}-${name}`, dpr);
+          expect(activation.focused).toBe(true);
+          expect(activation.labelFor).toBe(activation.inputId);
+          expect(activation.valueAfter).toBe(activation.valueBefore);
+          expect(activation.dpr).toBe(dpr);
+        }
       }
       await capture(`consumers-${width}x${height}-dpr-${dpr}`, dpr);
     }

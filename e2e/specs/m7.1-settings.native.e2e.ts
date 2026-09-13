@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
 import { nativeResourceOrigins } from "../support/nativeResourceOrigins";
+import { activateFigureFieldByLabel } from "../support/figureLabelActivation";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "../..");
@@ -227,12 +228,21 @@ describe("M7.1 focused real Windows Settings, figure and picker integration", fu
     await browser.$('.spectrum-panel input[id$="-widthPx"]').waitForDisplayed({ timeout: 60_000 });
     await browser.$("#chromatogram-export-toggle").click();
     const before = await capture("02-native-real-roster-figure");
-    await browser.$('.spectrum-panel input[id$="-widthPx"]').setValue("00640");
-    await observeWindow("figure draft: after width input");
-    await browser.$('.spectrum-panel input[id$="-heightPx"]').setValue("480");
-    await observeWindow("figure draft: after height input");
-    await browser.$('.spectrum-panel input[id$="-pngDpi"]').setValue("144");
-    await observeWindow("figure draft: after PNG DPI input");
+    async function activateLabel(field: "widthPx" | "heightPx" | "pngDpi", locale: string) {
+      const activation = await activateFigureFieldByLabel(".spectrum-panel", field);
+      evidence.push(activation);
+      if (!activation.focused) await capture(`label-activation-${locale}-${field}`);
+      expect(activation.focused).toBe(true);
+      expect(activation.labelFor).toBe(activation.inputId);
+      expect(activation.valueAfter).toBe(activation.valueBefore);
+      expect(activation.locale).toBe(locale);
+      expect(activation.dpr).toBe(expectedDpi / 96);
+    }
+    for (const [field, value] of [["widthPx", "00640"], ["heightPx", "480"], ["pngDpi", "144"]] as const) {
+      await activateLabel(field, "en");
+      await browser.$(`.spectrum-panel input[id$="-${field}"]`).setValue(value);
+      await observeWindow(`figure draft: after ${field} input`);
+    }
     await openSettings(true);
     await choose("zh-CN");
     await observeWindow("figure draft: after locale choice");
@@ -242,6 +252,7 @@ describe("M7.1 focused real Windows Settings, figure and picker integration", fu
     expect(compact.rows[0].height).toBeLessThan(before.rows[0].height);
     await press(zh.apply);
     await returned();
+    for (const field of ["widthPx", "heightPx", "pngDpi"] as const) await activateLabel(field, "zh-CN");
     const figure = join(output, "m71-shared-fields-640x480-144dpi.png");
     expect(existsSync(figure)).toBe(false);
     const button = browser.$('.spectrum-panel').$('button=Export PNG…');

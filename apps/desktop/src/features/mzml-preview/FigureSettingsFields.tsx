@@ -41,7 +41,7 @@ export function FigureSettingsFields({ idPrefix, settings, validation, onFigureS
       const issue = validation[problem];
       const invalid = issue?.fields.includes(field) === true;
       const labelId = `${idPrefix}-${field}-label`;
-      return <SettingField key={field} labelId={labelId} label={message(label)} help={message(hint)} className="spectrum-figure-field">
+      return <SettingField key={field} labelId={labelId} htmlFor={`${idPrefix}-${field}`} label={message(label)} help={message(hint)} className="spectrum-figure-field">
         <RawTextField id={`${idPrefix}-${field}`} labelledBy={`${labelId} ${labelId}-help`}
           describedBy={invalid ? problemIds[problem] : undefined}
           invalid={invalid} value={settings[field]} onChange={(value) => onFigureSetting(field, value)} />

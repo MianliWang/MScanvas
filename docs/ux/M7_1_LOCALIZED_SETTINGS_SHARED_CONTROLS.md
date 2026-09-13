@@ -1,7 +1,10 @@
 # M7.1 — Localized Settings and shared controls
 
-Status: **implementation and required native acceptance verified**.
-The task PR will bind protected source publication and local closeout to the
+Status: **label-activation repair implemented; renewed native acceptance pending**.
+The first QA build passed all four required native pairs below. PR #120 identified
+a label-activation regression and stale status prose. The product repair requires
+a new QA build and four fresh paired native runs; the retained first-build passes
+do not qualify the repaired build. The task PR binds publication and local closeout to the
 reviewed head. This QA build is not a public beta. M7.2 is next, not started.
 M6 remains complete; the post-M6 XIC interlude remains complete on its
 non-admission branch. XIC is not admitted or implemented.
@@ -128,6 +131,31 @@ is counted as a fix, and the original intermittent failure is retained.
 
 ## Attributable validation and review
 
+### PR #120 label activation follow-up
+
+The shared field's visible caption was a `span`: its accessible name remained
+connected through `aria-labelledby`, but clicking Width, Height or PNG DPI no
+longer focused the input. A real browser click from the other field reproduced
+the regression before repair: `browser-C1qjbi/evidence.json` records
+`focused: false`, `labelTag: SPAN`, `labelFor: null` and unchanged raw `00640`.
+`resume-20260913T024431Z/label-falsification-browser-01.log` and `.exit.json`
+retain the failing assertion and actual exit 1, with its diagnostic screenshot.
+
+`SettingField` now accepts an optional `htmlFor` for a single-input native label.
+The two actual figure consumers provide their existing stable field IDs. Group
+captions remain spans, and each radio keeps its existing native label. Raw values,
+accessible names, help/error links, numeric validation and focus-return ownership
+are unchanged. The focused browser spec exercises real label clicks from another
+input in both consumers/locales. The native spec adds spectrum-label clicks in
+both locales before the existing PNG and natural-return acceptance; its second
+figure consumer remains opened only. No retry or timeout was increased.
+
+New-build checks and paired native acceptance are pending. The identities,
+browser results and four native runs in the following sections refer only to the
+retained first build and its harness; they are not attributed to this repair.
+
+### Retained first-build validation
+
 All evidence paths below are relative to the retained local root
 `D:/tmp/mscanvas-m71-20260912`, unless stated otherwise. Original logs, outputs,
 launch identities, actual command exits and earlier failures remain available.
@@ -143,8 +171,9 @@ launch identities, actual command exits and earlier failures remain available.
 
 The executable is `target/e2e/release/mscanvas-desktop.exe`, built with the existing
 QA features by `pnpm e2e:build`. All 154 production inputs matched the build
-manifest before each successful pair. Later commits change native harness or
-these documents, not the executable's production inputs. The executable was not
+manifest before each successful pair. Commits through `e4fbab66c16a22726533ad44720dc51374502099`
+change native harness or documents after that build, not its production inputs.
+The subsequent label repair changes two production files. The first executable was not
 rebuilt at the harness SHA. A QA executable is not an installer or release artifact.
 
 | Gate | Result and retained record |

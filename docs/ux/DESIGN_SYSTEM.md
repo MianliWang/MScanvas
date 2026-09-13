@@ -14,9 +14,11 @@ is introduced. The prototype's globals, CSS patches, synthetic science and ETA
 budgets are not production implementation authority.
 
 The M7.1 candidate supplies localized session Settings, actual roster density and
-shared controls in both existing figure consumers. Its required native validation
-is pending; the [implementation record](M7_1_LOCALIZED_SETTINGS_SHARED_CONTROLS.md)
-separates browser evidence from native proof. M7.2 carries
+shared controls in both existing figure consumers. The first QA build passed all
+four required native pairs. PR #120's label-activation repair requires a new build
+and renewed paired acceptance; the
+[implementation record](M7_1_LOCALIZED_SETTINGS_SHARED_CONTROLS.md) separates that
+pending gate from retained browser and native proof. M7.2 carries
 the single Home action, distinct viewed/drag-selected/conversion-scope states,
 session-only virtual organization and one drag transform/hit-test owner. M7.3
 owns whole-row scan activation and the pending-range gesture: release does not
