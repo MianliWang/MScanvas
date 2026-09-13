@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { SettingsDialog } from "../preferences/SettingsDialog";
 
 import { BackendStatus } from "./BackendStatus";
 import { Chromatogram } from "./Chromatogram";
@@ -244,7 +245,7 @@ export function PreviewWorkspace() {
   );
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-settings-return-target="" tabIndex={-1}>
       <header className="topbar">
         <div className="brand-block">
           <span aria-hidden="true" className="brand-mark">
@@ -262,6 +263,7 @@ export function PreviewWorkspace() {
               ? "Connecting Explorer drag-and-drop…"
               : "Explorer drag-and-drop is unavailable. Use the Add actions below."}
         </p>
+        <SettingsDialog rowCount={roster.datasets.length} />
       </header>
 
       {workspace.dropPresentation.status === "idle" ? null : (
@@ -645,6 +647,7 @@ export function PreviewWorkspace() {
                       committedDomain={workspace.chromatogramCommittedDomain}
                       exportState={workspace.chromatogramExport}
                       figureSettings={workspace.figureSettings}
+                      figureSettingsValidation={workspace.figureSettingsValidation}
                       linkedExportState={workspace.linkedFigureExport}
                       linkedUnavailable={workspace.linkedFigureUnavailable}
                       onCopyLinkedPlot={workspace.copyLinkedPlot}
@@ -704,6 +707,7 @@ export function PreviewWorkspace() {
                 dispatchViewport={workspace.dispatchSpectrumViewportEvent}
                 exportState={workspace.spectrumExport}
                 figureSettings={workspace.figureSettings}
+                figureSettingsValidation={workspace.figureSettingsValidation}
                 onCopyPlot={workspace.copySpectrumPlot}
                 onDismissExport={workspace.dismissSpectrumExport}
                 onExport={workspace.exportSpectrum}

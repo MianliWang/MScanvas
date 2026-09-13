@@ -39,6 +39,12 @@ runs at build time rather than shipping.
 
 ## External backends
 
+The M7.1 frontend additionally uses `i18next`, `react-i18next` and
+`@radix-ui/react-dialog`, each under MIT. The
+[M7.1 implementation record](docs/ux/M7_1_LOCALIZED_SETTINGS_SHARED_CONTROLS.md)
+records the exact approved pins, actual consumers and reviewed lock delta.
+These are local UI dependencies and do not redistribute scientific backends.
+
 - ProteoWizard / `msconvert` / `msaccess`: installed and licensed separately by the user.
 - Vendor RAW readers: availability and redistribution rights vary by vendor, platform and installation.
 - Future Python/OpenMS workers: distribution model pending explicit license and size review.

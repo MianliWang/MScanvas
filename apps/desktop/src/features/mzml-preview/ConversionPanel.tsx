@@ -298,33 +298,42 @@ export function ConversionPanel({
   const terminal = state.status === "terminal";
   const convertButton = useRef<HTMLButtonElement | null>(null);
   const restoreAfterPicker = useRef(false);
-  // Runs after every commit, and is a two-comparison no-op unless a picker was
-  // cancelled. That is deliberate: the control this restores to is not on
-  // screen in every commit, and the commit where it returns is not always one
-  // of the three values a dependency list could name.
+  // A later focus destination permanently cancels the return, including one
+  // which disappears before the picker settles. Opening Settings is such a
+  // destination; a blur into a native window is not.
   useEffect(() => {
-    if (conversion.busy || !restoreAfterPicker.current) return;
-    // The picker produced a queue rather than a cancellation. There is nothing
-    // to restore to, and the running queue owns the focus from here.
-    if (state.status !== "idle") {
-      restoreAfterPicker.current = false;
-      return;
-    }
-    // The plan has not answered yet. The button may be on screen and disabled,
-    // and focusing it here would land on a control that cannot be pressed.
-    if (plan.startPlan === "reading") return;
-    const button = convertButton.current;
-    // **Not focusable yet, so this is not the commit to give up in.** The
-    // control is present but *disabled* whenever the plan has no question to
-    // answer -- a scope still settling as the picker closes reads "Convert 0
-    // selected…" -- and `focus()` on a disabled button does nothing at all.
-    // Clearing the flag against that left the focus on the document body for
-    // the rest of the session, because the commit where the button becomes
-    // pressable is not one any dependency list here could name. The flag now
-    // survives until the focus actually lands.
-    if (button === null || button.disabled) return;
-    restoreAfterPicker.current = false;
-    button.focus();
+    const recordDestination = (event: FocusEvent) => {
+      if (event.target instanceof HTMLElement && event.target !== document.body &&
+        event.target !== convertButton.current) restoreAfterPicker.current = false;
+    };
+    document.addEventListener("focusin", recordDestination);
+    return () => document.removeEventListener("focusin", recordDestination);
+  }, []);
+
+  // The plan and its button can disappear during the picker and return over
+  // several commits. Keep the return until an enabled target actually receives
+  // focus, or newer user intent cancels it. A foreground event can pay the same
+  // return without waiting for an unrelated React update.
+  useEffect(() => {
+    const restore = () => {
+      if (conversion.busy || !restoreAfterPicker.current) return;
+      if (state.status !== "idle") {
+        restoreAfterPicker.current = false;
+        return;
+      }
+      const button = convertButton.current;
+      if (plan.startPlan === "reading" || button === null || button.disabled || !document.hasFocus()) return;
+      const active = document.activeElement;
+      if (active !== null && active !== document.body && active !== button) {
+        restoreAfterPicker.current = false;
+        return;
+      }
+      button.focus();
+      if (document.activeElement === button) restoreAfterPicker.current = false;
+    };
+    restore();
+    window.addEventListener("focus", restore);
+    return () => window.removeEventListener("focus", restore);
   });
 
   // The two decisions this panel offers, each projected from the one lane the

@@ -6,6 +6,7 @@ Before non-trivial work, read `PROJECT_PROPOSAL.md` and the nearest relevant `AG
 
 - Communicate with the user in Chinese by default. This includes progress updates, clarifying questions, plans, decisions, blockers, GO/NO-GO reports, and final summaries.
 - Keep implementation and repository artifacts in English. This includes code, identifiers, file and directory names, paths, comments, docstrings, CLI and shell commands, configuration keys, branch names, commit messages, pull-request and issue titles/bodies, review replies, error codes, repository-authored error messages, tests, and repository documentation.
+- Localized UI resource values may use their declared language under ADR 0047. Resource keys, identifiers, comments, test descriptions, documentation and machine contracts remain English; provider output and user data remain original. M7.1 bundles only the declared `en` and `zh-CN` resource values in `apps/desktop/src/features/preferences/locales/`.
 - Preserve command output, logs, diagnostics, and third-party text in their original form. Explain them in Chinese separately rather than translating or rewriting the evidence.
 - Technical terms may remain in English when that is clearer.
 - Do not switch user-facing communication to English merely because the task prompt, codebase, source material, or GitHub content is written in English.

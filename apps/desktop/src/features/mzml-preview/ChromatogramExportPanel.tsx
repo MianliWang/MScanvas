@@ -1,3 +1,4 @@
+import type { FigureSettingsValidation } from "./figureSettingsValidation";
 /**
  * What the run on screen can be exported as, and over how much of itself.
  *
@@ -126,6 +127,7 @@ export interface ChromatogramExportPanelProps {
   readonly onCopyPlot: () => void;
   readonly onDismiss: () => void;
   readonly figureSettings: FigureSettingsDraft;
+  readonly figureSettingsValidation: FigureSettingsValidation;
   readonly renderSettingsProblem: string | null;
   readonly pngDpiProblem: string | null;
   readonly onFigureSetting: (field: FigureSettingsField, value: string) => void;
@@ -156,6 +158,7 @@ export function ChromatogramExportPanel({
   onCopyPlot,
   onDismiss,
   figureSettings,
+  figureSettingsValidation,
   renderSettingsProblem,
   pngDpiProblem,
   onFigureSetting,
@@ -231,8 +234,7 @@ export function ChromatogramExportPanel({
         idPrefix={FIGURE_PREFIX}
         onFigureSetting={onFigureSetting}
         onFigureTheme={onFigureTheme}
-        pngDpiProblem={pngDpiProblem}
-        renderSettingsProblem={renderSettingsProblem}
+        validation={figureSettingsValidation}
         settings={figureSettings}
       />
       <fieldset className="spectrum-figure-actions">

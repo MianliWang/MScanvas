@@ -1,3 +1,4 @@
+import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 /**
  * Where the keyboard is after the native folder picker closes.
  *
@@ -8,7 +9,7 @@
  * one-request-at-a-time rule are the real ones rather than a stand-in.
  */
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { PreviewApi } from "./api";

@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "./design-system/tokens.css";
 @import "./app/app.css";
+@import "./features/preferences/preferences.css";
 
 * {
   box-sizing: border-box;

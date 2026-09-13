@@ -13,7 +13,12 @@ remain the design owners; no parallel style system or new three-concept contest
 is introduced. The prototype's globals, CSS patches, synthetic science and ETA
 budgets are not production implementation authority.
 
-M7.1 begins with a real localized settings/shared-control consumer. M7.2 carries
+The M7.1 candidate supplies localized session Settings, actual roster density and
+shared controls in both existing figure consumers. The first QA build passed all
+four required native pairs. PR #120's label-activation repair has a new QA build
+and passing browser checks and focused 150% native revalidation; the
+[implementation record](M7_1_LOCALIZED_SETTINGS_SHARED_CONTROLS.md) separates that
+repaired-build evidence from retained first-build native proof. M7.2 carries
 the single Home action, distinct viewed/drag-selected/conversion-scope states,
 session-only virtual organization and one drag transform/hit-test owner. M7.3
 owns whole-row scan activation and the pending-range gesture: release does not
@@ -24,9 +29,17 @@ M7.4 consolidates typed configuration, result details and figure settings.
 Motion must be interruptible, useful and compatible with reduced motion. Drag
 feedback uses group/gap highlighting and compact counts. Preserve legibility,
 units and bounded-data scope through reflow/collapse rather than shrinking text.
-The en/zh-CN resource-value policy exception, canonical numeric-input rules and
-language-preserving state tests are scheduled with M7.1; complete delivered-UI
-coverage closes in M7.5. Nothing here declares those controls or tests shipped.
+M7.1 implements the narrow en/zh-CN resource-value policy exception and preserves
+the figure fields' existing positive-integer grammar and raw editing strings.
+Complete delivered-UI coverage closes in M7.5. M7.1 preferences reset when the
+app session restarts; no storage or scientific workspace restoration is added.
+
+The production roster maps comfortable/compact to 44/32px minimum rows with
+unchanged 13px type. Wrapped names grow beyond those minima; this roster is not
+windowed and retains its DOM scroll/activation owner. Shared figure inputs and
+choices use visible 32px controls; Settings actions use 36px controls. The Settings
+surface uses local Segoe UI/CJK fonts, quiet light surfaces and one real Appearance
+category. At constrained heights, its own scroll surface keeps the footer reachable.
 
 ## Durable v5.11 reference baseline
 

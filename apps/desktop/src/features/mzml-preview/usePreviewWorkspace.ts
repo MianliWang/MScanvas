@@ -1,3 +1,5 @@
+import { wholeCount, validateFigureDraft, describeFigureProblem, type FigureSettingsValidation } from "./figureSettingsValidation";
+
 import {
   useCallback,
   useEffect,
@@ -417,14 +419,7 @@ export interface FigureRenderSettings {
  * What this catches is what the interface can know on its own: blank, not a
  * number, negative, fractional, zero.
  */
-function wholeCount(text: string): number | null {
-  const trimmed = text.trim();
-  if (!/^\d+$/.test(trimmed)) {
-    return null;
-  }
-  const value = Number(trimmed);
-  return Number.isSafeInteger(value) && value > 0 ? value : null;
-}
+// The shared validator returns structured reasons for localized field consumers.
 
 /** The figure these fields describe, if they describe one. */
 export function resolveRenderSettings(draft: FigureSettingsDraft): FigureRenderSettings | null {
@@ -459,18 +454,7 @@ function figureSettingsFor(
 
 /** What is wrong with the size and theme, in the words the panel reads out. */
 export function describeRenderSettingsProblem(draft: FigureSettingsDraft): string | null {
-  const wrong = (
-    [
-      ["widthPx", "Width"],
-      ["heightPx", "Height"],
-    ] as const
-  )
-    .filter(([field]) => wholeCount(draft[field]) === null)
-    .map(([, label]) => label);
-  if (wrong.length === 0) {
-    return null;
-  }
-  return `${wrong.join(", ")} must be a whole number of at least 1.`;
+  return describeFigureProblem(validateFigureDraft(draft).render);
 }
 
 /**
@@ -482,7 +466,7 @@ export function describeRenderSettingsProblem(draft: FigureSettingsDraft): strin
  * that nothing is stopping.
  */
 export function describePngDpiProblem(draft: FigureSettingsDraft): string | null {
-  return resolvePngDpi(draft) === null ? "PNG DPI must be a whole number of at least 1." : null;
+  return describeFigureProblem(validateFigureDraft(draft).dpi);
 }
 
 export type RosterLoadState =
@@ -896,6 +880,7 @@ export interface PreviewWorkspace {
   readonly canSelectNextScan: boolean;
   /** The figure settings as the user is editing them. */
   readonly figureSettings: FigureSettingsDraft;
+  readonly figureSettingsValidation: FigureSettingsValidation;
   /** The figure they describe, or `null` while they describe none. */
   readonly resolvedRenderSettings: FigureRenderSettings | null;
   /** The resolution they describe, or `null` while they describe none. */
@@ -2780,11 +2765,9 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     [figureSettings],
   );
   const resolvedPngDpi = useMemo(() => resolvePngDpi(figureSettings), [figureSettings]);
-  const renderSettingsProblem = useMemo(
-    () => describeRenderSettingsProblem(figureSettings),
-    [figureSettings],
-  );
-  const pngDpiProblem = useMemo(() => describePngDpiProblem(figureSettings), [figureSettings]);
+  const figureSettingsValidation = useMemo(() => validateFigureDraft(figureSettings), [figureSettings]);
+  const renderSettingsProblem = describeFigureProblem(figureSettingsValidation.render);
+  const pngDpiProblem = describeFigureProblem(figureSettingsValidation.dpi);
 
   // ------------------------------------------------- scientific exports
   //
@@ -4249,6 +4232,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     canSelectPreviousScan: spectrumSelectionAvailable && previousScanIndex !== null,
     canSelectNextScan: spectrumSelectionAvailable && nextScanIndex !== null,
     figureSettings,
+    figureSettingsValidation,
     resolvedRenderSettings,
     resolvedPngDpi,
     renderSettingsProblem,

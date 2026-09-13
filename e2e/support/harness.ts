@@ -179,7 +179,11 @@ export async function installIpcBoundary(
     CALL_LOG,
     TABLE,
     CONSOLE_LOG,
-    JSON.stringify({ table, held: HELD, pending: PENDING, hold: [...(options.hold ?? [])] }),
+    // The pinned WDIO preload transport uses btoa. Escape UTF-16 code units
+    // in JSON (including surrogate pairs) so CJK user data reaches JSON.parse
+    // unchanged without requiring a different driver or package version.
+    JSON.stringify({ table, held: HELD, pending: PENDING, hold: [...(options.hold ?? [])] })
+      .replace(/[\u0080-\uffff]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`),
   );
 }
 

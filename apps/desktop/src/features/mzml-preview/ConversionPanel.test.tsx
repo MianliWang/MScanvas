@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PreviewApiProvider } from "./api";
 import { WorkspaceDropTransportProvider } from "./dropTransport";
@@ -17,7 +17,7 @@ import {
 } from "../../test/previewFixtures";
 import { pressConvert } from "../../test/conversionPanelInteractions";
 import type { FakePreviewApi } from "../../test/previewFixtures";
-import type { SelectedFile, WorkspaceConversionState } from "./contracts";
+import type { ConversionPlanOutcome, SelectedFile, WorkspaceConversionState } from "./contracts";
 
 function acquisition(index: number): SelectedFile {
   return {
@@ -73,6 +73,10 @@ function selectAllRows(): void {
 }
 
 describe("destination request and queue truth", () => {
+  // jsdom has no foreground window. This models that condition; no assertion
+  // assigns the return target focus after the picker resolves.
+  beforeEach(() => { vi.spyOn(document, "hasFocus").mockReturnValue(true); });
+  afterEach(() => { vi.restoreAllMocks(); });
   it("preserves the inactive subfolder draft and restores Convert focus after picker cancellation", async () => {
     const picker = deferred<WorkspaceConversionState>();
     const api = createFakePreviewApi({
@@ -106,24 +110,86 @@ describe("destination request and queue truth", () => {
     const api = createFakePreviewApi({
       initialDatasets: [first], availability: availableBackend, conversion: () => picker.promise,
     });
-    renderApp(api);
+    const restoredPlan = deferred<ConversionPlanOutcome>();
+    const describeConversion = api.describeConversion;
+    let holdPlan = false;
+    let answeredPlan: ConversionPlanOutcome | undefined;
+    renderApp({ ...api, describeConversion: async (request) => {
+      const answer = await describeConversion(request);
+      if (!holdPlan) return answer;
+      answeredPlan = answer;
+      return restoredPlan.promise;
+    } });
     const panel = await screen.findByRole("region", { name: "Convert" });
     const row = await screen.findByRole("option", { name: /run-1\.raw/ });
     fireEvent.click(row);
     fireEvent.click(within(panel).getByRole("radio", { name: "Custom local folder" }));
     await pressConvert(panel, "Convert 1 selected…");
 
-    // The scope empties while the picker is open, so the plan has no question
-    // to answer and the button is not rendered at all.
+    // Controlled scope changes model commits around a native picker; these
+    // synthetic click events intentionally do not simulate a newer focus move.
+    holdPlan = true;
     fireEvent.click(row, { ctrlKey: true });
     await act(async () => picker.resolve({ status: "idle" }));
     expect(within(panel).getByRole("button", { name: "Convert 0 selected…" })).toBeDisabled();
 
-    // And when the scope comes back, so does the focus.
+    // The scope returns before its plan. The absent/disabled commits must not
+    // consume the return, and a controlled plan answer is the only release.
     fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    await waitFor(() => expect(answeredPlan).toBeDefined());
+    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeDisabled();
+    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).not.toHaveFocus();
+    await act(async () => restoredPlan.resolve(answeredPlan!));
     await waitFor(() =>
       expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toHaveFocus(),
     );
+  });
+
+  it("permanently yields picker return to a later focus choice even if that choice then blurs", async () => {
+    const picker = deferred<WorkspaceConversionState>();
+    const api = createFakePreviewApi({ initialDatasets: [first], availability: availableBackend, conversion: () => picker.promise });
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    await pressConvert(panel, "Convert 1 selected…");
+    const settings = screen.getByRole("button", { name: "Settings" });
+    settings.focus();
+    settings.blur();
+    await act(async () => picker.resolve({ status: "idle" }));
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeEnabled());
+    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).not.toHaveFocus();
+  });
+
+  it("does not move focus into the background of Settings after a cancelled picker", async () => {
+    const picker = deferred<WorkspaceConversionState>();
+    const api = createFakePreviewApi({ initialDatasets: [first], availability: availableBackend, conversion: () => picker.promise });
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    await pressConvert(panel, "Convert 1 selected…");
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    await act(async () => picker.resolve({ status: "idle" }));
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Settings" })).toHaveFocus());
+    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeEnabled();
+  });
+
+  it("retains return while a native window owns the foreground and pays it on natural return", async () => {
+    const picker = deferred<WorkspaceConversionState>();
+    const api = createFakePreviewApi({ initialDatasets: [first], availability: availableBackend, conversion: () => picker.promise });
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    await pressConvert(panel, "Convert 1 selected…");
+    vi.mocked(document.hasFocus).mockReturnValue(false);
+    await act(async () => picker.resolve({ status: "idle" }));
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeEnabled());
+    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).not.toHaveFocus();
+    vi.mocked(document.hasFocus).mockReturnValue(true);
+    fireEvent.focus(window);
+    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toHaveFocus();
   });
 
   it.each(["unresolved", "bound"] as const)("renders the queue's %s destination independently of the next request", async (destinationStatus) => {

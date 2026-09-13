@@ -492,11 +492,14 @@ describe("what the chromatogram can be exported as", () => {
 
     const ids = [...document.querySelectorAll("[id]")].map((element) => element.id);
     expect(new Set(ids).size).toBe(ids.length);
-    const names = [...document.querySelectorAll("input[type=radio]")].map(
+    const names = [...document.querySelectorAll(".spectrum-figure-settings input[type=radio]")].map(
       (input) => (input as HTMLInputElement).name,
     );
-    expect(names).toContain("chromatogram-figure-theme");
-    expect(names).toContain("spectrum-figure-theme");
+    expect(names).toHaveLength(4);
+    expect(names.every((name) => name.length > 0)).toBe(true);
+    expect(names[0]).toBe(names[1]);
+    expect(names[2]).toBe(names[3]);
+    expect(names[0]).not.toBe(names[2]);
   });
 
   it("says what was saved, including a range that held no scans", async () => {

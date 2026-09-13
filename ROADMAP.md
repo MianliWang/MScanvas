@@ -709,7 +709,7 @@ and runtime filters. No XIC follow-up is a prerequisite for M7.
 
 ## M7 — UI/UX and public product hardening
 
-**M7 IN PROGRESS; implementation NOT STARTED.** The separately authorized
+**M7 IN PROGRESS; M7.1 implementation and required native acceptance verified.** The separately authorized
 M7.0 first-beta route is accepted in
 [ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md),
 the single owner of scope, implementation order and release exits. M7 delivers
@@ -721,7 +721,14 @@ adds no XIC prerequisite.
 The route proceeds through localized settings/shared controls, shell/roster,
 viewer/scan gestures, conversion/results/figures, preferences/onboarding, then
 installer/release integration. **M7.1 — Localized settings and shared controls —
-NEXT / NOT STARTED; requires its own implementation authorization.** M8/M9/M10
+IMPLEMENTED / VALIDATED.** The first QA build passed all four native
+pairs; PR #120's shared-field label repair has a new QA build and passing browser
+checks, and its focused 150% native revalidation passed. Each result retains its
+own build attribution.
+Protected source publication and local closeout require
+the task PR's evidence; local acceptance alone is not publication. See the
+[M7.1 implementation record](docs/ux/M7_1_LOCALIZED_SETTINGS_SHARED_CONTROLS.md).
+M7.2 remains **NEXT / NOT STARTED**. M8/M9/M10
 remain later owners. External support/signing/distribution/sample/release
 decisions have explicit owner deadlines in ADR 0047; they are not waived.
 
