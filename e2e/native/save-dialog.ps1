@@ -41,11 +41,42 @@ Add-Type -Namespace MSCanvasSaveDialog -Name Native -MemberDefinition @'
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr window, System.Text.StringBuilder text, int count);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr window, System.Text.StringBuilder text, int count);
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll")] static extern bool IsWindowEnabled(IntPtr window);
+  [DllImport("user32.dll", EntryPoint = "GetWindowLongW", ExactSpelling = true)] static extern int GetWindowStyle(IntPtr window, int index);
   [DllImport("user32.dll")] public static extern bool IsChild(IntPtr parent, IntPtr child);
   [DllImport("user32.dll")] public static extern int GetDlgCtrlID(IntPtr window);
   [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr SendMessageTimeout(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam, uint flags, uint timeout, out UIntPtr result);
+  [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", ExactSpelling = true, CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr SendText(IntPtr window, uint message, UIntPtr wParam, string text, uint flags, uint timeout, out UIntPtr result);
+  [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", ExactSpelling = true, CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr ReadText(IntPtr window, uint message, UIntPtr wParam, System.Text.StringBuilder text, uint flags, uint timeout, out UIntPtr result);
   public sealed class WindowInfo { public long handle; public string title, className; public bool visible; }
   public sealed class ControlInfo { public long handle; public int id; public string className; public bool visible; }
+  static void AssertFilename(IntPtr dialog, IntPtr host, IntPtr edit, int processId) {
+    int dialogOwner, hostOwner, editOwner;
+    GetWindowThreadProcessId(dialog, out dialogOwner);
+    GetWindowThreadProcessId(host, out hostOwner);
+    GetWindowThreadProcessId(edit, out editOwner);
+    var className = new System.Text.StringBuilder(256);
+    GetClassName(edit, className, className.Capacity);
+    if (dialog == IntPtr.Zero || host == IntPtr.Zero || edit == IntPtr.Zero ||
+        dialogOwner != processId || hostOwner != processId || editOwner != processId ||
+        !IsChild(dialog, host) || !IsChild(host, edit) || GetDlgCtrlID(edit) != 1001 ||
+        className.ToString() != "Edit" || !IsWindowVisible(edit) || !IsWindowEnabled(edit) ||
+        (GetWindowStyle(edit, -16) & 0x0800) != 0) // GWL_STYLE / ES_READONLY
+      throw new InvalidOperationException("Native filename ownership changed before text access.");
+  }
+  public static void EnterFilename(IntPtr dialog, IntPtr host, IntPtr edit, int processId, string value) {
+    AssertFilename(dialog, host, edit, processId);
+    UIntPtr result;
+    // WM_SETTEXT targets this exact owned Edit; no keyboard or activation.
+    if (SendText(edit, 0x000C, UIntPtr.Zero, value, 0x0022, 5000, out result) == IntPtr.Zero || result == UIntPtr.Zero)
+      throw new InvalidOperationException("The owned filename text write failed or timed out.");
+    AssertFilename(dialog, host, edit, processId);
+    // One extra character beyond the expected text detects a truncated prefix.
+    var readback = new System.Text.StringBuilder(value.Length + 2);
+    if (ReadText(edit, 0x000D, new UIntPtr((uint)readback.Capacity), readback, 0x0022, 5000, out result) == IntPtr.Zero ||
+        result.ToUInt64() != (ulong)value.Length || !String.Equals(readback.ToString(), value, StringComparison.Ordinal))
+      throw new InvalidOperationException("The owned filename text did not read back exactly.");
+  }
   public static ControlInfo[] OwnedControls(IntPtr dialog, int processId) {
     int owner;
     GetWindowThreadProcessId(dialog, out owner);
@@ -291,8 +322,7 @@ if ($ApplicationProcessId -ne 0) {
     $hasValuePattern = $null -ne $edit -and $edit.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref] $valuePattern)
     $result.readiness = [ordered]@{ filenameLookup = $script:filenameLookup; editFound = $null -ne $edit; valuePatternAvailable = $hasValuePattern; buttonFound = $null -ne $button; buttonEnabled = ($null -ne $button -and $button.Current.IsEnabled) }
     if ($null -ne $button -and $button.Current.IsEnabled -and ($Action -eq 'cancel' -or
-        ($null -ne $edit -and $edit.Current.IsEnabled -and
-         $hasValuePattern))) {
+        ($null -ne $edit -and $edit.Current.IsEnabled))) {
       $ready = $true
       break
     }
@@ -322,10 +352,21 @@ if ($Action -eq 'save') {
   }
   $editId = if ($ApplicationProcessId -ne 0) { 1001 } else { 1148 }
   Assert-OwnedControl -Dialog $dialog -Control $edit -Id $editId
-  $value = $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
   # The full path rather than a bare name, so the destination is this test's own
   # temporary directory rather than wherever the dialog last opened.
-  $value.SetValue($Path)
+  $value = $null
+  if ($ApplicationProcessId -eq 0 -or $edit.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref] $value)) {
+    if ($null -eq $value) { $value = $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern) }
+    $value.SetValue($Path)
+    $result.filenameEntryMethod = 'UIAutomation.Value'
+  } else {
+    # Run07 proved that the exact native Edit is available but ValuePattern is
+    # absent. Write and read back its text through bounded, owned HWND messages.
+    $hostControl = Find-ById -Dialog $dialog -AutomationId 'FileNameControlHost'
+    [MSCanvasSaveDialog.Native]::EnterFilename([IntPtr] $dialog.Current.NativeWindowHandle, [IntPtr] $hostControl.Current.NativeWindowHandle, [IntPtr] $edit.Current.NativeWindowHandle, $ApplicationProcessId, $Path)
+    $result.filenameEntryMethod = 'Win32.WM_SETTEXT with exact WM_GETTEXT readback'
+    $result.filenameReadbackExact = $true
+  }
   $result.named = $true
   $result.filenameControl = [ordered]@{ id = $editId; className = $edit.Current.ClassName; handle = $edit.Current.NativeWindowHandle; hostId = $(if ($ApplicationProcessId -ne 0) { 'FileNameControlHost' } else { 'legacy' }) }
 }
