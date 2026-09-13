@@ -34,12 +34,41 @@ the figure fields' existing positive-integer grammar and raw editing strings.
 Complete delivered-UI coverage closes in M7.5. M7.1 preferences reset when the
 app session restarts; no storage or scientific workspace restoration is added.
 
-The production roster maps comfortable/compact to 44/32px minimum rows with
-unchanged 13px type. Wrapped names grow beyond those minima; this roster is not
-windowed and retains its DOM scroll/activation owner. Shared figure inputs and
+The M7.1 roster mapped comfortable/compact to 44/32px minimum rows with
+unchanged 13px type and no windowing. M7.2 preserves those minima and typography,
+with measured variable-height windowing above 80 presentation items; wrapped
+names grow and offscreen payloads remain ID-based. Shared figure inputs and
 choices use visible 32px controls; Settings actions use 36px controls. The Settings
 surface uses local Segoe UI/CJK fonts, quiet light surfaces and one real Appearance
 category. At constrained heights, its own scroll surface keeps the footer reachable.
+
+### M7.2 consumer mapping
+
+The implemented shell uses a white header, quiet gray background, blue active
+underline and one logo/name Home target. Workbench and Conversion & results are
+real mounted surfaces. Existing export controls stay with their scientific panel;
+no future navigation target is exposed. Wide workbench regions are 280px / flex /
+245px: the roster is wider than the approximate 240px reference to keep wrapped
+names and separate selection controls legible. Below 1050px, auxiliary panels
+fold into reachable header actions before displacing evidence. Header actions do
+not scroll; the roster owns its scroll, and the evidence region owns the retained
+plots/table/export flow. Hidden surfaces expose no tab stops.
+
+Viewed acquisition, highlighted row, focus and checked conversion membership
+have separate labels and visual cues. Group names are raw user labels; groups
+and browsing arrangement last for the session only. Group checkboxes explicitly
+cover the whole group, including filtered children.
+
+dnd-kit 0.5.0 owns sensors, geometry, collision, the overlay and auto-scroll.
+The sortable consumer uses `SortableKeyboardPlugin` without the default
+`OptimisticSortingPlugin`: that plugin reparents React-owned nodes, which breaks
+variable-height window unmounts during auto-scroll. The target highlight and
+compact count provide feedback, and React commits the ID transaction on drop.
+Motion animates only unrelated navigation/disclosure affordances; it never moves
+active drag targets or scientific plots. Keyboard accepts `Enter` and
+`NumpadEnter`, as measured under the pinned sensor. Reduced motion preserves
+operations. Frame evidence and limitations live in the
+[M7.2 record](M7_2_WORKBENCH_SHELL_ROSTER_ORGANIZATION.md).
 
 ## Durable v5.11 reference baseline
 

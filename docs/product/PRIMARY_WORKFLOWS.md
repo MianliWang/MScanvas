@@ -30,6 +30,37 @@ the selected file: it stays one click from being reopened.
 
 ## WF-002 — Add and curate a batch
 
+**M7.2 organization contract:** Home and task navigation preserve the workspace,
+viewed acquisition, selected spectrum, viewport, figure drafts and live operation
+owners. Plain mzML row activation requests its existing preview; modifier clicks
+and keyboard movement do not read. Focus, viewed source, highlighted interaction
+selection and checkbox conversion membership are separate. Ctrl/Shift highlights
+drive `Remove highlighted`, drag and Move to group. Hidden highlights survive
+search/collapse; Ctrl+A applies only within the roster. Group checkboxes apply to
+all group members, including filtered ones, and do not change highlights.
+
+One level of session-only groups references admitted dataset IDs. New arrivals
+enter Ungrouped. Create/rename/disclose/reorder and Move to group have keyboard
+and menu paths; dissolving a group returns its members to Ungrouped without
+removing acquisitions. Drag captures the full highlighted payload, including
+offscreen/hidden members, or just an unhighlighted source. Escape, pointer cancel,
+window focus loss, outside/invalid targets and stale authoritative membership
+cancel atomically. Undo reverses only applicable local organization changes; it
+preserves intervening imports and refuses an inverse that would restore removed
+IDs. Neither organization nor undo imports, removes or checks acquisitions.
+
+`Add files…` preserves the existing new-batch membership default; folder/drop
+and explicit output adoption add newly admitted handles to that membership.
+Read-back only reconciles it. The complete Rust roster and explicit execution
+sort still supply M6.7; search, group arrangement, collapse and undo do not change
+an unstarted conversion plan. Membership, scope and execution-sort edits still
+invalidate it. BEGIN and retry retain their bound membership/order. Actual
+Explorer drops continue through Rust's narrower mzML admission path into
+Ungrouped, independent of the virtual group beneath the pointer.
+
+The historical import race guarantees below remain in force; their former
+`Remove selected` action is now explicitly named `Remove highlighted`.
+
 1. Use `Add files…` to choose one or many mzML files, use `Add mzML folder…` to take every `.mzML` file found beneath one folder, or drop regular files, ordinary local folders, or a mixture of both from Windows Explorer.
 2. Discovery represents each logical acquisition once.
 3. Rows progressively show format, size and readiness.
@@ -218,7 +249,7 @@ availability, queue, adoption and export contracts.
    acquisition is refused with a sentence saying which file to put beside it —
    and choosing the `.wiff.scan` on its own says to choose the `.wiff` instead.
 2. Choose `Selected rows` or `All workspace rows`. Selected uses the curated
-   selection even when it contains just one row; focus is viewer/keyboard state
+   checkbox membership even when it contains just one row; focus is viewer/keyboard state
    only. All uses every eligible row in the workspace, regardless of search.
    Both scopes exclude unsupported rows and show requested/eligible/excluded
    counts. The three families may be mixed. Vendor rows cannot be previewed,

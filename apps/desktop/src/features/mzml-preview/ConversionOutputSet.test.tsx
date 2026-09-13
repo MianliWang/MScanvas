@@ -53,6 +53,7 @@ function renderApp(api: FakePreviewApi): void {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
+  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
 }
 
 /** Names the visible copy of a sentence rather than its polite mirror. */
@@ -68,7 +69,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
 
     // The label is part of the accessible row name rather than a visual aside,
     // and it is the exact one: not "SCIEX", not "vendor RAW".
-    const row = await screen.findByRole("option", {
+    const row = await screen.findByRole("row", {
       name: /Enolase_repeats\.wiff.*SCIEX WIFF/,
     });
     expect(row).toBeVisible();
@@ -82,7 +83,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /Enolase_repeats\.wiff/ }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /Enolase_repeats\.wiff/ })).getByRole("checkbox"));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
@@ -113,10 +114,10 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /Enolase_repeats\.wiff/ });
-    const rows = within(screen.getByRole("listbox", { name: "Workspace" })).getAllByRole("option");
-    fireEvent.click(rows[0]);
-    fireEvent.click(rows[1], { ctrlKey: true });
+    await screen.findByRole("row", { name: /Enolase_repeats\.wiff/ });
+    const rows = Array.from(screen.getByRole("treegrid", { name: "Acquisitions" }).querySelectorAll<HTMLElement>("[data-handle]"));
+    fireEvent.click(within(rows[0]).getByRole("checkbox"));
+    fireEvent.click(within(rows[1]).getByRole("checkbox"));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
@@ -264,12 +265,10 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     });
     // Ten ordinary mzML rows beside the acquisition, which is still one row.
     await waitFor(() => {
-      const rows = within(screen.getByRole("listbox", { name: "Workspace" })).getAllByRole(
-        "option",
-      );
+      const rows = Array.from(screen.getByRole("treegrid", { name: "Acquisitions" }).querySelectorAll("[data-handle]"));
       expect(rows).toHaveLength(11);
     });
-    expect(screen.getAllByRole("option", { name: /SCIEX WIFF/ })).toHaveLength(1);
+    expect(screen.getAllByRole("row", { name: /SCIEX WIFF/ })).toHaveLength(1);
 
     // Repeating it reports every member rather than adding one twice.
     fireEvent.click(
@@ -279,9 +278,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
       expect(screen.getByText("0 added, 10 already in the workspace, 0 not added.")).toBeVisible();
     });
     await waitFor(() => {
-      const rows = within(screen.getByRole("listbox", { name: "Workspace" })).getAllByRole(
-        "option",
-      );
+      const rows = Array.from(screen.getByRole("treegrid", { name: "Acquisitions" }).querySelectorAll("[data-handle]"));
       expect(rows).toHaveLength(11);
     });
 
@@ -647,7 +644,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
     // The walking surfaces are mzML-only and their copy must not imply
     // otherwise -- for this family or for any other.

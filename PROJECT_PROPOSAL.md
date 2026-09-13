@@ -655,7 +655,11 @@ passed all four required native pairs. PR #120 identified a shared-field label
 activation regression; its new QA build, browser checks and focused 150% native
 revalidation pass, with explicit build attribution in the
 [implementation record](docs/ux/M7_1_LOCALIZED_SETTINGS_SHARED_CONTROLS.md).
-M7.2 remains next and not started. This source slice builds or releases no public beta.
+M7.2 implements the light workbench shell, independent roster interaction and
+conversion membership, and session-only grouped organization. Acceptance and
+protected publication are tracked in its
+[implementation record](docs/ux/M7_2_WORKBENCH_SHELL_ROSTER_ORGANIZATION.md).
+M7.3 remains next and not started. This source slice builds or releases no public beta.
 
 ### M8 — Artifact, run and QC foundation
 

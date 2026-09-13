@@ -56,6 +56,7 @@ function renderApp(api: FakePreviewApi): void {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
+  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
 }
 
 /** An item that finalized an output of its own. */
@@ -130,8 +131,8 @@ function apiWith(
  * rows and would make every count wrong by a fixed amount that looks plausible.
  */
 function rows(): HTMLElement[] {
-  const roster = screen.queryByRole("listbox", { name: "Workspace" });
-  return roster === null ? [] : within(roster).queryAllByRole("option");
+  const roster = screen.queryByRole("treegrid", { name: "Acquisitions" });
+  return roster === null ? [] : Array.from(roster.querySelectorAll<HTMLElement>("[data-handle]"));
 }
 
 describe("adding converted outputs to the workspace", () => {
@@ -187,8 +188,9 @@ describe("adding converted outputs to the workspace", () => {
     // Named the queue it is looking at, and asked once.
     expect(api.adoptionRequests).toEqual(["1"]);
     // The adopted rows are ordinary mzML rows.
-    expect(screen.getByRole("option", { name: /run-1\.mzML/ })).toBeVisible();
-    expect(screen.getByRole("option", { name: /run-2\.mzML/ })).toBeVisible();
+    const roster = within(screen.getByRole("treegrid", { name: "Acquisitions" }));
+    expect(roster.getByRole("row", { name: /run-1\.mzML/ })).toBeVisible();
+    expect(roster.getByRole("row", { name: /run-2\.mzML/ })).toBeVisible();
     // Nothing was read. Adopting a file is not opening it.
     expect(api.requestedSpectra).toEqual([]);
     expect(api.openedHandles).toEqual([]);
@@ -207,7 +209,7 @@ describe("adding converted outputs to the workspace", () => {
     });
     const search = screen.getByRole("searchbox", { name: /search/i });
     fireEvent.change(search, { target: { value: "run" } });
-    const sort = screen.getByRole("combobox", { name: /sort/i });
+    const sort = screen.getByRole("combobox", { name: "Execution order" });
     fireEvent.change(sort, { target: { value: "name-asc" } });
 
     const panel = await screen.findByRole("region", { name: "Convert" });
@@ -444,7 +446,7 @@ describe("adding converted outputs to the workspace", () => {
     });
     expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
     // The roster stays readable throughout.
-    expect(screen.getByRole("listbox", { name: "Workspace" })).toBeVisible();
+    expect(screen.getByRole("treegrid", { name: "Acquisitions" })).toBeVisible();
     expect(screen.getByRole("searchbox", { name: /search/i })).toBeEnabled();
   });
 

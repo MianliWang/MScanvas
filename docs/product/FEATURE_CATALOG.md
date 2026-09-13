@@ -19,19 +19,21 @@ This catalog is the concise feature index. Detailed semantics remain in [`PROJEC
 | WSP-002 | Add folder | P0 | Discover logical acquisition roots without descending inside recognized directory datasets. Partially implemented: regular `.mzML` files only. |
 | WSP-003 | Explorer drag-and-drop | P0 | Files/folders dropped from Windows Explorer enter the same discovery path as pickers. |
 | WSP-004 | Duplicate prevention | P0 | Re-adding the same canonical logical dataset does not create another row. |
-| WSP-005 | Multi-selection | P0 | Pointer and keyboard selection follow familiar desktop list behavior. |
-| WSP-006 | Remove selected | P0 | Removes logical rows only; never changes source files. |
+| WSP-005 | Multi-selection | P0 | Ctrl/Shift highlights and roster-scoped Ctrl+A preserve hidden IDs; keyboard focus, viewed source and checkbox conversion membership remain independent. |
+| WSP-006 | Remove highlighted | P0 | Removes highlighted logical rows through Rust only; conversion checkboxes are not a deletion selection, and source files never change. |
 | WSP-007 | Clear workspace | P0 | One visible action clears idle rows without app restart or disk deletion; active runs require an explicit choice. |
 | WSP-008 | Convert selected/all | P0 | Scope is visible before execution and unrelated rows remain intact. |
-| WSP-009 | Search/sort/filter | P1 | Handles large batches without obscuring selected/running items. |
+| WSP-009 | Search/sort/filter | P1 | Search/collapse preserves hidden highlights and reports their count. Viewed/reading/queue rows retain existing pin facts. Browsing arrangement never replaces the complete roster's explicit execution sort. |
 | WSP-010 | Restore workspace | P1 | Restores logical state safely and marks missing files rather than deleting rows silently. |
+| WSP-011 | Session organization | P1 | One-level groups and Ungrouped support create/rename/disclose/reorder/move/dissolve. ID-based pointer/keyboard drag and menus share atomic checks; bounded undo preserves imports and refuses unsafe inverses. No persistence or source deletion. |
+| WSP-012 | Workbench navigation | P0 | One Home target and real workbench/conversion surfaces preserve mounted authority, viewed evidence, drafts and live work across navigation, Settings and responsive folding. |
 
 Implementation notes for the two folder-bearing features follow. The acceptance
 table remains the target, including the unsupported portions called out below:
 
 - **WSP-002 — Partially implemented.** M1.4.0 built the private discovery foundation and M1.4.1 exposed `Add mzML folder…` over it ([ADR 0007](../architecture/adr/0007-logical-acquisition-discovery-and-folder-traversal.md)). What works today: one chosen local Windows folder is scanned recursively for regular `.mzML` files, in a deterministic order, under four named limits, without following any linked or special filesystem entry, and an incomplete scan says so. What is still absent from the acceptance above: directory-formatted acquisitions are not recognized, so there is nothing to stop descending inside. They remain evidence-gated — MSCanvas recognizes none of them today, and will only claim one once this repository can convert it.
 - **WSP-008 — Implemented by M6.7 ([PR #100](https://github.com/MianliWang/MScanvas/pull/100)).** Selected means the
-  user's curated rows, including a selection of one; all means every eligible
+  user's curated checkbox membership in M7.2, including a selection of one; all means every eligible
   workspace row, including rows outside search. Focus never supplies a fallback.
   Requested, eligible and excluded counts are visible. Both scopes use the
   complete roster's chosen sort, with added order breaking ties, and show every

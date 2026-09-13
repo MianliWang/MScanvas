@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { SettingsDialog } from "../preferences/SettingsDialog";
+import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
+import type { UiMessage } from "../preferences/i18n";
+import { WorkbenchHeader, type WorkbenchSurface } from "../workbench/WorkbenchHeader";
+import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 
 import { BackendStatus } from "./BackendStatus";
 import { Chromatogram } from "./Chromatogram";
 import { ChromatogramExportPanel } from "./ChromatogramExportPanel";
-import type { WorkspaceDropRejectionReason } from "./contracts";
 import { conversionJudgedAnyOutput } from "./contracts";
 import { resolveConversionScope } from "./conversionScope";
 import { ConversionPanel } from "./ConversionPanel";
@@ -15,33 +17,24 @@ import { SpectrumTable } from "./SpectrumTable";
 import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
 import { formatCount, formatDatasetLabel } from "./format";
 import { rosterProjection, type WorkspaceNotice } from "./rosterSelection";
-import { describeProjection } from "./rosterView";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
-
-/**
- * What a folder import is doing, said so that it is true throughout.
- *
- * The operation covers a modal dialog and then a filesystem walk, and the
- * interface cannot see the moment between them: a native picker does not report
- * closing, and adding an event protocol to learn it is a task model this
- * milestone deliberately does not build. So the sentence names both phases
- * rather than guessing which one is running, and says the length is unknown
- * rather than inventing a proportion of a tree nothing has counted.
- */
-const FOLDER_IMPORT_STATUS =
-  "Folder import in progress. MSCanvas is waiting for a folder selection or " +
-  "scanning the chosen folder. The duration is not known.";
-
-const DROP_IMPORT_STATUS =
-  "Adding dropped items. MSCanvas is inspecting dropped files and folders. " +
-  "The duration is not known.";
-
-const DROP_BUSY_STATUS =
-  "Another drop is already being processed. Wait for it to finish or clear the workspace.";
 
 /** The session workspace: a curated roster of mzML files, and one open preview. */
 export function PreviewWorkspace() {
   const workspace = usePreviewWorkspace();
+  const t = useUiMessages();
+  const notice = workspace.workspaceNotice === null ? null : formatWorkspaceNotice(workspace.workspaceNotice, t);
+  const [surface, setSurface] = useState<WorkbenchSurface>("workbench");
+  const [constrained, setConstrained] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(max-width: 1050px)").matches);
+  const [rosterOpen, setRosterOpen] = useState(() => typeof window.matchMedia !== "function" || !window.matchMedia("(max-width: 1050px)").matches);
+  const [detailsOpen, setDetailsOpen] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1700px)").matches);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia("(max-width: 1050px)");
+    const fold = () => { setConstrained(query.matches); if (query.matches) { setRosterOpen(false); setDetailsOpen(false); } };
+    query.addEventListener("change", fold);
+    return () => query.removeEventListener("change", fold);
+  }, []);
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
   /**
    * Whether the chromatogram's export surface is open.
@@ -221,7 +214,7 @@ export function PreviewWorkspace() {
 
   const resolvedScope = useMemo(
     () => resolveConversionScope(workspace.conversionScope, roster),
-    [workspace.conversionScope, roster.datasets, roster.selected, roster.sort],
+    [workspace.conversionScope, roster.datasets, roster.conversionMembership, roster.sort],
   );
 
   const { describe: describeConversion } = workspace.conversionPlan;
@@ -245,26 +238,11 @@ export function PreviewWorkspace() {
   );
 
   return (
-    <div className="app-shell" data-settings-return-target="" tabIndex={-1}>
-      <header className="topbar">
-        <div className="brand-block">
-          <span aria-hidden="true" className="brand-mark">
-            MS
-          </span>
-          <div>
-            <strong>MSCanvas</strong>
-            <span>Local mzML workspace</span>
-          </div>
-        </div>
-        <p className="workspace-drop-hint">
-          {workspace.dropSubscriptionStatus === "available"
-            ? "Drop mzML files or folders anywhere in this window."
-            : workspace.dropSubscriptionStatus === "connecting"
-              ? "Connecting Explorer drag-and-drop…"
-              : "Explorer drag-and-drop is unavailable. Use the Add actions below."}
-        </p>
-        <SettingsDialog rowCount={roster.datasets.length} />
-      </header>
+    <div className="app-shell workbench-shell" data-surface={surface} data-roster-open={rosterOpen} data-details-open={detailsOpen} data-settings-return-target="" tabIndex={-1}>
+      <WorkbenchHeader surface={surface} onNavigate={next => { setSurface(next); if (constrained) { setRosterOpen(false); setDetailsOpen(false); } }} rosterOpen={rosterOpen} onToggleRoster={() => { setRosterOpen(open => !open); if (constrained) setDetailsOpen(false); }}
+        detailsOpen={detailsOpen} onToggleDetails={() => { setDetailsOpen(open => !open); if (constrained) setRosterOpen(false); }} rowCount={roster.datasets.length}
+        busy={workspace.conversion.busy || workspace.previewBackendBusy || workspace.folderBusy || workspace.dropBusy}
+        retained={workspace.conversion.state.status === "terminal"} dropStatus={workspace.dropSubscriptionStatus} />
 
       {workspace.dropPresentation.status === "idle" ? null : (
         <div
@@ -275,14 +253,12 @@ export function PreviewWorkspace() {
           <div className="workspace-drop-overlay-card">
             <strong>
               {workspace.dropPresentation.status === "hovering"
-                ? `Release to inspect and add ${formatDroppedItemCount(
-                    workspace.dropPresentation.itemCount,
-                  )}.`
-                : "Adding dropped items…"}
+                ? t("dropRelease", { count: workspace.dropPresentation.itemCount })
+                : t("dropAdding")}
             </strong>
             {workspace.dropPresentation.status === "importing" ? (
               <span>
-                MSCanvas is inspecting dropped files and folders. The duration is not known.
+                {t("dropInspecting")}
               </span>
             ) : null}
           </div>
@@ -305,7 +281,7 @@ export function PreviewWorkspace() {
             what is already on screen, which is still open and still usable. */}
         {workspace.pickerError === null ? null : (
           <div className="notice notice-danger" role="status">
-            <strong>The file picker could not be opened</strong>
+            <strong>{t("pickerFailed")}</strong>
             <span>{workspace.pickerError.summary}</span>
             {/* The same action as `Add files…`, so it is refused in the same
                 states. An enabled control that returns at a guard tells the
@@ -316,10 +292,10 @@ export function PreviewWorkspace() {
               onClick={workspace.addFiles}
               type="button"
             >
-              Try choosing files again
+              {t("retryFiles")}
             </button>
             <button className="link-button" onClick={workspace.dismissPickerError} type="button">
-              Dismiss
+              {t("dismiss")}
             </button>
           </div>
         )}
@@ -332,7 +308,7 @@ export function PreviewWorkspace() {
             network share or a folder that has since gone. */}
         {workspace.folderError === null ? null : (
           <div className="notice notice-danger" role="status">
-            <strong>The folder could not be added</strong>
+            <strong>{t("folderFailed")}</strong>
             <span>{workspace.folderError.summary}</span>
             <button
               className="link-button"
@@ -349,7 +325,7 @@ export function PreviewWorkspace() {
               }}
               type="button"
             >
-              Choose another folder
+              {t("chooseAnotherFolder")}
             </button>
             <button
               className="link-button"
@@ -365,7 +341,7 @@ export function PreviewWorkspace() {
               }}
               type="button"
             >
-              Dismiss
+              {t("dismiss")}
             </button>
           </div>
         )}
@@ -377,14 +353,14 @@ export function PreviewWorkspace() {
             is the shape screen readers routinely miss. */}
         {workspace.folderBusy ? (
           <div className="notice notice-neutral">
-            <span>Folder import in progress…</span>
+            <span>{t("folderBusy")}</span>
           </div>
         ) : null}
 
         {workspace.dropRejectedToken > 0 ? (
           <div className="notice notice-warning">
-            <strong>Drop not accepted</strong>
-            <span>{DROP_REJECTION_STATUS[workspace.dropRejectedReason]}</span>
+            <strong>{t("dropRejected")}</strong>
+            <span>{t(workspace.dropRejectedReason === "drop_busy" ? "dropBusy" : "dropConversionBusy")}</span>
           </div>
         ) : null}
 
@@ -393,7 +369,7 @@ export function PreviewWorkspace() {
           // roster and the picker actions remain usable. Keep its recovery and
           // wording separate from the error for one accepted Drop below.
           <div className="notice notice-danger">
-            <strong>Explorer drag-and-drop is unavailable</strong>
+            <strong>{t("dropUnavailable")}</strong>
             <span>{workspace.dropSubscriptionError.summary}</span>
             <button
               className="link-button"
@@ -408,7 +384,7 @@ export function PreviewWorkspace() {
               }}
               type="button"
             >
-              Try connecting again
+              {t("dropReconnect")}
             </button>
           </div>
         )}
@@ -418,7 +394,7 @@ export function PreviewWorkspace() {
           // announcement. Giving this visible copy `role=status` would speak
           // the same failure twice.
           <div className="notice notice-danger">
-            <strong>The dropped items could not be added</strong>
+            <strong>{t("dropFailed")}</strong>
             <span>{workspace.dropError.summary}</span>
             <button
               className="link-button"
@@ -430,17 +406,17 @@ export function PreviewWorkspace() {
               }}
               type="button"
             >
-              Dismiss
+              {t("dismiss")}
             </button>
           </div>
         )}
 
         {workspace.workspaceError === null ? null : (
           <div className="notice notice-danger" role="status">
-            <strong>The workspace could not be changed</strong>
+            <strong>{t("workspaceFailed")}</strong>
             <span>{workspace.workspaceError.summary}</span>
             <button className="link-button" onClick={workspace.dismissWorkspaceError} type="button">
-              Dismiss
+              {t("dismiss")}
             </button>
           </div>
         )}
@@ -453,39 +429,39 @@ export function PreviewWorkspace() {
             together with its text is the shape screen readers routinely miss,
             so the announcement is made by the always-mounted region below and
             this is the visible half. */}
-        {workspace.workspaceNotice === null ? null : (
+        {notice === null ? null : (
           <div
             className={
-              workspace.workspaceNotice.tone === "warning"
+              notice.tone === "warning"
                 ? "notice notice-warning"
                 : "notice notice-neutral"
             }
           >
-            <span>{workspace.workspaceNotice.message}</span>
-            {workspace.workspaceNotice.details.length === 0 ? null : (
+            <span>{notice.message}</span>
+            {notice.details.length === 0 ? null : (
               <ul className="workspace-notice-details">
                 {/* Keyed by position as well as by text: two names for one
                     acquisition produce the same sentence, and Rust reports one
                     outcome per file the user chose rather than one per row. */}
-                {workspace.workspaceNotice.details.map((detail, index) => (
+                {notice.details.map((detail, index) => (
                   <li key={`${String(index)}-${detail}`}>{detail}</li>
                 ))}
-                {workspace.workspaceNotice.more === 0 ? null : (
+                {notice.more === 0 ? null : (
                   <li key="more">
-                    {formatCount(workspace.workspaceNotice.more)} more not listed here.
+                    {t("moreNotListed", { count: notice.more })}
                   </li>
                 )}
               </ul>
             )}
             <button className="link-button" onClick={workspace.dismissWorkspaceNotice} type="button">
-              Dismiss
+              {t("dismiss")}
             </button>
           </div>
         )}
 
         {workspace.rosterLoad.status === "failed" && roster.datasets.length > 0 ? (
           <div className="notice notice-danger" role="status">
-            <strong>The workspace list could not be read</strong>
+            <strong>{t("rosterFailed")}</strong>
             <span>{workspace.rosterLoad.error.summary}</span>
             {/* Refused while a mutation or an import is unresolved. Rust returns
                 a pure, gate-linearized snapshot; native page-load start owns
@@ -499,7 +475,7 @@ export function PreviewWorkspace() {
               onClick={workspace.reloadRoster}
               type="button"
             >
-              Try reading it again
+              {t("rosterRetry")}
             </button>
           </div>
         ) : null}
@@ -517,7 +493,7 @@ export function PreviewWorkspace() {
           Reaching for "the last polite region" was a positional answer that a
           fifth region silently changed the meaning of. */}
       <p aria-live="polite" className="visually-hidden" data-live-region="viewer">
-        {announce(workspace)}
+        {announce(workspace, t)}
       </p>
       {/* One expression, so the region holds one text node whose string
           changes. Two children would leave the sentence node untouched when
@@ -535,10 +511,10 @@ export function PreviewWorkspace() {
           select announces its own value and a second voice saying the same
           thing is noise rather than access. */}
       <p aria-live="polite" className="visually-hidden" data-live-region="search">
-        {describeProjection(projection)}
+        {t("rosterContext", { visible: projection.datasets.length, total: roster.datasets.length, capacity: roster.capacity })}
       </p>
       <p aria-live="polite" className="visually-hidden" data-live-region="workspace">
-        {workspace.workspaceNotice === null ? "" : announceNotice(workspace.workspaceNotice)}
+        {workspace.workspaceNotice === null ? "" : announceNotice(workspace.workspaceNotice, t)}
       </p>
       {/* A folder import is the one workspace action long enough that a user
           can wonder whether anything is happening, and the only one whose end
@@ -553,10 +529,10 @@ export function PreviewWorkspace() {
           report closing, which is an event protocol this milestone does not
           add; saying something true of both needs nothing. */}
       <p aria-live="polite" className="visually-hidden" data-live-region="folder">
-        {workspace.folderBusy ? FOLDER_IMPORT_STATUS : ""}
+        {workspace.folderBusy ? t("folderImportStatus") : ""}
       </p>
       <p aria-live="polite" className="visually-hidden" data-live-region="drop">
-        {announceDrop(workspace)}
+        {announceDrop(workspace, t)}
       </p>
       {/* Named like the four above it and mounted for the life of the
           application for the same reason: what a reader must notice is a change
@@ -566,7 +542,7 @@ export function PreviewWorkspace() {
       </p>
 
       <main className="workspace-layout">
-        <aside className="workspace-sidebar">
+        <aside id="workbench-roster" className="workspace-sidebar" hidden={!rosterOpen}>
           <DatasetRoster
             canAddFiles={canAcquire}
             canAddFolder={canAddFolder}
@@ -591,6 +567,10 @@ export function PreviewWorkspace() {
             rosterSettlementToken={workspace.rosterSettlementToken}
             state={roster}
           />
+
+        </aside>
+
+        <section id="workbench-conversion" className="workbench-conversion" hidden={surface !== "conversion" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("conversionTask")}>
           <ConversionPanel
             configuration={workspace.conversionConfiguration}
             conversion={workspace.conversion}
@@ -598,6 +578,8 @@ export function PreviewWorkspace() {
             resolvedScope={resolvedScope}
             onScopeChange={workspace.setConversionScope}
           />
+        </section>
+        <aside id="workbench-inspector" className="workbench-inspector" hidden={!detailsOpen} aria-label={t("inspectorToggle")}>
           {preview.status === "loaded" ? (
             <PreviewSummary
               file={previewFile ?? preview.preview.file}
@@ -606,8 +588,8 @@ export function PreviewWorkspace() {
               runSummary={preview.preview.runSummary}
               spectrumListTotal={preview.preview.spectrumTable.totalRowCount}
             />
-          ) : null}
-        </aside>
+          ) : null}        </aside>
+        <section id="workbench-evidence" className="workbench-evidence" hidden={surface !== "workbench" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("workbench")}>
 
         {preview.status === "loaded" ? (
           <div className="viewer-column">
@@ -732,10 +714,9 @@ export function PreviewWorkspace() {
           <section className="panel workspace-placeholder">
             {preview.status === "opening" ? (
               <div className="empty-state">
-                <strong>Reading the file…</strong>
+                <strong>{t("readingEvidence")}</strong>
                 <span>
-                  Loading metadata, the run summary and the spectrum list through the installed
-                  backend.
+                  {t("readingEvidenceHelp")}
                 </span>
               </div>
             ) : preview.status === "failed" ? (
@@ -753,53 +734,23 @@ export function PreviewWorkspace() {
                       onClick={workspace.previewActiveAgain}
                       type="button"
                     >
-                      Try reading this file again
+                      {t("retryEvidence")}
                     </button>
                   ) : null}
                 </div>
               </div>
             ) : (
               <div className="empty-state">
-                <strong>{roster.datasets.length === 0 ? "Add mzML files" : "Preview a file"}</strong>
-                <span>
-                  MSCanvas reads local .mzML files from this computer and never writes to them.
-                  Nothing is uploaded and nothing leaves this machine.
-                </span>
-                {backendUnavailable ? (
-                  <span>
-                    Install ProteoWizard to read a file. The workspace list works without it.
-                  </span>
-                ) : roster.datasets.length === 0 ? (
-                  <span>
-                    Use Add files… in the workspace list to choose one or several, or Add mzML
-                    folder… to take every .mzML file under one folder.
-                  </span>
-                ) : (
-                  <>
-                    {/* Rust still holds every path, so reading one again is one
-                        action and not a trip back through the picker. This is
-                        what changing the installation costs: the readings go,
-                        the workspace does not. */}
-                    {workspace.activeDataset === null ? (
-                      <span>
-                        Select a file in the workspace list, then choose Preview focused.
-                      </span>
-                    ) : (
-                      <button
-                        className="primary-button"
-                        disabled={!canPreview}
-                        onClick={workspace.previewActiveAgain}
-                        type="button"
-                      >
-                        Preview {formatDatasetLabel(workspace.activeDataset)}
-                      </button>
-                    )}
-                  </>
-                )}
+                <strong>{t("emptyEvidence")}</strong>
+                <span>{backendUnavailable ? t("previewBackendRequired") : t("emptyEvidenceHelp")}</span>
+                {workspace.activeDataset !== null ? <button type="button" className="secondary-button" disabled={!canPreview} onClick={workspace.previewActiveAgain}>
+                  {t("previewRetained", { name: formatDatasetLabel(workspace.activeDataset) })}
+                </button> : null}
               </div>
             )}
           </section>
         )}
+        </section>
       </main>
     </div>
   );
@@ -821,20 +772,14 @@ export function PreviewWorkspace() {
  * U+00A0 rather than a plain space, because CSS collapses a trailing ordinary
  * space out of the rendered text a screen reader is given. It is not spoken.
  */
-function announceNotice(notice: WorkspaceNotice): string {
-  return `Workspace: ${notice.message}${notice.sequence % 2 === 1 ? "\u00a0" : ""}`;
+function announceNotice(notice: WorkspaceNotice, t: UiMessage): string {
+  return `${t("workspaceAnnouncement", { message: formatWorkspaceNotice(notice, t).message })}${notice.sequence % 2 === 1 ? "\u00a0" : ""}`;
 }
 
 /**
  * What each refusal says. Exhaustive over the reasons, so one added to the
  * boundary fails compilation here rather than being dropped in silence.
  */
-const DROP_REJECTION_STATUS: Readonly<Record<WorkspaceDropRejectionReason, string>> = {
-  drop_busy: DROP_BUSY_STATUS,
-  conversion_busy:
-    "MSCanvas is converting an acquisition, so those files were not added. Try again once the conversion has finished.",
-};
-
 /**
  * What a reader is told about the conversion queue.
  *
@@ -984,60 +929,41 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
   }`;
 }
 
-function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>): string {
-  if (workspace.dropSubscriptionStatus === "unavailable") {
-    return `Explorer drag-and-drop is unavailable. ${workspace.dropSubscriptionError?.summary ?? "Use the Add actions below."}`;
-  }
-  if (workspace.dropSubscriptionStatus === "connecting") {
-    return "Connecting Explorer drag-and-drop.";
-  }
-  if (workspace.dropRejectedToken > 0) {
-    return `${DROP_REJECTION_STATUS[workspace.dropRejectedReason]}${
-      workspace.dropRejectedToken % 2 === 1 ? "\u00a0" : ""
-    }`;
-  }
-  if (workspace.dropError !== null) {
-    return `The dropped items could not be added. ${workspace.dropError.summary}`;
-  }
+function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessage): string {
+  if (workspace.dropSubscriptionStatus === "unavailable") return `${t("dropUnavailable")}. ${workspace.dropSubscriptionError?.summary ?? t("addFiles")}`;
+  if (workspace.dropSubscriptionStatus === "connecting") return t("shellDropConnecting");
+  if (workspace.dropRejectedToken > 0) return `${t(workspace.dropRejectedReason === "drop_busy" ? "dropBusy" : "dropConversionBusy")}${workspace.dropRejectedToken % 2 === 1 ? "\u00a0" : ""}`;
+  if (workspace.dropError !== null) return `${t("dropFailed")}. ${workspace.dropError.summary}`;
   switch (workspace.dropPresentation.status) {
-    case "idle":
-      return "";
-    case "hovering":
-      return `Release to inspect and add ${formatDroppedItemCount(
-        workspace.dropPresentation.itemCount,
-      )}.`;
-    case "importing":
-      return DROP_IMPORT_STATUS;
+    case "idle": return "";
+    case "hovering": return t("dropRelease", { count: workspace.dropPresentation.itemCount });
+    case "importing": return t("dropImportStatus");
   }
 }
 
-function formatDroppedItemCount(itemCount: number): string {
-  return `${formatCount(itemCount)} dropped ${itemCount === 1 ? "item" : "items"}`;
-}
-
-function announce(workspace: ReturnType<typeof usePreviewWorkspace>): string {
+function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessage): string {
   const { preview, roster, rosterLoad, spectrum } = workspace;
   if (preview.status === "opening") {
-    return "Reading the selected file.";
+    return t("readingSelected");
   }
   if (preview.status === "failed") {
-    return `The file could not be read. ${preview.error.summary}`;
+    return `${t("readFailed")} ${preview.error.summary}`;
   }
   if (preview.status === "empty") {
     if (rosterLoad.status === "loading") {
       // Not "the workspace is empty". Rust keeps the workspace across a reload
       // of this window, so until the list has been read that is a claim this
       // side cannot make.
-      return "Reading the workspace list.";
+      return t("rosterReadingAnnouncement");
     }
     if (rosterLoad.status === "failed" && roster.datasets.length === 0) {
       // Nor after the read failed, which is the same ignorance by another
       // route -- and the failure itself is worth hearing.
-      return `The workspace list could not be read. ${rosterLoad.error.summary}`;
+      return `${t("rosterFailed")}. ${rosterLoad.error.summary}`;
     }
     return roster.datasets.length === 0
-      ? "The workspace is empty."
-      : `${formatCount(roster.datasets.length)} files in the workspace. No preview is open.`;
+      ? t("rosterEmptyAnnouncement")
+      : t("rosterRetainedAnnouncement", { count: roster.datasets.length });
   }
   switch (spectrum.status) {
     case "none":

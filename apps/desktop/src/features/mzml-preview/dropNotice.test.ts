@@ -1,7 +1,9 @@
+import { bindUiMessages, createUiRuntime } from "../preferences/i18n";
+import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
 import { describe, expect, it } from "vitest";
 
 import type { DropIngestionResult, DropIngestionSummary } from "./contracts";
-import { describeDropResult } from "./dropNotice";
+import { describeDropResult as describeDropResultData } from "./dropNotice";
 import { previewError, selectedFile } from "../../test/previewFixtures";
 
 const completeSummary: DropIngestionSummary = {
@@ -129,3 +131,6 @@ describe("drop result notice", () => {
     expect(notice.details.join(" ")).not.toContain("private");
   });
 });
+
+const englishNoticeMessages = bindUiMessages(createUiRuntime().instance.getFixedT("en", "ui"));
+function describeDropResult(...args: Parameters<typeof describeDropResultData>) { return formatWorkspaceNotice(describeDropResultData(...args), englishNoticeMessages); }

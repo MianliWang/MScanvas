@@ -61,7 +61,7 @@ def validate_required(errors: list[str]) -> None:
 def validate_json(errors: list[str]) -> None:
     for pattern in JSON_GLOBS:
         for path in ROOT.glob(pattern):
-            if any(part in {"node_modules", "target", ".git"} for part in path.parts):
+            if any(part in {"node_modules", "target", ".git", ".tmp"} for part in path.parts):
                 continue
             try:
                 json.loads(path.read_text(encoding="utf-8"))
@@ -72,7 +72,7 @@ def validate_json(errors: list[str]) -> None:
 def validate_toml(errors: list[str]) -> None:
     for pattern in TOML_GLOBS:
         for path in ROOT.glob(pattern):
-            if any(part in {"node_modules", "target", ".git"} for part in path.parts):
+            if any(part in {"node_modules", "target", ".git", ".tmp"} for part in path.parts):
                 continue
             try:
                 tomllib.loads(path.read_text(encoding="utf-8"))
@@ -100,7 +100,7 @@ def validate_skill_frontmatter(errors: list[str]) -> None:
 def validate_markdown_links(errors: list[str]) -> None:
     for pattern in MARKDOWN_GLOBS:
         for path in ROOT.glob(pattern):
-            if any(part in {"node_modules", "target", ".git"} for part in path.parts):
+            if any(part in {"node_modules", "target", ".git", ".tmp"} for part in path.parts):
                 continue
             text = path.read_text(encoding="utf-8")
             for target in LINK_RE.findall(text):
@@ -468,7 +468,7 @@ def validate_test_support_stays_a_dev_dependency(errors: list[str]) -> None:
     """
     for manifest in sorted(ROOT.glob("**/Cargo.toml")):
         if any(
-            part in {"node_modules", "target", ".git"} for part in manifest.parts
+            part in {"node_modules", "target", ".git", ".tmp"} for part in manifest.parts
         ):
             continue
         section = None
@@ -706,7 +706,7 @@ def validate_no_font_is_bundled_or_fetched(errors: list[str]) -> None:
 
     Checked here because both wrong ways look like small conveniences.
     """
-    skip = {"node_modules", "target", ".git", "dist"}
+    skip = {"node_modules", "target", ".git", ".tmp", "dist"}
     for candidate in sorted(ROOT.glob("**/*")):
         if any(part in skip for part in candidate.parts) or not candidate.is_file():
             continue

@@ -27,19 +27,56 @@ function wrapper(api: ReturnType<typeof createFakePreviewApi>) {
 async function mount(count = 3, conversionPlan = async (request: ConversionPlanRequest) => plan(request)) {
   const api = createFakePreviewApi({ initialDatasets: [...Array.from({ length: count }, (_, index) => vendor(index + 1)), open], availability: availableBackend, conversionPlan });
   render(<App />, { wrapper: wrapper(api) });
+  fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
   await waitFor(() => expect(document.querySelector('[data-handle="open"]')).not.toBeNull());
   return api;
 }
-function select(handle: string, ctrlKey = false) {
+function select(handle: string, additive = false) {
+  if (!additive) for (const checkbox of document.querySelectorAll<HTMLInputElement>(".grouped-roster [data-handle] input:checked")) fireEvent.click(checkbox);
   const row = document.querySelector(`[data-handle="${handle}"]`);
   expect(row).not.toBeNull();
-  fireEvent.click(row!, { ctrlKey });
+  const checkbox = within(row as HTMLElement).getByRole("checkbox");
+  if (!(checkbox as HTMLInputElement).checked) fireEvent.click(checkbox);
 }
+
 function scopeAll() { fireEvent.click(screen.getByRole("radio", { name: "All workspace rows" })); }
 function button() { return document.querySelector<HTMLButtonElement>(".conversion-plan .primary-button")!; }
 async function ready() { await waitFor(() => expect(button()).toBeEnabled()); }
 
+async function organizeRow(handle: string) {
+  fireEvent.click(screen.getByRole("button", { name: "New group" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Group name" }), { target: { value: "Local browsing" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save group" }));
+  const row = document.querySelector(`[data-handle="${handle}"]`) as HTMLElement;
+  fireEvent.keyDown(within(row).getByRole("button", { name: /^Actions for/ }), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Local browsing" }));
+  await waitFor(() => expect(row).toHaveAttribute("data-group", "group-1"));
+}
+
 describe("M6.7 through the production conversion surface", () => {
+  it("retains the exact reviewed question through group movement, collapse, search, undo and Home", async () => {
+    const api = await mount();
+    select("raw-1"); select("raw-3", true); await ready();
+    const before = [...api.planRequests()];
+    const reads = vi.spyOn(api, "getRoster"), opens = vi.spyOn(api, "openPreview");
+    await organizeRow("raw-3");
+    fireEvent.click(screen.getByRole("button", { name: "Local browsing (1 acquisitions)" }));
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "open" } });
+    fireEvent.click(screen.getByRole("button", { name: "Undo organization" }));
+    fireEvent.click(screen.getByRole("button", { name: "Home — MSCanvas workbench" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Compact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
+    expect(button()).toBeEnabled();
+    expect(api.planRequests()).toEqual(before);
+    expect(api.planRequests().at(-1)?.handles).toEqual(["raw-1", "raw-3"]);
+    expect(reads).not.toHaveBeenCalled(); expect(opens).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value: "name-desc" } });
+    await ready();
+    expect(api.planRequests().at(-1)?.handles).toEqual(["raw-3", "raw-1"]);
+  });
   it("has no focused fallback, excludes mixed selected rows, and all ignores search", async () => {
     const api = await mount();
     expect(button()).toHaveTextContent("Convert 0 selected");
@@ -99,7 +136,7 @@ describe("M6.7 through the production conversion surface", () => {
     const hook = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
     await waitFor(() => expect(hook.result.current.conversionConfiguration.configuration).not.toBeNull());
     act(() => {
-      hook.result.current.dispatchRoster({ type: "allSelected" });
+      hook.result.current.dispatchRoster({ type: "membershipChanged", handles: ["raw-1", "raw-2"], checked: true });
       hook.result.current.conversionPlan.describe(["raw-1", "raw-2"]);
     });
     await waitFor(() => expect(hook.result.current.conversionPlan.current).not.toBeNull());
@@ -124,14 +161,22 @@ describe("M6.7 through the production conversion surface", () => {
     const api = createFakePreviewApi({ initialDatasets: [vendor(1), vendor(2), open], availability: availableBackend,
       conversion: () => drain.promise });
     render(<App />, { wrapper: wrapper(api) });
+  fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
     await waitFor(() => expect(document.querySelector('[data-handle="raw-1"]')).not.toBeNull());
     select("raw-2"); await ready();
     const start = button();
     fireEvent.click(start); fireEvent.click(start);
     await waitFor(() => expect(api.beginRequests()).toHaveLength(1));
     expect(api.beginRequests()[0]?.handles).toEqual(["raw-2"]);
+    await organizeRow("raw-2");
+    fireEvent.click(screen.getByRole("button", { name: "Home — MSCanvas workbench" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Compact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "nothing" } });
-    fireEvent.change(screen.getByRole("combobox", { name: /sort/i }), { target: { value: "size-desc" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value: "size-desc" } });
     const queue = queueOf([queueItem("raw-2", "sample-2.raw")]);
     await act(async () => drain.resolve({ status: "terminal", reason: "completed", operationId: "1", queue }));
     expect(screen.getByTestId("conversion-bound-membership")).toHaveTextContent("Later workspace rows are outside this queue and its retry");
@@ -147,11 +192,14 @@ describe("M6.7 through the production conversion surface", () => {
       initialConversion: { status: "terminal", reason: "completed", operationId: "1", queue: bound } });
     const retryCall = vi.spyOn(api, "retryConversions");
     render(<App />, { wrapper: wrapper(api) });
+  fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
     await waitFor(() => expect(document.querySelector('[data-handle="raw-3"]')).not.toBeNull());
     scopeAll(); await ready();
     expect(api.planRequests().at(-1)?.handles).toEqual(["raw-1", "raw-2", "raw-3"]);
     const names = () => [...document.querySelectorAll(".conversion-running .conversion-queue-name")].map((node) => node.textContent);
     expect(names()).toEqual(["sample-2.raw", "sample-1.raw"]);
+    await organizeRow("raw-1");
+    fireEvent.click(screen.getByRole("button", { name: "Undo organization" }));
     const retry = screen.getByRole("button", { name: "Retry 2 failed" });
     await waitFor(() => expect(retry).toBeEnabled());
     fireEvent.click(retry);

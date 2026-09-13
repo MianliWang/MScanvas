@@ -178,8 +178,8 @@ function removeFrom(state: RosterState, handle: string): RosterState {
 function rows(): HTMLElement[] {
   // Scoped to the workspace listbox: the sort control is a native select, and
   // its options carry the same role.
-  const list = screen.queryByRole("listbox", { name: "Workspace" });
-  return list === null ? [] : within(list).getAllByRole("option");
+  const list = screen.queryByRole("treegrid", { name: "Acquisitions" });
+  return list === null ? [] : Array.from(list.querySelectorAll<HTMLElement>("[data-handle]"));
 }
 
 function selectedNames(): string[] {
@@ -220,11 +220,11 @@ describe("looking at the roster through a search and a sort", () => {
     const label = screen.getByText("Search files");
     expect(label.tagName).toBe("LABEL");
     expect(label).toHaveAttribute("for", searchBox().id);
-    const sort = screen.getByRole("combobox", { name: "Sort files" });
+    const sort = screen.getByRole("combobox", { name: "Execution order" });
     expect(within(sort).getAllByRole("option").map((option) => option.textContent)).toEqual([
       "Added order",
-      "Name A–Z",
-      "Name Z–A",
+      "Name: A–Z",
+      "Name: Z–A",
       "Size: smallest first",
       "Size: largest first",
     ]);
@@ -236,7 +236,7 @@ describe("looking at the roster through a search and a sort", () => {
     render(<Harness rows={0} />);
 
     expect(screen.queryByRole("searchbox", { name: "Search files" })).toBeNull();
-    expect(screen.queryByRole("combobox", { name: "Sort files" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Execution order" })).toBeNull();
   });
 
   it("shows only the matching rows, and says how many of how many", () => {
@@ -247,7 +247,7 @@ describe("looking at the roster through a search and a sort", () => {
     expect(rowNames()).toEqual(["QC_pool_01.mzML", "QC_pool_02.mzML", "QC_pool_04.mzML"]);
     // In the header line the panel already had, which already truncates and
     // already carries the whole sentence in its `title`.
-    expect(screen.getByText(/3 matches of 4 files./)).toBeVisible();
+    expect(screen.getByText(/3 visible \/ 4 acquisitions/)).toBeVisible();
   });
 
   it("says nothing about counts when the search narrows nothing", () => {
@@ -284,58 +284,24 @@ describe("looking at the roster through a search and a sort", () => {
     expect(searchBox()).toHaveValue("");
   });
 
-  it("reorders the rendered rows to follow the chosen sort", () => {
+  it("keeps browsing arrangement when the explicit execution sort changes", () => {
     render(<Harness />);
-
-    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
-      target: { value: "name-asc" },
-    });
-    expect(rowNames()).toEqual([
-      "Blank_03.mzML",
-      "QC_pool_01.mzML",
-      "QC_pool_02.mzML",
-      "QC_pool_04.mzML",
-    ]);
-
-    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
-      target: { value: "size-desc" },
-    });
-    expect(rowNames()).toEqual([
-      "QC_pool_04.mzML",
-      "Blank_03.mzML",
-      "QC_pool_02.mzML",
-      "QC_pool_01.mzML",
-    ]);
-
-    // And back to exactly the order the session holds.
-    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
-      target: { value: "added" },
-    });
-    expect(rowNames()).toEqual([
-      "QC_pool_01.mzML",
-      "QC_pool_02.mzML",
-      "Blank_03.mzML",
-      "QC_pool_04.mzML",
-    ]);
+    const before = rowNames();
+    for (const sort of ["name-asc", "size-desc", "added"]) {
+      fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value: sort } });
+      expect(rowNames()).toEqual(before);
+    }
   });
 
-  it("keeps a selected row visible outside the search, and says why in words", () => {
+  it("retains highlighted rows hidden by search and names their hidden count", () => {
     render(<Harness />);
-    fireEvent.click(rows()[2] as HTMLElement);
-
+    fireEvent.click(rows()[2] as HTMLElement, { ctrlKey: true });
     type("qc_pool");
-
-    const kept = screen.getByRole("option", { name: /Blank_03\.mzML/ });
-    // Not a shade and not a marker: the reason is text, so it survives
-    // greyscale and reaches a screen reader through the row's own name.
-    expect(within(kept).getByText("Selected — outside search")).toBeVisible();
-    expect(kept).toHaveAccessibleName(/Selected — outside search/);
-    // Four rows on screen, three of them matches: the count says so rather
-    // than letting the visible length speak for the search.
-    expect(rows()).toHaveLength(4);
-    expect(
-      screen.getByText(/3 matches of 4 files; 1 selected or active file kept visible./),
-    ).toBeVisible();
+    expect(screen.queryByRole("row", { name: /Blank_03\.mzML/ })).toBeNull();
+    expect(rows()).toHaveLength(3);
+    expect(screen.getByText("1 highlighted · 1 hidden · 0 checked")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(selectedNames()).toEqual(["Blank_03.mzML"]);
   });
 
   it("says a kept row is showing only when something is on screen for it", () => {
@@ -347,8 +313,8 @@ describe("looking at the roster through a search and a sort", () => {
     const { rerender } = render(<Fixed state={searched} />);
 
     expect(
-      within(screen.getByRole("option", { name: /Blank_03\.mzML/ })).getByText(
-        "Showing — outside search",
+      within(screen.getByRole("row", { name: /Blank_03\.mzML/ })).getByText(
+        "Viewed acquisition",
       ),
     ).toBeVisible();
 
@@ -356,9 +322,9 @@ describe("looking at the roster through a search and a sort", () => {
     // one an explicit re-read acts on -- and stops claiming to be showing.
     rerender(<Fixed state={rosterReducer(searched, { type: "previewDiscarded" })} />);
 
-    const kept = screen.getByRole("option", { name: /Blank_03\.mzML/ });
-    expect(within(kept).queryByText("Showing — outside search")).toBeNull();
-    expect(within(kept).getByText("Kept for the viewer — outside search")).toBeVisible();
+    const kept = screen.getByRole("row", { name: /Blank_03\.mzML/ });
+    expect(within(kept).queryByText("Viewed acquisition")).toBeNull();
+    expect(within(kept).getByText("Kept for the viewer")).toBeVisible();
   });
 
   it("says a row being read is being read", () => {
@@ -369,8 +335,8 @@ describe("looking at the roster through a search and a sort", () => {
     render(<Fixed state={reading} />);
 
     expect(
-      within(screen.getByRole("option", { name: /Blank_03\.mzML/ })).getByText(
-        "Reading — outside search",
+      within(screen.getByRole("row", { name: /Blank_03\.mzML/ })).getByText(
+        "Reading…",
       ),
     ).toBeVisible();
   });
@@ -380,10 +346,10 @@ describe("looking at the roster through a search and a sort", () => {
 
     type("zzz");
 
-    expect(screen.getByText("No files match this search")).toBeVisible();
-    expect(screen.getByText(/4 files are in this session/)).toBeVisible();
+    expect(screen.getByText("No matching rows are visible")).toBeVisible();
+    expect(screen.getByText(/0 visible \/ 4 acquisitions/)).toBeVisible();
     // The one thing it must not say: the workspace still holds every file.
-    expect(screen.queryByText("No files in this session yet")).toBeNull();
+    expect(screen.queryByText("No acquisitions yet")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
     expect(rows()).toHaveLength(4);
@@ -420,18 +386,11 @@ describe("looking at the roster through a search and a sort", () => {
   });
 
   it("moves the keyboard to a visible row when the one it was on disappears", () => {
-    render(<Harness />);
-    fireEvent.click(rows()[2] as HTMLElement);
-    type("qc_pool");
-    const kept = screen.getByRole("option", { name: /Blank_03\.mzML/ });
-    kept.focus();
-    expect(document.activeElement).toBe(kept);
-
-    // Deselecting it takes away the only reason it was on screen.
-    fireEvent.click(kept, { ctrlKey: true });
-
-    expect(rows()).toHaveLength(3);
-    expect(document.activeElement).not.toBe(document.body);
+    const before = seeded(4);
+    const { rerender } = render(<Fixed state={before} />);
+    screen.getByRole("row", { name: /Blank_03\.mzML/ }).focus();
+    rerender(<Fixed state={rosterReducer(before, { type: "searchChanged", query: "qc_pool" })} />);
+    expect(screen.queryByRole("row", { name: /Blank_03\.mzML/ })).toBeNull();
     expect(rows()).toContain(document.activeElement);
   });
 
@@ -465,16 +424,9 @@ describe("looking at the roster through a search and a sort", () => {
     // the recovery would be looking at a row that really has gone, for a user
     // who really has left.
     // A kept row: selected, and outside the search that is keeping it visible.
-    const kept = rosterReducer(
-      rosterReducer(seeded(4), {
-        type: "rowPressed",
-        handle: "file-2",
-        modifiers: { ctrl: false, shift: false },
-      }),
-      { type: "searchChanged", query: "qc_pool" },
-    );
+    const kept = seeded(4);
     const { rerender } = render(<Fixed state={kept} />);
-    screen.getByRole("option", { name: /Blank_03\.mzML/ }).focus();
+    screen.getByRole("row", { name: /Blank_03\.mzML/ }).focus();
 
     const add = screen.getByRole("button", { name: "Add files…" });
     add.focus();
@@ -497,9 +449,9 @@ describe("looking at the roster through a search and a sort", () => {
         ],
       },
     });
-    rerender(<Fixed canAddFiles={false} state={added} />);
+    rerender(<Fixed canAddFiles={false} state={rosterReducer(added, { type: "searchChanged", query: "qc_pool" })} />);
 
-    expect(screen.queryByRole("option", { name: /Blank_03\.mzML/ })).toBeNull();
+    expect(screen.queryByRole("row", { name: /Blank_03\.mzML/ })).toBeNull();
     expect(document.activeElement).toBe(document.body);
 
     rerender(<Fixed state={added} />);
@@ -511,27 +463,23 @@ describe("looking at the roster through a search and a sort", () => {
     // be read is not a fact a search may suppress, and it was suppressed while
     // both shared one slot.
     const failed = rosterReducer(
-      rosterReducer(seeded(4), { type: "rowPressed", handle: "file-2", modifiers: { ctrl: false, shift: false } }),
+      rosterReducer(seeded(4), { type: "activated", handle: "file-2" }),
       { type: "rowStateChanged", handle: "file-2", state: "replaced" },
     );
     render(<Fixed state={rosterReducer(failed, { type: "searchChanged", query: "qc_pool" })} />);
 
-    const kept = screen.getByRole("option", { name: /Blank_03\.mzML/ });
+    const kept = screen.getByRole("row", { name: /Blank_03\.mzML/ });
     expect(within(kept).getByText("Replaced")).toBeVisible();
-    expect(within(kept).getByText("Selected — outside search")).toBeVisible();
+    expect(within(kept).getByText("Outside search")).toBeVisible();
     expect(kept).toHaveAccessibleName(/Replaced/);
   });
 
   it("moves the keyboard to the search box when no visible row survives", () => {
-    render(<Harness />);
-    fireEvent.click(rows()[2] as HTMLElement);
-    type("zzz");
-    const kept = screen.getByRole("option", { name: /Blank_03\.mzML/ });
-    kept.focus();
-
-    fireEvent.click(kept, { ctrlKey: true });
-
-    expect(screen.getByText("No files match this search")).toBeVisible();
+    const before = seeded(4);
+    const { rerender } = render(<Fixed state={before} />);
+    screen.getByRole("row", { name: /Blank_03\.mzML/ }).focus();
+    rerender(<Fixed state={rosterReducer(before, { type: "searchChanged", query: "zzz" })} />);
+    expect(screen.queryByRole("row", { name: /Blank_03\.mzML/ })).toBeNull();
     expect(document.activeElement).toBe(searchBox());
   });
 });
@@ -548,14 +496,14 @@ describe("native drop roster accessibility", () => {
       />,
     );
 
-    expect(screen.getByRole("region", { name: "Workspace" })).toHaveAttribute(
+    expect(screen.getByRole("region", { name: "Acquisitions" })).toHaveAttribute(
       "aria-busy",
       "true",
     );
     const clear = screen.getByRole("button", { name: "Clear list" });
     expect(clear).toHaveAttribute("aria-describedby", "clear-during-drop-import-description");
     expect(
-      screen.getByText("Clear list also prevents the pending drop from adding files."),
+      screen.getByText("Clear also prevents the pending import from adding files."),
     ).toBeInTheDocument();
     expect(clear).toBeEnabled();
     fireEvent.click(clear);
@@ -566,10 +514,10 @@ describe("native drop roster accessibility", () => {
     render(<Harness canAddFiles={false} canAddFolder={false} dropBusy rows={2} />);
 
     expect(screen.getByRole("searchbox", { name: "Search files" })).toBeEnabled();
-    expect(screen.getByRole("combobox", { name: "Sort files" })).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: "Execution order" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("option", { name: /QC_pool_01\.mzML/ }));
-    expect(screen.getByRole("button", { name: "Remove selected" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("row", { name: /QC_pool_01\.mzML/ }));
+    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeEnabled();
     expect(screen.getByRole("button", { name: /Clear list/ })).toBeEnabled();
   });
 });
@@ -589,8 +537,8 @@ describe("returning the keyboard after removal", () => {
     const { rerender } = render(
       <Fixed onRemoveSelected={onRemoveSelected} state={before} />,
     );
-    const remove = screen.getByRole("button", { name: "Remove selected" });
-    const survivor = screen.getByRole("option", { name: /Blank_03\.mzML/ });
+    const remove = screen.getByRole("button", { name: "Remove highlighted" });
+    const survivor = screen.getByRole("row", { name: /Blank_03\.mzML/ });
     const focusing = vi.spyOn(survivor, "focus");
     remove.focus();
 
@@ -623,7 +571,7 @@ describe("returning the keyboard after removal", () => {
     const before = selectedMiddle();
     const after = removeFrom(before, "file-1");
     const { rerender } = render(<Fixed state={before} />);
-    const remove = screen.getByRole("button", { name: "Remove selected" });
+    const remove = screen.getByRole("button", { name: "Remove highlighted" });
     remove.focus();
 
     fireEvent.click(remove);
@@ -634,15 +582,15 @@ describe("returning the keyboard after removal", () => {
     rerender(<Fixed rosterSettlementToken={1} state={after} />);
 
     expect(destination).toHaveFocus();
-    expect(screen.getByRole("option", { name: /Blank_03\.mzML/ })).not.toHaveFocus();
+    expect(screen.getByRole("row", { name: /Blank_03\.mzML/ })).not.toHaveFocus();
   });
 
   it("gives a later focused picker ownership after removal reconciliation", () => {
     const before = selectedMiddle();
     const after = removeFrom(before, "file-1");
     const { rerender } = render(<Fixed state={before} />);
-    const remove = screen.getByRole("button", { name: "Remove selected" });
-    const survivor = screen.getByRole("option", { name: /Blank_03\.mzML/ });
+    const remove = screen.getByRole("button", { name: "Remove highlighted" });
+    const survivor = screen.getByRole("row", { name: /Blank_03\.mzML/ });
     const survivorFocusing = vi.spyOn(survivor, "focus");
     remove.focus();
 
@@ -686,7 +634,7 @@ describe("returning the keyboard after removal", () => {
     const before = selectedMiddle();
     const after = removeFrom(before, "file-1");
     const { rerender } = render(<Fixed state={before} />);
-    const remove = screen.getByRole("button", { name: "Remove selected" });
+    const remove = screen.getByRole("button", { name: "Remove highlighted" });
     remove.focus();
 
     fireEvent.click(remove);
@@ -696,7 +644,7 @@ describe("returning the keyboard after removal", () => {
 
     const addFiles = screen.getByRole("button", { name: "Add files…" });
     const addFilesFocusing = vi.spyOn(addFiles, "focus");
-    const survivor = screen.getByRole("option", { name: /Blank_03\.mzML/ });
+    const survivor = screen.getByRole("row", { name: /Blank_03\.mzML/ });
     const survivorFocusing = vi.spyOn(survivor, "focus");
     // This press never held keyboard focus, so it has no later keyboard
     // destination and must not erase the older removal recovery.
@@ -724,7 +672,7 @@ describe("returning the keyboard after removal", () => {
     const { rerender } = render(<Fixed state={before} />);
     expect(document.body).toHaveFocus();
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
     rerender(<Fixed canMutate={false} state={before} />);
     rerender(<Fixed rosterSettlementToken={1} state={after} />);
 
@@ -734,7 +682,7 @@ describe("returning the keyboard after removal", () => {
   it("returns an unchanged removal to its re-enabled action", () => {
     const state = selectedMiddle();
     const { rerender } = render(<Fixed state={state} />);
-    const remove = screen.getByRole("button", { name: "Remove selected" });
+    const remove = screen.getByRole("button", { name: "Remove highlighted" });
     const focusing = vi.spyOn(remove, "focus");
     remove.focus();
     focusing.mockClear();
@@ -1018,7 +966,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       modifiers: { ctrl: false, shift: false },
     });
     const { rerender } = render(<Fixed state={selected} />);
-    const remove = screen.getByRole("button", { name: "Remove selected" });
+    const remove = screen.getByRole("button", { name: "Remove highlighted" });
     remove.focus();
     fireEvent.click(remove);
     rerender(<Fixed canMutate={false} state={selected} />);
@@ -1178,9 +1126,9 @@ describe("the workspace roster as an accessible list", () => {
   it("is one multi-selectable listbox with one roving tab stop", () => {
     render(<Harness />);
 
-    const list = screen.getByRole("listbox", { name: "Workspace" });
+    const list = screen.getByRole("treegrid", { name: "Acquisitions" });
     expect(list).toHaveAttribute("aria-multiselectable", "true");
-    expect(within(list).getAllByRole("option")).toHaveLength(4);
+    expect(Array.from(list.querySelectorAll<HTMLElement>("[data-handle]"))).toHaveLength(4);
     // One tab stop, whatever the selection: a list of a thousand rows must not
     // be a thousand stops in the tab order.
     expect(tabStops()).toHaveLength(1);
@@ -1219,12 +1167,12 @@ describe("the workspace roster as an accessible list", () => {
       />,
     );
 
-    const shown = screen.getByRole("option", { name: /QC_pool_02\.mzML/ });
+    const shown = screen.getByRole("row", { name: /QC_pool_02\.mzML/ });
     // A glyph and a word, not a shade: the marker survives greyscale and high
     // contrast, and the hidden text is what a screen reader hears.
-    expect(shown).toHaveTextContent("▸");
-    expect(within(shown).getByText("Showing,")).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /QC_pool_01\.mzML/ })).not.toHaveTextContent("▸");
+    expect(shown).toHaveTextContent("Viewed acquisition");
+    expect(within(shown).getByText("Viewed acquisition")).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /QC_pool_01\.mzML/ })).not.toHaveTextContent("▸");
   });
 
   it("says nothing is being shown for a row whose reading was discarded", () => {
@@ -1264,9 +1212,9 @@ describe("the workspace roster as an accessible list", () => {
       />,
     );
 
-    const row = screen.getByRole("option", { name: /QC_pool_02\.mzML/ });
+    const row = screen.getByRole("row", { name: /QC_pool_02\.mzML/ });
     expect(row).not.toHaveTextContent("▸");
-    expect(within(row).queryByText("Showing,")).toBeNull();
+    expect(within(row).queryByText("Viewed acquisition")).toBeNull();
     expect(discarded.active).toBe("file-1");
   });
 
@@ -1277,7 +1225,7 @@ describe("the workspace roster as an accessible list", () => {
     render(<Harness load={{ status: "loading" }} rows={0} />);
 
     expect(screen.getByText("Reading the workspace list…")).toBeVisible();
-    expect(screen.queryByText("No files in this session yet")).toBeNull();
+    expect(screen.queryByText("No acquisitions yet")).toBeNull();
   });
 
   it("keeps its actions under stable accessible names", () => {
@@ -1285,18 +1233,19 @@ describe("the workspace roster as an accessible list", () => {
 
     expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
     // Said where the actions are, not only in a confirmation nobody has to
     // read: removing a row is not deleting a file.
-    expect(screen.getByText(/removing a row never deletes a file/)).toBeVisible();
+    fireEvent.click(screen.getByText("Roster help"));
+    expect(screen.getByText(/Removing rows leaves source files unchanged/)).toBeVisible();
   });
 
   it("offers adding files and nothing else when the session holds none", () => {
     render(<Harness rows={0} />);
 
     expect(screen.queryByRole("listbox")).toBeNull();
-    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(screen.getByText("No acquisitions yet")).toBeVisible();
     expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
     // No second Add action hiding in the empty state: one action, one place.
     expect(screen.getAllByRole("button", { name: "Add files…" })).toHaveLength(1);
@@ -1319,7 +1268,7 @@ describe("the workspace roster as an accessible list", () => {
     const clear = screen.getByRole("button", { name: "Clear list" });
     expect(clear).toBeEnabled();
     expect(clear).toHaveAccessibleDescription(
-      "Clear list also prevents the pending folder import from adding files.",
+      "Clear also prevents the pending import from adding files.",
     );
   });
 
@@ -1370,42 +1319,42 @@ describe("selecting rows with the pointer", () => {
   it("selects only the row that was clicked", () => {
     render(<Harness />);
 
-    fireEvent.click(screen.getByRole("option", { name: /Blank_03\.mzML/ }));
+    fireEvent.click(screen.getByRole("row", { name: /Blank_03\.mzML/ }));
 
     expect(selectedNames()).toEqual(["Blank_03.mzML"]);
     expect(tabStops()).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Remove selected" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeEnabled();
   });
 
   it("adds and removes one row at a time with Ctrl", () => {
     render(<Harness />);
 
-    fireEvent.click(screen.getByRole("option", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("option", { name: /Blank_03\.mzML/ }), { ctrlKey: true });
+    fireEvent.click(screen.getByRole("row", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("row", { name: /Blank_03\.mzML/ }), { ctrlKey: true });
     expect(selectedNames()).toEqual(["QC_pool_01.mzML", "Blank_03.mzML"]);
 
-    fireEvent.click(screen.getByRole("option", { name: /QC_pool_01\.mzML/ }), { ctrlKey: true });
+    fireEvent.click(screen.getByRole("row", { name: /QC_pool_01\.mzML/ }), { ctrlKey: true });
     expect(selectedNames()).toEqual(["Blank_03.mzML"]);
   });
 
   it("selects the whole insertion-order range with Shift", () => {
     render(<Harness />);
 
-    fireEvent.click(screen.getByRole("option", { name: /QC_pool_02\.mzML/ }));
-    fireEvent.click(screen.getByRole("option", { name: /QC_pool_04\.mzML/ }), { shiftKey: true });
+    fireEvent.click(screen.getByRole("row", { name: /QC_pool_02\.mzML/ }));
+    fireEvent.click(screen.getByRole("row", { name: /QC_pool_04\.mzML/ }), { shiftKey: true });
 
     expect(selectedNames()).toEqual(["QC_pool_02.mzML", "Blank_03.mzML", "QC_pool_04.mzML"]);
   });
 
-  it("reads a row on a double click and on nothing else", () => {
+  it("reads on ordinary activation while modifier clicks only highlight", () => {
     const onActivate = vi.fn();
     render(<Harness onActivate={onActivate} />);
-
-    fireEvent.click(screen.getByRole("option", { name: /Blank_03\.mzML/ }));
+    const row = screen.getByRole("row", { name: /Blank_03\.mzML/ });
+    fireEvent.click(row, { ctrlKey: true });
+    fireEvent.click(row, { shiftKey: true });
     expect(onActivate).not.toHaveBeenCalled();
-
-    fireEvent.doubleClick(screen.getByRole("option", { name: /Blank_03\.mzML/ }));
-    expect(onActivate).toHaveBeenCalledWith("file-2");
+    fireEvent.click(row);
+    expect(onActivate).toHaveBeenCalledExactlyOnceWith("file-2");
   });
 });
 
@@ -1418,7 +1367,7 @@ describe("driving the roster from the keyboard alone", () => {
     press("ArrowDown");
     press("ArrowDown");
 
-    expect(document.activeElement).toBe(screen.getByRole("option", { name: /Blank_03\.mzML/ }));
+    expect(document.activeElement).toBe(screen.getByRole("row", { name: /Blank_03\.mzML/ }));
     // Focus is not selection and neither is a read. Every one of these would be
     // a ProteoWizard process if focus followed selection.
     expect(selectedNames()).toEqual([]);
@@ -1457,9 +1406,9 @@ describe("driving the roster from the keyboard alone", () => {
     expect(selectedNames()).toHaveLength(4);
 
     press("End");
-    expect(document.activeElement).toBe(screen.getByRole("option", { name: /QC_pool_04\.mzML/ }));
+    expect(document.activeElement).toBe(screen.getByRole("row", { name: /QC_pool_04\.mzML/ }));
     press("Home");
-    expect(document.activeElement).toBe(screen.getByRole("option", { name: /QC_pool_01\.mzML/ }));
+    expect(document.activeElement).toBe(screen.getByRole("row", { name: /QC_pool_01\.mzML/ }));
     // Jumping moved focus and left the selection where it was.
     expect(selectedNames()).toHaveLength(4);
   });
@@ -1711,7 +1660,7 @@ describe("the two ways of adding acquisitions", () => {
   it("offers five actions, in one place, under stable names", () => {
     render(<Harness />);
 
-    const actions = screen
+    const actions = within(screen.getByRole("button", { name: "Add files…" }).closest(".dataset-roster-actions") as HTMLElement)
       .getAllByRole("button")
       .map((button) => button.textContent)
       .filter((label) => label !== "Clear search");
@@ -1719,7 +1668,7 @@ describe("the two ways of adding acquisitions", () => {
       "Add files…",
       "Add mzML folder…",
       "Preview focused",
-      "Remove selected",
+      "Remove highlighted",
       "Clear list",
     ]);
   });
@@ -1739,9 +1688,9 @@ describe("the two ways of adding acquisitions", () => {
     // proportion to report and none is made up.
     expect(folder.textContent).not.toMatch(/\d/);
     // And the region the import is about to change says it is not settled.
-    expect(screen.getByRole("region", { name: "Workspace" })).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("region", { name: "Acquisitions" })).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
   });
 
@@ -1767,7 +1716,7 @@ describe("the two ways of adding acquisitions", () => {
     // `Remove selected` still needs a selected row, which is its own condition
     // and not this one.
     fireEvent.click(rows()[0] as HTMLElement);
-    expect(screen.getByRole("button", { name: "Remove selected" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeEnabled();
   });
 
   it("refuses the roster read while an import is unresolved", () => {
@@ -1799,7 +1748,7 @@ describe("the two ways of adding acquisitions", () => {
       "aria-busy",
       "false",
     );
-    expect(screen.getByRole("region", { name: "Workspace" })).toHaveAttribute("aria-busy", "false");
+    expect(screen.getByRole("region", { name: "Acquisitions" })).toHaveAttribute("aria-busy", "false");
   });
 
   it("hands each acquisition action to its own callback", () => {
@@ -1833,21 +1782,22 @@ describe("saying which of two identically named rows is which", () => {
   it("renders the context beside the name and nowhere else", () => {
     render(<Fixed state={collided()} />);
 
-    const row = screen.getByRole("option", { name: /sample\.mzML,\s*batch-1/ });
+    const row = screen.getByRole("row", { name: /sample\.mzML,\s*batch-1/ });
     expect(within(row).getByText("batch-1")).toBeVisible();
     // The filename is the primary label and is said once.
     expect(within(row).getAllByText("sample.mzML")).toHaveLength(1);
     // And a row whose name is already unique says nothing.
-    const unique = screen.getByRole("option", { name: /unique\.mzML/ });
+    const unique = screen.getByRole("row", { name: /unique\.mzML/ });
     // The family sits between the name and the size, separated in the text so
     // the accessible name does not run them together.
-    expect(unique.textContent).toBe("unique.mzML, mzML, 2.0 KiB");
+    expect(unique.querySelector(".dataset-row-context")).toBeNull();
+    expect(unique).toHaveTextContent("unique.mzMLmzML2.0 KiB");
   });
 
   it("uses the bounded value exactly as Rust gave it, in the visible text and the title alike", () => {
     render(<Fixed state={collided()} />);
 
-    const context = within(screen.getByRole("option", { name: /sample\.mzML,\s*batch-2/ })).getByText(
+    const context = within(screen.getByRole("row", { name: /sample\.mzML,\s*batch-2/ })).getByText(
       "batch-2",
     );
     // No client-side path processing of any kind: the tooltip says exactly what
@@ -1861,7 +1811,7 @@ describe("saying which of two identically named rows is which", () => {
     // search did not match is on screen anyway.
     const searched = rosterReducer(
       rosterReducer(
-        rosterReducer(collided(), { type: "rowPressed", handle: "file-0", modifiers: { ctrl: false, shift: false } }),
+        rosterReducer(collided(), { type: "activated", handle: "file-0" }),
         { type: "rowStateChanged", handle: "file-0", state: "missing" },
       ),
       { type: "searchChanged", query: "unique" },
@@ -1869,9 +1819,9 @@ describe("saying which of two identically named rows is which", () => {
 
     render(<Fixed state={searched} />);
 
-    const row = screen.getByRole("option", { name: /sample\.mzML/ });
+    const row = screen.getByRole("row", { name: /sample\.mzML/ });
     expect(within(row).getByText("batch-1")).toBeVisible();
     expect(within(row).getByText("Missing")).toBeVisible();
-    expect(within(row).getByText("Selected — outside search")).toBeVisible();
+    expect(within(row).getByText("Outside search")).toBeVisible();
   });
 });

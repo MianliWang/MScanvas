@@ -110,6 +110,7 @@ function renderApp(api: FakePreviewApi): void {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
+  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
 }
 
 /** The hook itself, for the half of an equivalence claim a disabled control cannot make. */
@@ -129,7 +130,7 @@ async function conversionPanel(): Promise<HTMLElement> {
 }
 
 async function convertControl(): Promise<HTMLElement> {
-  fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+  fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
   const panel = await conversionPanel();
   return within(panel).findByRole("button", { name: /^Convert/u });
 }
@@ -641,14 +642,14 @@ describe("the conversion lane's one authority, as it ships", () => {
 
     const search = screen.getByRole("searchbox", { name: "Search files" });
     // Select the row the query will match; a selected nonmatch stays pinned.
-    fireEvent.click(await screen.findByRole("option", { name: /run-2\.raw/ }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-2\.raw/ })).getByRole("checkbox"));
     expect(search).toBeEnabled();
     fireEvent.change(search, { target: { value: "run-2" } });
     await waitFor(() => {
       expect(
-        within(screen.getByRole("listbox", { name: "Workspace" })).queryAllByRole("option"),
+        Array.from(screen.getByRole("treegrid", { name: "Acquisitions" }).querySelectorAll<HTMLElement>("[data-handle]")),
       ).toHaveLength(1);
     });
-    expect(screen.getByRole("combobox", { name: "Sort files" })).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: "Execution order" })).toBeEnabled();
   });
 });

@@ -27,7 +27,7 @@
  * the same microtask is a read nothing can be true *during*.
  */
 
-import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { createElement } from "react";
 import { describe, expect, it } from "vitest";
@@ -135,6 +135,7 @@ function mountApp(options: FakePreviewApiOptions = {}): FakePreviewApi {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
+  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
   return api;
 }
 

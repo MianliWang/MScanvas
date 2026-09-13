@@ -40,13 +40,18 @@ const CHARTING_PACKAGES = [
 ];
 
 describe("the figure renderer decision's dependency cost", () => {
-  it("retains the approved frontend dependency set, including the M7.1 Settings cohort", () => {
+  it("retains the approved frontend dependency set, including M7.1 Settings and M7.2 organization", () => {
     // The exact set, not a subset check. A production dependency that arrived
     // without a decision is the thing worth failing on, whatever it is called.
     expect(Object.keys(manifest.dependencies).sort()).toEqual([
+      "@dnd-kit/dom",
+      "@dnd-kit/helpers",
+      "@dnd-kit/react",
       "@radix-ui/react-dialog",
+      "@radix-ui/react-dropdown-menu",
       "@tauri-apps/api",
       "i18next",
+      "motion",
       "react",
       "react-dom",
       "react-i18next",
@@ -54,6 +59,9 @@ describe("the figure renderer decision's dependency cost", () => {
     expect(manifest.dependencies["@radix-ui/react-dialog"]).toBe("1.1.23");
     expect(manifest.dependencies.i18next).toBe("26.4.2");
     expect(manifest.dependencies["react-i18next"]).toBe("17.0.13");
+    expect(manifest.dependencies.motion).toBe("13.2.0");
+    for (const name of ["@dnd-kit/react", "@dnd-kit/dom", "@dnd-kit/helpers"] as const) expect(manifest.dependencies[name]).toBe("0.5.0");
+    expect(manifest.dependencies["@radix-ui/react-dropdown-menu"]).toBe("2.1.24");
   });
 
   it("carries no charting library, in production or in development", () => {

@@ -1,3 +1,5 @@
+import { bindUiMessages, createUiRuntime } from "../preferences/i18n";
+import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -7,7 +9,7 @@ import type {
   SelectedFile,
   WorkspaceAddOutcome,
 } from "./contracts";
-import { describeFolderResult } from "./folderNotice";
+import { describeFolderResult as describeFolderResultData } from "./folderNotice";
 
 const CLEAN: FolderDiscoverySummary = {
   complete: true,
@@ -241,3 +243,6 @@ describe("accounting for one folder import", () => {
     expect(describeFolderResult(result([added("a.mzML")])).sequence).toBe(0);
   });
 });
+
+const englishNoticeMessages = bindUiMessages(createUiRuntime().instance.getFixedT("en", "ui"));
+function describeFolderResult(...args: Parameters<typeof describeFolderResultData>) { return formatWorkspaceNotice(describeFolderResultData(...args), englishNoticeMessages); }

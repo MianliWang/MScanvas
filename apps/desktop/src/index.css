@@ -2,6 +2,7 @@
 @import "./design-system/tokens.css";
 @import "./app/app.css";
 @import "./features/preferences/preferences.css";
+@import "./features/workbench/workbench.css";
 
 * {
   box-sizing: border-box;

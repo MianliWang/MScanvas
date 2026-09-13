@@ -109,8 +109,8 @@ describe("mzML preview workspace", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
 
-    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
-    expect(screen.getByRole("option", { name: /QC_pool_02\.mzML/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(screen.getByRole("row", { name: /QC_pool_02\.mzML/ })).toBeVisible();
     // Not one read. Nothing about an unusable backend stops the user telling
     // MSCanvas which acquisitions this session is about.
     expect(api.openCount()).toBe(0);
@@ -338,7 +338,7 @@ describe("mzML preview workspace", () => {
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     // Curating is not reading, so it is not closed by a backend nobody can
     // describe: the user can still build the list this session is about.
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled());
     // The recovery actions the banner offers stay live -- they are the way out.
     expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Choose folder…" })).toBeEnabled();
@@ -434,7 +434,7 @@ describe("mzML preview workspace", () => {
     renderApp(api);
 
     await screen.findByRole("button", { name: "Search automatically" });
-    expect(screen.getByRole("button", { name: "Choose folder…" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Choose folder…" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Check again" })).toBeVisible();
   });
 
@@ -469,7 +469,7 @@ describe("mzML preview workspace", () => {
     // rows the session holds.
     const summary = screen.getByRole("region", { name: "Run" });
     expect(within(summary).getByText(/QC_pool_01\.mzML/)).toBeVisible();
-    expect(screen.getByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(screen.getByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
     expect(screen.getByRole("heading", { name: "File description" })).toBeVisible();
     expect(screen.getByText("software: pwiz 3.0.25000")).toBeVisible();
 
@@ -511,7 +511,7 @@ describe("mzML preview workspace", () => {
     const api = createFakePreviewApi({ pickedFiles: null });
     await openTheFile(api);
 
-    expect(await screen.findByText("No files in this session yet")).toBeVisible();
+    expect(await screen.findByText("No acquisitions yet")).toBeVisible();
     expect(screen.queryByRole("grid")).not.toBeInTheDocument();
     expect(screen.queryByRole("option")).not.toBeInTheDocument();
     expect(api.openCount()).toBe(0);
@@ -546,7 +546,7 @@ describe("mzML preview workspace", () => {
     ).not.toBeInTheDocument();
     // The row is still in the workspace and still removable, and adding more
     // files is still available: neither is a repeat of what just failed.
-    expect(screen.getByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(screen.getByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
     expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
   });
 
@@ -571,7 +571,7 @@ describe("mzML preview workspace", () => {
     // there: the row is still in the workspace and its preview is still shown.
     expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Run" })).toBeVisible();
-    expect(screen.getByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(screen.getByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Try choosing files again" }));
     await waitFor(() => {
@@ -808,7 +808,7 @@ describe("mzML preview workspace", () => {
 
     // The second row is previewed explicitly, which is the only way a second
     // dataset is ever read.
-    fireEvent.click(screen.getByRole("option", { name: /QC_pool_02\.mzML/ }));
+    fireEvent.click(screen.getByRole("row", { name: /QC_pool_02\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
     await waitFor(() => {
       expect(api.openedHandles).toEqual(["file-0", "file-1"]);
@@ -830,8 +830,8 @@ describe("mzML preview workspace", () => {
     await screen.findByRole("grid", { name: "Spectra" });
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
-    fireEvent.click(screen.getByRole("option", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    fireEvent.click(screen.getByRole("row", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
     await waitFor(() => {
       expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
     });
@@ -998,7 +998,7 @@ describe("native Explorer drop presentation", () => {
     expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
     const clear = screen.getByRole("button", { name: "Clear list" });
     expect(clear).toBeEnabled();
-    expect(screen.getByRole("region", { name: "Workspace" })).toHaveAttribute(
+    expect(screen.getByRole("region", { name: "Acquisitions" })).toHaveAttribute(
       "aria-busy",
       "true",
     );
@@ -1027,7 +1027,7 @@ describe("native Explorer drop presentation", () => {
       operationId: "801",
       result: renderedDropResult(),
     });
-    expect(screen.queryByRole("option", { name: new RegExp(selectedFile.fileName) })).toBeNull();
+    expect(screen.queryByRole("row", { name: new RegExp(selectedFile.fileName) })).toBeNull();
     expect(screen.getByText("The workspace is empty. The pending drop will not add files.")).toBeVisible();
   });
 
@@ -1045,8 +1045,8 @@ describe("native Explorer drop presentation", () => {
       result: renderedDropResult([selectedFile, secondFile]),
     });
 
-    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
-    expect(screen.getByRole("option", { name: /QC_pool_02\.mzML/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(screen.getByRole("row", { name: /QC_pool_02\.mzML/ })).toBeVisible();
     expect(screen.getByText("Added 2 files.")).toBeVisible();
     expect(document.querySelector("[data-live-region='workspace']")).toHaveTextContent(
       "Workspace: Added 2 files.",
@@ -1172,7 +1172,7 @@ describe("native Explorer drop presentation", () => {
 
     expect(await screen.findByText("Explorer drag-and-drop is unavailable")).toBeVisible();
     expect(screen.getByText("Explorer drag-and-drop could not connect.")).toBeVisible();
-    expect(screen.getByText("Explorer drag-and-drop is unavailable. Use the Add actions below.")).toBeVisible();
+    expect(screen.getByText("File drop unavailable; use Add files")).toBeVisible();
     expect(document.querySelector("[data-live-region='drop']")).toHaveTextContent(
       "Explorer drag-and-drop is unavailable. Explorer drag-and-drop could not connect.",
     );
@@ -1187,14 +1187,14 @@ describe("native Explorer drop presentation", () => {
     fireEvent.click(retry, { detail: 0 });
     expect(addFiles).toHaveFocus();
     expect(screen.queryByText("Explorer drag-and-drop is unavailable")).toBeNull();
-    expect(screen.getByText("Connecting Explorer drag-and-drop…")).toBeVisible();
+    expect(document.querySelector(".workspace-drop-hint")).toHaveTextContent("Connecting native file drop…");
 
     await act(async () => {
       retryRegistration.resolve(() => undefined);
       await retryRegistration.promise;
     });
     await waitFor(() => {
-      expect(screen.getByText("Drop mzML files or folders anywhere in this window.")).toBeVisible();
+      expect(screen.getByText("Drop mzML files or folders to import")).toBeVisible();
       expect(api.rosterReads()).toBe(2);
     });
 
@@ -1221,7 +1221,7 @@ describe("native Explorer drop presentation", () => {
         },
       });
     });
-    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
     expect(screen.getByText("Added 1 file.")).toBeVisible();
   });
 
@@ -1268,12 +1268,20 @@ const VISIBLE = { ignore: "[aria-live], script, style" } as const;
  * as roster rows.
  */
 function rosterRows(): HTMLElement[] {
-  const list = screen.queryByRole("listbox", { name: "Workspace" });
-  return list === null ? [] : within(list).getAllByRole("option");
+  const list = screen.queryByRole("treegrid", { name: "Acquisitions" });
+  return list === null ? [] : Array.from(list.querySelectorAll<HTMLElement>("[data-handle]"));
+}
+
+/** Curate highlight membership with modifier clicks, without requesting a read. */
+function highlightRows(...names: RegExp[]): void {
+  for (const row of rosterRows()) {
+    const wanted = names.some(name => name.test(row.getAttribute("aria-label") ?? ""));
+    if ((row.getAttribute("aria-selected") === "true") !== wanted) fireEvent.click(row, { ctrlKey: true });
+  }
 }
 
 function rosterRow(name: RegExp): HTMLElement {
-  return screen.getByRole("option", { name });
+  return screen.getByRole("row", { name });
 }
 
 describe("the session workspace roster", () => {
@@ -1284,13 +1292,13 @@ describe("the session workspace roster", () => {
     const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile] });
     renderApp(api);
 
-    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
     expect(rosterRow(/QC_pool_02\.mzML/)).toBeVisible();
     expect(api.openCount()).toBe(0);
     expect(api.rosterReads()).toBe(1);
     // Listed but not selected and not being read: nothing here is a decision
     // the user has made yet.
-    expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
     expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
   });
 
@@ -1310,7 +1318,7 @@ describe("the session workspace roster", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Try reading it again" }));
 
-    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
   });
 
   it("reads exactly one file however many were chosen at once", async () => {
@@ -1328,8 +1336,8 @@ describe("the session workspace roster", () => {
     expect(
       rosterRows().filter((row) => row.getAttribute("aria-selected") === "true"),
     ).toHaveLength(3);
-    expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("▸");
-    expect(rosterRow(/QC_pool_02\.mzML/)).not.toHaveTextContent("▸");
+    expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("Viewed acquisition");
+    expect(rosterRow(/QC_pool_02\.mzML/)).not.toHaveTextContent("Viewed acquisition");
     expect(screen.getByText("Added 3 files.", VISIBLE)).toBeVisible();
   });
 
@@ -1347,11 +1355,11 @@ describe("the session workspace roster", () => {
     // A second picker operation, adding to a session that already has a file
     // open. Nothing about that is a request to read something else.
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
-    expect(await screen.findByRole("option", { name: /QC_pool_02\.mzML/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /QC_pool_02\.mzML/ })).toBeVisible();
 
     expect(api.openedHandles).toEqual(["file-0"]);
     expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
-    expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("▸");
+    expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("Viewed acquisition");
     // The new row is what is selected, so removing it takes it away again.
     expect(rosterRow(/QC_pool_02\.mzML/)).toHaveAttribute("aria-selected", "true");
     expect(rosterRow(/QC_pool_01\.mzML/)).toHaveAttribute("aria-selected", "false");
@@ -1394,7 +1402,7 @@ describe("the session workspace roster", () => {
       pickedFiles: [second],
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /sample\.mzML.*batch-2/ });
+    await screen.findByRole("row", { name: /sample\.mzML.*batch-2/ });
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
@@ -1458,7 +1466,7 @@ describe("the session workspace roster", () => {
     expect(rosterRows()).toHaveLength(1);
     // The limit is stated where the count is, rather than left to be inferred
     // from a refusal.
-    expect(screen.getByText(/1 of 1 files in this session/)).toBeVisible();
+    expect(document.querySelector("#dataset-roster-matches")).toHaveTextContent("1 visible / 1 acquisitions");
   });
 
   it("removes the selected rows, keeps the preview whose row survived, and says the files are untouched", async () => {
@@ -1467,9 +1475,8 @@ describe("the session workspace roster", () => {
     await screen.findByRole("grid", { name: "Spectra" });
 
     // The first row is the one being shown; the other two are removed.
-    fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
-    fireEvent.click(rosterRow(/Blank_03\.mzML/), { ctrlKey: true });
-    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    highlightRows(/QC_pool_02\.mzML/, /Blank_03\.mzML/);
+    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
 
     await waitFor(() => {
       expect(rosterRows()).toHaveLength(1);
@@ -1478,7 +1485,7 @@ describe("the session workspace roster", () => {
     expect(screen.getByText(/The files on disk were not changed\./, VISIBLE)).toBeVisible();
     // The preview belonged to a row that survived, so it is still on screen.
     expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
-    expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("▸");
+    expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("Viewed acquisition");
   });
 
   it("clears the preview when the row it belongs to is removed, and reads nothing else", async () => {
@@ -1487,8 +1494,8 @@ describe("the session workspace roster", () => {
     await screen.findByRole("grid", { name: "Spectra" });
     const readsBefore = api.openCount();
 
-    fireEvent.click(rosterRow(/QC_pool_01\.mzML/));
-    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    highlightRows(/QC_pool_01\.mzML/);
+    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
 
     await waitFor(() => {
       expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
@@ -1509,11 +1516,11 @@ describe("the session workspace roster", () => {
       removeDatasets: () => removal.promise,
     });
     renderApp(api);
-    const removed = await screen.findByRole("option", { name: /QC_pool_02\.mzML/ });
+    const removed = await screen.findByRole("row", { name: /QC_pool_02\.mzML/ });
     fireEvent.click(removed);
     const survivor = rosterRow(/Blank_03\.mzML/);
     const focusing = vi.spyOn(survivor, "focus");
-    const remove = screen.getByRole("button", { name: "Remove selected" });
+    const remove = screen.getByRole("button", { name: "Remove highlighted" });
     remove.focus();
     fireEvent.click(remove);
 
@@ -1555,11 +1562,11 @@ describe("the session workspace roster", () => {
       },
     });
     renderApp(api);
-    const removed = await screen.findByRole("option", { name: /QC_pool_02\.mzML/ });
+    const removed = await screen.findByRole("row", { name: /QC_pool_02\.mzML/ });
     fireEvent.click(removed);
     const survivor = rosterRow(/QC_pool_01\.mzML/);
     const focusing = vi.spyOn(survivor, "focus");
-    const remove = screen.getByRole("button", { name: "Remove selected" });
+    const remove = screen.getByRole("button", { name: "Remove highlighted" });
     remove.focus();
     fireEvent.click(remove);
 
@@ -1613,9 +1620,9 @@ describe("the session workspace roster", () => {
       },
     });
     renderApp(api);
-    const removed = await screen.findByRole("option", { name: /QC_pool_02\.mzML/ });
+    const removed = await screen.findByRole("row", { name: /QC_pool_02\.mzML/ });
     fireEvent.click(removed);
-    const remove = screen.getByRole("button", { name: "Remove selected" });
+    const remove = screen.getByRole("button", { name: "Remove highlighted" });
     const focusing = vi.spyOn(remove, "focus");
     remove.focus();
     focusing.mockClear();
@@ -1658,7 +1665,7 @@ describe("the session workspace roster", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
 
-    expect(await screen.findByText("No files in this session yet")).toBeVisible();
+    expect(await screen.findByText("No acquisitions yet")).toBeVisible();
     expect(screen.queryByRole("option")).toBeNull();
     expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
     expect(screen.getByText(/Cleared 2 files from the list\./, VISIBLE)).toBeVisible();
@@ -1683,7 +1690,7 @@ describe("the session workspace roster", () => {
       preview: () => open.promise,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
 
     fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
@@ -1708,10 +1715,11 @@ describe("the session workspace roster", () => {
       preview: () => open.promise,
     });
     await openTheFile(api);
-    await screen.findByText("Reading the file…");
+    await screen.findByText("Reading the acquisition…");
 
-    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
+    highlightRows(/QC_pool_01\.mzML/);
+    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
     await waitFor(() => {
       expect(rosterRows()).toHaveLength(1);
     });
@@ -1748,8 +1756,8 @@ describe("the session workspace roster", () => {
     // The marker does go, because nothing is on screen for that row any more.
     // Saying "Showing" beside a file whose reading was just discarded is the
     // one thing the hidden half of that affordance must not do.
-    expect(rosterRow(/QC_pool_01\.mzML/)).not.toHaveTextContent("▸");
-    expect(within(rosterRow(/QC_pool_01\.mzML/)).queryByText("Showing,")).toBeNull();
+    expect(rosterRow(/QC_pool_01\.mzML/)).not.toHaveTextContent("Viewed acquisition");
+    expect(within(rosterRow(/QC_pool_01\.mzML/)).queryByText("Viewed acquisition")).toBeNull();
     // Nothing was re-read on the user's behalf, and reading it again is one
     // action rather than a trip back through the picker.
     expect(api.openCount()).toBe(readsBefore);
@@ -1768,14 +1776,14 @@ describe("the session workspace roster", () => {
       removeDatasets: () => removal.promise,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
     await screen.findByRole("grid", { name: "Spectra" });
 
     // The row on screen is removed, and before Rust answers the user reads
     // another one.
-    fireEvent.click(rosterRow(/QC_pool_01\.mzML/));
-    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    highlightRows(/QC_pool_01\.mzML/);
+    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
     fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
     fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
     await waitFor(() => {
@@ -1792,7 +1800,7 @@ describe("the session workspace roster", () => {
       expect(rosterRows()).toHaveLength(1);
     });
     expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
-    expect(rosterRow(/QC_pool_02\.mzML/)).toHaveTextContent("▸");
+    expect(rosterRow(/QC_pool_02\.mzML/)).toHaveTextContent("Viewed acquisition");
     expect(rosterRow(/QC_pool_02\.mzML/)).not.toHaveTextContent("Reading…");
   });
 
@@ -1816,11 +1824,11 @@ describe("the session workspace roster", () => {
         Promise.reject(previewError({ kind: "preview_worker_unavailable" })),
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
     expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
 
-    const remove = screen.getByRole("button", { name: "Remove selected" });
+    const remove = screen.getByRole("button", { name: "Remove highlighted" });
     remove.focus();
     fireEvent.click(remove);
     // WebView2 blurs a button when the request disables it. jsdom keeps a
@@ -1833,7 +1841,7 @@ describe("the session workspace roster", () => {
       expect(rosterRows()).toHaveLength(0);
     });
     expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
-    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(screen.getByText("No acquisitions yet")).toBeVisible();
     expect(api.openCount()).toBe(1);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
@@ -1853,10 +1861,10 @@ describe("the session workspace roster", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
 
-    const row = await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    const row = await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
     expect(api.openCount()).toBe(0);
-    expect(row).not.toHaveTextContent("▸");
-    expect(within(row).queryByText("Showing,")).toBeNull();
+    expect(row).not.toHaveTextContent("Viewed acquisition");
+    expect(within(row).queryByText("Viewed acquisition")).toBeNull();
   });
 
   it("announces what a workspace action did through a region that already existed", async () => {
@@ -1871,7 +1879,7 @@ describe("the session workspace roster", () => {
     // Existing workspace/operation announcements and the session Settings
     // announcement all stay mounted for the life of this application.
     const applicationRegions = regions();
-    expect(applicationRegions).toHaveLength(9);
+    expect(applicationRegions).toHaveLength(11);
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
@@ -1899,11 +1907,11 @@ describe("the session workspace roster", () => {
     renderApp(api);
 
     expect(await screen.findByText("Reading the workspace list…")).toBeVisible();
-    expect(screen.queryByText("No files in this session yet")).toBeNull();
+    expect(screen.queryByText("No acquisitions yet")).toBeNull();
 
     roster.resolve({ datasets: [selectedFile], capacity: 1_024 });
 
-    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
   });
 
   it("lists two names for one acquisition as two lines, and warns about neither", async () => {
@@ -1947,14 +1955,14 @@ describe("the session workspace roster", () => {
       clearWorkspace: () => clearing.promise,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
     fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
     });
-    expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
 
     clearing.resolve({ datasets: [], capacity: 1_024 });
 
@@ -1977,8 +1985,9 @@ describe("the session workspace roster", () => {
     const spoken = () =>
       document.querySelector("[data-live-region='workspace']")?.textContent ?? "";
 
-    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
+    highlightRows(/QC_pool_01\.mzML/);
+    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
     await waitFor(() => {
       expect(rosterRows()).toHaveLength(2);
     });
@@ -1986,7 +1995,7 @@ describe("the session workspace roster", () => {
     expect(afterFirst).toContain("Removed 1 file from the list.");
 
     fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
-    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
     await waitFor(() => {
       expect(rosterRows()).toHaveLength(1);
     });
@@ -2053,19 +2062,19 @@ describe("the session workspace roster", () => {
       pickedFiles: () => picking.promise,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
     });
     expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
 
     picking.resolve(null);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Remove selected" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeEnabled();
     });
     expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
   });
@@ -2091,11 +2100,11 @@ describe("the session workspace roster", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
 
     // All four rows arrive, in picker order, each saying its family.
-    await screen.findByRole("option", { name: /sample-29\.lcd/ });
+    await screen.findByRole("row", { name: /sample-29\.lcd/ });
     expect(
-      screen.getByRole("option", { name: /sample-28\.lcd.*Shimadzu LabSolutions LCD/ }),
+      screen.getByRole("row", { name: /sample-28\.lcd.*Shimadzu LabSolutions LCD/ }),
     ).toBeVisible();
-    expect(screen.getByRole("option", { name: /run-30\.raw.*Thermo RAW/ })).toBeVisible();
+    expect(screen.getByRole("row", { name: /run-30\.raw.*Thermo RAW/ })).toBeVisible();
 
     // Exactly one read, and it is the mzML row's.
     await screen.findByRole("grid", { name: "Spectra" });
@@ -2104,7 +2113,7 @@ describe("the session workspace roster", () => {
 
     // Moving focus to a Shimadzu row does not clear the mzML preview and does
     // not read anything further.
-    fireEvent.click(screen.getByRole("option", { name: /sample-28\.lcd/ }));
+    fireEvent.click(screen.getByRole("row", { name: /sample-28\.lcd/ }));
     expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
     expect(api.openCount()).toBe(1);
   });
@@ -2125,9 +2134,9 @@ describe("the session workspace roster", () => {
     // Deliberately not waiting for the roster: this is the window under test.
     fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
 
-    expect(await screen.findByRole("option", { name: /QC_pool_02\.mzML/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /QC_pool_02\.mzML/ })).toBeVisible();
     // Both rows are there, because Rust answered with everything it holds.
-    expect(screen.getByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(screen.getByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
     expect(api.openCount()).toBe(0);
     expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
 
@@ -2143,13 +2152,13 @@ describe("the session workspace roster", () => {
     });
     renderApp(api);
     fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
-    await screen.findByRole("option", { name: /Blank_03\.mzML/ });
+    await screen.findByRole("row", { name: /Blank_03\.mzML/ });
     const before = api.calls();
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC" },
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
       target: { value: "name-desc" },
     });
     fireEvent.click(rosterRows()[0] as HTMLElement);
@@ -2172,7 +2181,7 @@ describe("the session workspace roster", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "Blank_03" },
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
       target: { value: "size-asc" },
     });
 
@@ -2181,8 +2190,8 @@ describe("the session workspace roster", () => {
     expect(api.openCount()).toBe(reads);
     // And the row it belongs to is still on screen, saying why.
     expect(
-      screen.getByRole("option", { name: /QC_pool_01\.mzML/ }),
-    ).toHaveAccessibleName(/Showing — outside search/);
+      screen.getByRole("row", { name: /QC_pool_01\.mzML/ }),
+    ).toHaveAccessibleName(/Viewed acquisition.*Outside search/);
   });
 
   it("keeps the query and the sort across adding, and across removing what it matched", async () => {
@@ -2192,11 +2201,11 @@ describe("the session workspace roster", () => {
       availability: unavailableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC_pool_01" },
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
       target: { value: "name-desc" },
     });
     expect(rosterRows()).toHaveLength(1);
@@ -2204,15 +2213,15 @@ describe("the session workspace roster", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
     // The arrival does not match, and is on screen because it was selected.
-    const arrival = await screen.findByRole("option", { name: /Blank_03\.mzML/ });
-    expect(arrival).toHaveAccessibleName(/Selected — outside search/);
+    await screen.findByText("1 highlighted · 1 hidden · 1 checked");
+    expect(screen.queryByRole("row", { name: /Blank_03\.mzML/ })).toBeNull();
     expect(screen.getByRole("searchbox", { name: "Search files" })).toHaveValue("QC_pool_01");
-    expect(screen.getByRole("combobox", { name: "Sort files" })).toHaveValue("name-desc");
+    expect(screen.getByRole("combobox", { name: "Execution order" })).toHaveValue("name-desc");
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
 
     await waitFor(() => {
-      expect(screen.queryByRole("option", { name: /Blank_03\.mzML/ })).toBeNull();
+      expect(screen.queryByRole("row", { name: /Blank_03\.mzML/ })).toBeNull();
     });
     // The hidden row nobody selected is untouched, and the view is unchanged.
     expect(screen.getByRole("searchbox", { name: "Search files" })).toHaveValue("QC_pool_01");
@@ -2228,11 +2237,11 @@ describe("the session workspace roster", () => {
       availability: unavailableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC_pool_01" },
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
       target: { value: "size-asc" },
     });
     expect(rosterRows()).toHaveLength(1);
@@ -2240,7 +2249,7 @@ describe("the session workspace roster", () => {
     fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
 
     // Every file, not the one the search was showing.
-    expect(await screen.findByText("No files in this session yet")).toBeVisible();
+    expect(await screen.findByText("No acquisitions yet")).toBeVisible();
     expect(api.datasets()).toEqual([]);
     expect(screen.queryByRole("searchbox", { name: "Search files" })).toBeNull();
     expect(screen.getByText(/Cleared 3 files from the list/, VISIBLE)).toBeVisible();
@@ -2252,9 +2261,9 @@ describe("the session workspace roster", () => {
       availability: unavailableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
     const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
-    expect(regions()).toHaveLength(9);
+    expect(regions()).toHaveLength(11);
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC" },
@@ -2263,11 +2272,11 @@ describe("the session workspace roster", () => {
     const spoken = regions()
       .map((region) => region.textContent)
       .join(" ");
-    expect(spoken).toContain("2 matches of 3 files.");
+    expect(spoken).toContain("2 visible / 3 acquisitions");
     // A search that found nothing is not an empty workspace, and the two must
     // not sound alike.
     expect(spoken).not.toContain("The workspace is empty.");
-    expect(regions()).toHaveLength(9);
+    expect(regions()).toHaveLength(11);
   });
 
   it("says the search was cleared rather than falling silent", async () => {
@@ -2279,7 +2288,7 @@ describe("the session workspace roster", () => {
       availability: unavailableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
     const spoken = () =>
       [...document.querySelectorAll("[aria-live='polite']")]
         .map((region) => region.textContent)
@@ -2288,13 +2297,13 @@ describe("the session workspace roster", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC" },
     });
-    expect(spoken()).toContain("2 matches of 3 files.");
+    expect(spoken()).toContain("2 visible / 3 acquisitions");
 
     fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
 
     expect(rosterRows()).toHaveLength(3);
-    expect(spoken()).toContain("All 3 files listed.");
-    expect(spoken()).not.toContain("2 matches of 3 files.");
+    expect(spoken()).toContain("3 visible / 3 acquisitions");
+    expect(spoken()).not.toContain("2 visible / 3 acquisitions");
   });
 
   // Given its own allowance rather than the suite's default. The assertion is
@@ -2317,17 +2326,19 @@ describe("the session workspace roster", () => {
       availability: unavailableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /QC_run-0\.mzML/ });
-    expect(rosterRows()).toHaveLength(1_024);
+    await screen.findByRole("row", { name: /QC_run-0\.mzML/ });
+    expect(rosterRows().length).toBeLessThan(80);
+    expect(document.querySelector("#dataset-roster-matches")).toHaveTextContent("1024 visible / 1024 acquisitions · capacity 1024");
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "qc_run" },
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
       target: { value: "name-asc" },
     });
 
-    expect(rosterRows()).toHaveLength(512);
+    expect(rosterRows().length).toBeLessThan(80);
+    expect(document.querySelector("#dataset-roster-matches")).toHaveTextContent("512 visible / 1024 acquisitions · capacity 1024");
     // Naturally ordered, which is the whole reason for a numeric collator.
     expect(
       rosterRows()
@@ -2355,14 +2366,14 @@ describe("the session workspace roster", () => {
     expect(await screen.findByText("The workspace list could not be read")).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
-    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
-    fireEvent.click(screen.getByRole("option", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    fireEvent.click(screen.getByRole("row", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
 
     // Back to an empty workspace, which is now something this side knows
     // rather than something it failed to find out.
-    expect(await screen.findByText("No files in this session yet")).toBeVisible();
+    expect(await screen.findByText("No acquisitions yet")).toBeVisible();
     expect(screen.queryByText("The workspace list could not be read")).toBeNull();
     const spoken = [...document.querySelectorAll("[aria-live='polite']")]
       .map((region) => region.textContent)
@@ -2393,18 +2404,18 @@ describe("the session workspace roster", () => {
       preview: () => open.promise,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
 
-    const row = await screen.findByRole("option", { name: /Reading…/ });
+    const row = await screen.findByRole("row", { name: /Reading…/ });
     expect(row.className).not.toContain("is-active");
-    expect(row).not.toHaveTextContent("▸");
-    expect(within(row).queryByText("Showing,")).toBeNull();
+    expect(row).not.toHaveTextContent("Viewed acquisition");
+    expect(within(row).queryByText("Viewed acquisition")).toBeNull();
 
     open.resolve(buildPreview(3));
 
     await waitFor(() => {
-      expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("▸");
+      expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("Viewed acquisition");
     });
     expect(rosterRow(/QC_pool_01\.mzML/).className).toContain("is-active");
   });
@@ -2416,10 +2427,10 @@ describe("the session workspace roster", () => {
         Promise.reject(previewError({ kind: "file_identity_changed", retryable: false })),
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
 
-    expect(await screen.findByRole("option", { name: /Replaced/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /Replaced/ })).toBeVisible();
     // The row stays. What the name now points at is a question for the next
     // read of it, and removing it is the user's decision.
     expect(rosterRows()).toHaveLength(1);
@@ -2479,8 +2490,8 @@ describe("adding a folder of mzML files", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
 
-    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
-    expect(screen.getByRole("option", { name: /QC_pool_02\.mzML/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(screen.getByRole("row", { name: /QC_pool_02\.mzML/ })).toBeVisible();
     await waitFor(() => {
       expect(api.openCount()).toBe(1);
     });
@@ -2496,11 +2507,11 @@ describe("adding a folder of mzML files", () => {
       scannedFolder: { files: [{ file: selectedFile, parents: [] }] },
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /Blank_03\.mzML/ });
+    await screen.findByRole("row", { name: /Blank_03\.mzML/ });
 
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
-    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
     expect(api.openCount()).toBe(0);
   });
 
@@ -2513,7 +2524,7 @@ describe("adding a folder of mzML files", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
 
-    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
     expect(api.openCount()).toBe(0);
   });
 
@@ -2528,7 +2539,7 @@ describe("adding a folder of mzML files", () => {
       scannedFolder: () => scan.promise,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
     // Chosen while the scan is unresolved, which is exactly what a captured
@@ -2541,7 +2552,7 @@ describe("adding a folder of mzML files", () => {
 
     scan.resolve({ files: [{ file: thirdFile, parents: ["nested"] }] });
 
-    expect(await screen.findByRole("option", { name: /Blank_03\.mzML/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /Blank_03\.mzML/ })).toBeVisible();
     await waitFor(() => {
       expect(selectedRowNames()).toHaveLength(2);
     });
@@ -2563,10 +2574,10 @@ describe("adding a folder of mzML files", () => {
       scannedFolder: () => scan.promise,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
     await screen.findByRole("grid", { name: "Spectra" });
-    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
       target: { value: "name-desc" },
     });
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
@@ -2581,7 +2592,7 @@ describe("adding a folder of mzML files", () => {
       expect(screen.getByText(/Added 1 file\./, VISIBLE)).toBeVisible();
     });
     expect(screen.getByRole("searchbox", { name: "Search files" })).toHaveValue("QC");
-    expect(screen.getByRole("combobox", { name: "Sort files" })).toHaveValue("name-desc");
+    expect(screen.getByRole("combobox", { name: "Execution order" })).toHaveValue("name-desc");
     // The preview belongs to the row it was opened for, and a list operation is
     // not a reason to take it away or to read anything else.
     expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
@@ -2595,7 +2606,7 @@ describe("adding a folder of mzML files", () => {
       scannedFolder: () => scan.promise,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }), { ctrlKey: true });
 
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
@@ -2607,12 +2618,12 @@ describe("adding a folder of mzML files", () => {
     // escape; `Remove selected` remains available to manage rows already shown,
     // though imported rows can remain if the import committed first. Rust
     // linearises either action rather than this side making it impossible.
-    expect(screen.getByRole("button", { name: "Remove selected" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
     // And none of the ones that cost nothing. Curating what is on screen is
     // this side's own work, and a filesystem walk is no reason to stop it.
     expect(screen.getByRole("searchbox", { name: "Search files" })).toBeEnabled();
-    expect(screen.getByRole("combobox", { name: "Sort files" })).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: "Execution order" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeEnabled();
     fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
     expect(selectedRowNames().join(" ")).toContain("QC_pool_02.mzML");
@@ -2644,16 +2655,16 @@ describe("adding a folder of mzML files", () => {
         }),
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
 
     await waitFor(() => {
       expect(rosterRows()).toHaveLength(2);
     });
-    expect(screen.queryByRole("option", { name: /QC_pool_01\.mzML/ })).toBeNull();
-    expect(screen.getByRole("option", { name: /Blank_03\.mzML/ })).toBeVisible();
+    expect(screen.queryByRole("row", { name: /QC_pool_01\.mzML/ })).toBeNull();
+    expect(screen.getByRole("row", { name: /Blank_03\.mzML/ })).toBeVisible();
     expect(screen.getByText(/Removed 1 file from the list\./, VISIBLE)).toBeVisible();
 
     // The import answers afterwards, carrying the roster it saw -- which is the
@@ -2671,8 +2682,8 @@ describe("adding a folder of mzML files", () => {
     });
     // The removed row stays removed, while the discovered row already present
     // in removal's authoritative roster stays present.
-    expect(screen.queryByRole("option", { name: /QC_pool_01\.mzML/ })).toBeNull();
-    expect(screen.getByRole("option", { name: /Blank_03\.mzML/ })).toBeVisible();
+    expect(screen.queryByRole("row", { name: /QC_pool_01\.mzML/ })).toBeNull();
+    expect(screen.getByRole("row", { name: /Blank_03\.mzML/ })).toBeVisible();
     expect(rosterRows()).toHaveLength(2);
     // The account of what the user actually did survives; the late reply does
     // not overwrite it.
@@ -2758,7 +2769,7 @@ describe("adding a folder of mzML files", () => {
       await waitFor(() => {
         expect(restored).toHaveFocus();
       });
-      expect(screen.getByRole("option", { name: /Blank_03\.mzML/ })).toBeVisible();
+      expect(screen.getByRole("row", { name: /Blank_03\.mzML/ })).toBeVisible();
       expect(rosterRows()).toHaveLength(1);
     },
   );
@@ -2874,12 +2885,12 @@ describe("adding a folder of mzML files", () => {
       scannedFolder: () => scan.promise,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
 
-    expect(await screen.findByText("No files in this session yet")).toBeVisible();
+    expect(await screen.findByText("No acquisitions yet")).toBeVisible();
     expect(screen.getByText(/Cleared 2 files from the list/, VISIBLE)).toBeVisible();
     // The keyboard is owed to `Add files…`, which is still disabled because the
     // import has not settled. Focusing a disabled control does nothing, so the
@@ -2893,7 +2904,7 @@ describe("adding a folder of mzML files", () => {
       expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
     });
     expect(rosterRows()).toHaveLength(0);
-    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(screen.getByText("No acquisitions yet")).toBeVisible();
     expect(api.openCount()).toBe(0);
     // And paid on the commit that makes the control usable, rather than leaving
     // a keyboard user on the body with no way back into the workspace. Awaited,
@@ -2921,7 +2932,7 @@ describe("adding a folder of mzML files", () => {
     const clear = screen.getByRole("button", { name: "Clear list" });
     expect(clear).toBeEnabled();
     expect(clear).toHaveAccessibleDescription(
-      "Clear list also prevents the pending folder import from adding files.",
+      "Clear also prevents the pending import from adding files.",
     );
     clear.focus();
     fireEvent.click(clear);
@@ -2934,7 +2945,7 @@ describe("adding a folder of mzML files", () => {
         VISIBLE,
       ),
     ).toBeVisible();
-    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(screen.getByText("No acquisitions yet")).toBeVisible();
     expect(screen.getByText("Folder import in progress…", VISIBLE)).toBeVisible();
 
     stale.reject(
@@ -2949,7 +2960,7 @@ describe("adding a folder of mzML files", () => {
       expect(screen.queryByText("Folder import in progress…")).toBeNull();
     });
     expect(rosterRows()).toHaveLength(0);
-    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(screen.getByText("No acquisitions yet")).toBeVisible();
     expect(
       screen.getByText(
         "The workspace is empty. The pending folder import will not add files.",
@@ -3030,8 +3041,8 @@ describe("adding a folder of mzML files", () => {
     // Clear has not answered. The folder result must remain unobservable for
     // that entire window, including at the process boundary.
     expect(rosterRows()).toHaveLength(0);
-    expect(screen.queryByRole("option", { name: /Blank_03\.mzML/ })).toBeNull();
-    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(screen.queryByRole("row", { name: /Blank_03\.mzML/ })).toBeNull();
+    expect(screen.getByText("No acquisitions yet")).toBeVisible();
     expect(api.openCount()).toBe(0);
 
     clearing.resolve({ datasets: [], capacity: 1_024 });
@@ -3070,7 +3081,7 @@ describe("adding a folder of mzML files", () => {
       expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
     });
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
-    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
   });
 
   it("stays unavailable after a failed roster read, until the retry succeeds", async () => {
@@ -3099,7 +3110,7 @@ describe("adding a folder of mzML files", () => {
       expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
     });
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
-    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
   });
 
 
@@ -3112,7 +3123,7 @@ describe("adding a folder of mzML files", () => {
       scannedFolder: () => scan.promise,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
@@ -3130,7 +3141,7 @@ describe("adding a folder of mzML files", () => {
       scannedFolder: null,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
@@ -3159,7 +3170,7 @@ describe("adding a folder of mzML files", () => {
         ),
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
     await screen.findByRole("grid", { name: "Spectra" });
 
@@ -3188,7 +3199,7 @@ describe("adding a folder of mzML files", () => {
         ),
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
@@ -3233,7 +3244,7 @@ describe("adding a folder of mzML files", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
-    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
     // Two rows in the reply and one of them added, so the session was not
     // empty -- however empty this window happened to look.
     expect(rosterRows()).toHaveLength(2);
@@ -3352,7 +3363,7 @@ describe("telling two identically named acquisitions apart", () => {
 
   async function importTheFolder(): Promise<void> {
     fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
-    await screen.findByRole("option", { name: /unique\.mzML/ });
+    await screen.findByRole("row", { name: /unique\.mzML/ });
   }
 
   it("keeps the Run identity aligned with collision context recomputed by the roster", async () => {
@@ -3364,7 +3375,7 @@ describe("telling two identically named acquisitions apart", () => {
     });
     renderApp(api);
 
-    fireEvent.click(await screen.findByRole("option", { name: /sample\.mzML/ }));
+    fireEvent.click(await screen.findByRole("row", { name: /sample\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
     const summary = await screen.findByRole("region", { name: "Run" });
     const grid = screen.getByRole("grid", { name: "Spectra" });
@@ -3383,14 +3394,14 @@ describe("telling two identically named acquisitions apart", () => {
 
     // Removing the row that made the context necessary recomputes the roster
     // again. The open Run stays, but its now-unique identity sheds the context.
-    fireEvent.click(screen.getByRole("option", { name: COLLIDING_TWO }));
+    highlightRows(COLLIDING_TWO);
     // Moving focus and selection is not opening that row. The Run identity
     // remains attached to the active preview until the roster actually changes.
     expect(within(summary).getByText(/^sample\.mzML, batch-1 ·/)).toHaveAttribute(
       "title",
       "sample.mzML, batch-1",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
     let uniqueIdentity: HTMLElement | null = null;
     await waitFor(() => {
       uniqueIdentity = within(summary).getByText(/^sample\.mzML ·/);
@@ -3412,7 +3423,7 @@ describe("telling two identically named acquisitions apart", () => {
     });
     renderApp(api);
 
-    fireEvent.click(await screen.findByRole("option", { name: COLLIDING_ONE }));
+    fireEvent.click(await screen.findByRole("row", { name: COLLIDING_ONE }));
     fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
     await screen.findByRole("region", { name: "Run" });
 
@@ -3434,14 +3445,14 @@ describe("telling two identically named acquisitions apart", () => {
     // reader is told exactly what the screen says. The comma is part of the
     // row's text rather than only a gap in the layout, so the two are not read
     // as one word.
-    expect(screen.getByRole("option", { name: COLLIDING_ONE })).toBeVisible();
-    expect(screen.getByRole("option", { name: COLLIDING_TWO })).toBeVisible();
-    const unique = screen.getByRole("option", { name: /unique\.mzML/ });
+    expect(screen.getByRole("row", { name: COLLIDING_ONE })).toBeVisible();
+    expect(screen.getByRole("row", { name: COLLIDING_TWO })).toBeVisible();
+    const unique = screen.getByRole("row", { name: /unique\.mzML/ });
     // A unique name needs no help, and a folder fragment beside one would be a
     // location on screen for nothing.
     expect(unique.textContent).not.toContain("Top level");
     // The filename is still the primary label, said once.
-    const first = screen.getByRole("option", { name: COLLIDING_ONE });
+    const first = screen.getByRole("row", { name: COLLIDING_ONE });
     expect(within(first).getAllByText("sample.mzML")).toHaveLength(1);
   });
 
@@ -3450,7 +3461,7 @@ describe("telling two identically named acquisitions apart", () => {
 
     await importTheFolder();
 
-    const list = screen.getByRole("listbox", { name: "Workspace" });
+    const list = screen.getByRole("treegrid", { name: "Acquisitions" });
     const rendered = list.textContent ?? "";
     expect(rendered).not.toContain(":\\");
     expect(rendered).not.toContain("..");
@@ -3473,7 +3484,7 @@ describe("telling two identically named acquisitions apart", () => {
     // everything it added, and a selected row stays on screen whether or not
     // the query found it -- saying so, which is what makes the distinction
     // visible rather than a trick of the assertion.
-    expect(screen.getByText(/0 matches of 3 files/, VISIBLE)).toBeVisible();
+    expect(screen.getByText(/0 visible \/ 3 acquisitions/, VISIBLE)).toBeVisible();
     for (const row of rosterRows()) {
       expect(row.textContent).toContain("Selected — outside search");
     }
@@ -3481,37 +3492,26 @@ describe("telling two identically named acquisitions apart", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "sample" },
     });
-    expect(screen.getByText(/2 matches of 3 files/, VISIBLE)).toBeVisible();
+    expect(screen.getByText(/2 visible \/ 3 acquisitions/, VISIBLE)).toBeVisible();
   });
 
-  it("does not let the context decide the name order", async () => {
+  it("keeps browsing arrangement when execution name order changes", async () => {
     renderApp(collidingApi());
     await importTheFolder();
-
-    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
-      target: { value: "name-asc" },
-    });
-
-    // `sample.mzML` twice, then `unique.mzML`: the two collide by name and stay
-    // in the order the session holds them, because the context is not a key.
-    // The session holds `batch-2` first, so a sort that used the context would
-    // put `batch-1` above it -- which is the difference this asserts.
-    expect(rosterRows().map((row) => row.textContent?.slice(0, 40))).toEqual([
-      expect.stringContaining("sample.mzML"),
-      expect.stringContaining("sample.mzML"),
-      expect.stringContaining("unique.mzML"),
-    ]);
-    expect(rosterRows()[0]?.textContent).toContain("batch-2");
-    expect(rosterRows()[1]?.textContent).toContain("batch-1");
+    const before = rosterRows().map(row => row.getAttribute("data-handle"));
+    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value: "name-asc" } });
+    expect(rosterRows().map(row => row.getAttribute("data-handle"))).toEqual(before);
+    expect(rosterRows()[1]?.textContent).toContain("batch-2");
+    expect(rosterRows()[2]?.textContent).toContain("batch-1");
   });
 
   it("takes the context away when the row that made it necessary goes", async () => {
     renderApp(collidingApi());
     await importTheFolder();
-    expect(screen.getByRole("option", { name: COLLIDING_ONE })).toBeVisible();
+    expect(screen.getByRole("row", { name: COLLIDING_ONE })).toBeVisible();
 
-    fireEvent.click(screen.getByRole("option", { name: COLLIDING_TWO }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    fireEvent.click(screen.getByRole("row", { name: COLLIDING_TWO }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
 
     await waitFor(() => {
       expect(rosterRows()).toHaveLength(2);
@@ -3519,7 +3519,7 @@ describe("telling two identically named acquisitions apart", () => {
     // Rust decides it over the whole live roster every time one is built, so a
     // survivor with a unique name stops saying anything at all.
     expect(screen.queryByText("batch-1")).toBeNull();
-    expect(screen.getByRole("option", { name: /sample\.mzML/ })).toBeVisible();
+    expect(screen.getByRole("row", { name: /sample\.mzML/ })).toBeVisible();
   });
 });
 
@@ -3761,7 +3761,7 @@ describe("giving the keyboard back after an acquisition picker", () => {
     // Settlement retires the one-shot debt even when it declines to move focus.
     // A later body focus and unrelated render must not revive it.
     search.blur();
-    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
       target: { value: "name-desc" },
     });
     expect(document.body).toHaveFocus();
@@ -3875,7 +3875,7 @@ describe("saying what a folder import is doing", () => {
     // Still true once the walk itself is running, which is why one sentence
     // covers both rather than two sentences guessing which.
     scan.resolve({ files: [{ file: selectedFile, parents: [] }] });
-    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
   });
 
   it("clears the status however the operation ends", async () => {

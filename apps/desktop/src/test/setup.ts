@@ -3,6 +3,29 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, configure } from "@testing-library/react";
 import { afterEach } from "vitest";
 
+// Consumer tests use a wide desktop composition unless a case supplies another
+// viewport. This selects panels only; jsdom still provides no layout evidence.
+Object.defineProperties(window, {
+  innerWidth: { configurable: true, writable: true, value: 1920 },
+  innerHeight: { configurable: true, writable: true, value: 1080 },
+});
+
+// jsdom has no layout engine. These are import/lifecycle surfaces only; actual
+// geometry, sensors, scrolling and animation are verified in browser/native QA.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class implements ResizeObserver {
+    observe() { /* No rendered geometry in jsdom. */ }
+    unobserve() { /* No rendered geometry in jsdom. */ }
+    disconnect() { /* No rendered geometry in jsdom. */ }
+  };
+}
+if (typeof window.matchMedia !== "function") {
+  window.matchMedia = query => ({ matches: query.includes("min-width: 1700px"), media: query, onchange: null,
+    addListener() { /* Controlled tests may replace this boundary. */ }, removeListener() {},
+    addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; } });
+}
+if (typeof Element.prototype.getAnimations !== "function") Element.prototype.getAnimations = () => [];
+
 // Testing Library's own async default is one second, which is a statement about
 // how long a *browser* takes to settle rather than about this suite. These
 // files render the whole application against a modelled boundary and vitest
