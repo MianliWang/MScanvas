@@ -35,13 +35,32 @@ Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 Add-Type -Namespace MSCanvasSaveDialog -Name Native -MemberDefinition @'
   public delegate bool Enumerator(IntPtr window, IntPtr parameter);
   [DllImport("user32.dll")] static extern bool EnumWindows(Enumerator callback, IntPtr parameter);
+  [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, Enumerator callback, IntPtr parameter);
   [DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr window, out int processId);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr window, System.Text.StringBuilder text, int count);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr window, System.Text.StringBuilder text, int count);
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
   [DllImport("user32.dll")] public static extern bool IsChild(IntPtr parent, IntPtr child);
   [DllImport("user32.dll")] public static extern int GetDlgCtrlID(IntPtr window);
+  [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr SendMessageTimeout(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam, uint flags, uint timeout, out UIntPtr result);
   public sealed class WindowInfo { public long handle; public string title, className; public bool visible; }
+  public sealed class ControlInfo { public long handle; public int id; public string className; public bool visible; }
+  public static ControlInfo[] OwnedControls(IntPtr dialog, int processId) {
+    int owner;
+    GetWindowThreadProcessId(dialog, out owner);
+    if (dialog == IntPtr.Zero || owner != processId) throw new InvalidOperationException("Control observation requires the owned dialog.");
+    var controls = new System.Collections.Generic.List<ControlInfo>();
+    EnumChildWindows(dialog, delegate(IntPtr control, IntPtr parameter) {
+      int controlOwner;
+      GetWindowThreadProcessId(control, out controlOwner);
+      if (controlOwner != processId) return true;
+      var className = new System.Text.StringBuilder(256);
+      GetClassName(control, className, className.Capacity);
+      controls.Add(new ControlInfo { handle = control.ToInt64(), id = GetDlgCtrlID(control), className = className.ToString(), visible = IsWindowVisible(control) });
+      return true;
+    }, IntPtr.Zero);
+    return controls.ToArray();
+  }
   public static WindowInfo[] OwnedWindows(int processId) {
     var windows = new System.Collections.Generic.List<WindowInfo>();
     EnumWindows(delegate(IntPtr window, IntPtr parameter) {
@@ -145,6 +164,19 @@ function Assert-OwnedControl {
   }
 }
 
+function Get-OwnedControlEvidence {
+  param($Dialog)
+  $nativeControls = @([MSCanvasSaveDialog.Native]::OwnedControls([IntPtr] $Dialog.Current.NativeWindowHandle, $ApplicationProcessId))
+  $uiaControls = @()
+  foreach ($control in $Dialog.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) {
+    if ($control.Current.ProcessId -ne $ApplicationProcessId) { continue }
+    # Record identifiers and control classes only, never directory entries,
+    # filename values or another application's UI.
+    $uiaControls += [ordered]@{ id = $control.Current.AutomationId; className = $control.Current.ClassName; handle = $control.Current.NativeWindowHandle; enabled = $control.Current.IsEnabled }
+  }
+  return [ordered]@{ native = $nativeControls; uia = $uiaControls }
+}
+
 $result = [ordered]@{
   title    = $Title
   action   = $Action
@@ -155,6 +187,7 @@ $result = [ordered]@{
   detail   = ''
 }
 
+$controlsDeadline = (Get-Date).AddSeconds($TimeoutSeconds)
 $dialog = Find-Dialog -Name $Title -Seconds $TimeoutSeconds
 if ($null -eq $dialog) {
   if ($ApplicationProcessId -ne 0) {
@@ -210,6 +243,31 @@ $result.found = $true
 $result.dialogHandle = $dialog.Current.NativeWindowHandle
 $result.lookup = if ($ApplicationProcessId -ne 0) { 'Win32 exact PID/title/class -> UIAutomation.FromHandle' } else { 'legacy UIAutomation root' }
 
+if ($ApplicationProcessId -ne 0) {
+  # Finding the dialog HWND does not establish that its controls are ready.
+  # Use the remainder of the original lookup budget, not a second timeout.
+  $ready = $false
+  $buttonId = if ($Action -eq 'save') { '1' } else { '2' }
+  do {
+    $button = Find-ById -Dialog $dialog -AutomationId $buttonId
+    $valuePattern = $null
+    $edit = if ($Action -eq 'save') { Find-ById -Dialog $dialog -AutomationId '1148' } else { $null }
+    if ($null -ne $button -and $button.Current.IsEnabled -and ($Action -eq 'cancel' -or
+        ($null -ne $edit -and $edit.Current.IsEnabled -and
+         $edit.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref] $valuePattern)))) {
+      $ready = $true
+      break
+    }
+    Start-Sleep -Milliseconds 200
+  } while ((Get-Date) -lt $controlsDeadline)
+  if (-not $ready) {
+    $result.detail = 'The exact owned filename/button controls did not become ready within the original lookup budget.'
+    $result.controls = Get-OwnedControlEvidence -Dialog $dialog
+    $result | ConvertTo-Json -Depth 5 -Compress
+    exit 4
+  }
+}
+
 if ($Action -eq 'save') {
   if ([string]::IsNullOrWhiteSpace($Path)) {
     $result.detail = 'saving needs a destination'
@@ -241,8 +299,19 @@ if ($null -eq $button) {
 }
 
 Assert-OwnedControl -Dialog $dialog -Control $button -Id ([int] $buttonId)
-$invoke = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-$invoke.Invoke()
+$invoke = $null
+if ($ApplicationProcessId -eq 0 -or $button.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref] $invoke)) {
+  if ($null -eq $invoke) { $invoke = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern) }
+  $invoke.Invoke()
+  $result.method = 'UIAutomation.Invoke'
+} else {
+  # The same native common-dialog button provider used by the acquisition
+  # helper may omit InvokePattern. Activate only the already verified button.
+  $messageResult = [UIntPtr]::Zero
+  $sent = [MSCanvasSaveDialog.Native]::SendMessageTimeout([IntPtr] $button.Current.NativeWindowHandle, 0xF5, [UIntPtr]::Zero, [IntPtr]::Zero, 2, 5000, [ref] $messageResult)
+  if ($sent -eq [IntPtr]::Zero) { throw 'The owned save button click timed out or failed.' }
+  $result.method = 'Win32.BM_CLICK'
+}
 $result.invoked = $true
 $result | ConvertTo-Json -Compress
 exit 0
