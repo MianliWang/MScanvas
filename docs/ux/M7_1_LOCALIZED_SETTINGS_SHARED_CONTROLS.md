@@ -1,10 +1,12 @@
 # M7.1 — Localized Settings and shared controls
 
-Status: **label-activation repair implemented; renewed native acceptance pending**.
+Status: **label-activation repair built; focused native acceptance pending**.
 The first QA build passed all four required native pairs below. PR #120 identified
-a label-activation regression and stale status prose. The product repair requires
-a new QA build and four fresh paired native runs; the retained first-build passes
-do not qualify the repaired build. The task PR binds publication and local closeout to the
+a label-activation regression and stale status prose. The repaired QA build and
+browser checks pass; focused native revalidation at 150% remains pending. The
+retained four pairs belong to the first build and support unchanged scaling and
+geometry behavior, not a claim of four native passes on the repaired binary.
+The task PR binds publication and local closeout to the
 reviewed head. This QA build is not a public beta. M7.2 is next, not started.
 M6 remains complete; the post-M6 XIC interlude remains complete on its
 non-admission branch. XIC is not admitted or implemented.
@@ -150,9 +152,35 @@ input in both consumers/locales. The native spec adds spectrum-label clicks in
 both locales before the existing PNG and natural-return acceptance; its second
 figure consumer remains opened only. No retry or timeout was increased.
 
-New-build checks and paired native acceptance are pending. The identities,
-browser results and four native runs in the following sections refer only to the
-retained first build and its harness; they are not attributed to this repair.
+The follow-up impact review found no changes to CSS, font sizes, layout breakpoints,
+DPI/window handling, Rust or native helpers. The label association uses stable
+element IDs. Repeating all four manually changed Windows scales was a conservative
+execution proposal, not an additional requirement of this DOM repair. The scope
+is now one focused native run at the user's retained 150%: the existing three
+scenarios, including spectrum-label activation in both locales, Settings, the real
+PNG and actual Escape/natural Convert return. The second native consumer is still
+opened only. No assertion, timeout or ownership guard is weakened. This reuses
+only unaffected first-build scaling/geometry evidence, with explicit attribution;
+it does not declare the new binary tested at four Windows scales.
+
+The existing isolated reviewer approved this impact assessment. The previous
+four-fresh-run wording was our execution interpretation and is superseded here.
+A fresh host-readiness reply is still required before this interactive launch.
+
+| Repaired-build gate | Result and retained record |
+| --- | --- |
+| Product/build and label-aware harness source | `9c63b6f7a87d49f1f09aa5a97896d237aa5e1d5a`, tree `cf9ac8e8967849c03a2054190d46f4b4ae364b54` |
+| QA build | Exit 0; `resume-20260913T024431Z/native-build-4.log`, `.exit.json` and `.PASS.json` |
+| Executable SHA-256 | `184f76370a7a446ac7ba603ebabec81f54b1cff304b17b1ecb50fbb85cf4bde2` |
+| 154-input manifest | `build-inputs-4.json`, SHA-256 `03f7195a054cbc6e3e787446168acc576e2713b21be4652c111577cfa685e935`; exactly two production files differ from the first build |
+| Static/repository checks | All exit 0; `resume-20260913T024431Z/label-repair-static-01.exit.json` |
+| Full frontend suite | 73 files / 1726 tests pass with unchanged timeouts; `resume-20260913T024431Z/label-repair-frontend-01.log` and `.exit.json` |
+| Rendered browser | Three groups pass; `browser-Xj30Nu`, `resume-20260913T024431Z/label-repair-browser-01.PASS.json`; 48 real label clicks across both consumers, both locales and DPR 1/1.25/1.5/2, all correctly focused with unchanged raw values; 14 existing scaled-consumer observations and three empty app-console records |
+| Source attribution | `resume-20260913T024431Z/label-repair-attribution-01.json` verifies all 201 broad frontend/browser inputs committed unchanged and the unchanged Rust input boundary; prior local Rust checks remain attributable |
+| New native acceptance | Pending the focused actual 150% run and fresh host readiness; no repaired-build native pass is claimed yet |
+
+The identities, browser results and four native runs in the following sections
+refer only to the retained first build and its harness.
 
 ### Retained first-build validation
 
