@@ -32,10 +32,62 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+Add-Type -Namespace MSCanvasSaveDialog -Name Native -MemberDefinition @'
+  public delegate bool Enumerator(IntPtr window, IntPtr parameter);
+  [DllImport("user32.dll")] static extern bool EnumWindows(Enumerator callback, IntPtr parameter);
+  [DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr window, out int processId);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr window, System.Text.StringBuilder text, int count);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr window, System.Text.StringBuilder text, int count);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll")] public static extern bool IsChild(IntPtr parent, IntPtr child);
+  [DllImport("user32.dll")] public static extern int GetDlgCtrlID(IntPtr window);
+  public sealed class WindowInfo { public long handle; public string title, className; public bool visible; }
+  public static WindowInfo[] OwnedWindows(int processId) {
+    var windows = new System.Collections.Generic.List<WindowInfo>();
+    EnumWindows(delegate(IntPtr window, IntPtr parameter) {
+      int owner;
+      GetWindowThreadProcessId(window, out owner);
+      if (owner != processId) return true;
+      var title = new System.Text.StringBuilder(1024);
+      var className = new System.Text.StringBuilder(256);
+      GetWindowText(window, title, title.Capacity);
+      GetClassName(window, className, className.Capacity);
+      windows.Add(new WindowInfo { handle = window.ToInt64(), title = title.ToString(), className = className.ToString(), visible = IsWindowVisible(window) });
+      return true;
+    }, IntPtr.Zero);
+    return windows.ToArray();
+  }
+'@
+
+if ($ApplicationProcessId -ne 0 -and (Get-Process -Id $ApplicationProcessId).ProcessName -ne 'mscanvas-desktop') {
+  throw 'The supplied process is not MSCanvas.'
+}
 
 function Find-Dialog {
   param([string] $Name, [int] $Seconds)
 
+  if ($ApplicationProcessId -ne 0) {
+    # A native common dialog can exist without being a UIA root child. Bridge
+    # only its exact PID, title and class HWND into UIA; never use another app
+    # or a filename-field match as an attributed-dialog fallback.
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $deadline) {
+      $matches = @([MSCanvasSaveDialog.Native]::OwnedWindows($ApplicationProcessId) | Where-Object {
+        $_.visible -and $_.className -ceq '#32770' -and [String]::Equals($_.title, $Name, [StringComparison]::Ordinal)
+      })
+      if ($matches.Count -gt 1) { throw 'More than one exact owned save dialog was found.' }
+      if ($matches.Count -eq 1) {
+        $handle = [IntPtr] $matches[0].handle
+        $found = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
+        if ($null -ne $found -and $found.Current.ProcessId -eq $ApplicationProcessId -and
+            [IntPtr] $found.Current.NativeWindowHandle -eq $handle) { return $found }
+      }
+      Start-Sleep -Milliseconds 200
+    }
+    return $null
+  }
+
+  # Preserve the legacy, unattributed caller's UIA lookup.
   $root = [System.Windows.Automation.AutomationElement]::RootElement
   $byName = New-Object System.Windows.Automation.PropertyCondition(
     [System.Windows.Automation.AutomationElement]::NameProperty, $Name)
@@ -76,6 +128,23 @@ function Find-ById {
       [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $AutomationId)))
 }
 
+function Assert-OwnedControl {
+  param($Dialog, $Control, [int] $Id)
+  if ($ApplicationProcessId -eq 0) { return }
+  $dialogHandle = [IntPtr] $Dialog.Current.NativeWindowHandle
+  $controlHandle = [IntPtr] $Control.Current.NativeWindowHandle
+  $dialogOwner = 0
+  $controlOwner = 0
+  [void] [MSCanvasSaveDialog.Native]::GetWindowThreadProcessId($dialogHandle, [ref] $dialogOwner)
+  [void] [MSCanvasSaveDialog.Native]::GetWindowThreadProcessId($controlHandle, [ref] $controlOwner)
+  if ($controlHandle -eq [IntPtr]::Zero -or $dialogOwner -ne $ApplicationProcessId -or
+      $controlOwner -ne $ApplicationProcessId -or
+      -not [MSCanvasSaveDialog.Native]::IsChild($dialogHandle, $controlHandle) -or
+      [MSCanvasSaveDialog.Native]::GetDlgCtrlID($controlHandle) -ne $Id) {
+    throw 'The native save control ownership or resource ID check failed.'
+  }
+}
+
 $result = [ordered]@{
   title    = $Title
   action   = $Action
@@ -88,6 +157,12 @@ $result = [ordered]@{
 
 $dialog = Find-Dialog -Name $Title -Seconds $TimeoutSeconds
 if ($null -eq $dialog) {
+  if ($ApplicationProcessId -ne 0) {
+    $result.detail = "no exact owned native dialog titled '$Title' appeared within ${TimeoutSeconds}s"
+    $result.appWindows = @([MSCanvasSaveDialog.Native]::OwnedWindows($ApplicationProcessId))
+    $result | ConvertTo-Json -Depth 4 -Compress
+    exit 2
+  }
   # What was actually on screen, so a mismatch names the window it should have
   # matched instead of reporting only that nothing did.
   $root = [System.Windows.Automation.AutomationElement]::RootElement
@@ -132,6 +207,8 @@ if ($null -eq $dialog) {
   exit 2
 }
 $result.found = $true
+$result.dialogHandle = $dialog.Current.NativeWindowHandle
+$result.lookup = if ($ApplicationProcessId -ne 0) { 'Win32 exact PID/title/class -> UIAutomation.FromHandle' } else { 'legacy UIAutomation root' }
 
 if ($Action -eq 'save') {
   if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -147,6 +224,7 @@ if ($Action -eq 'save') {
     $result | ConvertTo-Json -Compress
     exit 4
   }
+  Assert-OwnedControl -Dialog $dialog -Control $edit -Id 1148
   $value = $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
   # The full path rather than a bare name, so the destination is this test's own
   # temporary directory rather than wherever the dialog last opened.
@@ -162,6 +240,7 @@ if ($null -eq $button) {
   exit 5
 }
 
+Assert-OwnedControl -Dialog $dialog -Control $button -Id ([int] $buttonId)
 $invoke = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
 $invoke.Invoke()
 $result.invoked = $true

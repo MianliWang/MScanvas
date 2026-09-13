@@ -27,8 +27,24 @@ const windowsViewports = new Map([
 const digest = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex");
 
 async function calls() { return browser.execute(() => (window as unknown as { __mscanvasIpcCalls__: { command: string; args: Record<string, unknown> }[] }).__mscanvasIpcCalls__); }
+type NativeRect = { left: number; top: number; right: number; bottom: number };
+type WindowMetrics = {
+  dpi: number; foregroundProcessId: number; executable: string;
+  bounds: { client: NativeRect; visibleFrameInsideWorkArea: boolean };
+};
 function windowMetrics() {
-  return JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", resolve(HERE, "../native/m7.1-window-metrics.ps1"), "-ApplicationProcessId", String(processId)], { encoding: "utf8", windowsHide: true })) as { dpi: number; foregroundProcessId: number; executable: string };
+  return JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", resolve(HERE, "../native/m7.1-window-metrics.ps1"), "-ApplicationProcessId", String(processId)], { encoding: "utf8", windowsHide: true })) as WindowMetrics;
+}
+function assertNativeViewport(metrics: WindowMetrics, state: { cssViewport: { width: number; height: number }; devicePixelRatio: number }) {
+  expect(metrics.dpi).toBe(expectedDpi);
+  expect(state.cssViewport).toEqual(windowsViewports.get(expectedDpi));
+  expect(state.devicePixelRatio).toBe(expectedDpi / 96);
+  expect(metrics.bounds.visibleFrameInsideWorkArea).toBe(true);
+  const client = metrics.bounds.client;
+  expect({ width: client.right - client.left, height: client.bottom - client.top }).toEqual({
+    width: Math.round(state.cssViewport.width * state.devicePixelRatio),
+    height: Math.round(state.cssViewport.height * state.devicePixelRatio),
+  });
 }
 async function observeWindow(label: string) {
   const metrics = windowMetrics();
@@ -82,8 +98,8 @@ async function capture(label: string) {
   // Retain the rendered state even when a subsequent observation fails.
   await browser.saveScreenshot(join(output, `${label}.png`));
   const afterScreenshot = await observeWindow(`${label}: after screenshot`);
-  expect(metrics.dpi).toBe(expectedDpi);
-  expect(state.cssViewport).toEqual(windowsViewports.get(expectedDpi));
+  assertNativeViewport(metrics, state);
+  assertNativeViewport(afterScreenshot.metrics, afterScreenshot);
   expect(afterScreenshot.cssViewport).toEqual(state.cssViewport);
   expect(resources.externalResources).toEqual([]);
   return state;
@@ -116,7 +132,10 @@ async function add(path: string) {
   await browser.waitUntil(async () => (await browser.$$(ROW).length) === before + 1);
 }
 
-describe("M7.1 focused real Windows Settings, figure and picker integration", () => {
+describe("M7.1 focused real Windows Settings, figure and picker integration", function () {
+  // These cases share one native session. A failed prerequisite ends the run;
+  // later scenarios remain unproved instead of interacting with a stranded modal.
+  this.bail(true);
   before(async () => {
     mzml = process.env["MSCANVAS_M71_MZML"] ?? "";
     raw = process.env["MSCANVAS_THERMO_FIXTURE"] ?? "";
@@ -174,8 +193,10 @@ describe("M7.1 focused real Windows Settings, figure and picker integration", ()
   it("applies, cancels, resets and dismisses Settings in the actual app", async () => {
     const viewport = windowsViewports.get(expectedDpi)!;
     await observeWindow("before requested viewport");
-    await browser.setWindowSize(viewport.width, viewport.height);
-    await observeWindow("after requested viewport");
+    await native("m7.1-size-window", ["-ApplicationProcessId", String(processId), "-ExpectedDpi", String(expectedDpi), "-CssWidth", String(viewport.width), "-CssHeight", String(viewport.height)]);
+    await browser.waitUntil(() => browser.execute((width, height) => innerWidth === width && innerHeight === height, viewport.width, viewport.height), { timeoutMsg: "The real native client size did not reach the required CSS viewport." });
+    const sized = await observeWindow("after requested native client size");
+    assertNativeViewport(sized.metrics, sized);
     await openSettings();
     await choose("zh-CN");
     await choose("compact");
