@@ -14,7 +14,8 @@
   names are localised, and this machine reports them in Chinese. A suite keyed
   on names would be a suite that passes in one locale.
 
-    1148  the file-name edit
+    FileNameControlHost / Edit 1001  the attributed modern save dialog
+    1148  the legacy caller's file-name edit
     1     IDOK, the Save button
     2     IDCANCEL
 
@@ -164,6 +165,34 @@ function Assert-OwnedControl {
   }
 }
 
+function Find-FileName {
+  param($Dialog)
+  if ($ApplicationProcessId -eq 0) { return Find-ById -Dialog $Dialog -AutomationId '1148' }
+
+  # Observed in native-run05: the save dialog's Edit1001 lives under this
+  # host. A toolbar elsewhere also has ID1001, so neither ID nor any Edit
+  # anywhere in the dialog is sufficient identification.
+  $hostControl = Find-ById -Dialog $Dialog -AutomationId 'FileNameControlHost'
+  if ($null -eq $hostControl -or $hostControl.Current.ProcessId -ne $ApplicationProcessId) { return $null }
+  $byId = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::AutomationIdProperty, '1001')
+  $byClass = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::ClassNameProperty, 'Edit')
+  $condition = New-Object System.Windows.Automation.AndCondition($byId, $byClass)
+  $edit = $hostControl.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+  if ($null -eq $edit) { return $null }
+  Assert-OwnedControl -Dialog $Dialog -Control $edit -Id 1001
+  $hostHandle = [IntPtr] $hostControl.Current.NativeWindowHandle
+  $hostOwner = 0
+  [void] [MSCanvasSaveDialog.Native]::GetWindowThreadProcessId($hostHandle, [ref] $hostOwner)
+  if ($hostHandle -eq [IntPtr]::Zero -or $hostOwner -ne $ApplicationProcessId -or
+      -not [MSCanvasSaveDialog.Native]::IsChild([IntPtr] $Dialog.Current.NativeWindowHandle, $hostHandle) -or
+      -not [MSCanvasSaveDialog.Native]::IsChild($hostHandle, [IntPtr] $edit.Current.NativeWindowHandle)) {
+    throw 'The filename edit is not inside the exact owned FileNameControlHost.'
+  }
+  return $edit
+}
+
 function Get-OwnedControlEvidence {
   param($Dialog)
   $nativeControls = @([MSCanvasSaveDialog.Native]::OwnedControls([IntPtr] $Dialog.Current.NativeWindowHandle, $ApplicationProcessId))
@@ -251,7 +280,7 @@ if ($ApplicationProcessId -ne 0) {
   do {
     $button = Find-ById -Dialog $dialog -AutomationId $buttonId
     $valuePattern = $null
-    $edit = if ($Action -eq 'save') { Find-ById -Dialog $dialog -AutomationId '1148' } else { $null }
+    $edit = if ($Action -eq 'save') { Find-FileName -Dialog $dialog } else { $null }
     if ($null -ne $button -and $button.Current.IsEnabled -and ($Action -eq 'cancel' -or
         ($null -ne $edit -and $edit.Current.IsEnabled -and
          $edit.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref] $valuePattern)))) {
@@ -276,18 +305,20 @@ if ($Action -eq 'save') {
   }
   # The file-name edit. Its own id, not its label: the label is localised and
   # the id is not.
-  $edit = Find-ById -Dialog $dialog -AutomationId '1148'
+  $edit = Find-FileName -Dialog $dialog
   if ($null -eq $edit) {
-    $result.detail = 'the dialog carried no control with automation id 1148'
+    $result.detail = 'The identified save dialog carried no matching filename edit.'
     $result | ConvertTo-Json -Compress
     exit 4
   }
-  Assert-OwnedControl -Dialog $dialog -Control $edit -Id 1148
+  $editId = if ($ApplicationProcessId -ne 0) { 1001 } else { 1148 }
+  Assert-OwnedControl -Dialog $dialog -Control $edit -Id $editId
   $value = $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
   # The full path rather than a bare name, so the destination is this test's own
   # temporary directory rather than wherever the dialog last opened.
   $value.SetValue($Path)
   $result.named = $true
+  $result.filenameControl = [ordered]@{ id = $editId; className = $edit.Current.ClassName; handle = $edit.Current.NativeWindowHandle; hostId = $(if ($ApplicationProcessId -ne 0) { 'FileNameControlHost' } else { 'legacy' }) }
 }
 
 $buttonId = if ($Action -eq 'save') { '1' } else { '2' }
@@ -313,5 +344,5 @@ if ($ApplicationProcessId -eq 0 -or $button.TryGetCurrentPattern([System.Windows
   $result.method = 'Win32.BM_CLICK'
 }
 $result.invoked = $true
-$result | ConvertTo-Json -Compress
+$result | ConvertTo-Json -Depth 4 -Compress
 exit 0
