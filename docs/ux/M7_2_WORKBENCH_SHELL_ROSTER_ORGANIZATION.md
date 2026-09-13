@@ -1,7 +1,8 @@
 # M7.2 — Workbench shell and roster organization
 
-Status: **implemented; local checks and independent review complete;
-native acceptance and publication pending**.
+Status: **implemented; local checks, targeted native acceptance and independent
+review complete**. Protected publication identities and main-CI closeout are
+recorded in the task PR and retained local closeout, not inferred from this status.
 Baseline: `bdc8470e9e00aa21aab61316caff04d0fa6d7817` (M7.1 / PR #120).
 Task branch: `feat/m7.2-workbench-shell-roster-organization`.
 Route: [ADR 0047](../architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md).
@@ -154,7 +155,19 @@ not an OS IME certification.
 
 Historical native M7.1 images are before-state illustrations only. Current
 browser frames illustrate the new layout with controlled metadata, not new
-scientific/provider capability. Native current-build proof is still pending.
+scientific/provider capability. The first browser scenario inherits a null
+`subscribe_workspace_drop_updates` receipt from `e2e/support/fixtures.ts`;
+`dropTransport.ts` correctly refuses that missing reservation. Its visible
+Explorer-unavailable banner is browser layout evidence with a failed mocked
+subscription, not deliberate native-failure coverage or native import proof.
+Later browser scenarios supply controlled receipts only for their own layer.
+The final native run below establishes the actual subscription and OS import.
+
+Against v5.11, the light shell, single Home action, grouped roster and quiet
+evidence hierarchy are retained. The intentional drag disposition is a target
+highlight and compact count without a long insertion line. Native frames retain
+their actual scroll positions; the scientific/figure consumers remain unchanged
+and are not a new full-plot layout or scientific qualification in this slice.
 
 Two serial isolated reversions in `falsification-01/` discriminated the intended
 seams. Routing conversion through highlights failed requested-count assertions;
@@ -177,7 +190,22 @@ automatically preview B. The harness now explicitly activates B and observes
 the real read settle before testing B-to-A navigation overlap. This targeted
 harness repair passed isolated `review-03` readback (SHA-256
 `ca18f695d3fab8999e37c211867633ad3b8a7ac1bffbc6d26115bd98ba48caeb`).
-No review finding remains open. Native execution is still a separate obligation.
+Native execution then exposed an immutable Tauri `invoke` property, so the
+attempted wrapper produced no timing trace despite successful real previews.
+The repaired observer uses actual Windows IPC Resource Timing and a surface
+MutationObserver; it neither replaces requests nor changes results. `review-04`
+confirmed this delta. The final native spec has SHA-256
+`79c894b61063a2db6b23afbdba2e5464edf937093518614194974d7457567015`.
+
+`review-05` examined the optional real Explorer input helper. Its two confirmed
+findings were fixed before OS use: unsafe release at old coordinates after a
+foreground change, and cleanup exceptions skipping recovery/evidence output.
+`review-06` confirmed guarded cancellation, movement-free release, refusal with
+manual-recovery evidence on foreign foreground, and preserved JSON output.
+`review-07` confirmed the runtime-only .NET hashing and UTF-8 output correction.
+The final helper SHA-256 is
+`9d55edf149df34623381460bafd81914287dcf519015e9474734f6e010f2726e`.
+No review finding remains open. Reviews are static; native results are below.
 
 Retained diagnostic runs are not acceptance gates. Initial consumer migration
 failed 117 of 1,749 tests; the later full run had three ambiguous text selectors
@@ -190,30 +218,61 @@ and images; a later pass does not erase them. `check_repo.py` now skips the
 already-ignored `.tmp` directory so downloaded inspection-package README links
 are not mistaken for owned project documentation.
 
-## Native and publication checkpoint
+## Targeted native acceptance and publication handoff
 
-Pending: one announced native session at the user's measured current scaling,
-using the new attributable binary and retained fixture hashes; real mzML and
-Settings/Home ownership, internal multi-drag, actual Explorer file/folder drop,
-navigation during real work and the affected picker cancellation's natural
-focus return. One initial click is permitted; no post-cancel rescue is allowed.
-No repeat physical DPI cycle is required without a concrete unresolved mechanism.
+Fresh desktop availability and continuation were supplied in the execution
+conversation. Windows scaling was measured, never changed. Native run 04 passed
+all **3/3 scenarios** in 28 seconds (runner 30 seconds), exit 0, with empty mock
+answers and console. Evidence: `native-KBLm3r/`; launch/raw log/exit:
+`resume-native-20260913T220412812Z/`. Session
+`e8dbc34a8d120c5971f55baff2d929b0`; PID 39700; HWND 922914;
+WebView2 and EdgeDriver 152.0.4191.66. Build 02 remains attributable to the same
+production manifest and executable hash above, not to a later documentation
+commit. The preserved source head was
+`13745b123c88d8fb93c3dbeb84e47458328d4fc3`; only harness changes followed it.
 
-After native acceptance and repair-delta review: ordinary task commit/push/PR,
-required exact-head checks and thread resolution, protected true merge, ordered
-parent/candidate-tree proof, natural push/main CI and ff-only local closeout.
-The PR and ignored local closeout will hold final merge/run identities without a
-self-referential source commit. Until then this record does not claim M7.2
-publication. M6 and the post-M6 XIC non-admission interlude remain complete;
-XIC is not admitted or implemented. M7.3 is next and not started. No public beta,
-installer, tag or release is produced by this slice.
+| Proof | Actual result |
+|---|---|
+| Native geometry | 144 DPI / 150%; CSS 1366x768; client and PNG 2049x1152; CSS zoom 1; frame inside 3840x2160 monitor / 3840x2088 work area; zero horizontal overflow |
+| Real source and pending work | Real admitted A/B/A mzML reads; B explicitly activated and settled. A request interval 9254.4–10424.9 ms includes Conversion navigation at 9266.6 ms. This is one actual overlap, not a provider latency guarantee |
+| Mounted state | Real selected spectrum, raw width draft `0640`, active source, Home/navigation and en/zh-CN comfortable/compact Settings survive without new operations |
+| Internal organization | Actual WebView2 pointer drag moves A and RAW into Native group; only RAW remains checked. No preview/conversion/ingestion is started by that move; frames 03/04/05 |
+| Actual Explorer import | Exact file plus folder selected in Explorer HWND 8586680 / PID 53484, then Windows SendInput drag to measured CSS (148,592) / physical (613,1313). Real native subscription imports file-3/4/5 into Ungrouped; Native group remains 2, total roster 6; no additional preview or subscription |
+| Natural cancellation | Owned acquisition picker Escape closes normally; document focus and foreground PID return to the live Add files control without any post-cancel click, focus call or activation; frame 07 |
+| Resource boundary | Raw URLs retained; only exact Tauri application and `http://ipc.localhost` origins present; external resources empty |
 
-Current host checkpoint: readiness was requested for one approximately five-minute
-session and has not yet been supplied. Read-only preflight measured matching
-WebView2/EdgeDriver 152.0.4191.66, no existing task-native processes or listeners
-on 4490/4491, and no exclusion covering those ports. No GUI has been launched and
-no physical scale has been assumed or changed. A local checkpoint commit may
-preserve this reviewed candidate while native acceptance remains pending.
+The Explorer route uses the local
+[ShellFolderView selection API](https://learn.microsoft.com/en-us/windows/win32/shell/shellfolderview-selectitem)
+and [Windows SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput),
+with exact path/hash, HWND/PID, foreground, UIA source and physical target guards.
+It never injects paths into DOM or calls ingestion directly. The helper restores
+the source Explorer selection/placement and checks the fixture bytes again.
+The final run required no reported human mouse action. Automated pointer and OS
+input are not physical touchscreen qualification; failure-cleanup branches were
+statically reviewed, not exhaustively exercised on the desktop.
+
+All earlier native attempts remain unsuccessful records:
+
+| Run | Evidence / exit | Disposition |
+|---|---|---|
+| 01 | `native-J4375n`; exit 1 | Real previews succeeded; immutable-invoke timing observer failed. Repaired and reviewed |
+| 02 | `native-xQPTjQ`; exit 1 | Real pending-work/state and internal-drag assertions passed; manual Explorer phase timed out. User subsequently confirmed no desktop action was performed; not a product drop failure |
+| 03 | `native-SoJnDz`; exit 1 | Helper stopped before selection/window input because the Windows PowerShell child lacked Get-FileHash; original diagnostic encoding retained. Replaced by .NET SHA-256 and UTF-8 output |
+
+Harness checks refreshed: `e2e-typecheck-06/07`, PowerShell parsing/C# compilation,
+the exact fixture hash and wrong-process refusal (JSON, exit 1 before window
+mutation), diff check, and the focused reviews above. The unchanged 1,758-test
+frontend run, three browser scenarios, local Rust gates, dependency closure and
+two isolated reversions were reused by input identity, not rerun. No new build
+was needed for harness/documentation changes or a repeated physical DPI cycle.
+
+Ordinary publication still requires actual reviewed-head checks and resolved
+threads, protected true merge, ordered parent/candidate-tree proof, natural
+push/main CI and ff-only local closeout. The PR and ignored local closeout hold
+final merge/run identities without a self-referential source commit. M6 and the
+post-M6 XIC non-admission interlude remain complete; XIC is not admitted or
+implemented. M7.3 remains next and not started. No public beta, installer, tag
+or release is produced by this slice.
 
 Live GitHub main was still the expected M7.1 baseline. The active `Protect main`
 Ruleset 19660027 requires up-to-date Frontend, Rust and Repository quality checks,

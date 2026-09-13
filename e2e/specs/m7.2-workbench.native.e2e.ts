@@ -22,6 +22,11 @@ function metrics(): Metrics {
 }
 function saveEvidence() { if (output) writeFileSync(join(output, "evidence.json"), JSON.stringify(evidence, null, 2)); }
 async function calls() { return browser.execute(() => Reflect.get(window, "__mscanvasIpcCalls__") as { command: string; args: Record<string, unknown> }[]); }
+async function previewReads() {
+  return browser.execute(() => performance.getEntriesByType("resource")
+    .filter(entry => new URL(entry.name).origin === "http://ipc.localhost" && new URL(entry.name).pathname === "/open_mzml_preview")
+    .map(entry => ({ url: entry.name, startTime: entry.startTime, responseEnd: (entry as PerformanceResourceTiming).responseEnd, duration: entry.duration })));
+}
 function helper(script: string, args: string[]) {
   const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", resolve(HERE, `../native/${script}.ps1`), "-ApplicationProcessId", String(processId), ...args], { windowsHide: true });
   let stdout = "", stderr = "";
@@ -35,7 +40,7 @@ function helper(script: string, args: string[]) {
     });
   });
 }
-async function capture(label: string) {
+async function capture(label: string, validate = true) {
   const owned = metrics();
   const state = await browser.execute(() => ({ css: { width: innerWidth, height: innerHeight }, dpr: devicePixelRatio, cssZoom: getComputedStyle(document.documentElement).zoom,
     locale: document.documentElement.lang, density: document.querySelector("[data-density]")?.getAttribute("data-density"), focus: { hasFocus: document.hasFocus(), tag: document.activeElement?.tagName, text: document.activeElement?.textContent, add: document.activeElement?.matches(".dataset-roster-actions .primary-button") },
@@ -45,12 +50,14 @@ async function capture(label: string) {
     applicationOrigin: location.origin, resourceUrls: performance.getEntriesByType("resource").map(entry => entry.name),
     horizontalOverflow: document.documentElement.scrollWidth - innerWidth,
     trace: Reflect.get(window, "__m72NativeTrace") ?? [],
+    invokeDescriptor: { writable: Object.getOwnPropertyDescriptor(Reflect.get(window, "__TAURI_INTERNALS__"), "invoke")?.writable, configurable: Object.getOwnPropertyDescriptor(Reflect.get(window, "__TAURI_INTERNALS__"), "invoke")?.configurable },
   }));
   const resources = nativeResourceOrigins(state.resourceUrls, state.applicationOrigin);
   await browser.saveScreenshot(join(output, `${label}.png`));
   const png = readFileSync(join(output, `${label}.png`));
   const raster = { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
-  evidence.push({ label, kind: "actual Tauri WebView2; automated mouse/keyboard, not physical touch", owned, ...state, ...resources, raster }); saveEvidence();
+  evidence.push({ label, kind: "actual Tauri WebView2; automated mouse/keyboard, not physical touch", owned, ...state, ...resources, raster, previewReads: await previewReads() }); saveEvidence();
+  if (!validate) return state;
   expect(owned.dpi).toBe(dpi); expect(state.dpr).toBe(dpi / 96); expect(state.css).toEqual(viewport);
   expect(owned.bounds.visibleFrameInsideWorkArea).toBe(true);
   const physical = { width: owned.bounds.client.right - owned.bounds.client.left, height: owned.bounds.client.bottom - owned.bounds.client.top };
@@ -84,6 +91,7 @@ describe("M7.2 affected final native workbench paths", function () {
   this.bail(true);
   before(async () => {
     const root = resolve(REPO, ".tmp/m72-evidence"); mkdirSync(root, { recursive: true }); output = mkdtempSync(join(root, "native-"));
+    try {
     for (const leaf of ["M72-retained-A.mzML", "M72-retained-B.mzML"]) expect(digest(join(INPUTS, "retained", leaf))).toBe(MZML_SHA);
     expect(digest(join(INPUTS, "retained/M72-retained.raw"))).toBe(RAW_SHA);
     const capabilities = browser.capabilities as unknown as Record<string, unknown>;
@@ -104,22 +112,23 @@ describe("M7.2 affected final native workbench paths", function () {
     await browser.waitUntil(() => browser.execute((v) => innerWidth === v.width && innerHeight === v.height, viewport));
     await browser.execute(() => {
       const trace: unknown[] = []; Reflect.set(window, "__m72NativeTrace", trace);
-      const internals = Reflect.get(window, "__TAURI_INTERNALS__") as { invoke: (...args: unknown[]) => Promise<unknown> };
-      const invoke = internals.invoke;
-      internals.invoke = (...args) => {
-        const id = trace.length, command = args[0]; trace.push({ id, command, phase: "start", time: performance.now() });
-        return Reflect.apply(invoke, internals, args).then(value => { trace.push({ id, command, phase: "resolved", time: performance.now() }); return value; }, error => { trace.push({ id, command, phase: "rejected", time: performance.now() }); throw error; });
-      };
+      // Tauri's invoke property is immutable. Resource Timing observes the real
+      // Windows IPC request interval without replacing the command or response.
       new MutationObserver(() => trace.push({ phase: "surface", surface: document.querySelector(".workbench-shell")!.getAttribute("data-surface"), time: performance.now() }))
         .observe(document.querySelector(".workbench-shell")!, { attributes: true, attributeFilter: ["data-surface"] });
     });
     await capture("01-measured-native-empty");
+    } catch (cause) {
+      evidence.push({ kind: "native setup failure", message: String(cause) }); saveEvidence();
+      try { await capture("failed-native-setup", false); } catch (captureError) { evidence.push({ kind: "setup capture unavailable", message: String(captureError) }); saveEvidence(); }
+      throw cause;
+    }
   });
   after(saveEvidence);
   afterEach(async function () {
     if (!output) return;
     evidence.push({ test: this.currentTest?.title, state: this.currentTest?.state, console: await browser.execute(() => Reflect.get(window, "__mscanvasConsole__")), calls: await calls() }); saveEvidence();
-    if (this.currentTest?.state === "failed") await browser.saveScreenshot(join(output, "failed-native-state.png"));
+    if (this.currentTest?.state === "failed") await capture("failed-native-state", false);
     expect(await browser.execute(() => Reflect.get(window, "__mscanvasConsole__"))).toEqual([]);
     expect(await browser.execute(() => Object.keys(Reflect.get(window, "__mscanvasIpcTable__") as object))).toEqual([]);
     for (const leaf of ["M72-retained-A.mzML", "M72-retained-B.mzML"]) expect(digest(join(INPUTS, "retained", leaf))).toBe(MZML_SHA);
@@ -130,11 +139,9 @@ describe("M7.2 affected final native workbench paths", function () {
     secondHandle = await add(join(INPUTS, "retained/M72-retained-B.mzML"));
     await browser.$(row(secondHandle)).click();
     await browser.$(`${row(secondHandle)}.is-active`).waitForExist({ timeout: 60_000 });
-    await browser.waitUntil(() => browser.execute(() => {
-      const trace = Reflect.get(window, "__m72NativeTrace") as { id?: number; command?: string; phase: string }[];
-      const latest = trace.filter(item => item.command === "open_mzml_preview" && item.phase === "start").at(-1);
-      return latest !== undefined && trace.some(item => item.id === latest.id && item.phase === "resolved");
-    }));
+    await browser.waitUntil(async () => (await previewReads()).length === 2);
+    await browser.$(".spectrum-table").waitForExist();
+    const priorReads = await previewReads();
     const source = await point(row(firstHandle)), navigation = await point(".workbench-navigation button:nth-child(2)");
     await browser.performActions([{ type: "pointer", id: "native-navigation", parameters: { pointerType: "mouse" }, actions: [
       { type: "pointerMove", ...source, origin: "viewport", duration: 0 }, { type: "pointerDown", button: 0 }, { type: "pointerUp", button: 0 },
@@ -142,11 +149,12 @@ describe("M7.2 affected final native workbench paths", function () {
     ] }]); await browser.releaseActions();
     await browser.$("#workbench-conversion").waitForDisplayed();
     await browser.$(`${row(firstHandle)}.is-active`).waitForExist({ timeout: 60_000 });
-    const trace = await browser.execute(() => Reflect.get(window, "__m72NativeTrace") as { id?: number; command?: string; phase: string; time: number; surface?: string }[]);
-    const read = trace.filter(item => item.command === "open_mzml_preview" && item.phase === "start").at(-1)!;
-    const settled = trace.find(item => item.id === read.id && item.phase === "resolved")!;
-    evidence.push({ kind: "real navigation/read overlap", read, settled, surfaces: trace.filter(item => item.phase === "surface") }); saveEvidence();
-    expect(trace.some(item => item.phase === "surface" && item.surface === "conversion" && item.time >= read.time && item.time < settled.time)).toBe(true);
+    await browser.waitUntil(async () => (await previewReads()).length === priorReads.length + 1);
+    const trace = await browser.execute(() => Reflect.get(window, "__m72NativeTrace") as { phase: string; time: number; surface?: string }[]);
+    const read = (await previewReads()).at(-1)!;
+    evidence.push({ kind: "real navigation/read overlap; Windows IPC Resource Timing", read, priorReads, surfaces: trace }); saveEvidence();
+    expect(read.responseEnd).toBeGreaterThan(read.startTime);
+    expect(trace.some(item => item.phase === "surface" && item.surface === "conversion" && item.time >= read.startTime && item.time < read.responseEnd)).toBe(true);
     await browser.$(".workbench-home").click();
     await browser.$('.spectrum-table [role="row"][aria-rowindex="2"]').click();
     await browser.$('.spectrum-panel input[id$="-widthPx"]').waitForDisplayed({ timeout: 60_000 });
@@ -176,15 +184,22 @@ describe("M7.2 affected final native workbench paths", function () {
     expect(await calls()).toEqual(before); await capture("05-native-drag-committed");
     const oldHandles = await browser.$$(ROW).map(row => row.getAttribute("data-handle"));
     const dropBefore = await calls();
-    console.log(`M7.2 NATIVE OS DROP NOW: in Explorer, drag both entries from ${join(INPUTS, "TaskDrop")} onto Native group in MSCanvas. They must enter Ungrouped. No DOM paths will be injected.`);
-    writeFileSync(join(output, "human-drop-ready.json"), JSON.stringify({ processId, sourceDirectory: join(INPUTS, "TaskDrop"), expectedAdded: 3 }));
+    const automatedDrop = process.env["MSCANVAS_M72_OS_DROP"] === "explorer";
+    if (automatedDrop) {
+      const target = await point('[data-group-id="group-1"]');
+      const result = await helper("m7.2-explorer-drop", ["-TargetCssX", String(target.x), "-TargetCssY", String(target.y), "-ExpectedDpi", String(dpi)]);
+      expect(result.dropped).toBe(true);
+    } else {
+      console.log(`M7.2 NATIVE OS DROP NOW: in Explorer, drag both entries from ${join(INPUTS, "TaskDrop")} onto Native group in MSCanvas. They must enter Ungrouped. No DOM paths will be injected.`);
+      writeFileSync(join(output, "human-drop-ready.json"), JSON.stringify({ processId, sourceDirectory: join(INPUTS, "TaskDrop"), expectedAdded: 3 }));
+    }
     await browser.waitUntil(async () => (await browser.$$(ROW).length) === oldHandles.length + 3, { timeout: 120_000, interval: 1000, timeoutMsg: "Actual Explorer file/folder drop was not observed; native OS drop proof remains blocked." });
     const state = await capture("06-native-actual-os-file-and-folder-drop");
     const added = state.rows.filter(item => !oldHandles.includes(item.handle ?? "")); expect(added).toHaveLength(3); expect(added.every(item => item.group === "ungrouped")).toBe(true);
     expect(await browser.$('[data-group-id="group-1"] .group-count').getText()).toBe("2");
     expect((await calls()).slice(dropBefore.length).filter(call => call.command === "open_mzml_preview")).toEqual([]);
     expect((await calls()).filter(call => call.command === "subscribe_workspace_drop_updates")).toEqual(before.filter(call => call.command === "subscribe_workspace_drop_updates"));
-    evidence.push({ kind: "human-assisted actual OS import", added, unchangedInternalGroupCount: 2 }); saveEvidence();
+    evidence.push({ kind: automatedDrop ? "Windows-input-automated actual Explorer OS import" : "human-assisted actual OS import", added, unchangedInternalGroupCount: 2 }); saveEvidence();
   });
   it("naturally returns from the affected acquisition picker cancellation without a focus rescue", async () => {
     const before = await calls();
