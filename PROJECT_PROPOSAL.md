@@ -652,8 +652,8 @@ UI preference persistence does not restore projects or scientific runs. M7.0 is
 the historical route lock. The authorized M7.1 candidate implements session-only
 localized Settings, roster density and shared figure controls. Its first QA build
 passed all four required native pairs. PR #120 identified a shared-field label
-activation regression; its new QA build and browser checks pass, with focused
-150% native revalidation pending in the
+activation regression; its new QA build, browser checks and focused 150% native
+revalidation pass, with explicit build attribution in the
 [implementation record](docs/ux/M7_1_LOCALIZED_SETTINGS_SHARED_CONTROLS.md).
 M7.2 remains next and not started. This source slice builds or releases no public beta.
 

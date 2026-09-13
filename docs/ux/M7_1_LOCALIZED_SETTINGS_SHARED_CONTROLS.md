@@ -1,9 +1,9 @@
 # M7.1 — Localized Settings and shared controls
 
-Status: **label-activation repair built; focused native acceptance pending**.
+Status: **implementation and required native acceptance verified**.
 The first QA build passed all four required native pairs below. PR #120 identified
 a label-activation regression and stale status prose. The repaired QA build and
-browser checks pass; focused native revalidation at 150% remains pending. The
+browser checks pass; focused native revalidation at 150% passed. The
 retained four pairs belong to the first build and support unchanged scaling and
 geometry behavior, not a claim of four native passes on the repaired binary.
 The task PR binds publication and local closeout to the
@@ -156,7 +156,7 @@ The follow-up impact review found no changes to CSS, font sizes, layout breakpoi
 DPI/window handling, Rust or native helpers. The label association uses stable
 element IDs. Repeating all four manually changed Windows scales was a conservative
 execution proposal, not an additional requirement of this DOM repair. The scope
-is now one focused native run at the user's retained 150%: the existing three
+is one focused native run at the user's retained 150%: the existing three
 scenarios, including spectrum-label activation in both locales, Settings, the real
 PNG and actual Escape/natural Convert return. The second native consumer is still
 opened only. No assertion, timeout or ownership guard is weakened. This reuses
@@ -165,7 +165,8 @@ it does not declare the new binary tested at four Windows scales.
 
 The existing isolated reviewer approved this impact assessment. The previous
 four-fresh-run wording was our execution interpretation and is superseded here.
-A fresh host-readiness reply is still required before this interactive launch.
+Fresh host readiness was obtained for each new interactive attempt; the successful
+run retained the existing initial foreground guard.
 
 | Repaired-build gate | Result and retained record |
 | --- | --- |
@@ -177,7 +178,36 @@ A fresh host-readiness reply is still required before this interactive launch.
 | Full frontend suite | 73 files / 1726 tests pass with unchanged timeouts; `resume-20260913T024431Z/label-repair-frontend-01.log` and `.exit.json` |
 | Rendered browser | Three groups pass; `browser-Xj30Nu`, `resume-20260913T024431Z/label-repair-browser-01.PASS.json`; 48 real label clicks across both consumers, both locales and DPR 1/1.25/1.5/2, all correctly focused with unchanged raw values; 14 existing scaled-consumer observations and three empty app-console records |
 | Source attribution | `resume-20260913T024431Z/label-repair-attribution-01.json` verifies all 201 broad frontend/browser inputs committed unchanged and the unchanged Rust input boundary; prior local Rust checks remain attributable |
-| New native acceptance | Pending the focused actual 150% run and fresh host readiness; no repaired-build native pass is claimed yet |
+| New native acceptance | `resume-20260913T024431Z/native-run-13`: exit 0, all three scenarios pass; independent readback in `native-label-150.PASS.json`; actual 150% only, with five native captures and six correct spectrum-label activations |
+
+The repaired-build native run launched reviewed source
+`09daf0a76d428c779f912ba92f0751e4364ee9e2`; its four-document change leaves
+the `9c63b6f7` binary inputs and label-aware harness unchanged. The run started at
+2026-09-13T06:43:52Z and ended at 06:44:24Z after a fresh user retry reply; all
+three scenarios passed in 26.4 seconds. `native-3uY1Mr/evidence.json` has SHA-256
+`9b52ca252d8bb74806a8050264474c662a1ecd06aa698e4628866102ae2a68c2`.
+
+The actual window measured 144 DPI, CSS 1366 x 768, physical client 2049 x 1152,
+DPR 1.5 and browser/CSS zoom 1. All five screenshot headers and before/after
+window measurements agree. Six real spectrum-label clicks cover Width, Height
+and PNG DPI in English and Chinese, each starting on another input and preserving
+the raw value. The roster changes from 44px to 32px. Settings actions, real
+retained mzML/provider interaction, canonical spectrum PNG export and actual
+Escape/natural Convert return pass in the same session. Initial assistance is
+limited to one foreground opportunity with actual PID/document checks; no
+post-cancellation activation rescues the return. A human click event itself was
+not measured. The second native figure consumer remains opened only.
+
+The real PNG is 640 x 480 and 12,353 bytes, with both pHYs axes at 5669 pixels/m
+(144 DPI rounded), valid chunk CRCs, and SHA-256
+`4cf1c300edf3a4361c782261723b416113cb62ebe3641d85ddfb7ed266b670f9`.
+Three app-console records and the mock IPC table are empty; local IPC is recorded
+and no external resource is observed. The preserved fixtures, drivers and binary
+hashes are unchanged. Owned processes and ports 4490/4491 are released. Settings,
+compact preview, actual PNG and natural-return captures were visually inspected;
+existing panels scroll and not all workspace content is simultaneously visible.
+This refreshes affected native evidence under the impact review; it does not
+claim four real Windows scale runs on the repaired binary.
 
 The identities, browser results and four native runs in the following sections
 refer only to the retained first build and its harness.
@@ -333,6 +363,7 @@ viewer may resize their display. No prototype image substitutes for this QA.
 | `resume-20260912T214819Z/native-run-01` | Local IPC was misclassified as external; provider/Escape observations were partial, not a passing run. Exact-origin classification and negative controls repaired it. |
 | `resume-20260913T024431Z/native-run-02` and `03` | CSS/physical-size drift; run03 measured WebDriver changing DOM dimensions while the real client stayed smaller. Exact native client sizing replaced it. No human-resize cause is inferred. |
 | Same directory, native-run04 through07 | Owned save dialog/control readiness failures; run06's failed subcondition was not isolated. Run07 established exact filename edit found but ValuePattern unavailable. Bounded text entry with exact readback repaired that observed gap. No PNG or full pair is attributed to these failures. |
+| Same directory, native-run12 | Correct 144-DPI new binary, but the unchanged 90s initial foreground/document guard did not pass. Two window snapshots had another foreground PID. No scenario or label observation ran, and no pre-failure screenshot was captured. Identity, logs and independent metrics are retained; no cause beyond the observed guard failure is inferred. Processes exited before the user-authorized run13 retry. |
 
 The complete pairs all use the same reviewed harness and unchanged product build;
 failed partial observations are not assembled into a pass. M6.6-M6.9 native

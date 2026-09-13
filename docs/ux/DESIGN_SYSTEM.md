@@ -16,9 +16,9 @@ budgets are not production implementation authority.
 The M7.1 candidate supplies localized session Settings, actual roster density and
 shared controls in both existing figure consumers. The first QA build passed all
 four required native pairs. PR #120's label-activation repair has a new QA build
-and passing browser checks, with focused 150% native revalidation pending; the
+and passing browser checks and focused 150% native revalidation; the
 [implementation record](M7_1_LOCALIZED_SETTINGS_SHARED_CONTROLS.md) separates that
-pending gate from retained browser and native proof. M7.2 carries
+repaired-build evidence from retained first-build native proof. M7.2 carries
 the single Home action, distinct viewed/drag-selected/conversion-scope states,
 session-only virtual organization and one drag transform/hit-test owner. M7.3
 owns whole-row scan activation and the pending-range gesture: release does not
