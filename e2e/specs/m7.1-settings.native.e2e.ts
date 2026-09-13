@@ -30,6 +30,21 @@ async function calls() { return browser.execute(() => (window as unknown as { __
 function windowMetrics() {
   return JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", resolve(HERE, "../native/m7.1-window-metrics.ps1"), "-ApplicationProcessId", String(processId)], { encoding: "utf8", windowsHide: true })) as { dpi: number; foregroundProcessId: number; executable: string };
 }
+async function observeWindow(label: string) {
+  const metrics = windowMetrics();
+  const state = await browser.execute(() => ({
+    cssViewport: { width: innerWidth, height: innerHeight },
+    outerWindow: { width: outerWidth, height: outerHeight, x: screenX, y: screenY },
+    screen: { width: screen.width, height: screen.height, availableWidth: screen.availWidth, availableHeight: screen.availHeight },
+    devicePixelRatio, visualViewportScale: visualViewport?.scale,
+    cssZoom: getComputedStyle(document.documentElement).zoom, documentHasFocus: document.hasFocus(),
+  }));
+  const observation = { kind: "window transition", label, metrics, ...state };
+  evidence.push(observation);
+  writeFileSync(join(output, "evidence.json"), JSON.stringify(evidence, null, 2));
+  console.log(`M7.1 window observation: ${JSON.stringify(observation)}`);
+  return observation;
+}
 function native(script: string, args: string[]): Promise<Record<string, unknown>> {
   const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", resolve(HERE, `../native/${script}.ps1`), ...args], { windowsHide: true });
   let stdout = "", stderr = "";
@@ -66,16 +81,20 @@ async function capture(label: string) {
   evidence.push({ kind: "actual Windows/Tauri", label, metrics, expectedDpi, ...state, ...resources });
   // Retain the rendered state even when a subsequent observation fails.
   await browser.saveScreenshot(join(output, `${label}.png`));
+  const afterScreenshot = await observeWindow(`${label}: after screenshot`);
   expect(metrics.dpi).toBe(expectedDpi);
   expect(state.cssViewport).toEqual(windowsViewports.get(expectedDpi));
+  expect(afterScreenshot.cssViewport).toEqual(state.cssViewport);
   expect(resources.externalResources).toEqual([]);
   return state;
 }
-async function openSettings() {
+async function openSettings(observe = false) {
   const entry = browser.$("[data-settings-entry]");
   await entry.scrollIntoView({ block: "center" });
+  if (observe) await observeWindow("figure draft: after Settings opener scroll");
   await entry.click();
   await browser.$(DIALOG).waitForDisplayed();
+  if (observe) await observeWindow("figure draft: after Settings opener click");
 }
 async function choose(value: string) { await browser.$(`${DIALOG} input[value="${value}"]`).click(); }
 async function press(name: string) {
@@ -154,7 +173,9 @@ describe("M7.1 focused real Windows Settings, figure and picker integration", ()
 
   it("applies, cancels, resets and dismisses Settings in the actual app", async () => {
     const viewport = windowsViewports.get(expectedDpi)!;
+    await observeWindow("before requested viewport");
     await browser.setWindowSize(viewport.width, viewport.height);
+    await observeWindow("after requested viewport");
     await openSettings();
     await choose("zh-CN");
     await choose("compact");
@@ -186,11 +207,16 @@ describe("M7.1 focused real Windows Settings, figure and picker integration", ()
     await browser.$("#chromatogram-export-toggle").click();
     const before = await capture("02-native-real-roster-figure");
     await browser.$('.spectrum-panel input[id$="-widthPx"]').setValue("00640");
+    await observeWindow("figure draft: after width input");
     await browser.$('.spectrum-panel input[id$="-heightPx"]').setValue("480");
+    await observeWindow("figure draft: after height input");
     await browser.$('.spectrum-panel input[id$="-pngDpi"]').setValue("144");
-    await openSettings();
+    await observeWindow("figure draft: after PNG DPI input");
+    await openSettings(true);
     await choose("zh-CN");
+    await observeWindow("figure draft: after locale choice");
     await choose("compact");
+    await observeWindow("figure draft: after density choice");
     const compact = await capture("03-native-real-compact-preview");
     expect(compact.rows[0].height).toBeLessThan(before.rows[0].height);
     await press(zh.apply);
