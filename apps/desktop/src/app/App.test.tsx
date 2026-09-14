@@ -433,9 +433,11 @@ describe("mzML preview workspace", () => {
     });
     renderApp(api);
 
-    await screen.findByRole("button", { name: "Search automatically" });
-    expect(await screen.findByRole("button", { name: "Choose folder…" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Check again" })).toBeVisible();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Search automatically" })).toBeVisible();
+      expect(screen.getByRole("button", { name: "Choose folder…" })).toBeVisible();
+      expect(screen.getByRole("button", { name: "Check again" })).toBeVisible();
+    });
   });
 
   it("notices a backend that has gone away and can be told to look again", async () => {

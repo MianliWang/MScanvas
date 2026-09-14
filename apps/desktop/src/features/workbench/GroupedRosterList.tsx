@@ -207,6 +207,7 @@ const GroupHeader = memo(function GroupHeader({ group, state, dispatch, onRename
 }) {
   const t = useUiMessages();
   const menuTrigger = useRef<HTMLButtonElement | null>(null), openingDialog = useRef(false);
+  const menuReturnFallback = useRef<HTMLButtonElement | null>(null);
   const { ref, isDropTarget } = useDroppable({ id: `group:${group.id}`, data: { groupId: group.id }, type: "group", accept: "acquisition" });
   const setRef = useCallback((node: HTMLDivElement | null) => { ref(node); measure(node, `group:${group.id}`); }, [ref, measure, group.id]);
   const name = group.id === UNGROUPED ? t("ungrouped") : group.name;
@@ -217,8 +218,15 @@ const GroupHeader = memo(function GroupHeader({ group, state, dispatch, onRename
       onChange={checked => dispatch({ type: "membershipChanged", handles: group.handles, checked })} /></div>
     <div role="gridcell" className="group-disclosure-cell"><button type="button" className="group-disclosure" aria-expanded={!group.collapsed} aria-label={t("groupDisclosure", { name, count: group.handles.length })} onClick={() => dispatch({ type: "organization", action: { type: "disclose", groupId: group.id } })}>
       <motion.span aria-hidden="true" animate={{ rotate: group.collapsed ? -90 : 0 }} transition={{ duration: reduced ? 0 : 0.14 }}>⌄</motion.span><span>{name}</span><span className="group-count">{group.handles.length}</span></button></div>
-    {group.id !== UNGROUPED ? <div role="gridcell"><Menu.Root><Menu.Trigger asChild><button ref={menuTrigger} type="button" className="row-menu-trigger" aria-label={t("groupActions", { name })}>⋯</button></Menu.Trigger>
-      <Menu.Portal><Menu.Content className="roster-menu" sideOffset={4} onCloseAutoFocus={event => { if (openingDialog.current) { event.preventDefault(); openingDialog.current = false; } }}>
+    {group.id !== UNGROUPED ? <div role="gridcell"><Menu.Root onOpenChange={open => {
+      if (open) menuReturnFallback.current = menuTrigger.current?.closest(".dataset-roster-panel")?.querySelector<HTMLButtonElement>(".organization-toolbar button") ?? null;
+    }}><Menu.Trigger asChild><button ref={menuTrigger} type="button" className="row-menu-trigger" aria-label={t("groupActions", { name })}>⋯</button></Menu.Trigger>
+      <Menu.Portal><Menu.Content className="roster-menu" sideOffset={4} onCloseAutoFocus={event => {
+        const fallback = menuReturnFallback.current;
+        menuReturnFallback.current = null;
+        if (openingDialog.current) { event.preventDefault(); openingDialog.current = false; }
+        else if (!menuTrigger.current?.isConnected && fallback?.isConnected) { event.preventDefault(); fallback.focus(); }
+      }}>
         <Menu.Item onSelect={() => { openingDialog.current = true; onRename({ id: group.id, name: group.name, returnTo: menuTrigger.current }); }}>{t("renameGroup")}</Menu.Item>
         <Menu.Item disabled={index <= 1} onSelect={() => { const targetId = state.organization.groups[index - 1]?.id; if (targetId) dispatch({ type: "organization", action: { type: "reorderGroup", groupId: group.id, targetId } }); }}>{t("moveGroupUp")}</Menu.Item>
         <Menu.Item disabled={index === state.organization.groups.length - 1} onSelect={() => { const targetId = state.organization.groups[index + 1]?.id; if (targetId) dispatch({ type: "organization", action: { type: "reorderGroup", groupId: group.id, targetId } }); }}>{t("moveGroupDown")}</Menu.Item>

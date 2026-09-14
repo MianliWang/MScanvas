@@ -528,3 +528,81 @@ uncertainty remain recorded; a later pass does not establish a repair of that
 historical focus condition. No test was removed, skipped or weakened. Final
 candidate CI, protected merge and local closeout are recorded under their actual
 identities in the PR and local closeout rather than inferred from these runs.
+
+## Group-menu removal and unknown-capacity live-region follow-up
+
+The exact efaabdb37876288bfe9cbb26911d81ec17f631a3 head passed Frontend
+34807733067, Rust 34807733015 and Repository quality 34807733034 on attempt 1.
+Its completed automatic review then identified two additional confirmed P2s:
+GroupHeader's dissolve action removed the return trigger, and the permanent
+search live region still formatted the unknown capacity sentinel. Publication
+remained unmerged while those findings were handled.
+
+GroupHeader now captures the stable organization toolbar button when opening
+its menu. On close, a connected original trigger keeps the normal return;
+rename keeps its dialog handoff; an unmounted trigger returns to the connected
+toolbar fallback. Dissolve still moves acquisitions to Ungrouped without
+removing acquisitions or changing conversion membership. The search live
+region now stays empty while capacity is 0 and announces context only after
+the authoritative response. Both rosterContext consumers now honor the same
+unknown-capacity meaning. No provider, queue, persistence or dependency changes
+are introduced.
+
+Browser run 32 (`browser-xZmS7C/`, exit 1) reproduces the hidden text
+`0 visible / 0 acquisitions · capacity 0`. Its second case fails viewport
+initialization, so that attempt is not dissolve-focus proof. Standalone run 33
+(`browser-mSCMhi/`, exit 1) reaches the dissolve action after passing normal
+Escape and rename-dialog cancellation, then fails toolbar focus restoration.
+Run 34 (`browser-jZGi0w/`) passes both cases, 2/2 with ten captures in en/zh-CN.
+It checks loading/failure silence and authoritative recovery, keyboard dissolve,
+normal menu Escape, rename handoff/cancel, retained acquisition membership and
+unchanged IPC. CSS 1366x768 / DPR 1.5 is browser emulation; console and external
+resources are empty and horizontal overflow is zero.
+
+Build 09 preserves all 166 production input hashes across compilation.
+Compared with build 08, only PreviewWorkspace and GroupedRosterList differ.
+Production manifest SHA-256:
+`2c9e038bb99e30595ca5746daa1d3d08d84c40b78e3802ad99304eb1edf78e79`.
+The optimized E2E executable is 16,225,792 bytes, SHA-256
+`f9c45325fa07bfbca1229a203edfd239bf16b0f3f3f5a59f98f05825001b6950`.
+Its JavaScript bundle is `index-CiffqkBz.js`, SHA-256
+`c567da21f50987f9d2bdeee1eb8f2e5d7cbf3893e19e77a1af701e295308881c`;
+CSS is unchanged. The build-08 binary and preceding evidence remain retained.
+
+The affected native run `group-live-native-20260914T051521232Z` records
+`native-3h44KV/`, WebDriver session `d4873476aef99d2cde9da6f40075d303`,
+2/2 passing in 17.9 seconds, actual command exit 0. PID 26596/HWND 2821268
+already owns the foreground in the initial 05:15:27.5871249Z observation.
+The guarded launcher has no activation helper or background activation job;
+the existing foreground/document guard passes. Actual DPI is 144 (150%);
+five captures measure CSS/raster pairs 1366x768/2049x1152 and
+960x640/1440x960. The run reads the actual Rust capacity, retains real A/B/A
+evidence and raw figure draft 0640, then dissolves a populated group through
+keyboard menu input. Focus reaches New group, the acquisition returns to
+Ungrouped, and membership plus IPC/preview-read history remain unchanged.
+Mocks, console and external resources are empty; horizontal overflow is zero.
+The owned application/drivers and 4490/4491 listeners are released afterward.
+No Windows scaling cycle or unchanged OS-drop/picker campaign is repeated.
+
+Independent read-only review 16 accepts the four-file product/harness snapshot.
+The first related unit run passes 242/243 and fails the existing natural-
+foreground Conversion focus assertion; its standalone file follow-up passes
+30/31 and fails the existing delayed-plan focus assertion instead. Both
+failures receive body focus. The subsequent full run 07 passes both Conversion
+cases but fails App's backend-recovery assertion on a detached button reference:
+1,758/1,759 tests, 76/77 files, exit 1. These failures remain recorded. The
+bounded review found no direct attribution to the menu/live-region delta, but
+that does not exclude an indirect relation or establish a historical cause.
+Conversion focus root cause remains undetermined; later passes are not a fix.
+
+The App recovery test now queries and requires all three current recovery
+buttons to be visible together in one synchronous waitFor callback, avoiding
+an awaited stale node and strengthening the prior existence-only first check.
+Names, default timeout and all recovery requirements remain unchanged. This
+test-only delta is captured in review 17 and changes no production/native input.
+
+The corrected full frontend run 08 passes 1,759 tests in 77 files in 51.56
+seconds, exit 0, without worker-termination diagnostics. It includes both
+Conversion focus cases and the strengthened recovery assertion; all earlier
+failed invocations retain their separate status. The final required-head CI and
+protected publication lifecycle remain pending.

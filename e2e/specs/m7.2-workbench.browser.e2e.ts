@@ -241,6 +241,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       if (language === "zh-CN") await locale(language);
       await browser.waitUntil(async () => await heldCallers("get_workspace_roster") === 1);
       expect(await browser.$("#dataset-roster-matches").isExisting()).toBe(false);
+      expect(await browser.$('[data-live-region="search"]').getProperty("textContent")).toBe("");
       await capture(`review-capacity-${language}-loading`);
       await setInvokeResult("get_workspace_roster", { malformedRoster: true });
       await releaseInvokeHold("get_workspace_roster");
@@ -248,12 +249,49 @@ describe("M7.2 workbench shell and grouped roster", () => {
       await retry.waitForDisplayed();
       expect(await browser.$("#dataset-roster-matches").isExisting()).toBe(false);
       expect(await browser.$(".dataset-roster-actions button:first-child").isEnabled()).toBe(true);
+      expect(await browser.$('[data-live-region="search"]').getProperty("textContent")).toBe("");
       await capture(`review-capacity-${language}-failed`);
       await setInvokeResult("get_workspace_roster", { capacity: 1024, datasets: [] });
       await retry.click();
       await browser.waitUntil(async () => (await browser.$("#dataset-roster-matches").getText()).includes("1024"));
       expect(await browser.$("#dataset-roster-matches").getAttribute("title")).toContain("1024");
+      expect(await browser.$('[data-live-region="search"]').getProperty("textContent")).toContain("1024");
       await capture(`review-capacity-${language}-known`);
+      expect(await consoleEntries()).toEqual([]);
+    }
+  });
+  it("review regression: restores group-menu focus after dissolving while retaining rename and Escape", async () => {
+    for (const language of ["en", "zh-CN"] as const) {
+      const table: Record<string, unknown> = ipcTable();
+      table.subscribe_workspace_drop_updates = { reservationId: "browser-m72-reservation" };
+      table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile] };
+      await installIpcBoundary(table); await metrics(1366, 768, 1.5); await browser.url("/");
+      await browser.$(row(selectedFile.handle)).waitForDisplayed();
+      const originalGroup = await browser.$(row(selectedFile.handle)).getAttribute("data-group");
+      await newGroup("Dissolve target");
+      await browser.$(`${row(selectedFile.handle)} .row-menu-trigger`).click();
+      await browser.$('[role="menuitem"]=Dissolve target').click();
+      if (language === "zh-CN") await locale(language);
+      const before = await ipcCalls();
+      const membership = await browser.$(`${row(selectedFile.handle)} input[type="checkbox"]`).isSelected();
+      const group = '.roster-group-header[data-group-id="group-1"]';
+      const trigger = `${group} .row-menu-trigger`;
+      await browser.$(trigger).click(); await browser.keys("Escape");
+      await browser.waitUntil(() => browser.execute(selector => document.activeElement?.matches(selector) === true, trigger));
+      await browser.$(trigger).click(); await browser.keys(["Home", "Enter"]);
+      await browser.$(".group-name-dialog").waitForDisplayed();
+      expect(await browser.$("#organization-group-name").getValue()).toBe("Dissolve target");
+      await browser.keys("Escape");
+      await browser.$(".group-name-dialog").waitForExist({ reverse: true });
+      await browser.waitUntil(() => browser.execute(selector => document.activeElement?.matches(selector) === true, trigger));
+      await capture(`review-group-dissolve-${language}-before`);
+      await browser.$(trigger).click(); await browser.keys(["End", "Enter"]);
+      await browser.$(group).waitForExist({ reverse: true });
+      await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches(".organization-toolbar button:first-child") === true));
+      expect(await browser.$(row(selectedFile.handle)).getAttribute("data-group")).toBe(originalGroup);
+      expect(await browser.$(`${row(selectedFile.handle)} input[type="checkbox"]`).isSelected()).toBe(membership);
+      expect(await ipcCalls()).toEqual(before);
+      await capture(`review-group-dissolve-${language}-after`);
       expect(await consoleEntries()).toEqual([]);
     }
   });

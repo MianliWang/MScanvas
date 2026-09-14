@@ -512,8 +512,8 @@ export function PreviewWorkspace() {
           announce in one direction and CSS collapses away in the other. */}
       {/* What the search found, which is otherwise announced nowhere: the list
           simply becomes shorter, and neither of the other two regions says a
-          word about it. Empty until a query narrows something, so an ordinary
-          session is not given a third thing to say.
+          word about it. Report visible/total context only after authoritative
+          capacity arrives; the initial unknown sentinel is not a real limit.
 
           No alternating character here, unlike the account below. Two searches
           that happen to find the same number of files are not two events worth
@@ -521,7 +521,7 @@ export function PreviewWorkspace() {
           select announces its own value and a second voice saying the same
           thing is noise rather than access. */}
       <p aria-live="polite" className="visually-hidden" data-live-region="search">
-        {t("rosterContext", { visible: projection.datasets.length, total: roster.datasets.length, capacity: roster.capacity })}
+        {roster.capacity === 0 ? "" : t("rosterContext", { visible: projection.datasets.length, total: roster.datasets.length, capacity: roster.capacity })}
       </p>
       <p aria-live="polite" className="visually-hidden" data-live-region="workspace">
         {workspace.workspaceNotice === null ? "" : announceNotice(workspace.workspaceNotice, t)}

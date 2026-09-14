@@ -119,6 +119,7 @@ describe("M7.2 affected final native workbench paths", function () {
     });
     await browser.$("#dataset-roster-matches").waitForDisplayed();
     expect(await browser.$("#dataset-roster-matches").getText()).toContain("capacity 1024");
+    expect(await browser.$('[data-live-region="search"]').getProperty("textContent")).toContain("capacity 1024");
     await capture("01-measured-native-empty");
     const normalViewport = viewport;
     viewport = { width: 960, height: 640 };
@@ -288,6 +289,28 @@ describe("M7.2 affected final native workbench paths", function () {
     expect(await calls()).toEqual(before);
     expect(await previewReads()).toEqual(beforeReads);
     await capture("review-native-collapsed-menu-recovered");
+  });
+  it("restores native group-menu focus after dissolving a populated group", async () => {
+    await browser.$("button=New group").click();
+    await browser.$("#organization-group-name").setValue("Native dissolve target");
+    await browser.$("button=Save group").click();
+    await browser.$(".group-name-dialog").waitForExist({ reverse: true });
+    const groupId = await browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>(".roster-group-header"))
+      .find(element => element.querySelector(".group-disclosure")?.textContent?.includes("Native dissolve target"))?.dataset.groupId);
+    if (groupId === undefined) throw Error("Native dissolve target was not created.");
+    await browser.$(`${row(firstHandle)} .row-menu-trigger`).click();
+    await browser.$('[role="menuitem"]=Native dissolve target').click();
+    const group = `.roster-group-header[data-group-id="${groupId}"]`;
+    const before = await calls(), beforeReads = await previewReads();
+    const membership = await browser.$(`${row(firstHandle)} input[type="checkbox"]`).isSelected();
+    await capture("review-native-group-dissolve-before");
+    await browser.$(`${group} .row-menu-trigger`).click(); await browser.keys(["End", "Enter"]);
+    await browser.$(group).waitForExist({ reverse: true });
+    await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches(".organization-toolbar button:first-child") === true));
+    expect(await browser.$(row(firstHandle)).getAttribute("data-group")).toBe("ungrouped");
+    expect(await browser.$(`${row(firstHandle)} input[type="checkbox"]`).isSelected()).toBe(membership);
+    expect(await calls()).toEqual(before); expect(await previewReads()).toEqual(beforeReads);
+    await capture("review-native-group-dissolve-after");
   });
   it("reveals accepted roster previews from conversion at native wide and constrained sizes", async () => {
     await browser.$(".workbench-navigation button:nth-child(2)").click();
