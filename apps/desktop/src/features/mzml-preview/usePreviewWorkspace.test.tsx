@@ -826,18 +826,24 @@ describe("discarding what a replaced installation read", () => {
     expect(result.current.previewBackendBusy).toBe(true);
 
     act(() => {
-      result.current.activateDataset(selectedFile.handle);
+      expect(result.current.activateDataset(selectedFile.handle)).toBe(false);
     });
 
     expect(reads).toBe(1);
 
     await act(async () => {
-      open.resolve(buildPreview(3));
+      open.resolve(buildPreview(3, false, 0));
       await Promise.resolve();
     });
     await waitFor(() => {
       expect(result.current.previewBackendBusy).toBe(false);
     });
+    act(() => {
+      expect(result.current.activateDataset(selectedFile.handle)).toBe(true);
+      expect(result.current.activateDataset(selectedFile.handle)).toBe(false);
+    });
+    await waitFor(() => expect(result.current.previewBackendBusy).toBe(false));
+    expect(reads).toBe(2);
   });
 
   it("keeps the viewer lane busy until every request it started has settled", async () => {

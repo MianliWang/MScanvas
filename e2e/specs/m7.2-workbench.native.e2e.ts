@@ -117,6 +117,8 @@ describe("M7.2 affected final native workbench paths", function () {
       new MutationObserver(() => trace.push({ phase: "surface", surface: document.querySelector(".workbench-shell")!.getAttribute("data-surface"), conversionBadge: document.querySelector(".workbench-navigation .work-status-dot") !== null, time: performance.now() }))
         .observe(document.querySelector(".workbench-shell")!, { attributes: true, attributeFilter: ["data-surface"] });
     });
+    await browser.$("#dataset-roster-matches").waitForDisplayed();
+    expect(await browser.$("#dataset-roster-matches").getText()).toContain("capacity 1024");
     await capture("01-measured-native-empty");
     const normalViewport = viewport;
     viewport = { width: 960, height: 640 };
@@ -262,5 +264,29 @@ describe("M7.2 affected final native workbench paths", function () {
     expect(metrics().foregroundProcessId).toBe(processId);
     const state = await capture("07-native-picker-cancel-natural-return"); expect(state.rows).toHaveLength(6);
     expect((await calls()).slice(before.length).filter(call => call.command === "open_mzml_preview")).toEqual([]);
+  });
+  it("reveals accepted roster previews from conversion at native wide and constrained sizes", async () => {
+    await browser.$(".workbench-navigation button:nth-child(2)").click();
+    await browser.$(row(secondHandle)).click();
+    await browser.$("#workbench-evidence").waitForDisplayed();
+    await browser.$(`${row(secondHandle)}.is-active`).waitForExist({ timeout: 60_000 });
+    await browser.$(".spectrum-table").waitForDisplayed();
+    await capture("review-native-reveal-wide-pointer");
+    const normalViewport = viewport;
+    viewport = { width: 960, height: 640 };
+    await helper("m7.1-size-window", ["-ExpectedDpi", String(dpi), "-CssWidth", "960", "-CssHeight", "640"]);
+    await browser.waitUntil(() => browser.execute(() => innerWidth === 960 && innerHeight === 640));
+    await browser.$(".workbench-navigation button:nth-child(2)").click();
+    await browser.$('[aria-controls="workbench-roster"]').click();
+    const before = (await previewReads()).length;
+    await browser.$(".dataset-roster-actions button:nth-child(3)").click();
+    await browser.$("#workbench-evidence").waitForDisplayed();
+    expect(await browser.$("#workbench-roster").isDisplayed()).toBe(false);
+    expect(await browser.execute(() => document.activeElement?.id)).toBe("workbench-evidence");
+    await browser.waitUntil(async () => (await previewReads()).length === before + 1);
+    await browser.$(".spectrum-table").waitForDisplayed();
+    await capture("review-native-reveal-narrow-button");
+    viewport = normalViewport;
+    await helper("m7.1-size-window", ["-ExpectedDpi", String(dpi), "-CssWidth", String(viewport.width), "-CssHeight", String(viewport.height)]);
   });
 });

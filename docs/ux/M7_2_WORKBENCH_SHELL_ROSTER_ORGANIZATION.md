@@ -394,3 +394,65 @@ retention also pass; three captures have zero horizontal overflow, and console,
 mock answers and external resources are empty. This refresh does not repeat
 the full keyboard, Inspector, Explorer or picker-return acceptance. Task
 native processes and ports were measured released afterward.
+
+### Accepted row activation reveals the evidence surface
+
+Review body 5193050529 on the first repair head identified a fourth P2: a row
+request could read behind the selected Conversion surface or constrained roster.
+The existing activation guards now return whether a read actually started.
+Only an accepted request selects Workbench and closes constrained side panels;
+focus then moves to the visible evidence region. Rejected, modified-selection
+and vendor-row actions do not navigate. Later deliberate navigation remains
+authoritative even when the accepted read finishes afterward.
+
+Review thread 4001647805 on `4240285d044dee5873f26e7298a9c11aa0d43cf7`
+identified a fifth P2: the initial unknown capacity sentinel was displayed as
+real capacity zero. The context paragraph is now omitted until the first
+authoritative roster arrives, including after an initial failure. Existing
+retry and add-file recovery remain available. No resource or domain contract
+changes are needed.
+
+Build 06 records all 166 production inputs unchanged during compilation;
+manifest SHA-256 is
+`8ba3eb50d1a9f8c2c5cec5f4a596258dab68ee5b9a15829bd4536e4a68fc1a92`.
+Only PreviewWorkspace, usePreviewWorkspace and DatasetRoster differ from build
+04. The 16,225,792-byte optimized E2E executable has SHA-256
+`057fcbbcb11759b383437109428528c15f0c6227bb98799328b6f33a976aaef7`.
+JS `index-CvZeeger.js` has SHA-256
+`7768f4ac745f1903cccb8c205ba5035bfb25dfbed37c5d045994f228f35558f4`;
+CSS remains unchanged. Intermediate build 05 completed and is retained, but
+was not exercised natively: the later capacity correction was batched into
+build 06 before the affected native run.
+
+Browser run 23 reproduced hidden evidence before the activation repair; run
+24 passed afterward. Run 25 reproduced the unknown-capacity defect before its
+repair. Final affected run 26 passes 2/2, exit 0, with nine captures in
+`browser-eojRSm/`. It covers pointer, Enter and Preview focused activation,
+vendor/modified/busy refusal and deliberate later navigation in en/zh-CN at
+1366x768 and 960x768, DPR 1.5. It also holds the first roster response through
+loading, protocol failure and successful retry in both locales. Console and
+external resources are empty, and horizontal overflow is zero. The browser
+launcher reported forced cleanup of its own dev server; the test and command
+exit are successful, and no task browser watcher was found afterward.
+
+Build-06 native validation passes 2/2, exit 0, in 23.1 seconds; evidence
+`native-GCTiCP/`, launch `reveal-native-20260914T022250612Z/`, session
+`8b4c9c5c7eba9a7893b3c3d981d58d1d`. It reads the actual Rust roster capacity,
+retains real A/B/A work and the raw figure draft across navigation, and reveals
+real acquisitions from Conversion with a pointer at 1366x768 and Preview
+focused at 960x640. The narrow roster closes and focus reaches visible evidence.
+Five captures retain the actual 144 DPI / 150% CSS-to-raster pairs
+1366x768/2049x1152 and 960x640/1440x960. Mock answers, console and external
+resources are empty; horizontal overflow is zero. Processes and ports
+4490/4491 were measured released. No physical DPI change was made.
+
+Related App, hook and roster tests pass 264/264. The first extended hook test
+failed because its preview fixture defaulted to receipt 1 while this harness
+models receipt 0; making that receipt explicit preserves the actual busy
+refusal guard and accepted-request check. The failed record is retained.
+Lint/typecheck, E2E typecheck and build 06 pass. Earlier full-suite 1,759/77,
+build-03 keyboard/Inspector, build-02 Explorer import and natural picker-return,
+and unchanged Rust evidence remain explicitly attributed to those runs.
+Independent read-only reviews 12 and 13 verified their immutable snapshots
+and found no confirmed actionable issue; final acceptance reconciliation and
+publication identities are retained in the PR and local closeout.

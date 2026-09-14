@@ -789,7 +789,8 @@ export const DatasetRoster = memo(function DatasetRoster({
   // a fourth row is being kept visible for another reason. The same sentence
   // the live region reads, so the two halves cannot drift apart.
   const searching = projection.searching && projection.matchCount !== rowCount;
-  const headline = t("rosterContext", { visible: visible.length, total: rowCount, capacity: state.capacity });
+  const headline = state.capacity === 0 ? null :
+    t("rosterContext", { visible: visible.length, total: rowCount, capacity: state.capacity });
 
 
   return (
@@ -811,13 +812,13 @@ export const DatasetRoster = memo(function DatasetRoster({
               a row of its own costs height in the one panel that is counting
               it, and at the widths where the roster's actions wrap it was the
               list that paid. */}
-          <p
+          {headline === null ? null : <p
             className={searching ? "dataset-roster-matches" : undefined}
             id="dataset-roster-matches"
             title={headline}
           >
             {headline}
-          </p>
+          </p>}
         </div>
       </header>
 

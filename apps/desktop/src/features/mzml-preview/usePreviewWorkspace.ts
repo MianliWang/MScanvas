@@ -702,8 +702,8 @@ export interface PreviewWorkspace {
   readonly removeSelected: () => void;
   /** Clears the roster and reports whether this call acquired the mutation gate. */
   readonly clearList: () => boolean;
-  /** Explicitly reads one dataset. The only thing that starts a preview. */
-  readonly activateDataset: (handle: string) => void;
+  /** Explicitly reads one dataset; returns whether this request started a read. */
+  readonly activateDataset: (handle: string) => boolean;
   /** Reads the active dataset again, after a failure or a backend change. */
   readonly previewActiveAgain: () => void;
   /** A bounded account of the last workspace action, for display and for a live region. */
@@ -1994,7 +1994,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
   const activateDataset = useCallback(
     (handle: string) => {
       if (backendBusyRef.current || viewerRequests.current > 0) {
-        return;
+        return false;
       }
       // Here rather than on the button, because a button is one of three ways
       // in: Enter and a double-click reach this too. Without it, activating a
@@ -2006,12 +2006,13 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
           (dataset) => dataset.handle === handle && dataset.sourceKind !== "mzml",
         )
       ) {
-        return;
+        return false;
       }
       if (!backendUsableRef.current) {
-        return;
+        return false;
       }
       loadPreview(handle, now());
+      return true;
     },
     [loadPreview],
   );

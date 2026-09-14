@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
 import type { UiMessage } from "../preferences/i18n";
 import { WorkbenchHeader, type WorkbenchSurface } from "../workbench/WorkbenchHeader";
@@ -38,6 +38,14 @@ export function PreviewWorkspace() {
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
   const detailsAvailable = preview.status === "loaded";
   const detailsOpen = detailsRequested && detailsAvailable;
+  const evidenceRef = useRef<HTMLElement | null>(null);
+  const pendingRevealFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (pendingRevealFocus.current && surface === "workbench" && !rosterOpen && !detailsOpen) {
+      pendingRevealFocus.current = false;
+      evidenceRef.current?.focus({ preventScroll: true });
+    }
+  }, [surface, rosterOpen, detailsOpen]);
   /**
    * Whether the chromatogram's export surface is open.
    *
@@ -556,7 +564,12 @@ export function PreviewWorkspace() {
             dropBusy={workspace.dropBusy}
             folderBusy={workspace.folderBusy}
             load={workspace.rosterLoad}
-            onActivate={workspace.activateDataset}
+            onActivate={handle => {
+              if (!workspace.activateDataset(handle)) return;
+              pendingRevealFocus.current = constrained && rosterOpen;
+              setSurface("workbench");
+              if (constrained) { setRosterOpen(false); setDetailsOpen(false); }
+            }}
             onAddFiles={workspace.addFiles}
             onAddFolder={workspace.addFolder}
             canRemove={canRemove}
@@ -591,7 +604,7 @@ export function PreviewWorkspace() {
               spectrumListTotal={preview.preview.spectrumTable.totalRowCount}
             />
           ) : null}        </aside>
-        <section id="workbench-evidence" className="workbench-evidence" hidden={surface !== "workbench" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("workbench")}>
+        <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("workbench")}>
 
         {preview.status === "loaded" ? (
           <div className="viewer-column">

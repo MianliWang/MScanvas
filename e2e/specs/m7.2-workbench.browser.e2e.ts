@@ -186,6 +186,77 @@ describe("M7.2 workbench shell and grouped roster", () => {
       expect(await consoleEntries()).toEqual([]);
     }
   });
+  it("review regression: reveals accepted roster previews and leaves rejected activation on its current surface", async () => {
+    for (const [width, language, activation] of [[960, "en", "pointer"], [1366, "zh-CN", "keyboard"], [960, "zh-CN", "button"]] as const) {
+      const table: Record<string, unknown> = ipcTable();
+      table.subscribe_workspace_drop_updates = { reservationId: "browser-m72-reservation" };
+      table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile, { ...selectedFile, handle: "unreadable-raw", fileName: "研究.raw", sourceKind: "thermo_raw" }] };
+      await installIpcBoundary(table); await metrics(width, 768, 1.5); await browser.url("/");
+      if (language === "zh-CN") await locale(language);
+      await browser.$(".workbench-navigation button:nth-child(2)").click();
+      if (width === 960) await browser.$('[aria-controls="workbench-roster"]').click();
+      const before = await ipcCalls();
+      await browser.$(row("unreadable-raw")).click();
+      expect(await browser.$(".workbench-shell").getAttribute("data-surface")).toBe("conversion");
+      expect(await ipcCalls()).toEqual(before);
+      // Highlighting/focusing an mzML row is not an activation request.
+      await browser.performActions([{ type: "key", id: "reveal-selection", actions: [{ type: "keyDown", value: "\uE009" }] }]);
+      await browser.$(row(selectedFile.handle)).click(); await browser.releaseActions();
+      expect(await browser.$(".workbench-shell").getAttribute("data-surface")).toBe("conversion");
+      expect(await ipcCalls()).toEqual(before);
+      await holdInvoke("open_mzml_preview");
+      if (activation === "pointer") await browser.$(row(selectedFile.handle)).click();
+      else if (activation === "keyboard") await browser.keys("Enter");
+      else await browser.$(".dataset-roster-actions button:nth-child(3)").click();
+      await browser.waitUntil(async () => await heldCallers("open_mzml_preview") === 1);
+      expect(await browser.$(".workbench-shell").getAttribute("data-surface")).toBe("workbench");
+      expect(await browser.$("#workbench-evidence").isDisplayed()).toBe(true);
+      if (width === 960) {
+        expect(await browser.$("#workbench-roster").isDisplayed()).toBe(false);
+        expect(await browser.execute(() => document.activeElement?.id)).toBe("workbench-evidence");
+      }
+      await capture(`review-reveal-${width}-${language}-${activation}`);
+      // A subsequent deliberate navigation stays authoritative while reading.
+      await browser.$(".workbench-navigation button:nth-child(2)").click();
+      if (width === 960) await browser.$('[aria-controls="workbench-roster"]').click();
+      const pendingCalls = await ipcCalls();
+      await browser.$(row(selectedFile.handle)).click();
+      expect(await browser.$(".workbench-shell").getAttribute("data-surface")).toBe("conversion");
+      expect(await ipcCalls()).toEqual(pendingCalls);
+      await releaseInvokeHold("open_mzml_preview");
+      await browser.$(".spectrum-table").waitForExist();
+      expect(await browser.$(".workbench-shell").getAttribute("data-surface")).toBe("conversion");
+      await browser.$(".workbench-home").click();
+      await browser.$(".spectrum-table").waitForDisplayed();
+      expect(await consoleEntries()).toEqual([]);
+    }
+  });
+  it("review regression: omits unknown roster capacity through initial loading and failure", async () => {
+    for (const language of ["en", "zh-CN"] as const) {
+      const table: Record<string, unknown> = ipcTable();
+      table.subscribe_workspace_drop_updates = { reservationId: "browser-m72-reservation" };
+      table.get_workspace_roster = { capacity: 1024, datasets: [] };
+      await installIpcBoundary(table, { hold: ["get_workspace_roster"] });
+      await metrics(1366, 768, 1.5); await browser.url("/");
+      if (language === "zh-CN") await locale(language);
+      await browser.waitUntil(async () => await heldCallers("get_workspace_roster") === 1);
+      expect(await browser.$("#dataset-roster-matches").isExisting()).toBe(false);
+      await capture(`review-capacity-${language}-loading`);
+      await setInvokeResult("get_workspace_roster", { malformedRoster: true });
+      await releaseInvokeHold("get_workspace_roster");
+      const retry = browser.$(language === "en" ? "button=Try reading it again" : "button=重试读取列表");
+      await retry.waitForDisplayed();
+      expect(await browser.$("#dataset-roster-matches").isExisting()).toBe(false);
+      expect(await browser.$(".dataset-roster-actions button:first-child").isEnabled()).toBe(true);
+      await capture(`review-capacity-${language}-failed`);
+      await setInvokeResult("get_workspace_roster", { capacity: 1024, datasets: [] });
+      await retry.click();
+      await browser.waitUntil(async () => (await browser.$("#dataset-roster-matches").getText()).includes("1024"));
+      expect(await browser.$("#dataset-roster-matches").getAttribute("title")).toContain("1024");
+      await capture(`review-capacity-${language}-known`);
+      expect(await consoleEntries()).toEqual([]);
+    }
+  });
   it("keeps work and independent checked/highlighted state through real navigation and organization", async () => {
     const table = ipcTable();
     table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile, ...Array.from({ length: 5 }, (_, i) => ({ ...selectedFile, handle: `sample-${i}`, fileName: `研究样本_${i}_long_acquisition_name.mzML` }))] };
