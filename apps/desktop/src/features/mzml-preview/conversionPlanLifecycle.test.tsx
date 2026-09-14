@@ -70,7 +70,8 @@ async function mount(options: FakePreviewApiOptions = {}): Promise<FakePreviewAp
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
   return api;
 }
 
@@ -583,7 +584,8 @@ describe("the plan the panel is showing", () => {
         </PreviewApiProvider>
       </WorkspaceDropTransportProvider>,
     );
-    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
       expect(panel.querySelector(".conversion-queue-list")).not.toBeNull();

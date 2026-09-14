@@ -68,6 +68,7 @@ function renderApp(api: FakePreviewApi): void {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
+  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
 }
 
 function liveRegion(): string {
@@ -1093,7 +1094,7 @@ describe("stopping a running conversion queue", () => {
     });
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     // And the roster is still readable and searchable.
-    expect(screen.getByRole("listbox", { name: "Workspace" })).toBeVisible();
+    expect(screen.getByRole("treegrid", { name: "Acquisitions" })).toBeVisible();
     expect(screen.getByRole("searchbox", { name: /search/i })).toBeEnabled();
 
     // The backend banner says the same thing, because a user who has scrolled
@@ -1169,15 +1170,15 @@ describe("stopping a running conversion queue", () => {
       apiWith(stoppingQueue()),
     );
 
-    await screen.findByRole("listbox", { name: "Workspace" });
+    await screen.findByRole("treegrid", { name: "Acquisitions" });
     const search = screen.getByRole("searchbox", { name: /search/i });
     fireEvent.change(search, { target: { value: "nothing-matches-this" } });
 
     // A search that hides the row a stop is waiting on would hide the one thing
     // the user is watching.
     await waitFor(() => {
-      expect(screen.getByText("Converting — outside search")).toBeVisible();
+      expect(within(screen.getByRole("treegrid", { name: "Acquisitions" })).getByText("Converting")).toBeVisible();
     });
-    expect(screen.getAllByText("Queued — outside search")).toHaveLength(2);
+    expect(within(screen.getByRole("treegrid", { name: "Acquisitions" })).getAllByText("Queued")).toHaveLength(2);
   });
 });

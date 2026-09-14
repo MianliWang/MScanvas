@@ -5,7 +5,7 @@ export type ConversionScope = "selected" | "all";
 
 export interface ConversionScopeFacts {
   readonly datasets: readonly SelectedFile[];
-  readonly selected: ReadonlySet<string>;
+  readonly conversionMembership: ReadonlySet<string>;
   readonly sort: SortMode;
 }
 
@@ -28,7 +28,7 @@ export function resolveConversionScope(
   facts: ConversionScopeFacts,
 ): ResolvedConversionScope {
   const requested = orderRoster(facts.datasets, facts.sort)
-    .filter((row) => scope === "all" || facts.selected.has(row.handle));
+    .filter((row) => scope === "all" || facts.conversionMembership.has(row.handle));
   const members = requested.filter((row) => isConvertibleSourceKind(row.sourceKind));
   return {
     scope,

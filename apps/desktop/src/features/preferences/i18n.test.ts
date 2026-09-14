@@ -56,6 +56,13 @@ describe("bundled UI resources", () => {
     expect(count).toBe(1234);
   });
 
+  it("renders numeric drag destinations through both runtime resource boundaries", () => {
+    const { instance } = createUiRuntime();
+    const parameters = { name: "QC 研究", count: 2, position: 3, total: 5 };
+    expect(bindUiMessages(instance.getFixedT("en", "ui"))("dragTarget", parameters)).toBe("Move to QC 研究, position 3 of 5 (2 selected).");
+    expect(bindUiMessages(instance.getFixedT("zh-CN", "ui"))("dragTarget", parameters)).toBe("移至QC 研究，第 3 位，共 5 个采集（已选 2 个）。");
+  });
+
   it("detects missing resources even when an engine fallback would hide the gap", () => {
     const { instance } = createUiRuntime();
     const incomplete: Record<string, unknown> = { ...UI_RESOURCES["zh-CN"] };

@@ -23,6 +23,7 @@ import type { ConversionOperation } from "./useConversionOperation";
 import type { ConversionPlanView } from "./useConversionPlan";
 import type { ConversionScope, ResolvedConversionScope } from "./conversionScope";
 import { SORT_MODE_LABEL } from "./rosterView";
+import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 
 /**
  * What each conflict policy means, in the user's terms rather than the
@@ -760,6 +761,7 @@ function PlanState({
   /** Whether a previous result is on screen above this plan. */
   readonly repeating: boolean;
 }): ReactElement | null {
+  const t = useUiMessages();
   const current = plan.current;
   const summary = current?.plan ?? null;
   // The rows the control names, which is what the reader selected rather than
@@ -783,6 +785,7 @@ function PlanState({
         {resolvedScope.scope === "all" ? " All workspace rows, including those outside search." : " All selected rows, including those outside search."}
       </p>
       <p className="quiet-text">Order: {SORT_MODE_LABEL[resolvedScope.sort]}. Equal keys keep added order.</p>
+      <p className="quiet-text" data-testid="conversion-membership-help">{t("conversionMembershipHelp")}</p>
       {summary === null ? null : <p className="quiet-text" data-testid="conversion-capacity">Queue capacity: {summary.capacity} eligible acquisitions.</p>}
       {plan.capacityRefusal === null ? null : <p className="notice notice-warning" data-testid="conversion-capacity">
         {plan.capacityRefusal.requestedCount} eligible acquisitions exceed the queue capacity of {plan.capacityRefusal.capacity}.

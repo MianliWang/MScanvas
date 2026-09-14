@@ -1,3 +1,5 @@
+import { bindUiMessages, createUiRuntime } from "../preferences/i18n";
+import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { createElement } from "react";
@@ -824,18 +826,24 @@ describe("discarding what a replaced installation read", () => {
     expect(result.current.previewBackendBusy).toBe(true);
 
     act(() => {
-      result.current.activateDataset(selectedFile.handle);
+      expect(result.current.activateDataset(selectedFile.handle)).toBe(false);
     });
 
     expect(reads).toBe(1);
 
     await act(async () => {
-      open.resolve(buildPreview(3));
+      open.resolve(buildPreview(3, false, 0));
       await Promise.resolve();
     });
     await waitFor(() => {
       expect(result.current.previewBackendBusy).toBe(false);
     });
+    act(() => {
+      expect(result.current.activateDataset(selectedFile.handle)).toBe(true);
+      expect(result.current.activateDataset(selectedFile.handle)).toBe(false);
+    });
+    await waitFor(() => expect(result.current.previewBackendBusy).toBe(false));
+    expect(reads).toBe(2);
   });
 
   it("keeps the viewer lane busy until every request it started has settled", async () => {
@@ -1673,7 +1681,7 @@ describe("starting a folder import", () => {
     });
     await waitFor(() => {
       expect(api.calls().filter((call) => call === "clearWorkspace")).toHaveLength(1);
-      expect(result.current.workspaceNotice?.message).toBe(
+      expect(result.current.workspaceNotice === null ? undefined : formatWorkspaceNotice(result.current.workspaceNotice, englishNoticeMessages).message).toBe(
         "The workspace is empty. The pending folder import will not add files.",
       );
     });
@@ -1737,7 +1745,7 @@ describe("starting a folder import", () => {
         result.current.clearList();
       });
       await waitFor(() => {
-        expect(result.current.workspaceNotice?.message).toBe(
+        expect(result.current.workspaceNotice === null ? undefined : formatWorkspaceNotice(result.current.workspaceNotice, englishNoticeMessages).message).toBe(
           "The workspace is empty. The pending folder import will not add files.",
         );
       });
@@ -1866,7 +1874,7 @@ describe("native Explorer drop updates", () => {
       selectedFile.handle,
       secondFile.handle,
     ]);
-    expect(result.current.workspaceNotice?.message).toContain("Added 2 files.");
+    expect(result.current.workspaceNotice === null ? undefined : formatWorkspaceNotice(result.current.workspaceNotice, englishNoticeMessages).message).toContain("Added 2 files.");
     const settlement = result.current.rosterSettlementToken;
     const notice = result.current.workspaceNotice;
 
@@ -1973,7 +1981,7 @@ describe("native Explorer drop updates", () => {
       expect(result.current.dropBusy).toBe(false);
     });
     expect(result.current.roster.datasets).toHaveLength(0);
-    expect(result.current.workspaceNotice?.message).toBe(
+    expect(result.current.workspaceNotice === null ? undefined : formatWorkspaceNotice(result.current.workspaceNotice, englishNoticeMessages).message).toBe(
       "The workspace is empty. The pending drop will not add files.",
     );
     expect(api.openCount()).toBe(0);
@@ -2037,7 +2045,7 @@ describe("native Explorer drop updates", () => {
       expect(result.current.dropBusy).toBe(false);
     });
     expect(result.current.roster.datasets).toHaveLength(0);
-    expect(result.current.workspaceNotice?.message).toContain("Removed 1 file from the list.");
+    expect(result.current.workspaceNotice === null ? undefined : formatWorkspaceNotice(result.current.workspaceNotice, englishNoticeMessages).message).toContain("Removed 1 file from the list.");
     expect(api.openCount()).toBe(0);
   });
 
@@ -2214,7 +2222,7 @@ describe("native Explorer drop updates", () => {
     expect(result.current.roster.datasets.map((dataset) => dataset.handle)).toEqual([
       selectedFile.handle,
     ]);
-    expect(result.current.workspaceNotice?.message).toContain("Added 1 file.");
+    expect(result.current.workspaceNotice === null ? undefined : formatWorkspaceNotice(result.current.workspaceNotice, englishNoticeMessages).message).toContain("Added 1 file.");
   });
 
   it("recovers an ownerless completed startup snapshot through the post-claim roster read", async () => {
@@ -2344,7 +2352,7 @@ describe("native Explorer drop updates", () => {
       selectedFile.handle,
       secondFile.handle,
     ]);
-    expect(notice?.message).toContain("Added 2 files.");
+    expect(notice === null ? undefined : formatWorkspaceNotice(notice, englishNoticeMessages).message).toContain("Added 2 files.");
 
     await act(async () => {
       startupRoster.resolve({ datasets: [], capacity: FAKE_WORKSPACE_CAPACITY });
@@ -2444,3 +2452,5 @@ describe("native Explorer drop updates", () => {
     });
   });
 });
+
+const englishNoticeMessages = bindUiMessages(createUiRuntime().instance.getFixedT("en", "ui"));

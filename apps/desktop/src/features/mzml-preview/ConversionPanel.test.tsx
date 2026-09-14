@@ -40,11 +40,12 @@ function renderApp(api: FakePreviewApi): void {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
+  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
 }
 
 /** The roster's own list, so the sort control's options are not mistaken for rows. */
 function rows(): HTMLElement[] {
-  return within(screen.getByRole("listbox", { name: "Workspace" })).queryAllByRole("option");
+  return Array.from(screen.getByRole("treegrid", { name: "Acquisitions" }).querySelectorAll<HTMLElement>("[data-handle]"));
 }
 
 /** The queue's own result block, as distinct from the plan beneath it. */
@@ -66,9 +67,9 @@ const VISIBLE = { ignore: "[aria-live], script, style" } as const;
 /** Selects every roster row, as a user working through the list would. */
 function selectAllRows(): void {
   const list = rows();
-  fireEvent.click(list[0]);
+  fireEvent.click(within(list[0]).getByRole("checkbox"));
   for (const row of list.slice(1)) {
-    fireEvent.click(row, { ctrlKey: true });
+    fireEvent.click(within(row).getByRole("checkbox"));
   }
 }
 
@@ -84,7 +85,7 @@ describe("destination request and queue truth", () => {
     });
     renderApp(api);
     const panel = await screen.findByRole("region", { name: "Convert" });
-    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     const named = () => within(panel).getByRole("radio", { name: "Named subfolder beside each source" });
     fireEvent.click(named());
     fireEvent.change(within(panel).getByLabelText("Subfolder name"), { target: { value: "Native QA" } });
@@ -121,21 +122,21 @@ describe("destination request and queue truth", () => {
       return restoredPlan.promise;
     } });
     const panel = await screen.findByRole("region", { name: "Convert" });
-    const row = await screen.findByRole("option", { name: /run-1\.raw/ });
-    fireEvent.click(row);
+    const row = await screen.findByRole("row", { name: /run-1\.raw/ });
+    fireEvent.click(within(row).getByRole("checkbox"));
     fireEvent.click(within(panel).getByRole("radio", { name: "Custom local folder" }));
     await pressConvert(panel, "Convert 1 selected…");
 
     // Controlled scope changes model commits around a native picker; these
     // synthetic click events intentionally do not simulate a newer focus move.
     holdPlan = true;
-    fireEvent.click(row, { ctrlKey: true });
+    fireEvent.click(within(row).getByRole("checkbox"));
     await act(async () => picker.resolve({ status: "idle" }));
     expect(within(panel).getByRole("button", { name: "Convert 0 selected…" })).toBeDisabled();
 
     // The scope returns before its plan. The absent/disabled commits must not
     // consume the return, and a controlled plan answer is the only release.
-    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     await waitFor(() => expect(answeredPlan).toBeDefined());
     expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeDisabled();
     expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).not.toHaveFocus();
@@ -150,7 +151,7 @@ describe("destination request and queue truth", () => {
     const api = createFakePreviewApi({ initialDatasets: [first], availability: availableBackend, conversion: () => picker.promise });
     renderApp(api);
     const panel = await screen.findByRole("region", { name: "Convert" });
-    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     await pressConvert(panel, "Convert 1 selected…");
     const settings = screen.getByRole("button", { name: "Settings" });
     settings.focus();
@@ -165,7 +166,7 @@ describe("destination request and queue truth", () => {
     const api = createFakePreviewApi({ initialDatasets: [first], availability: availableBackend, conversion: () => picker.promise });
     renderApp(api);
     const panel = await screen.findByRole("region", { name: "Convert" });
-    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     await pressConvert(panel, "Convert 1 selected…");
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     const dialog = screen.getByRole("dialog", { name: "Settings" });
@@ -181,7 +182,7 @@ describe("destination request and queue truth", () => {
     const api = createFakePreviewApi({ initialDatasets: [first], availability: availableBackend, conversion: () => picker.promise });
     renderApp(api);
     const panel = await screen.findByRole("region", { name: "Convert" });
-    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     await pressConvert(panel, "Convert 1 selected…");
     vi.mocked(document.hasFocus).mockReturnValue(false);
     await act(async () => picker.resolve({ status: "idle" }));
@@ -204,7 +205,7 @@ describe("destination request and queue truth", () => {
     });
     renderApp(api);
     const panel = await screen.findByRole("region", { name: "Convert" });
-    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     await waitFor(() => expect(within(panel).getByText("Requested destination")).toBeVisible());
     const actual = queueResult();
     expect(within(actual).getByText("Queue destination").nextElementSibling?.textContent).toContain("Original");
@@ -229,7 +230,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     renderApp(api);
     // The label is part of the accessible row name, not a visual aside: a
     // reader hears which family the row is.
-    const row = await screen.findByRole("option", {
+    const row = await screen.findByRole("row", {
       name: /sample-7\.lcd.*Shimadzu LabSolutions LCD/,
     });
     expect(row).toBeVisible();
@@ -241,7 +242,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /sample-7\.lcd/ }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /sample-7\.lcd/ })).getByRole("checkbox"));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
@@ -267,7 +268,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /run-2\.raw/ });
+    await screen.findByRole("row", { name: /run-2\.raw/ });
     selectAllRows();
 
     const panel = await screen.findByRole("region", { name: "Convert" });
@@ -294,7 +295,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
     // Scope remains explicit and the empty-state recovery is family-neutral.
     const panel = screen.getByRole("region", { name: "Convert" });
@@ -350,7 +351,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
       },
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /sample-7\.lcd/ }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /sample-7\.lcd/ })).getByRole("checkbox"));
 
     // A success, in the queue's own terms, with the exact measured facts --
     // never "empty", "failed" or "no data".
@@ -370,7 +371,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
@@ -395,12 +396,12 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /run-2\.raw/ });
+    await screen.findByRole("row", { name: /run-2\.raw/ });
 
     // Select the second row, which also focuses it; then move focus to the
     // first with the keyboard, which leaves the selection where it was.
-    fireEvent.click(rows()[1]);
-    fireEvent.keyDown(screen.getByRole("listbox", { name: "Workspace" }), { key: "ArrowUp" });
+    fireEvent.click(within(rows()[1]).getByRole("checkbox"));
+    fireEvent.keyDown(screen.getByRole("treegrid", { name: "Acquisitions" }), { key: "ArrowUp" });
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
@@ -422,7 +423,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /run-2\.raw/ });
+    await screen.findByRole("row", { name: /run-2\.raw/ });
     selectAllRows();
 
     const panel = await screen.findByRole("region", { name: "Convert" });
@@ -450,9 +451,9 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /run-2\.raw/ });
+    await screen.findByRole("row", { name: /run-2\.raw/ });
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
       target: { value: "name-desc" },
     });
     selectAllRows();
@@ -489,7 +490,7 @@ describe("queueing selected Thermo RAW conversions", () => {
         }),
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /run-2\.raw/ });
+    await screen.findByRole("row", { name: /run-2\.raw/ });
     selectAllRows();
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
@@ -794,6 +795,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     renderApp(api);
 
     const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toBeEnabled());
     fireEvent.click(within(panel).getByRole("button", { name: "Retry 1 failed" }));
 
     // The retry has not answered, and the interface has stopped offering work.
@@ -805,7 +807,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     // Including the row being rerun. Rust would refuse to let it go, so
     // offering the action would only produce an error nobody needed to see.
     fireEvent.click(rows()[0]);
-    expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
     // And a screen reader is told now, rather than at the next poll.
     expect(liveRegion()).toContain("Retrying 1 failed.");
 
@@ -888,7 +890,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       },
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
@@ -902,9 +904,9 @@ describe("queueing selected Thermo RAW conversions", () => {
 
     // Selecting a queued row makes removal unavailable; an unrelated row does not.
     fireEvent.click(rows()[0]);
-    expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
     fireEvent.click(rows()[2]);
-    expect(screen.getByRole("button", { name: "Remove selected" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeEnabled();
   });
 
   it("keeps every queue member visible when a search would have hidden it", async () => {
@@ -921,7 +923,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       },
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /run-2\.raw/ });
+    await screen.findByRole("row", { name: /run-2\.raw/ });
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC_pool" },
@@ -929,12 +931,12 @@ describe("queueing selected Thermo RAW conversions", () => {
 
     // Different reasons, because the user can do nothing about either.
     await waitFor(() => {
-      expect(screen.getByRole("option", { name: /run-1\.raw/ })).toHaveAccessibleName(
-        expect.stringContaining("Converting — outside search"),
+      expect(screen.getByRole("row", { name: /run-1\.raw/ })).toHaveAccessibleName(
+        expect.stringContaining("Converting"),
       );
     });
-    expect(screen.getByRole("option", { name: /run-2\.raw/ })).toHaveAccessibleName(
-      expect.stringContaining("Queued — outside search"),
+    expect(screen.getByRole("row", { name: /run-2\.raw/ })).toHaveAccessibleName(
+      expect.stringContaining("Queued"),
     );
   });
 
@@ -959,7 +961,7 @@ describe("queueing selected Thermo RAW conversions", () => {
         }),
     });
     renderApp(api);
-    await screen.findByRole("option", { name: /run-2\.raw/ });
+    await screen.findByRole("row", { name: /run-2\.raw/ });
     selectAllRows();
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
@@ -1025,7 +1027,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     const panel = await screen.findByRole("region", { name: "Convert" });
 
     await pressConvert(panel, "Convert 1 selected…");
@@ -1055,7 +1057,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
 
     const preview = screen.getByRole("button", { name: "Preview focused" });
     expect(preview).toBeDisabled();
@@ -1078,7 +1080,7 @@ describe("queueing selected Thermo RAW conversions", () => {
         </PreviewApiProvider>
       </WorkspaceDropTransportProvider>,
     );
-    fireEvent.click(await screen.findByRole("option", { name: /run-1\.raw/ }));
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
 
     await act(async () => {
       transport.emit({ sequence: 1, state: { status: "rejected", reason: "conversion_busy" } });

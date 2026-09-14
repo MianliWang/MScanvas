@@ -1,5 +1,6 @@
+import { GroupedRosterList } from "../workbench/GroupedRosterList";
 import { memo, useCallback, useEffect, useRef } from "react";
-import { useSessionPreferences } from "../preferences/SessionPreferencesProvider";
+import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { ChangeEvent, KeyboardEvent, MouseEvent } from "react";
 
 import { SOURCE_KIND_LABEL, isConvertibleSourceKind } from "./contracts";
@@ -172,12 +173,14 @@ export const DatasetRoster = memo(function DatasetRoster({
   restoreAddFolderFocusToken,
 }: DatasetRosterProps) {
   const preferences = useSessionPreferences();
-  const listRef = useRef<HTMLUListElement | null>(null);
+  const t = useUiMessages();
+  const listRef = useRef<HTMLDivElement | null>(null);
   const addFilesRef = useRef<HTMLButtonElement | null>(null);
   const addFolderRef = useRef<HTMLButtonElement | null>(null);
   const removeSelectedRef = useRef<HTMLButtonElement | null>(null);
   const clearListRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const searchComposing = useRef(false);
   /** Advances whenever a real control becomes the keyboard's newer destination. */
   const focusOwnershipToken = useRef(0);
   const seenFocusToken = useRef(focusAddFilesToken);
@@ -269,6 +272,10 @@ export const DatasetRoster = memo(function DatasetRoster({
     const recordDestination = (event: FocusEvent) => {
       if (event.target instanceof HTMLElement && event.target !== document.body) {
         focusOwnershipToken.current += 1;
+        if (pendingPickerRestore.current !== null && event.target !== pendingPickerRestore.current) {
+          pendingPickerRestore.current = null;
+          pickerRestoreOutstanding.current = false;
+        }
         addFilesOwnsKeyboard.current = event.target === addFilesRef.current;
         if (event.target === clearListRef.current && clearFocusDebt.current !== null) {
           // Returning to the same re-enabled action renews its ownership. A
@@ -319,6 +326,9 @@ export const DatasetRoster = memo(function DatasetRoster({
     const moved = followed.current !== state.focused;
     followed.current = state.focused;
     if (list !== null && list.contains(active)) {
+      // Disclosure and menu controls own their focus while a group changes.
+      // Only a row's own keyboard navigation follows the roving row stop.
+      if (active instanceof Element && active.closest("button,input,select,textarea,[contenteditable=true]")) return;
       if (!moved) {
         // The tab stop is where it was, so the keyboard is where the user put
         // it. Following it on every commit would take focus off a row they
@@ -326,7 +336,7 @@ export const DatasetRoster = memo(function DatasetRoster({
         return;
       }
       const row = list.querySelector<HTMLElement>(`[data-handle="${state.focused ?? ""}"]`);
-      if (row !== null && row !== active) {
+      if (row !== null && !row.contains(active)) {
         row.focus({ preventScroll: false });
       }
       return;
@@ -690,15 +700,19 @@ export const DatasetRoster = memo(function DatasetRoster({
     control.focus({ preventScroll: true });
   });
 
-  const handleRowPress = (event: MouseEvent<HTMLLIElement>, handle: string) => {
+  const handleRowPress = (event: MouseEvent<HTMLElement>, handle: string) => {
+    // Pointer activation constraints can prevent the browser's default focus.
+    // A completed row click still places the keyboard on that explicit target.
+    event.currentTarget.focus({ preventScroll: true });
     dispatch({
       type: "rowPressed",
       handle,
       modifiers: { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey },
     });
+    if (!event.ctrlKey && !event.metaKey && !event.shiftKey && canPreview && state.datasets.some(row => row.handle === handle && row.sourceKind === "mzml")) onActivate(handle);
   };
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     switch (event.key) {
       case "ArrowDown":
         dispatch({ type: "focusStepped", delta: 1, extend: event.shiftKey });
@@ -725,7 +739,7 @@ export const DatasetRoster = memo(function DatasetRoster({
       case "Enter":
         // The one keystroke that reads a file. Every other key here moves
         // focus or changes the selection, and neither costs a process.
-        if (state.focused !== null && canPreview) {
+        if (state.focused !== null && canPreview && state.datasets.some(row => row.handle === state.focused && row.sourceKind === "mzml")) {
           onActivate(state.focused);
         }
         break;
@@ -740,7 +754,7 @@ export const DatasetRoster = memo(function DatasetRoster({
   };
 
   const handleSearchKeys = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== "Escape" || state.query === "") {
+    if (searchComposing.current || event.nativeEvent.isComposing || event.keyCode === 229 || event.key !== "Escape" || state.query === "") {
       return;
     }
     dispatch({ type: "searchCleared" });
@@ -775,13 +789,9 @@ export const DatasetRoster = memo(function DatasetRoster({
   // a fourth row is being kept visible for another reason. The same sentence
   // the live region reads, so the two halves cannot drift apart.
   const searching = projection.searching && projection.matchCount !== rowCount;
-  const headline = searching
-    ? `${describeProjection(projection)} Removing a row never deletes a file.`
-    : `${
-        state.capacity === 0
-          ? "Files in this session"
-          : `${formatCount(rowCount)} of ${formatCount(state.capacity)} files in this session`
-      } · removing a row never deletes a file`;
+  const headline = state.capacity === 0 ? null :
+    t("rosterContext", { visible: visible.length, total: rowCount, capacity: state.capacity });
+
 
   return (
     // Marked busy for the whole import, because this is the region the import
@@ -795,20 +805,20 @@ export const DatasetRoster = memo(function DatasetRoster({
     >
       <header className="panel-header compact">
         <div>
-          <h2 id="dataset-roster-heading">Workspace</h2>
+          <h2 id="dataset-roster-heading">{t("rosterTitle")}</h2>
           {/* The line the panel already had, which already truncates with an
               ellipsis and already carries the whole sentence in its `title`.
               The search summary belongs here rather than in a line of its own:
               a row of its own costs height in the one panel that is counting
               it, and at the widths where the roster's actions wrap it was the
               list that paid. */}
-          <p
+          {headline === null ? null : <p
             className={searching ? "dataset-roster-matches" : undefined}
             id="dataset-roster-matches"
             title={headline}
           >
             {headline}
-          </p>
+          </p>}
         </div>
       </header>
 
@@ -822,12 +832,14 @@ export const DatasetRoster = memo(function DatasetRoster({
               of the search box's own name. Associated by `for` instead, which
               says the same thing without the ambiguity. */}
           <div className="roster-field">
-            <label htmlFor="dataset-roster-search">Search files</label>
+            <label htmlFor="dataset-roster-search">{t("searchFiles")}</label>
             <input
               aria-describedby={searching ? "dataset-roster-matches" : undefined}
               id="dataset-roster-search"
               onChange={handleSearch}
               onKeyDown={handleSearchKeys}
+              onCompositionStart={() => { searchComposing.current = true; }}
+              onCompositionEnd={() => { searchComposing.current = false; }}
               ref={searchRef}
               type="search"
               value={state.query}
@@ -839,16 +851,16 @@ export const DatasetRoster = memo(function DatasetRoster({
                 search". */}
             {state.query === "" || visible.length === 0 ? null : (
               <button className="link-button" onClick={clearSearch} type="button">
-                Clear search
+                {t("clearSearch")}
               </button>
             )}
           </div>
           <div className="roster-field">
-            <label htmlFor="dataset-roster-sort">Sort files</label>
-            <select id="dataset-roster-sort" onChange={handleSort} value={state.sort}>
+            <label htmlFor="dataset-roster-sort">{t("executionSort")}</label>
+            <select aria-describedby="execution-order-help" id="dataset-roster-sort" onChange={handleSort} value={state.sort}>
               {SORT_MODES.map((mode) => (
                 <option key={mode} value={mode}>
-                  {SORT_MODE_LABEL[mode]}
+                  {t(({ added: "sortAdded", "name-asc": "sortNameAsc", "name-desc": "sortNameDesc", "size-asc": "sortSizeAsc", "size-desc": "sortSizeDesc" } as const)[mode])}
                 </option>
               ))}
             </select>
@@ -856,6 +868,8 @@ export const DatasetRoster = memo(function DatasetRoster({
         </div>
       )}
 
+      <p className="visually-hidden" id="execution-order-help">{t("executionOrderHelp")}</p>
+      <details className="roster-help"><summary>{t("rosterHelp")}</summary><p>{t("rosterLifetime")}</p><p>{t("rosterKeyboardHelp")}</p></details>
       <div className="dataset-roster-actions">
         <button
           className="primary-button"
@@ -866,7 +880,7 @@ export const DatasetRoster = memo(function DatasetRoster({
           ref={addFilesRef}
           type="button"
         >
-          Add files…
+          {t("addFiles")}
         </button>
         {/* Beside `Add files…` rather than anywhere else, because it answers
             the same question with a different unit of choice: this file, or
@@ -890,7 +904,7 @@ export const DatasetRoster = memo(function DatasetRoster({
           ref={addFolderRef}
           type="button"
         >
-          Add mzML folder…
+          {t("addFolder")}
         </button>
         <button
           aria-describedby={
@@ -905,7 +919,7 @@ export const DatasetRoster = memo(function DatasetRoster({
           }}
           type="button"
         >
-          Preview focused
+          {t("previewFocused")}
         </button>
         {/* Mounted only while the reason holds, and said in words the moment it
             does. A vendor acquisition is not something this product reads, and
@@ -913,7 +927,7 @@ export const DatasetRoster = memo(function DatasetRoster({
             which of several conditions had turned it off. */}
         {focusedIsConvertible ? (
           <span className="visually-hidden" id="preview-needs-conversion-description">
-            {PREVIEW_NEEDS_CONVERSION}
+            {t("needsConversion")}
           </span>
         ) : null}
         <button
@@ -939,7 +953,7 @@ export const DatasetRoster = memo(function DatasetRoster({
           ref={removeSelectedRef}
           type="button"
         >
-          Remove selected
+          {t("removeHighlighted")}
         </button>
         {clearListOffered ? (
           <button
@@ -978,212 +992,38 @@ export const DatasetRoster = memo(function DatasetRoster({
             ref={clearListRef}
             type="button"
           >
-            Clear list
+            {t("clearList")}
           </button>
         ) : null}
         {folderBusy ? (
           <span className="visually-hidden" id="clear-during-folder-import-description">
-            {CLEAR_DURING_FOLDER_IMPORT_DESCRIPTION}
+            {t("clearImportHelp")}
           </span>
         ) : null}
         {dropBusy ? (
           <span className="visually-hidden" id="clear-during-drop-import-description">
-            {CLEAR_DURING_DROP_IMPORT_DESCRIPTION}
+            {t("clearImportHelp")}
           </span>
         ) : null}
       </div>
 
-      {rowCount > 0 && visible.length === 0 ? (
-        // Not the empty state. The session holds files; the search is what is
-        // standing between the user and them, and saying "no files in this
-        // session" here would be a claim about the workspace rather than about
-        // the query.
-        <div className="empty-state">
-          <strong>No files match this search</strong>
-          <span>
-            {formatCount(rowCount)} {rowCount === 1 ? "file is" : "files are"} in this session.
-            Clear the search to see {rowCount === 1 ? "it" : "them"} again.
-          </span>
-          <button className="secondary-button" onClick={clearSearch} type="button">
-            Clear search
-          </button>
-        </div>
-      ) : rowCount === 0 ? (
-        <div className="empty-state">
-          {load.status === "failed" ? (
-            <>
-              <strong>The workspace list could not be read</strong>
-              <span>{load.error.summary}</span>
-              {/* Refused while a mutation or an import is unresolved, exactly
-                  as the shell's copy of this action is. Rust returns a pure,
-                  gate-linearized snapshot; native page-load start owns reload
-                  ordering. During an import the folder reply or reconciliation
-                  already supplies the authoritative answer, without another
-                  loading state whose usefulness depends on commit order. */}
-              <button
-                className="secondary-button"
-                disabled={!canReloadRoster}
-                onClick={onReloadRoster}
-                type="button"
-              >
-                Try reading it again
-              </button>
-            </>
-          ) : load.status === "loading" ? (
-            // Not "there is nothing here". Rust keeps the workspace across a
-            // reload of this window, so before the list has been read the one
-            // thing that cannot be said is that the session holds nothing.
-            <>
-              <strong>Reading the workspace list…</strong>
-              <span>MSCanvas is asking what this session already holds.</span>
-            </>
-          ) : (
-            <>
-              <strong>No files in this session yet</strong>
-              <span>
-                Add one or many local .mzML files, or a folder to take every .mzML file under it.
-                MSCanvas only reads them, nothing is uploaded, and nothing leaves this computer.
-              </span>
-            </>
-          )}
-        </div>
-      ) : (
-        <ul
-          aria-labelledby="dataset-roster-heading"
-          aria-multiselectable="true"
-          className="dataset-roster-list"
-          onBlur={(event) => {
-            // Only when the keyboard has genuinely gone somewhere else. A
-            // `relatedTarget` outside the list is a user moving on, and what
-            // they left behind stops being this component's to recover. A null
-            // one is what an unmounting row looks like -- there is nowhere for
-            // focus to have gone -- and that is the case the record exists for,
-            // so it is kept.
-            const next = event.relatedTarget;
-            if (next instanceof Node && !event.currentTarget.contains(next)) {
-              keyboardOn.current = null;
-            }
-          }}
-          onFocus={(event) => {
-            // Recorded as it happens rather than at the next commit. A row can
-            // be focused and then unmounted without a render in between, and
-            // by the time anything else runs the only evidence of which row
-            // held the keyboard has gone with it.
-            keyboardOn.current =
-              event.target instanceof HTMLElement
-                ? (event.target.closest<HTMLElement>("[data-handle]")?.dataset.handle ?? null)
-                : null;
-          }}
-          onKeyDown={handleKeyDown}
-          ref={listRef}
-          role="listbox"
-        >
-          {visible.map((dataset) => {
-            const selected = state.selected.has(dataset.handle);
-            const presentation = rowPresentation(state, dataset.handle);
-            const pinned = projection.pinned.get(dataset.handle);
-            // Two different things, and never one instead of the other. What a
-            // row says about its file -- that it was replaced, is missing, or
-            // could not be read -- is not a fact a search may suppress, and it
-            // was suppressed while every pinned row rendered its view reason in
-            // the one slot both had to share. A row the search did not match
-            // says why it is here anyway, in words rather than in a shade, and
-            // in the row's own text so a screen reader is told what the screen
-            // says.
-            const label = ROW_STATE_LABEL[presentation];
-            const reason = pinned === undefined ? "" : PIN_REASON_LABEL[pinned];
-            // Being the row a read belongs to is not the same as having
-            // something on screen. A row keeps that place after a backend
-            // change discards what it read, and the marker must not go on
-            // claiming a preview nobody can see -- least of all in the hidden
-            // text, which is the whole of what a screen reader is told.
-            // The bar and the glyph say one thing between them, so they follow
-            // one condition. A row being read says so in words instead: the
-            // "Reading…" label beside it, which needs no colour either.
-            const showing = state.active === dataset.handle && presentation === "loaded";
-            return (
-              <li
-                aria-selected={selected}
-                className={`dataset-row${selected ? " is-selected" : ""}${showing ? " is-active" : ""}`}
-                data-handle={dataset.handle}
-                key={dataset.handle}
-                onClick={(event) => {
-                  handleRowPress(event, dataset.handle);
-                }}
-                onDoubleClick={() => {
-                  if (canPreview) {
-                    onActivate(dataset.handle);
-                  }
-                }}
-                role="option"
-                tabIndex={focusStop === dataset.handle ? 0 : -1}
-              >
-                {/* Two glyphs rather than two shades. Which row is shown and
-                    which rows are selected both survive greyscale, high
-                    contrast and colour-blind viewing. */}
-                <span aria-hidden="true" className="dataset-row-marker">
-                  {showing ? "▸" : ""}
-                </span>
-                <span aria-hidden="true" className="dataset-row-marker">
-                  {selected ? "✓" : ""}
-                </span>
-                {showing ? <span className="visually-hidden">Showing, </span> : null}
-                {/* The name, and only where two rows share one, where it sat
-                    under the folder it came from. Rust decides that over the
-                    whole live roster and bounds what it says, so this renders
-                    the string it was given and derives nothing: a context that
-                    appeared because a second `sample.mzML` arrived goes again
-                    when that row leaves, without this component being told.
+      <GroupedRosterList state={state} projection={projection} dispatch={dispatch} listRef={listRef}
+        onRowPress={handleRowPress} onKeyDown={handleKeyDown}
+        onBlur={event => { if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) keyboardOn.current = null; }}
+        onFocus={event => {
+          keyboardOn.current = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>("[data-handle]")?.dataset.handle ?? null : null;
+          if (keyboardOn.current !== null) dispatch({ type: "focusChanged", handle: keyboardOn.current });
+        }}
+        empty={rowCount > 0 && visible.length === 0 ? <div className="empty-state roster-empty">
+          <strong>{t("rosterNoMatches")}</strong><span>{t("rosterNoMatchesHelp")}</span>
+          {state.query ? <button className="secondary-button" onClick={clearSearch} type="button">{t("clearSearch")}</button> : null}
+        </div> : rowCount === 0 ? <div className="empty-state roster-empty">
+          {load.status === "failed" ? <><strong>{t("rosterFailed")}</strong><span>{load.error.summary}</span>
+            <button className="secondary-button" disabled={!canReloadRoster} onClick={onReloadRoster} type="button">{t("rosterRetry")}</button></> :
+            load.status === "loading" ? <><strong>{t("rosterLoading")}</strong><span>{t("rosterLoadingHelp")}</span></> :
+              <><strong>{t("rosterEmpty")}</strong><span>{t("rosterEmptyHelp")}</span></>}
+        </div> : null} />
 
-                    Inside the name's own cell rather than in a track of its
-                    own, so the row keeps the columns it has and the name keeps
-                    the floor it was given. */}
-                <span className="dataset-row-label">
-                  <span className="dataset-row-name" title={dataset.fileName}>
-                    {dataset.fileName}
-                  </span>
-                  {dataset.relativeContext === null ? null : (
-                    <>
-                      {/* A separator in the text, not only a gap in the
-                          layout: the option's accessible name is its text run
-                          together, and without this a reader hears
-                          "sample.mzMLbatch-2". */}
-                      <span className="visually-hidden">, </span>
-                      <span className="dataset-row-context" title={dataset.relativeContext}>
-                        {dataset.relativeContext}
-                      </span>
-                    </>
-                  )}
-                </span>
-                {/* A separator in the text for the same reason as above: the
-                    family is part of the row's accessible name, and without it
-                    a reader hears "sample.raw1.2 MBThermo RAW". */}
-                <span className="visually-hidden">, </span>
-                <span className="dataset-row-kind">{SOURCE_KIND_LABEL[dataset.sourceKind]}</span>
-                <span className="visually-hidden">, </span>
-                <span className="dataset-row-size">{formatByteLength(dataset.byteLength)}</span>
-                {/* One track for both, so the name keeps a column of its own.
-                    An `auto` grid track takes its max-content width before the
-                    name's `1fr` gets any, and a long reason beside a long state
-                    could squeeze the name out of a narrow panel entirely. */}
-                {label === "" && reason === "" ? null : (
-                  <span className="dataset-row-notes">
-                    {label === "" ? null : <span className="dataset-row-state">{label}</span>}
-                    {/* A separator in the text, not only a gap in the layout.
-                        The row's accessible name is its text content run
-                        together, and without this a reader hears
-                        "Could not be readSelected — outside search". */}
-                    {label === "" || reason === "" ? null : (
-                      <span className="visually-hidden">, </span>
-                    )}
-                    {reason === "" ? null : <span className="dataset-row-kept">{reason}</span>}
-                  </span>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
     </section>
   );
 })

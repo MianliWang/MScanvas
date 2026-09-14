@@ -5,9 +5,47 @@ import { zhCN } from "./locales/zh-CN";
 import type { UiLocale } from "./sessionPreferences";
 
 export const UI_RESOURCES = { en, "zh-CN": zhCN } as const;
-export type MessageKey = Exclude<keyof typeof en, "rosterRows_one" | "rosterRows_other"> | "rosterRows";
+type PluralKey = "rosterRetainedAnnouncement" | "rosterRows" | "dragPicked" | "dragCount" | "dropRelease" | "noticeAdded" | "noticeDuplicates" | "noticeUnreadable" | "noticeFull" | "noticeRemoved" | "noticeGone" | "noticeCleared" | "noticeFolderLinked" | "noticeFolderInaccessible" | "noticeDropLinkedRoot" | "noticeDropInaccessibleRoot" | "noticeDropRemoteRoot" | "noticeDropUnsupportedRoot" | "noticeDropLinkedEntry" | "noticeDropInaccessibleEntry";
+export type MessageKey = Exclude<keyof typeof en, `${PluralKey}_${string}`> | PluralKey;
 export interface MessageParameters {
+  readonly rosterRetainedAnnouncement: { readonly count: number };
+  readonly dropRelease: { readonly count: number };
+  readonly noticeAdded: { readonly count: number };
+  readonly noticeDuplicates: { readonly count: number };
+  readonly noticeUnreadable: { readonly count: number };
+  readonly noticeFull: { readonly count: number };
+  readonly noticeRemoved: { readonly count: number };
+  readonly noticeGone: { readonly count: number };
+  readonly noticeCleared: { readonly count: number };
+  readonly noticeFolderLinked: { readonly count: number };
+  readonly noticeFolderInaccessible: { readonly count: number };
+  readonly noticeDropLinkedRoot: { readonly count: number };
+  readonly noticeDropInaccessibleRoot: { readonly count: number };
+  readonly noticeDropRemoteRoot: { readonly count: number };
+  readonly noticeDropUnsupportedRoot: { readonly count: number };
+  readonly noticeDropLinkedEntry: { readonly count: number };
+  readonly noticeDropInaccessibleEntry: { readonly count: number };
+  readonly moreNotListed: { readonly count: number };
+  readonly workspaceAnnouncement: { readonly message: string };
+  readonly noticeDuplicate: { readonly name: string };
+  readonly noticeRejected: { readonly name: string; readonly summary: string };
+  readonly noticeFolderLimit: { readonly reasons: string };
+  readonly noticeDropLimit: { readonly reasons: string };
+  readonly noticeListPair: { readonly left: string; readonly right: string };
+  readonly noticeListComma: { readonly left: string; readonly right: string };
   readonly rosterRows: { readonly count: number };
+  readonly dragPicked: { readonly count: number };
+  readonly dragCount: { readonly count: number };
+  readonly selectionContext: { readonly total: number; readonly hidden: number; readonly checked: number };
+  readonly rosterContext: { readonly total: number; readonly visible: number; readonly capacity: number };
+  readonly groupActions: { readonly name: string };
+  readonly rowActions: { readonly name: string };
+  readonly previewRetained: { readonly name: string };
+  readonly moveHandle: { readonly name: string };
+  readonly checkAcquisition: { readonly name: string };
+  readonly checkGroup: { readonly name: string; readonly count: number };
+  readonly groupDisclosure: { readonly name: string; readonly count: number };
+  readonly dragTarget: { readonly name: string; readonly count: number; readonly position: number; readonly total: number };
   readonly resourceCode: { readonly code: string };
   readonly unknownFigureProblem: { readonly code: string };
 }
@@ -31,28 +69,26 @@ export class ResourceProblem extends Error {
   }
 }
 
-const simpleKeys = Object.keys(en).filter((key) => !key.startsWith("rosterRows_"));
+const pluralKeys: readonly PluralKey[] = ["rosterRetainedAnnouncement", "rosterRows", "dragPicked", "dragCount", "dropRelease", "noticeAdded", "noticeDuplicates", "noticeUnreadable", "noticeFull", "noticeRemoved", "noticeGone", "noticeCleared", "noticeFolderLinked", "noticeFolderInaccessible", "noticeDropLinkedRoot", "noticeDropInaccessibleRoot", "noticeDropRemoteRoot", "noticeDropUnsupportedRoot", "noticeDropLinkedEntry", "noticeDropInaccessibleEntry"];
+const simpleKeys = Object.keys(en).filter((key) => !pluralKeys.some(base => key.startsWith(`${base}_`)));
 const parameters = (message: string): string =>
   [...new Set([...message.matchAll(/\{\{\s*(\w+)(?:,\s*number)?\s*\}\}/gu)].map((match) => match[1]))].sort().join(",");
 
 /** Required parameters at both the typed call site and the untyped boundary. */
 export function bindUiMessages(t: TFunction<"ui">): UiMessage {
   return <K extends MessageKey>(key: K, ...args: MessageArguments<K>): string => {
-    if (key !== "rosterRows" && !simpleKeys.includes(key)) throw new ResourceProblem("RESOURCE_KEYS", key);
+    const plural = pluralKeys.includes(key as PluralKey);
+    if (!plural && !simpleKeys.includes(key)) throw new ResourceProblem("RESOURCE_KEYS", key);
     const values = args[0];
-    if (key === "rosterRows") {
-      if (values === undefined || !("count" in values) || !Number.isSafeInteger(values.count) || values.count < 0) {
-        throw new ResourceProblem("RESOURCE_PARAMETERS", key);
-      }
-      return t("rosterRows", { count: values.count });
+    const baseline = en[(plural ? `${key}_other` : key) as keyof typeof en];
+    for (const parameter of parameters(baseline).split(",").filter(Boolean)) {
+      const value = (values as Record<string, unknown> | undefined)?.[parameter];
+      const numeric = ["count", "total", "hidden", "checked", "visible", "capacity", "position"].includes(parameter);
+      if (numeric ? typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 :
+        typeof value !== "string" || value.trim() === "") throw new ResourceProblem("RESOURCE_PARAMETERS", key);
     }
-    if (key === "resourceCode" || key === "unknownFigureProblem") {
-      if (values === undefined || !("code" in values) || typeof values.code !== "string" || values.code.trim() === "") {
-        throw new ResourceProblem("RESOURCE_PARAMETERS", key);
-      }
-      return key === "resourceCode" ? t("resourceCode", { code: values.code }) : t("unknownFigureProblem", { code: values.code });
-    }
-    return t(key as Exclude<MessageKey, keyof MessageParameters>);
+    // The generic engine call is behind the typed key/argument API and explicit runtime validation.
+    return (t as (key: string, options?: object) => string)(key, values);
   };
 }
 
@@ -63,13 +99,14 @@ export function validateBundle(locale: UiLocale, bundle: unknown): void {
   }
   const values = bundle as Record<string, unknown>;
   const plurals = new Intl.PluralRules(locale).resolvedOptions().pluralCategories;
-  const expected = [...simpleKeys, ...plurals.map((plural) => `rosterRows_${plural}`)];
+  const expected = [...simpleKeys, ...pluralKeys.flatMap(base => plurals.map(plural => `${base}_${plural}`))];
   if (Object.keys(values).some((key) => !expected.includes(key))) throw new ResourceProblem("RESOURCE_KEYS");
   for (const key of expected) {
     if (!(key in values)) throw new ResourceProblem("RESOURCE_MISSING", key);
     const value = values[key];
     if (typeof value !== "string" || value.trim() === "") throw new ResourceProblem("RESOURCE_EMPTY", key);
-    const baseline = key.startsWith("rosterRows_") ? en.rosterRows_other : en[key as keyof typeof en];
+    const base = pluralKeys.find(base => key.startsWith(`${base}_`));
+    const baseline = en[(base === undefined ? key : `${base}_other`) as keyof typeof en];
     if (parameters(value) !== parameters(baseline)) throw new ResourceProblem("RESOURCE_PARAMETERS", key);
   }
 }

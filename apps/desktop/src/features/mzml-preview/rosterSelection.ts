@@ -1,33 +1,14 @@
 /**
- * The workspace roster's own state, kept pure.
+ * Rust's complete roster remains authoritative. Focus, viewed acquisition,
+ * highlighted interaction selection and curated conversion membership are
+ * separate. Organization contains only session group labels and stable IDs.
  *
- * Seven ideas that are easy to collapse into one and must not be:
- *
- * - the **roster** is Rust's order and Rust's contents, adopted rather than
- *   derived;
- * - the **query** and the **sort** are how the user is looking at that roster,
- *   which changes what is on screen and never what the session holds;
- * - the **focused** row is the single row the keyboard acts on;
- * - the **selection** is the set `Remove selected` operates on, which may be
- *   none, one or many rows;
- * - the **anchor** is where a Shift range is measured from;
- * - the **active** row is the one whose preview is on screen or was explicitly
- *   asked for, which is not the same as being selected and not the same as
- *   being focused.
- *
- * Nothing here starts work. Every transition is a decision about what the user
- * is looking at, which is what makes moving around the roster free: a backend
- * read happens only where the hook explicitly asks for one. Searching and
- * sorting are the same kind of decision, which is why they live here rather
- * than behind a command.
- *
- * The query and the sort live in this state rather than beside it for one
- * concrete reason: every keyboard range, every `Ctrl+A` and every rule about
- * where focus lands is a question about the *visible* order, and answering it
- * in the same transition that changed the view is what keeps reconciliation to
- * one path and out of an effect that would have to dispatch to fix itself.
+ * Search and group disclosure define the flattened browsing range. Existing
+ * sort is an explicit execution-order input to M6.7, independent of arrangement.
+ * Hidden highlighted handles and a live range anchor survive view changes.
+ * Only explicit activation in the hook starts a scientific read.
  */
-
+import type { WorkspaceNoticePart } from "../workbench/workspaceMessages";
 import type {
   DropIngestionResult,
   FolderIngestionResult,
@@ -38,6 +19,7 @@ import type {
   WorkspaceRoster,
 } from "./contracts";
 import { formatDatasetLabel } from "./format";
+import { initialOrganization, organize, reconcileOrganization, type OrganizationAction, type OrganizationState } from "../workbench/organization";
 import {
   matchesQuery,
   projectRoster,
@@ -83,8 +65,8 @@ export function rowStateForError(kind: string): RowPresentation {
  */
 export interface WorkspaceNotice {
   readonly tone: "info" | "warning";
-  readonly message: string;
-  readonly details: readonly string[];
+  readonly message: readonly WorkspaceNoticePart[];
+  readonly details: readonly WorkspaceNoticePart[];
   /** How many more items there were than the details name. */
   readonly more: number;
   /**
@@ -110,87 +92,40 @@ export function plural(count: number, noun: string): string {
 }
 
 export function describeAddResult(result: WorkspaceAddResult): WorkspaceNotice {
-  const added = result.outcomes.filter((outcome) => outcome.outcome === "added").length;
-  const duplicates = result.outcomes.filter((outcome) => outcome.outcome === "duplicate");
-  const rejected = result.outcomes.flatMap((outcome) =>
-    outcome.outcome === "rejected" ? [outcome] : [],
-  );
-  const full = rejected.filter((outcome) => outcome.error.kind === "workspace_full").length;
+  const added = result.outcomes.filter(outcome => outcome.outcome === "added").length;
+  const duplicates = result.outcomes.flatMap(outcome => outcome.outcome === "duplicate" ? [outcome] : []);
+  const rejected = result.outcomes.flatMap(outcome => outcome.outcome === "rejected" ? [outcome] : []);
+  const full = rejected.filter(outcome => outcome.error.kind === "workspace_full").length;
   const unreadable = rejected.length - full;
-
-  const parts: string[] = [];
-  parts.push(added === 0 ? "No files were added." : `Added ${plural(added, "file")}.`);
-  if (duplicates.length > 0) {
-    parts.push(`${plural(duplicates.length, "file")} already in the workspace.`);
-  }
-  if (unreadable > 0) {
-    parts.push(`${plural(unreadable, "file")} could not be added.`);
-  }
-  if (full > 0) {
-    parts.push(
-      `${plural(full, "file")} did not fit: the workspace already holds as many as MSCanvas keeps.`,
-    );
-  }
-
-  const details = [
-    ...duplicates.map((outcome) =>
-      outcome.outcome === "duplicate"
-        ? `${formatDatasetLabel(outcome.existing)} is already in the workspace.`
-        : "",
-    ),
-    ...rejected.map((outcome) => `${outcome.candidateName}: ${outcome.error.summary}`),
+  const message: WorkspaceNoticePart[] = [added === 0 ? ["noticeNoneAdded"] : ["noticeAdded", { count: added }]];
+  if (duplicates.length > 0) message.push(["noticeDuplicates", { count: duplicates.length }]);
+  if (unreadable > 0) message.push(["noticeUnreadable", { count: unreadable }]);
+  if (full > 0) message.push(["noticeFull", { count: full }]);
+  const details: WorkspaceNoticePart[] = [
+    ...duplicates.map(outcome => ["noticeDuplicate", { name: formatDatasetLabel(outcome.existing) }] as const),
+    ...rejected.map(outcome => ["noticeRejected", { name: outcome.candidateName, summary: outcome.error.summary }] as const),
   ];
-  return {
-    tone: duplicates.length + rejected.length > 0 ? "warning" : "info",
-    message: parts.join(" "),
-    details: details.slice(0, MAX_NOTICE_DETAILS),
-    more: Math.max(0, details.length - MAX_NOTICE_DETAILS),
-    sequence: 0,
-  };
+  return { tone: duplicates.length + rejected.length > 0 ? "warning" : "info", message,
+    details: details.slice(0, MAX_NOTICE_DETAILS), more: Math.max(0, details.length - MAX_NOTICE_DETAILS), sequence: 0 };
 }
 
 export function describeRemoveResult(result: WorkspaceRemoveResult): WorkspaceNotice {
   const removed = result.removedHandles.length;
-  const parts = [
-    removed === 0
-      ? "No rows were removed."
-      : `Removed ${plural(removed, "file")} from the list. The files on disk were not changed.`,
-  ];
-  if (result.unknownHandles.length > 0) {
-    parts.push(`${plural(result.unknownHandles.length, "row")} had already gone.`);
-  }
-  return {
-    tone: result.unknownHandles.length > 0 ? "warning" : "info",
-    message: parts.join(" "),
-    details: [],
-    more: 0,
-    sequence: 0,
-  };
+  const message: WorkspaceNoticePart[] = [removed === 0 ? ["noticeNoneRemoved"] : ["noticeRemoved", { count: removed }]];
+  if (result.unknownHandles.length > 0) message.push(["noticeGone", { count: result.unknownHandles.length }]);
+  return { tone: result.unknownHandles.length > 0 ? "warning" : "info", message, details: [], more: 0, sequence: 0 };
 }
 
-export function describeClear(
-  removed: number,
-  pendingFolderImport = false,
-  pendingDropImport = false,
-): WorkspaceNotice {
-  const pendingImportMessage = pendingFolderImport
-    ? pendingDropImport
-      ? "The workspace is empty. The pending imports will not add files."
-      : "The workspace is empty. The pending folder import will not add files."
-    : "The workspace is empty. The pending drop will not add files.";
-  return {
-    tone: "info",
-    message:
-      removed === 0 && (pendingFolderImport || pendingDropImport)
-        ? pendingImportMessage
-        : `Cleared ${plural(removed, "file")} from the list. The files on disk were not changed.`,
-    details: [],
-    more: 0,
-    sequence: 0,
-  };
+export function describeClear(removed: number, pendingFolderImport = false, pendingDropImport = false): WorkspaceNotice {
+  const pending = pendingFolderImport ? pendingDropImport ? "noticePendingBoth" : "noticePendingFolder" : "noticePendingDrop";
+  return { tone: "info", message: [removed === 0 && (pendingFolderImport || pendingDropImport) ? [pending] : ["noticeCleared", { count: removed }]],
+    details: [], more: 0, sequence: 0 };
 }
 
 export interface RosterState {
+  readonly organization: OrganizationState;
+  /** Explicit conversion checkbox membership; independent of highlighted rows. */
+  readonly conversionMembership: ReadonlySet<string>;
   readonly datasets: readonly SelectedFile[];
   /** The session limit Rust enforces. Zero until the first roster read. */
   readonly capacity: number;
@@ -209,7 +144,7 @@ export interface SelectionModifiers {
   readonly shift: boolean;
 }
 
-export type RosterAction =
+type CoreRosterAction =
   | { readonly type: "rosterLoaded"; readonly roster: WorkspaceRoster }
   | { readonly type: "filesAdded"; readonly result: WorkspaceAddResult }
   | {
@@ -241,7 +176,14 @@ export type RosterAction =
   | { readonly type: "searchCleared" }
   | { readonly type: "sortChanged"; readonly sort: SortMode };
 
+export type RosterAction = CoreRosterAction
+  | { readonly type: "focusChanged"; readonly handle: string }
+  | { readonly type: "organization"; readonly action: OrganizationAction }
+  | { readonly type: "membershipChanged"; readonly handles: readonly string[]; readonly checked: boolean };
+
 export const initialRosterState: RosterState = {
+  organization: initialOrganization,
+  conversionMembership: new Set(),
   datasets: [],
   capacity: 0,
   query: "",
@@ -270,16 +212,22 @@ export function rosterProjection(
   converting: string | null = null,
   queued: ReadonlySet<string> = new Set(),
 ): RosterProjection {
-  return projectRoster({
+  const projection = projectRoster({
     datasets: state.datasets,
     query: state.query,
     sort: state.sort,
-    selected: state.selected,
+    selected: new Set(),
     active: state.active,
     rowState: state.rowState,
     converting,
     queued,
   });
+  const organization = reconcileOrganization(state.organization, state.datasets.map(row => row.handle));
+  const rows = new Map(projection.datasets.map(row => [row.handle, row]));
+  const datasets = organization.groups.flatMap(group => group.collapsed ? [] :
+    group.handles.flatMap(handle => { const row = rows.get(handle); return row === undefined ? [] : [row]; }));
+  const handles = new Set(datasets.map(row => row.handle));
+  return { ...projection, datasets, handles, pinned: new Map([...projection.pinned].filter(([handle]) => handles.has(handle))) };
 }
 
 function handlesOf(datasets: readonly SelectedFile[]): Set<string> {
@@ -378,8 +326,8 @@ function withFocus(
     anchor: from,
     // Over what is on screen. A range that quietly swept up the rows a search
     // is hiding would be a selection the user cannot see and cannot check
-    // before pressing `Remove selected`.
-    selected: new Set(rangeBetween(visible, from, handle)),
+    // before pressing `Remove highlighted`.
+    selected: new Set([...state.selected].filter(id => !visible.some(row => row.handle === id)).concat(rangeBetween(visible, from, handle))),
   };
 }
 
@@ -398,7 +346,7 @@ function steppedTo(
 }
 
 /**
- * Puts focus and the range anchor back on rows the user can actually see.
+ * Reconciles visible focus while preserving an authoritative live range anchor.
  *
  * The single reconciliation path, run at the end of every transition. Most of
  * the time it changes nothing: with no query every row is visible, so a focused
@@ -421,7 +369,7 @@ function reconciled(
   const visible = rosterProjection(next);
   const live = visible.handles;
   const first = visible.datasets[0]?.handle ?? null;
-  const anchorSurvives = next.anchor !== null && live.has(next.anchor);
+  const anchorSurvives = next.anchor !== null && next.datasets.some(row => row.handle === next.anchor);
   if (next.focused === null && first !== null) {
     // Nothing is focused and there are rows to focus. The list already draws
     // the first of them with the tab stop, so this is only the state agreeing
@@ -434,11 +382,11 @@ function reconciled(
     // The anchor goes with it, as it does on every focus move that is not an
     // extension: with no focused row there is no range in progress for an
     // anchor to be the far end of.
-    return { ...next, focused: first, anchor: first };
+    return { ...next, focused: first, anchor: anchorSurvives ? next.anchor : first };
   }
   if (next.focused === null || live.has(next.focused)) {
-    // Nothing was lost. A hidden anchor still has to go: kept, the next Shift
-    // action would measure a range from a row that is not on screen.
+    // Nothing was lost. A removed anchor must be replaced; a hidden live anchor
+    // remains available when its row becomes visible again.
     return anchorSurvives || next.anchor === null
       ? next
       : { ...next, anchor: next.focused };
@@ -469,11 +417,42 @@ function preferenceFor(action: RosterAction): "first" | "nearest" {
 }
 
 export function rosterReducer(state: RosterState, action: RosterAction): RosterState {
+  if (action.type === "focusChanged") {
+    return state.focused === action.handle || !rosterProjection(state).handles.has(action.handle)
+      ? state : { ...state, focused: action.handle };
+  }
+  if (action.type === "organization") {
+    const organization = organize(reconcileOrganization(state.organization, state.datasets.map(row => row.handle)), action.action);
+    return reconciled({ ...state, organization }, state, "nearest");
+  }
+  if (action.type === "membershipChanged") {
+    const live = handlesOf(state.datasets), conversionMembership = new Set(state.conversionMembership);
+    for (const handle of action.handles) if (live.has(handle)) {
+      if (action.checked) conversionMembership.add(handle); else conversionMembership.delete(handle);
+    }
+    return { ...state, conversionMembership };
+  }
   const next = transition(state, action);
-  return next === state ? state : reconciled(next, state, preferenceFor(action));
+  if (next === state) return state;
+  const live = handlesOf(next.datasets);
+  let conversionMembership = keptIn(state.conversionMembership, live);
+  // Preserve each lawful import default explicitly. Roster reads only prune.
+  if (action.type === "filesAdded") {
+    const added = action.result.outcomes.flatMap(outcome => outcome.outcome === "added" ? [outcome.dataset.handle] : []);
+    if (added.length) conversionMembership = new Set(added);
+  } else if (action.type === "folderImported" || action.type === "dropImported") {
+    for (const outcome of action.result.outcomes) if (outcome.outcome === "added") conversionMembership.add(outcome.dataset.handle);
+  } else if (action.type === "outputsAdopted") {
+    for (const outcome of action.result.outcomes) if (outcome.kind === "added") conversionMembership.add(outcome.dataset.handle);
+  }
+  const sameMembership = conversionMembership.size === state.conversionMembership.size && [...conversionMembership].every(id => state.conversionMembership.has(id));
+  return reconciled({ ...next,
+    organization: reconcileOrganization(state.organization, next.datasets.map(row => row.handle)),
+    conversionMembership: sameMembership ? state.conversionMembership : conversionMembership,
+  }, state, preferenceFor(action));
 }
 
-function transition(state: RosterState, action: RosterAction): RosterState {
+function transition(state: RosterState, action: CoreRosterAction): Omit<RosterState, "organization" | "conversionMembership"> {
   switch (action.type) {
     case "searchChanged":
       return action.query === state.query ? state : { ...state, query: action.query };
@@ -650,7 +629,7 @@ function transition(state: RosterState, action: RosterAction): RosterState {
       // Pruned against the authoritative roster: a row the user selected while
       // the scan ran can have been removed by something else in the same
       // window, and carrying a handle Rust no longer holds would arm
-      // `Remove selected` with a row that is not there.
+      // `Remove highlighted` with a row that is not there.
       const kept = keptIn(state.selected, live);
       const first = added[0];
       if (first === undefined) {
@@ -718,7 +697,7 @@ function transition(state: RosterState, action: RosterAction): RosterState {
       // when the rows they had picked are the rows that went.
       const kept = keptIn(state.selected, live);
       // The row beside the gap is a "keep going" affordance for pruning a run
-      // of files, and it arms the next `Remove selected` without the user
+      // of files, and it arms the next `Remove highlighted` without the user
       // pressing anything. That is only safe for a row the search itself
       // found. `survivor` now comes from the projection, so it is always on
       // screen; the rows this refuses are the ones on screen for another
@@ -785,8 +764,8 @@ function transition(state: RosterState, action: RosterAction): RosterState {
           focused: handle,
           anchor: from,
           selected: modifiers.ctrl
-            ? new Set([...state.selected, ...range])
-            : new Set(range),
+             ? new Set([...state.selected, ...range])
+            : new Set([...state.selected].filter(id => !visible.some(row => row.handle === id)).concat(range)),
         };
       }
       if (modifiers.ctrl) {
@@ -838,7 +817,7 @@ function transition(state: RosterState, action: RosterAction): RosterState {
     case "allSelected": {
       // Everything on screen, which under a search is not everything the
       // session holds. Selecting rows the user cannot see would hand
-      // `Remove selected` a batch they never looked at.
+      // `Remove highlighted` a batch they never looked at.
       const visible = rosterProjection(state).datasets;
       if (visible.length === 0) {
         return state;
@@ -848,7 +827,7 @@ function transition(state: RosterState, action: RosterAction): RosterState {
         ...state,
         focused,
         anchor: focused,
-        selected: handlesOf(visible),
+        selected: new Set([...state.selected, ...handlesOf(visible)]),
       };
     }
 
@@ -857,7 +836,7 @@ function transition(state: RosterState, action: RosterAction): RosterState {
         return state;
       }
       // Selection is deliberately left alone. Previewing one row is not a
-      // statement about which rows `Remove selected` would take.
+      // statement about which rows `Remove highlighted` would take.
       return { ...state, focused: action.handle, active: action.handle };
     }
 

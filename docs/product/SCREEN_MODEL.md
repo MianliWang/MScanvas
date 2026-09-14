@@ -1,6 +1,24 @@
 # Screen and workspace model
 
-## Workbench shell
+## Current M7.2 workbench shell
+
+The single logo/name Home action opens the workbench without resetting it.
+Workbench and Conversion & results retain one set of workspace, provider, queue,
+viewer and export owners while presentation surfaces hide or fold. The header
+keeps active work discoverable. Acquisitions and Details can fold independently;
+constrained windows show one auxiliary panel or the evidence region at a time.
+The roster scrolls locally and evidence receives the remaining space.
+
+The acquisition treegrid distinguishes keyboard focus, viewed source,
+highlighted interaction selection and checkbox conversion membership. One level
+of session groups references Rust dataset handles. Highlighted rows may remain
+hidden by search/collapse; selection context reports that count. Menus, local
+undo and pointer/keyboard drag change presentation references, never the roster
+or execution order. New acquisitions enter Ungrouped; dissolving a group does
+not remove any acquisition. See the
+[implementation record](../ux/M7_2_WORKBENCH_SHELL_ROSTER_ORGANIZATION.md).
+
+## Historical M0 structural candidate
 
 The first structural prototype uses a resizable workbench:
 

@@ -728,7 +728,20 @@ own build attribution.
 Protected source publication and local closeout require
 the task PR's evidence; local acceptance alone is not publication. See the
 [M7.1 implementation record](docs/ux/M7_1_LOCALIZED_SETTINGS_SHARED_CONTROLS.md).
-M7.2 remains **NEXT / NOT STARTED**. M8/M9/M10
+**M7.2 — Workbench shell and roster organization — IMPLEMENTED / VALIDATED.**
+A light bilingual shell preserves mounted operations across
+Home, navigation, folding and Settings. Keyboard focus, viewed acquisition,
+highlighted rows and conversion membership are independent. Session groups,
+ID-based multi-drag, height-aware windowing, local menus and bounded safe undo
+change browsing arrangement without changing execution order. Its
+[implementation record](docs/ux/M7_2_WORKBENCH_SHELL_ROSTER_ORGANIZATION.md)
+records measured browser acceptance and 3/3 targeted native scenarios at actual
+150% scaling, including automated real Explorer file/folder import and natural
+picker return. PR review corrections add positional keyboard feedback and
+availability-gated Details, with a newly attributable build and 2/2 affected
+native scenarios at the same scale. Protected publication and main-CI closeout are recorded in the
+task PR and retained local closeout; local acceptance alone is not publication.
+M7.3 remains **NEXT / NOT STARTED**. M8/M9/M10
 remain later owners. External support/signing/distribution/sample/release
 decisions have explicit owner deadlines in ADR 0047; they are not waived.
 

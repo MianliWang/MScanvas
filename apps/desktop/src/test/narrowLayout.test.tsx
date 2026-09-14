@@ -325,7 +325,7 @@ describe("narrow desktop layout markup", () => {
     expect(await screen.findAllByRole("button", { name: "Add files…" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Add mzML folder…" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Preview focused" })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "Remove selected" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Remove highlighted" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Check again" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Choose folder…" })).toHaveLength(1);
   });
@@ -342,7 +342,7 @@ describe("narrow desktop layout markup", () => {
 
     expect(
       await screen.findByText(
-        "MSCanvas reads local .mzML files from this computer and never writes to them. Nothing is uploaded and nothing leaves this machine.",
+        "Add local data, then activate an mzML row to inspect its plots and scans. Vendor acquisitions remain available for conversion.",
       ),
     ).toBeVisible();
   });
@@ -563,7 +563,7 @@ describe("narrow desktop layout markup", () => {
       </WorkspaceDropTransportProvider>,
     );
     const line = () => document.querySelector("#dataset-roster-matches");
-    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
     expect(line()).not.toHaveClass("dataset-roster-matches");
 
@@ -572,7 +572,7 @@ describe("narrow desktop layout markup", () => {
     });
 
     expect(line()).toHaveClass("dataset-roster-matches");
-    expect(line()).toHaveTextContent("2 matches of 3 files.");
+    expect(line()).toHaveTextContent("2 visible / 3 acquisitions");
   });
 
   it("leaves the workspace roster scrolling inside its own panel", async () => {
@@ -680,6 +680,7 @@ describe("the conversion queue at each checked window size", () => {
         </WorkspaceDropTransportProvider>,
       );
 
+      fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
       await screen.findByText("Converting item 2 of 3…");
       // One list of items, not one per breakpoint.
       const lists = document.querySelectorAll(".conversion-queue-list");

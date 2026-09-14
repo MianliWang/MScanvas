@@ -72,6 +72,7 @@ function mount(options: FakePreviewApiOptions = {}): FakePreviewApi {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
+  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
   return api;
 }
 

@@ -10,7 +10,7 @@ const rows: readonly SelectedFile[] = [
   { handle: "three", fileName: "run-2.raw", byteLength: 10, sourceKind: "sciex_wiff", relativeContext: null },
   { handle: "open", fileName: "open.mzML", byteLength: 5, sourceKind: "mzml", relativeContext: null },
 ];
-const facts = { ...initialRosterState, datasets: rows, selected: new Set(["two", "open"]), focused: "one" };
+const facts = { ...initialRosterState, datasets: rows, selected: new Set(["two", "open"]), conversionMembership: new Set(["two", "open"]), focused: "one" };
 
 describe("explicit conversion scope over the complete roster", () => {
   it("separates selected, all, visible and eligible; preserves hidden selection", () => {
@@ -27,10 +27,10 @@ describe("explicit conversion scope over the complete roster", () => {
   });
 
   it("keeps one-row selection selected and never falls back to focus", () => {
-    expect(resolveConversionScope("selected", { ...facts, selected: new Set(["two"]) }))
+    expect(resolveConversionScope("selected", { ...facts, conversionMembership: new Set(["two"]) }))
       .toMatchObject({ scope: "selected", requestedCount: 1, handles: ["two"] });
     for (const selected of [new Set<string>(), new Set(["open"]), new Set(["missing"])]) {
-      expect(resolveConversionScope("selected", { ...facts, selected }).handles).toEqual([]);
+      expect(resolveConversionScope("selected", { ...facts, conversionMembership: selected }).handles).toEqual([]);
     }
     expect(resolveConversionScope("all", { ...facts, datasets: [] })).toMatchObject({ requestedCount: 0, excludedCount: 0, handles: [] });
   });
@@ -41,7 +41,7 @@ describe("explicit conversion scope over the complete roster", () => {
     "size-desc": ["one", "two", "three"],
   };
   for (const sort of SORT_MODES) it(`uses ${sort} and Rust added order for ties in both scopes`, () => {
-    const input = { ...facts, sort, selected: new Set(rows.map((row) => row.handle)) };
+    const input = { ...facts, sort, conversionMembership: new Set(rows.map((row) => row.handle)) };
     for (const scope of ["selected", "all"] as const) {
       expect(resolveConversionScope(scope, input).handles).toEqual(expected[sort]);
       const visible = projectRoster({ ...input, query: "", converting: null, queued: new Set<string>() });
@@ -57,6 +57,6 @@ describe("explicit conversion scope over the complete roster", () => {
     expect(sameConversionScope(selected, { ...selected, scope: "all" })).toBe(false);
     const all = resolveConversionScope("all", facts);
     expect(sameConversionScope(all, { ...all, handles: [...all.handles].reverse() })).toBe(false);
-    expect(sameConversionScope(all, resolveConversionScope("all", { ...facts, selected: new Set() }))).toBe(true);
+    expect(sameConversionScope(all, resolveConversionScope("all", { ...facts, conversionMembership: new Set() }))).toBe(true);
   });
 });

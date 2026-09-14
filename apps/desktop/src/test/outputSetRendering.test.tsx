@@ -102,6 +102,7 @@ function renderApp(api: FakePreviewApi): void {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
+  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
 }
 
 async function renderState(
@@ -194,10 +195,10 @@ describe("rendered QA for the one-to-many output topology", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    await screen.findByRole("option", { name: new RegExp(LONG_NAME.slice(0, 20)) });
-    const rows = within(screen.getByRole("listbox", { name: "Workspace" })).getAllByRole("option");
-    fireEvent.click(rows[0]);
-    fireEvent.click(rows[1], { ctrlKey: true });
+    await screen.findByRole("row", { name: new RegExp(LONG_NAME.slice(0, 20)) });
+    const rows = Array.from(screen.getByRole("treegrid", { name: "Acquisitions" }).querySelectorAll<HTMLElement>("[data-handle]"));
+    fireEvent.click(within(rows[0]).getByRole("checkbox"));
+    fireEvent.click(within(rows[1]).getByRole("checkbox"));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await awaitPlan(panel);
@@ -224,7 +225,7 @@ describe("rendered QA for the one-to-many output topology", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("option", { name: new RegExp(LONG_NAME.slice(0, 20)) }));
+    fireEvent.click(within(await screen.findByRole("row", { name: new RegExp(LONG_NAME.slice(0, 20)) })).getByRole("checkbox"));
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
       expect(
