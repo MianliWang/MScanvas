@@ -456,3 +456,75 @@ and unchanged Rust evidence remain explicitly attributed to those runs.
 Independent read-only reviews 12 and 13 verified their immutable snapshots
 and found no confirmed actionable issue; final acceptance reconciliation and
 publication identities are retained in the PR and local closeout.
+
+### Row-menu focus survives collapsed and windowed destinations
+
+Review comment 4001865161 on `438a0c63177f81c50f8f50c83da2dff05b4d3c01`
+confirmed that moving into a collapsed group unmounts the menu trigger before
+Radix can return focus. The row now captures the destination disclosure and a
+stable toolbar fallback separately. On close, a surviving original trigger
+keeps Radix's normal return; otherwise a connected destination disclosure, or
+the still-connected toolbar fallback, receives focus. Independent review 14
+identified the additional case where a bulk move also unmounts the destination
+header. Review 15 covers that correction; organization payloads and data order
+are unchanged.
+
+Comment 4001865156 was not reproduced. Both existing locales explicitly describe
+the absence of *visible* matching rows and offer expansion of a group. Browser
+27 passes that case in both locales before any product correction: the group
+still contains one acquisition, and expansion reveals the query match without
+changing the query or invoking IPC. Its separate menu-focus regression fails.
+The comment receives an individual evidence-backed non-issue disposition.
+
+Browser 28 passes both cases (2/2, three captures). Final supplemental browser
+31 passes the windowing boundary (1/1, one capture in `browser-Zg65LX/`): with
+230 acquisitions, moving 80 highlighted rows into a collapsed group leaves
+scrollTop at 3428, unmounts the previously connected target header, and returns
+focus to New group. The 80 hidden highlights and unchanged IPC ledger are
+asserted. Browser 29/30 failed setup assumptions: clearing a field through an
+empty WebDriver value did not clear the React query, and the key sequence did
+not select the intended target. Browser 31 uses the actual Clear search button
+and named menu item. These unsuccessful records remain retained.
+
+Build 08 changes only GroupedRosterList from build 06 (intermediate build 07
+also remains retained). Its 166 production inputs match before/after; manifest
+SHA-256 is
+`a690b4768efc7ae72b03c7a8025966c57073bd84953573ce5d17403efd658e5a`.
+The 16,225,792-byte E2E executable has SHA-256
+`88376f1662c9d82f9a89ff67966047972aaa05f2abef33343063a8f0abc461b5`.
+JS `index-C-A614vf.js` has SHA-256
+`1ef785d852f46db3786d7d171b06d8e8d99cd079a7bdcde9846b00dc0768cac1`;
+CSS remains unchanged. There is no new production dependency or Rust change.
+
+Native build 08 passes 2/2, exit 0, in 22.2 seconds; evidence `native-1l5bkk/`,
+launch `menu-final-native-20260914T031302034Z/`, session
+`e693a1cdfeab8e15d77fc020d1c49566`. It retains real reads/drafts and verifies
+keyboard menu selection into a collapsed group, actual focus on its disclosure,
+and Enter expansion without extra IPC or preview reads. Five captures retain
+the actual 144 DPI viewport/raster pairs; console, mock answers and external
+resources are empty and horizontal overflow is zero. Processes/ports were
+measured released afterward. Earlier build-06 activation/capacity, build-03
+keyboard/Inspector and build-02 Explorer/picker-return evidence remain
+separately attributed and were not repeated as full campaigns.
+
+The preceding build-07 native attempt failed its initial foreground guard
+before entering any product case; observed foreground owners were Chrome and
+Code, not evidence of a locked desktop. The completed build-08 run records one
+initial helper completion at 03:13:08.2760460Z, on PID 48784/HWND 1445176, which
+was already the foreground owner. Initial native measurement occurred later
+at 03:13:12.1384938Z, before the unchanged guard and any test input. Thus no
+helper activation overlapped picker or menu focus restoration in this actual
+run. The temporary concurrent launcher had a potential ordering/error-recording
+race and is retired with an execution guard; its executed copy and raw logs
+remain history. A guard-only replacement is not claimed as another native run.
+
+Frontend CI on head `438a0c63177f81c50f8f50c83da2dff05b4d3c01` failed
+attempt 1 of run 34800059108: 1,758 tests passed and the existing ConversionPanel
+"restores Convert focus even when the plan is momentarily gone" assertion
+received body focus. The current focused file subsequently passes 31/31; full
+local run 06 passes 1,759/77 on build-07 source, and the final menu fallback's
+related roster/conversion files pass 107/107. The CI failure and root-cause
+uncertainty remain recorded; a later pass does not establish a repair of that
+historical focus condition. No test was removed, skipped or weakened. Final
+candidate CI, protected merge and local closeout are recorded under their actual
+identities in the PR and local closeout rather than inferred from these runs.

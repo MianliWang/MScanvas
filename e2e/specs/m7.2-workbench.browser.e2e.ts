@@ -257,6 +257,102 @@ describe("M7.2 workbench shell and grouped roster", () => {
       expect(await consoleEntries()).toEqual([]);
     }
   });
+  it("review disposition: keeps matching acquisitions in collapsed groups recoverable", async () => {
+    for (const language of ["en", "zh-CN"] as const) {
+      const table: Record<string, unknown> = ipcTable();
+      table.subscribe_workspace_drop_updates = { reservationId: "browser-m72-reservation" };
+      table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile] };
+      await installIpcBoundary(table); await metrics(1366, 768, 1.5); await browser.url("/");
+      await browser.$(row(selectedFile.handle)).waitForDisplayed();
+      await newGroup("Collapsed matches");
+      const group = '.roster-group-header[data-group-id="group-1"]';
+      await browser.$(`${group} .group-disclosure`).click();
+      await browser.$(`${row(selectedFile.handle)} .row-menu-trigger`).click();
+      await browser.$('[role="menuitem"]=Collapsed matches').click();
+      if (language === "zh-CN") await locale(language);
+      const before = await ipcCalls();
+      await browser.$("#dataset-roster-search").setValue(selectedFile.fileName);
+      expect(await browser.$(".roster-empty strong").getText()).toBe(language === "en" ? "No matching rows are visible" : "没有可见的匹配行");
+      expect(await browser.$(".roster-empty span").getText()).toBe(language === "en" ? "Clear the search or expand a group. Hidden highlighted rows remain selected." : "请清除搜索或展开分组。隐藏的高亮行仍保持选中。");
+      expect(await browser.$(`${group} .group-count`).getText()).toBe("1");
+      await capture(`review-collapsed-match-${language}`);
+      await browser.$(`${group} .group-disclosure`).click();
+      await browser.$(row(selectedFile.handle)).waitForDisplayed();
+      expect(await browser.$("#dataset-roster-search").getValue()).toBe(selectedFile.fileName);
+      expect(await browser.$(".roster-empty").isExisting()).toBe(false);
+      expect(await ipcCalls()).toEqual(before);
+      expect(await consoleEntries()).toEqual([]);
+    }
+  });
+  it("review regression: restores row-menu focus after moving into a collapsed group", async () => {
+    const table: Record<string, unknown> = ipcTable();
+    table.subscribe_workspace_drop_updates = { reservationId: "browser-m72-reservation" };
+    table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile] };
+    await installIpcBoundary(table); await metrics(1366, 768, 1.5); await browser.url("/");
+    await browser.$(row(selectedFile.handle)).waitForDisplayed();
+    await newGroup("Keyboard destination");
+    const group = '.roster-group-header[data-group-id="group-1"]';
+    await browser.$(`${group} .group-disclosure`).click();
+    const before = await ipcCalls();
+    await browser.$(`${row(selectedFile.handle)} .row-menu-trigger`).click();
+    await browser.keys(["End", "Enter"]);
+    await browser.$('[role="menu"]').waitForExist({ reverse: true });
+    await browser.$(row(selectedFile.handle)).waitForExist({ reverse: true });
+    await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches('.roster-group-header[data-group-id="group-1"] .group-disclosure') === true));
+    await capture("review-menu-collapsed-focus");
+    await browser.keys("Enter");
+    await browser.$(row(selectedFile.handle)).waitForDisplayed();
+    expect(await ipcCalls()).toEqual(before);
+    expect(await consoleEntries()).toEqual([]);
+  });
+  it("review regression: falls back when a bulk move unmounts the destination header", async () => {
+    const table: Record<string, unknown> = ipcTable();
+    table.subscribe_workspace_drop_updates = { reservationId: "browser-m72-reservation" };
+    table.get_workspace_roster = { capacity: 1024, datasets: Array.from({ length: 230 }, (_, index) => ({ ...selectedFile,
+      handle: `menu-${index}`, sourceKind: "thermo_raw", fileName: `${index < 80 ? "Move" : "Tail"}_${index}.raw`,
+    })) };
+    await installIpcBoundary(table); await metrics(1366, 768, 1.5); await browser.url("/");
+    await browser.$(row("menu-0")).waitForDisplayed();
+    await newGroup("Collapsed target"); await newGroup("Tail");
+    const search = browser.$("#dataset-roster-search");
+    await search.setValue("Tail_"); await browser.$(row("menu-80")).click();
+    await browser.performActions([{ type: "key", id: "menu-tail-select", actions: [{ type: "keyDown", value: "\uE009" }, { type: "keyDown", value: "a" }, { type: "keyUp", value: "a" }, { type: "keyUp", value: "\uE009" }] }]);
+    await browser.releaseActions();
+    expect(await browser.$(".roster-selection-context").getText()).toContain("150 highlighted");
+    await browser.$(`${row("menu-80")} .row-menu-trigger`).click();
+    await browser.$('[role="menuitem"]=Tail').click();
+    await search.setValue("Move_"); await browser.$(row("menu-0")).click();
+    await browser.performActions([{ type: "key", id: "menu-source-select", actions: [{ type: "keyDown", value: "\uE009" }, { type: "keyDown", value: "a" }, { type: "keyUp", value: "a" }, { type: "keyUp", value: "\uE009" }] }]);
+    await browser.releaseActions();
+    expect(await browser.$(".roster-selection-context").getText()).toContain("80 highlighted");
+    await browser.keys("End"); await browser.$(row("menu-79")).waitForDisplayed();
+    await browser.$("button=Clear search").click();
+    await browser.$('[data-group-id="group-1"] .group-disclosure').click();
+    await browser.$(`${row("menu-79")} .row-menu-trigger`).click();
+    expect(await browser.$('.grouped-roster[data-windowed="true"]').isExisting()).toBe(true);
+    const before = await ipcCalls();
+    const beforeScroll = await browser.execute(() => {
+      const target = document.querySelector('[data-group-id="group-1"] .group-disclosure');
+      if (target === null) throw Error("Target header must be mounted before the move.");
+      Reflect.set(window, "__m72MenuTargetBefore", target);
+      return document.querySelector(".grouped-roster")!.scrollTop;
+    });
+    expect(beforeScroll).toBeGreaterThan(1000);
+    await browser.$('[role="menuitem"]=Collapsed target').click();
+    await browser.$('[role="menu"]').waitForExist({ reverse: true });
+    evidence.push({ kind: "bulk menu windowing after move", beforeScroll, observed: await browser.execute(() => ({
+      targetConnected: (Reflect.get(window, "__m72MenuTargetBefore") as Element).isConnected,
+      focus: document.activeElement?.outerHTML, scrollTop: document.querySelector(".grouped-roster")!.scrollTop,
+      groups: Array.from(document.querySelectorAll(".roster-group-header")).map(element => ({ id: element.getAttribute("data-group-id"), text: element.textContent, expanded: element.getAttribute("aria-expanded") })),
+      selection: document.querySelector(".roster-selection-context")?.textContent,
+    })) });
+    await browser.waitUntil(() => browser.execute(() => !(Reflect.get(window, "__m72MenuTargetBefore") as Element).isConnected));
+    await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches(".organization-toolbar button:first-child") === true));
+    expect(await ipcCalls()).toEqual(before);
+    expect(await browser.$(".roster-selection-context").getText()).toContain("80 highlighted · 80 hidden");
+    await capture("review-menu-unmounted-target-fallback");
+    expect(await consoleEntries()).toEqual([]);
+  });
   it("keeps work and independent checked/highlighted state through real navigation and organization", async () => {
     const table = ipcTable();
     table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile, ...Array.from({ length: 5 }, (_, i) => ({ ...selectedFile, handle: `sample-${i}`, fileName: `研究样本_${i}_long_acquisition_name.mzML` }))] };

@@ -265,6 +265,30 @@ describe("M7.2 affected final native workbench paths", function () {
     const state = await capture("07-native-picker-cancel-natural-return"); expect(state.rows).toHaveLength(6);
     expect((await calls()).slice(before.length).filter(call => call.command === "open_mzml_preview")).toEqual([]);
   });
+  it("restores native menu focus after moving a real acquisition into a collapsed group", async () => {
+    await browser.$("button=New group").click();
+    await browser.$("#organization-group-name").setValue("Native menu target");
+    await browser.$("button=Save group").click();
+    await browser.$(".group-name-dialog").waitForExist({ reverse: true });
+    const groupId = await browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>(".roster-group-header"))
+      .find(element => element.querySelector(".group-disclosure")?.textContent?.includes("Native menu target"))?.dataset.groupId);
+    if (groupId === undefined) throw Error("Native menu destination was not created.");
+    const group = `.roster-group-header[data-group-id="${groupId}"]`;
+    await browser.$(`${group} .group-disclosure`).click();
+    const before = await calls();
+    const beforeReads = await previewReads();
+    await browser.$(`${row(firstHandle)} .row-menu-trigger`).click();
+    await browser.keys(["End", "Enter"]);
+    await browser.$('[role="menu"]').waitForExist({ reverse: true });
+    await browser.$(row(firstHandle)).waitForExist({ reverse: true });
+    await browser.waitUntil(() => browser.execute(id => document.activeElement?.closest<HTMLElement>(".roster-group-header")?.dataset.groupId === id && document.activeElement?.matches(".group-disclosure"), groupId));
+    await capture("review-native-collapsed-menu-focus");
+    await browser.keys("Enter");
+    await browser.$(row(firstHandle)).waitForDisplayed();
+    expect(await calls()).toEqual(before);
+    expect(await previewReads()).toEqual(beforeReads);
+    await capture("review-native-collapsed-menu-recovered");
+  });
   it("reveals accepted roster previews from conversion at native wide and constrained sizes", async () => {
     await browser.$(".workbench-navigation button:nth-child(2)").click();
     await browser.$(row(secondHandle)).click();

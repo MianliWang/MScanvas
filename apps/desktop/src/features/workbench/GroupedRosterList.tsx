@@ -232,6 +232,9 @@ const AcquisitionRow = memo(function AcquisitionRow({ row, group, state, project
   readonly onPress: Props["onRowPress"]; readonly moveTo: (source: string, group: string) => void; readonly measure: (node: HTMLElement | null, key: string) => void; readonly reduced: boolean;
 }) {
   const t = useUiMessages(), highlighted = state.selected.has(row.handle);
+  const menuTrigger = useRef<HTMLButtonElement | null>(null);
+  const menuReturnTarget = useRef<HTMLElement | null>(null);
+  const menuReturnFallback = useRef<HTMLElement | null>(null);
   const { ref, handleRef, isDropTarget, isDragSource } = useSortable({ id: row.handle, group: group.id, index: group.handles.indexOf(row.handle), data: { handle: row.handle, groupId: group.id }, type: "acquisition", accept: "acquisition", plugins: sortablePlugins, transition: reduced ? null : { duration: 140 } });
   const setRef = useCallback((node: HTMLDivElement | null) => { ref(node); measure(node, row.handle); }, [ref, measure, row.handle]);
   const presentation = rowPresentation(state, row.handle), pin = projection.pinned.get(row.handle);
@@ -246,9 +249,27 @@ const AcquisitionRow = memo(function AcquisitionRow({ row, group, state, project
       {row.relativeContext !== null ? <span className="dataset-row-context" title={row.relativeContext}>{row.relativeContext}</span> : null}
       <span className="dataset-row-facts"><span>{SOURCE_KIND_LABEL[row.sourceKind]}</span><span>{formatByteLength(row.byteLength)}</span>{viewed ? <span>{t("showingRow")}</span> : null}{status ? <span>{status}</span> : null}{pin ? <span>{t("outsideSearch")}</span> : null}</span></div>
     <div role="gridcell" className="roster-row-controls"><button ref={handleRef} tabIndex={tabIndex} type="button" data-drag-handle aria-describedby="roster-drag-instructions" aria-label={t("moveHandle", { name: row.fileName })} className="row-drag-handle">⠿</button>
-      <Menu.Root><Menu.Trigger asChild><button tabIndex={tabIndex} type="button" className="row-menu-trigger" aria-label={t("rowActions", { name: row.fileName })}>⋯</button></Menu.Trigger><Menu.Portal><Menu.Content className="roster-menu" sideOffset={4}>
+      <Menu.Root><Menu.Trigger asChild><button ref={menuTrigger} tabIndex={tabIndex} type="button" className="row-menu-trigger" aria-label={t("rowActions", { name: row.fileName })}>⋯</button></Menu.Trigger><Menu.Portal><Menu.Content className="roster-menu" sideOffset={4}
+        onCloseAutoFocus={event => {
+          const destination = menuReturnTarget.current?.isConnected ? menuReturnTarget.current : menuReturnFallback.current;
+          menuReturnTarget.current = null;
+          menuReturnFallback.current = null;
+          if (!menuTrigger.current?.isConnected && destination?.isConnected) {
+            event.preventDefault();
+            destination.focus();
+          }
+        }}>
         <Menu.Label>{t("moveToGroup")} · {t("dragCount", { count: highlighted ? state.selected.size : 1 })}</Menu.Label>
-        {state.organization.groups.map(destination => <Menu.Item key={destination.id} onSelect={() => moveTo(row.handle, destination.id)}>{destination.id === UNGROUPED ? t("ungrouped") : destination.name}</Menu.Item>)}
+        {state.organization.groups.map(destination => <Menu.Item key={destination.id} onSelect={() => {
+          // A collapsed destination unmounts this trigger. Capture a stable
+          // return control before the move, including a windowing fallback.
+          const panel = menuTrigger.current?.closest(".dataset-roster-panel");
+          const header = Array.from(panel?.querySelectorAll<HTMLElement>(".roster-group-header") ?? [])
+            .find(element => element.dataset.groupId === destination.id);
+          menuReturnTarget.current = header?.querySelector<HTMLButtonElement>(".group-disclosure") ?? null;
+          menuReturnFallback.current = panel?.querySelector<HTMLButtonElement>(".organization-toolbar button") ?? null;
+          moveTo(row.handle, destination.id);
+        }}>{destination.id === UNGROUPED ? t("ungrouped") : destination.name}</Menu.Item>)}
       </Menu.Content></Menu.Portal></Menu.Root></div>
   </div>;
 });
