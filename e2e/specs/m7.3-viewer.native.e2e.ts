@@ -60,6 +60,7 @@ async function capture(label: string, validate = true) {
   const png = readFileSync(path), raster = { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
   evidence.push({ label, attribution: "actual Windows scaling; WebDriver input; real IPC; synthetic mzML source", owned, ...state, ...resources, raster, calls: await calls() }); saveEvidence();
   if (validate) {
+    expect(owned.foregroundProcessId).toBe(processId); expect(state.focus.hasFocus).toBe(true);
     expect(owned.dpi).toBe(dpi); expect(state.dpr).toBe(dpi / 96); expect(state.css).toEqual(viewport);
     expect(owned.bounds.visibleFrameInsideWorkArea).toBe(true);
     expect(raster).toEqual({ width: owned.bounds.client.right - owned.bounds.client.left, height: owned.bounds.client.bottom - owned.bounds.client.top });
@@ -95,17 +96,31 @@ async function edit(axis: "rt" | "mz", low: string, high: string) {
   await browser.$("#plot-range-" + axis + "-low").setValue(low); await browser.$("#plot-range-" + axis + "-high").setValue(high);
   await browser.$(panel + " .plot-range-form button[type=submit]").click();
 }
+async function rememberPickerTrigger(selector: string, text: string | null = null) {
+  const element = await browser.execute((css, name) => {
+    const matches = [...document.querySelectorAll(css)].filter(node => name === null || node.textContent === name);
+    if (matches.length !== 1) throw Error("Expected exactly one native picker trigger.");
+    Reflect.set(window, "__m73NativePickerTrigger", matches[0]);
+    return matches[0].outerHTML;
+  }, selector, text);
+  evidence.push({ kind: "native picker initiating control", selector, text, element }); saveEvidence();
+}
 async function naturalReturn(label: string) {
   // Observation only: no focus(), click, foreground API or activation helper.
-  await browser.waitUntil(async () => await browser.execute(() => document.hasFocus()) && metrics().foregroundProcessId === processId,
-    { timeout: 15_000, interval: 500, timeoutMsg: "Native picker did not return foreground naturally." });
-  const focus = await browser.execute(() => ({ hasFocus: document.hasFocus(), element: document.activeElement?.outerHTML }));
-  evidence.push({ kind: "natural native picker return", label, focus, owned: metrics() }); saveEvidence();
-  expect(focus.element).toContain("button");
+  try {
+    await browser.waitUntil(async () => await browser.execute(() => document.hasFocus() &&
+      document.activeElement === Reflect.get(window, "__m73NativePickerTrigger")) && metrics().foregroundProcessId === processId,
+    { timeout: 15_000, interval: 500, timeoutMsg: "Native picker did not return naturally to its exact initiating control." });
+  } finally {
+    const focus = await browser.execute(() => ({ hasFocus: document.hasFocus(), element: document.activeElement?.outerHTML,
+      sameTrigger: document.activeElement === Reflect.get(window, "__m73NativePickerTrigger") }));
+    evidence.push({ kind: "natural native picker return", label, focus, owned: metrics() }); saveEvidence();
+  }
 }
 async function csv(axis: "rt" | "mz", label: string, cancel = false) {
   const panel = axis === "rt" ? ".chromatogram-panel" : ".spectrum-panel";
   const path = join(output, label + ".csv");
+  await rememberPickerTrigger(panel + " button", "Export CSV…");
   const [result] = await Promise.all([helper("save-dialog", ["-Title", axis === "rt" ? "Export chromatogram data" : "Export spectrum data",
     "-Action", cancel ? "cancel" : "save", "-Path", path, "-TimeoutSeconds", "35"]), browser.$(panel).$("button=Export CSV…").click()]);
   expect(result.found).toBe(true); expect(result.invoked).toBe(true);
@@ -162,6 +177,7 @@ describe("M7.3 real native viewer and committed exports", function () {
     if (this.currentTest?.state === "failed") await capture("failure-" + evidence.length, false);
   });
   it("reads synthetic mzML through the real provider and activates exact sorted row bodies and keyboard indices", async () => {
+    await rememberPickerTrigger(".dataset-roster-actions .primary-button");
     const [chosen] = await Promise.all([helper("choose-workspace-files", ["-Action", "choose", "-Path", fixture, "-TimeoutSeconds", "35"]),
       browser.$(".dataset-roster-actions .primary-button").click()]);
     expect(chosen.closed).toBe(true); await naturalReturn("choose-synthetic-source");
@@ -194,6 +210,7 @@ describe("M7.3 real native viewer and committed exports", function () {
     await edit("mz", "200", "550"); await browser.waitUntil(async () => await browser.$("#spectrum-viewport-status").getText() === "");
     await drag(MZ, .2, .7); const before = await reads();
     await browser.$(".spectrum-panel .plot-pending-actions").waitForDisplayed(); await capture("03-native-mz-pending");
+    expect(await browser.execute(() => window.getSelection()?.toString() ?? "")).toBe("");
     const current = await browser.$("#spectrum-viewport-range").getText();
     await browser.keys("Escape"); expect(await browser.$(".spectrum-panel .plot-pending-actions").isExisting()).toBe(false);
     expect(await reads()).toEqual(before); expect(await browser.$("#spectrum-viewport-range").getText()).toBe(current);

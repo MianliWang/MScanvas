@@ -211,6 +211,7 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await drag(MZ, .2, .7);
     await browser.$('.spectrum-panel .plot-pending-actions').waitForDisplayed();
     await capture("range-01-released-pending");
+    expect(await browser.execute(() => window.getSelection()?.toString() ?? "")).toBe("");
     expect(await scientificCalls()).toEqual(before);
     expect(await browser.$("#spectrum-viewport-range").getText()).toBe(range);
     await clickPlot(MZ, .4);

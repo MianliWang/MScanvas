@@ -18,6 +18,27 @@ or execution order. New acquisitions enter Ungrouped; dissolving a group does
 not remove any acquisition. See the
 [implementation record](../ux/M7_2_WORKBENCH_SHELL_ROSTER_ORGANIZATION.md).
 
+## M7.3 viewer continuation
+
+The evidence stack presents the chromatogram, current spectrum, then loaded
+scans. Small tables use their content height; large tables cap their scrolling
+region at ten rows plus a sticky header. Table values and header buttons share
+one horizontal track. Whole-row activation names a source index; roving focus
+and persistent selection remain separate. Search/filter/sort affect loaded rows
+only and expose hidden-selection recovery without replacing the plotted scan.
+
+Plot text remains 12 CSS px as the available width changes. Existing scientific
+export controls and detailed source explanations use reachable disclosures;
+their state and source authority remain above the presentation. Constrained
+windows retain natural outer evidence scrolling, including the rest of the
+selected-spectrum plot below the initial short viewport.
+
+Pending horizontal bands have visible boundaries, canonical accessible context
+and a short confirm/cancel action. Numeric entry and compact gesture help remain
+reachable. The existing Settings dialog localizes these controls and preserves
+valid source-domain proposals and raw input drafts without remounting owners.
+See [M7.3 acceptance and limitations](../ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md).
+
 ## Historical M0 structural candidate
 
 The first structural prototype uses a resizable workbench:

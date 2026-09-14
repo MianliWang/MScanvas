@@ -2,6 +2,16 @@
 
 Status: accepted
 Date: 2026-08-28
+
+Current-range cross-reference (2026-09-14): M7.3 adds drawing and pending
+proposal states beside live pan/wheel and the committed range. The
+[ADR 0032 amendment](0032-viewer-interaction-and-viewport-state.md#2026-09-14-amendment--m73-proposals-and-displayed-scan-order)
+owns their transaction/revision semantics; the
+[ADR 0039 amendment](0039-visible-spectrum-viewport-adapter.md#m73-input-amendment-2026-09-14)
+owns input. Release alone never changes the committed projection window. The
+Rust retained-domain/refusal, source projection and scientific export contracts
+below are unchanged; the original M5.1 visibility statements are historical.
+
 Related: [0028](0028-figure-renderer-and-semantic-specification.md),
 [0029](0029-first-visible-spectrum-figure-and-data-export.md),
 [0032](0032-viewer-interaction-and-viewport-state.md),

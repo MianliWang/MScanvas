@@ -1251,6 +1251,12 @@ button:disabled {
   cursor: crosshair;
 }
 
+/* Drawing on a productive plot must not also select its SVG axis labels. */
+.chromatogram-svg[tabindex="0"],
+.spectrum-plot[tabindex="0"] {
+  user-select: none;
+}
+
 .chromatogram-svg:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;

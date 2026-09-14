@@ -59,7 +59,7 @@ export interface KeyModifiers {
  * Whether the host reserves this wheel event, so no viewport may claim it.
  *
  * Ctrl alone. M7.3 explicitly maps Shift-wheel to horizontal scientific pan
- * (ADR 0039 amendment). Alt/Meta retain the pre-existing ordinary wheel mapping;
+ * (ADR 0039 amendment). The shared plot adapter also releases Alt/Meta wheels;
  * neither is interpreted as host pinch or used to infer a device.
  */
 export function isViewportWheelModifierOwnedByHost(event: WheelModifiers): boolean {

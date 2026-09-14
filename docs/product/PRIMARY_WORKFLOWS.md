@@ -132,6 +132,24 @@ until this repository can convert one.
 
 ## WF-003 — Inspect an acquisition
 
+M7.3 extends step 4 with raw loaded-scan search, represented MS-level filtering
+and whole-header scalar sorting. Activate any ordinary row cell or press
+Enter/Space on its focused row to read that exact source index. Arrow/Page/Home/
+End only move roving focus. Previous/Next traverse the displayed loaded order;
+filtering out the current scan preserves its plot and offers clear-filter/reveal
+instead of choosing a replacement. Plot inspection still resolves against the
+scientific nearest-scan model and may select a row outside the results.
+
+On either usable plot, primary drag draws a pending horizontal range; release
+does not zoom. A fresh inside click/tap, confirm action or Enter commits it once.
+Escape cancels; an outside click cancels and follows the ordinary inspection
+path once. Middle/Space drag pans, wheel zooms and Shift-wheel pans. The numeric
+editor preserves raw decimal/exponent input; valid Apply commits, while Escape
+discards it. Current-range exports during drawing/pending use the last committed
+range. Source/revision replacement refuses late work. All source, unit and
+truncation refusals below remain. See the
+[M7.3 record](../ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md) for measured scope.
+
 1. Select a row.
 2. Metadata and chromatogram enter visible loading states.
 3. TIC/BPC renders, or a specific unsupported/error state appears.

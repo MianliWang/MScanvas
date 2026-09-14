@@ -659,7 +659,11 @@ M7.2 implements the light workbench shell, independent roster interaction and
 conversion membership, and session-only grouped organization. Acceptance and
 protected publication are tracked in its
 [implementation record](docs/ux/M7_2_WORKBENCH_SHELL_ROSTER_ORGANIZATION.md).
-M7.3 remains next and not started. This source slice builds or releases no public beta.
+M7.3 implements loaded-scan search/sort and explicit range confirmation in the
+existing bilingual viewer. Local browser checks and static repair review are
+complete; current-build native acceptance and protected publication remain
+pending in its [implementation record](docs/ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md).
+M7.4 remains next and not started. This source slice builds or releases no public beta.
 
 ### M8 — Artifact, run and QC foundation
 

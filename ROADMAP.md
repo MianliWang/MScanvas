@@ -741,7 +741,11 @@ picker return. PR review corrections add positional keyboard feedback and
 availability-gated Details, with a newly attributable build and 2/2 affected
 native scenarios at the same scale. Protected publication and main-CI closeout are recorded in the
 task PR and retained local closeout; local acceptance alone is not publication.
-M7.3 remains **NEXT / NOT STARTED**. M8/M9/M10
+M7.3 implements loaded-scan browsing and committed RT/m/z gestures; browser
+checks and static repair review are complete. Current-build native acceptance
+and publication remain pending in its
+[implementation record](docs/ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md).
+M7.4 remains **NEXT / NOT STARTED**. M8/M9/M10
 remain later owners. External support/signing/distribution/sample/release
 decisions have explicit owner deadlines in ADR 0047; they are not waived.
 

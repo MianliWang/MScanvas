@@ -305,6 +305,18 @@ physical-device evidence separately. No hardware, latency or large-scale claim
 without measured inputs, host and results. Required CI failures remain failures;
 a passing rerun retains the original attempt and its cause/status.
 
+M7.3 residual update, 2026-09-14: the published M7.2 Frontend run `34844821499`
+attempt 1 failed the distinct foreground-return case at
+`ConversionPanel.test.tsx:193`; the delayed-plan case passed in that attempt.
+The original log is retained and [issue #122](https://github.com/MianliWang/MScanvas/issues/122)
+assigns diagnosis to the first changed ConversionPanel/focus consumer, expected
+M7.4. Attempt 2 success is not a repair; issue #112's historical evidence remains
+unchanged. M7.3 refreshes the actual M5.2 Tab path: productive SVGs are reachable,
+while zero-span/inert SVGs explicitly use `tabIndex=-1`. The changed path passes
+four rendered Tab cases after repairing obsolete harness navigation and the
+new implicit SVG focus regression. Empty-spectrum export remains with M7.4.
+See [the M7.3 record](../../ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md) for attribution.
+
 ## External release decisions
 
 M7.0 may close with the following decisions scheduled; M7's release exit cannot

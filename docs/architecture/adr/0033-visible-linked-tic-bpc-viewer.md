@@ -3,6 +3,13 @@
 Status: accepted, with one rule superseded by
 [0039](0039-visible-spectrum-viewport-adapter.md)
 Date: 2026-08-23
+
+Current-input cross-reference (2026-09-14): M7.3 replaces primary drag with a
+pending proposal and unifies productive input/touch ownership across both axes.
+The dated [ADR 0039 amendment](0039-visible-spectrum-viewport-adapter.md#m73-input-amendment-2026-09-14)
+governs those mappings; the historical evidence below and full-model nearest-scan,
+clip/extent/reduction and source-refusal contracts remain in force.
+
 Related: [0032](0032-viewer-interaction-and-viewport-state.md),
 [0003](0003-msaccess-preview-spike.md),
 [0028](0028-figure-renderer-and-semantic-specification.md),

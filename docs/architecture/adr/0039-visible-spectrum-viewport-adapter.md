@@ -11,7 +11,56 @@ Supersedes one rule of [ADR 0033](0033-visible-linked-tic-bpc-viewer.md): its
 `ctrlKey` is not given a meaning section, replaced by
 [the cross-axis ownership rule below](#a-modified-input-is-the-hosts-and-that-is-a-cross-axis-rule).
 
-## What this ADR is
+## M7.3 input amendment (2026-09-14)
+
+The [ADR 0047](0047-first-windows-beta-scope-and-implementation-route.md) viewer
+slice deliberately replaces the older primary-pan, differing axis ownership
+and Shift-wheel descriptions below. Their historical evidence remains intact.
+
+| Input on a usable plot | Current outcome |
+|---|---|
+| Unmodified primary drag beyond 4 CSS px | Draw a horizontal RT or m/z proposal; release leaves it pending |
+| Fresh inside click/tap, contextual confirm or Enter | Commit that pending interval exactly once |
+| Escape | Abandon owned drawing/pending input, retaining the committed range |
+| Unmodified wheel | Pointer-anchored horizontal zoom, existing normalization and 120 ms settle |
+| Shift-wheel | Horizontal pan using the same bounded wheel transaction |
+| Middle drag or Space-primary drag | Horizontal pan from the press origin |
+| Unmodified idle double activation | Reset this axis; the visible Reset action remains |
+
+The drag's pointerup and generated click never confirm. A pending confirmation
+does not also select a scan. Outside click cancels and inspects once, while a
+new drag replaces the proposal. A double-click sequence cannot confirm then
+reset. Modified/already-owned double activation is released. Ctrl/Alt/Meta wheel
+and Ctrl/Meta/Alt keys remain with the host; Tab, IME and ordinary input/button Space
+keep their native meanings. Empty, refused and zero-span plots have no productive
+viewport key target; an SVG with listeners explicitly uses `tabindex=-1` there.
+
+Both SVGs and relevant wrappers declare `touch-action: pan-y pinch-zoom` before
+input. Horizontal single-touch may propose a range; vertical travel abandons
+it for page/panel scrolling. A second touch cancels the single-pointer work.
+No scientific pinch or device classifier is introduced. Capture loss, cancel,
+blur, hidden/unmounted surfaces and changed active geometry abandon active work.
+A settled source-domain band may survive valid layout/locale/density changes;
+none confirms it. Modal-covered plots do not consume background shortcuts.
+
+Reducers own source/revision/epoch/domain matching. The adapter keeps pointer
+coordinates local, holds same-transaction frames in refs and publishes bounded
+state transitions. m/z sticks and labels are repainted from the live controller
+after an unrelated React render rebases the published drawing. RT clipping,
+extent and reduction are cached by source, visible traces and live domain, so
+ordinary hover reuses geometry while refreshing markers. Neither Motion nor
+React adds another scientific transform owner. Drawing or releasing a proposal
+owes no projection; confirming it can owe one retained-source projection. The
+1,800-point ceiling remains unchanged.
+
+Numeric entry retains raw decimal/exponent strings and IME/caret state. Blank,
+grouped, nonfinite, reversed and outside-source intervals are refused. A valid
+Apply commits once, Escape discards the draft, and stale draft contexts cannot
+replace newer range or selection instructions. UI messages use the existing
+en/zh-CN resources; exported values and provider diagnostics remain canonical.
+See the [M7.3 implementation and evidence](../../ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md).
+
+## Historical M5.2 decision
 
 M5.2, the slice that makes the m/z viewport [ADR 0038](0038-spectrum-viewport-authority-and-screen-projection.md)
 built reachable. That ADR remains the semantic authority and this one does not

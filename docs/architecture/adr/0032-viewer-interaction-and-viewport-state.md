@@ -12,6 +12,40 @@ Related: [0003](0003-msaccess-preview-spike.md),
 
 ## Context
 
+### 2026-09-14 amendment — M7.3 proposals and displayed scan order
+
+[ADR 0047](0047-first-windows-beta-scope-and-implementation-route.md) and the
+[M7.3 record](../../ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md) extend this
+authority. The historical pan/settle descriptions below still govern wheel and
+pan transactions; primary drag now draws a source-domain proposal instead.
+Drawing, released pending range, live pan/wheel and committed viewport are
+distinct reducer states. Release and its compatibility click cannot commit a
+proposal. A fresh inside activation, contextual action or Enter confirms the
+complete transaction exactly once; Escape cancels. Outside activation cancels
+then follows ordinary inspection once; a new drag replaces the pending proposal.
+
+Each proposal carries its axis, reducer epoch, source identity, selection
+revision and committed-domain identity. RT and m/z types reject cross-axis
+assignment. Preview/selection replacement, including same-index reactivation,
+and newer same-axis instructions invalidate incompatible work. The existing
+selection-before-reveal precedence and monotonic session counters remain.
+Only committed domains reach current-range scientific exports. The linked lower
+spectrum still uses its existing full retained source.
+
+`scanTableView` adds a pure loaded-row presentation projection beside layer A.
+Search, represented MS-level filter and deterministic scalar sorting own the
+displayed order and source-index lookups for roving focus, reveal and
+Previous/Next. Numeric keys compare raw numbers; raw identifiers compare UTF-16
+code units; missing values remain last in both directions; ties preserve source
+table order. The initial order remains source order. This projection never
+becomes the nearest-scan model, a provider query or a selection authority.
+Filtering preserves a hidden selection and refuses Previous/Next until an
+explicit row activation or clear-filter/reveal restores an anchor. Hover and
+pointer frames do not re-sort the table. See the current input mapping in
+[ADR 0039](0039-visible-spectrum-viewport-adapter.md#m73-input-amendment-2026-09-14).
+
+The remaining context records the original R1 decision and evidence.
+
 PR #72 built a linked TIC/BPC viewer that worked, and that bounded review kept
 finding real, reachable defects in. Nine of them, over four rounds. The
 repository's normal two-round policy stopped the milestone twice, a governance

@@ -9,12 +9,16 @@ M7.0 changed no repository visibility.
 
 **Default branch:** `main`
 
-**Current route, 2026-09-12:** M7 IN PROGRESS; implementation NOT STARTED.
+**Current route, 2026-09-14:** M7 IN PROGRESS.
 [ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md)
-accepts the first Windows x64 beta scope and implementation sequence. M7.1 —
-Localized settings and shared controls — is NEXT / NOT STARTED and requires its
-own implementation authorization. M7.0 builds/releases no public beta. The dated
-entries below retain their original milestone and validation context.
+accepts the first Windows x64 beta scope and implementation sequence. M7.1 and
+M7.2 are published. M7.3 has implemented the bilingual scan browser and explicit
+RT/m/z range confirmation; browser checks and static repair review are complete,
+while current-build native acceptance and protected publication remain pending.
+See the [M7.3 record](docs/ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md).
+M7.4 — Conversion, results and figures — is NEXT / NOT STARTED. This slice builds
+or releases no public beta. The dated entries below retain their original
+milestone and validation context.
 
 ## Completed
 
