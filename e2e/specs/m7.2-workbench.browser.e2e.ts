@@ -102,6 +102,90 @@ describe("M7.2 workbench shell and grouped roster", () => {
     }
     writeFileSync(join(output, "evidence.json"), JSON.stringify(evidence, null, 2));
   });
+  it("review regression: announces successive in-group keyboard destinations before committing", async () => {
+    for (const language of ["en", "zh-CN"] as const) {
+      const table: Record<string, unknown> = ipcTable();
+      table.subscribe_workspace_drop_updates = { reservationId: "browser-m72-reservation" };
+      table.get_workspace_roster = { capacity: 1024, datasets: [0, 1, 2].map(index => ({ ...selectedFile,
+        handle: `feedback-${index}`, sourceKind: "thermo_raw", fileName: `采集_${index}.raw`,
+      })) };
+      await installIpcBoundary(table); await browser.url("/"); await metrics(1366, 768, 1.5);
+      await browser.$(row("feedback-0")).waitForDisplayed();
+      if (language === "zh-CN") await locale(language);
+      const before = await ipcCalls();
+      await browser.$(`${row("feedback-0")} .row-drag-handle`).click();
+      await browser.keys("\uE00D");
+      await browser.$('.grouped-roster[data-drag-active="true"]').waitForExist();
+      for (const position of [2, 3]) {
+        await browser.keys("ArrowDown");
+        const expected = language === "en" ? `Move to Ungrouped, position ${position} of 3 (1 selected).` : `移至未分组，第 ${position} 位，共 3 个采集（已选 1 个）。`;
+        await browser.waitUntil(async () => await browser.$(".organization-notice").getText() === expected);
+        expect(await browser.$$(".grouped-roster [data-handle]").map(node => node.getAttribute("data-handle"))).toEqual(["feedback-0", "feedback-1", "feedback-2"]);
+        evidence.push({ kind: "pre-commit keyboard destination", language, position, announcement: await browser.$(".organization-notice").getText() });
+        await capture(`review-keyboard-${language}-${position}`);
+      }
+      await browser.keys("Enter");
+      await browser.$('.grouped-roster[data-drag-active="true"]').waitForExist({ reverse: true });
+      expect(await browser.$$(".grouped-roster [data-handle]").map(node => node.getAttribute("data-handle"))).toEqual(["feedback-1", "feedback-2", "feedback-0"]);
+      expect(await ipcCalls()).toEqual(before);
+      expect(await consoleEntries()).toEqual([]);
+    }
+  });
+  it("review regression: keeps empty, reading and failed evidence reachable when details are unavailable", async () => {
+    for (const language of ["en", "zh-CN"] as const) {
+      const table: Record<string, unknown> = ipcTable();
+      table.subscribe_workspace_drop_updates = { reservationId: "browser-m72-reservation" };
+      table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile] };
+      await installIpcBoundary(table); await metrics(1920, 1080, 1); await browser.url("/");
+      if (language === "zh-CN") await locale(language);
+      const details = browser.$('[aria-controls="workbench-inspector"]');
+      const unavailable = async (state: string) => {
+        expect(await details.isEnabled()).toBe(false);
+        expect(await details.getAttribute("aria-expanded")).toBe("false");
+        expect(await browser.$("#workbench-inspector").isDisplayed()).toBe(false);
+        expect(await browser.$("#workbench-evidence").isDisplayed()).toBe(true);
+        await capture(`review-inspector-${language}-${state}`);
+      };
+      await browser.$("#workbench-evidence .empty-state").waitForDisplayed();
+      await unavailable("wide-empty");
+      await metrics(960, 640, 2);
+      await unavailable("empty");
+      await holdInvoke("open_mzml_preview");
+      await browser.$('[aria-controls="workbench-roster"]').click();
+      await browser.$(row(selectedFile.handle)).click();
+      await browser.waitUntil(async () => await heldCallers("open_mzml_preview") === 1);
+      await browser.$(".workbench-home").click();
+      expect(await browser.$("#workbench-evidence strong").getText()).toBe(language === "en" ? "Reading the acquisition…" : "正在读取采集…");
+      await unavailable("reading");
+      // A held call resolves at release; a malformed DTO exercises the real
+      // adapter's retryable protocol failure without modifying the harness.
+      await setInvokeResult("open_mzml_preview", { malformedPreview: true });
+      await releaseInvokeHold("open_mzml_preview");
+      await browser.$("#workbench-evidence").$("strong=Something went wrong while talking to the MSCanvas backend.").waitForDisplayed();
+      await unavailable("failed");
+      await setInvokeResult("open_mzml_preview", table.open_mzml_preview);
+      await browser.$("#workbench-evidence").$(language === "en" ? "button=Try reading this file again" : "button=重试读取此文件").click();
+      await details.waitForEnabled(); await details.click();
+      await browser.$("#workbench-inspector").waitForDisplayed();
+      expect(await browser.$("#workbench-inspector").getText()).toContain(selectedFile.fileName);
+      await capture(`review-inspector-${language}-loaded`);
+      // Re-read with an already requested inspector. Availability must close it
+      // immediately, even before a resize folds the constrained layout.
+      await metrics(1366, 768, 1.5);
+      await browser.$('[aria-controls="workbench-roster"]').click();
+      await holdInvoke("open_mzml_preview");
+      await browser.$(".dataset-roster-actions button:nth-child(3)").click();
+      await browser.waitUntil(async () => await heldCallers("open_mzml_preview") === 1);
+      await unavailable("already-open-reading");
+      await metrics(960, 640, 2);
+      await unavailable("narrowed-reading");
+      await setInvokeResult("open_mzml_preview", { malformedPreview: true });
+      await releaseInvokeHold("open_mzml_preview");
+      await browser.$("#workbench-evidence").$("strong=Something went wrong while talking to the MSCanvas backend.").waitForDisplayed();
+      await unavailable("narrowed-failed");
+      expect(await consoleEntries()).toEqual([]);
+    }
+  });
   it("keeps work and independent checked/highlighted state through real navigation and organization", async () => {
     const table = ipcTable();
     table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile, ...Array.from({ length: 5 }, (_, i) => ({ ...selectedFile, handle: `sample-${i}`, fileName: `研究样本_${i}_long_acquisition_name.mzML` }))] };

@@ -50,7 +50,8 @@ const sensors = [
 // the target highlight communicates the destination without speculative reparenting.
 const sortablePlugins = [SortableKeyboardPlugin];
 type WindowItem = { readonly key: string; readonly estimate: number; readonly group: AcquisitionGroup; readonly row: SelectedFile | null };
-type Announcement = { readonly kind: "pickup"; readonly count: number } | { readonly kind: "target"; readonly count: number; readonly groupId: string } | null;
+type Announcement = { readonly kind: "pickup"; readonly count: number } | { readonly kind: "unchanged" } |
+  { readonly kind: "target"; readonly count: number; readonly groupId: string; readonly position: number; readonly total: number } | null;
 
 export function GroupedRosterList(props: Props) {
   const { state, projection, dispatch } = props;
@@ -101,7 +102,17 @@ export function GroupedRosterList(props: Props) {
         group.handles.indexOf(payload.current.sourceHandle) < group.handles.indexOf(next.anchor)) next = { ...next, edge: "after" };
     const previous = target.current;
     target.current = next;
-    if (previous?.groupId !== groupId) setAnnouncement({ kind: "target", count: payload.current.handles.length, groupId });
+    if (group !== undefined && (previous?.groupId !== groupId || previous.anchor !== next.anchor || previous.edge !== next.edge)) {
+      const moving = new Set(payload.current.handles);
+      if (next.anchor !== null && moving.has(next.anchor)) setAnnouncement({ kind: "unchanged" });
+      else {
+        // Report the insertion position in the complete destination, including
+        // filtered rows and the captured payload, without changing data order.
+        const remaining = group.handles.filter(handle => !moving.has(handle));
+        const position = next.anchor === null ? remaining.length + 1 : remaining.indexOf(next.anchor) + (next.edge === "after" ? 2 : 1);
+        setAnnouncement({ kind: "target", count: moving.size, groupId, position, total: remaining.length + moving.size });
+      }
+    }
   }, []);
   const onDragEnd = useCallback((event: DragEndEvent) => {
     const captured = payload.current, destination = target.current;
@@ -175,7 +186,8 @@ export function GroupedRosterList(props: Props) {
     </div>
     <p id="roster-keyboard-help" className="visually-hidden">{t("rosterKeyboardHelp")}</p>
     <p className="organization-notice" aria-live="polite" data-organization-notice={notice ?? ""}>
-      {announcement?.kind === "pickup" ? t("dragPicked", { count: announcement.count }) : announcement?.kind === "target" ? t("dragTarget", { count: announcement.count, name: groupName(announcement.groupId) }) : notice === null ? "" : t(noticeKeys[notice])}
+      {announcement?.kind === "pickup" ? t("dragPicked", { count: announcement.count }) : announcement?.kind === "unchanged" ? t("dragUnchanged") :
+        announcement?.kind === "target" ? t("dragTarget", { count: announcement.count, name: groupName(announcement.groupId), position: announcement.position, total: announcement.total }) : notice === null ? "" : t(noticeKeys[notice])}
     </p>
     <DragOverlay dropAnimation={null} style={{ pointerEvents: "none", display: "flex", justifyContent: "flex-end", alignItems: "center" }}><span className="roster-drag-overlay" aria-hidden="true">{t("dragCount", { count: payload.current?.handles.length ?? 0 })}</span></DragOverlay>
     {editing !== null ? <GroupNameDialog name={editing.name} rename={editing.id !== null} returnTo={editing.returnTo} onClose={() => setEditing(null)} onSave={name => {

@@ -87,7 +87,7 @@ changing results. A production-input match binds a later reviewed commit to this
 build; the baseline HEAD alone does not describe the uncommitted build inputs.
 Build 02 follows diff-check whitespace cleanup in two source files. The JS and
 CSS bundle bytes are identical to build 01, so browser/unit evidence remains
-attributable; native acceptance uses only build 02. Both build manifests/logs
+attributable; the initial native acceptance uses build 02. Both build manifests/logs
 are retained. JS `index-sDn2wpEU.js` has SHA-256
 `1ef4e9f9e645d0bdd0a438d171e9ad7a585d65417036e6297d462df35a7d0037`;
 CSS `index-BGlbuSQr.css` has SHA-256
@@ -132,7 +132,7 @@ provider/queue authority, native-drop admission or acquisition files change.
 ## Local acceptance and rendered evidence
 
 All paths below are under the ignored, retained `.tmp/m72-evidence/` directory.
-The final full frontend run `full-unit-03` passed **1,758 tests in 77 files**.
+The initial full frontend run `full-unit-03` passed **1,758 tests in 77 files**.
 The final browser run `browser-16` passed all three scenarios, with 24 captures
 and frame/geometry/IPC evidence in `browser-OIcFmW/`. Actual app console entries
 were empty in those passing scenarios. Existing picker-return tests are retained.
@@ -205,7 +205,9 @@ manual-recovery evidence on foreign foreground, and preserved JSON output.
 `review-07` confirmed the runtime-only .NET hashing and UTF-8 output correction.
 The final helper SHA-256 is
 `9d55edf149df34623381460bafd81914287dcf519015e9474734f6e010f2726e`.
-No review finding remains open. Reviews are static; native results are below.
+The pre-publication independent review had no remaining finding. Reviews are
+static; native results are below. Later PR findings and their affected refresh
+are recorded separately at the end of this record.
 
 Retained diagnostic runs are not acceptance gates. Initial consumer migration
 failed 117 of 1,749 tests; the later full run had three ambiguous text selectors
@@ -279,3 +281,82 @@ Ruleset 19660027 requires up-to-date Frontend, Rust and Repository quality check
 a PR and resolved review threads; the legacy branch-protection endpoint returns
 404. This is Ruleset protection, not an absent protection claim. All live merge
 inputs must be read again immediately before publication.
+
+## PR 121 corrections and attributable acceptance refresh
+
+PR [#121](https://github.com/MianliWang/MScanvas/pull/121) was created from
+`e9b150fb49b2d8d9bf3d7286609b210341118a62`. Frontend, Rust and Repository quality
+each passed on attempt 1 for that head. Automated review then raised two P2
+findings; both were confirmed and repaired on the same task branch:
+
+- Same-group keyboard movement now announces each changed insertion position
+  before commit, using the complete destination order and captured payload.
+  Hovering the selected payload reports the existing no-op. Both locales use
+  the typed and runtime-checked numeric position contract. Data movement,
+  dnd-kit geometry and Rust authority are unchanged.
+- Details is disabled until a preview is loaded. Effective Inspector visibility
+  is derived from both the requested panel state and preview availability, so
+  an already-open Inspector also closes during a new read or a failed read.
+  The main evidence states and existing retry remain reachable at constrained
+  widths. The previous panel request remains a presentation preference.
+
+Only six production paths changed: PreviewWorkspace, WorkbenchHeader,
+GroupedRosterList, the i18n boundary and its en/zh-CN resource values. Build 03
+records all 166 production inputs before and after compilation, unchanged
+during the build, with production-manifest SHA-256
+`c6f4eb24cdfb824e0b3d85e1ba1229c04d74888a0d1ab22a65284015a664de45`.
+The optimized E2E executable is 16,225,792 bytes, SHA-256
+`1cc2f3580ed574ed417071b1772ee15bc6db63fb612855db67d2cb07940d2e64`.
+JS `index-B3wknL44.js` has SHA-256
+`addccf2e841e77f5136fd8c5ef8af97a28a435ef78860ac9ff72033b503bd670`;
+the CSS bytes remain identical to build 02. Build 02 and its executable,
+manifests, logs and acceptance remain retained as earlier evidence.
+
+The affected browser run `browser-19-review-after` passed 2/2, with 18 captures
+in `browser-X2yRJx/`, no console entries and zero horizontal overflow. It proves
+successive keyboard destinations and committed order in both locales, and
+empty, reading, failure, retry, loaded and already-open Inspector transitions
+at 960x640/DPR 2 and 1366x768/DPR 1.5. A held malformed preview DTO exercises
+the real adapter's retryable protocol failure; this is controlled browser IPC,
+not a native provider failure or native DPI result.
+
+Supplemental run `browser-20-wide-inspector` passed the affected Inspector
+scenario with 16 captures in `browser-qapTps/`, adding initial 1920x1080/DPR 1
+in both locales before the constrained transitions. Console entries and
+horizontal overflow remain zero. This is an affected layout extension, not
+a repeat of the unchanged browser campaign.
+
+Affected native run `native-2gAVwr/` passed 2/2, exit 0, in 21.7 seconds; launch
+and raw log are in `review-native-20260914T003441353Z/`. Session
+`4f1099683be54bd338959cbe3fb82962` used WebView2/driver 152.0.4191.66 and the
+build-03 executable. Actual Windows DPI remained 144 (150%): CSS 1366x768 maps
+to client/raster 2049x1152, and 960x640 to 1440x960. Six captures have zero
+horizontal overflow; the mock table, console and external resources are empty.
+The run verifies narrow empty/loaded Details, real A/B/A preview reads, retained
+source and raw `0640` draft, and en/zh-CN keyboard target feedback followed by
+commit and Undo with no additional IPC. The actual read interval
+11929.1-13079.8 ms contains the observed navigation. This is one measured
+overlap, not a latency guarantee or new scientific-renderer qualification.
+
+The unchanged Explorer import and natural picker-return scenarios were not
+repeated: build-02 `native-KBLm3r/` remains their actual native evidence. The
+six-path product delta does not change their admission, subscription, input
+helper or focus-return mechanism. No physical DPI cycle was requested or run.
+Task native processes and ports 4490/4491 were confirmed released after the run.
+
+Independent read-only delta review `review-09` verified all nine snapshot
+hashes and found no confirmed actionable issue. It compared destination
+positions against the existing reducer and reviewed Inspector state and the
+affected harness. It did not replace rendered or native execution.
+
+Failure history is preserved. Browser run 17 failed both regressions on the
+original product. Run 18 exposed an omitted numeric runtime parameter and a
+test that supplied a rejection envelope to a held resolving call; both were
+corrected before run 19 passed. The interim full frontend run 04 passed 1,758
+tests but reported three worker-termination timeout diagnostics; it is not
+presented as a clean run. After correcting the runtime numeric boundary, final
+`full-unit-05` passes **1,759 tests in 77 files**, exit 0, without those timeout
+diagnostics. The numeric boundary test separately passes 12/12. Lint/typecheck,
+E2E typecheck and build 03 pass. Required checks, individual PR
+thread disposition, protected merge and main-CI/local closeout remain publication
+gates, recorded against their actual final identities in the PR and local closeout.

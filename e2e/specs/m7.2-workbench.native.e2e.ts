@@ -118,6 +118,17 @@ describe("M7.2 affected final native workbench paths", function () {
         .observe(document.querySelector(".workbench-shell")!, { attributes: true, attributeFilter: ["data-surface"] });
     });
     await capture("01-measured-native-empty");
+    const normalViewport = viewport;
+    viewport = { width: 960, height: 640 };
+    await helper("m7.1-size-window", ["-ExpectedDpi", String(dpi), "-CssWidth", "960", "-CssHeight", "640"]);
+    await browser.waitUntil(() => browser.execute(() => innerWidth === 960 && innerHeight === 640));
+    expect(await browser.$('[aria-controls="workbench-inspector"]').isEnabled()).toBe(false);
+    expect(await browser.$("#workbench-evidence .empty-state").isDisplayed()).toBe(true);
+    await capture("review-native-narrow-empty");
+    viewport = normalViewport;
+    await helper("m7.1-size-window", ["-ExpectedDpi", String(dpi), "-CssWidth", String(viewport.width), "-CssHeight", String(viewport.height)]);
+    await browser.waitUntil(() => browser.execute((v) => innerWidth === v.width && innerHeight === v.height, viewport));
+    await browser.$('[aria-controls="workbench-roster"]').click();
     } catch (cause) {
       evidence.push({ kind: "native setup failure", message: String(cause) }); saveEvidence();
       try { await capture("failed-native-setup", false); } catch (captureError) { evidence.push({ kind: "setup capture unavailable", message: String(captureError) }); saveEvidence(); }
@@ -166,6 +177,45 @@ describe("M7.2 affected final native workbench paths", function () {
     expect(await browser.$(`${row(firstHandle)}.is-active`).isExisting()).toBe(true);
     expect(await calls()).toEqual(before);
     await settings("en", "comfortable");
+  });
+  it("review regression: exposes loaded details and announces real in-group keyboard targets", async () => {
+    const normalViewport = viewport;
+    viewport = { width: 960, height: 640 };
+    await helper("m7.1-size-window", ["-ExpectedDpi", String(dpi), "-CssWidth", "960", "-CssHeight", "640"]);
+    await browser.waitUntil(() => browser.execute(() => innerWidth === 960 && innerHeight === 640));
+    const before = await calls();
+    await browser.$('[aria-controls="workbench-inspector"]').click();
+    await browser.$("#workbench-inspector").waitForDisplayed();
+    expect(await browser.$("#workbench-inspector").getText()).toContain("M72-retained-A.mzML");
+    expect(await browser.$("#workbench-evidence").isDisplayed()).toBe(false);
+    await capture("review-native-narrow-loaded-details");
+    await browser.$('[aria-controls="workbench-inspector"]').click();
+    expect(await browser.$("#workbench-evidence").isDisplayed()).toBe(true);
+    viewport = normalViewport;
+    await helper("m7.1-size-window", ["-ExpectedDpi", String(dpi), "-CssWidth", String(viewport.width), "-CssHeight", String(viewport.height)]);
+    await browser.waitUntil(() => browser.execute((v) => innerWidth === v.width && innerHeight === v.height, viewport));
+    await browser.$('[aria-controls="workbench-roster"]').click();
+    for (const language of ["en", "zh-CN"] as const) {
+      await settings(language, "comfortable");
+      await browser.$(`${row(firstHandle)} .row-drag-handle`).click();
+      await browser.keys("\uE00D");
+      await browser.$('.grouped-roster[data-drag-active="true"]').waitForExist();
+      await browser.keys("ArrowDown");
+      const expected = language === "en" ? "Move to Ungrouped, position 2 of 2 (1 selected)." : "移至未分组，第 2 位，共 2 个采集（已选 1 个）。";
+      await browser.waitUntil(async () => await browser.$(".organization-notice").getText() === expected);
+      expect(await browser.$$(ROW).map(node => node.getAttribute("data-handle"))).toEqual([firstHandle, secondHandle]);
+      evidence.push({ kind: "native pre-commit keyboard destination", language, announcement: await browser.$(".organization-notice").getText() });
+      await capture(`review-native-keyboard-${language}`);
+      await browser.keys("Enter");
+      await browser.$('.grouped-roster[data-drag-active="true"]').waitForExist({ reverse: true });
+      expect(await browser.$$(ROW).map(node => node.getAttribute("data-handle"))).toEqual([secondHandle, firstHandle]);
+      await browser.$(language === "en" ? "button=Undo organization" : "button=撤销组织操作").click();
+      expect(await browser.$$(ROW).map(node => node.getAttribute("data-handle"))).toEqual([firstHandle, secondHandle]);
+    }
+    await settings("en", "comfortable");
+    expect(await calls()).toEqual(before);
+    expect(await browser.$(`${row(firstHandle)}.is-active`).isExisting()).toBe(true);
+    expect(await browser.$('.spectrum-panel input[id$="-widthPx"]').getValue()).toBe("0640");
   });
   it("moves two real native acquisitions locally and accepts an actual Explorer file/folder drop into ungrouped", async () => {
     rawHandle = await add(join(INPUTS, "retained/M72-retained.raw"));

@@ -27,7 +27,7 @@ export function PreviewWorkspace() {
   const [surface, setSurface] = useState<WorkbenchSurface>("workbench");
   const [constrained, setConstrained] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(max-width: 1050px)").matches);
   const [rosterOpen, setRosterOpen] = useState(() => typeof window.matchMedia !== "function" || !window.matchMedia("(max-width: 1050px)").matches);
-  const [detailsOpen, setDetailsOpen] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1700px)").matches);
+  const [detailsRequested, setDetailsOpen] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1700px)").matches);
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
     const query = window.matchMedia("(max-width: 1050px)");
@@ -36,6 +36,8 @@ export function PreviewWorkspace() {
     return () => query.removeEventListener("change", fold);
   }, []);
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
+  const detailsAvailable = preview.status === "loaded";
+  const detailsOpen = detailsRequested && detailsAvailable;
   /**
    * Whether the chromatogram's export surface is open.
    *
@@ -240,7 +242,7 @@ export function PreviewWorkspace() {
   return (
     <div className="app-shell workbench-shell" data-surface={surface} data-roster-open={rosterOpen} data-details-open={detailsOpen} data-settings-return-target="" tabIndex={-1}>
       <WorkbenchHeader surface={surface} onNavigate={next => { setSurface(next); if (constrained) { setRosterOpen(false); setDetailsOpen(false); } }} rosterOpen={rosterOpen} onToggleRoster={() => { setRosterOpen(open => !open); if (constrained) setDetailsOpen(false); }}
-        detailsOpen={detailsOpen} onToggleDetails={() => { setDetailsOpen(open => !open); if (constrained) setRosterOpen(false); }} rowCount={roster.datasets.length}
+        detailsOpen={detailsOpen} detailsAvailable={detailsAvailable} onToggleDetails={() => { setDetailsOpen(open => !open); if (constrained) setRosterOpen(false); }} rowCount={roster.datasets.length}
         busy={workspace.conversion.busy || workspace.previewBackendBusy || workspace.folderBusy || workspace.dropBusy}
         retained={workspace.conversion.state.status === "terminal"} dropStatus={workspace.dropSubscriptionStatus} />
 

@@ -737,7 +737,9 @@ change browsing arrangement without changing execution order. Its
 [implementation record](docs/ux/M7_2_WORKBENCH_SHELL_ROSTER_ORGANIZATION.md)
 records measured browser acceptance and 3/3 targeted native scenarios at actual
 150% scaling, including automated real Explorer file/folder import and natural
-picker return. Protected publication and main-CI closeout are recorded in the
+picker return. PR review corrections add positional keyboard feedback and
+availability-gated Details, with a newly attributable build and 2/2 affected
+native scenarios at the same scale. Protected publication and main-CI closeout are recorded in the
 task PR and retained local closeout; local acceptance alone is not publication.
 M7.3 remains **NEXT / NOT STARTED**. M8/M9/M10
 remain later owners. External support/signing/distribution/sample/release

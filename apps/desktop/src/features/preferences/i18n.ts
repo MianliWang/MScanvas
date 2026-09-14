@@ -45,7 +45,7 @@ export interface MessageParameters {
   readonly checkAcquisition: { readonly name: string };
   readonly checkGroup: { readonly name: string; readonly count: number };
   readonly groupDisclosure: { readonly name: string; readonly count: number };
-  readonly dragTarget: { readonly name: string; readonly count: number };
+  readonly dragTarget: { readonly name: string; readonly count: number; readonly position: number; readonly total: number };
   readonly resourceCode: { readonly code: string };
   readonly unknownFigureProblem: { readonly code: string };
 }
@@ -83,7 +83,7 @@ export function bindUiMessages(t: TFunction<"ui">): UiMessage {
     const baseline = en[(plural ? `${key}_other` : key) as keyof typeof en];
     for (const parameter of parameters(baseline).split(",").filter(Boolean)) {
       const value = (values as Record<string, unknown> | undefined)?.[parameter];
-      const numeric = ["count", "total", "hidden", "checked", "visible", "capacity"].includes(parameter);
+      const numeric = ["count", "total", "hidden", "checked", "visible", "capacity", "position"].includes(parameter);
       if (numeric ? typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 :
         typeof value !== "string" || value.trim() === "") throw new ResourceProblem("RESOURCE_PARAMETERS", key);
     }
