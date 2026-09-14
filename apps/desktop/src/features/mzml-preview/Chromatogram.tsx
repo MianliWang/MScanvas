@@ -532,26 +532,6 @@ function ChromatogramPlot({
               {tick.toFixed(4)}
             </text>
           ))}
-          {nothingDrawn ? null : (
-            <>
-              <text
-                className="chromatogram-value-label"
-                textAnchor="start"
-                x={PADDING_LEFT + 6}
-                y={PADDING_TOP + 8}
-              >
-                {formatIntensity(extent.high)}
-              </text>
-              <text
-                className="chromatogram-value-label"
-                textAnchor="start"
-                x={PADDING_LEFT + 6}
-                y={BASELINE_Y}
-              >
-                {formatIntensity(extent.low)}
-              </text>
-            </>
-          )}
         </g>
         <g clipPath="url(#chromatogram-clip)">
           <rect className="plot-range-band" aria-hidden="true" visibility="hidden" x={0} y={PADDING_TOP} width={0} height={USABLE_HEIGHT} />
@@ -604,6 +584,27 @@ function ChromatogramPlot({
             </g>
           )}
         </g>
+        {/* Paint intensity text above traces so the existing halo protects signs and digits. */}
+        {nothingDrawn ? null : (
+          <g className="chromatogram-axes">
+            <text
+              className="chromatogram-value-label"
+              textAnchor="start"
+              x={PADDING_LEFT + 6}
+              y={PADDING_TOP + 8}
+            >
+              {formatIntensity(extent.high)}
+            </text>
+            <text
+              className="chromatogram-value-label"
+              textAnchor="start"
+              x={PADDING_LEFT + 6}
+              y={BASELINE_Y}
+            >
+              {formatIntensity(extent.low)}
+            </text>
+          </g>
+        )}
       </svg>
       <PlotRangeActions port={inputPort} />
       <div className="chromatogram-context">

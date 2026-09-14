@@ -92,11 +92,12 @@ zero-span cases pass (four cases, `m52-tab-repaired-04.log`).
 | Evidence | Observed result and boundary |
 | --- | --- |
 | Frontend checks | `pnpm lint`, `pnpm typecheck`, `pnpm test` pass; 81 test files / 1,820 tests in `full-tests-04.log`, unchanged default worker/timeouts |
+| Final label-layer consumer | Existing Chromatogram suite passes 106/106 after the intensity-text paint-order repair (`label-layer-consumer-01.log`) |
 | Build | `pnpm e2e:build` passes, including `pnpm build`; existing QA features only, no installer/release configuration claim |
 | Harness | `pnpm e2e:typecheck` passes, including exact initiating-control focus assertions and a pre-session readiness guard |
 | Repository | `python -B scripts/check_repo.py` and full-slice `git diff --check` pass |
 | Rust reuse | 83 Rust/build inputs hash-match retained M7.2 evidence; fmt/clippy/test exits 0, 1,556 passed / 23 ignored without double-counting nested tests. Fresh remote Rust CI remains required |
-| Browser production composition | 12 cases pass in `browser-07.log`, Chrome 152.0.7977.84, session `5e7490e409ab781d35d12718afa14f39`, artifacts `browser/browser-GV91Zu/` |
+| Browser production composition | 12 cases pass in `browser-08.log`, Chrome 152.0.7977.84, session `f2e6d953e07b5fbced6d65f55c36eec6`, artifacts `browser/browser-yQ9C0j/` |
 | Historical Tab consumer | Four real Tab cases pass, session `ca5673ca6d4f43ffa69fbfd4518c5d6f`; no claim to rerun the whole historical viewer campaign |
 | Serial isolated reversions | Pointerup-commits, displayed-index substitution and stale-context acceptance each fail discriminating tests; baseline and each byte-restored copy pass. Writer tree untouched; hashes retained in `falsification-01/evidence.json` |
 
@@ -119,7 +120,7 @@ scroll. No frame-rate or larger-input claim is made.
 Long positive/negative exponent intensity labels stay within the plot; computed
 font size is 12 CSS pixels and measured glyph height is 16 pixels in the matrix.
 CDP-emulated touch proves horizontal pending selection, second-touch cancel and
-vertical `pointercancel` with outer scroll 0 to 119. Physical touch qualification
+vertical `pointercancel` with outer scroll 0 to 123 in run 08. Physical touch qualification
 remains an M7.6 limit. Application console and external resource lists are empty;
 existing browser harness service warnings remain in raw logs.
 
@@ -148,6 +149,12 @@ alongside range drawing. A rendered assertion reproduced it before repair.
 external numeric/source text copyable. The strengthened range scenario and all
 12 browser cases pass in run 07; both the failed run and screenshots are retained.
 
+The UI reviewer then observed a trace crossing the lower intensity label's
+leading sign/digits in the long-exponent screenshot. The same two text nodes now
+paint after trace geometry, with unchanged values/coordinates and their existing
+white halo. Primary before/after image inspection confirms the protected glyphs;
+the 106 existing consumer tests and all 12 browser cases pass (run 08).
+
 All failed local attempts remain in `.tmp/m73-evidence/`. Early failures exposed
 legacy unlocalized fixtures/selectors, a DOM child replacement error, synthetic
 PointerEvent primary flags and a selected-index callback typo; these were
@@ -174,12 +181,12 @@ free ports 5494/5495 and absence of another native process before invoking WDIO.
 The M7.3 `beforeSession` guard also rejects missing readiness before creating the
 application session. It does not replace the operator's actual readiness check.
 
-The current QA binary (build 03) is 16,237,568 bytes, SHA256
-`48778e66a3316cfea3b732dc4f83783b6dd583ede5afb40b7401facf68cf6db5`.
+The current QA binary (build 04) is 16,237,568 bytes, SHA256
+`1371193285b22c61e52db693e7402ab2af1fca9bec7305b895c36e5e45a67c79`.
 Production-input manifest SHA256:
-`4db58b79da4941107860701139796ecff7e3c7a56ddb1d1eb9f73c1184c681c2`.
-JS `index-D6_o3fg5.js` is 899,048 bytes, SHA256
-`9e50a090b5bd0d2707a3f118fbf369c7e4933ff9ded8aa4efa795e189c94165c`;
+`2d956eabcecdd5c143b623b6bace09821070f0dd1c9e480a27e1d9c453d003f3`.
+JS `index-BW4-JIxF.js` is 899,071 bytes, SHA256
+`78c13d51de21a78f7d4c12b95bac4cda88e0044da8bb6bf904d30fb115a2f997`;
 CSS `index-BN5qMi-u.css` is 55,966 bytes, SHA256
 `ecaa40b87d7f4eac0319b3a21bd2c8ce534346a5585c86f9e4cfceb933714c5d`.
 Source inputs were unchanged during the build. Subsequent harness/documentation
