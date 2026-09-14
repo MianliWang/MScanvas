@@ -360,3 +360,37 @@ diagnostics. The numeric boundary test separately passes 12/12. Lint/typecheck,
 E2E typecheck and build 03 pass. Required checks, individual PR
 thread disposition, protected merge and main-CI/local closeout remain publication
 gates, recorded against their actual final identities in the PR and local closeout.
+
+### Conversion status belongs to the conversion/results lane
+
+The subsequent automated review of `5e166e282fe1f83dcb0a8ef67873dc29920781c4`
+confirmed a third P2: acquisition-only preview, folder and drop activity was
+incorrectly included in the Conversion navigation status. A one-line correction
+passes only `workspace.conversion.busy`; conversion/results lane activity and
+retained results keep their existing status semantics. Independent read-only
+`review-11` verified the three changed snapshot files and found no issue.
+
+Browser run 21 failed the new held-preview status assertion before the repair.
+Run 22 passed the affected scenario, with nine captures in `browser-KuAB0J/` and
+an empty console. The related App consumer tests pass 136/136; the unchanged
+full-suite result remains 1,759/77 from run 05. E2E typecheck 10 passes.
+
+Build 04 changes only PreviewWorkspace from build 03. All 166 production inputs
+match before and after compilation; manifest SHA-256 is
+`144a31487fde6ae76c16cd9597a5ffb90d72c3aff3e71dd784103e3a76556734`.
+The 16,225,792-byte optimized E2E executable has SHA-256
+`c6aebaaac605b5f9a325eab31871ce9e2a623316790b5ef5f98629098d2fcdb3`.
+JS `index-qdm48qKB.js` has SHA-256
+`db6f2822660af1e64c01963354c5e6db65ed71f55e18d3b51caf80e1c0a012bd`;
+CSS remains unchanged. Prior build 03 and its evidence/executable are retained.
+
+The affected native scenario passes 1/1, exit 0, in 14.9 seconds on build 04;
+evidence `native-8v9XlU/`, launch `badge-native-20260914T012102446Z/`, session
+`fd29680247fa371829f277f9003aafbe`. Actual DPI remains 144 at the same measured
+1366x768 and 960x640 CSS/client/raster pairs. At 11257.1 ms, inside the actual
+preview read interval 11245.6-12420.8 ms, navigation changes to Conversion while
+`conversionBadge` is false. Real source, raw figure draft and Settings/Home
+retention also pass; three captures have zero horizontal overflow, and console,
+mock answers and external resources are empty. This refresh does not repeat
+the full keyboard, Inspector, Explorer or picker-return acceptance. Task
+native processes and ports were measured released afterward.

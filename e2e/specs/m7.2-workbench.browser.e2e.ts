@@ -398,6 +398,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.$(row(selectedFile.handle)).click();
     await browser.waitUntil(async () => (await heldCallers("open_mzml_preview")) === 1);
     await capture("18-evidence-reading");
+    expect(await browser.$(".workbench-navigation .work-status-dot").isExisting()).toBe(false);
     const readingCalls = await ipcCalls();
     await browser.$(".workbench-navigation button:nth-child(2)").click();
     await newGroup("Async group");

@@ -114,7 +114,7 @@ describe("M7.2 affected final native workbench paths", function () {
       const trace: unknown[] = []; Reflect.set(window, "__m72NativeTrace", trace);
       // Tauri's invoke property is immutable. Resource Timing observes the real
       // Windows IPC request interval without replacing the command or response.
-      new MutationObserver(() => trace.push({ phase: "surface", surface: document.querySelector(".workbench-shell")!.getAttribute("data-surface"), time: performance.now() }))
+      new MutationObserver(() => trace.push({ phase: "surface", surface: document.querySelector(".workbench-shell")!.getAttribute("data-surface"), conversionBadge: document.querySelector(".workbench-navigation .work-status-dot") !== null, time: performance.now() }))
         .observe(document.querySelector(".workbench-shell")!, { attributes: true, attributeFilter: ["data-surface"] });
     });
     await capture("01-measured-native-empty");
@@ -161,11 +161,12 @@ describe("M7.2 affected final native workbench paths", function () {
     await browser.$("#workbench-conversion").waitForDisplayed();
     await browser.$(`${row(firstHandle)}.is-active`).waitForExist({ timeout: 60_000 });
     await browser.waitUntil(async () => (await previewReads()).length === priorReads.length + 1);
-    const trace = await browser.execute(() => Reflect.get(window, "__m72NativeTrace") as { phase: string; time: number; surface?: string }[]);
+    const trace = await browser.execute(() => Reflect.get(window, "__m72NativeTrace") as { phase: string; time: number; surface?: string; conversionBadge?: boolean }[]);
     const read = (await previewReads()).at(-1)!;
     evidence.push({ kind: "real navigation/read overlap; Windows IPC Resource Timing", read, priorReads, surfaces: trace }); saveEvidence();
     expect(read.responseEnd).toBeGreaterThan(read.startTime);
     expect(trace.some(item => item.phase === "surface" && item.surface === "conversion" && item.time >= read.startTime && item.time < read.responseEnd)).toBe(true);
+    expect(trace.some(item => item.phase === "surface" && item.surface === "conversion" && item.time >= read.startTime && item.time < read.responseEnd && item.conversionBadge === false)).toBe(true);
     await browser.$(".workbench-home").click();
     await browser.$('.spectrum-table [role="row"][aria-rowindex="2"]').click();
     await browser.$('.spectrum-panel input[id$="-widthPx"]').waitForDisplayed({ timeout: 60_000 });
