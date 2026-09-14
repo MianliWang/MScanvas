@@ -8,12 +8,14 @@
  * both to resolve against, and a header that stays put only vertically.
  */
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import appStyles from "../../app/app.css?raw";
 import { buildRows } from "../../test/previewFixtures";
-import { SpectrumTable } from "./SpectrumTable";
+import { SpectrumTable, type SpectrumTableProps } from "./SpectrumTable";
+import { renderWithPreferences as render } from "../../test/renderWithPreferences";
+import { useScanTableView } from "./viewer/useScanTableView";
 import type { Selection } from "./viewer/interactionState";
 import type { SpectrumSelectionAvailability } from "./viewer/selectionAvailability";
 
@@ -54,6 +56,7 @@ interface TableOptions {
 
 function renderTable(options: TableOptions = {}) {
   const rowCount = options.rowCount ?? 40;
+  const rows = buildRows(rowCount);
   const onSelect = vi.fn();
   const onRendered = vi.fn();
   const onSelectPrevious = vi.fn();
@@ -69,12 +72,12 @@ function renderTable(options: TableOptions = {}) {
     selectionAvailability:
       options.selectionAvailability ?? ({ status: "available" } as const),
     table: {
-      rows: buildRows(rowCount),
+      rows,
       totalRowCount: options.truncated === true ? rowCount * 10 : rowCount,
       truncated: options.truncated ?? false,
     },
   });
-  const result = render(<SpectrumTable {...props(options.selection ?? null)} />);
+  const result = render(<TestSpectrumTable {...props(options.selection ?? null)} />);
   return {
     ...result,
     onSelect,
@@ -83,7 +86,7 @@ function renderTable(options: TableOptions = {}) {
     onSelectNext,
     /** Publishes another selection commit, as the workspace would. */
     commitSelection: (selection: Selection | null) => {
-      result.rerender(<SpectrumTable {...props(selection)} />);
+      result.rerender(<TestSpectrumTable {...props(selection)} />);
     },
     /**
      * Publishes a new selection availability, as the workspace would.
@@ -94,7 +97,7 @@ function renderTable(options: TableOptions = {}) {
      */
     rerenderWithAvailability: (availability: SpectrumSelectionAvailability) => {
       result.rerender(
-        <SpectrumTable
+        <TestSpectrumTable
           {...props(options.selection ?? null)}
           selectionAvailability={availability}
         />,
@@ -210,7 +213,7 @@ describe("spectrum table horizontal position", () => {
     const { container } = renderTable();
     const viewport = requireElement(container, ".spectrum-table-viewport");
 
-    expect(getComputedStyle(viewport).scrollPaddingTop).toBe("30px");
+    expect(getComputedStyle(viewport).scrollPaddingTop).toBe("36px");
   });
 });
 
@@ -241,7 +244,7 @@ describe("spectrum table rows", () => {
 
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "PageDown" });
 
-    expect(document.activeElement).toHaveAttribute("aria-rowindex", "20");
+    expect(document.activeElement).toHaveAttribute("aria-rowindex", "19");
   });
 
   it("carries exactly one tab stop among the rendered rows", () => {
@@ -271,7 +274,7 @@ describe("spectrum table rows", () => {
  * arithmetic rather than from a rendered box -- but that arithmetic is
  * `revealScrollTop`'s, and these are the two cases the wrong version of it got
  * wrong. The viewport reports no height here, so the table falls back to its
- * 600px default: the header takes a row, leaving 570px for rows of 30px each.
+ * 600px default: the header takes a row, leaving 564px for rows of 30px each.
  */
 describe("bringing a row into view", () => {
   function viewportOf(container: HTMLElement): HTMLElement {
@@ -284,11 +287,11 @@ describe("bringing a row into view", () => {
     const { container, commitSelection } = renderTable({ rowCount: 400 });
     const viewport = viewportOf(container);
 
-    // Row 30 sits at canvas offset 900 and the rows have 570px, so the least
-    // scroll that shows all of it is 900 + 30 - 570.
+    // Row 30 sits at canvas offset 900 and the rows have 564px, so the least
+    // scroll that shows all of it is 900 + 30 - 564.
     commitSelection(commit(30, 1));
 
-    expect(viewport.scrollTop).toBe(360);
+    expect(viewport.scrollTop).toBe(366);
   });
 
   it("puts a row above the fold exactly at the top of the canvas, header included once", () => {
@@ -322,12 +325,12 @@ describe("bringing a row into view", () => {
     const { container, commitSelection } = renderTable({ rowCount: 400 });
     const viewport = viewportOf(container);
     commitSelection(commit(30, 1));
-    expect(viewport.scrollTop).toBe(360);
+    expect(viewport.scrollTop).toBe(366);
 
     fireEvent.scroll(viewport, { target: { scrollTop: 0 } });
     commitSelection(commit(30, 2));
 
-    expect(viewport.scrollTop).toBe(360);
+    expect(viewport.scrollTop).toBe(366);
   });
 
   it("does not undo a scroll the user made while the same commit stands", () => {
@@ -371,7 +374,7 @@ describe("bringing a row into view", () => {
     fireEvent.scroll(viewport, { target: { scrollTop: 0 } });
     commitSelection(commit(30, 1));
 
-    expect(viewport.scrollTop).toBe(360);
+    expect(viewport.scrollTop).toBe(366);
   });
 });
 
@@ -394,7 +397,7 @@ describe("stepping through scans from the table", () => {
     renderTable({ rowCount: 40, truncated: true });
 
     expect(
-      screen.getByText(/step through these rows and stop at the end of them, which is not the end of the run/),
+      screen.getByText(/loaded prefix only/),
     ).toBeVisible();
   });
 });
@@ -460,7 +463,7 @@ describe("the spectrum table while selection is unavailable", () => {
     expect(document.activeElement).toHaveAttribute("aria-rowindex", "3");
 
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "PageDown" });
-    expect(document.activeElement).toHaveAttribute("aria-rowindex", "21");
+    expect(document.activeElement).toHaveAttribute("aria-rowindex", "20");
 
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Home" });
     expect(document.activeElement).toHaveAttribute("aria-rowindex", "2");
@@ -514,8 +517,8 @@ describe("the spectrum table while selection is unavailable", () => {
     }
     // The sentence itself lives once, in the viewer. Not here.
     expect(screen.queryByText(/conversion is running/u)).toBeNull();
-    // And the hint that Enter opens a row is not offered while it does not.
-    expect(screen.queryByText(/Enter or Space opens the focused row/u)).toBeNull();
+    // Navigation help stays reachable; the row names the one current refusal.
+    expect(screen.getByText(/Enter\/Space opens once/u)).toBeInTheDocument();
   });
 
   it("says nothing about availability, and describes nothing, once selection returns", () => {
@@ -525,7 +528,7 @@ describe("the spectrum table while selection is unavailable", () => {
     for (const row of container.querySelectorAll('[role="row"]:not(.spectrum-table-head)')) {
       expect(row.getAttribute("aria-disabled")).toBeNull();
     }
-    expect(screen.getByText(/Enter or Space opens the focused row/u)).toBeInTheDocument();
+    expect(screen.getByText(/Enter\/Space opens once/u)).toBeInTheDocument();
   });
 
   it("commits again as soon as the lane clears, without being remounted", () => {
@@ -542,3 +545,8 @@ describe("the spectrum table while selection is unavailable", () => {
     expect(grid().getAttribute("aria-describedby")).toBeNull();
   });
 });
+
+function TestSpectrumTable(props: Omit<SpectrumTableProps, "view">) {
+  const view = useScanTableView(props.table.rows);
+  return <SpectrumTable {...props} view={view} />;
+}

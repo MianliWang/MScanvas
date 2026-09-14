@@ -24,10 +24,8 @@ export const AXIS_CAPTION = ".chromatogram-axis-caption";
  * them, for the reason this file exists at all: these are the interface, and a
  * spec that spelled a selector out again would be testing its own copy of it.
  *
- * `SPECTRUM_SURFACE` is deliberately not the drawing. The pointer adapters live
- * on the wrapper because the plot itself is replaced whenever the viewport is
- * refused, admitted or given a new spectrum; the wheel listener is on the
- * drawing, which is why the two are separate constants rather than one.
+ * M7.3 attaches pointer and wheel ownership to the current SVG. The wrapper
+ * constant remains for scrolling and compatibility with historical harnesses.
  */
 export const SPECTRUM_PLOT = "svg.spectrum-plot";
 export const SPECTRUM_SURFACE = "div.spectrum-viewport-plot";
@@ -134,12 +132,14 @@ export async function openTheViewer(options: OpenViewerOptions = {}): Promise<vo
   await browser.setWindowSize(options.width ?? 1_366, options.height ?? 768);
   await installIpcBoundary(options.answers ?? ipcTable());
   await browser.url("/");
-  const row = `li.dataset-row[data-handle="${MZML_ROW.handle}"]`;
+  const row = `.grouped-roster [data-handle="${MZML_ROW.handle}"]`;
+  await browser.$(row).waitForExist();
+  if (!await browser.$(row).isDisplayed()) await browser.$('[aria-controls="workbench-roster"]').click();
   await browser.$(row).waitForDisplayed();
   if (options.scans !== undefined) {
     await seedARunOf(options.scans);
   }
-  await browser.$(row).doubleClick();
+  await browser.$(row).click();
   await browser.$(PLOT).waitForDisplayed({ timeout: 60_000 });
   await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForDisplayed({
     timeout: 60_000,

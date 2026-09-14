@@ -1246,9 +1246,8 @@ button:disabled {
   min-height: 52px;
   width: 100%;
   flex: 1;
-  /* The wheel zooms rather than scrolling the page, and a horizontal drag pans
-     rather than selecting text or starting a browser gesture. */
-  touch-action: none;
+  /* Declared before pointerdown: horizontal selection, native vertical scroll and host pinch. */
+  touch-action: pan-y pinch-zoom;
   cursor: crosshair;
 }
 
@@ -1265,6 +1264,13 @@ button:disabled {
 .chromatogram-axes text {
   fill: var(--color-text-tertiary);
   font-size: 10px;
+}
+
+.chromatogram-value-label {
+  paint-order: stroke;
+  stroke: var(--surface, #fff);
+  stroke-width: 3px;
+  stroke-linejoin: round;
 }
 
 .chromatogram-trace {
@@ -1404,6 +1410,7 @@ button:disabled {
    them sideways because it is inside the same scrolling box. The background is
    opaque on purpose: rows pass beneath it. */
 .spectrum-table-head {
+  height: 36px;
   position: sticky;
   z-index: 1;
   top: 0;
@@ -1441,7 +1448,7 @@ button:disabled {
      do when focus moves to it, and left to itself it counts a row that is
      already half behind the header as near enough -- which is how a row can be
      focused with its top edge, and its focus ring, under the header. */
-  scroll-padding-top: 30px;
+  scroll-padding-top: 36px;
 }
 
 /* The width the header row and the rows below it both resolve their columns
@@ -1675,7 +1682,7 @@ button:disabled {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  touch-action: pan-y;
+  touch-action: pan-y pinch-zoom;
   cursor: crosshair;
 }
 

@@ -8,11 +8,13 @@
  * recorded hardware baseline, which this slice does not claim to have.
  */
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { buildRows } from "../../test/previewFixtures";
-import { SpectrumTable } from "./SpectrumTable";
+import { SpectrumTable, type SpectrumTableProps } from "./SpectrumTable";
+import { renderWithPreferences as render } from "../../test/renderWithPreferences";
+import { useScanTableView } from "./viewer/useScanTableView";
 import { StickSpectrum } from "./StickSpectrum";
 
 /** The measured representative acquisition. */
@@ -23,7 +25,7 @@ function renderTable(rowCount: number) {
   const onSelect = vi.fn();
   const onRendered = vi.fn();
   const result = render(
-    <SpectrumTable
+    <TestSpectrumTable
       canSelectNext={false}
       canSelectPrevious={false}
       onRendered={onRendered}
@@ -45,6 +47,24 @@ function viewportOf(container: HTMLElement): HTMLElement {
 }
 
 describe("spectrum table at acquisition scale", () => {
+  it("keeps End, filtering and activation bounded at the supported 100,000-row ceiling", () => {
+    const { container, onSelect, onRendered } = renderTable(100_000);
+    const grid = screen.getByRole("grid");
+    within(grid).getAllByRole("row")[1]?.focus();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "End" });
+    expect(document.activeElement).toHaveAttribute("data-source-index", "99999");
+    expect(container.querySelectorAll("[data-source-index]").length).toBeLessThan(100);
+    expect(container.querySelector('[data-source-index="0"]')).toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Enter" });
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(99999);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search loaded scans" }), { target: { value: "scan=99999" } });
+    expect(grid).toHaveAttribute("aria-rowcount", "2");
+    expect(container.querySelectorAll("[data-source-index]")).toHaveLength(1);
+    expect(container.querySelector("[data-source-index]")).toHaveAttribute("data-source-index", "99998");
+    expect(onRendered.mock.calls.every(([count]) => count < 100)).toBe(true);
+  });
+
   it("keeps the mounted row count bounded while reporting the real total", () => {
     const { onRendered } = renderTable(REPRESENTATIVE_ROW_COUNT);
 
@@ -52,7 +72,7 @@ describe("spectrum table at acquisition scale", () => {
     expect(grid).toHaveAttribute("aria-rowcount", String(REPRESENTATIVE_ROW_COUNT + 1));
     // Header plus one window. The bound is what matters, not the exact number.
     expect(within(grid).getAllByRole("row").length).toBeLessThan(100);
-    expect(screen.getByText(/36,319 spectra/)).toBeVisible();
+    expect(screen.getByText(/36,319 reported spectra/)).toBeVisible();
     expect(screen.getByText(/all rows loaded/)).toBeVisible();
 
     const [renderedRowCount] = onRendered.mock.calls.at(-1) ?? [];
@@ -132,8 +152,14 @@ describe("stick spectrum at profile-scale point counts", () => {
     // 900 columns, and at most one stick per sign in each.
     expect(commands).toBeLessThanOrEqual(1_800);
 
-    expect(screen.getByText(/Drawn as \d+ sticks from 200000 points/)).toBeVisible();
+    fireEvent.click(screen.getByText("Source and drawing details"));
+    expect(screen.getByText(/Drawn as [\d,]+ sticks from 200,000 points/)).toBeVisible();
     // The spike survives the reduction: it is the axis maximum.
     expect(screen.getByText("5.000e+6")).toBeInTheDocument();
   });
 });
+
+function TestSpectrumTable(props: Omit<SpectrumTableProps, "view">) {
+  const view = useScanTableView(props.table.rows);
+  return <SpectrumTable {...props} view={view} />;
+}

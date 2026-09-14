@@ -6,7 +6,8 @@
  * tests assert only that the sentence agrees with the number it carries.
  */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
+import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 import { describe, expect, it } from "vitest";
 
 import { StickSpectrum } from "./StickSpectrum";
@@ -26,6 +27,9 @@ function renderSpectrum(mz: readonly number[], intensity: readonly number[]): vo
       surface={{ kind: "static" }}
     />,
   );
+  const disclosure = screen.getByText("Source and drawing details");
+  expect(disclosure.closest("details")).not.toHaveAttribute("open");
+  fireEvent.click(disclosure);
 }
 
 /** The same plot, drawn as one committed window of a retained spectrum. */
@@ -50,6 +54,9 @@ function renderWindow(
       surface={{ kind: "static" }}
     />,
   );
+  const disclosure = screen.getByText("Source and drawing details");
+  expect(disclosure.closest("details")).not.toHaveAttribute("open");
+  fireEvent.click(disclosure);
 }
 
 describe("what a window's caption may claim about it", () => {
@@ -162,10 +169,10 @@ describe("stick plot caption", () => {
     // different things about the same measurement.
     renderSpectrum([300, 301], [-1e20, -1]);
 
-    expect(screen.getByText(/2 of the points carry negative intensity\./)).toBeVisible();
+    expect(screen.getByText(/2 points carry negative intensity\./)).toBeVisible();
     expect(
       screen.getByText(
-        /The deepest negative in 1 of the columns is drawn below the zero line; in the rest the value range is too wide/,
+        /The deepest negative in 1 columns is drawn below zero; the rest cannot be distinguished from zero/,
       ),
     ).toBeVisible();
   });
@@ -177,10 +184,10 @@ describe("stick plot caption", () => {
     // let them conclude the drawing disagrees with the measurement.
     renderSpectrum([300, 301], [1e20, -1]);
 
-    expect(screen.getByText(/1 of the points carries negative intensity\./)).toBeVisible();
+    expect(screen.getByText(/1 point carries negative intensity\./)).toBeVisible();
     expect(
       screen.getByText(
-        /too wide to hold them apart from zero at this size, so they are drawn on the zero line without a length rather than below it\./,
+        /too wide to distinguish the negative values from zero at this size; they are drawn on the zero line without a length\./,
       ),
     ).toBeVisible();
     expect(screen.queryByText(/is drawn below the zero line/)).toBeNull();

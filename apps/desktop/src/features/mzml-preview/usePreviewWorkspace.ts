@@ -94,7 +94,8 @@ import {
 } from "./viewer/selectionAvailability";
 import { buildPreviewScanModel } from "./viewer/previewScanModel";
 import type { RetentionTimeDomain, ScanModel, TraceKind } from "./viewer/scanModel";
-import { adjacentScan } from "./viewer/scanModel";
+import { adjacentDisplayedScan } from "./viewer/scanTableView";
+import { useScanTableView, type ScanTableView } from "./viewer/useScanTableView";
 import type {
   MzDomain,
   SpectrumViewportEvent,
@@ -384,6 +385,10 @@ export type ChromatogramExportState =
  * it -- usually by snapping the value, which moves the cursor and fights the
  * user. What crosses to Rust is the parsed form, and only when there is one.
  */
+export type LinkedFigureUnavailable =
+  | { readonly code: "noChromatogram" | "loading" | "noSpectrum" | "noTrace" | "outside" | "figureSettings" }
+  | { readonly code: "minimumHeight"; readonly minimum: number };
+
 export interface FigureSettingsDraft {
   readonly widthPx: string;
   readonly heightPx: string;
@@ -532,6 +537,7 @@ export interface PreviewWorkspace {
    * a drawing: see `viewer/scanModel.ts`.
    */
   readonly scanModel: ScanModel;
+  readonly scanTableView: ScanTableView;
   /**
    * The one interaction state: committed viewport, transient gesture,
    * persistent selection, selection revision and hover.
@@ -768,7 +774,7 @@ export interface PreviewWorkspace {
    * One sentence, and only ever about the linked surface: the single-source
    * exports each answer for themselves. Ordered by what a user would fix first.
    */
-  readonly linkedFigureUnavailable: string | null;
+  readonly linkedFigureUnavailable: LinkedFigureUnavailable | null;
   /** Exports the chromatogram and the selected spectrum as one figure. */
   readonly exportLinkedFigure: (format: LinkedFigureFormat) => void;
   /** Puts that figure on the clipboard. */
@@ -938,6 +944,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    */
   const viewer = useViewerInteraction();
   const { dispatch: dispatchViewerEvent, current: readViewerInteraction } = viewer;
+  const spectrumViewport = useSpectrumViewport();
+  const { dispatch: dispatchSpectrumViewport, current: readSpectrumViewport } = spectrumViewport;
+  const spectrumViewportState = spectrumViewport.state;
   /**
    * The selected scan, read from the one place it is decided.
    *
@@ -1264,7 +1273,8 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     // still in flight can never commit into whatever is loaded next -- which is
     // why this does not depend on a timer having been cleared in time.
     dispatchViewerEvent({ type: "preview-closed" });
-  }, [dispatchViewerEvent]);
+    dispatchSpectrumViewport({ type: "spectrum-cleared" });
+  }, [dispatchSpectrumViewport, dispatchViewerEvent]);
 
   /**
    * Drops everything on screen that a backend produced.
@@ -1650,6 +1660,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       // announced by the lifecycle effect below, once there is a model to
       // announce.
       dispatchViewerEvent({ type: "preview-closed" });
+      dispatchSpectrumViewport({ type: "spectrum-cleared" });
       openHandle.current = handle;
       activeOpen.current = { token, handle };
       // Said here, where a read actually begins, rather than by whatever asked
@@ -1780,6 +1791,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       beginViewerRequest,
       checkBackend,
       discardBackendDerivedState,
+      dispatchSpectrumViewport,
       dispatchViewerEvent,
       endViewerRequest,
     ],
@@ -2521,11 +2533,12 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       // The reducer allocates the revision. Several producers reach this one
       // function -- the plot, the table, Previous and Next -- and the number
       // that tells two commits apart is not theirs to invent.
-      dispatchViewerEvent({
+      const selected = dispatchViewerEvent({
         type: "selection-committed",
         index,
         retentionTime: row.retentionTime.value,
       });
+      if (selected.selection !== null) dispatchSpectrumViewport({ type: "selection-changed", revision: selected.selection.revision });
       spectrumToken.current += 1;
       const token = spectrumToken.current;
       inFlightSpectrum.current = { index, token };
@@ -2682,6 +2695,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
   // same reason every other mirror here is: a commit arriving in the gap would
   // reconcile against the table before the last change.
   previewRowsRef.current = previewRows;
+  const scanTableView = useScanTableView(previewRows);
 
   /**
    * Tells the interaction which run it belongs to, once there is one to name.
@@ -2710,41 +2724,29 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     setChromatogramTraces((current) => ({ ...current, [trace]: !current[trace] }));
   }, []);
 
-  /**
-   * The scans either side of the selected one, kept off the cursor's path.
-   *
-   * `adjacentScan` walks the table to find the selected row, because the table's
-   * order is the order Previous and Next mean and nothing promises the indices
-   * are a gapless ascending run. That walk is linear, and this hook re-renders
-   * whenever the pointer crosses from one scan to another -- which at a full-run
-   * zoom over a large acquisition is most pointer frames. Unmemoized, a
-   * selection near the end of a 36,319-row table put two whole-table walks into
-   * every one of them.
-   *
-   * Neither input changes on a hover, so the memo answers without walking
-   * anything.
-   */
+  // O(1) neighbors of the persistent source selection under the loaded table
+  // projection. Hover does not rebuild the projection or change these steps.
   const scanSteps = useMemo(
     () => ({
-      previous: adjacentScan(previewRows, selectedIndex, -1),
-      next: adjacentScan(previewRows, selectedIndex, 1),
+      previous: adjacentDisplayedScan(scanTableView.projection, selectedIndex, -1),
+      next: adjacentDisplayedScan(scanTableView.projection, selectedIndex, 1),
     }),
-    [previewRows, selectedIndex],
+    [scanTableView.projection, selectedIndex],
   );
   const previousScanIndex = scanSteps.previous;
   const nextScanIndex = scanSteps.next;
+  const scanProjectionRef = useRef(scanTableView.projection);
+  scanProjectionRef.current = scanTableView.projection;
 
   const selectPreviousScan = useCallback(() => {
-    if (previousScanIndex !== null) {
-      selectSpectrum(previousScanIndex);
-    }
-  }, [previousScanIndex, selectSpectrum]);
+    const index = adjacentDisplayedScan(scanProjectionRef.current, readViewerInteraction().selection?.index ?? null, -1);
+    if (index !== null) selectSpectrum(index);
+  }, [readViewerInteraction, selectSpectrum]);
 
   const selectNextScan = useCallback(() => {
-    if (nextScanIndex !== null) {
-      selectSpectrum(nextScanIndex);
-    }
-  }, [nextScanIndex, selectSpectrum]);
+    const index = adjacentDisplayedScan(scanProjectionRef.current, readViewerInteraction().selection?.index ?? null, 1);
+    if (index !== null) selectSpectrum(index);
+  }, [readViewerInteraction, selectSpectrum]);
 
   // Session state, deliberately not persisted: a figure size is a decision
   // about one export, and a size silently restored from a previous run is a
@@ -2844,9 +2846,6 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
    * come from a browser gesture -- which spectrum is selected, and what Rust
    * answered -- and owns the one call that crosses the boundary.
    */
-  const spectrumViewport = useSpectrumViewport();
-  const { dispatch: dispatchSpectrumViewport, current: readSpectrumViewport } = spectrumViewport;
-  const spectrumViewportState = spectrumViewport.state;
   /**
    * The sentence behind the failure the reducer accepted, and its generation.
    *
@@ -3949,18 +3948,18 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
    * be drawn. A reader fixes the first of those before the ones below it can
    * even be asked.
    */
-  const linkedFigureUnavailable = useMemo((): string | null => {
+  const linkedFigureUnavailable = useMemo((): LinkedFigureUnavailable | null => {
     if (chromatogramExportToken === null) {
-      return "This run has no chromatogram to link to.";
+      return { code: "noChromatogram" };
     }
     if (spectrum.status === "loading") {
-      return "Wait for the selected spectrum to load.";
+      return { code: "loading" };
     }
     if (exportedSpectrumToken === null) {
-      return "Select a scan and wait for its spectrum to load.";
+      return { code: "noSpectrum" };
     }
     if (!chromatogramTraces.tic && !chromatogramTraces.bpc) {
-      return "Show at least one chromatogram trace to create a linked figure.";
+      return { code: "noTrace" };
     }
     // Said here because a reader can act on it -- choose Full run, or bring the
     // scan back into view -- and being told only after a save dialog would have
@@ -3973,16 +3972,13 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       (selectedScanRetentionTime < chromatogramCommittedDomain.low ||
         selectedScanRetentionTime > chromatogramCommittedDomain.high)
     ) {
-      return (
-        "The selected scan is outside the current chromatogram range. Choose Full run or move " +
-        "the current range to include the selected scan."
-      );
+      return { code: "outside" };
     }
     if (renderSettingsProblem !== null) {
-      return renderSettingsProblem;
+      return { code: "figureSettings" };
     }
     if (resolvedRenderSettings !== null && resolvedRenderSettings.heightPx < LINKED_MINIMUM_HEIGHT) {
-      return `A two-panel linked figure needs a height of at least ${LINKED_MINIMUM_HEIGHT}.`;
+      return { code: "minimumHeight", minimum: LINKED_MINIMUM_HEIGHT };
     }
     return null;
   }, [
@@ -4229,6 +4225,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     toggleChromatogramTrace,
     selectPreviousScan,
     selectNextScan,
+    scanTableView,
     spectrumSelection,
     canSelectPreviousScan: spectrumSelectionAvailable && previousScanIndex !== null,
     canSelectNextScan: spectrumSelectionAvailable && nextScanIndex !== null,

@@ -135,7 +135,7 @@ function clientXFor(retentionTime: number): number {
 function panTo(retentionTime: number): void {
   const from = clientXFor(retentionTime + 20 * RT_STEP);
   const to = clientXFor(retentionTime);
-  fireEvent.pointerDown(plot(), { button: 0, clientX: from, clientY: 100, pointerId: 1 });
+  fireEvent.pointerDown(plot(), { button: 1, isPrimary: true, pointerType: "mouse", clientX: from, clientY: 100, pointerId: 1 });
   fireEvent.pointerMove(plot(), { clientX: to, clientY: 100, pointerId: 1 });
   fireEvent.pointerUp(plot(), { button: 0, clientX: to, clientY: 100, pointerId: 1 });
 }
@@ -269,7 +269,7 @@ describe("what the chromatogram can be exported as", () => {
 
     expect(
       within(panel()).getByText(
-        "Current range is the whole run until the viewport is changed.",
+        "Current range is the whole run until a range is committed.",
       ),
     ).toBeDefined();
 
@@ -353,8 +353,8 @@ describe("what the chromatogram can be exported as", () => {
 
     // Now a drag that has moved but has not been released.
     const from = clientXFor(50 * RT_STEP);
-    fireEvent.pointerDown(plot(), { button: 0, clientX: from, clientY: 100, pointerId: 1 });
-    fireEvent.pointerMove(plot(), { clientX: from - 60, clientY: 100, pointerId: 1 });
+    fireEvent.pointerDown(plot(), { button: 1, isPrimary: true, pointerType: "mouse", clientX: from, clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(plot(), { button: 1, isPrimary: true, pointerType: "mouse", clientX: from - 60, clientY: 100, pointerId: 1 });
     const transient = document.querySelector(".chromatogram-range")?.textContent ?? "";
     expect(transient).not.toBe(committed);
 
@@ -368,7 +368,7 @@ describe("what the chromatogram can be exported as", () => {
     expect(range?.low).toBeCloseTo(Number(low), 3);
     expect(range?.high).toBeCloseTo(Number(high), 3);
     // And the gesture is still the user's: releasing it still commits.
-    fireEvent.pointerUp(plot(), { button: 0, clientX: from - 60, clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 1, isPrimary: true, pointerType: "mouse", clientX: from - 60, clientY: 100, pointerId: 1 });
     expect(document.querySelector(".chromatogram-range")?.textContent ?? "").toBe(transient);
   });
 

@@ -1,16 +1,17 @@
 import { useRef } from "react";
 
 /** Preserve the editing string and node; parsing remains with the domain owner. */
-export function RawTextField({ id, labelledBy, describedBy, invalid, value, onChange }: {
+export function RawTextField({ id, labelledBy, describedBy, invalid, value, onChange, inputMode = "numeric" }: {
   readonly id: string;
   readonly labelledBy: string;
   readonly describedBy?: string;
   readonly invalid: boolean;
   readonly value: string;
   readonly onChange: (value: string) => void;
+  readonly inputMode?: "numeric" | "decimal";
 }) {
   const composing = useRef(false);
-  return <input id={id} className="spectrum-figure-input" type="text" inputMode="numeric"
+  return <input id={id} className="spectrum-figure-input" type="text" inputMode={inputMode}
     aria-labelledby={labelledBy} aria-describedby={describedBy} aria-invalid={invalid || undefined}
     value={value} onChange={(event) => onChange(event.target.value)}
     onCompositionStart={() => { composing.current = true; }}

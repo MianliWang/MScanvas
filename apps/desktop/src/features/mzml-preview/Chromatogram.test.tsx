@@ -12,7 +12,8 @@
  * the component picked itself, or an epoch from anywhere but the reducer.
  */
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 import { useLayoutEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -23,6 +24,7 @@ import type { TraceVisibility } from "./usePreviewWorkspace";
 import type { ViewerInteractionState } from "./viewer/interactionState";
 import { renderedDomain } from "./viewer/interactionState";
 import { buildPreviewScanModel } from "./viewer/previewScanModel";
+import * as renderGeometry from "./viewer/renderGeometry";
 import type { RetentionTimeDomain, ScanModel } from "./viewer/scanModel";
 import type { SpectrumSelectionAvailability } from "./viewer/selectionAvailability";
 import type { ViewerInteractionController } from "./viewer/useViewerInteraction";
@@ -193,7 +195,7 @@ function state(): ViewerInteractionState {
   if (controller === null) {
     throw new Error("no controller");
   }
-  return controller.state;
+  return controller.current();
 }
 
 function send(event: Parameters<ViewerInteractionController["dispatch"]>[0]): void {
@@ -203,7 +205,7 @@ function send(event: Parameters<ViewerInteractionController["dispatch"]>[0]): vo
 }
 
 function tracePaths(): NodeListOf<Element> {
-  return document.querySelectorAll("path.chromatogram-trace");
+  return document.querySelectorAll('path.chromatogram-trace:not([d=""])');
 }
 
 /** The top value label, which is what the axis claims the tallest thing is. */
@@ -275,6 +277,7 @@ function key(options: {
   readonly altKey?: boolean;
   readonly shiftKey?: boolean;
 }): KeyboardEvent {
+  plot().focus();
   const event = new KeyboardEvent("keydown", {
     altKey: options.altKey ?? false,
     bubbles: true,
@@ -342,7 +345,8 @@ describe("what the traces are made of", () => {
   it("says the values come from the loaded table and are not a stored record", () => {
     renderChromatogram();
 
-    expect(screen.getByText(/Per-scan values from the loaded spectrum table/u)).toBeVisible();
+    fireEvent.click(screen.getByText("Source and drawing details"));
+    expect(screen.getByText(/Per-scan values from the complete loaded table/u)).toBeVisible();
     expect(screen.getByText(/Not a stored chromatogram record\./u)).toBeVisible();
   });
 
@@ -416,7 +420,8 @@ describe("what is drawn, and what the axis says about it", () => {
     renderChromatogram({ model: runOfRows(20_000), traces: BOTH });
 
     expect(tracePaths()).toHaveLength(2);
-    expect(document.querySelectorAll("svg.chromatogram-svg circle")).toHaveLength(0);
+    expect(document.querySelectorAll('svg.chromatogram-svg circle:not([visibility="hidden"])')).toHaveLength(0);
+    expect(document.querySelectorAll("svg.chromatogram-svg circle")).toHaveLength(2);
     for (const path of tracePaths()) {
       // A screen budget rather than the run's size: at most four vertices per
       // column, over 900 columns.
@@ -471,6 +476,27 @@ describe("trace visibility", () => {
 });
 
 describe("coordinate inspection", () => {
+  it("reuses source geometry across distinct hovers and rebuilds it for an RT change", () => {
+    const clip = vi.spyOn(renderGeometry, "clipTrace");
+    const reduce = vi.spyOn(renderGeometry, "reduceVisible");
+    const { onSelect } = renderChromatogram();
+    const initialClips = clip.mock.calls.length;
+    const initialReductions = reduce.mock.calls.length;
+    expect(initialClips).toBeGreaterThan(0);
+    send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
+    expect(clip.mock.calls.length).toBeGreaterThan(initialClips);
+    expect(reduce.mock.calls.length).toBeGreaterThan(initialReductions);
+    const changedClips = clip.mock.calls.length;
+    const changedReductions = reduce.mock.calls.length;
+    for (const index of [9, 12, 16, 20, 23]) {
+      fireEvent.pointerMove(plot(), { clientX: clientXFor(index * 0.0125, shown()) });
+      expect(state().hover?.spectrumIndex).toBe(index);
+    }
+    expect(clip.mock.calls.length).toBe(changedClips);
+    expect(reduce.mock.calls.length).toBe(changedReductions);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it("reports the nearest scan from the full model without selecting it", () => {
     const { onSelect } = renderChromatogram();
 
@@ -578,8 +604,9 @@ describe("choosing a scan", () => {
     const { onSelect } = renderChromatogram();
     const at = clientXFor(30 * 0.0125, shown());
 
-    fireEvent.pointerDown(plot(), { button: 0, clientX: at, pointerId: 1 });
+    fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 0, clientX: at, pointerId: 1 });
     fireEvent.pointerUp(plot(), { button: 0, clientX: at, pointerId: 1 });
+    fireEvent.click(plot(), { detail: 1 });
 
     expect(onSelect.mock.calls).toEqual([[30]]);
   });
@@ -592,8 +619,9 @@ describe("choosing a scan", () => {
     const target = 12_345;
     const at = clientXFor(target * 0.0125, shown());
 
-    fireEvent.pointerDown(plot(), { button: 0, clientX: at, pointerId: 1 });
+    fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 0, clientX: at, pointerId: 1 });
     fireEvent.pointerUp(plot(), { button: 0, clientX: at, pointerId: 1 });
+    fireEvent.click(plot(), { detail: 1 });
 
     expect(onSelect.mock.calls).toEqual([[target]]);
   });
@@ -601,9 +629,10 @@ describe("choosing a scan", () => {
   it("still selects when the pointer only trembled", () => {
     const { onSelect } = renderChromatogram();
 
-    fireEvent.pointerDown(plot(), { button: 0, clientX: 500, clientY: 100, pointerId: 1 });
+    fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 0, clientX: 500, clientY: 100, pointerId: 1 });
     fireEvent.pointerMove(plot(), { clientX: 502, clientY: 101, pointerId: 1 });
     fireEvent.pointerUp(plot(), { button: 0, clientX: 502, clientY: 101, pointerId: 1 });
+    fireEvent.click(plot(), { detail: 1 });
 
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
@@ -618,9 +647,10 @@ describe("choosing a scan", () => {
     const { onSelect } = renderChromatogram();
     const before = state();
 
-    fireEvent.pointerDown(plot(), { button: 0, clientX: 500, clientY: 100, pointerId: 1 });
+    fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 0, clientX: 500, clientY: 100, pointerId: 1 });
     fireEvent.pointerMove(plot(), { clientX: 501, clientY: 160, pointerId: 1 });
     fireEvent.pointerUp(plot(), { button: 0, clientX: 501, clientY: 160, pointerId: 1 });
+    fireEvent.click(plot(), { detail: 1 });
 
     expect(onSelect).not.toHaveBeenCalled();
     // And no gesture was invented for a direction this plot does not pan in.
@@ -722,9 +752,10 @@ describe("moving the viewport", () => {
     send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
     const before = shown();
 
-    fireEvent.pointerDown(plot(), { button: 0, clientX: 700, pointerId: 1 });
+    fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 1, clientX: 700, pointerId: 1 });
     fireEvent.pointerMove(plot(), { clientX: 500, pointerId: 1 });
-    fireEvent.pointerUp(plot(), { button: 0, clientX: 500, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 1, clientX: 500, pointerId: 1 });
+    fireEvent.click(plot(), { detail: 1 });
 
     const after = state().committedDomain;
     expect(after).not.toBeNull();
@@ -739,18 +770,20 @@ describe("moving the viewport", () => {
     renderChromatogram();
     send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
 
-    fireEvent.pointerDown(plot(), { button: 0, clientX: 700, pointerId: 1 });
+    fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 1, clientX: 700, pointerId: 1 });
     fireEvent.pointerMove(plot(), { clientX: 500, pointerId: 1 });
-    fireEvent.pointerUp(plot(), { button: 0, clientX: 500, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 1, clientX: 500, pointerId: 1 });
+    fireEvent.click(plot(), { detail: 1 });
     const direct = state().committedDomain;
 
     send({ type: "viewport-reset" });
     send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
-    fireEvent.pointerDown(plot(), { button: 0, clientX: 700, pointerId: 2 });
+    fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 1, clientX: 700, pointerId: 2 });
     fireEvent.pointerMove(plot(), { clientX: 640, pointerId: 2 });
     fireEvent.pointerMove(plot(), { clientX: 580, pointerId: 2 });
     fireEvent.pointerMove(plot(), { clientX: 500, pointerId: 2 });
-    fireEvent.pointerUp(plot(), { button: 0, clientX: 500, pointerId: 2 });
+    fireEvent.pointerUp(plot(), { button: 1, clientX: 500, pointerId: 2 });
+    fireEvent.click(plot(), { detail: 1 });
 
     expect(state().committedDomain?.low).toBeCloseTo(direct?.low ?? 0, 12);
     expect(state().committedDomain?.high).toBeCloseTo(direct?.high ?? 0, 12);
@@ -761,7 +794,7 @@ describe("moving the viewport", () => {
     send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
     const committed = state().committedDomain;
 
-    fireEvent.pointerDown(plot(), { button: 0, clientX: 700, pointerId: 1 });
+    fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 1, clientX: 700, pointerId: 1 });
     fireEvent.pointerMove(plot(), { clientX: 500, pointerId: 1 });
     fireEvent.pointerCancel(plot(), { clientX: 500, pointerId: 1 });
 
@@ -774,16 +807,22 @@ describe("moving the viewport", () => {
     const full = shown();
     plot().focus();
 
+    plot().focus();
+
     fireEvent.keyDown(plot(), { key: "+" });
     expect(state().committedDomain).not.toBeNull();
     const zoomed = state().committedDomain;
     const span = (zoomed?.high ?? 0) - (zoomed?.low ?? 0);
     expect(span).toBeLessThan(full.high - full.low);
 
+    plot().focus();
+
     fireEvent.keyDown(plot(), { key: "ArrowRight" });
     const panned = state().committedDomain;
     expect(panned?.low).toBeGreaterThan(zoomed?.low ?? 0);
     expect((panned?.high ?? 0) - (panned?.low ?? 0)).toBeCloseTo(span, 9);
+
+    plot().focus();
 
     fireEvent.keyDown(plot(), { key: "Home" });
     expect(state().committedDomain).toBeNull();
@@ -805,7 +844,7 @@ describe("when there is no chromatogram", () => {
     renderChromatogram({ model: runOfRows(20, true) });
 
     expect(screen.getByText("TIC and BPC are unavailable for this preview.")).toBeVisible();
-    expect(screen.getByText(/did not load the complete table/u)).toBeVisible();
+    expect(screen.getByText(/loaded table is incomplete/u)).toBeVisible();
     expect(screen.queryByRole("img", { name: "Chromatogram" })).toBeNull();
     expect(tracePaths()).toHaveLength(0);
     // And no controls for a range that does not exist.
@@ -823,7 +862,7 @@ describe("when there is no chromatogram", () => {
     });
 
     expect(screen.getByText("TIC and BPC are unavailable for this preview.")).toBeVisible();
-    expect(screen.getByText(/cannot identify\s+precisely/u)).toBeVisible();
+    expect(screen.getByText(/does not name it/u)).toBeVisible();
     expect(screen.queryByText(/malformed|corrupt|invalid file/iu)).toBeNull();
   });
 
@@ -883,7 +922,7 @@ describe("a run of a single scan", () => {
   const BASELINE_Y = 180;
 
   function glyphs(): { r: string; cx: string; cy: string; className: string }[] {
-    return [...document.querySelectorAll("circle.chromatogram-point")].map((node) => ({
+    return [...document.querySelectorAll('circle.chromatogram-point:not([visibility="hidden"])')].map((node) => ({
       r: node.getAttribute("r") ?? "",
       cx: node.getAttribute("cx") ?? "",
       cy: node.getAttribute("cy") ?? "",
@@ -1064,7 +1103,7 @@ describe("the viewport control group", () => {
     expect(enabledControls()).toEqual([]);
     // The measurement is still on screen. There is nothing to zoom, which is
     // not the same as nothing to see.
-    expect(document.querySelectorAll("circle.chromatogram-point")).toHaveLength(1);
+    expect(document.querySelectorAll('circle.chromatogram-point:not([visibility="hidden"])')).toHaveLength(1);
   });
 
   it("makes every control it offers do something, and every one it refuses do nothing", () => {
@@ -1142,14 +1181,21 @@ describe("the viewport control group", () => {
     renderChromatogram();
     const before = state();
 
+    plot().focus();
+
     fireEvent.keyDown(plot(), { key: "-" });
     expect(state()).toBe(before);
+    plot().focus();
     fireEvent.keyDown(plot(), { key: "Home" });
     expect(state()).toBe(before);
+
+    plot().focus();
 
     fireEvent.keyDown(plot(), { key: "+" });
     expect(state()).not.toBe(before);
     expect(control("Zoom out")).toBeEnabled();
+
+    plot().focus();
 
     fireEvent.keyDown(plot(), { key: "Home" });
     expect(shown()).toEqual(renderedDomain(state()));
@@ -1291,7 +1337,7 @@ describe("who owns a wheel", () => {
     expect(state()).toBe(before);
     expect(state().gesture).toBeNull();
     // And the measurement is still on screen.
-    expect(document.querySelectorAll("circle.chromatogram-point")).toHaveLength(1);
+    expect(document.querySelectorAll('circle.chromatogram-point:not([visibility="hidden"])')).toHaveLength(1);
   });
 
   it("ignores a wheel with no vertical delta at all", () => {
@@ -1714,26 +1760,19 @@ describe("how far the wheel zooms", () => {
     expect(state()).toBe(before);
   });
 
-  it("reads the same magnitude whether or not shift is held", () => {
-    /*
-     * What the superseded ctrl case above used to assert, asked of the modifier
-     * that still has no owner. Ctrl now names one -- see `input the host owns`
-     * below -- and this keeps the original point standing where it is still
-     * true: magnitude is read from the two numbers the event carries, and a
-     * modifier does not accelerate or attenuate it.
-     */
+  it("amends Shift-wheel to pan, leaving a full-range boundary to the host", () => {
     renderChromatogram();
-    const plain = wheel({ deltaY: -100 });
-    const withoutShift = shown();
-
-    cleanup();
-    renderChromatogram();
-    const held = wheel({ deltaY: -100, shiftKey: true });
-    const withShift = shown();
-
-    expect(plain.defaultPrevented).toBe(true);
-    expect(held.defaultPrevented).toBe(true);
-    expect(withShift).toEqual(withoutShift);
+    const full = state();
+    expect(wheel({ deltaY: -100, shiftKey: true }).defaultPrevented).toBe(false);
+    expect(state()).toBe(full);
+    send({ type: "viewport-step", domain: { low: .15, high: .35 } });
+    expect(wheel({ deltaY: -100, shiftKey: true }).defaultPrevented).toBe(true);
+    const panned = shown();
+    expect(panned.low).toBeLessThan(.15);
+    expect(panned.high - panned.low).toBeCloseTo(.2);
+    expect(state().committedDomain).toEqual({ low: .15, high: .35 });
+    act(() => vi.advanceTimersByTime(120));
+    expect(state().committedDomain).toEqual(panned);
   });
 
   it("still refuses an outward delta of any size at full range", () => {
@@ -1779,7 +1818,7 @@ describe("a wheel that arrives during a press", () => {
    * press began.
    */
   function press(clientX: number): void {
-    fireEvent.pointerDown(plot(), { button: 0, clientX, clientY: 100, pointerId: 1 });
+    fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 1, clientX, clientY: 100, pointerId: 1 });
   }
 
   function movePointer(clientX: number): void {
@@ -1821,7 +1860,9 @@ describe("a wheel that arrives during a press", () => {
     expect(shown().low).toBeGreaterThan(midPan.low);
     expect(state().gesture?.epoch).toBe(epoch);
 
-    fireEvent.pointerUp(plot(), { button: 0, clientX: 420, clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 1, clientX: 420, clientY: 100, pointerId: 1 });
+
+    fireEvent.click(plot(), { detail: 1 });
     expect(state().gesture).toBeNull();
     expect(state().committedDomain).not.toBeNull();
   });
@@ -1845,7 +1886,8 @@ describe("a wheel that arrives during a press", () => {
     zoomedIn();
     press(500);
     wheel({ deltaY: -240 });
-    fireEvent.pointerUp(plot(), { button: 0, clientX: 500, clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 1, clientX: 500, clientY: 100, pointerId: 1 });
+    fireEvent.click(plot(), { detail: 1 });
     const released = shown();
 
     const event = wheel({ deltaY: -240 });
@@ -1868,7 +1910,8 @@ describe("who owns a press on the plot", () => {
   /*
    * One pointer owns the press until that same pointer ends it.
    *
-   * The plot declares `touch-action: none`, so every contact reaches it as a
+   * These cases use mouse pointer traffic; M7.3 touch cancellation is tested in
+   * usePlotInput.test.tsx. A stray mouse pointer reaches the adapter as a
    * pointer event: on a touchscreen or a pen-and-touch device a second finger
    * arrives in the middle of a pan. The press record used to be replaced by it,
    * and the damage was not one bug but three. The first pointer's moves fell
@@ -1886,7 +1929,7 @@ describe("who owns a press on the plot", () => {
   const STRAY = 2;
 
   function down(clientX: number, pointerId: number): void {
-    fireEvent.pointerDown(plot(), { button: 0, clientX, clientY: 100, pointerId });
+    fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 0, clientX, clientY: 100, pointerId });
   }
 
   function move(clientX: number, pointerId: number): void {
@@ -1895,6 +1938,7 @@ describe("who owns a press on the plot", () => {
 
   function up(clientX: number, pointerId: number): void {
     fireEvent.pointerUp(plot(), { button: 0, clientX, clientY: 100, pointerId });
+    fireEvent.click(plot(), { detail: 1 });
   }
 
   function cancel(clientX: number, pointerId: number): void {
@@ -1945,7 +1989,7 @@ describe("who owns a press on the plot", () => {
 
   /** Presses at 500 and pans to 460, which is past the slop threshold. */
   function startPanning(): void {
-    down(500, OWNER);
+    fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 1, clientX: 500, clientY: 100, pointerId: OWNER });
     move(460, OWNER);
     expect(state().gesture).not.toBeNull();
   }
@@ -2058,7 +2102,7 @@ describe("who owns a press on the plot", () => {
     up(460, OWNER);
     const afterFirst = shown();
 
-    down(500, STRAY);
+    fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 1, clientX: 500, clientY: 100, pointerId: STRAY });
     move(440, STRAY);
 
     expect(state().gesture).not.toBeNull();
@@ -2084,10 +2128,11 @@ describe("who owns a press on the plot", () => {
     const { onSelect } = renderChromatogram();
     const at = clientXFor(30 * 0.0125, shown());
 
-    fireEvent.pointerDown(plot(), { button: 0, clientX: at, clientY: 100, pointerId: OWNER });
+    fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 0, clientX: at, clientY: 100, pointerId: OWNER });
     strayTraffic();
     fireEvent.pointerMove(plot(), { clientX: at, clientY: 160, pointerId: OWNER });
     fireEvent.pointerUp(plot(), { button: 0, clientX: at, clientY: 160, pointerId: OWNER });
+    fireEvent.click(plot(), { detail: 1 });
 
     expect(onSelect).not.toHaveBeenCalled();
   });
@@ -2144,8 +2189,9 @@ describe("choosing a scan while selection is unavailable", () => {
     const { onSelect } = blocked();
     const at = clientXFor(30 * 0.0125, shown());
 
-    fireEvent.pointerDown(plot(), { button: 0, clientX: at, pointerId: 1 });
+    fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 0, clientX: at, pointerId: 1 });
     fireEvent.pointerUp(plot(), { button: 0, clientX: at, pointerId: 1 });
+    fireEvent.click(plot(), { detail: 1 });
 
     // Not a disabled affordance. Nothing crossed the boundary.
     expect(onSelect).not.toHaveBeenCalled();
@@ -2197,9 +2243,10 @@ describe("choosing a scan while selection is unavailable", () => {
     send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
     const before = shown();
 
-    fireEvent.pointerDown(plot(), { button: 0, clientX: 700, pointerId: 1 });
+    fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 1, clientX: 700, pointerId: 1 });
     fireEvent.pointerMove(plot(), { clientX: 500, pointerId: 1 });
-    fireEvent.pointerUp(plot(), { button: 0, clientX: 500, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 1, clientX: 500, pointerId: 1 });
+    fireEvent.click(plot(), { detail: 1 });
 
     const after = state().committedDomain;
     expect(after?.low).toBeGreaterThan(before.low);

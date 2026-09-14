@@ -290,7 +290,7 @@ describe("session Settings in the real application composition", () => {
     choose(dialog, en.simplifiedChinese);
     await act(async () => result.resolve({ outcome: "spectrum", spectrum: buildSpectrum(0, 12) }));
     expect(document.querySelector('[data-settings-dialog]')).toBe(dialog);
-    expect(screen.getByText(/Spectrum 0, MS2, 12 points\./)).toBeInTheDocument();
+    expect(screen.getByText("质谱 0，MS2，12 个点。")).toBeInTheDocument();
     const spectrum = document.querySelector('.spectrum-panel');
     expect(spectrum).not.toBeNull();
     press(dialog, zh.cancel);
@@ -319,10 +319,11 @@ describe("session Settings in the real application composition", () => {
     expect(dpi).toHaveAccessibleDescription(zh.invalidDpi);
     expect(width).not.toHaveAttribute("aria-invalid");
     const spectrum = document.getElementById("spectrum-widthPx")?.closest("section") ?? width.closest("section")!;
-    const svg = within(spectrum).getByRole("button", { name: "Export SVG…" });
+    fireEvent.click(within(spectrum).getByText("导出质谱"));
+    const svg = within(spectrum).getByRole("button", { name: "导出 SVG…" });
     expect(svg).toBeEnabled();
-    expect(within(spectrum).getByRole("button", { name: "Export PNG…" })).toBeDisabled();
-    expect(within(spectrum).getByRole("button", { name: "Copy plot" })).toBeEnabled();
+    expect(within(spectrum).getByRole("button", { name: "导出 PNG…" })).toBeDisabled();
+    expect(within(spectrum).getByRole("button", { name: "复制图像" })).toBeEnabled();
     fireEvent.click(svg);
     await waitFor(() => expect(api.spectrumExportRequests.length + api.chromatogramExportRequests.length).toBe(1));
     const request = api.spectrumExportRequests[0] ?? api.chromatogramExportRequests[0];

@@ -232,14 +232,14 @@ describe("the linked chromatogram and spectrum section", () => {
     // act: the reason while the section is closed, what it draws once it opens.
     expect(linkedReason()).toBe("Select a scan and wait for its spectrum to load.");
     expect(
-      within(linkedSection()).queryByText(/Two panels: this chromatogram over the range above/u),
+      within(linkedSection()).queryByText(/The upper panel shows this chromatogram over the chosen range/u),
     ).toBeNull();
 
     await selectAScan();
     expect(linkedReason()).toBeNull();
     expect(
       within(linkedSection()).getByText(
-        /Two panels: this chromatogram over the range above, marked at the selected scan/u,
+        /The upper panel shows this chromatogram over the chosen range and marks the selected scan/u,
       ),
     ).toBeVisible();
   });
@@ -383,8 +383,7 @@ describe("the linked chromatogram and spectrum section", () => {
     });
 
     expect(linkedReason()).toBe(
-      "The selected scan is outside the current chromatogram range. Choose Full run or move " +
-        "the current range to include the selected scan.",
+      "The selected scan is outside the current chromatogram range. Choose Full run or include the selected scan in the committed range.",
     );
     pressEveryLinkedAction();
     expect(preview.linkedFigureRequests).toEqual([]);
@@ -456,13 +455,13 @@ describe("the linked chromatogram and spectrum section", () => {
     // AVAILABLE: the description is visible, and nothing is announced.
     expect(linkedReason()).toBeNull();
     expect(
-      within(linkedSection()).getByText(/^Two panels: this chromatogram/u),
+      within(linkedSection()).getByText(/^The upper panel shows this chromatogram/u),
     ).toBeVisible();
     const announcement = linkedAnnouncement();
     expect(announcement.getAttribute("aria-live")).toBe("polite");
     expect(announcement.textContent).toBe("");
     // The visible sentence is not the announcement, so it cannot read itself out.
-    expect(within(linkedSection()).getByText(/^Two panels: this chromatogram/u)).not.toBe(
+    expect(within(linkedSection()).getByText(/^The upper panel shows this chromatogram/u)).not.toBe(
       announcement,
     );
 
@@ -489,7 +488,7 @@ describe("the linked chromatogram and spectrum section", () => {
     expect(linkedAnnouncement()).toBe(announcement);
     expect(announcement.textContent).toBe("");
     expect(
-      within(linkedSection()).getByText(/^Two panels: this chromatogram/u),
+      within(linkedSection()).getByText(/^The upper panel shows this chromatogram/u),
     ).toBeVisible();
     expect(linkedButton("Export linked SVG…").disabled).toBe(false);
   });
@@ -519,7 +518,7 @@ describe("the linked chromatogram and spectrum section", () => {
 
     // AVAILABLE: one sentence, and it is the description rather than a refusal.
     expect(sentences()).toHaveLength(1);
-    expect(sentences()[0]?.textContent).toMatch(/^Two panels: this chromatogram/u);
+    expect(sentences()[0]?.textContent).toMatch(/^The upper panel shows this chromatogram/u);
     // The live region is there, empty, and carries no layout while it is.
     expect(linkedAnnouncement().textContent).toBe("");
     expect(sentences()).not.toContain(linkedAnnouncement());
@@ -539,7 +538,7 @@ describe("the linked chromatogram and spectrum section", () => {
     expect(occurrences).toBe(1);
     // And the description is not underneath it.
     expect(
-      within(linkedSection()).queryByText(/^Two panels: this chromatogram/u),
+      within(linkedSection()).queryByText(/^The upper panel shows this chromatogram/u),
     ).toBeNull();
   });
 
@@ -553,7 +552,8 @@ describe("the linked chromatogram and spectrum section", () => {
       target: { value: "" },
     });
 
-    expect(linkedReason()).toBe("Width must be a whole number of at least 1.");
+    expect(linkedReason()).toBe("Correct the figure settings above to export the linked figure.");
+    expect(within(panel()).getByText("Width must be a whole number of at least 1.")).toBeVisible();
     pressEveryLinkedAction();
     expect(preview.linkedFigureRequests).toEqual([]);
     expect(preview.linkedFigureCopyRequests).toEqual([]);
@@ -797,7 +797,7 @@ describe("what a finished linked export says", () => {
     fireEvent.click(linkedButton("Copy linked plot"));
 
     await waitFor(() => {
-      expect(linkedStatus()).toContain("Copied the linked figure at 1200×640 in the light theme");
+      expect(linkedStatus()).toContain("Copied the linked figure at 1200×640 in the Light theme");
     });
     expect(linkedStatus()).toContain("marking spectrum 0");
     expect(preview.linkedFigureCopyRequests).toHaveLength(1);
@@ -956,7 +956,7 @@ describe("two results in one surface", () => {
     ).toBe("");
   });
 
-  it("writes the marked scan's retention time the way every other one is written", async () => {
+  it("writes the marked scan's canonical retention time without display rounding", async () => {
     /*
      * Also found in review. The number comes back from Rust as an `f64` and was
      * rendered raw, so a run whose scan sits at 0.1 printed `0.1` here while the
@@ -988,8 +988,8 @@ describe("two results in one surface", () => {
     await waitFor(() => {
       expect(linkedStatus()).toContain("Saved");
     });
-    expect(linkedStatus()).toContain("at retention time 0.1000");
-    expect(linkedStatus()).not.toContain("at retention time 0.1 ");
+    expect(linkedStatus()).toContain("at retention time 0.1 ");
+    expect(linkedStatus()).not.toContain("at retention time 0.1000");
   });
 
   it("draws its separator with a colour the design system actually defines", async () => {

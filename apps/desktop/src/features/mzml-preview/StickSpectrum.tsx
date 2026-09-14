@@ -1,7 +1,10 @@
 import type { KeyboardEventHandler, Ref } from "react";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
+import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import type { UiMessage } from "../preferences/i18n";
 
-import { formatCount, formatIntensity, formatMz } from "./format";
+import { formatIntensity, formatMz } from "./format";
+import { usePlotTextSize } from "./viewer/usePlotTextSize";
 
 /**
  * The drawing area, in viewBox units. The element scales to its container, so
@@ -169,7 +172,7 @@ export type SpectrumSurface =
       readonly plotRef: Ref<SVGSVGElement>;
       /** The element saying what this viewport is doing right now. */
       readonly describedBy: string;
-      readonly onKeyDown: KeyboardEventHandler<SVGSVGElement>;
+      readonly onKeyDown?: KeyboardEventHandler<SVGSVGElement>;
       /**
        * Whether any viewport action would change what this spectrum shows.
        *
@@ -195,6 +198,7 @@ export interface StickSpectrumProps {
    * being shown.
    */
   readonly representationKnown: boolean;
+  readonly valueUnitsKnown?: boolean;
   readonly labelledBy: string;
   readonly surface: SpectrumSurface;
 }
@@ -406,30 +410,23 @@ function reduce(
  * Saying so is the difference between a reader concluding there is no negative
  * signal and a reader knowing there is some this drawing cannot show them.
  */
-function describeNegativeDrawing(reduction: Reduction): string {
+function describeNegativeDrawing(reduction: Reduction, t: UiMessage): string {
   const withHeight = reduction.negativesDrawn - reduction.negativesDrawnFlat;
   if (reduction.negativesDrawnFlat === 0) {
-    return " The deepest negative in each column is drawn below the zero line.";
+    return t("plotNegativeBelow");
   }
   if (withHeight === 0) {
-    return (
-      " The value range is too wide to hold them apart from zero at this size," +
-      " so they are drawn on the zero line without a length rather than below it."
-    );
+    return t("plotNegativeFlat");
   }
-  return (
-    ` The deepest negative in ${withHeight} of the columns is drawn below the zero` +
-    " line; in the rest the value range is too wide to hold them apart from zero" +
-    " at this size, so they are drawn on the line without a length."
-  );
+  return t("plotNegativeMixed", { count: withHeight });
 }
 
 /**
  * The drawn count, in agreement with itself. A reduction that yields one column
  * drew one stick, and saying `1 sticks` reads as a defect in the number.
  */
-function formatSticks(count: number): string {
-  return count === 1 ? "1 stick" : `${count} sticks`;
+function formatSticks(count: number, t: UiMessage): string {
+  return count === 1 ? t("plotSticksOne") : t("plotSticks", { count });
 }
 
 /**
@@ -445,16 +442,16 @@ function formatSticks(count: number): string {
  * Neither sentence calls the drawing the measurement. A screen projection is a
  * bounded drawing of the science and never the science.
  */
-function describeDrawing(reduction: Reduction, drawing: SpectrumDrawing): string {
-  const drawn = formatSticks(reduction.sticks.length);
+function describeDrawing(reduction: Reduction, drawing: SpectrumDrawing, t: UiMessage): string {
+  const drawn = formatSticks(reduction.sticks.length, t);
   if (drawing.kind === "transfer") {
     // The count is written plainly, not grouped. The sentence has said
     // `from 200000 points` since M4.1 and a reader comparing it with the
     // grouped `Points` fact beside it is comparing the same number twice; what
     // is not worth doing is changing a shipped sentence while moving it.
     return reduction.sticks.length < reduction.drawnFrom
-      ? `Drawn as ${drawn} from ${String(reduction.drawnFrom)} points, keeping the greatest non-negative and the deepest negative value in each column, so a peak spread over several points can appear as one stick.`
-      : `Drawn as ${drawn}, one per point.`;
+      ? t("plotTransferReduced", { sticks: drawn, count: reduction.drawnFrom })
+      : t("plotTransferExact", { sticks: drawn });
   }
   if (drawing.kind === "viewport-blank") {
     /*
@@ -467,8 +464,8 @@ function describeDrawing(reduction: Reduction, drawing: SpectrumDrawing): string
      * region beside the plot is where that window is already said.
      */
     return drawing.reason === "failed"
-      ? "This range could not be drawn. Nothing is drawn here."
-      : "Waiting for the drawing of this range. Nothing is drawn here yet.";
+      ? t("plotFailed")
+      : t("plotWaiting");
   }
   if (drawing.kind === "viewport-transient") {
     /*
@@ -482,13 +479,10 @@ function describeDrawing(reduction: Reduction, drawing: SpectrumDrawing): string
      * sitting under a plot that has since moved. The range line beside the plot
      * carries the live numbers, and is kept current for exactly that reason.
      */
-    return "Showing the drawing already in hand while the range is being changed. Release to draw the range under it from the retained spectrum.";
+    return t("plotTransient");
   }
-  const observations =
-    drawing.sourcePoints === 1
-      ? "1 observation"
-      : `${formatCount(drawing.sourcePoints)} observations`;
-  const opening = `Drawn as ${drawn} of the ${observations} this spectrum has between m/z ${formatMz(drawing.low)} and ${formatMz(drawing.high)}.`;
+  const opening = t("plotObservations", { sticks: drawn, count: drawing.sourcePoints,
+    low: formatMz(drawing.low), high: formatMz(drawing.high) });
   /*
    * Whether anything was collapsed, decided by what this drawing did rather
    * than by who did it.
@@ -518,8 +512,8 @@ function describeDrawing(reduction: Reduction, drawing: SpectrumDrawing): string
    * and says nothing about how many columns there were.
    */
   return reduction.sticks.length < drawing.sourcePoints
-    ? `${opening} This bounded drawing groups observations by screen column, and where several fall in one column it keeps that column's greatest non-negative and deepest negative measured observation, so not every observation is shown on its own.`
-    : `${opening} Every one of them is drawn.`;
+    ? `${opening} ${t("plotReduced")}`
+    : `${opening} ${t("plotExact")}`;
 }
 
 /**
@@ -542,9 +536,18 @@ export function StickSpectrum({
   intensity,
   drawing,
   representationKnown,
+  valueUnitsKnown = false,
   labelledBy,
   surface,
 }: StickSpectrumProps) {
+  const t = useUiMessages();
+  const sizeText = usePlotTextSize();
+  const externalRef = surface.kind === "interactive" ? surface.plotRef : undefined;
+  const attachPlot = useCallback((node: SVGSVGElement | null) => {
+    sizeText(node);
+    if (typeof externalRef === "function") externalRef(node);
+    else if (externalRef) externalRef.current = node;
+  }, [externalRef, sizeText]);
   const domain = useMemo(
     () =>
       drawing.kind === "transfer"
@@ -594,9 +597,11 @@ export function StickSpectrum({
         // Attached wherever there is a viewport. The wheel listener lives on
         // this node and must go on answering an inert spectrum's wheel by
         // declining it, rather than never hearing it.
-        ref={surface.kind === "interactive" ? surface.plotRef : undefined}
+        ref={attachPlot}
         role="img"
-        tabIndex={surface.kind === "interactive" && surface.focusable ? 0 : undefined}
+        // Chromium may implicitly tab to an SVG carrying input listeners.
+        // Explicitly exclude inert/refused drawings from sequential focus.
+        tabIndex={surface.kind === "interactive" && surface.focusable ? 0 : -1}
         viewBox={`0 0 ${PLOT_WIDTH} ${PLOT_HEIGHT}`}
       >
         <defs>
@@ -609,6 +614,8 @@ export function StickSpectrum({
             />
           </clipPath>
         </defs>
+        {surface.kind === "interactive" ? <rect className="plot-range-band" aria-hidden="true"
+          visibility="hidden" x={0} y={PLOT_PADDING_TOP} width={0} height={BASELINE_Y - PLOT_PADDING_TOP} /> : null}
         <g className="plot-grid">
           <line x1={0} x2={PLOT_WIDTH} y1={reduction.zeroY} y2={reduction.zeroY} />
           <line x1={0} x2={PLOT_WIDTH} y1={PLOT_PADDING_TOP} y2={PLOT_PADDING_TOP} />
@@ -645,8 +652,8 @@ export function StickSpectrum({
           intensity, which is what it knows.
         */}
         {nothingDrawn ? null : (
-          <text className="axis-label" x={PLOT_PADDING_LEFT} y={PLOT_PADDING_TOP - 2}>
-            {flat ? "every intensity is the same" : formatIntensity(reduction.intensityHigh)}
+          <text className="axis-label" x={PLOT_PADDING_LEFT} y={PLOT_PADDING_TOP + 10}>
+            {flat ? t("plotFlat") : formatIntensity(reduction.intensityHigh)}
           </text>
         )}
         {reduction.intensityLow < 0 ? (
@@ -656,16 +663,18 @@ export function StickSpectrum({
         ) : null}
       </svg>
       <figcaption className="spectrum-caption">
-        {describeDrawing(reduction, drawing)}
-        {nothingDrawn
-          ? " Horizontal axis: m/z."
-          : " Horizontal axis: m/z. Vertical axis: intensity, scaled to the point furthest from zero."}
-        {reduction.negativeCount > 0
-          ? ` ${reduction.negativeCount} of the points ${reduction.negativeCount === 1 ? "carries" : "carry"} negative intensity.${describeNegativeDrawing(reduction)}`
-          : ""}
-        {representationKnown
-          ? ""
-          : " This file does not report whether these are profile samples or centroided peaks, so read each stick as one measured point rather than as a peak."}
+        <p>{drawing.kind === "viewport" ? t("plotCaption", { count: reduction.sticks.length, total: drawing.sourcePoints }) :
+          drawing.kind === "transfer" ? t("plotTransferCaption", { count: reduction.sticks.length, total: reduction.drawnFrom }) :
+          drawing.kind === "viewport-transient" ? t("plotTransient") : t(drawing.reason === "failed" ? "plotFailed" : "plotWaiting")}
+          {" · "}{t(valueUnitsKnown ? "plotUnitsReported" : "plotUnits")}
+          {reduction.negativeCount > 0 ? ` · ${t("plotNegativeCount", { count: reduction.negativeCount })}` : ""}
+        </p>
+        <details className="plot-source-details"><summary>{t("viewerSourceDetails")}</summary>
+          <p>{drawing.kind === "viewport-blank" || drawing.kind === "viewport-transient" ? "" : describeDrawing(reduction, drawing, t)} {nothingDrawn ? "m/z" : t("plotAxes")}
+            {reduction.negativeCount > 0 ? ` ${describeNegativeDrawing(reduction, t)}` : ""}
+            {representationKnown ? "" : ` ${t("plotUnknownRepresentation")}`}
+          </p>
+        </details>
       </figcaption>
     </figure>
   );

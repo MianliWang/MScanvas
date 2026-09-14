@@ -624,7 +624,7 @@ describe("mzML preview workspace", () => {
     );
     expect(
       screen.getByText(
-        /2 of the points carry negative intensity\. The deepest negative in each column is drawn below the zero line\./,
+        /2 points carry negative intensity\./,
       ),
     ).toBeVisible();
     // The furthest-from-zero value sets the scale and is labelled.
@@ -654,7 +654,7 @@ describe("mzML preview workspace", () => {
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=3");
 
     expect(await findSpectrumPlot()).toHaveAccessibleName(
-      "Spectrum 2, MS2, 12 points. m/z ranges from 300.0000 to 305.5000. The most intense peak reported for this spectrum is 507.00 at m/z 305.5000. This file does not report whether these are profile samples or centroided peaks.",
+      "Spectrum 2, MS2, 12 points.",
     );
     // The drawing names the window it answers and how many observations the
     // retained spectrum holds there -- which is the number a reader needs, and
@@ -714,22 +714,22 @@ describe("mzML preview workspace", () => {
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
     const plot = await findSpectrumPlot();
-    expect(plot).toHaveAccessibleName(/most intense peak reported for this spectrum is 4\.200e\+6/);
+    expect(plot).toHaveAccessibleName("Spectrum 0, MS2, 900,000 points.");
+    fireEvent.click(screen.getByText("Spectrum details and identifiers"));
+    expect(screen.getByText("Base peak").nextElementSibling).toHaveTextContent("812.5000 at 4.200e+6");
     // What the drawing covers, now that this spectrum has a viewport. The
     // sentence this replaces -- "the drawing covers the first 8 of those
     // points" -- described the transferred prefix, and since M5.2 the drawing
     // is not taken from it: each committed range is drawn from the complete
     // spectrum Rust retained.
-    expect(plot).toHaveAccessibleName(
-      /Only the first 8 of those points were transferred to this window, but the drawing is taken from the complete spectrum, one m\/z range at a time\./,
-    );
+    expect(screen.getByRole("note")).toHaveTextContent("8 transferred points; drawing and source facts use the complete retained spectrum.");
     // The tallest point in the prefix is never presented as the spectrum's.
     expect(plot).not.toHaveAccessibleName(/359\.00/);
     // The notice says what the transfer bound still costs -- which is not the
     // drawing any more -- so it cannot contradict the whole-spectrum facts
     // stated beside it.
     expect(screen.getByRole("note")).toHaveTextContent(
-      "This spectrum has more points than one transfer carries, so only the first 8 of them reached this window. The drawing is not limited to them: each m/z range is drawn from the complete spectrum MSCanvas retained, and so are the point count, m/z range and base peak below.",
+      "8 transferred points; drawing and source facts use the complete retained spectrum.",
     );
   });
 
@@ -743,8 +743,8 @@ describe("mzML preview workspace", () => {
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=2");
 
-    expect(await screen.findByText("No spectrum at index 1")).toBeVisible();
-    expect(screen.getByText(/Nothing went wrong\./)).toBeVisible();
+    expect(await within(screen.getByRole("region", { name: "Selected spectrum" })).findByText("No spectrum at index 1")).toBeVisible();
+    expect(screen.getByText(/The backend reported no spectrum at that index\./)).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Try loading this spectrum again" }),
     ).not.toBeInTheDocument();
@@ -869,10 +869,8 @@ describe("mzML preview workspace", () => {
     await openTheFile(createFakePreviewApi({ preview: buildPreview(120, true) }));
 
     const grid = await screen.findByRole("grid", { name: "Spectra" });
-    expect(grid).toHaveAttribute("aria-rowcount", "250001");
-    expect(screen.getByRole("note")).toHaveTextContent(
-      "This run has more spectra than one preview transfers.",
-    );
+    expect(grid).toHaveAttribute("aria-rowcount", "121");
+    expect(screen.getByText(/120 matches \/ 120 loaded rows \/ 250,000 reported spectra · loaded prefix only/)).toBeVisible();
     // Windowed: the DOM holds far fewer rows than the table describes.
     expect(within(grid).getAllByRole("row").length).toBeLessThan(120);
   });
@@ -910,7 +908,7 @@ describe("mzML preview workspace", () => {
     // in the detail panel and beside the table's own values.
     expect(screen.getAllByText(/\(unit not reported\)/).length).toBeGreaterThan(0);
     expect(
-      screen.getByText(/retention times have no unit because the file reports none/),
+      screen.getByText(/Retention time — unit not reported · Intensity — unit not reported/),
     ).toBeVisible();
     expect(screen.queryByText(/\d\.\d+ (min|s|seconds|minutes)/)).not.toBeInTheDocument();
     expect(screen.getByText("Peak representation").nextElementSibling).toHaveTextContent(
@@ -919,8 +917,9 @@ describe("mzML preview workspace", () => {
     expect(screen.getByText("Value units").nextElementSibling).toHaveTextContent("Not reported");
     // The same caveat is stated at the drawing, because a reduced profile
     // spectrum looks exactly like a centroided one.
+    fireEvent.click(within(screen.getByRole("region", { name: "Selected spectrum" })).getByText("Source and drawing details"));
     expect(
-      screen.getByText(/does not report whether these are profile samples or centroided peaks, so read each stick/),
+      screen.getByText(/does not report whether these are profile samples or centroided peaks; each stick/),
     ).toBeVisible();
     // No chromatogram count is emitted, so none is shown as zero.
     expect(screen.getByText("Chromatograms").nextElementSibling).toHaveTextContent("Not reported");

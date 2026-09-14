@@ -1,3 +1,5 @@
+import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import type { UiMessage } from "../preferences/i18n";
 import type { FigureSettingsValidation } from "./figureSettingsValidation";
 /**
  * What the run on screen can be exported as, and over how much of itself.
@@ -39,6 +41,7 @@ import type {
   FigureSettingsDraft,
   FigureSettingsField,
   LinkedFigureExportState,
+  LinkedFigureUnavailable,
   TraceVisibility,
 } from "./usePreviewWorkspace";
 import type { RetentionTimeDomain } from "./viewer/scanModel";
@@ -54,7 +57,6 @@ const FIGURE_PREFIX = "chromatogram";
  * number here would print `0.1` where the table beside it prints `0.1000`, and a
  * reader comparing the two has no way to know they are the same scan.
  */
-const RETENTION_TIME_DECIMALS = 4;
 
 const RANGE_SCOPES: readonly {
   readonly scope: ChromatogramRangeScope;
@@ -141,7 +143,7 @@ export interface ChromatogramExportPanelProps {
    * control the reader has to guess about, and every one of these sentences
    * names something they can change.
    */
-  readonly linkedUnavailable: string | null;
+  readonly linkedUnavailable: LinkedFigureUnavailable | null;
   readonly onExportLinked: (format: LinkedFigureFormat) => void;
   readonly onCopyLinkedPlot: () => void;
   readonly onDismissLinked: () => void;
@@ -169,6 +171,7 @@ export function ChromatogramExportPanel({
   onCopyLinkedPlot,
   onDismissLinked,
 }: ChromatogramExportPanelProps) {
+  const t = useUiMessages();
   // What this surface is doing *to the run it is showing*, which is what its
   // labels are allowed to say. An operation that outlived the preview it was
   // begun on still holds the lane -- so the controls below stay closed -- but
@@ -198,16 +201,16 @@ export function ChromatogramExportPanel({
   return (
     <div className="chromatogram-export-panel spectrum-export" id="chromatogram-export-panel">
       <fieldset className="chromatogram-export-range">
-        <legend>Range</legend>
+        <legend>{t("viewerRange")}</legend>
         <div
           aria-labelledby="chromatogram-range-label"
           className="spectrum-figure-themes"
           role="radiogroup"
         >
           <span className="visually-hidden" id="chromatogram-range-label">
-            How much of the run to export
+            {t("viewerExportRunScope")}
           </span>
-          {RANGE_SCOPES.map(({ scope, label }) => (
+          {RANGE_SCOPES.map(({ scope }) => (
             <label className="spectrum-figure-theme" key={scope}>
               <input
                 checked={rangeScope === scope}
@@ -218,16 +221,14 @@ export function ChromatogramExportPanel({
                 type="radio"
                 value={scope}
               />
-              <span>{label}</span>
+              <span>{t(scope === "full" ? "viewerExportFullRun" : "viewerExportCurrent")}</span>
             </label>
           ))}
         </div>
         <p className="chromatogram-export-note">
           {committedDomain === null
-            ? "Current range is the whole run until the viewport is changed."
-            : `Current range is ${committedDomain.low.toFixed(4)} to ${committedDomain.high.toFixed(
-                4,
-              )}. A zoom or pan in progress is not exported until it settles.`}
+            ? t("viewerExportFullRunHelp")
+            : t("viewerExportRtHelp", { low: String(committedDomain.low), high: String(committedDomain.high) })}
         </p>
       </fieldset>
       <FigureSettingsFields
@@ -238,12 +239,12 @@ export function ChromatogramExportPanel({
         settings={figureSettings}
       />
       <fieldset className="spectrum-figure-actions">
-        <legend className="visually-hidden">Figure exports</legend>
+        <legend className="visually-hidden">{t("viewerFigureExports")}</legend>
         <p className="chromatogram-export-note">
-          Figure outputs use the TIC/BPC traces currently visible on screen.
+          {t("viewerExportTraceHelp")}
         </p>
         <div className="spectrum-export-actions">
-          {FIGURE_FORMATS.map(({ format, label, recordsDpi }) => (
+          {FIGURE_FORMATS.map(({ format, recordsDpi }) => (
             <button
               className="secondary-button"
               // Every figure action while any scientific export is running --
@@ -257,9 +258,7 @@ export function ChromatogramExportPanel({
               }}
               type="button"
             >
-              {running && exportState.operation === format
-                ? `Exporting ${format.toUpperCase()}…`
-                : label}
+              {t(running && exportState.operation === format ? "viewerExporting" : "viewerExportFormat", { name: format.toUpperCase() })}
             </button>
           ))}
           <button
@@ -270,17 +269,17 @@ export function ChromatogramExportPanel({
             onClick={onCopyPlot}
             type="button"
           >
-            {running && exportState.operation === "copy" ? "Copying plot…" : "Copy plot"}
+            {t(running && exportState.operation === "copy" ? "viewerCopying" : "viewerCopy")}
           </button>
         </div>
       </fieldset>
       <fieldset className="spectrum-data-actions">
-        <legend>Data</legend>
+        <legend>{t("viewerData")}</legend>
         <p className="chromatogram-export-note">
-          Data exports always include both TIC and BPC source columns.
+          {t("viewerExportDataHelp")}
         </p>
         <div className="spectrum-export-actions">
-          {DATA_FORMATS.map(({ format, label }) => (
+          {DATA_FORMATS.map(({ format }) => (
             <button
               className="secondary-button"
               // Closed while any scientific export is running, for the same one
@@ -293,9 +292,7 @@ export function ChromatogramExportPanel({
               }}
               type="button"
             >
-              {running && exportState.operation === format
-                ? `Exporting ${format.toUpperCase()}…`
-                : label}
+              {t(running && exportState.operation === format ? "viewerExporting" : "viewerExportFormat", { name: format.toUpperCase() })}
             </button>
           ))}
         </div>
@@ -311,7 +308,7 @@ export function ChromatogramExportPanel({
         finished.
       */}
       <div
-        aria-label="Chromatogram export status"
+        aria-label={t("viewerChromatogramExportStatus")}
         aria-live="polite"
         className="spectrum-export-status"
         role="status"
@@ -344,10 +341,6 @@ const LINKED_UNAVAILABLE_ID = `${LINKED_PREFIX}-unavailable`;
  * A constant rather than markup, because it shares one element with the reason
  * that replaces it -- see the comment where that element is rendered.
  */
-const LINKED_DESCRIPTION =
-  "Two panels: this chromatogram over the range above, marked at the selected scan, and that " +
-  "scan\u2019s complete spectrum below \u2014 always the whole spectrum, whatever the range.";
-
 /**
  * The linked two-panel figure, as one compact section of this surface.
  *
@@ -374,7 +367,7 @@ function LinkedFigureSection({
   readonly state: LinkedFigureExportState;
   /** Whether a running linked operation still names the pair on screen. */
   readonly linkedRunning: boolean;
-  readonly unavailable: string | null;
+  readonly unavailable: LinkedFigureUnavailable | null;
   readonly scientificExportBusy: boolean;
   readonly pngDpiProblem: string | null;
   readonly onExportLinked: (format: LinkedFigureFormat) => void;
@@ -384,6 +377,7 @@ function LinkedFigureSection({
   // The shared lane first, then this surface's own reasons. Both are asked
   // again in Rust, which is the boundary that decides; this is what keeps an
   // action that is already known to be refused from being offered.
+  const t = useUiMessages();
   const blocked = scientificExportBusy || unavailable !== null;
   const rasterBlocked = blocked || pngDpiProblem !== null;
   // Named for a screen reader only where there is something to name, so a
@@ -392,7 +386,7 @@ function LinkedFigureSection({
 
   return (
     <fieldset className="linked-figure-actions" id={`${LINKED_PREFIX}-section`}>
-      <legend>Linked chromatogram + spectrum</legend>
+      <legend>{t("viewerLinkedTitle")}</legend>
       {/*
         One sentence, in whichever of two elements the reader's situation calls
         for -- and never both at once.
@@ -450,13 +444,13 @@ function LinkedFigureSection({
          */
         id={unavailable === null ? undefined : LINKED_UNAVAILABLE_ID}
       >
-        {unavailable ?? ""}
+        {unavailable === null ? "" : describeUnavailable(unavailable, t)}
       </p>
       {unavailable === null ? (
-        <p className="chromatogram-export-note">{LINKED_DESCRIPTION}</p>
+        <p className="chromatogram-export-note">{t("viewerLinkedHelp")}</p>
       ) : null}
       <div className="spectrum-export-actions">
-        {LINKED_FIGURE_FORMATS.map(({ format, label, recordsDpi }) => (
+        {LINKED_FIGURE_FORMATS.map(({ format, recordsDpi }) => (
           <button
             aria-describedby={describedBy}
             className="secondary-button"
@@ -467,9 +461,7 @@ function LinkedFigureSection({
             }}
             type="button"
           >
-            {linkedRunning && state.status === "running" && state.operation === format
-              ? `Exporting linked ${format.toUpperCase()}…`
-              : label}
+            {t(linkedRunning && state.status === "running" && state.operation === format ? "viewerLinkedExporting" : "viewerLinkedExport", { name: format.toUpperCase() })}
           </button>
         ))}
         <button
@@ -482,13 +474,11 @@ function LinkedFigureSection({
           onClick={onCopyLinkedPlot}
           type="button"
         >
-          {linkedRunning && state.status === "running" && state.operation === "copy"
-            ? "Copying linked plot…"
-            : "Copy linked plot"}
+          {t(linkedRunning && state.status === "running" && state.operation === "copy" ? "viewerLinkedCopying" : "viewerLinkedCopy")}
         </button>
       </div>
       <div
-        aria-label="Linked figure export status"
+        aria-label={t("viewerLinkedStatus")}
         aria-live="polite"
         className="spectrum-export-status linked-figure-status"
         role="status"
@@ -500,140 +490,42 @@ function LinkedFigureSection({
 }
 
 /** What one finished linked export says about itself. */
-function LinkedFigureResult({
-  state,
-  onDismiss,
-}: {
-  readonly state: LinkedFigureExportState;
-  readonly onDismiss: () => void;
-}) {
-  if (state.status === "idle" || state.status === "running") {
-    return null;
-  }
-  if (state.status === "cancelled") {
-    return (
-      <p className="spectrum-export-message">
-        Linked export cancelled. Nothing was saved. <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
-      </p>
-    );
-  }
-  if (state.status === "failed") {
-    return (
-      <p className="spectrum-export-message">
-        {state.error.summary}{" "}
-        {/* Both halves, exactly as the two single-source surfaces do. The
-            detail is where a failure puts the part the user has to act on --
-            above all that the export could not remove the temporary file it
-            left in their folder. */}
-        {state.error.detail === null ? null : (
-          <span className="notice-detail">{state.error.detail}</span>
-        )}
-        <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
-      </p>
-    );
-  }
-  if (state.status === "copied") {
-    return (
-      <p className="spectrum-export-message">
-        Copied the linked figure at {state.figure.width}×{state.figure.height} in the{" "}
-        {state.figure.theme} theme, marking spectrum {formatCount(state.selectedIndex)} in a run of{" "}
-        {formatCount(state.sourceScanCount)} scans. <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
-      </p>
-    );
-  }
-  // The index rather than the retention time, because an index names one scan
-  // and a retention time may be shared by several. The time is beside it as the
-  // coordinate the marker was drawn at, which is what it is.
-  return (
-    <p className="spectrum-export-message">
-      Saved {state.fileName}, marking spectrum {formatCount(state.selectedIndex)} at retention time{" "}
-      {state.selectedRetentionTime.toFixed(RETENTION_TIME_DECIMALS)} in a run of{" "}
-      {formatCount(state.sourceScanCount)} scans.{" "}
-      <DismissButton label="Dismiss linked export message" onDismiss={onDismiss} />
-    </p>
-  );
+function LinkedFigureResult({ state, onDismiss }: { readonly state: LinkedFigureExportState; readonly onDismiss: () => void }) {
+  const t = useUiMessages();
+  if (state.status === "idle" || state.status === "running") return null;
+  const message = state.status === "cancelled" ? t("viewerLinkedCancelled") : state.status === "failed" ? state.error.summary :
+    state.status === "copied" ? t("viewerLinkedCopied", { width: String(state.figure.width), height: String(state.figure.height),
+      theme: t(state.figure.theme), index: formatCount(state.selectedIndex), count: state.sourceScanCount }) :
+    t("viewerLinkedSaved", { name: state.fileName, index: formatCount(state.selectedIndex),
+      rt: String(state.selectedRetentionTime), count: state.sourceScanCount });
+  return <p className="spectrum-export-message">{message}{" "}
+    {state.status === "failed" && state.error.detail !== null ? <span className="notice-detail">{state.error.detail}</span> : null}
+    <DismissButton label={t("viewerLinkedDismiss")} onDismiss={onDismiss} />
+  </p>;
 }
 
-/** What one finished export says about itself. */
-function ChromatogramExportResult({
-  state,
-  onDismiss,
-}: {
-  readonly state: ChromatogramExportState;
-  readonly onDismiss: () => void;
-}) {
-  if (state.status === "idle" || state.status === "running") {
-    return null;
-  }
-  if (state.status === "cancelled") {
-    return (
-      <p className="spectrum-export-message">
-        Export cancelled. Nothing was saved.{" "}
-        <DismissButton onDismiss={onDismiss} />
-      </p>
-    );
-  }
-  if (state.status === "failed") {
-    return (
-      <p className="spectrum-export-message">
-        {state.error.summary}{" "}
-        {/* Both halves, exactly as the selected spectrum's own failure does.
-            The summary says what happened; the detail is where a failure puts
-            the part the user has to act on -- above all that the export could
-            not remove the temporary file it left in their folder. The two
-            surfaces share `spectrum_write_failure`, so they receive the same
-            `detail`, and a panel that rendered only the summary would leave a
-            `.mscanvas-export-*` file in a folder having told nobody. */}
-        {state.error.detail === null ? null : (
-          <span className="notice-detail">{state.error.detail}</span>
-        )}
-        <DismissButton onDismiss={onDismiss} />
-      </p>
-    );
-  }
-  if (state.status === "copied") {
-    return (
-      <p className="spectrum-export-message">
-        Copied the chromatogram at {state.figure.width}×{state.figure.height} in the{" "}
-        {state.figure.theme} theme, from a run of {formatCount(state.sourceScanCount)} scans.{" "}
-        <DismissButton onDismiss={onDismiss} />
-      </p>
-    );
-  }
-  // A data document says how many source scans it holds; a figure says what it
-  // was drawn as. Zero scans in a range is a successful export and is reported
-  // as one -- the figure for that range may still draw the segment crossing it.
-  const scans =
-    state.rowCount === null
-      ? `from a run of ${formatCount(state.sourceScanCount)} scans`
-      : `with ${formatCount(state.rowCount)} source scans from a run of ${formatCount(
-          state.sourceScanCount,
-        )} scans`;
-  return (
-    <p className="spectrum-export-message">
-      Saved {state.fileName} {scans}. <DismissButton onDismiss={onDismiss} />
-    </p>
-  );
+function ChromatogramExportResult({ state, onDismiss }: { readonly state: ChromatogramExportState; readonly onDismiss: () => void }) {
+  const t = useUiMessages();
+  if (state.status === "idle" || state.status === "running") return null;
+  const message = state.status === "cancelled" ? t("viewerExportCancelled") : state.status === "failed" ? state.error.summary :
+    state.status === "copied" ? t("viewerChromCopied", { width: String(state.figure.width), height: String(state.figure.height),
+      theme: t(state.figure.theme), count: state.sourceScanCount }) :
+    t("viewerChromSaved", { name: state.fileName, details: state.rowCount === null ?
+      t("viewerChromSource", { count: state.sourceScanCount }) : t("viewerChromRows", { count: state.rowCount, total: state.sourceScanCount }) });
+  return <p className="spectrum-export-message">{message}{" "}
+    {state.status === "failed" && state.error.detail !== null ? <span className="notice-detail">{state.error.detail}</span> : null}
+    <DismissButton onDismiss={onDismiss} />
+  </p>;
 }
 
-function DismissButton({
-  onDismiss,
-  label,
-}: {
-  readonly onDismiss: () => void;
-  /**
-   * What this control is called where more than one of them can be on screen.
-   *
-   * The word alone is enough beside a single message. It stops being enough in
-   * a surface holding two, which is what the linked section makes possible: a
-   * reader listing the controls hears "Dismiss" twice and cannot tell which
-   * result each one clears.
-   */
-  readonly label?: string;
-}) {
-  return (
-    <button aria-label={label} className="link-button" onClick={onDismiss} type="button">
-      Dismiss
-    </button>
-  );
+function DismissButton({ onDismiss, label }: { readonly onDismiss: () => void; readonly label?: string }) {
+  const t = useUiMessages();
+  return <button aria-label={label} className="link-button" onClick={onDismiss} type="button">{t("viewerDismiss")}</button>;
+}
+
+function describeUnavailable(problem: LinkedFigureUnavailable, t: UiMessage): string {
+  if (problem.code === "minimumHeight") return t("linkedHeight", { value: String(problem.minimum) });
+  const keys = { noChromatogram: "linkedNoChromatogram", loading: "linkedLoading", noSpectrum: "linkedNoSpectrum",
+    noTrace: "linkedNoTrace", outside: "linkedOutside", figureSettings: "linkedSettings" } as const;
+  return t(keys[problem.code]);
 }

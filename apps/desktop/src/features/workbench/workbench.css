@@ -76,9 +76,60 @@
 .group-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
 .workbench-shell .viewer-column { min-height: 100%; }
 .workbench-shell .viewer-stack { display: flex; flex-direction: column; gap: 12px; overflow: visible; min-height: 0; }
-.workbench-shell .chromatogram-panel { flex: 0 0 auto; min-height: 280px; }
-.workbench-shell .spectrum-table-panel { flex: 0 0 300px; min-height: 300px; }
-.workbench-shell .spectrum-panel { flex: 0 0 auto; min-height: 380px; }
+.workbench-shell .chromatogram-panel { flex: 0 0 auto; min-height: 0; }
+.workbench-shell .spectrum-table-panel { flex: none; min-height: 0; }
+.workbench-shell .spectrum-table-viewport { flex: none; }
+.scan-view-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 8px 12px; }
+.scan-view-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.scan-view-controls input, .scan-view-controls select { min-height: 32px; font: inherit; border: 1px solid var(--color-border); border-radius: 6px; padding: 4px 8px; background: var(--color-surface); color: var(--color-text-primary); }
+.scan-view-controls input { width: min(260px, 55vw); }
+.scan-view-controls details { flex: 1 1 110px; font-size: 12px; }
+.scan-view-controls summary { cursor: pointer; min-height: 32px; align-content: center; }
+.scan-view-controls details p { max-width: 65ch; white-space: normal; }
+.spectrum-table-panel .scan-result-count { white-space: normal; overflow: visible; }
+.scan-hidden-selection { margin: 0; padding: 6px 12px; font-size: 12px; }
+.scan-sort-button { display: flex; align-items: center; justify-content: flex-end; gap: 4px; width: 100%; min-height: 32px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.scan-sort-button svg { flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; transition: opacity 120ms; }
+.scan-sort-button svg[data-direction="none"] { opacity: .65; }
+.scan-sort-button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.scan-sort-button:hover { color: var(--color-text-primary); }
+.spectrum-table-head .spectrum-table-cell { overflow: visible; }
+@media (prefers-reduced-motion: reduce) { .scan-sort-button svg { transition: none; } }
+.workbench-shell .spectrum-panel { flex: 0 0 auto; min-height: 0; }
+.workbench-shell .chromatogram-body, .workbench-shell .spectrum-body { padding: 8px 12px; }
+.workbench-shell .chromatogram-svg { flex: none; height: 150px; }
+.workbench-shell .spectrum-plot { height: 220px; touch-action: pan-y pinch-zoom; cursor: crosshair; }
+.workbench-shell .spectrum-summary { margin: 0 0 6px; font-size: 13px; }
+.workbench-shell .spectrum-panel > .panel-header { flex-direction: row; align-items: start; flex-wrap: wrap; padding: 8px 12px; }
+.workbench-shell .chromatogram-panel > .panel-header { padding: 8px 12px; }
+.spectrum-export-disclosure { margin-left: auto; }
+.spectrum-export-disclosure[open] { width: 100%; }
+.spectrum-export-disclosure > summary { width: fit-content; margin-left: auto; }
+.spectrum-export-disclosure > .spectrum-export { width: 100%; margin-top: 8px; }
+.spectrum-source-details, .plot-source-details, .plot-range-editor, .plot-gesture-help { font-size: 12px; color: var(--color-text-secondary); }
+.spectrum-export-disclosure > summary, .spectrum-source-details > summary,
+.plot-source-details > summary, .plot-range-editor > summary, .plot-gesture-help > summary {
+  cursor: pointer; min-height: 32px; align-content: center; border-radius: 4px;
+}
+.plot-range-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0 12px; margin: 4px 0; }
+.plot-committed-range { flex: 1 1 auto; margin: 0; font-size: 12px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.plot-pending-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.plot-range-actions button { min-height: 32px; }
+.plot-range-form { display: grid; grid-template-columns: auto minmax(90px, 1fr) auto minmax(90px, 1fr); gap: 6px; align-items: center; padding: 8px 0; }
+.plot-range-form input { min-width: 0; width: 100%; }
+.plot-range-form p { grid-column: 1 / -1; margin: 0; max-width: 64ch; }
+.plot-gesture-help p, .plot-source-details p { margin: 4px 0 8px; line-height: 1.45; max-width: 85ch; }
+.plot-range-editor[open], .plot-gesture-help[open] { flex-basis: 100%; }
+.chromatogram-context { display: flex; align-items: center; flex-wrap: wrap; gap: 0 12px; }
+.chromatogram-context > .chromatogram-axis-caption { flex: 1 1 auto; }
+.chromatogram-context > details[open] { flex-basis: 100%; }
+.workbench-shell .spectrum-body { gap: 4px; }
+.plot-range-band { fill: rgb(42 108 201 / .12); stroke: #286ac5; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; }
+.workbench-shell .spectrum-caption p, .workbench-shell .chromatogram-axis-caption, .workbench-shell .chromatogram-readout { margin: 4px 0; font-size: 12px; line-height: 1.4; }
+.spectrum-panel > .spectrum-export-status { padding: 0 12px; }
+.spectrum-panel > .spectrum-export-status:empty { margin: 0; padding: 0; }
+.spectrum-source-details .metadata-lines { overflow-wrap: anywhere; }
+@media (max-width: 600px) { .plot-range-form { grid-template-columns: auto minmax(90px, 1fr); } }
 .workbench-shell .workspace-placeholder { min-height: 100%; }
 .workbench-conversion > .panel { min-height: 100%; overflow: visible; }
 .workbench-inspector > .panel { min-height: 100%; }

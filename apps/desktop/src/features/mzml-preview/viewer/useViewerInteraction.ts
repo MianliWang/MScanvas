@@ -12,11 +12,10 @@
  * is exactly the race an epoch exists to remove. So the reducer keeps
  * allocating, and this returns what it produced.
  *
- * One authority, published twice. The ref is the current state for a handler
- * that runs between renders; the state is the same object for the render. They
- * are written together, in that order, so nothing can read a value the other
- * has not seen -- `useViewerInteraction.test.tsx` holds that as an assertion
- * rather than as a comment.
+ * The ref always holds the reducer result. React receives transaction starts,
+ * settled changes and unrelated state changes; same-transaction pointer frames
+ * stay in the ref and are painted directly by the plot adapter. Neither
+ * publication nor a layout render invents a second semantic viewport.
  */
 
 import { useCallback, useRef, useState } from "react";
@@ -44,14 +43,22 @@ export function useViewerInteraction(): ViewerInteractionController {
   const held = useRef<ViewerInteractionState>(initialViewerInteractionState);
 
   const dispatch = useCallback((event: ViewerEvent): ViewerInteractionState => {
-    const next = viewerInteractionReducer(held.current, event);
+    const previous = held.current;
+    const next = viewerInteractionReducer(previous, event);
     // An identity no-op publishes nothing. That is what lets a renderer resolve
     // the nearest scan on every pointer frame and dispatch freely: the pointer
     // crossing into another scan is a state change, and the pointer moving is
     // not.
     if (next !== held.current) {
       held.current = next;
-      setState(next);
+      const drawingFrame = previous.rangeSelection?.phase === "drawing" && next.rangeSelection?.phase === "drawing" &&
+        previous.rangeSelection.transaction === next.rangeSelection.transaction && previous.gesture === next.gesture &&
+        previous.selection === next.selection && previous.fullDomain === next.fullDomain && previous.committedDomain === next.committedDomain;
+      const gestureFrame = previous.gesture !== null && next.gesture !== null &&
+        previous.gesture.epoch === next.gesture.epoch && previous.selection === next.selection &&
+        previous.fullDomain === next.fullDomain && previous.committedDomain === next.committedDomain &&
+        previous.rangeSelection === next.rangeSelection;
+      if (!drawingFrame && !gestureFrame) setState(next);
     }
     return next;
   }, []);

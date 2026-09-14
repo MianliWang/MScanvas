@@ -1,16 +1,19 @@
 import type { ReactNode } from "react";
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import type { UiMessage } from "../preferences/i18n";
+
+import { PlotRangeActions } from "./PlotRangeActions";
+import { retentionTimeInput } from "./viewer/plotInputAdapters";
+import { usePlotInput } from "./viewer/usePlotInput";
+import { usePlotTextSize } from "./viewer/usePlotTextSize";
 
 import { formatCount, formatIntensity } from "./format";
-import {
-  isViewportKeyboardModifierOwnedByHost,
-  isViewportWheelModifierOwnedByHost,
-} from "./viewer/hostInputOwnership";
 import type {
   ViewerEvent,
   ViewerInteractionState,
 } from "./viewer/interactionState";
-import { activeGestureEpoch, renderedDomain } from "./viewer/interactionState";
+import { renderedDomain } from "./viewer/interactionState";
 import type { ValueExtent, VisibleVertex } from "./viewer/renderGeometry";
 import { clipTrace, reduceVisible, visibleExtent } from "./viewer/renderGeometry";
 import type {
@@ -23,14 +26,11 @@ import type {
 import { nearestScan } from "./viewer/scanModel";
 import type { SpectrumSelectionAvailability } from "./viewer/selectionAvailability";
 import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
-import { panDomain } from "./viewer/viewport";
 import type { ViewportAction } from "./viewer/viewportAction";
 import {
   applyViewportAction,
   planViewportAction,
-  planWheelGesture,
 } from "./viewer/viewportAction";
-import { normalizeWheelDelta } from "./viewer/wheelInput";
 import type { TraceVisibility } from "./usePreviewWorkspace";
 
 /**
@@ -46,24 +46,6 @@ const PADDING_TOP = 12;
 const BASELINE_Y = PLOT_HEIGHT - 30;
 const USABLE_WIDTH = PLOT_WIDTH - PADDING_LEFT - PADDING_RIGHT;
 const USABLE_HEIGHT = BASELINE_Y - PADDING_TOP;
-
-/** How far a pointer may move between press and release and still be a click. */
-const CLICK_SLOP = 4;
-
-/** What one pan step moves, as a fraction of the visible span. */
-const PAN_STEP = 0.25;
-
-/**
- * How long after the last wheel event the gesture is asked to settle.
- *
- * A wheel is a stream of events with no end signal, so something has to decide
- * when it stopped. That is all this is: an adapter that eventually emits
- * `gesture-settled` for the epoch it was scheduled under. Whether that settle
- * still means anything is the reducer's decision, not a race between
- * `clearTimeout` and a callback -- which is why cancelling the timer below is
- * an efficiency and never a correctness measure.
- */
-const SETTLE_DELAY_MS = 120;
 
 const TRACES: readonly {
   readonly trace: TraceKind;
@@ -164,6 +146,7 @@ export const Chromatogram = memo(function Chromatogram({
   exportToggle,
   exportPanel,
 }: ChromatogramProps) {
+  const t = useUiMessages();
   const domain = renderedDomain(interaction);
   const full = interaction.fullDomain;
   /**
@@ -205,13 +188,13 @@ export const Chromatogram = memo(function Chromatogram({
           which is why the source sentence lives under the plot with the axis
           rather than as a second header line. */}
       <header className="panel-header compact">
-        <h2 id="chromatogram-heading">Chromatogram</h2>
+        <h2 id="chromatogram-heading">{t("viewerChromatogram")}</h2>
         {model.status === "ready" ? (
           <div className="chromatogram-controls">
             <fieldset className="chromatogram-traces">
               {/* Named for a screen reader without spending a line on it. A
                   group of controls still has to say what it groups. */}
-              <legend className="visually-hidden">Traces</legend>
+              <legend className="visually-hidden">{t("viewerTraces")}</legend>
               {TRACES.map(({ trace, label, dash }) => (
                 <label className="chromatogram-trace-toggle" key={trace}>
                   <input
@@ -234,8 +217,8 @@ export const Chromatogram = memo(function Chromatogram({
               ))}
             </fieldset>
             <fieldset className="chromatogram-viewport-actions">
-              <legend className="visually-hidden">Range</legend>
-              {VIEWPORT_CONTROLS.map(({ action, label }) => (
+              <legend className="visually-hidden">{t("viewerRange")}</legend>
+              {VIEWPORT_CONTROLS.map(({ action }) => (
                 <button
                   className="secondary-button"
                   disabled={!viewportPlans[action].available}
@@ -247,7 +230,7 @@ export const Chromatogram = memo(function Chromatogram({
                   }}
                   type="button"
                 >
-                  {label}
+                  {t(action === "reset" ? "viewerReset" : action === "zoom-in" ? "viewerZoomIn" : "viewerZoomOut")}
                 </button>
               ))}
             </fieldset>
@@ -276,11 +259,11 @@ export const Chromatogram = memo(function Chromatogram({
           // workspace announces a loaded run in a layout effect, so this is
           // never painted; it exists because a component may not choose a range
           // the contract has not published.
-          <p className="chromatogram-axis-caption">Preparing the retention-time range…</p>
+          <p className="chromatogram-axis-caption">{t("viewerPreparingRt")}</p>
         ) : (
           <div className="empty-state">
-            <strong>{UNAVAILABLE[model.reason].summary}</strong>
-            <span>{UNAVAILABLE[model.reason].detail}</span>
+            <strong>{t(model.reason === "no-spectra" ? "viewerNoSpectra" : "viewerTicUnavailable")}</strong>
+            <span>{t(UNAVAILABLE[model.reason])}</span>
           </div>
         )}
       </div>
@@ -295,38 +278,10 @@ export const Chromatogram = memo(function Chromatogram({
  * particular has to be readable as a property of this preview, because the scan
  * table beside it is on screen and does show rows.
  */
-const UNAVAILABLE: Record<
-  ScanModelRefusal,
-  { readonly summary: string; readonly detail: string }
-> = {
-  truncated: {
-    summary: "TIC and BPC are unavailable for this preview.",
-    detail:
-      "They are drawn from the spectrum table, and this preview did not load the complete " +
-      "table. Drawing the rows it did load would be a chromatogram of part of the run " +
-      "presented as the whole of it.",
-  },
-  "no-spectra": {
-    summary: "This run has no spectra.",
-    detail: "There is nothing to draw a retention-time trace from.",
-  },
-  "unusable-retention-time": {
-    summary: "TIC and BPC are unavailable for this preview.",
-    detail: "A scan reported a retention time that cannot be placed on an axis.",
-  },
-  "unusable-intensity": {
-    summary: "TIC and BPC are unavailable for this preview.",
-    detail: "A scan reported a total ion current or base peak intensity that cannot be drawn.",
-  },
-  "unsupported-retention-time-unit": {
-    summary: "TIC and BPC are unavailable for this preview.",
-    detail:
-      "This preview reports a retention-time unit state that this build cannot identify " +
-      "precisely, so the traces are not drawn. Nothing is wrong with the file: what MSCanvas " +
-      "receives says that a unit was reported without saying which, and an axis cannot be " +
-      "labelled with a unit that was never named.",
-  },
-};
+const UNAVAILABLE = {
+  truncated: "viewerTicPrefix", "no-spectra": "viewerTicEmpty", "unusable-retention-time": "viewerTicRt",
+  "unusable-intensity": "viewerTicIntensity", "unsupported-retention-time-unit": "viewerTicUnit",
+} as const satisfies Record<ScanModelRefusal, string>;
 
 interface PlotProps {
   readonly points: readonly ScanPoint[];
@@ -355,7 +310,9 @@ function ChromatogramPlot({
   onSelect,
   selectionAvailability,
 }: PlotProps) {
+  const t = useUiMessages();
   const plotRef = useRef<SVGSVGElement | null>(null);
+  const sizeText = usePlotTextSize();
 
   const activeTraces = useMemo(
     () => TRACES.filter((each) => traces[each.trace]),
@@ -465,388 +422,72 @@ function ChromatogramPlot({
    * come to disagree about where the pointer is. `null` when there is nothing
    * measurable on screen, which each caller answers in its own terms.
    */
-  const plotFractionAt = useCallback((clientX: number): number | null => {
-    const element = plotRef.current;
-    if (element === null) {
-      return null;
-    }
-    const box = element.getBoundingClientRect();
-    if (box.width === 0) {
-      return null;
-    }
-    const viewBoxX = ((clientX - box.left) / box.width) * PLOT_WIDTH;
-    return clamp01((viewBoxX - PADDING_LEFT) / USABLE_WIDTH);
-  }, []);
-
-  /** The retention time under a pointer, read against the range on screen now. */
-  const retentionTimeAt = useCallback(
-    (clientX: number): number | null => {
-      const fraction = plotFractionAt(clientX);
-      if (fraction === null) {
-        return null;
-      }
-      const shown = renderedDomain(readInteraction());
-      if (shown === null) {
-        return null;
-      }
-      return shown.low + fraction * (shown.high - shown.low);
-    },
-    [plotFractionAt, readInteraction],
-  );
-
-  /**
-   * The pointer's own coordinates, which never leave this file.
-   *
-   * What crosses into the contract is the scan the pointer resolved to, and
-   * establishing the same one again is a no-op by identity -- so this may
-   * dispatch on every frame without any consumer re-rendering. What reaches the
-   * state is the pointer crossing from one scan to another, bounded by the run
-   * rather than by the pointer's sampling rate.
-   */
-  const showHover = useCallback(
-    (clientX: number) => {
-      const retentionTime = retentionTimeAt(clientX);
-      if (retentionTime === null) {
-        return;
-      }
-      const scan = nearestScan(points, retentionTime);
-      if (scan === null) {
-        return;
-      }
-      dispatch({ type: "hover-established", spectrumIndex: scan.spectrumIndex });
-    },
-    [dispatch, points, retentionTimeAt],
-  );
-
-  /**
-   * The wheel's settle, scheduled under the epoch the reducer assigned.
-   *
-   * Resetting the timer keeps a long scroll from committing halfway through it.
-   * Correctness does not rest on that: a settle whose epoch has been cancelled,
-   * superseded or invalidated is the very state it was given, by identity.
-   */
-  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scheduleSettle = useCallback(
-    (epoch: number | null) => {
-      if (settleTimer.current !== null) {
-        clearTimeout(settleTimer.current);
-        settleTimer.current = null;
-      }
-      if (epoch === null) {
-        return;
-      }
-      settleTimer.current = setTimeout(() => {
-        settleTimer.current = null;
-        dispatch({ type: "gesture-settled", epoch });
-      }, SETTLE_DELAY_MS);
-    },
-    [dispatch],
-  );
-  useEffect(
-    () => () => {
-      if (settleTimer.current !== null) {
-        clearTimeout(settleTimer.current);
-      }
-    },
-    [],
-  );
-
-  /**
-   * The press that owns this plot, if one does.
-   *
-   * It may still become a click, so nothing is dispatched until it passes the
-   * slop threshold. Its own starting domain is kept so every later move is
-   * computed from the origin rather than from the previous move -- the same pan
-   * arrived at by a different route accumulates no drift.
-   *
-   * **One pointer owns the lifecycle until that same pointer ends it.** A plot
-   * with `touch-action: none` receives every contact as a pointer event, so on a
-   * touchscreen or a pen-and-touch device a second finger arrives mid-pan. This
-   * record used to be replaced by it, and the damage was not one bug but three:
-   * the first pointer's moves fell through to *hover* and its pan froze; its
-   * release found a record belonging to someone else and returned, leaving the
-   * reducer holding a transient gesture nothing would ever settle; and a brief
-   * second contact could commit a selection -- one ProteoWizard process -- that
-   * nobody asked for.
-   *
-   * So every pointer that is not the owner is ignored here entirely: no capture,
-   * no dispatch, no hover, and above all no clearing of this record. Ownership
-   * is local to this adapter and deliberately not in `ViewerInteractionState`,
-   * which knows about gestures and epochs rather than about fingers.
-   */
-  const drag = useRef<{
-    readonly pointerId: number;
-    readonly originX: number;
-    readonly originY: number;
-    readonly start: RetentionTimeDomain;
-    epoch: number | null;
-    moved: boolean;
+  const inputPort = retentionTimeInput(readInteraction, dispatch);
+  const frameGeometry = useRef<{
+    points: typeof points; traces: typeof activeTraces; domain: RetentionTimeDomain;
+    extent: typeof extent; scale: typeof scale; marks: typeof marks;
   } | null>(null);
-
-  /*
-   * Attached by hand because React's own wheel listener is passive, so
-   * `preventDefault` inside `onWheel` could not stop the page scrolling under a
-   * zoom gesture.
-   *
-   * Which is the whole reason the order below matters. Cancelling a wheel event
-   * is a claim on it, and this panel sits at the top of a column that scrolls:
-   * a wheel cancelled and then not used is a wheel that neither zoomed nor
-   * scrolled. So the claim is made *after* the contract has said the gesture
-   * would move the axis, never before.
-   *
-   * Two questions, kept apart. `wheelInput.ts` decides **how much** the event
-   * asks for, from its own magnitude and unit; the planner decides **whether
-   * this viewer owns it**, which is unchanged. A large delta at a boundary is
-   * still not ours, and a small one that moves the axis still is.
-   */
-  useEffect(() => {
-    const element = plotRef.current;
-    if (element === null) {
-      return;
-    }
-    const onWheel = (event: WheelEvent) => {
-      /*
-       * The host's event before it is anyone's here.
-       *
-       * WebView2 enables its zoom controls by default and drives them with
-       * Ctrl+wheel, and this application disables neither. So a Ctrl-modified
-       * wheel is released before anything else happens -- no layout, no
-       * normalization, no plan, no claim -- and the window keeps a capability it
-       * would otherwise lose over every plot.
-       *
-       * This supersedes ADR 0033's rule that `ctrlKey` is given no meaning.
-       * It is still given no *device* meaning: nothing decides here whether the
-       * event came from a mouse or from a touchpad pinch Chromium reports this
-       * way, and pinch semantics remain deferred. What it is given is an owner.
-       */
-      if (isViewportWheelModifierOwnedByHost(event)) {
-        return;
+  const paintFrame = useCallback(() => {
+    const state = readInteraction(); const shown = renderedDomain(state); const node = plotRef.current;
+    if (shown === null || node === null) return;
+    let geometry = frameGeometry.current;
+    if (geometry === null || geometry.points !== points || geometry.traces !== activeTraces ||
+        geometry.domain.low !== shown.low || geometry.domain.high !== shown.high) {
+      if (shown.low === domain.low && shown.high === domain.high) {
+        geometry = { points, traces: activeTraces, domain: shown, extent, scale, marks };
+      } else {
+        const clippedNow = activeTraces.map(each => ({ ...each, vertices: clipTrace(points, each.trace, shown) }));
+        const extentNow = visibleExtent(clippedNow.map(each => each.vertices));
+        const scaleNow = scaleFor(shown, extentNow);
+        const marksNow = clippedNow.map(each => {
+          const vertices = reduceVisible(each.vertices, shown);
+          const only = vertices.length === 1 ? vertices[0] : undefined;
+          return { ...each, point: only === undefined ? null :
+            { x: scaleNow.x(only.retentionTime), y: scaleNow.y(only.value) },
+          d: only === undefined ? pathOf(vertices, scaleNow) : "" };
+        });
+        geometry = { points, traces: activeTraces, domain: shown, extent: extentNow, scale: scaleNow, marks: marksNow };
       }
-      /*
-       * A press owns the gesture, and this one is not it.
-       *
-       * `planWheelGesture` reads the active epoch out of the state, so a wheel
-       * arriving mid-pan would join the *pan's* gesture -- and then this
-       * adapter's 120ms timer would settle someone else's gesture, after which
-       * every later pointer move carries a dead epoch and the pan freezes until
-       * the button comes up. Whatever the wheel asked for would be overwritten
-       * by the next pan move anyway, which is computed from where the press
-       * began. So it is not this viewer's event: nothing is cancelled, nothing
-       * dispatched, nothing scheduled, and the pan is left exactly as it was.
-       */
-      if (drag.current !== null) {
-        return;
+      frameGeometry.current = geometry;
+    }
+    const { extent: extentNow, scale: scaleNow } = geometry;
+    for (const mark of geometry.marks) {
+      node.querySelector(`.chromatogram-trace-${mark.trace}`)?.setAttribute("d", mark.d);
+      const point = node.querySelector(`.chromatogram-point-${mark.trace}`);
+      point?.setAttribute("visibility", mark.point === null ? "hidden" : "visible");
+      if (mark.point !== null) { point?.setAttribute("cx", String(mark.point.x)); point?.setAttribute("cy", String(mark.point.y)); }
+    }
+    node.querySelectorAll(".chromatogram-time-label").forEach((label, position) => {
+      label.textContent = ticksOf(shown)[position]?.toFixed(4) ?? "";
+    });
+    node.querySelectorAll(".chromatogram-value-label").forEach((label, position) => {
+      label.textContent = formatIntensity(position === 0 ? extentNow.high : extentNow.low);
+    });
+    for (const [kind, index] of [["selected", state.selection?.index], ["hover", state.hover?.spectrumIndex]] as const) {
+      const group = node.querySelector(`.chromatogram-${kind}`); const point = index === undefined ? undefined : byIndex.get(index);
+      group?.setAttribute("visibility", point === undefined ? "hidden" : "visible");
+      if (point !== undefined) {
+        const x = scaleNow.x(point.retentionTime);
+        group?.querySelector("line")?.setAttribute("x1", String(x)); group?.querySelector("line")?.setAttribute("x2", String(x));
+        group?.querySelector("rect")?.setAttribute("x", String(x - 4.5));
       }
-      /*
-       * Both numbers the event carries, and nothing else about it. `deltaY` is
-       * not a length until `deltaMode` says what its unit is, so neither is read
-       * without the other.
-       */
-      const wheel = { deltaY: event.deltaY, deltaMode: event.deltaMode };
-      // Asked before anything is measured. An event this viewer cannot read is
-      // not worth a layout, and the answer is the same one the planner would
-      // give -- the same helper, asked the same question.
-      if (normalizeWheelDelta(wheel) === null) {
-        return;
-      }
-      const state = readInteraction();
-      // The centre when there is nothing to measure against, which is the same
-      // anchor a keyboard zoom uses and the only honest guess available.
-      const anchor = plotFractionAt(event.clientX) ?? 0.5;
-      const plan = planWheelGesture(state, wheel, anchor);
-      if (plan.event === null) {
-        // Not ours. The run cannot go any further this way, so the browser
-        // keeps the event and the column below can still be scrolled with it.
-        // Nothing is dispatched either: an input this viewer did not consume
-        // must not leave a gesture, or an epoch, behind.
-        return;
-      }
-      event.preventDefault();
-      // The epoch is the reducer's to hand out. An adapter that allocated one
-      // could address a gesture that is not its own, which is exactly the race
-      // an epoch exists to remove.
-      scheduleSettle(activeGestureEpoch(dispatch(plan.event)));
-    };
-    element.addEventListener("wheel", onWheel, { passive: false });
-    return () => {
-      element.removeEventListener("wheel", onWheel);
-    };
-  }, [dispatch, plotFractionAt, readInteraction, scheduleSettle]);
-
-  const handlePointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
-    // Someone already has it. A second pointer is not a second gesture, and it
-    // may not take the first one's place, its capture, or its record.
-    if (drag.current !== null) {
-      return;
     }
-    if (event.button !== 0) {
-      return;
-    }
-    const shown = renderedDomain(readInteraction());
-    if (shown === null) {
-      return;
-    }
-    drag.current = {
-      pointerId: event.pointerId,
-      originX: event.clientX,
-      originY: event.clientY,
-      start: shown,
-      epoch: null,
-      moved: false,
-    };
-    // Capture so a pan that leaves the plot keeps being a pan. Guarded because
-    // it is the one part of this gesture not every environment implements, and
-    // a drag that stops tracking outside the element is far better than a plot
-    // that cannot be pressed at all.
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-  };
-
-  const handlePointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
-    const active = drag.current;
-    if (active === null) {
-      // Nobody is pressing: an ordinary pointer moving over the plot.
-      showHover(event.clientX);
-      return;
-    }
-    if (active.pointerId !== event.pointerId) {
-      // A pointer that is not the owner. Not a pan, and not a hover either --
-      // publishing one would let a second contact move the guide rule and the
-      // readout out from under the pan in progress.
-      return;
-    }
-    const moved = event.clientX - active.originX;
-    // A press that has not travelled sideways is not a pan. Without a threshold
-    // a one-pixel tremor between press and release would pan instead of select;
-    // whether the release is still a *click* is decided at pointer up, against
-    // travel in both directions.
-    if (!active.moved && Math.abs(moved) < CLICK_SLOP) {
-      return;
-    }
-    const box = event.currentTarget.getBoundingClientRect();
-    const drawnWidth = (USABLE_WIDTH / PLOT_WIDTH) * box.width;
-    const next = panDomain(
-      active.start,
-      full,
-      drawnWidth === 0 ? 0 : -moved / drawnWidth,
-    );
-    if (active.moved) {
-      if (active.epoch !== null) {
-        dispatch({ type: "gesture-moved", epoch: active.epoch, domain: next });
-      }
-      return;
-    }
-    active.moved = true;
-    active.epoch = activeGestureEpoch(dispatch({ type: "gesture-started", domain: next }));
-  };
-
-  const handlePointerUp = (event: React.PointerEvent<SVGSVGElement>) => {
-    const active = drag.current;
-    // Read before anything is cleared. A stray pointer's release ends nothing:
-    // it must not drop the owner's record, and must not hand the wheel back
-    // while the owner is still pressing.
-    if (active === null || active.pointerId !== event.pointerId) {
-      return;
-    }
-    drag.current = null;
-    if (event.currentTarget.hasPointerCapture?.(event.pointerId) === true) {
-      event.currentTarget.releasePointerCapture?.(event.pointerId);
-    }
-    if (active.moved) {
-      if (active.epoch !== null) {
-        dispatch({ type: "gesture-settled", epoch: active.epoch });
-      }
-      return;
-    }
-    // A press that travelled past the slop is not a click, whichever way it
-    // went. Only sideways travel can pan, so a vertical drag starts no gesture
-    // -- but it is still a drag, and releasing it must not commit a selection
-    // the user did not ask for. Every selection is one ProteoWizard process.
-    if (
-      Math.hypot(event.clientX - active.originX, event.clientY - active.originY) >= CLICK_SLOP
-    ) {
-      return;
-    }
-    // A click, resolved against the full model. The drawing has fewer vertices
-    // than the run has scans and its edges carry interpolated points that are
-    // not scans at all, so resolving there would select a neighbour of the scan
-    // that was pointed at -- silently, and more often the larger the run.
-    const retentionTime = retentionTimeAt(event.clientX);
-    if (retentionTime === null) {
-      return;
-    }
-    // Only the commit is gated, and only here: everything above this line has
-    // already run, so the gesture that ended in this click still moved the
-    // viewport it was moving. A click that cannot commit does nothing rather
-    // than dispatching an operation that would refuse itself one frame later.
-    if (selectionAvailability.status !== "available") {
-      return;
-    }
-    const scan = nearestScan(points, retentionTime);
-    if (scan !== null) {
-      onSelect(scan.spectrumIndex);
-    }
-  };
-
-  const handlePointerCancel = (event: React.PointerEvent<SVGSVGElement>) => {
-    const active = drag.current;
-    // The owner check comes before the clearing, for the same reason it does on
-    // release: a cancelled second contact cancels nothing here.
-    if (active === null || active.pointerId !== event.pointerId) {
-      return;
-    }
-    drag.current = null;
-    if (active.epoch === null) {
-      return;
-    }
-    // Abandoned rather than committed: what the user was in the middle of doing
-    // is discarded, and the committed viewport is untouched.
-    dispatch({ type: "gesture-cancelled", epoch: active.epoch });
-  };
-
-  const handleKeyDown = (event: React.KeyboardEvent<SVGSVGElement>) => {
-    /*
-     * A modified accelerator belongs to the window around this plot.
-     *
-     * Ctrl+Plus, Ctrl+Minus and Ctrl+0 reach this handler carrying the very
-     * `key` values the bare shortcuts below are matched on, so without this the
-     * plot both swallows the accelerator and moves an axis nobody asked it to
-     * move. Shift is deliberately not in that list: on common layouts `+` is
-     * produced by holding it, and rejecting Shift would take away the ordinary
-     * shortcut rather than protect anything.
-     */
-    if (isViewportKeyboardModifierOwnedByHost(event)) {
-      return;
-    }
-    const state = readInteraction();
-    const runDomain = state.fullDomain;
-    const shown = renderedDomain(state);
-    if (runDomain === null || shown === null) {
-      return;
-    }
-    switch (event.key) {
-      case "+":
-      case "=":
-        applyViewportAction(state, dispatch, "zoom-in");
-        break;
-      case "-":
-      case "_":
-        applyViewportAction(state, dispatch, "zoom-out");
-        break;
-      case "ArrowLeft":
-        dispatch({ type: "viewport-step", domain: panDomain(shown, runDomain, -PAN_STEP) });
-        break;
-      case "ArrowRight":
-        dispatch({ type: "viewport-step", domain: panDomain(shown, runDomain, PAN_STEP) });
-        break;
-      case "Home":
-      case "0":
-        applyViewportAction(state, dispatch, "reset");
-        break;
-      default:
-        return;
-    }
-    event.preventDefault();
-  };
+    const line = node.parentElement?.querySelector(".chromatogram-range");
+    if (line) line.textContent = t("viewerShowing", { low: shown.low.toFixed(4), high: shown.high.toFixed(4) }) +
+      (state.committedDomain === null && state.gesture === null ? t("viewerFullRange") : "");
+  }, [readInteraction, activeTraces, points, byIndex, t, domain, extent, scale, marks]);
+  const input = usePlotInput({ port: inputPort, geometry: { width: PLOT_WIDTH, left: PADDING_LEFT, drawnWidth: USABLE_WIDTH }, paintFrame,
+    onInspect: retentionTime => {
+      if (selectionAvailability.status !== "available") return;
+      const scan = nearestScan(points, retentionTime); if (scan) onSelect(scan.spectrumIndex);
+    },
+    onHover: retentionTime => { const scan = nearestScan(points, retentionTime);
+      if (scan) dispatch({ type: "hover-established", spectrumIndex: scan.spectrumIndex }); },
+    onLeave: () => { dispatch({ type: "hover-cleared" }); } });
+  const attachPlot = useCallback((node: SVGSVGElement | null) => {
+    plotRef.current = node; input.attachPlot(node); sizeText(node);
+  }, [input.attachPlot, sizeText]);
+  useLayoutEffect(paintFrame);
 
   const nothingDrawn = activeTraces.length === 0;
 
@@ -866,19 +507,8 @@ function ChromatogramPlot({
         }
         aria-labelledby="chromatogram-heading"
         className="chromatogram-svg"
-        onBlur={() => {
-          dispatch({ type: "hover-cleared" });
-        }}
-        onKeyDown={handleKeyDown}
-        onPointerCancel={handlePointerCancel}
-        onPointerDown={handlePointerDown}
-        onPointerLeave={() => {
-          dispatch({ type: "hover-cleared" });
-        }}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
         preserveAspectRatio="none"
-        ref={plotRef}
+        ref={attachPlot}
         role="img"
         tabIndex={0}
         viewBox={`0 0 ${String(PLOT_WIDTH)} ${String(PLOT_HEIGHT)}`}
@@ -893,8 +523,9 @@ function ChromatogramPlot({
           <line x1={PADDING_LEFT} x2={PADDING_LEFT} y1={PADDING_TOP} y2={BASELINE_Y} />
           {ticksOf(domain).map((tick, position) => (
             <text
+              className="chromatogram-time-label"
               key={`${String(position)}:${String(tick)}`}
-              textAnchor="middle"
+              textAnchor={position === 4 ? "end" : "middle"}
               x={scale.x(tick)}
               y={BASELINE_Y + 14}
             >
@@ -905,16 +536,16 @@ function ChromatogramPlot({
             <>
               <text
                 className="chromatogram-value-label"
-                textAnchor="end"
-                x={PADDING_LEFT - 6}
+                textAnchor="start"
+                x={PADDING_LEFT + 6}
                 y={PADDING_TOP + 8}
               >
                 {formatIntensity(extent.high)}
               </text>
               <text
                 className="chromatogram-value-label"
-                textAnchor="end"
-                x={PADDING_LEFT - 6}
+                textAnchor="start"
+                x={PADDING_LEFT + 6}
                 y={BASELINE_Y}
               >
                 {formatIntensity(extent.low)}
@@ -923,26 +554,12 @@ function ChromatogramPlot({
           )}
         </g>
         <g clipPath="url(#chromatogram-clip)">
-          {marks.map((each) =>
-            each.point === null ? (
-              each.d === "" ? null : (
-                <path
-                  className={`chromatogram-trace chromatogram-trace-${each.trace}`}
-                  d={each.d}
-                  key={each.trace}
-                  strokeDasharray={each.dash}
-                />
-              )
-            ) : (
-              <circle
-                className={`chromatogram-point chromatogram-point-${each.trace}`}
-                cx={each.point.x}
-                cy={each.point.y}
-                key={each.trace}
-                r={each.pointRadius}
-              />
-            ),
-          )}
+          <rect className="plot-range-band" aria-hidden="true" visibility="hidden" x={0} y={PADDING_TOP} width={0} height={USABLE_HEIGHT} />
+          {marks.map(each => <g key={each.trace}>
+            <path className={`chromatogram-trace chromatogram-trace-${each.trace}`} d={each.d} strokeDasharray={each.dash} />
+            <circle className={`chromatogram-point chromatogram-point-${each.trace}`} visibility={each.point === null ? "hidden" : "visible"}
+              cx={each.point?.x ?? 0} cy={each.point?.y ?? 0} r={each.pointRadius} />
+          </g>)}
           {nothingDrawn ? (
             // An intentional state rather than an empty drawing. The axis is
             // still the run's, and the plot is still where a scan is chosen.
@@ -952,7 +569,7 @@ function ChromatogramPlot({
               x={PADDING_LEFT + USABLE_WIDTH / 2}
               y={PADDING_TOP + USABLE_HEIGHT / 2}
             >
-              Both traces are hidden.
+              {t("viewerTracesHidden")}
             </text>
           ) : null}
           {selectedPoint === null ? null : (
@@ -988,19 +605,23 @@ function ChromatogramPlot({
           )}
         </g>
       </svg>
+      <PlotRangeActions port={inputPort} />
+      <div className="chromatogram-context">
       <p className="chromatogram-axis-caption">
         {/* The unit state, said rather than assumed. Nothing in the accepted
             contract establishes what these numbers are measured in, and a
             chromatogram labelled "minutes" states something the file did not.
             Beside it, what the traces are made of. */}
-        Retention time — unit not reported · Intensity — unit not reported ·{" "}
+        {t("viewerRtUnits")} ·{" "}
         <span className="chromatogram-range">
-          Showing {domain.low.toFixed(4)} to {domain.high.toFixed(4)}
-          {showingFullRange ? " (full range)" : ""}
+          {t("viewerShowing", { low: domain.low.toFixed(4), high: domain.high.toFixed(4) }) +
+            (showingFullRange ? t("viewerFullRange") : "")}
         </span>{" "}
-        · Per-scan values from the loaded spectrum table, across{" "}
-        {formatCount(points.length)} scans. Not a stored chromatogram record.
       </p>
+      <details className="plot-source-details"><summary>{t("viewerSourceDetails")}</summary>
+        <p>{t("viewerScanSource", { count: points.length })}</p>
+      </details>
+      </div>
       {/* Not a live region. Which scan the pointer is over changes on most
           pointer frames at a full-run zoom, and a region that announced each of
           them would be noise rather than feedback. It is the plot's accessible
@@ -1009,8 +630,8 @@ function ChromatogramPlot({
           what every keyboard route establishes. */}
       <p className="chromatogram-readout" id="chromatogram-readout">
         {hoveredPoint === null
-          ? describeSelection(selectedPoint)
-          : describeScan(hoveredPoint, "Hovering")}
+          ? selectedPoint === null ? t("viewerNoSelection") : describeScan(selectedPoint, t("viewerSelected"), t)
+          : describeScan(hoveredPoint, t("viewerHover"), t)}
       </p>
     </div>
   );
@@ -1062,25 +683,14 @@ function ticksOf(domain: RetentionTimeDomain): readonly number[] {
   return [0, 0.25, 0.5, 0.75, 1].map((fraction) => domain.low + span * fraction);
 }
 
-function clamp01(value: number): number {
-  return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0.5;
-}
 
 /** What the readout says about one scan. */
-function describeScan(point: ScanPoint, verb: string): string {
+function describeScan(point: ScanPoint, verb: string, t: UiMessage): string {
   const scan =
     point.scanNumber === null
-      ? "scan number not reported"
-      : `scan ${formatCount(point.scanNumber)}`;
-  return (
-    `${verb} index ${formatCount(point.spectrumIndex)}, ${scan}, MS${formatCount(point.msLevel)}, ` +
-    `retention time ${point.retentionTime.toFixed(4)} (unit not reported), ` +
-    `TIC ${formatIntensity(point.totalIonCurrent)}, BPC ${formatIntensity(point.basePeakIntensity)}.`
-  );
-}
-
-function describeSelection(point: ScanPoint | null): string {
-  return point === null
-    ? "No scan selected. Click the plot or a table row to select one."
-    : describeScan(point, "Selected");
+      ? t("viewerScanUnreported")
+      : t("viewerReportedScan", { index: formatCount(point.scanNumber) });
+  return t("viewerScanReadout", { name: verb, index: formatCount(point.spectrumIndex), scan,
+    level: formatCount(point.msLevel), rt: point.retentionTime.toFixed(4),
+    tic: formatIntensity(point.totalIonCurrent), bpc: formatIntensity(point.basePeakIntensity) });
 }
