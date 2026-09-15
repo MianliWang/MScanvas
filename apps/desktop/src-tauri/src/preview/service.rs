@@ -11,6 +11,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+mod figure_preview;
+mod output_opening;
+mod staging_recovery;
+mod workspace_clear;
+
 use mscanvas_proteowizard::{
     ConversionSourceKind, LocalFileWriteError, LocalFileWriteFailure, MetadataEntry,
     MetadataResult, MetadataSectionKind, MsLevelBucket, PreviewNoResult, PreviewOutcome,
@@ -485,6 +490,12 @@ struct DatasetPreviewState {
 
 /// The narrow set of operations the desktop application exposes.
 pub struct PreviewService {
+    staging_reclaiming: AtomicBool,
+    clear_plan: Mutex<Option<workspace_clear::ClearPlan>>,
+    next_clear_plan: AtomicU64,
+    conversion_changed: Condvar,
+    /// One external handoff in flight; independent of the backend and roster.
+    output_opening: Mutex<()>,
     provider: Box<dyn PreviewProvider>,
     workspace: Mutex<Workspace>,
     /// Held for the length of one backend operation, so this application runs
@@ -662,6 +673,11 @@ impl PreviewService {
     #[must_use]
     pub fn new(provider: Box<dyn PreviewProvider>) -> Self {
         Self {
+            staging_reclaiming: AtomicBool::new(false),
+            clear_plan: Mutex::new(None),
+            next_clear_plan: AtomicU64::new(1),
+            conversion_changed: Condvar::new(),
+            output_opening: Mutex::new(()),
             provider,
             workspace: Mutex::new(Workspace::default()),
             backend_gate: Mutex::new(()),
@@ -1435,6 +1451,7 @@ impl PreviewService {
     fn publish_conversion_busy(&self, slot: &ConversionSlot) {
         self.conversion_busy
             .store(slot.is_busy(), Ordering::Release);
+        self.conversion_changed.notify_all();
     }
 
     /// What the one conversion slot currently holds.
@@ -2510,12 +2527,18 @@ impl PreviewService {
             if document_epoch != self.workspace_drop_document_epoch() {
                 return Err(outputs_not_adoptable());
             }
-            // A diagnostics export of the same terminal queue is the one other
-            // action that owns this result. Refused here rather than left to the
-            // generation guard, because an adoption that started inside one
-            // would hold the workspace gate while a modal save dialog was open.
+            // Diagnostics and staging recovery retain the same terminal result.
+            // Check their ownership under the mutation gate before reserving
+            // adoption, even while their filesystem work releases that gate.
             if self.diagnostics_export_is_in_flight() {
                 return Err(adoption_in_progress());
+            }
+            if self.staging_reclaiming.load(Ordering::Acquire) {
+                return Err(PreviewErrorDto::new(
+                    "staging_recovery_in_progress",
+                    "Temporary-output cleanup is in progress. Wait before adding converted outputs.",
+                    true,
+                ));
             }
             let tickets = self
                 .conversion_slot()
@@ -3197,7 +3220,13 @@ impl PreviewService {
         if facts.names_this_document(destination) {
             return Ok(());
         }
-        Err(spectrum_destination_misnamed(&facts.extension_refusal()))
+        Err(
+            spectrum_destination_misnamed(&facts.extension_refusal()).with_context(
+                super::dto::PreviewErrorContextDto::ExportExtension {
+                    extension: facts.default_extension.to_owned(),
+                },
+            ),
+        )
     }
 
     /// The sentence for each way a figure could not be drawn as asked.
@@ -3222,6 +3251,7 @@ impl PreviewService {
                  any size."
             }
         })
+        .with_context(refusal.error_context())
     }
 
     /// What the interface is told a figure was rendered as.
@@ -4259,7 +4289,9 @@ impl PreviewService {
     // terminal queue is holding, and a retry, a new queue or a mutation that
     /// landed in the middle would replace the very thing being read.
     fn terminal_queue_action_in_flight(&self) -> bool {
-        self.adoption_is_in_flight() || self.diagnostics_export_is_in_flight()
+        self.adoption_is_in_flight()
+            || self.diagnostics_export_is_in_flight()
+            || self.staging_reclaiming.load(Ordering::Acquire)
     }
 
     /// Marks a claimed queue as running without draining it.
@@ -4514,6 +4546,7 @@ impl PreviewService {
             // number that name it. A handle left over from an earlier item or
             // an earlier retry round cannot be mistaken for this one.
             let cancellation = ConversionCancellation::new();
+            let staging_observer = cancellation.recovery_observer();
             self.conversion_slot().bind_attempt(
                 operation,
                 index,
@@ -4586,9 +4619,15 @@ impl PreviewService {
             if unconfirmed || unaccounted {
                 self.quarantine_backend();
             }
-            let settled = self
-                .conversion_slot()
-                .settle_item(operation, index, outcome);
+            let recovery = staging_observer.retained();
+            let settled = {
+                let mut slot = self.conversion_slot();
+                let settled = slot.settle_item(operation, index, outcome);
+                if settled {
+                    slot.attach_staging_recovery(operation, index, attempt, recovery);
+                }
+                settled
+            };
             if !settled {
                 drop(running);
                 return self.conversion_state();
@@ -5849,10 +5888,8 @@ impl PreviewService {
         &self,
         handles: &[String],
     ) -> Result<WorkspaceRemoveResultDto, PreviewErrorDto> {
-        // Only the converting row is protected. Every other row is the user's
-        // to prune while a conversion runs, because removing one says nothing
-        // about the acquisition being read and the roster has to stay usable
-        // for as long as a process takes.
+        // Every member of an active queue is protected, including waiting and
+        // already finished members. Rows outside that bound set remain removable.
         if handles
             .iter()
             .filter_map(|handle| DatasetId::parse(handle))

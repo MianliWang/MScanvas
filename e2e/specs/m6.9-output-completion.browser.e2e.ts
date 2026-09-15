@@ -44,7 +44,7 @@ function converted(index: number): ConversionQueueItem {
     process: { kind: "settled", termination: "exited", exitCode: 0 },
     staged: { kind: "published" },
     runIdentity: `6f1d3c2b9a48000000000000000000${index}0`.slice(0, 32),
-    adoption: { kind: "notRequested" },
+    adoption: { kind: "notRequested" }, finalizedOutputs: [], stagingRecovery: null,
   } as ConversionQueueItem;
 }
 
@@ -85,7 +85,7 @@ function failed(index: number, stagedSomething: boolean): ConversionQueueItem {
           bounded: false,
         },
     runIdentity: `6f1d3c2b9a48000000000000000000${index}1`.slice(0, 32),
-    adoption: { kind: "nothingToAdopt" },
+    adoption: { kind: "nothingToAdopt" }, finalizedOutputs: [], stagingRecovery: null,
   } as ConversionQueueItem;
 }
 
@@ -138,7 +138,7 @@ function partialSet(): ConversionQueueItem {
       bounded: false,
     },
     runIdentity: "6f1d3c2b9a4800000000000000000c10",
-    adoption: { kind: "nothingToAdopt" },
+    adoption: { kind: "nothingToAdopt" }, finalizedOutputs: [], stagingRecovery: null,
   } as ConversionQueueItem;
 }
 

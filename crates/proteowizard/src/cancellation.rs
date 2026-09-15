@@ -32,9 +32,16 @@ use crate::process::CancellationToken;
 #[derive(Default)]
 pub struct ConversionCancellation {
     token: CancellationToken,
+    recovery: crate::conversion_run::StagingRecoveryObserver,
 }
 
 impl ConversionCancellation {
+    /// Retain the one attempt's live staging owner before transferring this
+    /// cancellation object to the runner. This observer grants no new ownership.
+    #[must_use]
+    pub fn recovery_observer(&self) -> crate::conversion_run::StagingRecoveryObserver {
+        self.recovery.clone()
+    }
     #[must_use]
     pub fn new() -> Self {
         Self::default()

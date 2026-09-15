@@ -16,6 +16,9 @@
  */
 
 import type { ReactElement } from "react";
+import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import { ownedErrorDetail } from "./ownedErrorMessages";
+import type { UiMessage } from "../preferences/i18n";
 
 import type {
   ConversionItemAdoption,
@@ -40,334 +43,75 @@ import { formatByteLength, formatCount } from "./format";
  * stay that way: an unmapped one falls through to the identifier itself rather
  * than to a friendly word that would be wrong.
  */
-const TERMINATION_LABEL: Record<string, string> = {
-  exited: "ran to its own end",
-  cancelled: "was terminated after a stop was requested",
-  not_started: "was never created",
-};
+const TERMINATION_LABEL = { exited: "cnvTermExited", cancelled: "cnvTermStopped", not_started: "cnvTermNever" } as const;
+const STAGED_PHASE_LABEL = { provider_not_invoked: "cnvBeforeProvider", provider_returned: "cnvProviderReturned", output_refused: "cnvOutputRefusedAt", publication_settled: "cnvPublicationSettled" } as const;
+const MEMBER_STATE_LABEL = { finalized: "cnvMemberFinalized", validated_not_published: "cnvMemberValidated", rejected: "cnvMemberRejected", not_published: "cnvMemberUnpublished" } as const;
+const ADOPTION_REFUSAL_LABEL = { output_missing: "cnvAdoptionReasonMissing", output_changed: "cnvAdoptionReasonChanged", output_unreadable: "cnvAdoptionReasonUnreadable", output_not_mzml: "cnvAdoptionReasonNotMzml", workspace_full: "cnvAdoptionReasonFull" } as const;
 
-/**
- * When an observation of the staging area was taken.
- *
- * The phase is part of the answer, not decoration. An empty snapshot says the
- * directory was empty *then*; taken after a publication it says nothing at all
- * about what the backend produced, and a reader who cannot see which one they
- * are looking at has been given a fact without its scope.
- */
-const STAGED_PHASE_LABEL: Record<string, string> = {
-  provider_not_invoked: "before any converter was invoked",
-  // Names the call returning, never a converter returning. This phase also
-  // covers a launch that created no process at all and one whose result could
-  // not be captured -- the two cases where the process judgement beside it
-  // deliberately refuses to say a converter ran. A phrase like "got control
-  // back from the converter" would have this line assert what that judgement
-  // withholds, in the same panel.
-  provider_returned: "when the attempt to run a converter returned",
-  output_refused: "after the output was checked and refused",
-  publication_settled: "after publication finished",
-};
-
-/**
- * What became of one member of a backend-named set.
- *
- * Four answers, because a refused member and one nobody examined are opposite
- * facts and shared a word until they did not.
- */
-const MEMBER_STATE_LABEL: Record<string, string> = {
-  finalized: "Finalized",
-  validated_not_published: "Checked, not published",
-  rejected: "Checked and refused",
-  not_published: "Not published",
-};
-
-/** Why one adoption refusal happened, in the user's terms. */
-const ADOPTION_REFUSAL_LABEL: Record<string, string> = {
-  output_missing: "it is no longer in the destination folder",
-  output_changed: "it changed since it was converted",
-  output_unreadable: "it could not be read",
-  output_not_mzml: "it is no longer a readable mzML file",
-  // The one reason that is not about the file. It is why the sentence carries
-  // its own subject: "each the workspace is full" is what a shared prefix
-  // produced, and it shipped.
-  workspace_full: "the workspace is full",
-};
-
-/**
- * What the execution boundary established about the process.
- *
- * Read from its own answer rather than from whether process facts came back. A
- * run whose streams could not be captured reports none and may well have
- * created a process, and saying "no converter was started" there would be this
- * surface inventing a fact from an absence.
- */
-export function processSentence(process: ConversionProcessOutcome): string {
+export function processSentence(process: ConversionProcessOutcome, t: UiMessage): string {
   switch (process.kind) {
-    case "notAttempted":
-      return "No converter was started for this item.";
-    case "indeterminate":
-      // Not "a converter was started". This arm covers a launch that may have
-      // created nothing at all, so asserting one would manufacture the very
-      // process fact the arm exists to withhold.
-      return "MSCanvas asked for a converter and could not establish whether one ran or how it ended.";
+    case "notAttempted": return t("cnvProcessNone");
+    case "indeterminate": return t("cnvProcessUnknown");
     case "settled": {
-      const ending = TERMINATION_LABEL[process.termination] ?? process.termination;
-      if (process.termination === "not_started") {
-        return "The converter was never created, so no process ran.";
-      }
-      return process.exitCode === null
-        ? `The converter ${ending}.`
-        : `The converter ${ending}, exit code ${String(process.exitCode)}.`;
+      if (process.termination === "not_started") return t("cnvProcessNotCreated");
+      const key = TERMINATION_LABEL[process.termination as keyof typeof TERMINATION_LABEL];
+      const ending = key === undefined ? process.termination : t(key);
+      return process.exitCode === null ? t("cnvProcessEnded", { ending }) : t("cnvProcessExit", { ending, code: String(process.exitCode) });
     }
   }
 }
 
-/**
- * What the private staging area held.
- *
- * Four answers and not a boolean. "Could not be read" is unknown rather than
- * empty, and "no folder was available" is a third thing again — an item that
- * never gave the converter anywhere to write, whether because none was made or
- * because one was made and torn down before anything was invoked.
- */
-export function stagedSentence(staged: ConversionStagedOutput, outputCount = 1): string {
+export function stagedSentence(staged: ConversionStagedOutput, outputCount = 1, t: UiMessage): string {
   switch (staged.kind) {
-    case "notCreated":
-      // What this establishes is that no converter was given a folder — which
-      // covers an attempt that settled before one was made and one whose own
-      // setup failed and was torn down. Saying "none was created" would be
-      // wrong in the second case and would be claiming more than the boundary
-      // reports.
-      return "No converter was given a temporary working folder, so nothing could have been written there.";
-    case "unobserved":
-      return `MSCanvas could not read its temporary working folder ${
-        STAGED_PHASE_LABEL[staged.phase] ?? "at that point"
-      }, so what it held is unknown.`;
+    case "notCreated": return t("cnvStagedNone");
+    case "unobserved": return t("cnvStagedUnknown", { when: t(STAGED_PHASE_LABEL[staged.phase as keyof typeof STAGED_PHASE_LABEL] ?? "cnvStagedAtPoint") });
     case "observed": {
-      const when = STAGED_PHASE_LABEL[staged.phase] ?? "at that point";
-      if (staged.entryCount === 0) {
-        return `The temporary working folder was empty ${when}.`;
-      }
-      // A reading that stopped at its bound counted at least this many and did
-      // not walk the rest. Saying the exact number would be a total this
-      // observation deliberately did not take.
-      if (staged.bounded) {
-        return `The temporary working folder held more than ${formatCount(
-          staged.entryCount - 1,
-        )} entries ${when}. MSCanvas stopped counting rather than reading all of them.`;
-      }
-      const entries = `${formatCount(staged.entryCount)} ${
-        staged.entryCount === 1 ? "entry" : "entries"
-      }`;
-      // The directory count is part of the observed shape and was being
-      // dropped: a folder holding one subdirectory read exactly like one
-      // holding one zero-byte file. What kind of thing was left behind is
-      // something the reader has to go and look at.
-      const directories =
-        staged.directoryCount === 0
-          ? ""
-          : ` ${formatCount(staged.directoryCount)} of them ${
-              staged.directoryCount === 1 ? "is a folder" : "are folders"
-            }.`;
-      // "Held bytes" rather than "an output": a staged file with content is not
-      // a valid document, and this surface has no judgement that says it is.
-      const content = staged.nonEmptyFileObserved
-        ? "at least one of them a file with content"
-        : "none of them a file with content";
-      return `The temporary working folder held ${entries} ${when}, ${content}.${directories}`;
+      const when = t(STAGED_PHASE_LABEL[staged.phase as keyof typeof STAGED_PHASE_LABEL] ?? "cnvStagedAtPoint");
+      if (staged.entryCount === 0) return t("cnvStagedEmpty", { when });
+      if (staged.bounded) return t("cnvStagedBounded", { when, n: formatCount(staged.entryCount - 1) });
+      return t("cnvStagedEntries", { when,
+        entries: t(staged.entryCount === 1 ? "cnvOneEntry" : "cnvManyEntries", { n: formatCount(staged.entryCount) }),
+        content: t(staged.nonEmptyFileObserved ? "cnvHasContent" : "cnvNoContent"),
+      }) + (staged.directoryCount === 0 ? "" : t(staged.directoryCount === 1 ? "cnvOneDirectory" : "cnvManyDirectories", { n: formatCount(staged.directoryCount) }));
     }
-    case "published":
-      // "The output", not "what was written". A single-output run validates and
-      // renames the one document it planned and takes no listing, so it never
-      // establishes that its output was the only thing in the folder. The set
-      // lifecycle does -- discovery refuses a staging area holding anything
-      // that is not a member -- but one sentence serves both, and it may only
-      // claim what the narrower of the two knows.
-      //
-      // The *number*, though, is not the narrower one's to withhold: an item
-      // with several outputs never says "the output", and this arm was the last
-      // place one did -- one line above its own "10 of 10 obtained a final
-      // name" and a ten-row manifest.
-      return outputCount <= 1
-        ? "The output was written to the temporary working folder and took its final name."
-        : `All ${formatCount(outputCount)} outputs were written to the temporary working folder and took their final names.`;
+    case "published": return outputCount <= 1 ? t("cnvStagedPublished") : t("cnvStagedPublishedSet", { n: formatCount(outputCount) });
   }
 }
 
-/**
- * What obtained a final name.
- *
- * A partially finalized set says how many of what, and names neither a success
- * nor a failure. A denominator is used only where the population is known: the
- * discovered members of this run, never the lifecycle's maximum bound.
- */
-export function finalizedSentence(item: ConversionQueueItem): string {
+export function finalizedSentence(item: ConversionQueueItem, t: UiMessage): string {
   const single = item.result?.kind === "single" ? item.result.report : null;
   const set = item.result?.kind === "outputSet" ? item.result.report : null;
-  // The conflict policy's own skip is answered first, and for both
-  // cardinalities. A set reaches it only when *every* one of its names was
-  // occupied, so a count of zero finalized would be arithmetically true and
-  // would say nothing about why nothing took a final name.
-  //
-  // The two cardinalities do not skip at the same moment, and the sentence has
-  // to respect that. A single output is skipped on the destination check
-  // *before* the converter is invoked, so nothing was written and saying so is
-  // exact. A set is skipped only after its members were written into the
-  // working folder and validated there -- the occupied names are compared
-  // against the validated ones -- so "nothing was written" would contradict the
-  // staged judgement directly above it, which says the folder held documents.
-  // What is true of the set is that no member was published.
-  if (item.state === "skipped") {
-    return set === null
-      ? "Nothing was written. A file of that name was already there and was left alone."
-      : "No output obtained a final name: files of all of its output names were already there and were left alone.";
-  }
-  if (set !== null) {
-    // What this surface knows is what the run *discovered* and published, not
-    // what the converter wrote. A set refused before discovery reports no
-    // members, and the converter may still have written documents — the staged
-    // judgement beside this one is what says whether it did. So the empty case
-    // says nothing obtained a final name, and does not say nothing was
-    // produced.
-    if (set.memberCount === 0) {
-      return "No output file obtained a final name.";
-    }
-    return `${formatCount(set.finalizedCount)} of ${formatCount(
-      set.memberCount,
-    )} discovered output files obtained a final name.`;
-  }
-  if (single?.outputFileName != null) {
-    return `One output obtained its final name: ${single.outputFileName}.`;
-  }
-  return "No output obtained a final name.";
+  if (item.state === "skipped") return t(set === null ? "cnvFinalSkipped" : "cnvFinalSetSkipped");
+  if (set !== null) return set.memberCount === 0 ? t("cnvFinalSetNone") : t("cnvFinalCount", { n: formatCount(set.finalizedCount), totalText: formatCount(set.memberCount) });
+  return single?.outputFileName != null ? t("cnvFinalOne", { name: single.outputFileName }) : t("cnvFinalNone");
 }
 
-/**
- * How an output was judged, and the exact limit of the claim.
- *
- * Output-only stays output-only whatever its sets contain. Advisories are named
- * separately from the three dispositions because none of them is a check that
- * could have been made and was not.
- */
-export function integritySentence(
-  validation: ConversionValidation | null,
-  perOutput = false,
-  refused = false,
-  passedThenUnpublished = false,
-  reportedMode: string | null = null,
-): string {
-  // A refusal keeps no member record, so an item whose first output was the
-  // refused one has none at all -- but the mode is a property of the source
-  // posture rather than of any one member, and a set report states it in its
-  // own right. Reading it from there keeps a refused set's scope as legible as
-  // every other integrity result's.
+export function integritySentence(validation: ConversionValidation | null, perOutput = false, refused = false, passedThenUnpublished = false, reportedMode: string | null = null, t: UiMessage): string {
   const mode = validation?.mode ?? reportedMode;
-  const scope =
-    mode === null
-      ? null
-      : mode === "source_comparison"
-        ? "Compared against the source document"
-        : "Output-only. The converted data was not compared against a readable vendor-source model";
-  // The one failure the integrity judgement *causes* must not report that no
-  // judgement happened. A refused output was read, judged and discarded, and
-  // saying nothing was checked there is the collapse this whole surface exists
-  // to undo.
+  const scope = mode === null ? null : mode === "source_comparison" ? t("cnvIntegritySource") : mode === "output_only" ? t("cnvIntegrityOutput") : t("cnvIntegrityModeUnknown", { code: mode });
   if (refused) {
-    // An item with several outputs never says "the output". A set is judged one
-    // member at a time and stops at the first that fails, so the members after
-    // it were never examined -- and a singular sentence would claim a check for
-    // files the manifest directly below it says nobody looked at.
-    if (perOutput) {
-      const mode = scope === null ? "" : `${scope}. `;
-      return `${mode}Outputs are judged one at a time and the set stopped at the one that did not pass, so nothing was published. The manifest below says which output was refused and which were never examined.`;
-    }
-    // The scope belongs here too. A refusal is the one failure this judgement
-    // causes, and reporting it without saying what the output was checked
-    // *against* states less than the boundary established -- the same gap the
-    // set sentence above had.
-    return scope === null
-      ? "The output was checked against this source posture's contract, did not pass, and was discarded rather than published."
-      : `${scope}. The output did not pass this contract and was discarded rather than published.`;
+    if (perOutput) return (scope === null ? "" : `${scope}. `) + t("cnvIntegritySetRefused");
+    return scope === null ? t("cnvIntegrityRefusedUnknown") : t("cnvIntegrityRefused", { scope });
   }
   if (validation === null) {
-    // Nor may a publication that failed *after* the check report that no check
-    // happened. The record travels with a finalization and there was none, so
-    // the properties are gone — but the judgement ran and passed, and the
-    // surface says which of the two happened rather than denying both.
-    if (passedThenUnpublished) {
-      // The scope belongs here for the same reason it belongs on a refusal:
-      // "checked and passed" without saying against what states less than the
-      // boundary established, and the report carries the mode whether or not a
-      // record of the check survived.
-      return scope === null
-        ? "The output was checked and passed. What failed was giving it its final name, so its detailed result was not kept."
-        : `${scope}. The output passed this contract, and what failed was giving it its final name, so its detailed result was not kept.`;
-    }
-    return "Nothing was checked, because nothing was validated.";
+    if (passedThenUnpublished) return scope === null ? t("cnvIntegrityUnpublishedUnknown") : t("cnvIntegrityUnpublished", { scope });
+    return t("cnvIntegrityNone");
   }
-  // A set is judged member by member. Printing one member's counts as the
-  // item's would be presenting a sample as a total, so where there is more than
-  // one output this states the mode — which is a property of the source posture
-  // and is therefore the same for all of them — and leaves the counts to the
-  // manifest, which carries each member's own.
-  if (perOutput) {
-    return `${scope}. Each output is judged on its own; the manifest below has every one.`;
-  }
-  return `${scope}. ${formatCount(validation.verified.length)} checked, ${formatCount(
-    validation.unverified.length,
-  )} not established, ${formatCount(validation.inapplicable.length)} not applicable.`;
+  if (perOutput) return t("cnvIntegrityPerOutput", { scope: scope ?? "" });
+  return t("cnvIntegrityCounts", { scope: scope ?? "", checkedText: formatCount(validation.verified.length), unknown: formatCount(validation.unverified.length), inapplicable: formatCount(validation.inapplicable.length) });
 }
 
-/**
- * What an adoption did with this item's outputs.
- *
- * Historical, and the sentence says so: it is what an adoption did, not what
- * the workspace holds now. A row removed afterwards leaves this unchanged,
- * because removing a row deletes no file and undoes no past process outcome.
- */
-export function adoptionSentence(
-  adoption: ConversionItemAdoption,
-  finalizedSomething = false,
-): string {
+export function adoptionSentence(adoption: ConversionItemAdoption, finalizedSomething = false, t: UiMessage): string {
   switch (adoption.kind) {
-    case "nothingToAdopt":
-      // An item that finalized files and is still not offered was refused by a
-      // policy, not by having produced nothing. Attributing the refusal to
-      // production would contradict the finalized line directly above it.
-      // Three different things make a finalized item unofferable — a set that
-      // published only part of itself, one whose sample completeness was never
-      // established, and one whose retained objects could not be paired with
-      // its members — and only the first is "incomplete". Saying so of all
-      // three would answer an unestablished question with a negative, which is
-      // the collapse this whole surface exists to undo. What is true of all
-      // three is that no complete output set is available to add.
-      return finalizedSomething
-        ? "Not offered: MSCanvas has no complete output set to add for this item. What it did finalize remains in the destination folder and can be added later with Add files…."
-        : "This item produced nothing that could be added to the workspace.";
-    case "notRequested":
-      return "Not added yet. Adding outputs to the workspace is something you ask for.";
+    case "nothingToAdopt": return t(finalizedSomething ? "cnvAdoptionSetUnavailable" : "cnvAdoptionNone");
+    case "notRequested": return t("cnvAdoptionNotAsked");
     case "settled": {
-      const parts = [
-        `${formatCount(adoption.added)} added`,
-        `${formatCount(adoption.alreadyInWorkspace)} already in the workspace`,
-        `${formatCount(adoption.refused)} not added`,
-      ];
-      // One item can hold many outputs and their refusals can differ — an
-      // identity check and a full workspace are independent answers — so the
-      // reasons are named as the set they are rather than the first one being
-      // spoken for all of them.
-      // Each reason carries its own subject, so a list of them reads whether
-      // there is one or several and whether or not the reason is about the
-      // file. An identifier this surface has no sentence for is shown as
-      // itself: inventing one would name a reason MSCanvas did not give.
-      const reasons: string[] = [];
-      for (const refusal of adoption.refusals) {
-        const said = ADOPTION_REFUSAL_LABEL[refusal] ?? `it was refused: ${refusal}`;
-        if (!reasons.includes(said)) {
-          reasons.push(said);
-        }
-      }
-      const why = reasons.length === 0 ? "" : ` Not added because ${reasons.join("; and ")}.`;
-      return `When outputs were last added: ${parts.join(", ")}.${why}`;
+      const parts = [t("cnvAddedCount", { n: formatCount(adoption.added) }), t("cnvDuplicateCount", { n: formatCount(adoption.alreadyInWorkspace) }), t("cnvRefusedCount", { n: formatCount(adoption.refused) })];
+      const reasons = [...new Set(adoption.refusals.map(code => {
+        const key = ADOPTION_REFUSAL_LABEL[code as keyof typeof ADOPTION_REFUSAL_LABEL];
+        return key === undefined ? t("cnvAdoptionRefusedCode", { code }) : t(key);
+      }))];
+      return t("cnvAdoptionHistory", { parts: parts.join(", ") }) + (reasons.length === 0 ? "" : t("cnvAdoptionWhy", { reasons: reasons.join(t("cnvJoinReasons")) }));
     }
   }
 }
@@ -494,8 +238,8 @@ function advisoriesOf(item: ConversionQueueItem): readonly string[] {
  * lifecycle's bound and is neither the number expected nor the number produced,
  * so it is never the second number here.
  */
-function setPopulation(report: ConversionOutputSetReport): string {
-  return `${formatCount(report.finalizedCount)} of ${formatCount(report.memberCount)}`;
+function setPopulation(report: ConversionOutputSetReport, t: UiMessage): string {
+  return t("cnvFinalPopulation", { n: formatCount(report.finalizedCount), totalText: formatCount(report.memberCount) });
 }
 
 export interface ConversionItemJudgementsProps {
@@ -516,6 +260,7 @@ export function ConversionItemJudgements({
   item,
   index,
 }: ConversionItemJudgementsProps): ReactElement {
+  const t = useUiMessages();
   const id = `conversion-item-${String(index)}`;
   const manifest = manifestOf(item);
   const advisories = advisoriesOf(item);
@@ -526,53 +271,54 @@ export function ConversionItemJudgements({
         {/* The visible word is short; the accessible name says which row it is
             about, because a list of sixteen identical "Details" is a list of
             sixteen unlabelled controls. */}
-        <span aria-hidden="true">Details</span>
-        <span className="visually-hidden">{`Details for ${item.fileName}`}</span>
+        <span aria-hidden="true">{t("cnvDetails")}</span>
+        <span className="visually-hidden">{t("cnvDetailsFor", { name: item.fileName })}</span>
       </summary>
+      {item.error?.detail == null ? null : <p className="notice-detail">{ownedErrorDetail(item.error, t)}</p>}
       <dl className="metadata-list conversion-item-judgements">
         <div>
-          <dt>Process</dt>
-          <dd data-testid={`${id}-process`}>{processSentence(item.process)}</dd>
+          <dt>{t("cnvProcessTitle")}</dt>
+          <dd data-testid={`${id}-process`}>{processSentence(item.process, t)}</dd>
         </div>
         <div>
-          <dt>Staged output</dt>
-          <dd data-testid={`${id}-staged`}>{stagedSentence(item.staged, manifest.length)}</dd>
+          <dt>{t("cnvStagedTitle")}</dt>
+          <dd data-testid={`${id}-staged`}>{stagedSentence(item.staged, manifest.length, t)}</dd>
         </div>
         <div>
-          <dt>Finalized output</dt>
+          <dt>{t("cnvFinalTitle")}</dt>
           <dd data-testid={`${id}-finalized`}>
-            {finalizedSentence(item)}
+            {finalizedSentence(item, t)}
             {set === null || set.partial === null ? null : (
-              <> {`Publication stopped partway: ${setPopulation(set)}.`}</>
+              <> {t("cnvPartialPublication", { population: setPopulation(set, t) })}</>
             )}
           </dd>
         </div>
         <div>
-          <dt>Integrity</dt>
+          <dt>{t("cnvIntegrityTitle")}</dt>
           <dd data-testid={`${id}-integrity`}>
             {integritySentence(
               validationOf(item),
               manifest.length > 1,
               integrityRefused(item),
               passedThenUnpublished(item),
-              reportedValidationMode(item),
+              reportedValidationMode(item), t,
             )}
             {advisories.length === 0 ? null : (
               <>
                 {" "}
                 <span className="conversion-item-advisories">
                   {advisories.length === 1
-                    ? `One kind of advisory observation, which fails nothing: ${advisories[0] ?? ""}.`
-                    : `${formatCount(advisories.length)} kinds of advisory observation, which fail nothing: ${advisories.join(", ")}.`}
+                    ? t("cnvAdvisoryOne", { codes: advisories[0] ?? "" })
+                    : t("cnvAdvisoryMany", { n: formatCount(advisories.length), codes: advisories.join(", ") })}
                 </span>
               </>
             )}
           </dd>
         </div>
         <div>
-          <dt>Adoption</dt>
+          <dt>{t("cnvAdoptionTitle")}</dt>
           <dd data-testid={`${id}-adoption`}>
-            {adoptionSentence(item.adoption, finalizedAnyOutput(item))}
+            {adoptionSentence(item.adoption, finalizedAnyOutput(item), t)}
           </dd>
         </div>
         <div>
@@ -582,13 +328,13 @@ export function ConversionItemJudgements({
               process judgement that says the converter was never created.
               Calling it a run identity there would give a name to something
               that did not happen -- in the same panel that says it did not. */}
-          <dt>Attempt identity</dt>
+          <dt>{t("cnvRunIdentityTitle")}</dt>
           {/* Named as absent rather than left blank. It is what keeps a
               refusal, a skip or a stop that never reached the boundary from
               reading as an attempt that was made. */}
           <dd data-testid={`${id}-run-identity`}>
             {item.runIdentity === null ? (
-              "No attempt reached a converter for this item."
+              t("cnvRunIdentityNone")
             ) : (
               <code className="conversion-run-identity">{item.runIdentity}</code>
             )}
@@ -598,19 +344,19 @@ export function ConversionItemJudgements({
       {manifest.length === 0 ? null : (
         <div className="conversion-item-manifest-scroll">
           <table className="conversion-item-manifest">
-            <caption>{`Outputs of ${item.fileName}`}</caption>
+            <caption>{t("cnvManifestTitle", { name: item.fileName })}</caption>
             <thead>
               <tr>
-                <th scope="col">File</th>
-                <th scope="col">State</th>
-                <th scope="col">Size</th>
-                <th scope="col">Spectra</th>
-                <th scope="col">Chromatograms</th>
+                <th scope="col">{t("cnvFileColumn")}</th>
+                <th scope="col">{t("cnvStateColumn")}</th>
+                <th scope="col">{t("cnvSizeColumn")}</th>
+                <th scope="col">{t("cnvSpectraColumn")}</th>
+                <th scope="col">{t("cnvChromatogramsColumn")}</th>
                 {/* Per member, because a set is judged member by member and the
                     sentence above states only the mode. */}
-                <th scope="col">Checked</th>
-                <th scope="col">Not established</th>
-                <th scope="col">Not applicable</th>
+                <th scope="col">{t("cnvCheckedColumn")}</th>
+                <th scope="col">{t("cnvUnverifiedColumn")}</th>
+                <th scope="col">{t("cnvInapplicableColumn")}</th>
                 <th scope="col">SHA-256</th>
               </tr>
             </thead>
@@ -635,7 +381,7 @@ export function ConversionItemJudgements({
                       as itself, like every other identifier here: answering an
                       unrecognised state with "Not published" would state a fact
                       about the file rather than admit an unread one. */}
-                  <td>{MEMBER_STATE_LABEL[member.state] ?? member.state}</td>
+                  <td>{(MEMBER_STATE_LABEL[member.state as keyof typeof MEMBER_STATE_LABEL] === undefined ? member.state : t(MEMBER_STATE_LABEL[member.state as keyof typeof MEMBER_STATE_LABEL]))}</td>
                   {/* Nothing measured is nothing shown. A zero here would read
                       as a measured empty document. */}
                   <td>{member.output === null ? "—" : formatByteLength(member.output.byteLength)}</td>

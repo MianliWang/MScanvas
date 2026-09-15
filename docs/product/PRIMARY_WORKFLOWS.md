@@ -242,11 +242,17 @@ See also
 
 **Success:** valid outputs are easy to locate and failures do not require rebuilding the batch.
 
-**Partly built.** WF-004a below is the bounded serial queue for three evidenced
+**Current M7.4 candidate; native acceptance/publication pending.** WF-004a
+below remains the bounded serial queue for three evidenced
 vendor families, with semantic settings and explicit output adoption. M6.6's
 destination policies and conflict explanations shipped in PR #99. M6.7 adds the
 explicit selected/all decision below ([PR #100](https://github.com/MianliWang/MScanvas/pull/100)).
-The queue's bound remains unchanged, and "Open file/folder" remains outside this slice. See
+The queue's bound remains unchanged. M7.4 adds explicit Open file/folder actions
+using retained output identities and Rust object/content revalidation. A missing
+file may retain access to its independently valid bound folder; OS acceptance
+does not establish external rendering. Opening neither adopts nor changes a
+result's integrity. Failed session-owned staging offers explicit cleanup and a
+fresh plan, without automatically rerunning the queue. See
 [ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md) and
 [ADR 0013](../architecture/adr/0013-serial-conversion-queue.md).
 
@@ -512,8 +518,18 @@ exists but could not be read. See
 
 ## WF-005 — Clear the workspace
 
-**Idle:** `Clear list` → workspace becomes empty → optional Undo.
+**Idle:** `Clear list` → Rust releases workspace rows and supersedes stale imports.
 **Active run:** `Clear list` → choose remove non-running / cancel and clear / return.
+
+The M7.4 candidate protects every active-queue member, including waiting and
+finished rows, and the active single source. Remove non-running releases only
+the captured eligible set. Cancel and clear requests whole-operation stop,
+waits outside worker locks, then revalidates operation, roster revision and
+removal set under the mutation/adoption authority. Stale confirmation,
+unconfirmed stop or quarantine preserves rows and offers re-evaluation.
+Return/Escape is inert. New imports cannot be erased by a late clear.
+There is no whole-workspace snapshot Undo; organization Undo stays narrower.
+Current native acceptance and publication remain pending.
 
 **Success:** no restart and no source-file deletion.
 
@@ -521,11 +537,25 @@ exists but could not be read. See
 
 1. Establish the relevant current view/selection.
 2. Choose quick copy/PNG or open `Export figure`.
-3. Select current/full range, dimensions, figure theme and optional metadata.
+3. Select current/full range, dimensions, figure theme and PNG DPI where applicable.
 4. Preview the export-specific render.
 5. Export image and optionally underlying data.
 
-**Implemented today (M4.2):** step 2's quick-copy half as `Copy plot`, step 3's
+**Current M7.4 candidate; native acceptance/publication pending.** The actual
+Export figure dialog covers spectrum, chromatogram and linked figures. Rust
+renders an inert bounded SVG from the same canonical specification as saving.
+Current means the committed range; Full means the retained source. Old replies,
+source changes and invalid settings cannot become a current preview. Empty,
+loading, stale, refused and failed states remain distinct. PNG DPI is metadata
+only and invalid DPI leaves valid SVG/data/clipboard paths available. Linked
+figures retain the selected scan's full-source lower spectrum.
+
+Quick PNG uses its own Rust save picker; Copy plot uses the Rust clipboard
+operation. Both remain beside the plot with their current scope/settings.
+CSV/TSV stay separately reachable. Saving captures its validated specification
+before the native picker, and dialog cancellation changes no scientific state.
+
+**Historical M4.2 delivery:** step 2's quick-copy half as `Copy plot`, step 3's
 dimensions and theme, and step 5, both halves -- for the selected spectrum only. The `Selected spectrum` panel offers `Export SVG…`,
 `Export PNG…`, `Copy plot`, `Export CSV…` and `Export TSV…` once a spectrum has
 loaded, beside a width, a height, a PNG DPI and a Light/Dark figure theme — including one that
@@ -534,9 +564,9 @@ through a Rust-owned save dialog that replaces nothing; a dismissed dialog is an
 ordinary outcome and leaves the spectrum exactly as it was. What is written is
 the complete spectrum Rust read, not the bounded arrays the interface drew from.
 
-What is still missing from steps 2 to 4: PNG is a save rather than a quick copy
-target, and step 4's export-specific preview does not exist -- the figure is
-described by its settings rather than shown before it is written.
+At that historical stage, the export-specific preview did not exist: settings
+described the figure before writing. M7.4 supplies the preview above and keeps
+PNG saving distinct from clipboard copying.
 
 The chromatogram exports as SVG, PNG, `Copy plot`, CSV and TSV, over the full
 run or the range the viewer has committed to, and that range is

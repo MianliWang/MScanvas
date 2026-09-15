@@ -1123,7 +1123,11 @@ describe("stopping a running conversion queue", () => {
     expect(api.stopRequests).toEqual([]);
     expect(within(panel).queryByRole("button", { name: "Stop queue" })).toBeNull();
     // Every row a stopping queue holds is still protected.
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    expect(await screen.findByRole("dialog")).toBeVisible();
+    expect(api.calls()).not.toContain("clearWorkspace");
+    fireEvent.click(screen.getByRole("button", { name: "Return" }));
     expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
   });
 

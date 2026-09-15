@@ -32,6 +32,7 @@ const CLEAR: ConversionLane = {
   backendQuarantined: false,
   previewReading: false,
   laneClaimed: false,
+  reclaimingStaging: false,
   configurationProbing: false,
   adopting: false,
   exportingDiagnostics: false,
@@ -278,6 +279,8 @@ function planFor(reason: ConversionUnavailableReason): ConversionStartPlan {
 /** The one lane fact that produces each reason, for the message sweep above. */
 function laneFor(reason: ConversionUnavailableReason): Partial<ConversionLane> {
   switch (reason) {
+    case "staging-reclaiming":
+      return { reclaimingStaging: true };
     case "backend-quarantined":
       return { backendQuarantined: true };
     case "backend-changing":

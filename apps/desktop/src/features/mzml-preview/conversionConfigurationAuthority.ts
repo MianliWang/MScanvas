@@ -38,6 +38,7 @@ import type { ConversionConfiguration } from "./contracts";
  * verdict, which is a judgement rather than ownership.
  */
 export interface ProbeAdmissionFacts {
+  readonly reclaimingStaging: boolean;
   /** The session has lost track of a converter. No waiting clears it. */
   readonly backendQuarantined: boolean;
   /** A backend installation check or change is in progress. */
@@ -61,7 +62,7 @@ export interface ProbeAdmissionFacts {
 
 /** Why a probe may not begin now, in the order the facts are consulted. */
 export type ProbeRefusal =
-  "backendQuarantined" | "backendChanging" | "laneClaimed" | "previewReading" | "probeInFlight";
+  "backendQuarantined" | "backendChanging" | "laneClaimed" | "previewReading" | "probeInFlight" | "reclaimingStaging";
 
 /**
  * The one order these facts are consulted in.
@@ -77,6 +78,7 @@ const REFUSAL_ORDER: readonly ProbeRefusal[] = [
   "backendChanging",
   "laneClaimed",
   "previewReading",
+  "reclaimingStaging",
   "probeInFlight",
 ];
 

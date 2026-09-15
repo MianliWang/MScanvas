@@ -216,6 +216,7 @@ function harness(
   // installation ordering and not an artefact of a roster that never settles.
   const empty: WorkspaceRoster = { datasets: [], capacity: FAKE_WORKSPACE_CAPACITY };
   const api: PreviewApi = {
+    previewFigure: async (request) => ({ status: "refused", requestId: request.requestId, error: { kind: "spectrum_export_stale", summary: "Select a spectrum.", detail: null, retryable: false } }),
     inspectBackend: () => service.inspectBackend(),
     chooseInstallation: () => service.chooseInstallation(options.dismissPicker ?? false),
     useAutomaticDiscovery: () => service.useAutomaticDiscovery(),
@@ -251,6 +252,10 @@ function harness(
         removedHandles: [...handles],
         unknownHandles: [],
       }),
+    reclaimConversionStaging: () => Promise.resolve({ status: "refused", reason: "unknownRecovery" }),
+    openFinalizedOutput: () => Promise.resolve({ status: "refused", reason: "unknownOutput" }),
+    planWorkspaceClear: () => Promise.resolve({ Err: "actionInFlight" }),
+    executeWorkspaceClear: () => Promise.resolve({ status: "refused", reason: "stalePlan" }),
     clearWorkspace: () => Promise.resolve(empty),
     openPreview:
       options.preview ?? (() => Promise.resolve(buildPreview(3, false, options.openGeneration ?? 0))),

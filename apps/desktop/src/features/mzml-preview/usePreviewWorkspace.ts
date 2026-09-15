@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 
+import type { WorkspaceClearAction, WorkspaceClearOutcome } from "./contracts";
 import { usePreviewApi } from "./api";
 import type { ConversionOperation } from "./useConversionOperation";
 import { useConversionOperation } from "./useConversionOperation";
@@ -62,6 +63,7 @@ import type { BackendCheckFacts } from "./backendReadingObligation";
 import { readingCheckIsOwed, readingIsStale } from "./backendReadingObligation";
 import { useBackendReadingObligation } from "./useBackendReadingObligation";
 import { toPreviewError } from "./contracts";
+import type { FigurePreviewKind, FigurePreviewQuestion, FigurePreviewRequest, FigurePreviewOutcome } from "./contracts";
 import { describeDropResult } from "./dropNotice";
 import { useWorkspaceDropTransport } from "./dropTransport";
 import { describeFolderResult } from "./folderNotice";
@@ -488,6 +490,11 @@ export type DropPresentation =
 export type DropSubscriptionStatus = "connecting" | "available" | "unavailable";
 
 export interface PreviewWorkspace {
+  readonly figurePreviewQuestion: (kind: FigurePreviewKind) => FigurePreviewQuestion | null;
+  readonly previewFigure: (request: FigurePreviewRequest) => Promise<FigurePreviewOutcome>;
+  readonly exportPreviewedFigure: (question: FigurePreviewQuestion, format: "svg" | "png") => boolean;
+  readonly copyPreviewedFigure: (question: FigurePreviewQuestion) => boolean;
+  readonly executeActiveClear: (planId: string, action: WorkspaceClearAction) => Promise<WorkspaceClearOutcome>;
   /**
    * The session's one conversion, as this document sees it.
    *
@@ -2802,7 +2809,9 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
    * remains the safety boundary: this is what makes the interface truthful, not
    * what makes it safe.
    */
-  const scientificExportBusy =
+  const [figurePreviewWorking, setFigurePreviewWorking] = useState(false);
+  const figurePreviewInFlight = useRef(false);
+  const scientificExportBusy = figurePreviewWorking ||
     spectrumExport.status === "running" ||
     chromatogramExport.status === "running" ||
     linkedFigureExport.status === "running";
@@ -3674,9 +3683,10 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       backendQuarantined,
       backendChanging: backendBusy,
       laneClaimed: conversion.lane.laneClaimed,
+      reclaimingStaging: conversion.reclaimingStaging,
       previewReading: previewBackendBusy,
     }),
-    [backendBusy, backendQuarantined, conversion.lane.laneClaimed, previewBackendBusy],
+    [backendBusy, backendQuarantined, conversion.lane.laneClaimed, conversion.reclaimingStaging, previewBackendBusy],
   );
   /**
    * The same four facts, from the refs each of them is written beside.
@@ -3696,9 +3706,10 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       backendQuarantined: backendQuarantinedRef.current,
       backendChanging: backendBusyRef.current,
       laneClaimed: conversion.laneClaimedRef.current,
+      reclaimingStaging: conversion.reclaimingStagingRef.current,
       previewReading: viewerRequests.current > 0,
     }),
-    [conversion.laneClaimedRef],
+    [conversion.laneClaimedRef, conversion.reclaimingStagingRef],
   );
   /**
    * The projection the banner's reading was taken at, where one is rendered.
@@ -3728,10 +3739,11 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     () => ({
       backendChanging: backendBusy,
       laneClaimed: conversion.lane.laneClaimed,
+      reclaimingStaging: conversion.reclaimingStaging,
       previewReading: previewBackendBusy,
       probeInFlight: configurationProbe.probing,
     }),
-    [backendBusy, configurationProbe.probing, conversion.lane.laneClaimed, previewBackendBusy],
+    [backendBusy, configurationProbe.probing, conversion.lane.laneClaimed, conversion.reclaimingStaging, previewBackendBusy],
   );
   // **Before the configuration read, and that ordering is the decision.** A
   // `BEGIN` that resolves a replacement and refuses leaves a check and a read
@@ -4142,7 +4154,78 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     [roster.active, roster.datasets],
   );
 
+  const executeActiveClear = useCallback(async (planId: string, action: WorkspaceClearAction): Promise<WorkspaceClearOutcome> => {
+    if (workspaceBusyRef.current || pickerBusyRef.current || folderReservationPendingRef.current) return { status: "refused", reason: "actionInFlight" };
+    workspaceBusyRef.current = true;
+    workspaceMutations.current += 1;
+    rosterToken.current += 1;
+    setWorkspaceBusy(true);
+    try {
+      const answer = await api.executeWorkspaceClear(planId, action);
+      if (mounted.current && answer.status === "removed") {
+        if (rosterRef.current.active !== null && answer.result.removedHandles.includes(rosterRef.current.active)) clearVisiblePreview();
+        workspaceReconcileOwed.current = false;
+        if (activeDrop.current !== null) settleDropPresentation();
+        dispatchRoster({ type: "datasetsRemoved", result: answer.result });
+        rosterSettled();
+        showWorkspaceNotice(describeRemoveResult(answer.result));
+      } else if (mounted.current) reconcileAfterFailedWorkspaceMutation();
+      return answer;
+    } catch (cause) {
+      if (mounted.current) reconcileAfterFailedWorkspaceMutation();
+      throw cause;
+    } finally {
+      workspaceBusyRef.current = false;
+      if (mounted.current) { setWorkspaceBusy(false); drainWorkspaceReconciliation(); }
+    }
+  }, [api, clearVisiblePreview, drainWorkspaceReconciliation, reconcileAfterFailedWorkspaceMutation, rosterSettled, settleDropPresentation, showWorkspaceNotice]);
+
+  // The question is the existing export request, including committed ranges.
+  // Presentation-only drafts and pending pointer gestures never enter it.
+  const figurePreviewQuestion = useCallback((kind: FigurePreviewKind): FigurePreviewQuestion | null => {
+    if (resolvedRenderSettings === null) return null;
+    const settings = figureSettingsFor(resolvedRenderSettings, resolvedPngDpi);
+    if (kind === "spectrum") return exportedSpectrumToken === null ? null : {
+      settings, source: { kind, token: exportedSpectrumToken, range: spectrumRange() },
+    };
+    if (chromatogramExportToken === null) return null;
+    const range = chromatogramRange();
+    const traces = { ...chromatogramTraces };
+    if (kind === "chromatogram") return { settings, source: { kind, token: chromatogramExportToken, range, traces } };
+    return exportedSpectrumToken === null ? null : { settings, source: { kind, chromatogramToken: chromatogramExportToken, spectrumToken: exportedSpectrumToken, range, traces } };
+  }, [chromatogramExportToken, chromatogramRange, chromatogramTraces, exportedSpectrumToken, resolvedPngDpi, resolvedRenderSettings, spectrumRange]);
+  const previewFigure = useCallback(async (request: FigurePreviewRequest): Promise<FigurePreviewOutcome> => {
+    if (figurePreviewInFlight.current) return { status: "refused", requestId: request.requestId, error: { kind: "scientific_export_in_progress", summary: "A figure operation is running.", detail: null, retryable: true } };
+    figurePreviewInFlight.current = true; setFigurePreviewWorking(true);
+    try { return await api.previewFigure(request); }
+    finally { figurePreviewInFlight.current = false; if (mounted.current) setFigurePreviewWorking(false); }
+  }, [api]);
+  const exportPreviewedFigure = useCallback((question: FigurePreviewQuestion, format: "svg" | "png"): boolean => {
+    if (scientificExportBusy || figurePreviewInFlight.current || JSON.stringify(question) !== JSON.stringify(figurePreviewQuestion(question.source.kind))) return false;
+    if (format === "png" && resolvedPngDpi === null) return false;
+    // No asynchronous boundary occurs between equality and BEGIN dispatch.
+    // Existing exporters capture these same values before the native picker.
+    switch (question.source.kind) {
+      case "spectrum": exportSpectrum(format); break;
+      case "chromatogram": exportChromatogram(format); break;
+      case "linked": exportLinkedFigure(format); break;
+    }
+    return true;
+  }, [exportChromatogram, exportLinkedFigure, exportSpectrum, figurePreviewQuestion, resolvedPngDpi, scientificExportBusy]);
+
+  const copyPreviewedFigure = useCallback((question: FigurePreviewQuestion): boolean => {
+    if (scientificExportBusy || figurePreviewInFlight.current || JSON.stringify(question) !== JSON.stringify(figurePreviewQuestion(question.source.kind))) return false;
+    switch (question.source.kind) {
+      case "spectrum": copySpectrumPlot(); break;
+      case "chromatogram": copyChromatogramPlot(); break;
+      case "linked": copyLinkedPlot(); break;
+    }
+    return true;
+  }, [copyChromatogramPlot, copyLinkedPlot, copySpectrumPlot, figurePreviewQuestion, scientificExportBusy]);
+
   return {
+    figurePreviewQuestion, previewFigure, exportPreviewedFigure, copyPreviewedFigure,
+    executeActiveClear,
     backend,
     backendReadingStale,
     preview,

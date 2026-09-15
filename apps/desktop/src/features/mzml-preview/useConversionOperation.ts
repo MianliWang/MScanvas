@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { usePreviewApi } from "./api";
+import type { StagingReclaimOutcome } from "./contracts";
 import type { ConversionAvailability, ConversionLane } from "./conversionAvailability";
 import {
   canRetryConversion,
@@ -110,6 +111,9 @@ export interface ConversionOperation {
    * {@link conversionAvailability}; they do not assemble one of their own.
    */
   readonly lane: ConversionLane;
+  readonly reclaimingStaging: boolean;
+  readonly reclaimingStagingRef: { readonly current: boolean };
+  readonly reclaimStaging: (recoveryId: string) => Promise<StagingReclaimOutcome>;
   /** A request that never reached Rust's slot, kept apart from a conversion's own outcome. */
   readonly error: PreviewError | null;
   readonly conflictPolicy: ConversionConflictPolicy;
@@ -589,6 +593,8 @@ export function useConversionOperation(
   // here: a click handler that read the rendered value could start a second
   // adoption inside the render that has not committed the first one yet.
   const adoptingRef = useRef(false);
+  const reclaimingStagingRef = useRef(false);
+  const [reclaimingStaging, setReclaimingStaging] = useState(false);
   const [adoption, setAdoption] = useState<WorkspaceOutputAdoptionResult | null>(null);
   // What Rust says about diagnostics for the queue it is reporting. Held whole
   // rather than spread across three pieces of state, because the three arrive
@@ -824,7 +830,7 @@ export function useConversionOperation(
   // And this panel's own notion of having work in flight, wider on purpose: an
   // adoption and a diagnostics export are things this surface must not offer
   // twice, and neither owns the backend.
-  const busy = adopting || exportRequested || diagnostics.exporting || laneClaimed;
+  const busy = reclaimingStaging || adopting || exportRequested || diagnostics.exporting || laneClaimed;
 
   /**
    * The lane a render sees.
@@ -836,6 +842,7 @@ export function useConversionOperation(
   const lane = useMemo<ConversionLane>(
     () => ({
       ...environment,
+      reclaimingStaging,
       backendQuarantined,
       laneClaimed,
       adopting,
@@ -845,6 +852,7 @@ export function useConversionOperation(
       adopting,
       backendQuarantined,
       diagnostics.exporting,
+      reclaimingStaging,
       environment,
       exportRequested,
       laneClaimed,
@@ -863,6 +871,7 @@ export function useConversionOperation(
   const readLane = useCallback(
     (): ConversionLane => ({
       ...readEnvironment(),
+      reclaimingStaging: reclaimingStagingRef.current,
       backendQuarantined: backendQuarantinedRef.current,
       laneClaimed: laneClaimedRef.current,
       adopting: adoptingRef.current,
@@ -1046,6 +1055,7 @@ export function useConversionOperation(
   const canExportDiagnostics =
     state.status === "terminal" &&
     diagnostics.available &&
+    !reclaimingStaging &&
     !exportingDiagnostics &&
     !adopting &&
     // The whole lane claim, which is what the guard below reads. A dispatched
@@ -1366,6 +1376,7 @@ export function useConversionOperation(
   const canAdopt =
     state.status === "terminal" &&
     eligibleOutputCount > 0 &&
+    !reclaimingStaging &&
     !adopting &&
     // The whole lane claim rather than a dispatched retry alone: `adopt` guards
     // itself with the claim, and a surface narrower than its own guard offers
@@ -1395,6 +1406,7 @@ export function useConversionOperation(
     // having already moved the workspace decision count.
     if (
       state.status !== "terminal" ||
+      reclaimingStagingRef.current ||
       adoptingRef.current ||
       laneClaimedRef.current ||
       exportRequestedRef.current
@@ -1463,6 +1475,7 @@ export function useConversionOperation(
     if (
       state.status !== "terminal" ||
       exportRequestedRef.current ||
+      reclaimingStagingRef.current ||
       adoptingRef.current ||
       laneClaimedRef.current
     ) {
@@ -1499,7 +1512,22 @@ export function useConversionOperation(
       });
   }, [api, applyUpdate, readState, state]);
 
+  const reclaimStaging = useCallback(async (recoveryId: string): Promise<StagingReclaimOutcome> => {
+    if (state.status !== "terminal" || reclaimingStagingRef.current || laneClaimedRef.current || adoptingRef.current || exportRequestedRef.current || readEnvironment().workspaceSettling) return { status: "refused", reason: "activeWork" };
+    if (!state.queue.items.some(item => item.stagingRecovery?.recoveryId === recoveryId && item.stagingRecovery.status === "recoverable")) return { status: "refused", reason: "unknownRecovery" };
+    reclaimingStagingRef.current = true; setReclaimingStaging(true);
+    try {
+      return await api.reclaimConversionStaging(recoveryId);
+    } finally {
+      reclaimingStagingRef.current = false;
+      if (mounted.current) { setReclaimingStaging(false); readState(true); }
+    }
+  }, [api, readEnvironment, readState, state]);
+
   return {
+    reclaimingStaging,
+    reclaimingStagingRef,
+    reclaimStaging,
     state,
     busy,
     lane,

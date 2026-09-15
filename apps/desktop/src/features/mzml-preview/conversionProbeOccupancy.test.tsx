@@ -408,6 +408,7 @@ describe("occupancy is not admission", () => {
       backendQuarantined: false,
       backendChanging: false,
       laneClaimed: false,
+      reclaimingStaging: false,
       previewReading: false,
     } as const;
     expect(probeAdmission({ ...owning, probeInFlight: true })).toBe("probeInFlight");

@@ -24,10 +24,10 @@ pub(super) type DestinationIdentity = (u64, [u8; 16]);
 
 /// The open directory admission judged, kept alive by whoever admitted it.
 ///
-/// Holding it is what makes the admission still true afterwards: the share mode
-/// welcomes other readers and writers and refuses only rename and delete, so a
-/// caller that keeps it stops the one thing that could make the path mean a
-/// different object without stopping anything the conversion itself needs.
+/// Every hold excludes rename/delete. Read-only adoption and presentation
+/// additionally exclude directory writes, including in-place reparse changes.
+/// Conversion permits child publication; creation guards the initially empty
+/// parent until its pinned staging child keeps the directory nonempty.
 #[cfg(windows)]
 pub(super) type DestinationHold = std::fs::File;
 
@@ -83,6 +83,21 @@ pub(super) fn lease_destination(
 pub(super) fn admit_destination_root(
     chosen: &Path,
 ) -> Result<(PathBuf, Option<DestinationIdentity>, DestinationHold), PreviewErrorDto> {
+    admit_destination(chosen, false)
+}
+
+/// A folder presentation handoff may involve an empty directory, so it also
+/// excludes in-place reparse writes. It never needs to rename a child into it.
+pub(super) fn admit_folder_for_open(
+    chosen: &Path,
+) -> Result<(PathBuf, Option<DestinationIdentity>, DestinationHold), PreviewErrorDto> {
+    admit_destination(chosen, true)
+}
+
+fn admit_destination(
+    chosen: &Path,
+    read_only_handoff: bool,
+) -> Result<(PathBuf, Option<DestinationIdentity>, DestinationHold), PreviewErrorDto> {
     // The chosen object itself, before its name is resolved. `canonicalize`
     // follows links, so inspecting the result would inspect a link's *target*
     // and accept the link -- which is exactly what this refuses. A junction to
@@ -91,7 +106,7 @@ pub(super) fn admit_destination_root(
     // Held first, and for the whole of admission. Everything below judges an
     // object nothing can rename or delete in the meantime, so the name still
     // means what it meant when it was inspected.
-    let held = hold_chosen_directory(chosen)?;
+    let held = hold_chosen_directory(chosen, read_only_handoff)?;
     let chosen_metadata = std::fs::symlink_metadata(chosen).map_err(|_| destination_unusable())?;
     if is_reparse_point(&chosen_metadata) {
         return Err(destination_is_a_link());
@@ -238,12 +253,15 @@ pub(super) fn directory_identity_of(_path: &Path) -> Option<DestinationIdentity>
 /// be renamed or deleted, so the name still means the object that was
 /// inspected when the path is resolved below.
 ///
-/// Deny-write sharing is not requested: a destination folder is one other
-/// programs may legitimately be writing into, and refusing every busy folder
-/// would be a stricter rule than this boundary needs. What is withheld is
-/// rename and delete of the directory itself.
+/// An empty-folder handoff excludes write sharing as well: a reparse point can
+/// be installed in place without a rename. Conversion admits child publication
+/// writes; staging creation separately guards its initially empty parent until
+/// the pinned staging root keeps it nonempty.
 #[cfg(windows)]
-fn hold_chosen_directory(chosen: &Path) -> Result<std::fs::File, PreviewErrorDto> {
+fn hold_chosen_directory(
+    chosen: &Path,
+    read_only_handoff: bool,
+) -> Result<std::fs::File, PreviewErrorDto> {
     use std::os::windows::fs::OpenOptionsExt;
 
     /// Needed to open a directory at all.
@@ -251,20 +269,23 @@ fn hold_chosen_directory(chosen: &Path) -> Result<std::fs::File, PreviewErrorDto
     /// Opens a link itself rather than its target, so a reparse point is
     /// refused above rather than followed here.
     const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-    /// Readers and writers are welcome; renaming and deleting this directory
-    /// out from under the admission that is judging it are not.
-    const FILE_SHARE_READ_WRITE: u32 = 0x0000_0003;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
 
     std::fs::OpenOptions::new()
         .read(true)
-        .share_mode(FILE_SHARE_READ_WRITE)
+        .share_mode(if read_only_handoff {
+            FILE_SHARE_READ
+        } else {
+            FILE_SHARE_READ | FILE_SHARE_WRITE
+        })
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(chosen)
         .map_err(|_| destination_unusable())
 }
 
 #[cfg(not(windows))]
-fn hold_chosen_directory(_chosen: &Path) -> Result<(), PreviewErrorDto> {
+fn hold_chosen_directory(_chosen: &Path, _read_only_handoff: bool) -> Result<(), PreviewErrorDto> {
     Ok(())
 }
 

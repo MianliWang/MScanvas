@@ -45,6 +45,9 @@ use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+mod recovery;
+pub use recovery::{StagingRecovery, StagingRecoveryObserver, StagingRecoveryStatus};
+
 use thiserror::Error;
 
 use crate::attempt::{
@@ -2727,6 +2730,7 @@ impl OwnedStagingArea {
     /// `create_dir` fails rather than adopting an existing directory, so this
     /// type never owns — and never removes — a directory it did not create. A
     /// partially built area is torn down rather than left for a later run.
+    #[cfg(test)]
     fn create(path: PathBuf) -> Result<Self, ConversionRunFailure> {
         if let Err(error) = std::fs::create_dir(&path) {
             return Err(match error.kind() {
@@ -2758,6 +2762,7 @@ impl OwnedStagingArea {
 
     /// Opens the root, writes and keeps the marker, and makes and keeps the
     /// output directory. Any failure leaves `area` to tear down what exists.
+    #[cfg(test)]
     fn populate(&mut self) -> io::Result<()> {
         self.root = Some(open_owned_directory(&self.path)?);
         let marker_path = self.path.join(STAGING_OWNER_MARKER);
@@ -2774,6 +2779,19 @@ impl OwnedStagingArea {
         Ok(())
     }
 
+    /// The root already is the handle returned by exclusive creation. Child
+    /// directories acquire ownership in that same operation as well.
+    fn populate_created(&mut self) -> io::Result<()> {
+        let marker_path = self.path.join(STAGING_OWNER_MARKER);
+        self.marker = Some(create_owner_marker(&marker_path)?);
+        write_owner_magic(self.marker.as_mut().expect("the marker was just stored"))?;
+        self.output = Some(cleanup::create_owned_directory(
+            self.root.as_ref().ok_or(io::ErrorKind::InvalidInput)?,
+            std::ffi::OsStr::new(STAGING_OUTPUT_DIRECTORY),
+        )?);
+        Ok(())
+    }
+
     /// Where the backend writes. Validation inspects this directory, so the
     /// ownership marker one level above never counts as an unexpected output.
     fn output_directory(&self) -> PathBuf {
@@ -2783,6 +2801,7 @@ impl OwnedStagingArea {
     /// Removes the staging area with whatever the backend left in it. Nothing
     /// outside it is touched, and a rejected or partial document is discarded
     /// here rather than left where it could be mistaken for a result.
+    #[cfg(test)]
     fn discard(mut self) -> Option<StagingResidue> {
         self.state = StagingState::Finished;
         let residue = self.tear_down();
@@ -2844,7 +2863,7 @@ impl Drop for OwnedStagingArea {
         // An unwind reaches here. It performs the same object-bound teardown —
         // never the old path-recursive one — and cannot report what it finds,
         // which is exactly why it must not be the more dangerous form.
-        if self.root.is_some() {
+        if self.root.is_some() && self.state == StagingState::Active {
             self.state = self
                 .tear_down()
                 .map_or(StagingState::Cleaned, StagingState::Residue);
@@ -3167,7 +3186,7 @@ fn run_admitted(
         });
     }
 
-    let staging = match OwnedStagingArea::create(plan.staging_directory()) {
+    let staging = match StagingRecovery::create(plan.staging_directory(), cancellation) {
         Ok(staging) => staging,
         Err(failure) => return settled_failure(failure),
     };
@@ -3177,7 +3196,7 @@ fn run_admitted(
         capabilities,
         runner,
         cancellation,
-        &staging.output_directory(),
+        &staging,
         &destination_directory,
         after_validation,
     );
@@ -3523,10 +3542,12 @@ fn run_staged(
     capabilities: &InstalledHelpCapabilities,
     runner: &dyn ProcessRunner,
     cancellation: Option<&ConversionCancellation>,
-    staging: &Path,
+    recovery: &StagingRecovery,
     destination_directory: &finalize::DestinationDirectory,
     after_validation: impl FnOnce(),
 ) -> StagedResult {
+    let staging_directory = recovery.output_directory();
+    let staging = staging_directory.as_path();
     let command = match build_msconvert_command_for_source(
         capabilities,
         plan.source.canonical_path(),
@@ -3565,10 +3586,12 @@ fn run_staged(
     // Nothing above this line has one, which is what makes its absence a
     // statement that the provider was never invoked.
     let identity = Some(OperationRunIdentity::mint());
+    recovery.before_provider();
     let result = match cancellation {
         Some(cancellation) => runner.run_cancellable(&command, cancellation.token()),
         None => runner.run(&command),
     };
+    recovery.after_provider(&result);
     let requested = cancellation.is_some_and(ConversionCancellation::is_requested);
 
     let output = match result {

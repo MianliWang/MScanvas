@@ -61,7 +61,7 @@ use crate::{ConversionCancellation, fs_guard};
 
 use super::{
     BackendExecutionFailure, BackendRunFacts, ConflictPolicy, ConversionSource,
-    ConversionSourceKind, OwnedStagingArea, OwnedTreeDisposition, StagingResidue, finalize,
+    ConversionSourceKind, OwnedTreeDisposition, StagingRecovery, StagingResidue, finalize,
 };
 use crate::BackendDiagnosticText;
 use crate::diagnostics::Redactor;
@@ -1538,10 +1538,10 @@ fn run_bound_multi_output(
         }
     };
 
-    let staging = match OwnedStagingArea::create(staging_directory(
-        &canonical_destination,
-        &canonical_source,
-    )) {
+    let staging = match StagingRecovery::create(
+        staging_directory(&canonical_destination, &canonical_source),
+        cancellation,
+    ) {
         Ok(staging) => staging,
         Err(failure) => {
             return refused(
@@ -1608,7 +1608,7 @@ fn run_bound_multi_output(
         output: process_output,
         identity,
         process,
-    } = run_set_backend(&command, runner, cancellation);
+    } = run_set_backend(&command, runner, cancellation, &staging);
     let diagnostics_of = |output: &Option<ProcessOutput>| {
         output.as_ref().and_then(|output| {
             set_diagnostic_text(
@@ -1954,6 +1954,7 @@ fn run_set_backend(
     command: &CommandSpec,
     runner: &dyn ProcessRunner,
     cancellation: Option<&ConversionCancellation>,
+    recovery: &StagingRecovery,
 ) -> SetBackendRun {
     if let Some(cancellation) = cancellation
         && cancellation.is_requested()
@@ -1976,10 +1977,12 @@ fn run_set_backend(
     // same place: an identity taken afterwards would name a result, and one
     // taken on first read would not exist for an attempt nobody looked at.
     let identity = Some(OperationRunIdentity::mint());
+    recovery.before_provider();
     let result = match cancellation {
         Some(cancellation) => runner.run_cancellable(command, cancellation.token()),
         None => runner.run(command),
     };
+    recovery.after_provider(&result);
     let requested = cancellation.is_some_and(ConversionCancellation::is_requested);
     let output = match result {
         Ok(output) => output,

@@ -61,6 +61,7 @@ export const CONVERSION_LANE_FACTS = [
   "adoption-running",
   "diagnostics-exporting",
   "workspace-settling",
+  "staging-reclaiming",
 ] as const;
 
 export type ConversionAvailabilityFact = (typeof CONVERSION_LANE_FACTS)[number];
@@ -75,6 +76,7 @@ export type ConversionAvailabilityFact = (typeof CONVERSION_LANE_FACTS)[number];
  * is unavailable.
  */
 const CONVERSION_FACT_MESSAGES: Record<ConversionAvailabilityFact, string> = {
+  "staging-reclaiming": "Temporary-output cleanup is in progress.",
   // The same correction as the availability copy: not "a converter", and not
   // "stopped".
   "backend-quarantined":
@@ -108,21 +110,27 @@ export function isConversionLaneFact(
  * to collect its decisions in, so the same combination of refusals always
  * produces the same document.
  */
-const NOTICE_ORDER: readonly ConversionUnavailableReason[] = [
-  ...CONVERSION_LANE_FACTS,
-  "no-convertible-target",
-  "plan-reading",
-  "plan-failed",
-  "plan-settings-unknown",
-  "plan-selection-unavailable",
-  // Beside its twin, because it refuses the same action for a different reason.
-  // A reason absent from this list renders no sentence at all -- this array is
-  // a list rather than a total mapping, so nothing made its omission a compile
-  // error, and the disabled `Convert` was left with no explanation.
-  "plan-selection-not-evidenced",
-  "queue-not-retryable",
-  "nothing-to-retry",
-];
+const NOTICE_ORDER: Readonly<Record<ConversionUnavailableReason, number>> = {
+  "backend-quarantined": 0,
+  "backend-changing": 1,
+  "backend-unavailable": 2,
+  "conversion-running": 3,
+  "preview-running": 4,
+  "configuration-probing": 5,
+  "adoption-running": 6,
+  "diagnostics-exporting": 7,
+  "workspace-settling": 8,
+  "staging-reclaiming": 7.5,
+  "no-convertible-target": 9,
+  "plan-reading": 10,
+  "plan-failed": 11,
+  "plan-capacity-exceeded": 12,
+  "plan-settings-unknown": 13,
+  "plan-selection-unavailable": 14,
+  "plan-selection-not-evidenced": 15,
+  "queue-not-retryable": 16,
+  "nothing-to-retry": 17,
+};
 
 /**
  * Which lane fact a probe refusal is about, or `null` where nothing renders it.
@@ -149,6 +157,8 @@ export function probeRefusalFact(refusal: ProbeRefusal): ConversionAvailabilityF
       return "conversion-running";
     case "previewReading":
       return "preview-running";
+    case "reclaimingStaging":
+      return "staging-reclaiming";
     case "probeInFlight":
       return null;
   }
@@ -241,8 +251,9 @@ export function conversionNotices(
       said.set(notice.reason, notice.message);
     }
   }
-  return NOTICE_ORDER.flatMap((reason) => {
-    const message = said.get(reason);
-    return message === undefined ? [] : [{ id: conversionNoticeId(reason), reason, message }];
-  });
+  // Order the actual observations. A presentation order must never filter a
+  // refusal out of the UI; the total rank map also requires every typed reason.
+  return [...said.entries()]
+    .sort(([left], [right]) => NOTICE_ORDER[left] - NOTICE_ORDER[right])
+    .map(([reason, message]) => ({ id: conversionNoticeId(reason), reason, message }));
 }

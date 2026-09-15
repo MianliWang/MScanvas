@@ -17,6 +17,8 @@ use crate::conversion::{
 use crate::finalized_output::OutputDrift;
 use crate::intent::CompressionIntent;
 
+mod live_recovery;
+
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 const FIXTURE_SHA256: Sha256Digest = Sha256Digest::from_bytes([0xAB; 32]);
@@ -1162,11 +1164,10 @@ fn a_unicode_name_with_a_space_survives_planning_staging_and_finalization() {
     assert_eq!(argv.len(), 7, "the name stays one argv value: {argv:?}");
 }
 
-/// A runner is caller-supplied code. An unwind through it must not leave the
-/// backend's output in the destination root under a name every later run would
-/// then refuse.
+/// A runner unwind returns no process disposition. It cannot authorize
+/// disposable-output deletion while a backend might still own those files.
 #[test]
-fn a_panic_in_the_runner_still_discards_the_staging_directory() {
+fn a_panic_in_the_runner_preserves_staging_without_confirmed_process_disposition() {
     let directory = TestDirectory::new();
     let source = write_source(directory.path(), "sample.mzML");
     let root = directory.path().join("out");
@@ -1183,11 +1184,20 @@ fn a_panic_in_the_runner_still_discards_the_staging_directory() {
     }));
 
     assert!(unwound.is_err(), "the panic must not be swallowed");
-    assert!(
-        entry_names(&root).is_empty(),
-        "the staging directory outlived the unwind: {:?}",
-        entry_names(&root)
+    assert_eq!(
+        entry_names(&root),
+        vec![OsString::from("sample.mzML.mscanvas-staging")]
     );
+    assert_eq!(
+        fs::read_to_string(
+            plan.staging_directory()
+                .join(STAGING_OUTPUT_DIRECTORY)
+                .join(&plan.output_file_name)
+        )
+        .expect("unconfirmed output is preserved"),
+        output_document()
+    );
+    assert!(source.exists());
 }
 
 /// A plan admits one acquisition, measured. The command builder reads the
@@ -6398,6 +6408,7 @@ fn a_wait_failure_whose_teardown_succeeded_is_not_a_cancellation_failure() {
 fn a_termination_that_could_not_be_confirmed_is_a_distinct_failure() {
     let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
     let cancellation = ConversionCancellation::new();
+    let recovery = cancellation.recovery_observer();
     let request = cancellation.request_handle();
     let act = |spec: &CommandSpec| {
         write_partial_output(spec)?;
@@ -6417,9 +6428,19 @@ fn a_termination_that_could_not_be_confirmed_is_a_distinct_failure() {
     // The runner returned an error rather than a result, so there are no
     // process facts to report and none are invented.
     assert_eq!(failure.backend(), None);
-    // The primary failure and the cleanup result are separate facts: cleanup
-    // still ran, and it succeeded.
-    assert_eq!(failure.residue(), None);
+    // The primary failure and recovery are separate facts. Unconfirmed process
+    // disposition refuses cleanup; it cannot be turned into deletion authority.
+    assert_eq!(
+        failure.residue(),
+        Some(StagingResidue::NotRemoved {
+            kind: io::ErrorKind::WouldBlock
+        })
+    );
+    let retained = recovery
+        .retained()
+        .expect("retain creation across the process error");
+    assert_eq!(retained.status(), StagingRecoveryStatus::ProcessUnconfirmed);
+    assert!(retained.reclaim().is_err());
     assert!(
         failure
             .staged_content()
@@ -6430,8 +6451,13 @@ fn a_termination_that_could_not_be_confirmed_is_a_distinct_failure() {
     assert_eq!(attempt.detailed_stable_id(), "backend_not_terminated");
     assert!(attempt.finalized().is_none());
     assert!(
-        entry_names(&fixture.root).is_empty(),
-        "an unconfirmed cancellation left something in the destination root"
+        fixture
+            .plan
+            .staging_directory()
+            .join(STAGING_OUTPUT_DIRECTORY)
+            .join(&fixture.plan.output_file_name)
+            .exists(),
+        "the possibly owned output must survive"
     );
 }
 
@@ -6474,6 +6500,7 @@ fn a_cancellation_claimed_before_the_owned_tree_is_empty_is_a_failure() {
 fn a_cancellation_with_no_owned_job_accounting_is_a_failure() {
     let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
     let cancellation = ConversionCancellation::new();
+    let recovery = cancellation.recovery_observer();
     let act = write_partial_output;
     let runner = CancellingRunner::new(&act)
         .requesting(cancellation.request_handle())
@@ -6487,9 +6514,19 @@ fn a_cancellation_with_no_owned_job_accounting_is_a_failure() {
     };
     assert_eq!(failure.cause(), BackendExecutionFailure::NotTerminated);
     assert!(attempt.finalized().is_none());
+    let retained = recovery
+        .retained()
+        .expect("retain creation without process accounting");
+    assert_eq!(retained.status(), StagingRecoveryStatus::ProcessUnconfirmed);
+    assert!(retained.reclaim().is_err());
     assert!(
-        entry_names(&fixture.root).is_empty(),
-        "an unconfirmed cancellation left something in the destination root"
+        fixture
+            .plan
+            .staging_directory()
+            .join(STAGING_OUTPUT_DIRECTORY)
+            .join(&fixture.plan.output_file_name)
+            .exists(),
+        "unknown is not confirmed quiescence"
     );
 }
 
