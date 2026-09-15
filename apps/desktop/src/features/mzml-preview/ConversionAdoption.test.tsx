@@ -1,3 +1,4 @@
+import { UI_RESOURCES } from "../preferences/i18n";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
@@ -470,7 +471,7 @@ describe("adding converted outputs to the workspace", () => {
 
     expect(
       await within(panel).findByText(
-        "The workspace changed while MSCanvas was checking the converted outputs. Nothing was added. Try again.",
+        UI_RESOURCES.en.m74ErrorAdoptionChanged,
       ),
     ).toBeVisible();
     // Nothing arrived, and the action is offered again rather than spent.

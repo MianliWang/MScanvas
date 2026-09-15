@@ -3993,6 +3993,11 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "subscribe_workspace_drop_updates",
             "remove_workspace_datasets",
             "clear_workspace",
+            "plan_workspace_clear",
+            "execute_workspace_clear",
+            "reclaim_conversion_staging",
+            "preview_figure",
+            "open_finalized_output",
             "open_mzml_preview",
             "load_selected_spectrum",
             "describe_workspace_conversion_queue",
@@ -11630,6 +11635,7 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "datasetHandle",
             "error",
             "fileName",
+            "finalizedOutputs",
             "output",
             "process",
             "result",
@@ -11637,6 +11643,7 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "runIdentity",
             "sourceKind",
             "staged",
+            "stagingRecovery",
             "state",
             "stopRequested",
         ],
@@ -12883,11 +12890,31 @@ fn an_unconfirmed_stop_quarantines_the_backend_and_refuses_every_operation() {
         }
         // No later item ran.
         assert_eq!(launches.load(Ordering::SeqCst), 1);
+        // An unconfirmed process can still use its staging. Retain the live
+        // ownership record, but never spend it while the session is quarantined.
+        let residue: Vec<_> = fs::read_dir(&destination)
+            .expect("read the destination")
+            .map(|entry| entry.expect("entry").path())
+            .collect();
+        assert_eq!(residue.len(), 1);
+        assert!(residue[0].is_dir());
+        let recovery = queue.items[0]
+            .staging_recovery
+            .as_ref()
+            .expect("creation was retained");
+        assert_eq!(
+            recovery.status,
+            super::dto::StagingRecoveryStatusDto::ProcessUnconfirmed
+        );
+        assert!(matches!(
+            service.reclaim_conversion_staging(&recovery.recovery_id, current_document(&service)),
+            super::dto::StagingReclaimOutcomeDto::Refused {
+                reason: super::dto::StagingReclaimRefusalDto::Quarantined
+            }
+        ));
         assert!(
-            fs::read_dir(&destination)
-                .expect("read the destination")
-                .next()
-                .is_none()
+            residue[0].is_dir(),
+            "the refused cleanup preserved the original staging"
         );
 
         // The session has stopped trusting the backend, and says so.
@@ -23898,6 +23925,10 @@ fn a_resolution_no_png_could_record_stops_the_png_and_nothing_else() {
         .begin_spectrum_export(&token, "png", &full_spectrum_range(), &unusable)
         .expect_err("50 DPI is below what this boundary records");
     assert_eq!(refusal.kind, "figure_settings_refused");
+    assert_eq!(
+        serde_json::to_value(&refusal).unwrap()["context"],
+        serde_json::json!({ "kind": "pngDpi", "min": 72, "max": 1200 })
+    );
     assert!(
         refusal.summary.contains("between 72 and 1200"),
         "the refusal names the number to change: {:?}",
@@ -24498,6 +24529,10 @@ fn a_selected_spectrum_export_is_refused_under_another_format_s_extension() {
         let refusal = spectrum_saved_as(&service, &token, format, &folder.join(name))
             .expect("a name that says something else is refused");
         assert_eq!(refusal.kind, "spectrum_destination_misnamed");
+        assert_eq!(
+            serde_json::to_value(&refusal).unwrap()["context"],
+            serde_json::json!({ "kind": "exportExtension", "extension": format })
+        );
     }
 }
 
@@ -30778,3 +30813,8 @@ fn the_catalog_wire_states_which_of_the_three_answers_each_row_got() {
         );
     }
 }
+mod active_clear;
+#[cfg(windows)]
+mod figure_preview;
+mod output_opening;
+mod staging_recovery;

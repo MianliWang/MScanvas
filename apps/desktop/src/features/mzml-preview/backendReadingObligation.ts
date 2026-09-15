@@ -60,7 +60,8 @@ export type BackendCheckRefusal =
   | "backendChanging"
   | "laneClaimed"
   | "previewReading"
-  | "probeInFlight";
+  | "probeInFlight"
+  | "reclaimingStaging";
 
 /**
  * The one order these facts are consulted in.
@@ -73,6 +74,7 @@ const CHECK_REFUSAL_ORDER: readonly BackendCheckRefusal[] = [
   "backendChanging",
   "laneClaimed",
   "previewReading",
+  "reclaimingStaging",
   "probeInFlight",
 ];
 

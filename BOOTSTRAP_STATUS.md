@@ -9,7 +9,7 @@ M7.0 changed no repository visibility.
 
 **Default branch:** `main`
 
-**Current route, 2026-09-14:** M7 IN PROGRESS.
+**Current route, 2026-09-15:** M7 IN PROGRESS.
 [ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md)
 accepts the first Windows x64 beta scope and implementation sequence. M7.1 and
 M7.2 are published. M7.3 has implemented the bilingual scan browser and explicit
@@ -18,7 +18,10 @@ targeted Build 05 native scenarios pass at measured 150% scaling, including real
 retained CSV content and natural picker return. Final reviewed-head, protected
 publication and natural-main CI identities belong to PR #123 and the retained closeout.
 See the [M7.3 record](docs/ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md).
-M7.4 — Conversion, results and figures — is NEXT / NOT STARTED. This slice builds
+M7.4 — Conversion, results and figures — is IN PROGRESS. Its
+[implementation record](docs/ux/M7_4_CONVERSION_RESULTS_FIGURES.md) distinguishes
+controlled evidence from pending current native acceptance and publication.
+M7.5 remains NEXT / NOT STARTED. This slice builds
 or releases no public beta. The dated entries below retain their original
 milestone and validation context.
 

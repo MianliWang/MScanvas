@@ -114,6 +114,27 @@ pub(super) enum SettingsRefusal {
     RasterBudget,
 }
 
+impl SettingsRefusal {
+    pub(super) fn error_context(self) -> super::dto::PreviewErrorContextDto {
+        use super::dto::PreviewErrorContextDto as Context;
+        match self {
+            Self::SizeOutOfRange => Context::FigureSize {
+                min_width: MIN_FIGURE_WIDTH as u32,
+                min_height: (MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT) as u32,
+                max_edge: MAX_FIGURE_EDGE as u32,
+            },
+            Self::DpiOutOfRange => Context::PngDpi {
+                min: MIN_PNG_DPI,
+                max: MAX_PNG_DPI,
+            },
+            Self::UnknownTheme => Context::FigureTheme,
+            Self::RasterBudget => Context::RasterBudget {
+                max_pixels: MAX_RASTER_PIXELS,
+            },
+        }
+    }
+}
+
 impl FigureRenderSettings {
     /// Reads the properties every figure output consumes.
     ///

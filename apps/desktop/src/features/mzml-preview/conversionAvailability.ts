@@ -31,6 +31,7 @@ import type { ConversionStartPlan } from "./conversionPlanAuthority";
  * this struct exists is that neither reader gets to re-decide it.
  */
 export interface ConversionLane {
+  readonly reclaimingStaging: boolean;
   /** Whether this session's own verdict says ProteoWizard can be launched. */
   readonly backendUsable: boolean;
   /** Whether an installation check or change owns the backend lane. */
@@ -127,6 +128,7 @@ export type ConversionUnavailableReason =
   | "configuration-probing"
   | "adoption-running"
   | "diagnostics-exporting"
+  | "staging-reclaiming"
   | "workspace-settling"
   | "no-convertible-target"
   | "plan-reading"
@@ -170,6 +172,7 @@ export type ConversionAvailability =
  * that refused rather than the situation the reader is in.
  */
 const CONVERSION_MESSAGES: Record<ConversionUnavailableReason, string> = {
+  "staging-reclaiming": "Temporary-output cleanup is in progress. Wait before starting another conversion.",
   // Neither "a converter" nor "stopped". This state is reached from a preview,
   // a spectrum read and a discovery help probe as well as from a conversion,
   // and by a root that could neither be started nor reclaimed with nothing in
@@ -294,6 +297,7 @@ function unavailableReason(
   if (lane.exportingDiagnostics) {
     return "diagnostics-exporting";
   }
+  if (lane.reclaimingStaging) { return "staging-reclaiming"; }
   if (lane.workspaceSettling) {
     return "workspace-settling";
   }

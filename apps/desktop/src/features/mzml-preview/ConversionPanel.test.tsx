@@ -32,8 +32,8 @@ function acquisition(index: number): SelectedFile {
 const first = acquisition(1);
 const second = acquisition(2);
 
-function renderApp(api: FakePreviewApi): void {
-  render(
+function renderApp(api: FakePreviewApi) {
+  const view = render(
     <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
       <PreviewApiProvider value={api}>
         <App />
@@ -41,6 +41,7 @@ function renderApp(api: FakePreviewApi): void {
     </WorkspaceDropTransportProvider>,
   );
   fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  return view;
 }
 
 /** The roster's own list, so the sort control's options are not mistaken for rows. */
@@ -191,6 +192,64 @@ describe("destination request and queue truth", () => {
     vi.mocked(document.hasFocus).mockReturnValue(true);
     fireEvent.focus(window);
     expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toHaveFocus();
+  });
+
+  it.each(["return", "newer focus", "settings"] as const)(
+    "reconciles a foreground event before document focus updates: %s",
+    async (laterIntent) => {
+      const picker = deferred<WorkspaceConversionState>();
+      const api = createFakePreviewApi({ initialDatasets: [first], availability: availableBackend, conversion: () => picker.promise });
+      renderApp(api);
+      const panel = await screen.findByRole("region", { name: "Convert" });
+      fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
+      await pressConvert(panel, "Convert 1 selected…");
+      vi.mocked(document.hasFocus).mockReturnValue(false);
+      await act(async () => picker.resolve({ status: "idle" }));
+      await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeEnabled());
+
+      // One controlled foreground turn, with no timer inflation or extra React
+      // render to pay a return that the focus event otherwise leaves stranded.
+      const frames: FrameRequestCallback[] = [];
+      vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+        frames.push(callback);
+        return frames.length;
+      });
+      fireEvent.focus(window);
+      expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).not.toHaveFocus();
+      vi.mocked(document.hasFocus).mockReturnValue(true);
+      const settings = screen.getByRole("button", { name: "Settings" });
+      if (laterIntent === "newer focus") { settings.focus(); settings.blur(); }
+      if (laterIntent === "settings") fireEvent.click(settings);
+      act(() => { for (const frame of frames.splice(0)) frame(16); });
+
+      const convert = within(panel).getByRole("button", { name: "Convert 1 selected…", hidden: laterIntent === "settings" });
+      if (laterIntent === "return") expect(convert).toHaveFocus();
+      else expect(convert).not.toHaveFocus();
+      if (laterIntent === "settings") expect(screen.getByRole("dialog", { name: "Settings" })).toContainElement(document.activeElement as HTMLElement);
+      expect(api.beginRequests()).toHaveLength(1);
+    },
+  );
+
+  it("keeps a pending foreground frame through an intervening unfocused React commit", async () => {
+    const picker = deferred<WorkspaceConversionState>();
+    const api = createFakePreviewApi({ initialDatasets: [first], availability: availableBackend, conversion: () => picker.promise });
+    const view = renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
+    await pressConvert(panel, "Convert 1 selected…");
+    vi.mocked(document.hasFocus).mockReturnValue(false);
+    await act(async () => picker.resolve({ status: "idle" }));
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeEnabled());
+    const frames = new Map<number, FrameRequestCallback>();
+    let sequence = 0;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { const id = ++sequence; frames.set(id, callback); return id; });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(id => { frames.delete(id); });
+    fireEvent.focus(window);
+    view.rerender(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}><PreviewApiProvider value={api}><App /></PreviewApiProvider></WorkspaceDropTransportProvider>);
+    vi.mocked(document.hasFocus).mockReturnValue(true);
+    act(() => { for (const frame of [...frames.values()]) frame(16); frames.clear(); });
+    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toHaveFocus();
+    expect(api.beginRequests()).toHaveLength(1);
   });
 
   it.each(["unresolved", "bound"] as const)("renders the queue's %s destination independently of the next request", async (destinationStatus) => {
@@ -803,7 +862,11 @@ describe("queueing selected Thermo RAW conversions", () => {
       expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
     });
     expect(within(panel).queryByRole("button", { name: "Retry 1 failed" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    expect(await screen.findByRole("dialog")).toBeVisible();
+    expect(api.calls()).not.toContain("clearWorkspace");
+    fireEvent.click(screen.getByRole("button", { name: "Return" }));
     // Including the row being rerun. Rust would refuse to let it go, so
     // offering the action would only produce an error nobody needed to see.
     fireEvent.click(rows()[0]);
@@ -876,7 +939,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     expect(api.conversionRequests).toEqual([]);
   });
 
-  it("refuses every workspace mutation while a queue runs, and keeps reads working", async () => {
+  it("offers guarded Clear while a queue runs and keeps unrelated reads working", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [first, second, selectedFile],
       availability: availableBackend,
@@ -896,7 +959,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
     });
     expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     // Reading the list is not a mutation.
     expect(screen.getByRole("searchbox", { name: "Search files" })).toBeEnabled();
@@ -907,6 +970,10 @@ describe("queueing selected Thermo RAW conversions", () => {
     expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
     fireEvent.click(rows()[2]);
     expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    expect(await screen.findByRole("dialog")).toBeVisible();
+    expect(api.calls()).not.toContain("clearWorkspace");
+    fireEvent.click(screen.getByRole("button", { name: "Return" }));
   });
 
   it("keeps every queue member visible when a search would have hidden it", async () => {

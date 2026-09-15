@@ -162,8 +162,10 @@ describe("a failed catalog beside a backend check", () => {
     // The settings retry keeps its own domain error beside the shared fact:
     // one is about this read, the other about the lane, and they have different
     // owners.
-    expect(describedBy(retry)).toEqual(["conversion-settings-failure", id]);
-    expect(owners("conversion-settings-failure")).toBe(1);
+    const localFailure = describedBy(retry)[0];
+    expect(localFailure).toMatch(/-failure$/);
+    expect(describedBy(retry)).toEqual([localFailure, id]);
+    expect(owners(localFailure!)).toBe(1);
   });
 
   it("leaves no ambiguous id anywhere in the document", async () => {

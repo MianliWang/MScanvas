@@ -147,6 +147,18 @@ describe("session Settings in the real application composition", () => {
     expect(storage).not.toHaveBeenCalled();
   });
 
+  it("does not let a detached dialog return into a later app session", async () => {
+    const first = mount();
+    await screen.findByText("ProteoWizard is not available");
+    const dialog = openSettings();
+    const closed = new Promise<void>(resolve => dialog.addEventListener("focusScope.autoFocusOnUnmount", () => resolve(), { once: true }));
+    first.unmount();
+    mount();
+    await act(async () => closed);
+    expect(document.querySelector("[data-settings-return-target]")).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: en.settings })).not.toHaveFocus();
+  });
+
   it("keeps an initialization resource failure reachable through validated recovery", async () => {
     mount(createFakePreviewApi({ availability: unavailableBackend }), createUiRuntime({ en: {}, "zh-CN": {} }));
     await screen.findByText("ProteoWizard is not available");

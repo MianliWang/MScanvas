@@ -140,6 +140,10 @@ export const config: WebdriverIO.Config = {
   },
 
   beforeSession(_configuration, _capabilities, specs): void {
+    if (specs.some(spec => spec.replaceAll("\\", "/").endsWith("/m7.4-conversion-figures.native.e2e.ts")) &&
+        process.env.MSCANVAS_M74_NATIVE_READY !== "true") {
+      throw new Error("Fresh user M7.4 native readiness is required before application session creation.");
+    }
     if (specs.some((spec) => spec.replaceAll("\\", "/").endsWith("/m7.3-viewer.native.e2e.ts")) &&
         process.env.MSCANVAS_M73_NATIVE_READY !== "true") {
       throw new Error("Fresh user M7.3 native readiness is required before application session creation.");

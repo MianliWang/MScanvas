@@ -1,18 +1,23 @@
+import { announceConversion } from "./conversionMessages";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
 import type { UiMessage } from "../preferences/i18n";
 import { WorkbenchHeader, type WorkbenchSurface } from "../workbench/WorkbenchHeader";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 
+import { ActiveClearDialog } from "./ActiveClearDialog";
 import { BackendStatus } from "./BackendStatus";
 import { Chromatogram } from "./Chromatogram";
-import { ChromatogramExportPanel } from "./ChromatogramExportPanel";
-import { conversionJudgedAnyOutput } from "./contracts";
+import { ChromatogramExportPanel, ChromatogramExportResult, LinkedFigureResult } from "./ChromatogramExportPanel";
 import { resolveConversionScope } from "./conversionScope";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
 import { PreviewSummary } from "./PreviewSummary";
-import { SelectedSpectrumPanel } from "./SelectedSpectrumPanel";
+import { SelectedSpectrumPanel, describeSpectrumExport } from "./SelectedSpectrumPanel";
+import { ownedErrorDetail } from "./ownedErrorMessages";
+import { ExportFigureDialog } from "./ExportFigureDialog";
+import { QuickFigureActions } from "./QuickFigureActions";
+import type { FigurePreviewKind } from "./contracts";
 import { SpectrumTable } from "./SpectrumTable";
 import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
 import { formatCount, formatDatasetLabel } from "./format";
@@ -22,6 +27,9 @@ import { usePreviewWorkspace } from "./usePreviewWorkspace";
 /** The session workspace: a curated roster of mzML files, and one open preview. */
 export function PreviewWorkspace() {
   const workspace = usePreviewWorkspace();
+  const [activeClear, setActiveClear] = useState<{ returnTo: HTMLElement | null } | null>(null);
+  const [figureDialog, setFigureDialog] = useState<{ kind: FigurePreviewKind; returnTo: HTMLElement | null } | null>(null);
+  const openFigure = (kind: FigurePreviewKind) => setFigureDialog({ kind, returnTo: document.activeElement instanceof HTMLElement ? document.activeElement : null });
   const t = useUiMessages();
   const notice = workspace.workspaceNotice === null ? null : formatWorkspaceNotice(workspace.workspaceNotice, t);
   const [surface, setSurface] = useState<WorkbenchSurface>("workbench");
@@ -173,10 +181,9 @@ export function PreviewWorkspace() {
     !workspace.workspaceBusy &&
     !workspace.pickerBusy &&
     !workspace.folderReservationPending;
-  // Emptying the list would revoke the row a conversion is reading. Stopping
-  // the queue is the way out of that, and it is the user's to take -- clearing
-  // the list is not a way to take it, so Rust refuses it outright.
-  const canClear = canMutate && !workspace.conversion.busy;
+  // Active Clear opens an authoritative confirmation. Rust protects the whole
+  // bound queue and only releases captured rows after the selected operation.
+  const canClear = canMutate && !workspace.conversion.adopting;
   // Removing is narrower than clearing, and deliberately not the same boolean.
   // Rust refuses a removal only when the converting row is among the handles,
   // so every other row stays the user's to prune -- which matters most during a
@@ -548,9 +555,23 @@ export function PreviewWorkspace() {
           application for the same reason: what a reader must notice is a change
           inside a region, not a region arriving with its text. */}
       <p aria-live="polite" className="visually-hidden" data-live-region="conversion">
-        {announceConversion(workspace)}
+        {announceConversion(workspace.conversion, t)}
       </p>
 
+      {activeClear !== null ? <ActiveClearDialog returnTo={activeClear.returnTo} onClose={() => setActiveClear(null)} onExecute={workspace.executeActiveClear} /> : null}
+      {figureDialog !== null ? <ExportFigureDialog
+        kind={figureDialog.kind}
+        sourceLabel={`${previewFile?.fileName ?? (preview.status === "loaded" ? preview.preview.file.fileName : t("viewerSpectrumNone"))} · ${figureDialog.kind === "chromatogram" ? t("viewerChromatogram") : spectrum.status === "loaded" ? t("viewerSpectrumIndex", { index: String(spectrum.spectrum.index) }) : t("viewerSpectrumNone")}`}
+        question={workspace.figurePreviewQuestion(figureDialog.kind)} preview={workspace.previewFigure} onExport={workspace.exportPreviewedFigure}
+        onCopy={workspace.copyPreviewedFigure}
+        returnTo={figureDialog.returnTo} onClose={() => setFigureDialog(null)} busy={workspace.scientificExportBusy}
+        settings={workspace.figureSettings} validation={workspace.figureSettingsValidation} onSetting={workspace.setFigureSetting} onTheme={workspace.setFigureTheme}
+        scope={figureDialog.kind === "spectrum" ? workspace.spectrumRangeScope : workspace.chromatogramRangeScope}
+        currentAvailable={figureDialog.kind !== "spectrum" || workspace.spectrumRangeAvailability === "available"}
+        onScope={figureDialog.kind === "spectrum" ? workspace.setSpectrumRangeScope : workspace.setChromatogramRangeScope}
+        scopeHelp={figureDialog.kind === "spectrum" ? workspace.spectrumCommittedDomain === null ? t("viewerExportFullHelp") : t("viewerExportRangeHelp", { low: String(workspace.spectrumCommittedDomain.low), high: String(workspace.spectrumCommittedDomain.high) }) : workspace.chromatogramCommittedDomain === null ? t("viewerExportFullRunHelp") : t("viewerExportRtHelp", { low: String(workspace.chromatogramCommittedDomain.low), high: String(workspace.chromatogramCommittedDomain.high) })}
+        result={figureDialog.kind === "spectrum" ? <p role="status">{describeSpectrumExport(workspace.spectrumExport, t)}{workspace.spectrumExport.status === "failed" ? <span className="notice-detail">{ownedErrorDetail(workspace.spectrumExport.error, t)}</span> : null}</p> : figureDialog.kind === "chromatogram" ? <div role="status"><ChromatogramExportResult state={workspace.chromatogramExport} onDismiss={workspace.dismissChromatogramExport} /></div> : <div role="status"><LinkedFigureResult state={workspace.linkedFigureExport} onDismiss={workspace.dismissLinkedFigureExport} /></div>}
+      /> : null}
       <main className="workspace-layout">
         <aside id="workbench-roster" className="workspace-sidebar" hidden={!rosterOpen}>
           <DatasetRoster
@@ -573,7 +594,11 @@ export function PreviewWorkspace() {
             onAddFiles={workspace.addFiles}
             onAddFolder={workspace.addFolder}
             canRemove={canRemove}
-            onClearList={workspace.clearList}
+            onClearList={() => {
+              if (!workspace.conversion.busy) return workspace.clearList();
+              setActiveClear({ returnTo: document.activeElement instanceof HTMLElement ? document.activeElement : null });
+              return true;
+            }}
             onReloadRoster={workspace.reloadRoster}
             onRemoveSelected={workspace.removeSelected}
             projection={projection}
@@ -641,6 +666,7 @@ export function PreviewWorkspace() {
                 exportPanel={
                   chromatogramExportOpen && workspace.chromatogramExportToken !== null ? (
                     <ChromatogramExportPanel
+                      onOpenLinkedFigure={() => openFigure("linked")}
                       committedDomain={workspace.chromatogramCommittedDomain}
                       exportState={workspace.chromatogramExport}
                       figureSettings={workspace.figureSettings}
@@ -666,6 +692,11 @@ export function PreviewWorkspace() {
                 }
                 exportToggle={
                   workspace.chromatogramExportToken === null ? null : (
+                    <div className="figure-quick-actions"><QuickFigureActions busy={workspace.scientificExportBusy} quickVisible={!chromatogramExportOpen}
+                      context={`${t("viewerChromatogram")} · ${t(workspace.chromatogramRangeScope === "current" ? "viewerExportCurrent" : "viewerExportFullRun")} · ${workspace.figureSettings.widthPx || "—"} × ${workspace.figureSettings.heightPx || "—"} px`}
+                      figureUnavailable={workspace.renderSettingsProblem !== null || (!workspace.chromatogramTraces.tic && !workspace.chromatogramTraces.bpc)}
+                      pngUnavailable={workspace.pngDpiProblem !== null} onPreview={() => openFigure("chromatogram")}
+                      onPng={() => workspace.exportChromatogram("png")} onCopy={workspace.copyChromatogramPlot} />
                     <button
                       aria-controls="chromatogram-export-panel"
                       aria-expanded={chromatogramExportOpen}
@@ -677,7 +708,7 @@ export function PreviewWorkspace() {
                       type="button"
                     >
                       {t("viewerExport")}
-                    </button>
+                    </button></div>
                   )
                 }
                 interaction={workspace.viewerInteraction}
@@ -689,6 +720,7 @@ export function PreviewWorkspace() {
                 traces={workspace.chromatogramTraces}
               />
               <SelectedSpectrumPanel
+                onOpenFigure={() => openFigure("spectrum")}
                 committedDomain={workspace.spectrumCommittedDomain}
                 dispatchViewport={workspace.dispatchSpectrumViewportEvent}
                 exportState={workspace.spectrumExport}
@@ -803,148 +835,6 @@ function announceNotice(notice: WorkspaceNotice, t: UiMessage): string {
  * rather than announcing that nothing is happening. Nothing here is a
  * percentage: nothing measures one.
  */
-function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): string {
-  const state = workspace.conversion.state;
-  // Before the slot, and for the same reason the retry sentence is: a dispatched
-  // conversion is not in the slot yet -- Rust has not reserved the queue -- so a
-  // region reading the status alone stays silent through the whole reservation
-  // and then, from a terminal queue, reads the *previous* result back at
-  // someone who has just pressed Convert.
-  if (workspace.conversion.converting) {
-    return "Starting the conversion.";
-  }
-  if (state.status === "idle") {
-    return "";
-  }
-  const { queue } = state;
-  // Said as soon as the retry is dispatched. Rust answers once, when the whole
-  // rerun is over, so a region that waited for it would repeat the finished
-  // counts back at a screen-reader user who had just pressed Retry, and stay
-  // silent for as long as the rerun took.
-  if (workspace.conversion.retrying && state.status === "terminal") {
-    return `Retrying ${String(queue.retryableFailedCount)} failed.`;
-  }
-  if (state.status === "awaitingDestination") {
-    return "Choose where to save the converted mzML.";
-  }
-  // Before the running branch, and read from the operation rather than only
-  // from the slot, so it is said the moment this document asks rather than on
-  // whichever poll first sees Rust agree. One sentence for the whole of that
-  // window: a repeated poll produces the same string and is not announced
-  // again.
-  if (
-    state.status === "stopping" ||
-    (workspace.conversion.stopping && state.status === "running")
-  ) {
-    return "Stopping queue. No further items will start.";
-  }
-  if (state.status === "running") {
-    // The item that says it is running, which is the same row the roster pins.
-    // Deriving one of them from the position and the other from the state would
-    // let the sentence name one acquisition while the list marked another.
-    const position = queue.items.findIndex((item) => item.state === "running");
-    const current = position === -1 ? undefined : queue.items[position];
-    // Named rather than counted alone, so a repeated poll that finds the same
-    // item says the same sentence and is not announced twice.
-    if (current === undefined) {
-      return `Converting ${String(queue.itemCount)} acquisitions.`;
-    }
-    // A per-item stop this document asked for, said where a queue stop is said.
-    // The panel changes its button and its note; both are outside any live
-    // region, so a listener had no confirmation that the control this milestone
-    // adds had been accepted at all -- while the queue-level stop two lines
-    // above has had one since M3.4.
-    if (workspace.conversion.cancellingItem) {
-      // The same three outcomes the panel's note carries, for the same reason:
-      // "the queue keeps going either way" is a promise about two of them, and
-      // the third -- a converter whose end cannot be confirmed -- ends the
-      // queue and the session's backend work. A listener heard only the
-      // reassuring half.
-      return `Stopping ${current.fileName}. This file may still finish on its own, and the items after it still run unless MSCanvas cannot confirm that its converter ended.`;
-    }
-    // A skip this document asked for, said the same way. Without it the string
-    // is byte-identical either side of the press -- the row stays pending and
-    // the running item does not move -- so nothing is announced at all, which
-    // is the defect repaired one sentence above for the other new control.
-    const skipping = queue.items.findIndex((_, index) =>
-      workspace.conversion.skippingItem(index),
-    );
-    if (skipping !== -1) {
-      const name = queue.items[skipping]?.fileName ?? "that file";
-      return `Skipping ${name}. It will not be converted, and the queue carries on.`;
-    }
-    return `Converting item ${String(position + 1)} of ${String(queue.itemCount)}, ${current.fileName}.`;
-  }
-  if (state.status === "terminal" && state.reason === "stopFailed") {
-    // Not "Queue stopped" either. The one thing this state does not establish
-    // is that the queue's converter stopped.
-    // The counts, as the panel shows them. A listener auditing the one terminal
-    // state that most needs auditing was getting strictly less than a sighted
-    // reader: the sentence, and none of what the queue actually did.
-    return `Stop could not be confirmed. MSCanvas could not confirm that the backend process stopped. ${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed, ${String(queue.cancelledCount)} cancelled, ${String(queue.notRunCount)} not run, ${String(queue.skippedByRequestCount)} skipped by you, ${String(queue.cancellationFailedCount)} stop could not be confirmed.${
-      workspace.conversion.backendQuarantined
-        ? " Restart MSCanvas before starting another preview or conversion."
-        : ""
-    }${
-      // The same rule the two branches below follow: wherever the panel shows
-      // it. This branch withheld it, and `stopFailed` is the terminal state in
-      // which what was and was not verified most needs saying.
-      queue.items.some(conversionJudgedAnyOutput) ? " Output-only validation." : ""
-    }${queue.error === null ? "" : ` ${queue.error.summary}`}`;
-  }
-  if (state.status === "terminal" && state.reason === "stopped") {
-    // The refusal that ended it, where there was one, said alongside rather
-    // than instead of the counts. The visible panel shows both, and a region
-    // that dropped one of them would describe a different queue.
-    return `Queue stopped. ${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed, ${String(queue.cancelledCount)} cancelled, ${String(queue.notRunCount)} not run, ${String(queue.skippedByRequestCount)} skipped by you${
-      queue.cancellationFailedCount > 0
-        ? `, ${String(queue.cancellationFailedCount)} stop could not be confirmed`
-        : ""
-    }.${
-      // Wherever the panel shows it. A stopped queue that finalized outputs
-      // showed the disclosure to a sighted reader and withheld it from a
-      // listener, which is the asymmetry this region exists not to have.
-      queue.items.some(conversionJudgedAnyOutput) ? " Output-only validation." : ""
-    }${queue.error === null ? "" : ` ${queue.error.summary}`}`;
-  }
-  // A short-circuit returning `queue.error.summary` alone stood here, and the
-  // one state this milestone added reached it every time: a session that loses
-  // track of a process refuses the rest of the queue, which settles `completed`
-  // with rows marked not-run *and* an error. A listener heard the refusal and
-  // none of the counts while the panel showed both. It is gone rather than
-  // guarded -- every non-terminal status has already returned above, so a guard
-  // would have been a branch that cannot run -- and the refusal is said after
-  // the counts below, exactly as the `stopped` branch says it.
-  // The same condition the visible panel applies, because it is the same claim.
-  // A queue whose items were all skipped judged nothing, and a skipped item's
-  // existing file was explicitly not inspected.
-  const judged = queue.items.some(conversionJudgedAnyOutput);
-  // Every item the queue held, including the two a user decides about and the
-  // rows a lost process leaves behind. Three counts were complete only while a
-  // cancelled item required a queue stop; a completed queue can now hold a file
-  // the user ended, a row they skipped, and the rows a session that lost track
-  // of a process refused to start. `cancellationFailed` is carried defensively
-  // -- that state pairs with a `stopFailed` queue today -- for the same reason
-  // the panel carries it. A region that named any of them short would tell a
-  // listener less than the panel tells a sighted reader, which is the one thing
-  // it exists not to do.
-  const decided = [
-    queue.cancelledCount > 0 ? `${String(queue.cancelledCount)} cancelled` : null,
-    queue.skippedByRequestCount > 0
-      ? `${String(queue.skippedByRequestCount)} skipped by you`
-      : null,
-    queue.notRunCount > 0 ? `${String(queue.notRunCount)} not run` : null,
-    queue.cancellationFailedCount > 0
-      ? `${String(queue.cancellationFailedCount)} stop could not be confirmed`
-      : null,
-  ].filter((part): part is string => part !== null);
-  return `${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed${
-    decided.length === 0 ? "" : `, ${decided.join(", ")}`
-  }.${judged ? " Output-only validation." : ""}${
-    queue.error === null ? "" : ` ${queue.error.summary}`
-  }`;
-}
-
 function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessage): string {
   if (workspace.dropSubscriptionStatus === "unavailable") return `${t("dropUnavailable")}. ${workspace.dropSubscriptionError?.summary ?? t("addFiles")}`;
   if (workspace.dropSubscriptionStatus === "connecting") return t("shellDropConnecting");

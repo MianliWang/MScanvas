@@ -831,6 +831,11 @@ export function fakeCopiedFigure(settings: FigureSettings): CopiedFigure {
 }
 
 export interface FakePreviewApiOptions {
+  readonly previewFigure?: PreviewApi["previewFigure"];
+  readonly reclaimConversionStaging?: PreviewApi["reclaimConversionStaging"];
+  readonly openFinalizedOutput?: PreviewApi["openFinalizedOutput"];
+  readonly planWorkspaceClear?: PreviewApi["planWorkspaceClear"];
+  readonly executeWorkspaceClear?: PreviewApi["executeWorkspaceClear"];
   readonly availability?: BackendAvailability | (() => Promise<BackendAvailability>);
   /**
    * What the conversion-settings read answers with.
@@ -1200,6 +1205,8 @@ export function queueItem(
   overrides: Partial<ConversionQueueItem> = {},
 ): ConversionQueueItem {
   return {
+    finalizedOutputs: [],
+    stagingRecovery: null,
     datasetHandle: handle,
     fileName,
     sourceKind: "thermo_raw",
@@ -1817,6 +1824,10 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   };
 
   const fake: FakePreviewApi = {
+    previewFigure: options.previewFigure ?? (async (request) => ({ status: "rendered", requestId: request.requestId,
+      specId: `mock-${JSON.stringify(request.source)}-${JSON.stringify(request.settings)}`, empty: false,
+      width: request.settings.widthPx, height: request.settings.heightPx,
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540"><rect width="960" height="540" fill="white"/><text x="30" y="50">Mock IPC figure preview</text></svg>' })),
     spectrumExportRequests,
     spectrumCopyRequests,
     spectrumProjectionRequests,
@@ -1956,6 +1967,10 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       held = held.filter((entry) => !removedHandles.includes(entry.file.handle));
       return Promise.resolve({ roster: snapshot(), removedHandles, unknownHandles });
     },
+    reclaimConversionStaging: (recoveryId) => options.reclaimConversionStaging?.(recoveryId) ?? Promise.resolve({ status: "refused", reason: "unknownRecovery" }),
+    openFinalizedOutput: (outputId, action) => options.openFinalizedOutput?.(outputId, action) ?? Promise.resolve({ status: "refused", reason: "unknownOutput" }),
+    planWorkspaceClear: () => options.planWorkspaceClear?.() ?? Promise.resolve({ Err: "actionInFlight" }),
+    executeWorkspaceClear: (planId, action) => options.executeWorkspaceClear?.(planId, action) ?? Promise.resolve({ status: "refused", reason: "stalePlan" }),
     clearWorkspace: () => {
       if (options.clearWorkspace !== undefined) {
         return options.clearWorkspace();
@@ -2474,6 +2489,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   // this makes testable is the negative claim -- that an interaction crossed
   // the boundary zero times -- which counting any single method cannot state.
   const commands = [
+    "previewFigure",
     "inspectBackend",
     "chooseInstallation",
     "useAutomaticDiscovery",
@@ -2482,6 +2498,10 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     "chooseFolder",
     "removeDatasets",
     "clearWorkspace",
+    "openFinalizedOutput",
+    "reclaimConversionStaging",
+    "planWorkspaceClear",
+    "executeWorkspaceClear",
     "openPreview",
     "loadSpectrum",
     "readConversionConfiguration",

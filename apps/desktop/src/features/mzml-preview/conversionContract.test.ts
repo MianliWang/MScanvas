@@ -149,6 +149,8 @@ const FINALIZED_REPORT = {
 } as const satisfies ConversionReport;
 
 const CONVERTED_ITEM = {
+  stagingRecovery: null,
+  finalizedOutputs: [{ outputId: "finalized-1", fileName: "FT-HCD-MSX.mzML" }],
   datasetHandle: "file-0",
   fileName: "FT-HCD-MSX.raw",
   sourceKind: "thermo_raw",
@@ -169,6 +171,8 @@ const CONVERTED_ITEM = {
 } as const satisfies ConversionQueueItem;
 
 const FAILED_ITEM = {
+  stagingRecovery: null,
+  finalizedOutputs: [],
   datasetHandle: "file-1",
   fileName: "second.raw",
   sourceKind: "thermo_raw",
@@ -226,6 +230,8 @@ const CANCELLATION = {
 } as const satisfies ConversionCancellation;
 
 const CANCELLED_ITEM = {
+  stagingRecovery: null,
+  finalizedOutputs: [],
   datasetHandle: "file-2",
   fileName: "third.raw",
   sourceKind: "thermo_raw",
@@ -254,6 +260,8 @@ const CANCELLED_ITEM = {
 } as const satisfies ConversionQueueItem;
 
 const NOT_RUN_ITEM = {
+  stagingRecovery: null,
+  finalizedOutputs: [],
   datasetHandle: "file-3",
   fileName: "fourth.raw",
   sourceKind: "thermo_raw",
@@ -511,6 +519,8 @@ describe("the conversion wire contract", () => {
     );
     expect(Object.keys(CONVERTED_ITEM).sort()).toEqual(
       [
+        "finalizedOutputs",
+        "stagingRecovery",
         "attempts",
         "cancellation",
         "datasetHandle",

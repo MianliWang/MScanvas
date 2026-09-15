@@ -1,3 +1,4 @@
+import { UI_RESOURCES } from "../preferences/i18n";
 import { validateFigureDraft } from "./figureSettingsValidation";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 /**
@@ -91,6 +92,7 @@ function renderPanel(
  * that every export result below is reached without one.
  */
 const NO_VIEWPORT = {
+  onOpenFigure: () => undefined,
   viewport: initialSpectrumViewportState,
   dispatchViewport: () => initialSpectrumViewportState,
   readViewport: () => initialSpectrumViewportState,
@@ -293,7 +295,7 @@ describe("selected spectrum export affordance", () => {
     expect(screen.getByText(/^Spectrum 3, MS/u)).toBeVisible();
   });
 
-  it("says what a typed refusal was, in its own words", () => {
+  it("localizes a known typed refusal while retaining recovery", () => {
     renderPanel(loaded(), {
       status: "failed",
       operation: "tsv",
@@ -306,7 +308,7 @@ describe("selected spectrum export affordance", () => {
     });
 
     expect(screen.getByRole("status")).toHaveTextContent(
-      "A file of that name is already in that folder.",
+      UI_RESOURCES.en.m74ErrorExists,
     );
     // Recoverable: the actions stay live, because choosing another name is the
     // whole of the recovery.
@@ -335,7 +337,7 @@ describe("selected spectrum export affordance", () => {
     });
 
     const status = screen.getByRole("status");
-    expect(status).toHaveTextContent("A file of that name is already in that folder.");
+    expect(status).toHaveTextContent(UI_RESOURCES.en.m74ErrorExists);
     expect(status).toHaveTextContent(".mscanvas-export-");
   });
 
@@ -712,6 +714,7 @@ describe("the selected spectrum's range chooser", () => {
       />,
     );
 
+    fireEvent.click(screen.getByText("Export spectrum"));
     expect(screen.getByText(/This spectrum has no peaks, so there is no range/u)).toBeInTheDocument();
     expect(screen.queryByText(/no m\/z viewport/u)).toBeNull();
     expect(screen.queryByRole("radio", { name: "Current range" })).toBeNull();
@@ -757,6 +760,7 @@ describe("the selected spectrum's range chooser", () => {
       />,
     );
 
+    fireEvent.click(screen.getByText("Export spectrum"));
     expect(screen.getByRole("radio", { name: "Current range" })).toBeEnabled();
     expect(screen.getByRole("radio", { name: "Full spectrum" })).toBeEnabled();
     // While every action the lane owns is closed, as it always was.

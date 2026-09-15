@@ -35,7 +35,526 @@ use std::fs::File;
 use std::io;
 use std::path::Path;
 
-use super::{STAGING_OUTPUT_DIRECTORY, STAGING_OWNER_MARKER, StagingResidue};
+use super::{OwnedStagingArea, STAGING_OUTPUT_DIRECTORY, STAGING_OWNER_MARKER, StagingResidue};
+
+/// Exclusively creates one child directory and receives that object's handle in
+/// the same kernel operation. An existing name is never opened as an owner.
+pub(super) fn create_owned_directory(parent: &File, name: &std::ffi::OsStr) -> io::Result<File> {
+    #[cfg(windows)]
+    {
+        use std::ffi::c_void;
+        use std::os::windows::ffi::OsStrExt;
+        use std::os::windows::io::{AsRawHandle, FromRawHandle};
+        use std::ptr::{null, null_mut};
+        #[repr(C)]
+        struct UnicodeString {
+            length: u16,
+            maximum_length: u16,
+            buffer: *mut u16,
+        }
+        #[repr(C)]
+        struct ObjectAttributes {
+            length: u32,
+            root: *mut c_void,
+            name: *mut UnicodeString,
+            attributes: u32,
+            security: *mut c_void,
+            quality: *mut c_void,
+        }
+        #[repr(C)]
+        struct IoStatus {
+            status: isize,
+            information: usize,
+        }
+        #[link(name = "ntdll")]
+        unsafe extern "system" {
+            fn NtCreateFile(
+                handle: *mut *mut c_void,
+                access: u32,
+                attributes: *const ObjectAttributes,
+                status: *mut IoStatus,
+                allocation: *const i64,
+                file_attributes: u32,
+                share: u32,
+                disposition: u32,
+                options: u32,
+                ea: *const c_void,
+                ea_length: u32,
+            ) -> i32;
+            fn RtlNtStatusToDosError(status: i32) -> u32;
+        }
+        let mut wide: Vec<u16> = name.encode_wide().collect();
+        if wide.is_empty()
+            || wide.iter().any(|value| matches!(*value, 0 | 47 | 58 | 92))
+            || name == "."
+            || name == ".."
+        {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        let length = u16::try_from(wide.len() * 2).map_err(|_| io::ErrorKind::InvalidInput)?;
+        let mut name = UnicodeString {
+            length,
+            maximum_length: length,
+            buffer: wide.as_mut_ptr(),
+        };
+        let attributes = ObjectAttributes {
+            length: u32::try_from(std::mem::size_of::<ObjectAttributes>())
+                .expect("fixed Windows ABI size"),
+            root: parent.as_raw_handle(),
+            name: &raw mut name,
+            attributes: 0x40,
+            security: null_mut(),
+            quality: null_mut(),
+        };
+        let mut status = IoStatus {
+            status: 0,
+            information: 0,
+        };
+        let mut handle = null_mut();
+        // DELETE | SYNCHRONIZE | FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES;
+        // Share read only: deny deletion and in-place reparse writes to this
+        // directory. Child file creation/writing uses distinct child handles.
+        // FILE_CREATE; directory + synchronous.
+        // SAFETY: all ABI structures and Unicode storage outlive the synchronous
+        // call. The parent remains held; FILE_CREATE cannot return an existing
+        // object. A successful handle is moved into exactly one owning File.
+        let result = unsafe {
+            NtCreateFile(
+                &raw mut handle,
+                0x0011_0081,
+                &raw const attributes,
+                &raw mut status,
+                null(),
+                0x10,
+                0x01,
+                2,
+                0x21,
+                null(),
+                0,
+            )
+        };
+        if result < 0 {
+            // SAFETY: conversion of an NTSTATUS has no pointer arguments.
+            let error = unsafe { RtlNtStatusToDosError(result) };
+            return Err(io::Error::from_raw_os_error(
+                i32::try_from(error).unwrap_or(31),
+            ));
+        }
+        if handle.is_null() {
+            return Err(io::ErrorKind::Other.into());
+        }
+        // SAFETY: success returned this unique owned kernel handle.
+        let created = unsafe { File::from_raw_handle(handle) };
+        if status.information != 2 {
+            return Err(io::ErrorKind::AlreadyExists.into());
+        }
+        Ok(created)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (parent, name);
+        Err(io::ErrorKind::Unsupported.into())
+    }
+}
+
+/// The parent is observed and pinned, never deleted. Requesting DELETE here
+/// would conflict with the conversion's existing no-delete destination pin.
+pub(super) fn hold_recovery_parent(path: &Path) -> io::Result<File> {
+    open_recovery_parent(path, false)
+}
+
+fn open_recovery_parent(path: &Path, child_publication: bool) -> io::Result<File> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+        let parent = std::fs::OpenOptions::new()
+            .read(true)
+            .access_mode(0x81)
+            .share_mode(if child_publication { 0x03 } else { 0x01 })
+            .custom_flags(0x0200_0000 | 0x0020_0000)
+            .open(path)?;
+        let metadata = parent.metadata()?;
+        if !metadata.is_dir() || metadata.file_attributes() & 0x400 != 0 {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        Ok(parent)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (path, child_publication);
+        Err(io::ErrorKind::Unsupported.into())
+    }
+}
+
+/// A pinned child keeps this parent nonempty, which itself prevents an in-place
+/// junction. Permit child renames only after that invariant is established;
+/// Windows publication opens the containing directory for child-write access.
+pub(super) fn parent_for_publication(
+    parent: &File,
+    root_path: &Path,
+    root: &File,
+) -> io::Result<File> {
+    #[cfg(windows)]
+    {
+        let root_identity = full_identity(root)?;
+        prove_child_name(parent, root_path, root_identity)
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+        let candidate =
+            open_recovery_parent(root_path.parent().ok_or(io::ErrorKind::InvalidInput)?, true)?;
+        if full_identity(&candidate)? != full_identity(parent)? {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+        Ok(candidate)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (parent, root_path, root);
+        Err(io::ErrorKind::Unsupported.into())
+    }
+}
+
+/// The first quiescent namespace, held across partial teardown and retries.
+/// Entries added after this capture can never enlarge the deletion authority.
+#[cfg(windows)]
+pub(super) struct FrozenStagingTree {
+    parent_identity: (u64, [u8; 16]),
+    root_identity: (u64, [u8; 16]),
+    output: Option<(EnumeratedChild, Vec<FrozenChild>)>,
+    marker: Option<EnumeratedChild>,
+}
+
+#[cfg(windows)]
+struct FrozenChild {
+    entry: EnumeratedChild,
+    held: Option<File>,
+    children: Vec<Self>,
+}
+
+#[cfg(not(windows))]
+pub(super) struct FrozenStagingTree;
+
+#[cfg(windows)]
+pub(super) fn freeze_staging_tree(
+    area: &OwnedStagingArea,
+    parent: Option<&File>,
+) -> Result<FrozenStagingTree, StagingResidue> {
+    let root = area.root.as_ref().ok_or(StagingResidue::IdentityChanged)?;
+    let parent = parent.ok_or(StagingResidue::IdentityChanged)?;
+    let root_identity = full_identity(root).map_err(residue_for)?;
+    let parent_identity = full_identity(parent).map_err(residue_for)?;
+    prove_child_name(parent, &area.path, root_identity)?;
+    let mut frozen = FrozenStagingTree {
+        parent_identity,
+        root_identity,
+        output: None,
+        marker: None,
+    };
+    let mut remaining = MAX_ENTRIES_PER_DIRECTORY;
+    for entry in enumerate_children(root)? {
+        if entry.name_is(STAGING_OUTPUT_DIRECTORY) {
+            let output = area.output.as_ref().ok_or(StagingResidue::ForeignEntry)?;
+            prove_retained(output, &entry, root_identity.0, true)?;
+            let children = freeze_children(
+                output,
+                &area.output_directory(),
+                root_identity.0,
+                0,
+                &mut remaining,
+            )?;
+            frozen.output = Some((entry, children));
+        } else if entry.name_is(STAGING_OWNER_MARKER) {
+            let marker = area.marker.as_ref().ok_or(StagingResidue::ForeignEntry)?;
+            prove_retained(marker, &entry, root_identity.0, false)?;
+            frozen.marker = Some(entry);
+        } else {
+            return Err(StagingResidue::ForeignEntry);
+        }
+    }
+    // A created object missing from its bound name is lost proof, not an empty
+    // directory whose authority can be reconstructed on the next attempt.
+    if frozen.output.is_some() != area.output.is_some()
+        || frozen.marker.is_some() != area.marker.is_some()
+    {
+        return Err(StagingResidue::IdentityChanged);
+    }
+    Ok(frozen)
+}
+
+#[cfg(windows)]
+fn freeze_children(
+    directory: &File,
+    path: &Path,
+    volume: u64,
+    depth: usize,
+    remaining: &mut usize,
+) -> Result<Vec<FrozenChild>, StagingResidue> {
+    if depth > MAX_STAGING_DEPTH {
+        return Err(StagingResidue::ForeignEntry);
+    }
+    let entries = enumerate_children(directory)?;
+    if entries.len() > *remaining {
+        return Err(StagingResidue::ForeignEntry);
+    }
+    *remaining -= entries.len();
+    entries
+        .into_iter()
+        .map(|entry| {
+            let child_path = path.join(&entry.name);
+            let held = retain_recovery_child(&child_path, &entry, volume)?;
+            let children = if entry.is_directory {
+                freeze_children(&held, &child_path, volume, depth + 1, remaining)?
+            } else {
+                Vec::new()
+            };
+            Ok(FrozenChild {
+                entry,
+                held: Some(held),
+                children,
+            })
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+fn retain_recovery_child(
+    path: &Path,
+    entry: &EnumeratedChild,
+    volume: u64,
+) -> Result<File, StagingResidue> {
+    use std::os::windows::fs::OpenOptionsExt;
+    // A metadata lease can coexist with a transient no-delete lock. Deletion
+    // later opens a separate DELETE handle and proves the same retained object.
+    // Requiring DELETE here would lose the very residue this path can recover.
+    let access = 0x80 | if entry.is_directory { 0x01 } else { 0 };
+    let held = std::fs::OpenOptions::new()
+        .access_mode(access)
+        .share_mode(0x07)
+        .custom_flags(0x0200_0000 | 0x0020_0000)
+        .open(path)
+        .map_err(residue_for)?;
+    prove_retained(&held, entry, volume, entry.is_directory)?;
+    Ok(held)
+}
+
+#[cfg(windows)]
+fn prove_retained(
+    held: &File,
+    entry: &EnumeratedChild,
+    volume: u64,
+    directory: bool,
+) -> Result<(), StagingResidue> {
+    use std::os::windows::fs::MetadataExt;
+    let metadata = held.metadata().map_err(residue_for)?;
+    if entry.is_reparse_point || metadata.file_attributes() & 0x400 != 0 {
+        return Err(StagingResidue::ReparsePointEncountered);
+    }
+    if metadata.is_dir() != directory
+        || full_identity(held).map_err(residue_for)? != (volume, entry.identity)
+    {
+        return Err(StagingResidue::IdentityChanged);
+    }
+    if !directory && link_count(held).map_err(residue_for)? != 1 {
+        return Err(StagingResidue::ForeignEntry);
+    }
+    Ok(())
+}
+
+/// A hard-linked file is not an exclusively disposable staging object.
+#[cfg(windows)]
+fn link_count(object: &File) -> io::Result<u32> {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileStandardInformation {
+        allocation_size: i64,
+        end_of_file: i64,
+        number_of_links: u32,
+        delete_pending: u8,
+        directory: u8,
+    }
+    const _: [(); 24] = [(); std::mem::size_of::<FileStandardInformation>()];
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "GetFileInformationByHandleEx"]
+        fn get_file_information_by_handle_ex(
+            file: *mut c_void,
+            class: i32,
+            buffer: *mut c_void,
+            size: u32,
+        ) -> i32;
+    }
+    let mut information = FileStandardInformation::default();
+    // SAFETY: FileStandardInfo (1) receives the exact initialized repr(C)
+    // FILE_STANDARD_INFO buffer, and the owning File stays live through the call.
+    let queried = unsafe {
+        get_file_information_by_handle_ex(
+            object.as_raw_handle(),
+            1,
+            (&raw mut information).cast(),
+            24,
+        )
+    };
+    if queried == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(information.number_of_links)
+}
+
+#[cfg(windows)]
+fn prove_child_name(
+    parent: &File,
+    child_path: &Path,
+    identity: (u64, [u8; 16]),
+) -> Result<(), StagingResidue> {
+    let children = enumerate_children(parent)?;
+    let child = children
+        .iter()
+        .find(|child| Some(child.name.as_os_str()) == child_path.file_name())
+        .ok_or(StagingResidue::IdentityChanged)?;
+    if child.is_reparse_point {
+        return Err(StagingResidue::ReparsePointEncountered);
+    }
+    if !child.is_directory
+        || child.identity != identity.1
+        || full_identity(parent).map_err(residue_for)?.0 != identity.0
+    {
+        return Err(StagingResidue::IdentityChanged);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn same_entry(actual: &EnumeratedChild, expected: &EnumeratedChild) -> bool {
+    actual.name == expected.name
+        && actual.identity == expected.identity
+        && actual.is_directory == expected.is_directory
+        && !actual.is_reparse_point
+}
+
+#[cfg(windows)]
+fn prove_remaining(directory: &File, expected: &[&EnumeratedChild]) -> Result<(), StagingResidue> {
+    let actual = enumerate_children(directory)?;
+    if actual.iter().any(|entry| entry.is_reparse_point) {
+        return Err(StagingResidue::ReparsePointEncountered);
+    }
+    if actual.len() != expected.len()
+        || actual
+            .iter()
+            .any(|entry| !expected.iter().any(|expected| same_entry(entry, expected)))
+    {
+        return Err(StagingResidue::ForeignEntry);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub(super) fn resume_frozen_teardown(
+    area: &mut OwnedStagingArea,
+    parent: Option<&File>,
+    frozen: &mut FrozenStagingTree,
+) -> Result<(), StagingResidue> {
+    let parent = parent.ok_or(StagingResidue::IdentityChanged)?;
+    let root = area.root.as_ref().ok_or(StagingResidue::IdentityChanged)?;
+    if full_identity(parent).map_err(residue_for)? != frozen.parent_identity
+        || full_identity(root).map_err(residue_for)? != frozen.root_identity
+    {
+        return Err(StagingResidue::IdentityChanged);
+    }
+    prove_child_name(parent, &area.path, frozen.root_identity)?;
+    let expected: Vec<_> = frozen
+        .output
+        .iter()
+        .map(|(entry, _)| entry)
+        .chain(frozen.marker.iter())
+        .collect();
+    prove_remaining(root, &expected)?;
+    if let Some((entry, children)) = &mut frozen.output {
+        let output = area
+            .output
+            .as_ref()
+            .ok_or(StagingResidue::IdentityChanged)?;
+        prove_retained(output, entry, frozen.root_identity.0, true)?;
+        resume_children(
+            output,
+            &area.output_directory(),
+            frozen.root_identity.0,
+            children,
+        )?;
+        set_delete_disposition(output).map_err(residue_for)?;
+        area.output.take();
+        frozen.output = None;
+    }
+    if let Some(entry) = &frozen.marker {
+        prove_remaining(root, &[entry])?;
+        let marker = area
+            .marker
+            .as_ref()
+            .ok_or(StagingResidue::IdentityChanged)?;
+        prove_retained(marker, entry, frozen.root_identity.0, false)?;
+        set_delete_disposition(marker).map_err(residue_for)?;
+        area.marker.take();
+        frozen.marker = None;
+    }
+    prove_remaining(root, &[])?;
+    set_delete_disposition(root).map_err(residue_for)?;
+    area.root.take();
+    Ok(())
+}
+
+#[cfg(windows)]
+fn resume_children(
+    directory: &File,
+    path: &Path,
+    volume: u64,
+    children: &mut [FrozenChild],
+) -> Result<(), StagingResidue> {
+    let remaining: Vec<_> = children
+        .iter()
+        .filter(|child| child.held.is_some())
+        .map(|child| &child.entry)
+        .collect();
+    prove_remaining(directory, &remaining)?;
+    for child in children.iter_mut().filter(|child| child.held.is_some()) {
+        let held = child.held.as_ref().ok_or(StagingResidue::IdentityChanged)?;
+        prove_retained(held, &child.entry, volume, child.entry.is_directory)?;
+        let child_path = path.join(&child.entry.name);
+        let deleting = open_verified_child(
+            &child_path,
+            &child.entry,
+            ChildPosture::AsEnumerated,
+            volume,
+        )?;
+        // Recheck links on the deletion handle after it has denied new DELETE
+        // sharing; the earlier metadata lease deliberately permitted replacement.
+        prove_retained(&deleting, &child.entry, volume, child.entry.is_directory)?;
+        if child.entry.is_directory {
+            resume_children(&deleting, &child_path, volume, &mut child.children)?;
+        }
+        set_delete_disposition(&deleting).map_err(residue_for)?;
+        child.held.take();
+        drop(deleting);
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub(super) fn freeze_staging_tree(
+    _area: &OwnedStagingArea,
+    _parent: Option<&File>,
+) -> Result<FrozenStagingTree, StagingResidue> {
+    Err(StagingResidue::ForeignEntry)
+}
+
+#[cfg(not(windows))]
+pub(super) fn resume_frozen_teardown(
+    _area: &mut OwnedStagingArea,
+    _parent: Option<&File>,
+    _frozen: &mut FrozenStagingTree,
+) -> Result<(), StagingResidue> {
+    Err(StagingResidue::ForeignEntry)
+}
 
 /// Objects a live run already holds, so teardown never has to find them again.
 ///
@@ -501,8 +1020,8 @@ fn open_verified_child(
 
     // Delete sharing is withheld: from here until this object is gone, nothing
     // else may rename, replace or unlink it, so the identity proved below stays
-    // the identity that is deleted. Readers and writers are still admitted,
-    // because neither can make it a different object.
+    // the identity that is deleted. A directory also denies write sharing:
+    // FSCTL_SET_REPARSE_POINT can redirect the same object without renaming it.
     let mut access = FILE_READ_ATTRIBUTES | DELETE | SYNCHRONIZE;
     if enumerated.is_directory {
         access |= FILE_LIST_DIRECTORY;
@@ -510,7 +1029,11 @@ fn open_verified_child(
     let opened = std::fs::OpenOptions::new()
         .read(true)
         .access_mode(access)
-        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .share_mode(if enumerated.is_directory {
+            FILE_SHARE_READ
+        } else {
+            FILE_SHARE_READ | FILE_SHARE_WRITE
+        })
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
         .map_err(residue_for)?;

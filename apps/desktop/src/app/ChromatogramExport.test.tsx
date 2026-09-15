@@ -1,3 +1,4 @@
+import { UI_RESOURCES } from "../features/preferences/i18n";
 /**
  * What the run on screen can be exported as, through the shipped composition.
  *
@@ -163,6 +164,7 @@ async function selectAScan(): Promise<void> {
   await waitFor(() => {
     expect(within(spectrumPanel()).queryByRole("button", { name: "Copy plot" })).not.toBeNull();
   }, SETTLING);
+  if (!spectrumPanel().querySelector("details")?.open) fireEvent.click(within(spectrumPanel()).getByText("Export spectrum"));
 }
 
 /** Every scientific action the selected spectrum offers. */
@@ -487,8 +489,7 @@ describe("what the chromatogram can be exported as", () => {
     await openTheViewer(preview);
     // The other export surface appears once a spectrum has been read, which is
     // the state this rule is about.
-    fireEvent.click(within(screen.getByRole("grid", { name: "Spectra" })).getAllByRole("row")[1]!);
-    await screen.findByRole("button", { name: "Export SVG…" }, SETTLING);
+    await selectAScan();
     openExport();
 
     const ids = [...document.querySelectorAll("[id]")].map((element) => element.id);
@@ -559,7 +560,7 @@ describe("what the chromatogram can be exported as", () => {
     openExport();
     fireEvent.click(button("Export CSV…"));
     await waitFor(() => {
-      expect(exportStatus()).toContain("not inside the run");
+      expect(exportStatus()).toContain(UI_RESOURCES.en.m74ErrorRtRange);
     });
   });
 
@@ -596,7 +597,7 @@ describe("what the chromatogram can be exported as", () => {
 
     fireEvent.click(button("Export CSV\u2026"));
     await waitFor(() => {
-      expect(exportStatus()).toContain("could not give it the name you chose");
+      expect(exportStatus()).toContain(UI_RESOURCES.en.m74ErrorNotFinalized);
     });
     expect(exportStatus()).toContain(RESIDUE);
 
@@ -605,7 +606,7 @@ describe("what the chromatogram can be exported as", () => {
     fireEvent.click(spectrumButton("Export CSV\u2026"));
     await waitFor(() => {
       const said = within(spectrumPanel()).getByRole("status").textContent ?? "";
-      expect(said).toContain("could not give it the name you chose");
+      expect(said).toContain(UI_RESOURCES.en.m74ErrorNotFinalized);
     });
     expect(within(spectrumPanel()).getByRole("status").textContent ?? "").toContain(RESIDUE);
   });
@@ -628,7 +629,7 @@ describe("what the chromatogram can be exported as", () => {
 
     fireEvent.click(button("Export CSV\u2026"));
     await waitFor(() => {
-      expect(exportStatus()).toContain("no longer the one on screen");
+      expect(exportStatus()).toContain(UI_RESOURCES.en.m74ErrorChromatogramChanged);
     });
     expect(panel().querySelector(".notice-detail")).toBeNull();
   });

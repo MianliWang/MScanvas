@@ -28,6 +28,7 @@ const CLEAR: ConversionLane = {
   backendQuarantined: false,
   previewReading: false,
   laneClaimed: false,
+  reclaimingStaging: false,
   configurationProbing: false,
   adopting: false,
   exportingDiagnostics: false,
@@ -58,7 +59,7 @@ function probe(refusal: ProbeRefusal): ConversionRefusal {
 
 describe("the facts a notice can be keyed on", () => {
   it("is exactly the lane's own fields", () => {
-    // Nine, `backendUsable` included -- it is shared by every conversion action
+    // `backendUsable` included -- it is shared by every conversion action
     // and by nothing else, and omitting it would leave the refusal two actions
     // reach most often with no key at all.
     expect([...CONVERSION_LANE_FACTS]).toEqual([
@@ -71,6 +72,7 @@ describe("the facts a notice can be keyed on", () => {
       "adoption-running",
       "diagnostics-exporting",
       "workspace-settling",
+      "staging-reclaiming",
     ]);
     expect(CONVERSION_LANE_FACTS).toHaveLength(Object.keys(CLEAR).length);
   });
@@ -171,6 +173,7 @@ describe("what the surviving element says", () => {
           ? { backendUsable: false }
           : ({
               "backend-quarantined": { backendQuarantined: true },
+              "staging-reclaiming": { reclaimingStaging: true },
               "backend-changing": { backendChanging: true },
               "conversion-running": { laneClaimed: true },
               "preview-running": { previewReading: true },
@@ -206,6 +209,16 @@ describe("what the surviving element says", () => {
 });
 
 describe("what the registry emits", () => {
+  it("keeps the capacity refusal attached to the initiating action", () => {
+    const refusal = action(conversionAvailability(CLEAR, { kind: "start", targetCount: 17, plan: "capacityExceeded" }));
+    const notices = conversionNotices([refusal]);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.reason).toBe("plan-capacity-exceeded");
+    expect(notices[0]?.id).toBe(conversionRefusalNoticeId(refusal));
+    expect(notices[0]?.message).not.toBe("");
+    expect(conversionNotices([action(startOn({}))])).toEqual([]);
+  });
+
   it("says nothing for an action that is available, and nothing for one absent", () => {
     expect(conversionNotices([action(startOn({})), null])).toEqual([]);
     expect(conversionRefusalNoticeId(action(startOn({})))).toBeNull();

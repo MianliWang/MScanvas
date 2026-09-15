@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createContext, useContext } from "react";
 
+import type { FigurePreviewRequest, FigurePreviewOutcome, StagingReclaimOutcome, OutputOpenAction, OutputOpenOutcome, WorkspaceClearAction, WorkspaceClearOutcome, WorkspaceClearPlanOutcome } from "./contracts";
+
 import type {
   WorkspaceOutputAdoptionResult,
   BackendAvailability,
@@ -77,6 +79,11 @@ function currentDocumentAuthority(): string {
  * without a WebView.
  */
 export interface PreviewApi {
+  readonly previewFigure: (request: FigurePreviewRequest) => Promise<FigurePreviewOutcome>;
+  reclaimConversionStaging(recoveryId: string): Promise<StagingReclaimOutcome>;
+  openFinalizedOutput(outputId: string, action: OutputOpenAction): Promise<OutputOpenOutcome>;
+  planWorkspaceClear(): Promise<WorkspaceClearPlanOutcome>;
+  executeWorkspaceClear(planId: string, action: WorkspaceClearAction): Promise<WorkspaceClearOutcome>;
   inspectBackend(): Promise<BackendAvailability>;
   /**
    * Shows the native folder picker, uses the chosen ProteoWizard for this
@@ -413,6 +420,9 @@ export interface PreviewApi {
 }
 
 export const tauriPreviewApi: PreviewApi = {
+  previewFigure: (request) => invoke<FigurePreviewOutcome>("preview_figure", { request }, {
+    headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() },
+  }),
   inspectBackend: () => invoke<BackendAvailability>("inspect_backend"),
   chooseInstallation: () => invoke<BackendAvailability | null>("choose_backend_installation"),
   useAutomaticDiscovery: () => invoke<BackendAvailability>("use_automatic_backend_discovery"),
@@ -430,7 +440,11 @@ export const tauriPreviewApi: PreviewApi = {
     }),
   removeDatasets: (handles) =>
     invoke<WorkspaceRemoveResult>("remove_workspace_datasets", { handles }),
+  reclaimConversionStaging: (recoveryId) => invoke<StagingReclaimOutcome>("reclaim_conversion_staging", { recoveryId }, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
   clearWorkspace: () => invoke<WorkspaceRoster>("clear_workspace"),
+  openFinalizedOutput: (outputId, action) => invoke<OutputOpenOutcome>("open_finalized_output", { outputId, action }, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
+  planWorkspaceClear: () => invoke<WorkspaceClearPlanOutcome>("plan_workspace_clear", {}, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
+  executeWorkspaceClear: (planId, action) => invoke<WorkspaceClearOutcome>("execute_workspace_clear", { planId, action }, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
   openPreview: (handle) => invoke<Preview>("open_mzml_preview", { handle }),
   loadSpectrum: (handle, index) =>
     invoke<AuthorityObserved<SelectedSpectrumOutcome>>("load_selected_spectrum", { handle, index }),

@@ -1,3 +1,4 @@
+import { UI_RESOURCES } from "../preferences/i18n";
 /**
  * The receipt-bound plan, and the two gates before a queue, through the tree
  * that ships.
@@ -734,7 +735,7 @@ describe("starting the conversion the plan describes", () => {
       plans.answer(1); // A valid answer for the old name cannot erase the refusal.
     });
     expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeDisabled();
-    expect(within(panel).getByText("Use one local subfolder name.")).toBeVisible();
+    expect(within(panel).getByText("That is not a folder name MSCanvas can create beside your acquisitions. Use a single name with no slashes.")).toBeVisible();
     expect(within(panel).getByLabelText("Subfolder name")).toHaveAttribute("aria-invalid", "true");
     expect(api.beginRequests()).toHaveLength(0);
     fireEvent.change(within(panel).getByLabelText("Subfolder name"), { target: { value: "Results" } });
@@ -874,7 +875,7 @@ describe("starting the conversion the plan describes", () => {
     await pressConvert(panel, "Convert 1 selected…");
 
     await waitFor(() => {
-      expect(within(panel).getByText("Two of those rows would write one file.")).toBeVisible();
+      expect(within(panel).getByText(UI_RESOURCES.en.m74ErrorNameCollision)).toBeVisible();
     });
     const reads = api.calls().filter((call) => call === "readConversionConfiguration").length;
     expect(reads).toBe(1);

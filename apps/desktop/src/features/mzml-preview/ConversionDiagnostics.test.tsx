@@ -1,3 +1,4 @@
+import { UI_RESOURCES } from "../preferences/i18n";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
@@ -464,16 +465,19 @@ describe("saving conversion diagnostics", () => {
     for (const failure of [
       {
         kind: "diagnostics_destination_exists",
+        expected: UI_RESOURCES.en.m74ErrorExists,
         summary:
           "A file of that name is already in that folder. MSCanvas did not replace it. Save the diagnostics under another name.",
       },
       {
         kind: "diagnostics_export_superseded",
+        expected: UI_RESOURCES.en.m74ErrorDiagnosticsChanged,
         summary:
           "The conversion queue changed while MSCanvas was saving diagnostics. Nothing was written. Try again.",
       },
       {
         kind: "diagnostics_too_large",
+        expected: UI_RESOURCES.en.m74ErrorDiagnosticsSize,
         summary:
           "These diagnostics are larger than one MSCanvas file may be, so nothing was saved.",
       },
@@ -495,7 +499,7 @@ describe("saving conversion diagnostics", () => {
       fireEvent.click(await within(panel).findByRole("button", { name: EXPORT_LABEL }));
 
       await waitFor(() => {
-        expect(within(panel).getByText(failure.summary)).toBeVisible();
+        expect(within(panel).getByText(failure.expected)).toBeVisible();
       });
       expect(panel.textContent ?? "").not.toMatch(/[A-Za-z]:[\\/]/);
       // The offer stands: every one of these is something the user can answer.
@@ -525,7 +529,7 @@ describe("saving conversion diagnostics", () => {
     fireEvent.click(await within(panel).findByRole("button", { name: EXPORT_LABEL }));
 
     await waitFor(() => {
-      expect(within(panel).getByText(/could not give the file the name you chose/)).toBeVisible();
+      expect(within(panel).getByText(UI_RESOURCES.en.m74ErrorNotFinalized)).toBeVisible();
     });
     expect(within(panel).getByText(leftBehind)).toBeVisible();
     // Still no path, even in the part that names a file.

@@ -1,4 +1,6 @@
-import { memo } from "react";
+import { memo, useState } from "react";
+import { QuickFigureActions } from "./QuickFigureActions";
+import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { UiMessage } from "../preferences/i18n";
 import type { CopiedFigure, ExportedFigure, ExportedSpectrumRange, FigureTheme, PreviewError, SelectedSpectrum,
@@ -11,6 +13,7 @@ import type { FigureSettingsDraft, FigureSettingsField, SpectrumExportState, Spe
 import type { MzDomain, SpectrumViewportEvent, SpectrumViewportState } from "./viewer/spectrumViewport";
 
 export interface SelectedSpectrumPanelProps {
+  readonly onOpenFigure: () => void;
   readonly state: SpectrumState;
   readonly onRetry: () => void;
   readonly viewport: SpectrumViewportState;
@@ -39,6 +42,7 @@ export interface SelectedSpectrumPanelProps {
 export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: SelectedSpectrumPanelProps) {
   const t = useUiMessages();
   const { state, exportState } = props;
+  const [exportOpen, setExportOpen] = useState(false);
   return <section aria-labelledby="selected-spectrum-heading" className="panel spectrum-panel">
     <header className="panel-header compact">
       <div><h2 id="selected-spectrum-heading">{t("viewerSpectrum")}</h2>
@@ -46,15 +50,21 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
           index: formatCount(state.spectrum.index), level: formatCount(state.spectrum.msLevel), count: state.spectrum.pointCount })}</p> :
           <p>{describe(state, t)}</p>}
       </div>
-      {state.status === "loaded" ? <details className="spectrum-export-disclosure">
-        <summary>{t("viewerSpectrumExport")}</summary><SpectrumExportActions {...props} />
-      </details> : null}
+      {state.status === "loaded" ? <div className="spectrum-export-header-actions"><QuickFigureActions
+        context={`${t("viewerSpectrumIndex", { index: String(state.spectrum.index) })} · ${t(props.rangeScope === "current" && props.rangeAvailability === "available" ? "viewerExportCurrent" : "viewerExportFull")} · ${props.figureSettings.widthPx || "—"} × ${props.figureSettings.heightPx || "—"} px`}
+        busy={props.scientificExportBusy} figureUnavailable={props.renderSettingsProblem !== null}
+        pngUnavailable={props.pngDpiProblem !== null} onPreview={props.onOpenFigure} quickVisible={!exportOpen}
+        onPng={() => props.onExport("png")} onCopy={props.onCopyPlot} />
+        <details className="spectrum-export-disclosure" open={exportOpen}>
+          <summary onClick={event => { event.preventDefault(); setExportOpen(value => !value); }}>{t("viewerSpectrumExport")}</summary>
+          <div hidden={!exportOpen}><SpectrumExportActions {...props} /></div>
+        </details></div> : null}
     </header>
     <div className="spectrum-body">{renderBody(state, props.onRetry, props, t)}</div>
     <p className="spectrum-export-status" role="status">
-      {describeExport(exportState, t)}
+      {describeSpectrumExport(exportState, t)}
       {exportState.status === "failed" && exportState.error.detail !== null ?
-        <span className="notice-detail">{exportState.error.detail}</span> : null}
+        <span className="notice-detail">{ownedErrorDetail(exportState.error, t)}</span> : null}
     </p>
     {["saved", "copied", "cancelled", "failed"].includes(exportState.status) ?
       <button className="link-button" onClick={props.onDismissExport} type="button">{t("viewerDismissExport")}</button> : null}
@@ -121,7 +131,7 @@ function describeExportedRange(state: ExportedSpectrumRange, t: UiMessage): stri
     t("viewerExportPointRange", { count: state.exportedPointCount, total: state.sourcePointCount,
       low: String(state.rangeLow), high: String(state.rangeHigh) });
 }
-function describeExport(state: SpectrumExportState, t: UiMessage): string {
+export function describeSpectrumExport(state: SpectrumExportState, t: UiMessage): string {
   switch (state.status) {
     case "idle": return "";
     case "running": return state.operation === "copy" ? t("viewerExportClipboard") : t("viewerExportChoose", { name: state.operation.toUpperCase() });
@@ -129,7 +139,7 @@ function describeExport(state: SpectrumExportState, t: UiMessage): string {
     case "saved": return t("viewerExportSaved", { name: state.fileName, details: describeExportedRange(state, t) +
       (state.figure === null ? "" : `, ${describeFigure(state.figure, t)}`) });
     case "copied": return t("viewerExportCopied", { details: `${describeExportedRange(state, t)}, ${describeFigure(state.figure, t)}` });
-    case "failed": return state.error.summary;
+    case "failed": return ownedErrorMessage(state.error, t);
   }
 }
 function describe(state: SpectrumState, t: UiMessage): string {

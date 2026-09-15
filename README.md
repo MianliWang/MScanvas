@@ -14,6 +14,13 @@ MSCanvas aims to be a Windows-first, local-first desktop application for importi
 
 Canonical repository: [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas) (public; visibility verified 2026-09-12).
 
+The **M7.4 working candidate** adds compact bilingual conversion/results,
+identity-checked output opening, active-run Clear, same-session staging
+cleanup and export-specific figure preview with separate quick PNG/Copy plot
+and data actions. Native acceptance and protected publication are pending;
+see [the implementation record](docs/ux/M7_4_CONVERSION_RESULTS_FIGURES.md).
+No public beta is built or released by this slice.
+
 ## What works today
 
 Build a session workspace of local `.mzML` files and inspect one of them:

@@ -19,6 +19,7 @@ import { useBackendReadingObligation } from "./useBackendReadingObligation";
 const FREE: BackendCheckFacts = {
   backendChanging: false,
   laneClaimed: false,
+  reclaimingStaging: false,
   previewReading: false,
   probeInFlight: false,
 };
