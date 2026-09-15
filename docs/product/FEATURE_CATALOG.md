@@ -67,7 +67,7 @@ table remains the target, including the unsupported portions called out below:
 | VIEW-001 | Metadata summary | P0 | Shows format/vendor, size, scan counts, MS levels, RT range and available instrument metadata. |
 | VIEW-002 | TIC/BPC | P0 | **Implemented for a completely loaded mzML spectrum table.** Toggle traces, zoom/pan/reset, inspect coordinates and select nearest scan. |
 | VIEW-003 | Spectrum view | P0 | Profile uses a line; centroid uses sticks; axes and units remain explicit. **Zoom/pan/reset implemented per spectrum, wherever an authoritative m/z domain is admitted; an explicit refusal where it is not.** |
-| VIEW-004 | Scan table | P0 | Virtualized rows with scan, RT, MS level and precursor context. |
+| VIEW-004 | Scan table | P0 | Bounded loaded-row window with whole-row activation, raw search, represented MS-level filter and deterministic scalar header sorting. Missing values remain last; focus/reveal and Previous/Next use source identities under the displayed projection. |
 | VIEW-005 | Linked selection | P0 | **Implemented across the chromatogram, the loaded scan table and the selected-spectrum panel.** Selection synchronizes chromatogram marker, table row, spectrum and inspector in both directions. Where a scan cannot be committed right now, both surfaces say so once and neither stops being readable. |
 | VIEW-006 | Keyboard scan navigation | P0 | **Implemented.** Previous/next and table navigation work without pointer-only access, including while selection is unavailable: `Enter` and `Space` are the activations that stop, and arrow, page, `Home` and `End` navigation does not. |
 | VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. **Unimplemented, and the evidence gate is answered `XIC_SOURCE_REFUSED`: no query the measured ProteoWizard build offers can serve as a general XIC source.** M5.5 and M5.6 are `NOT_APPLICABLE`. Re-entry requires an exact executable identity and capability grammar covered by fresh evidence, a resolved numeric-fidelity answer, and re-measurement of everything the record establishes — aggregation and the singular-parabola abort are invisible in help text. **M6 measured the identity, which is what the trigger is about: M6.10 re-observed `msaccess` on 2026-09-10 and it is byte-identical to the one M5.4 refused, so the trigger did not fire and the M6 route closes `REFUSED_WITH_EVIDENCE`, retaining M5.4's refusal.** The gate above stays live for a different installed identity; **owner: whichever slice measures one**. **That gate governs re-entry through this ProteoWizard build, and nothing else.** Whether a *different* provider or runtime could serve an XIC is a separate question, owned by the Post-M6 XIC Provider / Runtime Interlude and routed by [ADR 0046](../architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md). That route admits nothing, and this row's answer is unchanged by it. |
@@ -102,9 +102,21 @@ The acceptance table remains the target, including the parts called out below.
 - **VIEW-006 — Implemented for the loaded scan table.** Arrow, Page, Home and End
   move focus without selecting — each selection is one ProteoWizard process, and
   selection-following-focus would launch one per key press — and Enter or Space
-  commits. `Previous scan` and `Next scan` step through the table's own order.
+  commits. In M7.3, `Previous scan` and `Next scan` follow the current sorted and
+  filtered loaded projection. A hidden persistent selection has no step anchor;
+  clear-filter/reveal or an explicit row activation provides recovery.
   Where a preview loaded only part of the table, the interface says that the end
   of the loaded rows is not the end of the run.
+
+The [M7.3 record](../ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md) binds the
+bilingual viewer continuation to its acceptance/publication evidence. Primary
+drag proposes a horizontal source interval; release leaves it pending until
+fresh confirmation. Escape cancels, while wheel and middle/Space drag retain
+bounded zoom/pan. Both axes provide raw numeric entry, keyboard actions and
+compact help. Current/full scientific exports read committed ranges and retained
+sources, including while a proposal is pending. Table search never becomes a
+scientific trace filter or a whole-run query. Source/selection revisions invalidate
+stale proposals and late projections; the transfer/projection ceilings stay fixed.
 
 Still unimplemented across the viewer: XIC (VIEW-007), now refused on measured
 backend evidence rather than merely pending, and multi-layer comparison

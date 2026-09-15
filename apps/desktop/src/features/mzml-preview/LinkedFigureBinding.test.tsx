@@ -504,8 +504,8 @@ describe("why a linked figure cannot be exported", () => {
     });
 
     expect(result.current.chromatogramExportToken).toBeNull();
-    expect(result.current.linkedFigureUnavailable).toBe(
-      "This run has no chromatogram to link to.",
+    expect(result.current.linkedFigureUnavailable).toEqual(
+      { code: "noChromatogram" },
     );
   });
 
@@ -527,8 +527,8 @@ describe("why a linked figure cannot be exported", () => {
     });
 
     // Nothing selected yet.
-    expect(result.current.linkedFigureUnavailable).toBe(
-      "Select a scan and wait for its spectrum to load.",
+    expect(result.current.linkedFigureUnavailable).toEqual(
+      { code: "noSpectrum" },
     );
 
     act(() => {
@@ -537,8 +537,8 @@ describe("why a linked figure cannot be exported", () => {
     await waitFor(() => {
       expect(result.current.spectrum.status).toBe("loading");
     });
-    expect(result.current.linkedFigureUnavailable).toBe(
-      "Wait for the selected spectrum to load.",
+    expect(result.current.linkedFigureUnavailable).toEqual(
+      { code: "loading" },
     );
 
     act(() => {
@@ -557,8 +557,8 @@ describe("why a linked figure cannot be exported", () => {
       result.current.toggleChromatogramTrace("tic");
     });
     expect(result.current.chromatogramTraces).toEqual({ tic: false, bpc: false });
-    expect(result.current.linkedFigureUnavailable).toBe(
-      "Show at least one chromatogram trace to create a linked figure.",
+    expect(result.current.linkedFigureUnavailable).toEqual(
+      { code: "noTrace" },
     );
 
     // Closed means closed: pressing anyway sends nothing.
@@ -598,9 +598,8 @@ describe("why a linked figure cannot be exported", () => {
       expect(result.current.chromatogramCommittedDomain).not.toBeNull();
     });
 
-    expect(result.current.linkedFigureUnavailable).toBe(
-      "The selected scan is outside the current chromatogram range. Choose Full run or move " +
-        "the current range to include the selected scan.",
+    expect(result.current.linkedFigureUnavailable).toEqual(
+      { code: "outside" },
     );
     act(() => {
       result.current.exportLinkedFigure("svg");
@@ -652,8 +651,8 @@ describe("why a linked figure cannot be exported", () => {
     act(() => {
       result.current.setFigureSetting("heightPx", "259");
     });
-    expect(result.current.linkedFigureUnavailable).toBe(
-      "A two-panel linked figure needs a height of at least 260.",
+    expect(result.current.linkedFigureUnavailable).toEqual(
+      { code: "minimumHeight", minimum: 260 },
     );
     // The single-source exports are untouched: one panel still fits.
     expect(result.current.renderSettingsProblem).toBeNull();
@@ -684,7 +683,7 @@ describe("why a linked figure cannot be exported", () => {
       result.current.setFigureSetting("widthPx", "");
     });
     expect(result.current.renderSettingsProblem).not.toBeNull();
-    expect(result.current.linkedFigureUnavailable).toBe(result.current.renderSettingsProblem);
+    expect(result.current.linkedFigureUnavailable).toEqual({ code: "figureSettings" });
     act(() => {
       result.current.exportLinkedFigure("png");
     });

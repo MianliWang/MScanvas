@@ -1,4 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import { SCAN_SORT_KEYS } from "./viewer/scanTableView";
+import type { ScanTableView } from "./viewer/useScanTableView";
 
 import type { SpectrumRow, SpectrumTable as SpectrumTableModel } from "./contracts";
 import {
@@ -23,7 +26,7 @@ const ROW_HEIGHT = 30;
  * of the scrolling box: everything below has to be placed as though the box
  * began one row lower, or a row scrolled to would arrive behind the header.
  */
-const HEADER_HEIGHT = ROW_HEIGHT;
+const HEADER_HEIGHT = 36;
 /** Rows kept rendered outside the viewport so scrolling does not flash gaps. */
 const OVERSCAN = 10;
 /**
@@ -33,21 +36,22 @@ const OVERSCAN = 10;
 const FALLBACK_VIEWPORT_HEIGHT = 600;
 
 const COLUMNS = [
-  "Index",
+  "scanIndex",
   // Its own column, because the native identifier carries the scan number at
   // the end and a truncated identifier is what every row would look like.
-  "Scan",
-  "Identifier",
-  "MS level",
-  "Retention time",
-  "Base peak m/z",
-  "Base peak intensity",
-  "Total ion current",
-  "Precursor m/z",
+  "scanNumber",
+  "scanIdentifier",
+  "scanMsLevel",
+  "scanRetentionTime",
+  "scanBasePeakMz",
+  "scanBasePeakIntensity",
+  "scanTotalIonCurrent",
+  "scanPrecursorMz",
 ] as const;
 
 export interface SpectrumTableProps {
   readonly table: SpectrumTableModel;
+  readonly view: ScanTableView;
   /**
    * The one persistent selection, as the interaction reducer holds it.
    *
@@ -92,6 +96,7 @@ export interface SpectrumTableProps {
  */
 export const SpectrumTable = memo(function SpectrumTable({
   table,
+  view,
   selection,
   onSelect,
   onRendered,
@@ -101,11 +106,12 @@ export const SpectrumTable = memo(function SpectrumTable({
   canSelectNext,
   selectionAvailability,
 }: SpectrumTableProps) {
+  const t = useUiMessages();
   const canCommit = selectionAvailability.status === "available";
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(FALLBACK_VIEWPORT_HEIGHT);
-  const [focusRow, setFocusRow] = useState(0);
+  const [focusIndex, setFocusIndex] = useState<number | null>(null);
   const pendingFocus = useRef(false);
   const selectedIndex = selection?.index ?? null;
 
@@ -128,12 +134,14 @@ export const SpectrumTable = memo(function SpectrumTable({
     };
   }, []);
 
-  const rows = table.rows;
+  const rows = view.projection.rows;
   const rowCount = rows.length;
+  const focusRow = (focusIndex === null ? undefined : view.projection.positions.get(focusIndex)) ?? 0;
+  const selectedOutside = selectedIndex !== null && !view.projection.positions.has(selectedIndex);
   /** What the viewport has left for rows once the header has its row. */
   const rowsHeight = Math.max(ROW_HEIGHT, viewportHeight - HEADER_HEIGHT);
   const visibleCount = Math.ceil(rowsHeight / ROW_HEIGHT) + OVERSCAN * 2;
-  const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const start = Math.max(0, Math.min(Math.max(0, rowCount - 1), Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN));
   const end = Math.min(rowCount, start + visibleCount);
   const rendered = rows.slice(start, end);
   // Exactly one rendered row carries the tab stop. Extending the window to
@@ -179,7 +187,7 @@ export const SpectrumTable = memo(function SpectrumTable({
   const revealRow = useCallback(
     (position: number) => {
       const clamped = Math.min(rowCount - 1, Math.max(0, position));
-      setFocusRow(clamped);
+      setFocusIndex(rows[clamped]?.index ?? null);
       const viewport = viewportRef.current;
       if (viewport === null) {
         return;
@@ -198,7 +206,7 @@ export const SpectrumTable = memo(function SpectrumTable({
         setScrollTop(next);
       }
     },
-    [rowCount, viewportHeight],
+    [rowCount, rows, viewportHeight],
   );
 
   /** The same reveal, plus the focus only a keyboard move inside the table earns. */
@@ -221,18 +229,16 @@ export const SpectrumTable = memo(function SpectrumTable({
    * a scroll the user made from being undone.
    */
   const consumer = useRef<SelectionConsumer>(initialSelectionConsumer);
+  const previousProjection = useRef(view.projection);
   useEffect(() => {
     const outcome = consumeSelection(consumer.current, selection);
     consumer.current = outcome.consumer;
-    if (outcome.consumed === null) {
-      return;
-    }
-    const position = rows.findIndex((row) => row.index === outcome.consumed?.index);
-    if (position < 0) {
-      return;
-    }
-    revealRow(position);
-  }, [revealRow, rows, selection]);
+    const changed = previousProjection.current !== view.projection;
+    previousProjection.current = view.projection;
+    const position = selection === null ? undefined : view.projection.positions.get(selection.index);
+    if (position !== undefined && (outcome.consumed !== null || changed)) revealRow(position);
+    else if (changed && rowCount > 0) revealRow(focusRow);
+  }, [revealRow, rowCount, focusRow, selection, view.projection]);
 
   /**
    * Arrow keys move focus without selecting. Selection is committed with Enter
@@ -245,6 +251,8 @@ export const SpectrumTable = memo(function SpectrumTable({
    */
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>, position: number) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey ||
+        event.nativeEvent.isComposing || event.keyCode === 229 || isEmbeddedAction(event.target, event.currentTarget)) return;
       const pageSize = Math.max(1, Math.floor(rowsHeight / ROW_HEIGHT) - 1);
       switch (event.key) {
         case "ArrowDown":
@@ -267,8 +275,8 @@ export const SpectrumTable = memo(function SpectrumTable({
           break;
         case "Enter":
         case " ":
-          if (canCommit) {
-            onSelect(rows[position]?.index ?? 0);
+          if (canCommit && !event.repeat && rows[position] !== undefined) {
+            onSelect(rows[position].index);
           }
           break;
         default:
@@ -283,31 +291,23 @@ export const SpectrumTable = memo(function SpectrumTable({
     <section aria-labelledby="spectrum-table-heading" className="panel spectrum-table-panel">
       <header className="panel-header compact">
         <div>
-          <h2 id="spectrum-table-heading">Spectra</h2>
-          <p>
-            {formatCount(table.totalRowCount)}
-            {table.totalRowCount === 1 ? " spectrum" : " spectra"}
-            {table.truncated
-              ? ` · showing the first ${formatCount(rowCount)} rows`
-              : " · all rows loaded"}
-            {canCommit ? " · Enter or Space opens the focused row" : ""}
-            {/* Stated where the values are, not only in the detail panel. A
-                bare number invites being read as minutes. */}
-            {" · retention times have no unit because the file reports none"}
-          </p>
+          <h2 id="spectrum-table-heading">{t("scansTitle")}</h2>
+          <p className="scan-result-count" aria-live="polite">{t("scanCounts", {
+            visible: rowCount, total: table.totalRowCount, count: table.rows.length,
+          })}{" · "}{t(table.truncated ? "scanPrefix" : "scanComplete")}</p>
         </div>
         {/* Beside the heading rather than under the plot: these step through
             this table's order, and they stay available for a preview whose
             chromatogram cannot be drawn at all. */}
         <fieldset className="spectrum-scan-steps">
-          <legend className="visually-hidden">Scan navigation</legend>
+          <legend className="visually-hidden">{t("scanNavigation")}</legend>
           <button
             className="secondary-button"
             disabled={!canSelectPrevious}
             onClick={onSelectPrevious}
             type="button"
           >
-            Previous scan
+            {t("scanPrevious")}
           </button>
           <button
             className="secondary-button"
@@ -315,19 +315,26 @@ export const SpectrumTable = memo(function SpectrumTable({
             onClick={onSelectNext}
             type="button"
           >
-            Next scan
+            {t("scanNext")}
           </button>
         </fieldset>
       </header>
 
-      {table.truncated ? (
-        <p className="notice notice-warning" role="note">
-          This run has more spectra than one preview transfers. The rows below are the first{" "}
-          {formatCount(rowCount)} and are not the whole table. Previous scan and Next scan
-          step through these rows and stop at the end of them, which is not the end of the
-          run.
-        </p>
-      ) : null}
+      <div className="scan-view-controls">
+        <label>{t("scanSearch")}<input type="search" value={view.options.query}
+          onChange={event => view.setQuery(event.target.value)} aria-describedby="scan-view-help" /></label>
+        <label>{t("scanMsLevel")}<select value={view.options.msLevel === null ? "all" : String(view.options.msLevel)}
+          onChange={event => view.setMsLevel(event.target.value === "all" ? null : Number(event.target.value))}>
+          <option value="all">{t("scanAllLevels")}</option>
+          {view.msLevels.map(level => <option key={level} value={level}>MS{level}</option>)}
+        </select></label>
+        <details><summary>{t("scanHelp")}</summary><p id="scan-view-help">{t("scanHelpText")}</p></details>
+      </div>
+      {selectedOutside ? <p className="scan-hidden-selection" aria-live="polite">
+        {t("scanSelectedOutside", { name: String(selectedIndex) })}{" "}
+        <button type="button" className="secondary-button" onClick={view.clearFilters}>{t("scanReveal")}</button>
+      </p> : null}
+      {rowCount === 0 ? <p className="empty-state">{t(table.rows.length === 0 ? "scanEmpty" : "scanNoMatches")}</p> : null}
 
       <div
         aria-colcount={COLUMNS.length}
@@ -338,7 +345,7 @@ export const SpectrumTable = memo(function SpectrumTable({
          */
         aria-describedby={canCommit ? undefined : SPECTRUM_SELECTION_NOTICE_ID}
         aria-labelledby="spectrum-table-heading"
-        aria-rowcount={table.totalRowCount + 1}
+        aria-rowcount={rowCount + 1}
         className="spectrum-table"
         role="grid"
       >
@@ -353,6 +360,7 @@ export const SpectrumTable = memo(function SpectrumTable({
           }}
           ref={viewportRef}
           role="presentation"
+          style={{ maxHeight: `${Math.min(10, rowCount) * ROW_HEIGHT + HEADER_HEIGHT + 18}px` }}
         >
           {/* Carries the width both grids resolve against, which is what makes
               the label and the value the same column rather than two that
@@ -365,8 +373,16 @@ export const SpectrumTable = memo(function SpectrumTable({
                   className="spectrum-table-cell"
                   key={column}
                   role="columnheader"
+                  aria-sort={view.options.sort?.key === SCAN_SORT_KEYS[columnIndex] ? view.options.sort.direction : undefined}
                 >
-                  {column}
+                  <button className="scan-sort-button" type="button" onClick={() => view.sortBy(SCAN_SORT_KEYS[columnIndex]!)}>
+                    {t(column)}
+                    <svg aria-hidden="true" viewBox="0 0 12 12" width="12" height="12"
+                      data-direction={view.options.sort?.key === SCAN_SORT_KEYS[columnIndex] ? view.options.sort.direction : "none"}>
+                      <path d={view.options.sort?.key !== SCAN_SORT_KEYS[columnIndex] ? "M3 4 6 1 9 4 M3 8 6 11 9 8" :
+                        view.options.sort.direction === "ascending" ? "M2 8 6 4 10 8" : "M2 4 6 8 10 4"} />
+                    </svg>
+                  </button>
                 </span>
               ))}
             </div>
@@ -393,7 +409,7 @@ export const SpectrumTable = memo(function SpectrumTable({
                       // part happens either way: where the row cannot be
                       // committed, moving the tab stop is still what the click
                       // meant, and losing it would be a second surprise.
-                      setFocusRow(position);
+                      setFocusIndex(rows[position]?.index ?? null);
                       if (canCommit) {
                         onSelect(row.index);
                       }
@@ -432,6 +448,7 @@ function SpectrumTableRow({
   onActivate,
   onKeyDown,
 }: SpectrumTableRowProps) {
+  const t = useUiMessages();
   const cells = [
     formatCount(row.index),
     row.scanNumber === null ? "—" : formatCount(row.scanNumber),
@@ -456,7 +473,11 @@ function SpectrumTableRow({
       aria-selected={isSelected}
       className={`spectrum-table-row${isSelected ? " is-selected" : ""}`}
       data-row-position={position}
-      onClick={() => {
+      data-source-index={row.index}
+      onClick={(event) => {
+        if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.detail > 1 ||
+          isEmbeddedAction(event.target, event.currentTarget) || window.getSelection()?.type === "Range") return;
+        event.currentTarget.focus({ preventScroll: true });
         onActivate(position);
       }}
       onKeyDown={(event) => {
@@ -471,6 +492,7 @@ function SpectrumTableRow({
           className="spectrum-table-cell"
           key={COLUMNS[columnIndex]}
           role="gridcell"
+          title={String(cell)}
         >
           {columnIndex === 0 ? (
             <>
@@ -479,7 +501,7 @@ function SpectrumTableRow({
               <span aria-hidden="true" className="spectrum-table-marker">
                 {isSelected ? "▸" : ""}
               </span>
-              {isSelected ? <span className="visually-hidden">Selected, </span> : null}
+              {isSelected ? <span className="visually-hidden">{t("scanSelected")}, </span> : null}
               {cell}
             </>
           ) : (
@@ -489,4 +511,9 @@ function SpectrumTableRow({
       ))}
     </div>
   );
+}
+
+function isEmbeddedAction(target: EventTarget | null, row: HTMLElement): boolean {
+  return target instanceof Element && target !== row &&
+    target.closest("button, input, textarea, select, a, [contenteditable], [data-scan-action]") !== null;
 }

@@ -26,6 +26,7 @@ import {
   shimadzuDataset,
 } from "../test/previewFixtures";
 import { App } from "./App";
+import { blurAsABrowserWould } from "../test/browserFocus";
 
 /** Enough scans that a range can hold some of them and not others. */
 const SCAN_COUNT = 200;
@@ -135,7 +136,7 @@ function clientXFor(retentionTime: number): number {
 function panTo(retentionTime: number): void {
   const from = clientXFor(retentionTime + 20 * RT_STEP);
   const to = clientXFor(retentionTime);
-  fireEvent.pointerDown(plot(), { button: 0, clientX: from, clientY: 100, pointerId: 1 });
+  fireEvent.pointerDown(plot(), { button: 1, isPrimary: true, pointerType: "mouse", clientX: from, clientY: 100, pointerId: 1 });
   fireEvent.pointerMove(plot(), { clientX: to, clientY: 100, pointerId: 1 });
   fireEvent.pointerUp(plot(), { button: 0, clientX: to, clientY: 100, pointerId: 1 });
 }
@@ -269,7 +270,7 @@ describe("what the chromatogram can be exported as", () => {
 
     expect(
       within(panel()).getByText(
-        "Current range is the whole run until the viewport is changed.",
+        "Current range is the whole run until a range is committed.",
       ),
     ).toBeDefined();
 
@@ -353,8 +354,8 @@ describe("what the chromatogram can be exported as", () => {
 
     // Now a drag that has moved but has not been released.
     const from = clientXFor(50 * RT_STEP);
-    fireEvent.pointerDown(plot(), { button: 0, clientX: from, clientY: 100, pointerId: 1 });
-    fireEvent.pointerMove(plot(), { clientX: from - 60, clientY: 100, pointerId: 1 });
+    fireEvent.pointerDown(plot(), { button: 1, isPrimary: true, pointerType: "mouse", clientX: from, clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(plot(), { button: 1, isPrimary: true, pointerType: "mouse", clientX: from - 60, clientY: 100, pointerId: 1 });
     const transient = document.querySelector(".chromatogram-range")?.textContent ?? "";
     expect(transient).not.toBe(committed);
 
@@ -368,7 +369,7 @@ describe("what the chromatogram can be exported as", () => {
     expect(range?.low).toBeCloseTo(Number(low), 3);
     expect(range?.high).toBeCloseTo(Number(high), 3);
     // And the gesture is still the user's: releasing it still commits.
-    fireEvent.pointerUp(plot(), { button: 0, clientX: from - 60, clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 1, isPrimary: true, pointerType: "mouse", clientX: from - 60, clientY: 100, pointerId: 1 });
     expect(document.querySelector(".chromatogram-range")?.textContent ?? "").toBe(transient);
   });
 
@@ -669,6 +670,32 @@ describe("what the chromatogram can be exported as", () => {
     await waitFor(() => {
       expect(button("Export TSV…").disabled).toBe(false);
     });
+  });
+
+  it.each(["csv", "tsv"] as const)("keeps the %s initiator focusable and respects a later focus choice on cancellation", async (format) => {
+    let release: (() => void) | null = null;
+    const preview = api({ chromatogramExport: () => new Promise(resolve => {
+      release = () => resolve({ status: "cancelled" });
+    }) });
+    await openTheViewer(preview);
+    openExport();
+    const initiator = button(`Export ${format.toUpperCase()}…`);
+    initiator.focus();
+    fireEvent.click(initiator);
+    await waitFor(() => expect(preview.chromatogramExportRequests).toHaveLength(1));
+    if (initiator.disabled) blurAsABrowserWould(initiator);
+    expect(initiator).toHaveFocus();
+    expect(initiator).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(initiator);
+    expect(preview.chromatogramExportRequests).toHaveLength(1);
+
+    const later = within(panel()).getByRole("radio", { name: "Current range" });
+    later.focus();
+    act(() => release?.());
+    await waitFor(() => expect(exportStatus()).toContain("Export cancelled"));
+    expect(button(`Export ${format.toUpperCase()}…`)).toBe(initiator);
+    expect(initiator).not.toHaveAttribute("aria-disabled");
+    expect(later).toHaveFocus();
   });
 
   it("copies the plot through the same lane and says what was copied", async () => {

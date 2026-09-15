@@ -78,6 +78,7 @@ function renderPanel(
       state={state}
     />,
   );
+  if (state.status === "loaded") fireEvent.click(screen.getByText("Export spectrum"));
   return { onExport, onDismiss, onCopyPlot, onFigureSetting, onFigureTheme };
 }
 
@@ -217,6 +218,19 @@ describe("selected spectrum export affordance", () => {
     );
   });
 
+  it.each(["csv", "tsv"] as const)("keeps the running %s data action focusable while refusing another activation", (operation) => {
+    const { onExport } = renderPanel(loaded(), { status: "running", operation, namesVisibleRun: true });
+    const running = screen.getByRole("button", { name: `Exporting ${operation.toUpperCase()}…` });
+    running.focus();
+    expect(running).toHaveFocus();
+    expect(running).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(running);
+    expect(onExport).not.toHaveBeenCalled();
+    for (const format of ["svg", "png", "csv", "tsv"].filter(format => format !== operation)) {
+      expect(screen.getByRole("button", { name: `Export ${format.toUpperCase()}…` })).toBeDisabled();
+    }
+  });
+
   it("closes every action for an export that outlived the spectrum it names", () => {
     /*
      * An export begun on one spectrum and still being written when the user
@@ -276,7 +290,7 @@ describe("selected spectrum export affordance", () => {
     for (const button of exportButtons()) {
       expect(button).toBeEnabled();
     }
-    expect(screen.getByText("Spectrum 3")).toBeVisible();
+    expect(screen.getByText(/^Spectrum 3, MS/u)).toBeVisible();
   });
 
   it("says what a typed refusal was, in its own words", () => {
@@ -331,7 +345,7 @@ describe("selected spectrum export affordance", () => {
     fireEvent.click(screen.getByRole("button", { name: "Dismiss export message" }));
 
     expect(onDismiss).toHaveBeenCalledOnce();
-    expect(screen.getByText("Spectrum 3")).toBeVisible();
+    expect(screen.getByText(/^Spectrum 3, MS/u)).toBeVisible();
   });
 
   it("offers no dismissal while nothing has happened", () => {
@@ -464,7 +478,7 @@ describe("selected spectrum export affordance", () => {
     });
 
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Saved mscanvas-spectrum-3.png with 1,000,000 points, 1,200 by 640 pixels at 300 DPI, light theme.",
+      "Saved mscanvas-spectrum-3.png with 1,000,000 points, 1,200 by 640 pixels, Light theme, 300 DPI.",
     );
   });
 
@@ -482,7 +496,7 @@ describe("selected spectrum export affordance", () => {
     });
 
     const status = screen.getByRole("status");
-    expect(status).toHaveTextContent("800 by 600 pixels, dark theme");
+    expect(status).toHaveTextContent("800 by 600 pixels, Dark theme");
     expect(status).not.toHaveTextContent("DPI");
   });
 
@@ -599,6 +613,7 @@ describe("the selected spectrum's range chooser", () => {
         state={loaded()}
       />,
     );
+    fireEvent.click(screen.getByText("Export spectrum"));
     return { onRangeScope };
   }
 
@@ -623,7 +638,7 @@ describe("the selected spectrum's range chooser", () => {
     // rather than filled in with the spectrum's own bounds -- which would read
     // as a choice the user had made.
     expect(
-      screen.getByText("Current range is the whole spectrum until the viewport is changed."),
+      screen.getByText("Current range is the whole spectrum until a range is committed."),
     ).toBeInTheDocument();
   });
 
@@ -631,10 +646,10 @@ describe("the selected spectrum's range chooser", () => {
     withRange(mzDomain(105.25, 130.5));
 
     const note = screen.getByText(/Current range is m\/z/u);
-    expect(note).toHaveTextContent("Current range is m/z 105.2500 to 130.5000.");
+    expect(note).toHaveTextContent("Current range is m/z 105.25 to 130.5.");
     // The half a reader mid-drag needs: what is on screen right now is not what
     // pressing a button would write.
-    expect(note).toHaveTextContent("A zoom or pan in progress is not exported until it settles.");
+    expect(note).toHaveTextContent("Drawing and pending selections are not exported.");
   });
 
   it("reports a choice without taking focus away from it", () => {
@@ -785,7 +800,7 @@ describe("what a finished range export is allowed to claim", () => {
     // "saved the current range" would name a window this file may not hold.
     expect(status).toHaveTextContent(
       "Saved mscanvas-spectrum-3-current.csv with 2,500 of 1,000,000 points, " +
-        "m/z 105.2500 to 130.5000.",
+        "m/z 105.25 to 130.5.",
     );
     // Still no path. The one forward slash in this sentence is the `m/z` the
     // axis is named by, so the separator check is made against what is left
@@ -836,8 +851,8 @@ describe("what a finished range export is allowed to claim", () => {
 
     const status = screen.getByRole("status");
     expect(status).toHaveTextContent(
-      "Copied the plot with 2,500 of 1,000,000 points, m/z 105.2500 to 130.5000, " +
-        "1,200 by 640 pixels, light theme.",
+      "Copied the plot with 2,500 of 1,000,000 points, m/z 105.25 to 130.5, " +
+        "1,200 by 640 pixels, Light theme.",
     );
     expect(status).not.toHaveTextContent("Saved");
   });
@@ -894,11 +909,11 @@ describe("what a finished range export is allowed to claim", () => {
     );
 
     expect(screen.getByRole("status").textContent).toBe(before);
-    expect(screen.getByRole("status")).toHaveTextContent("m/z 105.2500 to 130.5000");
+    expect(screen.getByRole("status")).toHaveTextContent("m/z 105.25 to 130.5");
     // And the *note* did follow the viewport, which is the difference: it
     // describes what the next export would cover.
     expect(screen.getByText(/Current range is m\/z/u)).toHaveTextContent(
-      "m/z 900.0000 to 950.0000",
+      "m/z 900 to 950",
     );
   });
 });

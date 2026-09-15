@@ -52,7 +52,7 @@ let tableRenders = 0;
  * and nothing promises the indices are a gapless ascending run. That walk must
  * not be on the cursor's path.
  */
-let adjacencyWalks = 0;
+let tableProjections = 0;
 
 /**
  * What the document held at the moment each measurement was appended.
@@ -81,16 +81,16 @@ vi.mock("../features/mzml-preview/instrumentation", async (importOriginal) => {
   };
 });
 
-vi.mock("../features/mzml-preview/viewer/scanModel", async (importOriginal) => {
+vi.mock("../features/mzml-preview/viewer/scanTableView", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("../features/mzml-preview/viewer/scanModel")>();
+    await importOriginal<typeof import("../features/mzml-preview/viewer/scanTableView")>();
   return {
     ...actual,
-    adjacentScan: (
-      ...args: Parameters<typeof actual.adjacentScan>
-    ): ReturnType<typeof actual.adjacentScan> => {
-      adjacencyWalks += 1;
-      return actual.adjacentScan(...args);
+    projectScanTable: (
+      ...args: Parameters<typeof actual.projectScanTable>
+    ): ReturnType<typeof actual.projectScanTable> => {
+      tableProjections += 1;
+      return actual.projectScanTable(...args);
     },
   };
 });
@@ -178,8 +178,9 @@ function clientXFor(retentionTime: number): number {
 
 function clickThePlotAt(retentionTime: number): void {
   const at = clientXFor(retentionTime);
-  fireEvent.pointerDown(plot(), { button: 0, clientX: at, pointerId: 1 });
+  fireEvent.pointerDown(plot(), { isPrimary: true, pointerType: "mouse", button: 0, clientX: at, pointerId: 1 });
   fireEvent.pointerUp(plot(), { button: 0, clientX: at, pointerId: 1 });
+  fireEvent.click(plot(), { button: 0, clientX: at, detail: 1 });
 }
 
 function selectedRowPosition(): number | null {
@@ -217,7 +218,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   cleanup();
   tableRenders = 0;
-  adjacencyWalks = 0;
+  tableProjections = 0;
   measuredWith.length = 0;
 });
 
@@ -269,9 +270,9 @@ describe("the linked viewer", () => {
     await waitFor(() => {
       expect(tableViewport().scrollTop).toBeGreaterThan(0);
     });
-    // Row 30 sits at canvas offset 900, and the fallback viewport leaves 570px
-    // for rows, so the least scroll that shows all of it is 360.
-    expect(tableViewport().scrollTop).toBe(30 * ROW_HEIGHT + ROW_HEIGHT - 570);
+    // Row 30 sits at canvas offset 900, and the fallback viewport leaves 564px
+    // for rows, so the least scroll that shows all of it is 366.
+    expect(tableViewport().scrollTop).toBe(30 * ROW_HEIGHT + ROW_HEIGHT - 564);
     expect(preview.requestedSpectra).toEqual([30, 30]);
   });
 
@@ -312,9 +313,13 @@ describe("the linked viewer", () => {
     // Zoom to the start of the run, which leaves the marker off screen.
     fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
     fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    plot().focus();
     fireEvent.keyDown(plot(), { key: "ArrowLeft" });
+    plot().focus();
     fireEvent.keyDown(plot(), { key: "ArrowLeft" });
+    plot().focus();
     fireEvent.keyDown(plot(), { key: "ArrowLeft" });
+    plot().focus();
     fireEvent.keyDown(plot(), { key: "ArrowLeft" });
     const zoomed = rangeCaption();
     const span = spanOf(zoomed);
@@ -349,7 +354,9 @@ describe("the linked viewer", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    plot().focus();
     fireEvent.keyDown(plot(), { key: "ArrowRight" });
+    plot().focus();
     fireEvent.keyDown(plot(), { key: "ArrowRight" });
     const panned = rangeCaption();
 
@@ -527,7 +534,8 @@ describe("what a moving pointer costs", () => {
       expect(selectedRowPosition()).toBe(0);
     });
     await screen.findByRole("img", { name: /^Spectrum 0,/u });
-    const settled = adjacencyWalks;
+    const settled = tableProjections;
+    expect(settled, "the real projection was exercised").toBeGreaterThan(0);
 
     act(() => {
       for (let scan = 5; scan < 40; scan += 1) {
@@ -536,7 +544,7 @@ describe("what a moving pointer costs", () => {
     });
 
     expect(readout()).toMatch(/^Hovering index 39,/u);
-    expect(adjacencyWalks).toBe(settled);
+    expect(tableProjections).toBe(settled);
   });
 
   it("asks the backend for nothing while the viewport moves", async () => {
@@ -549,6 +557,7 @@ describe("what a moving pointer costs", () => {
     fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
     fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
     fireEvent.click(screen.getByRole("button", { name: "Reset range" }));
+    plot().focus();
     fireEvent.keyDown(plot(), { key: "ArrowRight" });
 
     expect(preview.calls().length).toBe(calls);
@@ -570,7 +579,7 @@ describe("what a moving pointer costs", () => {
     expect(within(grid).getAllByRole("row").length).toBeLessThan(100);
     const paths = document.querySelectorAll("path.chromatogram-trace");
     expect(paths).toHaveLength(1);
-    expect(document.querySelectorAll("svg.chromatogram-svg circle")).toHaveLength(0);
+    expect(document.querySelectorAll('svg.chromatogram-svg circle:not([visibility="hidden"])')).toHaveLength(0);
     const vertices = (paths[0]?.getAttribute("d") ?? "").split(/[ML]/u).length - 1;
     expect(vertices).toBeLessThanOrEqual(3_600);
 

@@ -28,7 +28,8 @@
  * input belonged to -- so every wheel and every key case asserts both.
  */
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 import { useLayoutEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -248,11 +249,7 @@ function plot(): HTMLElement {
 
 /** The pointer surface, which exists only where there is a viewport to drag. */
 function pointerSurface(): HTMLElement {
-  const element = document.querySelector<HTMLElement>("div.spectrum-viewport-plot");
-  if (element === null) {
-    throw new Error("this viewport offers no pointer surface");
-  }
-  return element;
+  return plot();
 }
 
 function control(label: (typeof CONTROLS)[number]): HTMLButtonElement {
@@ -402,6 +399,7 @@ function key(
     readonly shiftKey?: boolean;
   } = {},
 ): KeyboardEvent {
+  plot().focus();
   const event = new KeyboardEvent("keydown", {
     altKey: modifiers.altKey ?? false,
     bubbles: true,
@@ -418,7 +416,8 @@ function key(
 }
 
 function pressPointer(clientX: number, pointerId = 1): void {
-  fireEvent.pointerDown(pointerSurface(), { button: 0, clientX, clientY: 120, pointerId });
+  // M7.3: the established pan contract uses middle-drag; primary drag proposes a range.
+  fireEvent.pointerDown(pointerSurface(), { isPrimary: true, pointerType: "mouse", button: 1, clientX, clientY: 120, pointerId });
 }
 
 function movePointer(clientX: number, pointerId = 1): void {
@@ -426,7 +425,7 @@ function movePointer(clientX: number, pointerId = 1): void {
 }
 
 function releasePointer(clientX: number, pointerId = 1): void {
-  fireEvent.pointerUp(pointerSurface(), { button: 0, clientX, clientY: 120, pointerId });
+  fireEvent.pointerUp(pointerSurface(), { button: 1, clientX, clientY: 120, pointerId });
 }
 
 function cancelPointer(clientX: number, pointerId = 1): void {
@@ -1126,9 +1125,8 @@ describe("input the host owns", () => {
     expect(live()).toBe(before);
   });
 
-  it("still reads magnitude the same way whether or not shift is held", () => {
-    // Shift has no owner and is given no meaning, which is the rule ctrl used to
-    // be judged by. It survives here because it is still true.
+  it("uses Shift-wheel for pan and an unmodified wheel for zoom", () => {
+    // M7.3 deliberately gives Shift-wheel horizontal pan while preserving host Ctrl-wheel.
     renderViewport();
     send({ type: "viewport-step", domain: ROOMY });
 
@@ -1142,7 +1140,9 @@ describe("input the host owns", () => {
 
     expect(held.defaultPrevented).toBe(true);
     expect(plain.defaultPrevented).toBe(true);
-    expect(liveShown()).toEqual(withShift);
+    expect(withShift.high - withShift.low).toBeCloseTo(ROOMY.high - ROOMY.low);
+    expect(withShift.low).toBeLessThan(ROOMY.low);
+    expect(liveShown().high - liveShown().low).toBeLessThan(withShift.high - withShift.low);
   });
 
   it("releases every viewport key under ctrl, meta and alt", () => {
@@ -1444,6 +1444,33 @@ describe("panning the spectrum with a press", () => {
     expect(liveShown().low).not.toBe(200);
   });
 
+  it("preserves live sticks and axis agreement across a presentation render during pan", () => {
+    const props = { domain: FULL, intensity: TRANSFERRED_INTENSITY, mz: TRANSFERRED_MZ,
+      onRetryProjection: vi.fn(), projectionError: null };
+    const view = render(<Harness {...props} />);
+    givePlotABox();
+    send({ type: "viewport-step", domain: mzDomain(200, 300) });
+    drawProjection(DRAWN);
+    pressPointer(CENTRE_X);
+    movePointer(CENTRE_X - 60);
+    movePointer(CENTRE_X - 200);
+    const live = liveShown();
+    const published = shown();
+    expect(live.low).not.toBe(published.low);
+    const layer = () => plot().querySelector("g.spectrum-sticks-layer");
+    const transform = layer()?.getAttribute("transform");
+    expect(transform).toMatch(/translate/u);
+    // An export completion can change presentation props without publishing a pointer frame.
+    view.rerender(<Harness {...props} onRetryProjection={vi.fn()} />);
+    expect(shown()).toEqual(published);
+    expect(liveShown()).toEqual(live);
+    expect(layer()?.getAttribute("transform")).toBe(transform);
+    expect(plot().querySelector("text.spectrum-axis-low")?.textContent).toBe(formatMz(live.low));
+    expect(ready().committed).toEqual(mzDomain(200, 300));
+    releasePointer(CENTRE_X - 200);
+    expect(liveShown()).toEqual(live);
+  });
+
   it("keeps moving the drawing while a drag publishes nothing", () => {
     /*
      * The other half of the same repair. Taking frames off the render path must
@@ -1563,7 +1590,7 @@ describe("panning the spectrum with a press", () => {
     commitSubrange();
     const before = state();
 
-    fireEvent.pointerDown(pointerSurface(), { button: 2, clientX: CENTRE_X, pointerId: 3 });
+    fireEvent.pointerDown(pointerSurface(), { isPrimary: true, pointerType: "mouse", button: 2, clientX: CENTRE_X, pointerId: 3 });
     fireEvent.pointerMove(pointerSurface(), { clientX: CENTRE_X + 60, pointerId: 3 });
 
     expect(state()).toBe(before);
@@ -1682,7 +1709,7 @@ describe("what the plot draws, and what it says it is drawing", () => {
     expect(new Set(said.values()).size).toBe(said.size);
     const empty = said.get("a window with no point in it") ?? "";
     expect(empty).toMatch(/reports no measured point between m\/z 200\.0000 and 300\.0000/u);
-    expect(empty).toMatch(/That is what the file says about this range, not a drawing that failed/u);
+    expect(empty).toMatch(/The range is empty; the drawing did not fail/u);
   });
 
   it("draws a gesture over the gesture's range, not the range its points answer", () => {
@@ -1733,10 +1760,10 @@ describe("what the plot draws, and what it says it is drawing", () => {
     expect(ready().gesture).not.toBeNull();
     expect(sticks()).not.toBeNull();
     expect(captionText()).toMatch(
-      /Showing the drawing already in hand while the range is being changed\./u,
+      /Showing the drawing already in hand while the range changes\./u,
     );
     expect(captionText()).toMatch(
-      /Release to draw the range under it from the retained spectrum\./u,
+      /The retained spectrum is projected when the interaction settles\./u,
     );
   });
 
@@ -1840,8 +1867,8 @@ describe("a spectrum with no m/z range to navigate", () => {
     renderViewport({ domain: REFUSED });
 
     expect(statusText()).toMatch(/^The m\/z range of this spectrum cannot be navigated\./u);
-    expect(statusText()).toMatch(/do not increase from one point to the next/u);
-    expect(statusText()).toMatch(/drawn in the order the file reports them/u);
+    expect(statusText()).toMatch(/source m\/z values are not increasing/u);
+    expect(statusText()).toMatch(/Points remain in the reported order/u);
     expect(rangeText()).toBe("No m/z range to navigate.");
   });
 
@@ -1850,7 +1877,7 @@ describe("a spectrum with no m/z range to navigate", () => {
     // user's time to tell them nothing.
     renderViewport({ domain: REFUSED });
 
-    expect(plot()).not.toHaveAttribute("tabindex");
+    expect(plot()).toHaveAttribute("tabindex", "-1");
     expect(document.querySelector("div.spectrum-viewport-plot")).toBeNull();
     expect(screen.queryByRole("button", { name: RETRY })).toBeNull();
   });
@@ -1915,7 +1942,7 @@ describe("a viewport that is admitted and has nothing to do", () => {
      */
     renderViewport({ domain: FLAT });
 
-    expect(plot()).not.toHaveAttribute("tabindex");
+    expect(plot()).toHaveAttribute("tabindex", "-1");
     expect(plot()).toHaveAttribute(
       "aria-describedby",
       "spectrum-viewport-range spectrum-viewport-status",
@@ -2001,7 +2028,7 @@ describe("a viewport that is admitted and has nothing to do", () => {
     expect(sticks()).not.toBeNull();
     // And drawing it did not make it navigable, or a tab stop.
     expect(hasProductiveSpectrumViewportAction(state())).toBe(false);
-    expect(plot()).not.toHaveAttribute("tabindex");
+    expect(plot()).toHaveAttribute("tabindex", "-1");
   });
 });
 

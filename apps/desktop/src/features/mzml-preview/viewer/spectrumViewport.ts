@@ -40,6 +40,7 @@
  */
 
 import type { SpectrumProjection, SpectrumViewportDomain } from "../contracts";
+import { sameRange, sameTransaction, usableRange, type MzAxis, type RangeSelection, type RangeTransaction } from "./rangeSelection";
 
 /**
  * The m/z axis, as a key nothing outside this module can write.
@@ -67,7 +68,7 @@ declare const mzAxis: unique symbol;
  * runtime state: it records which axis these numbers were measured on, and
  * nothing else.
  */
-export interface MzDomain {
+export interface MzDomain extends MzAxis {
   readonly low: number;
   readonly high: number;
   /** The brand. Present in the type system only; no value ever carries it. */
@@ -234,6 +235,7 @@ export type MzProjectionState =
  * no state in which the sequence restarts.
  */
 interface ViewportCounters {
+  readonly selectionRevision: number;
   /** The epoch the next gesture will be given. Never reused. */
   readonly nextEpoch: number;
   /** The generation the next projection request will be given. Never reused. */
@@ -255,16 +257,28 @@ export type SpectrumViewportState =
       /** The committed window. `null` means the whole spectrum. */
       readonly committed: MzDomain | null;
       readonly gesture: MzGesture | null;
+      readonly rangeSelection: MzRangeSelection | null;
       readonly projection: MzProjectionState;
     } & ViewportCounters);
 
 export const initialSpectrumViewportState: SpectrumViewportState = {
   status: "none",
+  selectionRevision: 0,
   nextEpoch: 1,
   nextGeneration: 1,
 };
 
+export type MzRangeSelection = RangeSelection<"mz", MzDomain>;
+export type MzRangeTransaction = RangeTransaction<"mz", MzDomain>;
+
 export type SpectrumViewportEvent =
+  | { readonly type: "selection-changed"; readonly revision: number }
+  | { readonly type: "range-started"; readonly domain: MzDomain }
+  | { readonly type: "range-moved"; readonly transaction: MzRangeTransaction; readonly domain: MzDomain }
+  | { readonly type: "range-released"; readonly transaction: MzRangeTransaction }
+  | { readonly type: "range-confirmed"; readonly proposal: MzRangeSelection }
+  | { readonly type: "range-cancelled"; readonly transaction: MzRangeTransaction }
+  | { readonly type: "input-abandoned" }
   /**
    * A spectrum became the selected one, with Rust's verdict about its domain.
    *
@@ -311,6 +325,9 @@ export function spectrumViewportReducer(
   event: SpectrumViewportEvent,
 ): SpectrumViewportState {
   switch (event.type) {
+    case "selection-changed":
+      return event.revision <= state.selectionRevision ? state : {
+        status: "none", selectionRevision: event.revision, nextEpoch: state.nextEpoch, nextGeneration: state.nextGeneration };
     case "spectrum-selected":
       return selectSpectrum(state, event.spectrumToken, event.domain);
 
@@ -319,6 +336,7 @@ export function spectrumViewportReducer(
         ? state
         : {
             status: "none",
+            selectionRevision: state.selectionRevision,
             // Carried, not restarted: an answer outstanding for the spectrum
             // just cleared must not match a request issued after the next one
             // is selected.
@@ -335,10 +353,35 @@ export function spectrumViewportReducer(
     return state;
   }
   switch (event.type) {
+    case "range-started": {
+      if (!usableRange(state.full) || !usableRange(event.domain)) return state;
+      return { ...state, gesture: null, nextEpoch: state.nextEpoch + 1,
+        rangeSelection: { phase: "drawing", domain: clampMzDomain(event.domain, state.full),
+          transaction: { axis: "mz", epoch: state.nextEpoch, source: state.spectrumToken,
+            selectionRevision: state.selectionRevision, committed: state.committed } } };
+    }
+    case "range-moved": {
+      if (!currentRange(state, event.transaction) || state.rangeSelection?.phase !== "drawing" || !usableRange(event.domain)) return state;
+      const domain = clampMzDomain(event.domain, state.full);
+      return sameRange(domain, state.rangeSelection.domain) ? state : { ...state, rangeSelection: { ...state.rangeSelection, domain } };
+    }
+    case "range-released":
+      return currentRange(state, event.transaction) && state.rangeSelection?.phase === "drawing"
+        ? { ...state, rangeSelection: { ...state.rangeSelection, phase: "pending" } } : state;
+    case "range-confirmed":
+      return currentRange(state, event.proposal.transaction) && state.rangeSelection?.phase === "pending" &&
+        event.proposal.phase === "pending" && sameRange(event.proposal.domain, state.rangeSelection.domain)
+        ? commit(state, committedForm(state.rangeSelection.domain, state.full)) : state;
+    case "range-cancelled":
+      return currentRange(state, event.transaction) ? { ...state, rangeSelection: null } : state;
+    case "input-abandoned":
+      return state.gesture === null && state.rangeSelection?.phase !== "drawing" ? state :
+        { ...state, gesture: null, rangeSelection: state.rangeSelection?.phase === "drawing" ? null : state.rangeSelection };
     case "gesture-started":
       return {
         ...state,
         gesture: { epoch: state.nextEpoch, domain: clampMzDomain(event.domain, state.full) },
+        rangeSelection: null,
         nextEpoch: state.nextEpoch + 1,
       };
 
@@ -370,7 +413,7 @@ export function spectrumViewportReducer(
     case "viewport-step":
       // A deliberate instruction supersedes anything in flight, so its pending
       // settle becomes a stale epoch and can no longer overwrite what follows.
-      return commit(state, committedForm(event.domain, state.full));
+      return usableRange(event.domain) && usableRange(state.full) ? commit(state, committedForm(event.domain, state.full)) : state;
 
     case "viewport-reset":
       return commit(state, null);
@@ -448,12 +491,14 @@ function selectSpectrum(
   // Both counters carry across, and that is what makes a late answer about the
   // previous spectrum unmatchable here: its generation was issued before this
   // spectrum's first request and can never equal one issued after it.
-  const { nextEpoch, nextGeneration } = state;
+  const { nextEpoch, nextGeneration, selectionRevision } = state;
   if (domain.state === "refused") {
-    return { status: "refused", spectrumToken, reason: domain, nextEpoch, nextGeneration };
+    return { status: "refused", spectrumToken, reason: domain, nextEpoch, nextGeneration, selectionRevision };
   }
   return {
     status: "ready",
+    selectionRevision,
+    rangeSelection: null,
     spectrumToken,
     full: mzDomain(domain.low, domain.high),
     // Its own full domain, which is what reset means for this spectrum.
@@ -487,11 +532,19 @@ function commit(
   const unchanged =
     sameDomain(state.committed, committed) &&
     state.gesture === null &&
+    state.rangeSelection === null &&
     state.projection.status !== "loading";
   if (unchanged) {
     return state;
   }
-  return { ...state, committed, gesture: null, projection: { status: "idle" } };
+  return { ...state, committed, gesture: null, rangeSelection: null, nextEpoch: state.nextEpoch + 1,
+    projection: sameDomain(state.committed, committed) ? state.projection : { status: "idle" } };
+}
+
+function currentRange(state: SpectrumViewportState & { readonly status: "ready" }, transaction: MzRangeTransaction): boolean {
+  return state.rangeSelection !== null && sameTransaction(state.rangeSelection.transaction, transaction) &&
+    transaction.axis === "mz" && transaction.source === state.spectrumToken &&
+    transaction.selectionRevision === state.selectionRevision && sameRange(transaction.committed, state.committed);
 }
 
 /** The committed form of a window: clamped, and `null` when it is the source. */

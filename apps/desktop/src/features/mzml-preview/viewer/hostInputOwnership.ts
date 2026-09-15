@@ -58,9 +58,9 @@ export interface KeyModifiers {
 /**
  * Whether the host reserves this wheel event, so no viewport may claim it.
  *
- * Ctrl alone. Shift, Alt and Meta modified wheels have no published WebView zoom
- * meaning and no published meaning here, so inventing one for them would be the
- * guess this module exists to avoid -- in the other direction.
+ * Ctrl alone. M7.3 explicitly maps Shift-wheel to horizontal scientific pan
+ * (ADR 0039 amendment). The shared plot adapter also releases Alt/Meta wheels;
+ * neither is interpreted as host pinch or used to infer a device.
  */
 export function isViewportWheelModifierOwnedByHost(event: WheelModifiers): boolean {
   return event.ctrlKey;

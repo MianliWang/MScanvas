@@ -274,17 +274,17 @@ async function keyTheSpectrum(key: string): Promise<boolean> {
  * browser does with it, which is the actual claim: that a keyboard user moving
  * through this panel is never parked on a picture nothing can be done to.
  *
- * Focus is started from the document body so the walk begins somewhere neutral,
- * and each stop is described by tag plus class so an SVG plot is unmistakable in
- * the trail.
+ * Start at the panel's real export disclosure and stop at its final source
+ * disclosure. A fixed walk from body can end in the roster before reaching the
+ * viewer; the retained M7.3 failure records that false-negative precondition.
  */
-async function tabTrail(steps: number): Promise<string[]> {
-  await browser.execute(() => {
-    (document.activeElement as HTMLElement | null)?.blur();
-    document.body.focus();
-  });
+async function tabTrail(): Promise<string[]> {
+  expect(await browser.execute(() => {
+    const entry = document.querySelector<HTMLElement>(".spectrum-export-disclosure > summary");
+    entry?.focus(); return entry !== null && document.activeElement === entry;
+  })).toBe(true);
   const trail: string[] = [];
-  for (let step = 0; step < steps; step += 1) {
+  for (let step = 0; step < 20; step += 1) {
     await browser.keys(["Tab"]);
     trail.push(
       await browser.execute(() => {
@@ -296,8 +296,12 @@ async function tabTrail(steps: number): Promise<string[]> {
         return classes === "" ? active.tagName.toLowerCase() : `${active.tagName.toLowerCase()}.${classes}`;
       }),
     );
+    if (await browser.execute(() => document.activeElement?.matches(".spectrum-source-details > summary"))) {
+      console.log("M7.3 refreshed M5.2 real Tab trail: " + JSON.stringify(trail));
+      return trail;
+    }
   }
-  return trail;
+  throw Error("Real Tab did not reach the panel's final source disclosure.");
 }
 
 /** Which of the three controls would do something, by their own `disabled`. */
@@ -347,14 +351,11 @@ async function whatIsDrawn(): Promise<{
 /**
  * Waits until the plot is showing a drawing of the range beneath it.
  *
- * `Drawn as` is the one opening the caption uses for a drawing that answers its
- * own axes. A window still being asked for says `Waiting for the drawing`, and a
- * gesture in flight says `Showing the drawing already in hand` -- so waiting on
- * this word waits for the state a case about a settled viewport is about, and
- * never past one a case about an unsettled viewport is about.
+ * M7.3 captions start with the bounded stick count only for a completed drawing.
+ * Loading, failed and live-gesture captions remain distinct.
  */
 async function waitForTheDrawing(): Promise<void> {
-  await browser.waitUntil(async () => (await whatIsDrawn()).caption.startsWith("Drawn as"), {
+  await browser.waitUntil(async () => /^[\d,]+ sticks? ·/u.test((await whatIsDrawn()).caption), {
     timeout: 15_000,
     timeoutMsg: "the viewport never drew the range it committed",
   });
@@ -1258,7 +1259,7 @@ describe("the visible m/z viewport", () => {
           (css: string) => document.querySelector(css)?.getAttribute("tabindex"),
           SPECTRUM_PLOT,
         ),
-      ).toBeNull();
+      ).toBe("-1");
       expect(await keyTheSpectrum("+")).toBe(false);
       expect(await keyTheSpectrum("Home")).toBe(false);
 
@@ -1300,12 +1301,11 @@ describe("the visible m/z viewport", () => {
           "Reset m/z range": false,
         });
 
-        // The claim, by traversal: twenty Tab presses never land on the plot.
-        const trail = await tabTrail(20);
+        // Real traversal through this panel skips only its inert plot.
+        const trail = await tabTrail();
         expect(trail.some((stop) => stop.includes("spectrum-plot"))).toBe(false);
-        // And the walk did reach real controls, so it is not passing because
-        // nothing at all is focusable.
-        expect(trail.some((stop) => stop.startsWith("button"))).toBe(true);
+        // The real source disclosure is reached, so the traversal is not inert.
+        expect(trail.some((stop) => stop.startsWith("summary"))).toBe(true);
         expect(await unexpectedConsole()).toEqual([]);
       });
     }
@@ -1340,7 +1340,7 @@ describe("the visible m/z viewport", () => {
       await openTheSpectrum();
       await waitForTheDrawing();
 
-      const trail = await tabTrail(20);
+      const trail = await tabTrail();
 
       expect(trail.some((stop) => stop.includes("spectrum-plot"))).toBe(true);
       expect(await unexpectedConsole()).toEqual([]);

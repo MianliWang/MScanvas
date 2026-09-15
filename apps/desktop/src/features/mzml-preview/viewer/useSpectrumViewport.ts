@@ -77,11 +77,14 @@ function isGestureFrame(
   if (previous.status !== "ready" || next.status !== "ready") {
     return false;
   }
-  if (previous.gesture === null || next.gesture === null) {
+  const sameDrawing = previous.rangeSelection?.phase === "drawing" && next.rangeSelection?.phase === "drawing" &&
+    previous.rangeSelection.transaction === next.rangeSelection.transaction;
+  const sameGesture = previous.gesture !== null && next.gesture !== null && previous.gesture.epoch === next.gesture.epoch;
+  if (!sameDrawing && !sameGesture) {
     return false;
   }
   return (
-    previous.gesture.epoch === next.gesture.epoch &&
+    previous.selectionRevision === next.selectionRevision &&
     previous.spectrumToken === next.spectrumToken &&
     previous.full === next.full &&
     previous.committed === next.committed &&

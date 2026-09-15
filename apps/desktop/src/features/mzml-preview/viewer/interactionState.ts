@@ -18,6 +18,10 @@
 
 import type { RetentionTimeDomain } from "./scanModel";
 import { clampDomain, isFullDomain, revealDomain } from "./viewport";
+import { sameRange, sameTransaction, usableRange, type RangeSelection, type RangeTransaction } from "./rangeSelection";
+
+export type RetentionTimeSelection = RangeSelection<"rt", RetentionTimeDomain>;
+export type RetentionTimeTransaction = RangeTransaction<"rt", RetentionTimeDomain>;
 
 /**
  * A gesture in progress: a wheel zoom or a drag pan that has not settled.
@@ -99,6 +103,8 @@ export interface ViewerInteractionState {
    */
   readonly committedDomain: RetentionTimeDomain | null;
   readonly gesture: ActiveGesture | null;
+  readonly rangeSelection: RetentionTimeSelection | null;
+  readonly sourceRevision: number;
   readonly selection: Selection | null;
   readonly hover: Hover | null;
   /** The epoch the next gesture will be given. Monotonic, never reused. */
@@ -111,6 +117,8 @@ export const initialViewerInteractionState: ViewerInteractionState = {
   fullDomain: null,
   committedDomain: null,
   gesture: null,
+  rangeSelection: null,
+  sourceRevision: 0,
   selection: null,
   hover: null,
   nextGestureEpoch: 1,
@@ -118,6 +126,12 @@ export const initialViewerInteractionState: ViewerInteractionState = {
 };
 
 export type ViewerEvent =
+  | { readonly type: "range-started"; readonly domain: RetentionTimeDomain }
+  | { readonly type: "range-moved"; readonly transaction: RetentionTimeTransaction; readonly domain: RetentionTimeDomain }
+  | { readonly type: "range-released"; readonly transaction: RetentionTimeTransaction }
+  | { readonly type: "range-confirmed"; readonly proposal: RetentionTimeSelection }
+  | { readonly type: "range-cancelled"; readonly transaction: RetentionTimeTransaction }
+  | { readonly type: "input-abandoned" }
   | { readonly type: "preview-loaded"; readonly fullDomain: RetentionTimeDomain }
   | { readonly type: "preview-closed" }
   /**
@@ -226,6 +240,33 @@ function reduceCore(
   event: ViewerEvent,
 ): ViewerInteractionState {
   switch (event.type) {
+    case "range-started": {
+      if (state.fullDomain === null || !usableRange(state.fullDomain) || !usableRange(event.domain)) return state;
+      return { ...state, gesture: null, hover: null, nextGestureEpoch: state.nextGestureEpoch + 1,
+        rangeSelection: { phase: "drawing", domain: clampDomain(event.domain, state.fullDomain),
+          transaction: { axis: "rt", epoch: state.nextGestureEpoch, source: state.sourceRevision,
+            selectionRevision: state.selection?.revision ?? 0, committed: state.committedDomain } } };
+    }
+    case "range-moved": {
+      if (!currentRange(state, event.transaction) || state.rangeSelection?.phase !== "drawing" ||
+        state.fullDomain === null || !usableRange(event.domain)) return state;
+      const domain = clampDomain(event.domain, state.fullDomain);
+      return sameRange(domain, state.rangeSelection.domain) ? state :
+        { ...state, rangeSelection: { ...state.rangeSelection, domain } };
+    }
+    case "range-released":
+      return currentRange(state, event.transaction) && state.rangeSelection?.phase === "drawing"
+        ? { ...state, rangeSelection: { ...state.rangeSelection, phase: "pending" } } : state;
+    case "range-confirmed": {
+      if (!currentRange(state, event.proposal.transaction) || state.rangeSelection?.phase !== "pending" ||
+        event.proposal.phase !== "pending" || !sameRange(event.proposal.domain, state.rangeSelection.domain) || state.fullDomain === null) return state;
+      return { ...state, committedDomain: committed(state.rangeSelection.domain, state.fullDomain), rangeSelection: null, gesture: null, nextGestureEpoch: state.nextGestureEpoch + 1 };
+    }
+    case "range-cancelled":
+      return currentRange(state, event.transaction) ? { ...state, rangeSelection: null } : state;
+    case "input-abandoned":
+      return state.gesture === null && state.rangeSelection?.phase !== "drawing" ? state :
+        { ...state, gesture: null, rangeSelection: state.rangeSelection?.phase === "drawing" ? null : state.rangeSelection };
     case "preview-loaded":
       // Everything belongs to the preview that was on screen. A range chosen in
       // one run means nothing in another, and a settle still in flight from the
@@ -244,6 +285,8 @@ function reduceCore(
       // this one.
       return {
         fullDomain: event.fullDomain,
+        sourceRevision: state.sourceRevision + 1,
+        rangeSelection: null,
         committedDomain: null,
         gesture: null,
         selection: null,
@@ -255,6 +298,8 @@ function reduceCore(
     case "preview-closed":
       return {
         fullDomain: null,
+        sourceRevision: state.sourceRevision + 1,
+        rangeSelection: null,
         committedDomain: null,
         gesture: null,
         selection: null,
@@ -271,6 +316,7 @@ function reduceCore(
       return {
         ...state,
         gesture: { epoch: state.nextGestureEpoch, domain: clampDomain(event.domain, full) },
+        rangeSelection: null,
         nextGestureEpoch: state.nextGestureEpoch + 1,
       };
     }
@@ -317,14 +363,15 @@ function reduceCore(
       // A keyboard step or a button supersedes anything in flight, for the same
       // reason a selection does: it is a later, deliberate instruction about
       // the same viewport.
-      return { ...state, committedDomain: committed(event.domain, full), gesture: null };
+      if (!usableRange(event.domain) || !usableRange(full)) return state;
+      return { ...state, committedDomain: committed(event.domain, full), gesture: null, rangeSelection: null, nextGestureEpoch: state.nextGestureEpoch + 1 };
     }
 
     case "viewport-reset": {
       if (state.fullDomain === null) {
         return state;
       }
-      return { ...state, committedDomain: null, gesture: null };
+      return { ...state, committedDomain: null, gesture: null, rangeSelection: null, nextGestureEpoch: state.nextGestureEpoch + 1 };
     }
 
     case "selection-committed": {
@@ -336,7 +383,7 @@ function reduceCore(
       const nextSelectionRevision = state.nextSelectionRevision + 1;
       const full = state.fullDomain;
       if (full === null) {
-        return { ...state, selection, nextSelectionRevision, gesture: null };
+        return { ...state, selection, nextSelectionRevision, gesture: null, rangeSelection: null };
       }
       // Precedence, in order, and the order is the contract:
       //
@@ -354,6 +401,7 @@ function reduceCore(
       return {
         ...state,
         selection,
+        rangeSelection: null,
         nextSelectionRevision,
         gesture: null,
         committedDomain: revealed === null ? null : committed(revealed, full),
@@ -378,6 +426,12 @@ function reduceCore(
     case "hover-cleared":
       return state.hover === null ? state : { ...state, hover: null };
   }
+}
+
+function currentRange(state: ViewerInteractionState, transaction: RetentionTimeTransaction): boolean {
+  return state.rangeSelection !== null && sameTransaction(state.rangeSelection.transaction, transaction) &&
+    transaction.axis === "rt" && transaction.source === state.sourceRevision &&
+    transaction.selectionRevision === (state.selection?.revision ?? 0) && sameRange(transaction.committed, state.committedDomain);
 }
 
 /** The committed form of a domain: clamped, and `null` when it is the run. */

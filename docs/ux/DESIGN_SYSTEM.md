@@ -42,6 +42,28 @@ choices use visible 32px controls; Settings actions use 36px controls. The Setti
 surface uses local Segoe UI/CJK fonts, quiet light surfaces and one real Appearance
 category. At constrained heights, its own scroll surface keeps the footer reachable.
 
+### M7.3 viewer consumer mapping
+
+The center stack orders chromatogram, selected spectrum and scans. A small scan
+table grows with its rows; a large one uses a bounded ten-row scrolling region
+with stable headers. Label and SVG sort indicator share one 32px header target,
+with `aria-sort` on its column. Roving row focus has one Tab entry and remains
+distinct from the source-index selection and loaded-result position.
+
+SVG text is counter-scaled to 12 CSS px, including long/signed scientific
+intensity labels positioned inside the plot. This changes text presentation,
+not scientific path geometry. Existing exports and source detail stay in compact
+disclosures. At short heights the lower spectrum is reachable by the evidence
+pane's natural scroll; controls and units are not reduced to fit.
+
+A pending interval is a restrained shaded band and boundaries with one short
+confirm/cancel action. It never animates scientific amplitudes or moves an axis
+before confirmation. There is no persistent mode strip. Keyboard and raw numeric
+paths accompany gestures; reduced motion preserves the same outcomes. Existing
+session Settings controls deliver en/zh-CN viewer messages without remounting
+workspace state. [The M7.3 record](M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md) owns
+rendered/native attribution and publication status.
+
 ### M7.2 consumer mapping
 
 The implemented shell uses a white header, quiet gray background, blue active

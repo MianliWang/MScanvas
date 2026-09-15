@@ -13,6 +13,8 @@
  * intersections, reduced vertices, hover geometry. See `renderGeometry.ts`.
  */
 
+import type { RetentionTimeAxis } from "./rangeSelection";
+
 /** One scan, as everything downstream needs it. */
 export interface ScanPoint {
   /** The row's own spectrum index. What a selection commits. */
@@ -21,8 +23,8 @@ export interface ScanPoint {
    * Where the row sits in the scan table.
    *
    * The table's order and the trace's order are different questions: the table
-   * stays in acquisition order and the trace is drawn by retention time. This
-   * is what makes a tie decidable and what Previous/Next walks.
+   * preserves the provider order and the trace is drawn by retention time.
+   * M7.3 table navigation uses scanTableView; this position remains a source fact.
    */
   readonly tablePosition: number;
   readonly scanNumber: number | null;
@@ -36,10 +38,11 @@ export interface ScanPoint {
 export type TraceKind = "tic" | "bpc";
 
 /** A closed interval on the retention-time axis. */
-export interface RetentionTimeDomain {
+export interface RetentionTimeDomain extends RetentionTimeAxis {
   readonly low: number;
   readonly high: number;
 }
+
 
 /** Why a run has no scientific model this build can present. */
 export type ScanModelRefusal =

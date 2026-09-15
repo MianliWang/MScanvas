@@ -632,7 +632,7 @@ export function PreviewWorkspace() {
               }
             >
               {workspace.spectrumSelection.status === "unavailable"
-                ? workspace.spectrumSelection.message
+                ? t(({ "no-loaded-run": "viewerSelectionEmpty", "backend-unavailable": "viewerSelectionBackend", "backend-changing": "viewerSelectionChecking", "conversion-running": "viewerSelectionConverting" } as const)[workspace.spectrumSelection.reason])
                 : ""}
             </p>
             <div className="viewer-stack">
@@ -676,7 +676,7 @@ export function PreviewWorkspace() {
                       }}
                       type="button"
                     >
-                      Export
+                      {t("viewerExport")}
                     </button>
                   )
                 }
@@ -687,17 +687,6 @@ export function PreviewWorkspace() {
                 readInteraction={workspace.readViewerInteraction}
                 selectionAvailability={workspace.spectrumSelection}
                 traces={workspace.chromatogramTraces}
-              />
-              <SpectrumTable
-                canSelectNext={workspace.canSelectNextScan}
-                canSelectPrevious={workspace.canSelectPreviousScan}
-                onRendered={handleTableRendered}
-                onSelect={workspace.selectSpectrum}
-                onSelectNext={workspace.selectNextScan}
-                onSelectPrevious={workspace.selectPreviousScan}
-                selection={workspace.viewerInteraction.selection}
-                selectionAvailability={workspace.spectrumSelection}
-                table={preview.preview.spectrumTable}
               />
               <SelectedSpectrumPanel
                 committedDomain={workspace.spectrumCommittedDomain}
@@ -722,6 +711,18 @@ export function PreviewWorkspace() {
                 scientificExportBusy={workspace.scientificExportBusy}
                 state={spectrum}
                 viewport={workspace.spectrumViewport}
+              />
+              <SpectrumTable
+                view={workspace.scanTableView}
+                canSelectNext={workspace.canSelectNextScan}
+                canSelectPrevious={workspace.canSelectPreviousScan}
+                onRendered={handleTableRendered}
+                onSelect={workspace.selectSpectrum}
+                onSelectNext={workspace.selectNextScan}
+                onSelectPrevious={workspace.selectPreviousScan}
+                selection={workspace.viewerInteraction.selection}
+                selectionAvailability={workspace.spectrumSelection}
+                table={preview.preview.spectrumTable}
               />
             </div>
           </div>
@@ -982,19 +983,19 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessag
   }
   switch (spectrum.status) {
     case "none":
-      return `${formatCount(preview.preview.spectrumTable.totalRowCount)} spectra loaded. No spectrum selected.`;
+      return t("viewerLoadedNone", { count: preview.preview.spectrumTable.rows.length });
     case "loading":
-      return `Loading spectrum ${formatCount(spectrum.index)}.`;
+      return t("viewerSpectrumLoading", { index: String(spectrum.index) });
     case "loaded":
       // "Loaded", not "rendered". Since M5.2 an admitted spectrum draws nothing
       // until Rust answers a projection for its range, so at the moment this
       // fires there is no drawing -- and a beat later the panel's own region
       // says so. Two live regions in one window contradicting each other about
       // the same spectrum is worse than either of them saying less.
-      return `Spectrum ${formatCount(spectrum.spectrum.index)} loaded, ${formatCount(spectrum.spectrum.pointCount)} points.`;
+      return t("viewerSpectrumLoaded", { index: String(spectrum.spectrum.index), count: spectrum.spectrum.pointCount });
     case "unavailable":
-      return `This run has no spectrum at index ${formatCount(spectrum.requestedIndex)}.`;
+      return t("viewerSpectrumUnavailable", { index: String(spectrum.requestedIndex) });
     case "failed":
-      return `Spectrum ${formatCount(spectrum.index)} could not be loaded. ${spectrum.error.summary}`;
+      return `${t("viewerSpectrumFailed", { index: String(spectrum.index) })}. ${spectrum.error.summary}`;
   }
 }

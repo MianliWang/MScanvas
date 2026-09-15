@@ -203,23 +203,24 @@ describe("what a spectrum viewport is bound to", () => {
     expect(api.spectrumProjectionRequests).toEqual([]);
   });
 
-  it("does not ask again when the same spectrum is redelivered", async () => {
+  it("invalidates the old viewport when the same index is deliberately selected again", async () => {
     const { api, rendered } = await openTheWorkspace();
     await selectAndSettle(rendered, 2);
     await waitFor(() => {
       expect(api.spectrumProjectionRequests).toHaveLength(1);
     });
 
-    // The same row again. `selectSpectrum` drops a repeat of the row already
-    // being read, and even a redelivery of the same token resets nothing -- so
-    // neither route produces a second drawing request.
+    // A deliberate selection is a new revision, even when this fake redelivers
+    // the same token. Old pending work must not survive into this read.
+    const revision = rendered.result.current.spectrumViewport.selectionRevision;
     act(() => {
       rendered.result.current.selectSpectrum(2);
     });
     await act(async () => {
       await Promise.resolve();
     });
-    expect(api.spectrumProjectionRequests).toHaveLength(1);
+    expect(api.spectrumProjectionRequests).toHaveLength(2);
+    expect(rendered.result.current.spectrumViewport.selectionRevision).toBeGreaterThan(revision);
   });
 });
 
