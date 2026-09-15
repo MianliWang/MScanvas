@@ -94,9 +94,36 @@ caught and corrected a harness mistake: mzML is a viewer input, not an admitted
 vendor queue member. Active Clear uses eight lawful RAW copies; staging locks
 target actual RAW/set outputs. The unused long synthetic fixture remains
 retained preparation evidence. The 12-scan synthetic fixture supplies figure
-content checks, not representative scientific evidence. The required SCIEX bundle
-location is pending; no new acquisition download is authorized. One successful
-single-output native run will not be reported as set-native evidence.
+content checks, not representative scientific evidence. The narrowly authorized
+Enolase pair is now available in ignored local storage. Both objects match their
+recorded byte lengths, complete SHA-256 values and pinned Git blob identities:
+2,801,664 plus 1,143,140 bytes, two input objects forming one acquisition.
+Upstream originals are retained separately; the run companion uses the primary's
+capitalization with unchanged bytes. The prior manifest with no SCIEX input and
+the earlier provenance hold remain historical evidence.
+
+The accepted local-only QA basis combines the pinned root Apache-2.0 LICENSE,
+the explicit `pwiz` directory statement in
+[overview.html](https://github.com/ProteoWizard/pwiz/blob/1e4c3abccc05626bc215bcf3fee6ed0e33613360/doc/technical/overview.html)
+(blob `7dd0adab30b23fa27672c4c31c8be02e0d8ecd4b`), exact restoration provenance,
+and the completed ancestor/subtree exception checks. No separate file-specific
+permission letter, redistribution clearance or guaranteed contributor title is
+asserted. Acquisition files and derived outputs remain local and ignored.
+
+The fresh manifest binds the historical M3.11 names
+`Enolase_repeats_AQv1.4.2-20070918_En_01.mzML` through `_10.mzML` and M3.16's
+reader-identified completeness/adoption observations as independent fixture
+guidance. These are not current native acceptance. Scenario 6 now checks the
+actual two-object bundle and one source row separately from ten output members;
+the finalized report, all member names/digests/lengths, and narrow completeness;
+then real UI first/repeat adoption, settled counts, row names/types/identities
+and unchanged outputs. The affected read-only review caught a missing comparison
+between copied inputs and their pinned manifest identities. Both SCIEX paths now
+compare each copy's name, length and full hash before admission; the review closed
+that finding at harness SHA-256
+`19bfe3f6c1f32459578e4d4dbe5687b825c376c3d20538440edda352c25d8c63`.
+The affected e2e typecheck passes; current native execution remains pending.
+Single-output native results cannot replace this set-native evidence.
 
 The planned campaign covers real Fail/Skip conversion, explicit diagnostics
 and adoption; all active Clear choices; single/set staged-file lock/reclaim/replan;
@@ -112,8 +139,10 @@ the frontend artifacts match Build 02 and are reused without modification.
 The local e2e binary is 16,580,096 bytes, SHA-256
 `97b02215700eb2e1fe39c67f52f8b1704b04209ea20ae8a6377528753701d0f9`.
 It is a QA build, not a released artifact. Source, harness and input identities
-are separately checked by the guarded launcher. Fresh readiness has not been
-requested because the necessary SCIEX input location is still missing.
+are separately checked by the guarded launcher. The harness-only delta does not
+rebuild the application: Build 03 is reusable only after its actual build inputs,
+frontend artifacts and binary identities match. Fresh readiness has not been
+requested; the remaining noninteractive preparation precedes that request.
 
 ## Retained failures and attribution
 

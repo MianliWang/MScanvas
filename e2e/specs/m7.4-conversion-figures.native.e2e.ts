@@ -1,7 +1,7 @@
 /** Real Windows/Tauri campaign. Retained acquisition copies and explicitly synthetic mzML. */
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WorkspaceConversionUpdate, WorkspaceRoster } from "../../apps/desktop/src/features/mzml-preview/contracts";
@@ -121,9 +121,37 @@ function source(name: string, original: string) {
 }
 function destination(name: string) { const path = join(output, name); mkdirSync(path); return path; }
 function sciexInput() {
-  const manifest = JSON.parse(readFileSync(join(input!, "inputs.json"), "utf8")) as { sciex?: { file: string; expectedOutputs: string[] } };
-  if (!manifest.sciex?.expectedOutputs.length) throw Error("Required lawful SCIEX input is missing; a single-output run cannot establish set-native acceptance.");
-  return manifest.sciex;
+  const manifest = JSON.parse(readFileSync(join(input!, "inputs.json"), "utf8")) as { version?: number;
+    files?: { file: string; bytes: number; sha256: string }[]; sciex?: {
+    file: string; inputBundleObjectCount: number; inputBundleBytes: number; expectedOutputs: string[];
+    expectedCompleteness: { kind: "established"; method: string; sampleCount: number };
+    expectedFirstAdded: number; expectedRepeatAlready: number;
+    expectedOutputBasis: { independentHistoricalEvidence: { path: string; sha256: string; gitBlob: string }[] };
+  } };
+  const sciex = manifest.sciex;
+  if (manifest.version !== 2 || !sciex || sciex.inputBundleObjectCount !== 2 || sciex.inputBundleBytes !== 3_944_804 ||
+    sciex.expectedOutputs?.length !== 10 || new Set(sciex.expectedOutputs).size !== 10 ||
+    sciex.expectedCompleteness?.kind !== "established" || sciex.expectedCompleteness.method !== "reader_error_audit_v1" ||
+    sciex.expectedCompleteness.sampleCount !== 10 || sciex.expectedFirstAdded !== 10 || sciex.expectedRepeatAlready !== 10 ||
+    !sciex.expectedOutputBasis?.independentHistoricalEvidence.length) {
+    throw Error("Required verified Enolase pair and independently bound ten-member fixture guidance are missing.");
+  }
+  const inputFiles = [sciex.file, sciex.file + ".scan"].map(file => {
+    const entries = manifest.files?.filter(entry => entry.file === file) ?? [];
+    if (entries.length !== 1) throw Error("Each SCIEX run-bundle member needs one pinned file identity.");
+    return entries[0]!;
+  });
+  return { ...sciex, inputFiles };
+}
+function sciexSources(directory: string, sciex: ReturnType<typeof sciexInput>) {
+  const copied = sciex.inputFiles.map(expected => {
+    const path = source(join(directory, expected.file), join(input!, expected.file));
+    const actual = { fileName: basename(path), bytes: statSync(path).size, sha256: digest(path) };
+    record({ kind: "SCIEX source copy identity", expected, actual });
+    expect(actual).toEqual({ fileName: expected.file, bytes: expected.bytes, sha256: expected.sha256 });
+    return { path, ...actual };
+  });
+  return { file: copied[0]!.path, bundle: copied.map(({ path: _path, ...member }) => member) };
 }
 async function start(destinationPath: string, cancel = false) {
   await reveal(CONVERT); await remember(CONVERT);
@@ -264,9 +292,8 @@ describe("M7.4 current native conversion, recovery and figures", function () {
   for (const topology of ["single", "set"] as const) it("recovers real locked " + topology + " staging only after release and starts a fresh reviewed conversion", async () => {
     await clearIdle();
     const sciex = topology === "set" ? sciexInput() : null;
-    const path = sciex ? source("set-lock/" + basename(sciex.file), join(input!, sciex.file))
+    const path = sciex ? sciexSources("set-lock", sciex).file
       : source("M74-lock-recovery.raw", join(input!, "retained-thermo.raw"));
-    if (sciex) source("set-lock/" + basename(sciex.file) + ".scan", join(input!, sciex.file + ".scan"));
     await add(path); await selectOnly([path]);
     const folder = destination("locked-staging-" + topology);
     const stagingName = sciex ? basename(path).replace(/\.wiff$/iu, ".mzML-set.mscanvas-staging") : "M74-lock-recovery.mzML.mscanvas-staging";
@@ -360,16 +387,76 @@ describe("M7.4 current native conversion, recovery and figures", function () {
     record({ kind: "real synthetic scientific outputs", sourceSha256: digest(path), spectrumCurrentRows: data(csv, ","), spectrumFullRows: data(fullCsv, ","), emptyRows: data(emptyCsv, ","), currentRtRows: data(rtCsv, ",") });
   });
 
-  it("refreshes the real SCIEX output-set creation, publication and adoption mechanism", async () => {
+  it("verifies the real SCIEX bundle, complete output set and first/repeat adoption", async () => {
     const sciex = sciexInput();
-    await clearIdle(); const file = source("set-adoption/" + basename(sciex.file), join(input!, sciex.file));
-    source("set-adoption/" + basename(sciex.file) + ".scan", join(input!, sciex.file + ".scan"));
-    await add(file); await selectOnly([file]); await start(destination("sciex-set")); const completed = await terminal();
-    expect(completed.queue.finalizedCount).toBe(1); const item = completed.queue.items[0]!; expect(item.result?.kind).toBe("outputSet");
-    expect(item.finalizedOutputs.map(value => value.fileName).sort()).toEqual([...sciex.expectedOutputs].sort());
-    expect(item.adoption).toEqual({ kind: "notRequested" }); await browser.$(PANEL + " .conversion-adoption button").click();
-    await browser.waitUntil(async () => (await roster()).datasets.length === sciex.expectedOutputs.length + 1);
-    record({ kind: "current real SCIEX set creation and adoption", state: await state(), sourceHash: digest(file) });
+    await clearIdle(); const { file, bundle } = sciexSources("set-adoption", sciex);
+    expect(readdirSync(dirname(file)).sort()).toEqual(bundle.map(value => value.fileName).sort());
+    expect(bundle).toHaveLength(sciex.inputBundleObjectCount);
+    expect(bundle.reduce((bytes, member) => bytes + member.bytes, 0)).toBe(sciex.inputBundleBytes);
+    await add(file); const sourceRoster = await roster();
+    expect(sourceRoster.datasets).toHaveLength(1);
+    const acquisition = sourceRoster.datasets[0]!;
+    expect(acquisition).toMatchObject({ fileName: basename(file), sourceKind: "sciex_wiff", byteLength: sciex.inputBundleBytes });
+    record({ kind: "current SCIEX input bundle and independent fixture guidance", bundle, sourceRoster, guidance: sciex });
+    await selectOnly([file]); const folder = destination("sciex-set"); await start(folder); const completed = await terminal();
+    const expectedNames = [...sciex.expectedOutputs].sort(), memberCount = expectedNames.length;
+    expect(completed).toMatchObject({ reason: "completed", queue: { itemCount: 1, finalizedCount: 1, failedCount: 0, adoptableOutputCount: memberCount } });
+    expect(completed.queue.items).toHaveLength(1);
+    const item = completed.queue.items[0]!;
+    expect(item).toMatchObject({ datasetHandle: acquisition.handle, sourceKind: "sciex_wiff", state: "finalized", attempts: 1,
+      output: { kind: "backendNamedSet", maxMembers: 24 }, process: { kind: "settled", termination: "exited", exitCode: 0 }, staged: { kind: "published" } });
+    if (item.result?.kind !== "outputSet") throw Error("The SCIEX acquisition did not return a real output-set report.");
+    const report = item.result.report;
+    expect(report).toMatchObject({ datasetHandle: acquisition.handle, sourceKind: "sciex_wiff", groupOutcome: "fully_finalized",
+      memberCount, finalizedCount: memberCount, validatedNotPublishedCount: 0, rejectedCount: 0, notPublishedCount: 0,
+      boundSourceObjects: sciex.inputBundleObjectCount, partial: null, stagingResidue: null, completeSetAdoptable: true,
+      validationMode: "output_only", completeness: sciex.expectedCompleteness });
+    expect(report.members.map(member => member.fileName).sort()).toEqual(expectedNames);
+    expect(item.finalizedOutputs.map(value => value.fileName).sort()).toEqual(expectedNames);
+    expect(new Set(item.finalizedOutputs.map(value => value.outputId)).size).toBe(memberCount);
+    expect(readdirSync(folder, { withFileTypes: true }).filter(entry => entry.isFile()).map(entry => entry.name).sort()).toEqual(expectedNames);
+    const outputs = report.members.map(member => {
+      const path = join(folder, member.fileName), measured = { fileName: member.fileName, byteLength: statSync(path).size, sha256: digest(path) };
+      expect(member.state).toBe("finalized");
+      expect(member.output?.byteLength).toBe(measured.byteLength); expect(member.output?.sha256.toLowerCase()).toBe(measured.sha256);
+      expect(member.validation).toMatchObject({ mode: "output_only", fullyVerified: false });
+      return measured;
+    });
+    expect(item.adoption).toEqual({ kind: "notRequested" }); expect(await roster()).toEqual(sourceRoster);
+    expect(await browser.$(PANEL + " .conversion-adoption").getText()).toContain("10 converted mzML outputs are ready to add");
+    const callStart = (await calls()).length, adoptButton = browser.$(PANEL + " .conversion-adoption button");
+    let firstAdoptionRoster: WorkspaceRoster | undefined;
+    for (const phase of ["first", "repeat"] as const) {
+      await adoptButton.waitForEnabled(); await adoptButton.click();
+      const added = phase === "first" ? sciex.expectedFirstAdded : 0;
+      const alreadyInWorkspace = phase === "repeat" ? sciex.expectedRepeatAlready : 0;
+      await browser.waitUntil(async () => {
+        const current = await state();
+        const adoption = current.status === "terminal" ? current.queue.items[0]?.adoption : null;
+        return adoption?.kind === "settled" && adoption.added === added && adoption.alreadyInWorkspace === alreadyInWorkspace;
+      });
+      const adopted = await state(), currentRoster = await roster();
+      record({ kind: "current SCIEX " + phase + " adoption", state: adopted, roster: currentRoster, outputs });
+      if (adopted.status !== "terminal") throw Error("Adoption replaced the terminal SCIEX queue.");
+      expect(adopted.operationId).toBe(completed.operationId);
+      expect(adopted.queue.items[0]).toMatchObject({ attempts: 1, runIdentity: item.runIdentity, result: item.result,
+        finalizedOutputs: item.finalizedOutputs, adoption: { kind: "settled", added, alreadyInWorkspace, refused: 0, refusals: [] } });
+      await expect(browser.$(PANEL + " .conversion-adoption-summary")).toHaveText(`${added} added, ${alreadyInWorkspace} already in the workspace, 0 not added.`);
+      expect(currentRoster.datasets).toHaveLength(memberCount + 1);
+      expect(new Set(currentRoster.datasets.map(dataset => dataset.handle)).size).toBe(memberCount + 1);
+      expect(currentRoster.datasets.filter(dataset => dataset.sourceKind === "sciex_wiff")).toEqual(sourceRoster.datasets);
+      expect(currentRoster.datasets.filter(dataset => dataset.sourceKind === "mzml").map(dataset => dataset.fileName).sort()).toEqual(expectedNames);
+      for (const measured of outputs) {
+        expect(currentRoster.datasets.find(dataset => dataset.fileName === measured.fileName)?.byteLength).toBe(measured.byteLength);
+        expect(digest(join(folder, measured.fileName))).toBe(measured.sha256);
+      }
+      if (phase === "first") firstAdoptionRoster = currentRoster;
+      else expect(currentRoster).toEqual(firstAdoptionRoster);
+      await capture("06-native-sciex-" + phase + "-adoption");
+    }
+    const adoptionCalls = (await calls()).slice(callStart).filter(call => call.command === "adopt_workspace_conversion_outputs");
+    expect(adoptionCalls).toHaveLength(2);
+    expect(adoptionCalls.map(call => call.args.operationId)).toEqual([completed.operationId, completed.operationId]);
   });
 
   it("delegates file and folder actions to the actual Windows handler and records OS acceptance honestly", async () => {
