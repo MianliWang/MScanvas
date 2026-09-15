@@ -365,6 +365,35 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await capture("numeric-wheel-pan-reduced-motion");
     await cdp("Emulation.setEmulatedMedia", { features: [] });
   });
+  for (const axis of ["rt", "mz"] as const) for (const format of ["csv", "tsv"] as const) {
+    it(`preserves ${axis} ${format} data-export focus without admitting duplicate activation`, async () => {
+      await open("complete", { width: 1366, height: 768, dpr: 1.5 });
+      await clickPlot(RT, .4); await browser.$(MZ).waitForDisplayed();
+      const panel = axis === "rt" ? ".chromatogram-panel" : ".spectrum-panel";
+      await browser.$(axis === "rt" ? "#chromatogram-export-toggle" : ".spectrum-export-disclosure summary").click();
+      const command = axis === "rt" ? "save_chromatogram_export" : "save_selected_spectrum_export";
+      const begin = axis === "rt" ? "begin_chromatogram_export" : "begin_selected_spectrum_export";
+      await holdInvoke(command); await setInvokeResult(command, { status: "cancelled" });
+      const initiator = browser.$(panel).$("button=Export " + format.toUpperCase() + "…");
+      await initiator.click(); await browser.waitUntil(async () => await heldCallers(command) === 1);
+      expect(await initiator.isFocused()).toBe(true);
+      expect(await initiator.getAttribute("aria-disabled")).toBe("true");
+      expect(await initiator.isEnabled()).toBe(true);
+      const count = (await ipcCalls()).filter(call => call.command === begin).length;
+      await browser.keys("Enter");
+      expect((await ipcCalls()).filter(call => call.command === begin)).toHaveLength(count);
+      expect(await browser.$(panel).$("button=Export " + (format === "csv" ? "TSV" : "CSV") + "…").isEnabled()).toBe(false);
+      await capture(axis + "-" + format + "-export-busy");
+      // TSV also proves that settling does not take focus from a later choice.
+      const later = browser.$(panel + ' input[value="current"]');
+      if (format === "tsv") await later.click();
+      await releaseInvokeHold(command);
+      await browser.waitUntil(async () => await initiator.getText() === "Export " + format.toUpperCase() + "…");
+      expect(await (format === "tsv" ? later : initiator).isFocused()).toBe(true);
+      expect(await initiator.getAttribute("aria-disabled")).toBeNull();
+      await capture(axis + "-" + format + "-export-cancelled");
+    });
+  }
   it("cancels emulated touch on vertical travel and multiple contacts without committing", async () => {
     await open("complete", { width: 960, height: 640, dpr: 2 });
     await cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 2 });

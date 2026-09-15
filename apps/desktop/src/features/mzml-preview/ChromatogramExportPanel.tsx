@@ -285,10 +285,13 @@ export function ChromatogramExportPanel({
               // Closed while any scientific export is running, for the same one
               // lane. Not closed by a figure setting, because none of them
               // reaches a data document, and not by a hidden trace either.
-              disabled={scientificExportBusy}
+              // Preserve the current data initiator for natural native return.
+              // Every other action remains natively disabled by the shared lane.
+              aria-disabled={scientificExportBusy || undefined}
+              disabled={scientificExportBusy && !(running && exportState.operation === format)}
               key={format}
               onClick={() => {
-                onExport(format);
+                if (!scientificExportBusy) onExport(format);
               }}
               type="button"
             >

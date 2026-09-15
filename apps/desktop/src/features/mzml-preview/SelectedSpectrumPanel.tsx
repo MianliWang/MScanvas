@@ -98,8 +98,12 @@ function SpectrumExportActions(props: SelectedSpectrumPanelProps) {
     </fieldset>
     <fieldset className="spectrum-data-actions"><legend>{t("viewerData")}</legend>
       <div className="spectrum-export-actions">
-        {(["csv", "tsv"] as const).map(format => <button className="secondary-button" disabled={scientificExportBusy}
-          key={format} onClick={() => onExport(format)} type="button">
+        {(["csv", "tsv"] as const).map(format => <button className="secondary-button"
+          // Keep the current data initiator focusable across its native picker.
+          // The lane still refuses repeat activation, including keyboard clicks.
+          aria-disabled={scientificExportBusy || undefined}
+          disabled={scientificExportBusy && !(running && exportState.operation === format)}
+          key={format} onClick={() => { if (!scientificExportBusy) onExport(format); }} type="button">
           {t(running && exportState.operation === format ? "viewerExporting" : "viewerExportFormat", { name: format.toUpperCase() })}
         </button>)}
       </div>

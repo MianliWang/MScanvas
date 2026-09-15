@@ -218,6 +218,19 @@ describe("selected spectrum export affordance", () => {
     );
   });
 
+  it.each(["csv", "tsv"] as const)("keeps the running %s data action focusable while refusing another activation", (operation) => {
+    const { onExport } = renderPanel(loaded(), { status: "running", operation, namesVisibleRun: true });
+    const running = screen.getByRole("button", { name: `Exporting ${operation.toUpperCase()}…` });
+    running.focus();
+    expect(running).toHaveFocus();
+    expect(running).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(running);
+    expect(onExport).not.toHaveBeenCalled();
+    for (const format of ["svg", "png", "csv", "tsv"].filter(format => format !== operation)) {
+      expect(screen.getByRole("button", { name: `Export ${format.toUpperCase()}…` })).toBeDisabled();
+    }
+  });
+
   it("closes every action for an export that outlived the spectrum it names", () => {
     /*
      * An export begun on one spectrum and still being written when the user

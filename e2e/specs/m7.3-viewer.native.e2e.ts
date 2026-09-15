@@ -45,6 +45,8 @@ async function capture(label: string, validate = true) {
     const box = (node: Element) => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
     return { css: { width: innerWidth, height: innerHeight }, dpr: devicePixelRatio, language: document.documentElement.lang,
       focus: { hasFocus: document.hasFocus(), element: document.activeElement?.outerHTML },
+      scanQuery: (document.querySelector('.spectrum-table-panel input[type="search"]') as HTMLInputElement | null)?.value,
+      scanRows: [...document.querySelectorAll(".spectrum-table-panel [data-source-index]")].map(node => node.getAttribute("data-source-index")),
       plots: [...document.querySelectorAll("svg.chromatogram-svg,svg.spectrum-plot")].map(node => ({ ...box(node), labels:
         [...node.querySelectorAll("text")].map(label => ({ text: label.textContent, ...box(label), font: getComputedStyle(label).fontSize })) })),
       body: document.body.innerText, trace: Reflect.get(window, "__m73NativeTrace") ?? [],
@@ -161,11 +163,12 @@ describe("M7.3 real native viewer and committed exports", function () {
       await browser.waitUntil(() => browser.execute(v => innerWidth === v.width && innerHeight === v.height, viewport));
       await browser.execute(() => {
         const trace: unknown[] = []; Reflect.set(window, "__m73NativeTrace", trace);
-        for (const type of ["pointerdown", "pointerup", "pointercancel", "lostpointercapture", "click", "dblclick", "wheel", "keydown"]) {
+        for (const type of ["pointerdown", "pointerup", "pointercancel", "lostpointercapture", "click", "dblclick", "wheel", "keydown", "input", "change"]) {
           document.addEventListener(type, event => {
-            if (!(event.target instanceof Element) || !event.target.closest("svg.chromatogram-svg,svg.spectrum-plot")) return;
+            if (!(event.target instanceof Element) || !event.target.closest("svg.chromatogram-svg,svg.spectrum-plot,.spectrum-table-panel")) return;
             trace.push({ type, trusted: event.isTrusted, time: performance.now(), target: event.target.getAttribute("class"),
-              pointerId: "pointerId" in event ? event.pointerId : null, key: "key" in event ? event.key : null });
+              pointerId: "pointerId" in event ? event.pointerId : null, key: "key" in event ? event.key : null,
+              inputValue: event.target instanceof HTMLInputElement ? event.target.value : null });
           }, true);
         }
       });
@@ -195,8 +198,14 @@ describe("M7.3 real native viewer and committed exports", function () {
     await browser.waitUntil(async () => await browser.$("#selected-spectrum-summary").getText() === "Spectrum 7, MS2, 12 points.");
     await browser.$("#spectrum-viewport-status").waitForExist();
     await browser.waitUntil(async () => (await reads()).some(call => call.command === "project_selected_spectrum"));
-    await browser.$(SCANS + " input[type=search]").setValue("");
+    // A protocol clear with no following text left this controlled search unchanged
+    // in the real WebView. Exercise actual keyboard deletion and assert its result.
+    await browser.$(SCANS + " input[type=search]").click();
+    await browser.keys(["Control", "a"]); await browser.keys("Backspace");
+    await browser.waitUntil(async () => await browser.$(SCANS + " input[type=search]").getValue() === "" &&
+      (await browser.$(SCANS).getText()).includes("12 matches / 12 loaded rows / 12 reported spectra"));
     await browser.$(row(7) + ' [role="gridcell"]:nth-child(6)').click();
+    await browser.waitUntil(async () => await browser.$("#selected-spectrum-summary").getText() === "Spectrum 7, MS2, 12 points.");
     const before = (await reads()).filter(call => call.command === "load_selected_spectrum").length;
     await browser.keys("End"); expect(await browser.execute(() => document.activeElement?.getAttribute("data-source-index"))).toBe("0");
     expect((await reads()).filter(call => call.command === "load_selected_spectrum")).toHaveLength(before);

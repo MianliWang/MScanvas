@@ -26,6 +26,7 @@ import {
   shimadzuDataset,
 } from "../test/previewFixtures";
 import { App } from "./App";
+import { blurAsABrowserWould } from "../test/browserFocus";
 
 /** Enough scans that a range can hold some of them and not others. */
 const SCAN_COUNT = 200;
@@ -669,6 +670,32 @@ describe("what the chromatogram can be exported as", () => {
     await waitFor(() => {
       expect(button("Export TSV…").disabled).toBe(false);
     });
+  });
+
+  it.each(["csv", "tsv"] as const)("keeps the %s initiator focusable and respects a later focus choice on cancellation", async (format) => {
+    let release: (() => void) | null = null;
+    const preview = api({ chromatogramExport: () => new Promise(resolve => {
+      release = () => resolve({ status: "cancelled" });
+    }) });
+    await openTheViewer(preview);
+    openExport();
+    const initiator = button(`Export ${format.toUpperCase()}…`);
+    initiator.focus();
+    fireEvent.click(initiator);
+    await waitFor(() => expect(preview.chromatogramExportRequests).toHaveLength(1));
+    if (initiator.disabled) blurAsABrowserWould(initiator);
+    expect(initiator).toHaveFocus();
+    expect(initiator).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(initiator);
+    expect(preview.chromatogramExportRequests).toHaveLength(1);
+
+    const later = within(panel()).getByRole("radio", { name: "Current range" });
+    later.focus();
+    act(() => release?.());
+    await waitFor(() => expect(exportStatus()).toContain("Export cancelled"));
+    expect(button(`Export ${format.toUpperCase()}…`)).toBe(initiator);
+    expect(initiator).not.toHaveAttribute("aria-disabled");
+    expect(later).toHaveFocus();
   });
 
   it("copies the plot through the same lane and says what was copied", async () => {
