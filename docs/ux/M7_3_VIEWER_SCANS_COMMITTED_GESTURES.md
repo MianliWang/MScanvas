@@ -2,7 +2,7 @@
 
 Status: **implemented; browser checks, static product repair review and 3/3
 targeted current-build native scenarios pass**. Protected publication and final
-head/check/closeout identities are recorded in [PR #123](https://github.com/MianliWang/MScanvas/pull/123)
+head/check/closeout identities belong to [PR #123](https://github.com/MianliWang/MScanvas/pull/123)
 and the retained local closeout; local acceptance alone is not publication.
 Baseline: `e0b8fb101c29e78aeb6d99fda4b5ce5d58d6997c` (M7.2 / PR #121).
 Baseline tree: `a6b642b5946a5dda981e3e7eada866675a00e1ba`.
@@ -290,9 +290,10 @@ localhost exemption.
 
 ## Evidence and publication
 
-Current-build native acceptance is established. Final reviewed-head binding,
-protected true merge, natural-main Frontend/Rust/Repository quality and ff-only
-local closeout are recorded in the task PR and retained local record. A merge
+Current-build native acceptance is established. At that checkpoint, final
+reviewed-head binding and publication remained pending. Protected true merge,
+natural-main Frontend/Rust/Repository quality and ff-only local closeout identities
+belong to the task PR and retained local record. A merge
 request or green candidate check alone does not establish publication.
 M7.4 remains NEXT / NOT STARTED. M7 remains IN PROGRESS; no beta, installer, tag or
 public release is built by this slice. M6 and the post-M6 XIC interlude remain

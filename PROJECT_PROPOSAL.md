@@ -663,8 +663,8 @@ M7.3 implements loaded-scan search/sort and explicit range confirmation in the
 existing bilingual viewer. Browser checks, static product repair review and 3/3
 targeted Build 05 native scenarios pass at measured 150% Windows scaling.
 Its [implementation record](docs/ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md)
-binds source/build/harness evidence; PR #123 and the retained closeout record
-carry protected publication, natural-main CI and local synchronization identities.
+binds source/build/harness evidence; protected publication, natural-main CI and
+local synchronization identities belong to PR #123 and the retained closeout record.
 M7.4 remains next and not started. This source slice builds or releases no public beta.
 
 ### M8 — Artifact, run and QC foundation
