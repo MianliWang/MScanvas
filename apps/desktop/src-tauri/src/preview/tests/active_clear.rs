@@ -5,6 +5,32 @@ use crate::preview::dto::{
 };
 
 #[test]
+fn active_clear_stop_barrier_requires_the_current_attempt_cancellation_request() {
+    let cancellation = ConversionCancellation::new();
+    let (mut slot, operation, attempt) = running_two_item_slot(cancellation.request_handle());
+    assert!(!slot.current_attempt_cancellation_requested_for_test(operation));
+    let StopAccepted::Requested(Some(request)) = slot.request_clear_stop().unwrap() else {
+        panic!("the running attempt has a cancellation request")
+    };
+    assert!(slot.stop_requested(operation));
+    assert!(
+        !slot.current_attempt_cancellation_requested_for_test(operation),
+        "the recorded stop alone must not release the parked runner"
+    );
+    assert!(!cancellation.request_handle().is_requested());
+
+    request.request();
+    assert!(slot.current_attempt_cancellation_requested_for_test(operation));
+    assert!(!slot.current_attempt_cancellation_requested_for_test(operation + 1));
+    slot.release_attempt(operation, 0, attempt);
+    assert!(cancellation.request_handle().is_requested());
+    assert!(
+        !slot.current_attempt_cancellation_requested_for_test(operation),
+        "a settled attempt cannot satisfy the barrier through an old token"
+    );
+}
+
+#[test]
 fn active_clear_captures_nonmembers_and_never_removes_waiting_queue_members() {
     let fixture = TestFile::new("active-clear-nonmembers");
     let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
@@ -167,7 +193,7 @@ fn exercise_clear_stop(ending: StopEnding, add_while_waiting: bool) {
             )
         })
     };
-    service.wait_for_clear_stop_for_test(operation);
+    service.wait_for_clear_cancellation_request_for_test(operation);
     assert_eq!(
         service.roster().datasets.len(),
         2,

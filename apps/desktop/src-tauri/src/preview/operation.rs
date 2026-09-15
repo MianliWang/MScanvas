@@ -1780,6 +1780,14 @@ impl ConversionSlot {
         self.operation == operation && self.stop_requested
     }
 
+    #[cfg(test)]
+    pub(super) fn current_attempt_cancellation_requested_for_test(&self, operation: u64) -> bool {
+        self.stop_requested(operation)
+            && self.current_attempt.as_ref().is_some_and(|current| {
+                current.operation == operation && current.request.is_requested()
+            })
+    }
+
     /// How long ago the stop was accepted, for the attempt that is settling.
     pub(super) fn stop_requested_ago(&self, operation: u64) -> Option<Duration> {
         if self.operation != operation {

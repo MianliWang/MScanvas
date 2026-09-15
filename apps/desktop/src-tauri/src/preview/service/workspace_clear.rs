@@ -17,18 +17,21 @@ pub(super) struct ClearPlan {
 
 impl PreviewService {
     #[cfg(test)]
-    pub(in crate::preview) fn wait_for_clear_stop_for_test(&self, operation: u64) {
+    pub(in crate::preview) fn wait_for_clear_cancellation_request_for_test(&self, operation: u64) {
         let mut slot = self.conversion_slot();
         let deadline = Instant::now() + Duration::from_secs(5);
-        while !slot.stop_requested(operation) {
+        while !slot.current_attempt_cancellation_requested_for_test(operation) {
             let remaining = deadline.saturating_duration_since(Instant::now());
             assert!(
                 !remaining.is_zero(),
-                "clear records its stop before waiting"
+                "clear requests cancellation before the parked attempt is released"
             );
+            // Recording the slot stop notifies before the actual request. The
+            // token update has no notification, so recheck it while yielding
+            // the slot lock, within the original overall deadline.
             let (next, _) = self
                 .conversion_changed
-                .wait_timeout(slot, remaining)
+                .wait_timeout(slot, remaining.min(Duration::from_millis(10)))
                 .unwrap();
             slot = next;
         }

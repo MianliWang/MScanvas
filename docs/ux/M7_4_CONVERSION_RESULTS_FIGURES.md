@@ -60,10 +60,13 @@ and must not be added to their totals. Raw evidence remains ignored under
 | Bilingual layout and keyboard | Browser run 07: 9 passing scenarios across 1920×1080, 1366×768, 1200×800 and 960×640; DPR 1/1.5/1.25/2, both densities, reduced motion; invalid-width scope and cleanup focus verified | Actual host scale/native composition |
 | Conversion focus / #122 | Before-failing foreground obligation; stable mounted frame, current commit facts, user-intent and detached Settings-owner controls; latest affected suite passes | Native cancelled destination picker and published issue disposition |
 
-The final Rust all-target/all-feature run passed: desktop **944 passed,
+The latest Rust workspace/all-target run, using CI's default features, passed:
+desktop **945 passed,
 14 ignored**; ProteoWizard **513 passed, 9 ignored**; plot **125 passed**.
 Other workspace crates/integration suites are reported separately in the log;
-a nested one-test child execution is not an extra test. Clippy, fmt, frontend
+a nested one-test child execution and the focused seven-test Clear suite are
+not extra totals. The retained pre-PR all-feature run passed 944 desktop tests
+before the added cancellation-barrier control. Clippy, fmt, frontend
 lint/typecheck, e2e typecheck and the frontend build pass. The frontend build
 retains its existing large-bundle warning. Repository validation passes.
 
@@ -102,16 +105,33 @@ PNG dimensions/DPI/chunk CRCs, current/full/empty CSV/TSV and sampled clipboard
 image evidence; and actual OS file/folder outcomes. Handler launches are
 intentional. Clipboard sampling does not establish every pixel's content.
 
-Build 02 uses unchanged production inputs during compilation, digest
-`6439f9bb9039e0cdeebe1d978b329a93c76929f82bb8eb3150d8b43f2dac3095`.
+Build 03 uses unchanged inputs during compilation, digest
+`a4c086cbfa04401fa88a933ce0d824b330f44742bd21e24b26ddde00b0bf4cd2`.
+This conservative inventory includes the test sources changed by the CI repair;
+the frontend artifacts match Build 02 and are reused without modification.
 The local e2e binary is 16,580,096 bytes, SHA-256
-`c9fd086306b0b2164f79f644d3c9a318de2c3bf12345d2832021d78bcafdc6ac`.
+`97b02215700eb2e1fe39c67f52f8b1704b04209ea20ae8a6377528753701d0f9`.
 It is a QA build, not a released artifact. Source, harness and input identities
 are separately checked by the guarded launcher. Fresh readiness has not been
 requested because the necessary SCIEX input location is still missing.
 
 ## Retained failures and attribution
 
+- PR Rust run [34953173614](https://github.com/MianliWang/MScanvas/actions/runs/34953173614),
+  attempt 1, failed on candidate `e49546401be3ef2654687f478774065b34cef8d5`:
+  desktop **943 passed, 1 failed, 14 ignored**. The active-Clear stale-plan
+  test observed zero cancellations where it expected one. Its test barrier
+  waited for the slot's stop flag, which is published before the actual
+  cancellation request; a released runner can therefore finish naturally.
+  The repair waits for the current attempt's actual request in `cfg(test)`,
+  with bounded rechecks under the original 5-second deadline. A controlled
+  negative/positive test separates the recorded flag from the actual token
+  and rejects another operation or a settled attempt. Production ordering,
+  natural-completion semantics and all prior result assertions remain intact.
+  This confirms a reachable test race; the CI log did not capture enough
+  thread timing to establish that failed attempt's exact schedule.
+  The affected read-only review found no remaining blocker in this test-only
+  delta; the seven Clear cases and the CI-configured local workspace run pass.
 - Original #122 natural-main failure: run **34844821499**, attempt **1**;
   attempt 2 passing is not a repair. Its historical root cause remains
   **undetermined**. Controlled foreground/commit and detached-owner failures
