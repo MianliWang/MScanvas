@@ -1,7 +1,9 @@
 # M7.3 — Viewer, scans and committed gestures
 
-Status: **implemented; local browser checks and static repair review complete;
-current-build native acceptance and protected publication pending**.
+Status: **implemented; browser checks, static product repair review and 3/3
+targeted current-build native scenarios pass**. Protected publication and final
+head/check/closeout identities are recorded in [PR #123](https://github.com/MianliWang/MScanvas/pull/123)
+and the retained local closeout; local acceptance alone is not publication.
 Baseline: `e0b8fb101c29e78aeb6d99fda4b5ce5d58d6997c` (M7.2 / PR #121).
 Baseline tree: `a6b642b5946a5dda981e3e7eada866675a00e1ba`.
 Branch: `feat/m7.3-viewer-scans-committed-gestures`.
@@ -45,6 +47,12 @@ No dependency, provider, query, raw-reader, scientific algorithm or bound change
 The 100,000-row transfer and 1,800-point projection ceilings remain authoritative.
 Exports retain source tokens and consume committed ranges, never table filters
 or pending overlays. M7.4–M7.6 and XIC remain outside this slice.
+
+While a CSV/TSV export naming the visible source runs, its initiating button
+remains focusable with `aria-disabled` and a busy-handler guard. Other export
+actions stay natively disabled. This preserves native dialog return without a
+focus-restoration effect or admitting duplicate export. A later deliberate focus
+choice is preserved; replacing the visible source removes the exception.
 
 Numeric sorting uses canonical facts; identifier sorting uses deterministic raw
 UTF-16 string order. Missing/nonfinite values stay last in either direction;
@@ -93,12 +101,14 @@ zero-span cases pass (four cases, `m52-tab-repaired-04.log`).
 | --- | --- |
 | Frontend checks | `pnpm lint`, `pnpm typecheck`, `pnpm test` pass; 81 test files / 1,820 tests in `full-tests-04.log`, unchanged default worker/timeouts |
 | Final label-layer consumer | Existing Chromatogram suite passes 106/106 after the intensity-text paint-order repair (`label-layer-consumer-01.log`) |
+| Data-export focus repair | Four discriminating tests fail before repair; 74 affected export/lane tests pass afterward. Four RT/m/z × CSV/TSV browser cases pass in `browser-export-focus-01.log`, session `ecb17d188cad22ff687c7d7089eeee56`; these are separate from the retained 12-case campaign |
 | Build | `pnpm e2e:build` passes, including `pnpm build`; existing QA features only, no installer/release configuration claim |
 | Harness | `pnpm e2e:typecheck` passes, including exact initiating-control focus assertions and a pre-session readiness guard |
 | Repository | `python -B scripts/check_repo.py` and full-slice `git diff --check` pass |
 | Rust reuse | 83 Rust/build inputs hash-match retained M7.2 evidence; fmt/clippy/test exits 0, 1,556 passed / 23 ignored without double-counting nested tests. Fresh remote Rust CI remains required |
 | Browser production composition | 12 cases pass in `browser-08.log`, Chrome 152.0.7977.84, session `f2e6d953e07b5fbced6d65f55c36eec6`, artifacts `browser/browser-yQ9C0j/` |
 | Historical Tab consumer | Four real Tab cases pass, session `ca5673ca6d4f43ffa69fbfd4518c5d6f`; no claim to rerun the whole historical viewer campaign |
+| Native runtime | Build 05, real provider with synthetic mzML, 3/3 scenarios; session `a3cbaae0df271ba93d925f1d1c2ab98f`, `native-Wpi2HI/`, direct exit 0 |
 | Serial isolated reversions | Pointerup-commits, displayed-index substitution and stale-context acceptance each fail discriminating tests; baseline and each byte-restored copy pass. Writer tree untouched; hashes retained in `falsification-01/evidence.json` |
 
 Browser inputs are deterministic synthetic IPC with WebDriver/CDP dispatch.
@@ -133,7 +143,13 @@ repairs at implementation commit
 `cdf022e6f1f2cee509526c10a0759de90c8840cb4be7a461638fe8e436a12d33`;
 all 460 entries were unchanged before/after review. They report no remaining
 production P1/P2 finding. Their inspection of primary logs is not independent
-runtime execution. Final-head binding and native evidence remain pending.
+runtime execution. Subsequent affected-delta reviews bind the product repair to
+`6416843888c3c5b847ef48b7922afd8de7adc2e6`, tree
+`2230e33b5f4671d9759ab94c620bb189d66b4068`, with no substantive finding.
+All 460 source entries and nine supplied evidence entries matched before/after;
+source manifest `02f9ffe504764ff743ebca5273ca8fc3b3752884fabe1b2e4ac17c877c309227`.
+Final harness/documentation successor dispositions are retained with the PR
+head binding. Reviewers inspect primary runtime evidence; they do not execute it.
 
 Three reproduced P2 findings were repaired with before-failing/after-passing
 regressions: modified double-click reset, unrelated-render loss of the live m/z
@@ -172,48 +188,112 @@ used the wrong filename; the failed bookkeeping output is retained, corrected
 readback matches production inputs, and build 02 has complete before/after
 evidence. The existing Vite large-chunk warning remains unmodified.
 
-## Current-build native checkpoint
+## Current-build native acceptance
 
-Fresh user readiness is required before starting the GUI and has not yet been
-received. No native M7.3 acceptance is claimed. The owned launcher checks the
-recorded reply, exact production/binary hashes, current driver compatibility,
-free ports 5494/5495 and absence of another native process before invoking WDIO.
-The M7.3 `beforeSession` guard also rejects missing readiness before creating the
-application session. It does not replace the operator's actual readiness check.
+The user explicitly supplied readiness and renewed it during the concentrated
+session. Every invocation retains a launch record, log, direct exit and evidence
+directory. The launcher checks actual production/binary hashes, compatible
+drivers, free ports 5494/5495 and absence of surviving task processes. No forced
+foreground activation or post-picker click/focus rescue supplies acceptance.
 
-The current QA binary (build 04) is 16,237,568 bytes, SHA256
-`1371193285b22c61e52db693e7402ab2af1fca9bec7305b895c36e5e45a67c79`.
-Production-input manifest SHA256:
-`2d956eabcecdd5c143b623b6bace09821070f0dd1c9e480a27e1d9c453d003f3`.
-JS `index-BW4-JIxF.js` is 899,071 bytes, SHA256
-`78c13d51de21a78f7d4c12b95bac4cda88e0044da8bb6bf904d30fb115a2f997`;
-CSS `index-BN5qMi-u.css` is 55,966 bytes, SHA256
-`ecaa40b87d7f4eac0319b3a21bd2c8ce534346a5585c86f9e4cfceb933714c5d`.
-Source inputs were unchanged during the build. Subsequent harness/documentation
-changes are separately hashed; they are not represented as a rebuilt binary.
+The passing invocation is `native-launch-20260915T030154512Z`, evidence
+`native-Wpi2HI/`, session `a3cbaae0df271ba93d925f1d1c2ab98f`: **3/3 pass,
+exit 0**. PID 25504, HWND 44307282, Windows DPI 144 (150%), CSS client
+1366x768 and physical client/raster 2049x1152 were measured. WebView2 and its
+driver are 152.0.4191.66. Post-run inventory shows no task application/driver
+or listener on either port.
 
-The new fixture generator explicitly labels synthetic mzML: 12 scans, 12 known
-points per scan. A console-only real ProteoWizard `msaccess` precheck accepted it
-and returned all 12 rows; fixture SHA256
+Build 05 follows the genuine data-export focus repair. Its executable is
+16,237,568 bytes, SHA256
+`c5125b75bfb9200987b4b7b034bacbe40c89b87ea0497e7ad84b70c9487278f1`;
+174 production inputs have manifest SHA256
+`317bb0f2c29bff6f234f5834d85cff88414365b93bf8418cf06d233cfdae26f8`.
+JS `index-fdOAguGE.js` is 899,177 bytes, SHA256
+`64effaa231be728e311aa3bfd15ebe536ac656093ae36042b08335709be0cdee`;
+CSS `index-Ch0K6k7k.css` is 56,042 bytes, SHA256
+`b7e3feab2d8ecbdb6e29e4a13714e1b4cc8a54e8285b162268362c6aa22a8e45`.
+The before/after manifests were captured on `eb82d74...` with the three product
+file repairs present, then committed unchanged as `6416843888c3c5b847ef48b7922afd8de7adc2e6`.
+Later harness/documentation changes do not imply a rebuild. Build 04 and all
+failed runs remain archived.
+
+Passing native specification SHA256:
+`bde4d014f6bb027c9b9589022778bb2592fcf51e2fbfc24af192b4b230bfed98`;
+save helper SHA256:
+`4e069714496f3e60b135d606c52b84824d5601795408a475a47ab2c93689889e`.
+The native evidence records all four helper hashes. The owned PowerShell 7
+launcher SHA256 is
+`6595698cd6ce22bf890a95d4491818776cf829fe8cdc06bd77405ae0c6d22b89`.
+
+Synthetic mzML contains 12 scans with 12 known float64 points per scan; unchanged
+source SHA256:
 `f2b9b64c50db79ba816f7b71daeb03e3c359dd77d32064f33ed70a45bed3de09`.
-The current provider emits raw RT values in multiples of 60 and raw identifiers
-such as `0.1.8`; the UI still reports unknown units because that table supplies
-none. This precheck is not native application acceptance.
+The real admitted ProteoWizard provider reads it. Its raw table RT values are
+multiples of 60 and identifiers include `0.1.8`; missing units stay unreported.
+No private acquisition, eight-scan browser illustration or reduced plot serves
+as independent expected science.
 
-The prepared native path uses real admitted reading and retained exports, no IPC
-response replacement. It records PID/HWND/current Windows DPI/CSS/raster,
-WebDriver input and raw capture/cancel ordering, exact picker-trigger natural
-return, source hash and current/pending/full CSV requests/content for both axes.
-The injected cancellation event is explicitly untrusted; it is not a physical
-device claim. One initial foreground click is permitted; no post-picker focus
-rescue may supply a passing observation.
+The passing chain establishes search/sort without spectrum reads, row-body and
+keyboard activation of exact source indices, both axes' pending/confirm/Escape
+boundary, m/z wheel/middle pan, host-modifier and Tab checks. Every plot input
+point passes a DOM hit test. Actual pending and committed screenshots accompany
+request/event records. WebDriver pointer input is trusted in the WebView; the
+injected cancellation remains explicitly untrusted, with no physical-touch claim.
+
+| Real CSV operation | Canonical range and observed retained output |
+| --- | --- |
+| m/z current while pending | committed 200–550; eight points from source index 7, including intensity -40 at m/z 200 |
+| m/z after explicit confirmation | 287.49809460890674–374.88157973975586; exactly (300, 800) and (350, 336) |
+| m/z full | null requested bounds; all 12 original points, independent of pending/current projection |
+| RT current while pending | committed 60–600; source indices 1–10 |
+| RT after explicit confirmation | 194.9649628774789–329.78519707936044; source indices 4 and 5 |
+| RT full | null requested bounds; all 12 original rows, RT `60 * index`, TIC `452 * (index + 1)`, BPC `100 * (index + 1)` |
+
+Each axis keeps one retained export token across current/confirmed/full requests.
+All six files retain their full content, byte counts and hashes in native JSON.
+Six saves, one save cancellation and the source picker return naturally to the
+exact initiating DOM control while the owned application is foreground. Cancel
+writes no file; source bytes are unchanged. Console and external-resource lists
+are empty at every capture. Raw application URLs use `http://tauri.localhost`;
+the separately classified local IPC uses `http://ipc.localhost`, not a broad
+localhost exemption.
+
+### Retained native failures and repairs
+
+- Two prelaunch failures exposed PowerShell 5.1 UTF-8 JSON decoding and its
+  native-stderr error handling. Explicit UTF-8 and the already-installed
+  PowerShell 7 launcher repair were reviewed; no GUI was created by those attempts.
+- Sessions `7597ad8431b330fef03456058b581259` and
+  `d4bb1a84f67c67eaef38ea6fb654ef63` failed the initial foreground guard.
+  The observed foreground was Chrome; the user reported no initial click.
+  These failures establish no scenario result or locked-desktop diagnosis.
+- Session `180927cedf45c7f86f58aca647e63851` retained search `0.1.8` after
+  protocol clearing, so End correctly stayed on its sole result. Actual keyboard
+  deletion plus empty-query/12-row/read-settled preconditions repair the harness;
+  the underlying reason protocol clearing failed remains undetermined.
+- Session `ca8dc43137bb3277c39a9a71b43b6b4c` reproduced product focus loss to the
+  Light radio after a successful CSV save. Keeping the guarded active data action
+  focusable repairs the consumer; Build 05 and the affected tests/browser cases
+  refresh its evidence without changing the shared Conversion focus utility.
+- Session `24e276c97319171b38dc262659edfa05` refused a later save-control guard.
+  Diagnostic session `28d0ca3d3940fa74ae2ca4c97d61889d` identified the cause:
+  UIA AutomationId `1` matched a virtual file-list item, HWND 0, before the real
+  owned Save Button. The helper now locates the unique visible native Button by
+  resource ID and bridges its HWND, retaining ownership checks and refusal.
+- Session `ff614747bf523833eda80428e69cb1e9` passed m/z exports and first RT save,
+  then exposed a missing RT pending precondition. Installed WDIO's wheel-at-(0,0)
+  scrolling left the RT plot clipped inside the workbench. Element scrolling,
+  per-input hit tests and positive pending assertions repair the harness.
+  These helper/spec changes preserve production inputs and all original
+  scientific/focus assertions and timeouts. Harness typecheck and PowerShell
+  parsing pass; the final native run above supplies the affected runtime proof.
 
 ## Evidence and publication
 
-Current-build native acceptance, final reviewed-head binding, protected true
-merge, natural-main Frontend/Rust/Repository quality and ff-only local closeout
-remain pending. Exact object/run/attempt/checkpoint identities belong to the task
-PR and retained local record. Unpublished implementation is not delivery on main.
+Current-build native acceptance is established. Final reviewed-head binding,
+protected true merge, natural-main Frontend/Rust/Repository quality and ff-only
+local closeout are recorded in the task PR and retained local record. A merge
+request or green candidate check alone does not establish publication.
 M7.4 remains NEXT / NOT STARTED. M7 remains IN PROGRESS; no beta, installer, tag or
 public release is built by this slice. M6 and the post-M6 XIC interlude remain
 complete with the non-admission branch: no XIC provider admitted and no

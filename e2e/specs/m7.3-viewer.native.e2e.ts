@@ -72,11 +72,22 @@ async function capture(label: string, validate = true) {
   }
   return state;
 }
+async function scrollPlot(selector: string) {
+  // WDIO's wheel-at-(0,0) scroll targets the outer document, not this nested
+  // workbench scroller. DOM scrolling establishes visibility without focus.
+  await browser.execute(css => document.querySelector(css)!.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }), selector);
+}
 async function point(selector: string, fraction: number) {
-  return browser.execute((css, part) => {
+  const target = await browser.execute((css, part) => {
     const node = document.querySelector(css)!, r = node.getBoundingClientRect(), mz = node.classList.contains("spectrum-plot");
-    return { x: Math.round(r.x + r.width * ((mz ? 8 : 64) + (mz ? 984 : 924) * part) / 1000), y: Math.round(r.y + r.height * .45) };
+    const x = Math.round(r.x + r.width * ((mz ? 8 : 64) + (mz ? 984 : 924) * part) / 1000), y = Math.round(r.y + r.height * .45);
+    const hit = document.elementFromPoint(x, y);
+    return { x, y, hitPlot: hit !== null && node.contains(hit), hitClass: hit?.getAttribute("class"),
+      rect: { x: r.x, y: r.y, width: r.width, height: r.height } };
   }, selector, fraction);
+  evidence.push({ kind: "plot input hit test", selector, fraction, ...target }); saveEvidence();
+  expect(target.hitPlot).toBe(true);
+  return { x: target.x, y: target.y };
 }
 async function clickPlot(selector: string, fraction: number) {
   await browser.performActions([{ type: "pointer", id: "m73-native-pointer", parameters: { pointerType: "mouse" }, actions: [
@@ -85,7 +96,7 @@ async function clickPlot(selector: string, fraction: number) {
   ] }]); await browser.releaseActions();
 }
 async function drag(selector: string, from: number, to: number, button = 0, release = true) {
-  await browser.$(selector).scrollIntoView({ block: "center" });
+  await scrollPlot(selector);
   await browser.performActions([{ type: "pointer", id: "m73-native-pointer", parameters: { pointerType: "mouse" }, actions: [
     { type: "pointerMove", duration: 0, origin: "viewport", ...await point(selector, from) }, { type: "pointerDown", button },
     { type: "pointerMove", duration: 120, origin: "viewport", ...await point(selector, to) },
@@ -149,7 +160,9 @@ describe("M7.3 real native viewer and committed exports", function () {
       const owned = metrics(); dpi = owned.dpi;
       evidence.push({ kind: "current build and synthetic fixture", capabilities, owned, binarySha256: digest(owned.executable), fixture, sourceSha,
         sourceHead: process.env.MSCANVAS_M73_SOURCE_HEAD, productionSha256: process.env.MSCANVAS_M73_PRODUCTION_SHA,
-        fixtureGeneratorSha256: digest(resolve(REPO, "e2e/support/m73NativeFixture.ts")), harnessSha256: digest(fileURLToPath(import.meta.url)) }); saveEvidence();
+        fixtureGeneratorSha256: digest(resolve(REPO, "e2e/support/m73NativeFixture.ts")), harnessSha256: digest(fileURLToPath(import.meta.url)),
+        nativeHelperSha256: Object.fromEntries(["save-dialog", "choose-workspace-files", "m7.1-window-metrics", "m7.1-size-window"]
+          .map(name => [name, digest(resolve(HERE, "../native/" + name + ".ps1"))])) }); saveEvidence();
       expect(realpathSync(owned.executable)).toBe(realpathSync(resolve(REPO, "target/e2e/release/mscanvas-desktop.exe")));
       expect(digest(owned.executable)).toBe(process.env.MSCANVAS_M73_BINARY_SHA);
       expect(capabilities["browserName"]).toBe("webview2");
@@ -213,7 +226,7 @@ describe("M7.3 real native viewer and committed exports", function () {
     await browser.waitUntil(async () => (await browser.$("#selected-spectrum-summary").getText()).startsWith("Spectrum 0,"));
     await browser.$(row(7) + ' [role="gridcell"]:nth-child(8)').click();
     await browser.waitUntil(async () => (await browser.$("#selected-spectrum-summary").getText()).startsWith("Spectrum 7,"));
-    await browser.$(MZ).scrollIntoView({ block: "center" }); await capture("02-native-source-index-seven");
+    await scrollPlot(MZ); await capture("02-native-source-index-seven");
   });
   it("keeps bands pending until a fresh confirmation and preserves committed ranges on Escape and cancellation", async () => {
     await edit("mz", "200", "550"); await browser.waitUntil(async () => await browser.$("#spectrum-viewport-status").getText() === "");
@@ -235,14 +248,15 @@ describe("M7.3 real native viewer and committed exports", function () {
     evidence.push({ kind: "untrusted DOM pointercancel following trusted WebDriver capture; not physical device input" });
     await browser.releaseActions();
     expect(await browser.$(".spectrum-panel .plot-pending-actions").isExisting()).toBe(false);
-    await browser.$(MZ).scrollIntoView({ block: "center" }); const at = await point(MZ, .5), beforeWheel = await reads();
+    await scrollPlot(MZ); const at = await point(MZ, .5), beforeWheel = await reads();
     await browser.performActions([{ type: "wheel", id: "m73-native-wheel", actions: [{ type: "scroll", origin: "viewport", ...at, deltaX: 0, deltaY: -120, duration: 120 }] }]);
     await browser.releaseActions(); await browser.waitUntil(async () => (await reads()).length === beforeWheel.length + 1);
     await drag(MZ, .5, .4, 1); await browser.waitUntil(async () => (await reads()).length === beforeWheel.length + 2);
     await clickPlot(MZ, .5); const host = await reads(); await browser.keys(["Control", "+"]); await browser.keys(["Control", "0"]);
     expect(await reads()).toEqual(host); await browser.keys("Tab");
     expect(await browser.execute(css => document.activeElement?.matches(css), MZ)).not.toBe(true);
-    await edit("rt", "60", "600"); await drag(RT, .2, .7); await browser.keys("Escape");
+    await edit("rt", "60", "600"); await drag(RT, .2, .7);
+    await browser.$(".chromatogram-panel .plot-pending-actions").waitForDisplayed(); await browser.keys("Escape");
     expect(await browser.$(".chromatogram-panel .plot-pending-actions").isExisting()).toBe(false);
     await capture("05-native-input-ownership");
   });
@@ -268,11 +282,17 @@ describe("M7.3 real native viewer and committed exports", function () {
     expect(fullMz.rows).toEqual(M73_MZ.map((mz, index) => [mz, M73_INTENSITY[index] * 8]));
     expect(new Set([pendingMz.request.args.exportToken, narrowedMz.request.args.exportToken, fullMz.request.args.exportToken]).size).toBe(1);
     await browser.$(".spectrum-export-disclosure summary").click();
-    await drag(RT, .25, .5); await browser.$("#chromatogram-export-toggle").click();
+    const beforeRtGesture = await reads();
+    await drag(RT, .25, .5);
+    await browser.$(".chromatogram-panel .plot-pending-actions").waitForDisplayed();
+    expect(await reads()).toEqual(beforeRtGesture); await capture("09b-native-rt-pending");
+    await browser.$("#chromatogram-export-toggle").click();
     await browser.$('input[name="chromatogram-range-scope"][value="current"]').click();
     const pendingRt = await csv("rt", "10-rt-current-while-pending"); expect(pendingRt.request.args.range).toEqual({ scope: "current", low: 60, high: 600 });
     expect(pendingRt.rows.map(row => row[0])).toEqual(Array.from({ length: 10 }, (_, index) => index + 1));
     await browser.$("#chromatogram-export-toggle").click(); await browser.$(".chromatogram-panel .plot-pending-actions button:first-child").click();
+    expect(await browser.$(".chromatogram-panel .plot-pending-actions").isExisting()).toBe(false);
+    await capture("10b-native-rt-confirmed");
     await browser.$("#chromatogram-export-toggle").click();
     const narrowedRt = await csv("rt", "11-rt-confirmed-current"), range = narrowedRt.request.args.range as { low: number; high: number };
     expect(range.low).toBeGreaterThan(60); expect(range.high).toBeLessThan(600);

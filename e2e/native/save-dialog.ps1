@@ -188,10 +188,19 @@ function Assert-OwnedControl {
   $controlOwner = 0
   [void] [MSCanvasSaveDialog.Native]::GetWindowThreadProcessId($dialogHandle, [ref] $dialogOwner)
   [void] [MSCanvasSaveDialog.Native]::GetWindowThreadProcessId($controlHandle, [ref] $controlOwner)
+  $isChild = [MSCanvasSaveDialog.Native]::IsChild($dialogHandle, $controlHandle)
+  $observedId = [MSCanvasSaveDialog.Native]::GetDlgCtrlID($controlHandle)
+  $result.controlChecks += [ordered]@{
+    expectedId = $Id; observedId = $observedId; dialogHandle = $dialogHandle.ToInt64()
+    controlHandle = $controlHandle.ToInt64(); dialogOwner = $dialogOwner; controlOwner = $controlOwner
+    isChild = $isChild; automationId = $Control.Current.AutomationId; className = $Control.Current.ClassName
+  }
   if ($controlHandle -eq [IntPtr]::Zero -or $dialogOwner -ne $ApplicationProcessId -or
       $controlOwner -ne $ApplicationProcessId -or
-      -not [MSCanvasSaveDialog.Native]::IsChild($dialogHandle, $controlHandle) -or
-      [MSCanvasSaveDialog.Native]::GetDlgCtrlID($controlHandle) -ne $Id) {
+      -not $isChild -or $observedId -ne $Id) {
+    $result.detail = 'The native save control ownership or resource ID check failed.'
+    $result.controls = Get-OwnedControlEvidence -Dialog $Dialog
+    $result | ConvertTo-Json -Depth 5 -Compress
     throw 'The native save control ownership or resource ID check failed.'
   }
 }
@@ -231,6 +240,29 @@ function Find-FileName {
   return $edit
 }
 
+function Find-ActionButton {
+  param($Dialog, [string] $Id)
+  if ($ApplicationProcessId -eq 0) { return Find-ById -Dialog $Dialog -AutomationId $Id }
+
+  # File-list UIItems also expose automation IDs 1 and 2 with no native HWND.
+  # Select the exact dialog's unique visible native Button by resource ID,
+  # then bridge that HWND without accepting a same-ID virtual list item.
+  $matches = @([MSCanvasSaveDialog.Native]::OwnedControls([IntPtr] $Dialog.Current.NativeWindowHandle, $ApplicationProcessId) | Where-Object {
+    $_.id -eq [int] $Id -and $_.className -ceq 'Button' -and $_.visible
+  })
+  if ($matches.Count -gt 1) { throw 'More than one exact owned action button was found.' }
+  if ($matches.Count -eq 0) { return $null }
+  $handle = [IntPtr] $matches[0].handle
+  $button = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
+  if ($null -eq $button -or $button.Current.ProcessId -ne $ApplicationProcessId -or
+      [IntPtr] $button.Current.NativeWindowHandle -ne $handle) {
+    throw 'The action button UIA bridge did not retain its verified native identity.'
+  }
+  Assert-OwnedControl -Dialog $Dialog -Control $button -Id ([int] $Id)
+  $result.buttonLookup = 'exact native Button/resource ID bridged to UIA'
+  return $button
+}
+
 function Get-OwnedControlEvidence {
   param($Dialog)
   $nativeControls = @([MSCanvasSaveDialog.Native]::OwnedControls([IntPtr] $Dialog.Current.NativeWindowHandle, $ApplicationProcessId))
@@ -252,6 +284,7 @@ $result = [ordered]@{
   named    = $false
   invoked  = $false
   detail   = ''
+  controlChecks = @()
 }
 
 $controlsDeadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -316,7 +349,7 @@ if ($ApplicationProcessId -ne 0) {
   $ready = $false
   $buttonId = if ($Action -eq 'save') { '1' } else { '2' }
   do {
-    $button = Find-ById -Dialog $dialog -AutomationId $buttonId
+    $button = Find-ActionButton -Dialog $dialog -Id $buttonId
     $valuePattern = $null
     $edit = if ($Action -eq 'save') { Find-FileName -Dialog $dialog } else { $null }
     $hasValuePattern = $null -ne $edit -and $edit.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref] $valuePattern)
@@ -372,7 +405,7 @@ if ($Action -eq 'save') {
 }
 
 $buttonId = if ($Action -eq 'save') { '1' } else { '2' }
-$button = Find-ById -Dialog $dialog -AutomationId $buttonId
+$button = Find-ActionButton -Dialog $dialog -Id $buttonId
 if ($null -eq $button) {
   $result.detail = "the dialog carried no control with automation id $buttonId"
   $result | ConvertTo-Json -Compress
