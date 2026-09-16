@@ -85,7 +85,14 @@ actual separate columns. These preparation repairs do not claim native success.
 
 The current harness uses the owned application PID/HWND and the host's actual
 scale, with no scale cycle, IPC mocks or post-picker focus rescue. It is guarded
-by fresh operator readiness. No M7.4 native window has been launched yet.
+by actual operator readiness. The initial reply was received on 2026-09-15;
+the user's 2026-09-16 retry explicitly authorized automating the initial owned
+window click. One exact PID/HWND/binary-bound software mouse click now establishes
+foreground and document focus. Its temporary task-window TOPMOST setup is removed
+before business scenarios. It is not physical-device evidence or a post-picker
+focus recovery path. The matching owned Microsoft driver and actual WebView2
+child both run version 153.0.4234.32; original readiness and identity records
+remain in ignored local evidence.
 
 Prepared inputs are task-owned copies: the retained Thermo acquisition
 (78,309 bytes, SHA-256 `b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe152bd6dd7b`)
@@ -122,7 +129,7 @@ between copied inputs and their pinned manifest identities. Both SCIEX paths now
 compare each copy's name, length and full hash before admission; the review closed
 that finding at harness SHA-256
 `19bfe3f6c1f32459578e4d4dbe5687b825c376c3d20538440edda352c25d8c63`.
-The affected e2e typecheck passes; current native execution remains pending.
+The affected e2e typecheck passes; complete set-native acceptance remains pending.
 Single-output native results cannot replace this set-native evidence.
 
 The planned campaign covers real Fail/Skip conversion, explicit diagnostics
@@ -139,10 +146,42 @@ the frontend artifacts match Build 02 and are reused without modification.
 The local e2e binary is 16,580,096 bytes, SHA-256
 `97b02215700eb2e1fe39c67f52f8b1704b04209ea20ae8a6377528753701d0f9`.
 It is a QA build, not a released artifact. Source, harness and input identities
-are separately checked by the guarded launcher. The harness-only delta does not
-rebuild the application: Build 03 is reusable only after its actual build inputs,
-frontend artifacts and binary identities match. Fresh readiness has not been
-requested; the remaining noninteractive preparation precedes that request.
+are separately checked by the guarded launcher. Build 03 and its frontend are
+retained locally as the artifacts of the failed native attempts. The diagnostics
+focus repair below changes production frontend bytes. Build 04 completed with
+inputs unchanged during compilation, inventory digest
+`45fed3d2d37d6ae65dd1c28fea13f2ea5397b0e21973c94d7e5a583e2c89d083`,
+and a 16,580,096-byte QA binary with SHA-256
+`1fe841c2b72100ccb65dddf8cdecb2b59b95b2d89060d1966ab2a2ad913e58bd`.
+Its native acceptance remains pending; Build 03 cannot qualify that repair.
+
+## Native diagnostics focus repair
+
+The first run that successfully completed automated initial input passed the original initial focus guard,
+then failed destination-picker cancellation with another foreground process and
+an unfocused document. Its root cause remains **undetermined**. A later run with
+read-only foreground sampling passed that cancellation, but this retry does not
+explain or erase the previous failure.
+
+That instrumented run observed one real finalized Thermo output and one honest
+pre-existing-name failure. Saving diagnostics then returned to the exact app
+window with the document focused, but the active element was `body`. The export
+button used native `disabled` while saving, which removes the initiating control
+from the browser focus path. This is distinct from the earlier foreground loss.
+
+The repair keeps only a locally initiated in-flight diagnostics button natively
+focusable. `aria-disabled` and the activation guard refuse repeated requests.
+Recovered exports started by another document retain native disabled behavior.
+The existing App-level focus test now checks duplicate rejection as well;
+52 focused tests in two files pass. One new real-Chrome browser regression checks
+focus through the held synthetic IPC save, repeated click/Enter rejection and
+completion. It passes with no application console entries. The prior nine-case
+browser campaign is retained without an unrelated rerun. These checks do not
+qualify Windows Save return; the repaired native build must do that directly.
+
+No whole native business scenario has passed yet. Real active Clear, both lock
+topologies, scientific figure/data/clipboard content, complete SCIEX set adoption
+and Windows opening outcomes remain mandatory before protected publication.
 
 ## Retained failures and attribution
 

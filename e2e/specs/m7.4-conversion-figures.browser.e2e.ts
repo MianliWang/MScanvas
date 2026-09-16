@@ -188,6 +188,33 @@ describe("M7.4 conversion, recovery and export composition", () => {
     await expect(entry).toBeFocused();
   });
 
+  it("keeps the diagnostics initiator focused and refuses duplicate export while saving", async () => {
+    await open(); await conversion();
+    const base = queueUpdate();
+    const busy = { ...base, sequence: 3, diagnostics: { ...base.diagnostics, exporting: true } };
+    const saved = { ...base, sequence: 4, diagnostics: { ...base.diagnostics, lastExport: {
+      operationId: "m74-queue", retryRound: 0, fileName: "synthetic-diagnostics.json",
+      byteLength: 2048, sha256: "A".repeat(64), diagnosticItemCount: 1,
+    } } };
+    await setInvokeResult("begin_workspace_conversion_diagnostics_export", { reservationId: "m74-diagnostics" });
+    await setInvokeResult("get_workspace_conversion_state", busy);
+    await setInvokeResult("save_workspace_conversion_diagnostics", saved);
+    await holdInvoke("save_workspace_conversion_diagnostics");
+    const action = browser.$(".conversion-diagnostics button");
+    await action.scrollIntoView({ block: "center" }); await action.click();
+    await browser.waitUntil(async () => await heldCallers("save_workspace_conversion_diagnostics") === 1);
+    await expect(action).toHaveAttribute("aria-disabled", "true");
+    await expect(action).toBeEnabled(); await expect(action).toBeFocused();
+    await action.click(); await browser.keys("Enter");
+    expect((await ipcCalls()).filter(call => call.command === "begin_workspace_conversion_diagnostics_export")).toHaveLength(1);
+    expect(await heldCallers("save_workspace_conversion_diagnostics")).toBe(1);
+    await capture("diagnostics-initiator-preserved");
+    await setInvokeResult("get_workspace_conversion_state", saved);
+    await releaseInvokeHold("save_workspace_conversion_diagnostics");
+    await expect(action).not.toHaveAttribute("aria-disabled"); await expect(action).toBeFocused();
+    await expect(browser.$(".conversion-diagnostics-summary")).toHaveText(expect.stringContaining("Saved synthetic-diagnostics.json"));
+  });
+
   it("deduplicates opening, reports no association and permits explicit folder recovery", async () => {
     await open(); await conversion();
     const group = browser.$(".output-open-actions");

@@ -679,6 +679,10 @@ function ExportDiagnostics({
 }): ReactElement | null {
   const t = useUiMessages();
   const { diagnosticItemCount, diagnosticsExport } = conversion;
+  const startedHere = useRef(false);
+  useLayoutEffect(() => {
+    if (!conversion.exportingDiagnostics) startedHere.current = false;
+  }, [conversion.exportingDiagnostics]);
 
   // Nothing to diagnose. No control, no explanation and no empty state: the
   // queue's own result already says what happened to each item, and an action
@@ -718,15 +722,19 @@ function ExportDiagnostics({
           : t("m74CnvManyDiagnostics", { count: diagnosticItemCount })}
       </p>
       <div className="conversion-actions">
-        {/* Left mounted and disabled rather than replaced while it runs.
-            Removing the control a keyboard user just activated would drop focus
-            to the document and announce nothing; the live region above is what
-            tells them the work finished. */}
+        {/* Keep the native picker initiator focusable while its export runs.
+            Native disabled drops focus to the document in WebView2, so use
+            aria-disabled and the activation guard for this in-flight action. */}
         <button
           aria-describedby="conversion-diagnostics-scope"
+          aria-disabled={!conversion.canExportDiagnostics || undefined}
           className="secondary-button"
-          disabled={!conversion.canExportDiagnostics}
-          onClick={conversion.exportDiagnostics}
+          disabled={!conversion.canExportDiagnostics && !(conversion.exportingDiagnostics && startedHere.current)}
+          onClick={() => {
+            if (!conversion.canExportDiagnostics) return;
+            startedHere.current = true;
+            conversion.exportDiagnostics();
+          }}
           type="button"
         >{t("m74CnvDiagnosticsAction")}</button>
       </div>

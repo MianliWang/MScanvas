@@ -324,10 +324,14 @@ describe("saving conversion diagnostics", () => {
     await waitFor(() => {
       expect(within(panel).getByText("Saving diagnostics…")).toBeVisible();
     });
-    // Left mounted and disabled rather than replaced. Removing the control a
-    // keyboard user just activated would drop focus to the document.
-    expect(within(panel).getByRole("button", { name: EXPORT_LABEL })).toBeDisabled();
+    // WebView2 drops focus when native disabled is applied. Keep this initiator
+    // focusable while aria-disabled and the handler refuse repeated activation.
+    expect(within(panel).getByRole("button", { name: EXPORT_LABEL })).toBeEnabled();
+    expect(action).toHaveAttribute("aria-disabled", "true");
     expect(document.activeElement).toBe(action);
+    fireEvent.click(action);
+    fireEvent.click(action);
+    expect(api.diagnosticsExportRequests).toEqual(["1"]);
     // No fraction of anything: the file is written in one go.
     expect(panel.textContent ?? "").not.toMatch(/\d+\s*%/);
 
@@ -338,6 +342,7 @@ describe("saving conversion diagnostics", () => {
       ).toBeVisible();
     });
     expect(within(panel).getByRole("button", { name: EXPORT_LABEL })).toBeEnabled();
+    expect(action).not.toHaveAttribute("aria-disabled");
     expect(document.activeElement).toBe(action);
   });
 
