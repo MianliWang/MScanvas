@@ -105,9 +105,58 @@ async function add(path: string) {
 async function selectOnly(paths: string[]) {
   await workbench(); await showRoster();
   const names = paths.map(path => basename(path));
-  for (const dataset of (await roster()).datasets) {
-    const checkbox = browser.$(ROWS + '[data-handle="' + dataset.handle + '"] input[type="checkbox"]');
-    if (await checkbox.isSelected() !== names.includes(dataset.fileName)) await checkbox.click();
+  const datasets = (await roster()).datasets;
+  await browser.execute(() => {
+    const root = document.querySelector<HTMLElement>(".grouped-roster")!, trace: unknown[] = [];
+    const events = ["pointerdown", "focusin", "scroll", "pointerup", "click", "change"];
+    const listener = (event: Event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const row = target?.closest<HTMLElement>("[data-handle]");
+      if (trace.length < 2048) trace.push({ event: event.type, time: performance.now(), handle: row?.dataset.handle,
+        checked: target instanceof HTMLInputElement ? target.checked : null, scrollTop: root.scrollTop,
+        row: row?.getBoundingClientRect().toJSON() });
+    };
+    for (const event of events) root.addEventListener(event, listener, { capture: true, passive: true });
+    Reflect.set(window, "__m74StopMembershipTrace", () => {
+      for (const event of events) root.removeEventListener(event, listener, true);
+      return trace;
+    });
+  });
+  try {
+    for (const dataset of datasets) {
+      const rowSelector = ROWS + '[data-handle="' + dataset.handle + '"]';
+      const selector = rowSelector + ' input[type="checkbox"]';
+      const checkbox = browser.$(selector), checked = names.includes(dataset.fileName);
+      if (await checkbox.isSelected() !== checked) {
+        await reveal(rowSelector);
+        const point = await browser.execute(async css => {
+          const control = document.querySelector<HTMLInputElement>(css)!;
+          const row = control.closest<HTMLElement>("[data-handle]")!, root = control.closest<HTMLElement>(".grouped-roster")!;
+          const before = row.getBoundingClientRect();
+          await new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+          const after = row.getBoundingClientRect(), bounds = root.getBoundingClientRect();
+          const rect = control.getBoundingClientRect();
+          const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+          return { x, y, hit: document.elementFromPoint(x, y) === control, checked: control.checked,
+            stable: Math.abs(before.top - after.top) <= 1 && Math.abs(before.bottom - after.bottom) <= 1,
+            wholeRowVisible: after.top >= bounds.top - 1 && after.bottom <= bounds.bottom + 1 };
+        }, selector);
+        record({ kind: "native membership click target", handle: dataset.handle, fileName: dataset.fileName, intended: checked, point });
+        expect(point.hit).toBe(true); expect(point.stable).toBe(true); expect(point.wholeRowVisible).toBe(true); await checkbox.click();
+        await browser.waitUntil(async () => await checkbox.isSelected() === checked);
+      }
+    }
+    const checkedHandles = await browser.execute(css => [...document.querySelectorAll<HTMLInputElement>(css + ' input[type="checkbox"]')]
+      .filter(control => control.checked).map(control => control.closest<HTMLElement>("[data-handle]")!.dataset.handle!), ROWS);
+    const expectedHandles = datasets.filter(dataset => names.includes(dataset.fileName)).map(dataset => dataset.handle);
+    expect(expectedHandles).toHaveLength(paths.length);
+    expect(checkedHandles.sort()).toEqual(expectedHandles.sort());
+    record({ kind: "verified native conversion membership", checkedHandles, expectedHandles, names });
+  } finally {
+    record({ kind: "passive native membership trace", trace: await browser.execute(() => {
+      const stop = Reflect.get(window, "__m74StopMembershipTrace") as () => unknown[];
+      Reflect.deleteProperty(window, "__m74StopMembershipTrace"); return stop();
+    }) });
   }
   await conversion(); await browser.$(CONVERT).waitForEnabled({ timeout: 60_000 });
 }
@@ -171,7 +220,7 @@ async function save(selector: string, name: string, title: string, path: string,
 }
 async function preview() {
   await browser.$(FIGURE + " .figure-preview img").waitForExist();
-  await browser.waitUntil(async () => await browser.$(FIGURE + ' button=Export SVG…').getAttribute("aria-disabled") === "false");
+  await browser.waitUntil(async () => await browser.$(FIGURE).$('button=Export SVG…').getAttribute("aria-disabled") === "false");
   return browser.execute(async css => {
     const img = document.querySelector<HTMLImageElement>(css + " .figure-preview img")!;
     return { svg: await (await fetch(img.src)).text(), specId: img.dataset.specId, width: img.width, height: img.height };
@@ -275,16 +324,20 @@ describe("M7.4 current native conversion, recovery and figures", function () {
     await browser.$('input[name="conversion-conflict-policy"][value="fail"]').click(); await browser.$(CONVERT).waitForEnabled();
     await start(destination("active-clear")); await browser.waitUntil(async () => (await state()).status === "running");
     await showRoster(); const before = (await calls()).filter(call => call.command === "execute_workspace_clear").length;
-    await browser.$("button=Clear list").click(); await browser.$('[role="dialog"] button=Return').waitForDisplayed();
-    expect(await browser.execute(() => document.activeElement?.textContent)).toBe("Return"); await browser.$('[role="dialog"] button=Return').click();
+    const running = await state();
+    if (running.status !== "running") throw Error("The eight-member Clear scenario needs an actual running queue.");
+    expect(running.queue.items.map(item => item.fileName).sort()).toEqual(members.map(member => basename(member)).sort());
+    record({ kind: "active Clear exact queue membership", state: running });
+    await browser.$("button=Clear list").click(); await browser.$('[role="dialog"]').$('button=Return').waitForDisplayed();
+    expect(await browser.execute(() => document.activeElement?.textContent)).toBe("Return"); await browser.$('[role="dialog"]').$('button=Return').click();
     await browser.$('[role="dialog"]').waitForExist({ reverse: true }); await browser.$("button=Clear list").click(); await browser.keys("Escape");
     await browser.$('[role="dialog"]').waitForExist({ reverse: true });
     expect((await calls()).filter(call => call.command === "execute_workspace_clear")).toHaveLength(before);
-    await browser.$("button=Clear list").click(); await browser.$('[role="dialog"] button=Remove non-running').waitForEnabled();
-    await browser.$('[role="dialog"] button=Remove non-running').click(); await browser.$('[role="dialog"]').waitForExist({ reverse: true });
+    await browser.$("button=Clear list").click(); await browser.$('[role="dialog"]').$('button=Remove non-running').waitForEnabled();
+    await browser.$('[role="dialog"]').$('button=Remove non-running').click(); await browser.$('[role="dialog"]').waitForExist({ reverse: true });
     expect((await roster()).datasets.map(row => row.fileName).sort()).toEqual(members.map(member => basename(member)).sort());
-    expect((await state()).status).toBe("running"); await browser.$("button=Clear list").click(); await browser.$('[role="dialog"] button=Cancel and clear').waitForEnabled();
-    await browser.$('[role="dialog"] button=Cancel and clear').click(); await browser.waitUntil(async () => (await roster()).datasets.length === 0, { timeout: 60_000 });
+    expect((await state()).status).toBe("running"); await browser.$("button=Clear list").click(); await browser.$('[role="dialog"]').$('button=Cancel and clear').waitForEnabled();
+    await browser.$('[role="dialog"]').$('button=Cancel and clear').click(); await browser.waitUntil(async () => (await roster()).datasets.length === 0, { timeout: 60_000 });
     const update = await read<WorkspaceConversionUpdate>("get_workspace_conversion_state"); expect(update.backendQuarantined).toBe(false);
     expect(update.state.status).not.toBe("running"); record({ kind: "cancel-and-clear authoritative outcome", update });
   });
@@ -327,7 +380,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
     await browser.$(ROWS).click(); await browser.$(".spectrum-table-panel").waitForDisplayed(); await workbench();
     await browser.$('.spectrum-table-panel [data-source-index="1"]').click();
     await browser.waitUntil(async () => (await browser.$("#selected-spectrum-summary").getText()).startsWith("Spectrum 1,"));
-    await edit("mz", "200", "550"); await pendingSpectrumBand(); await browser.$('.spectrum-panel button=Export figure').click();
+    await edit("mz", "200", "550"); await pendingSpectrumBand(); await browser.$('.spectrum-panel').$('button=Export figure').click();
     await scope(FIGURE, "Current range"); await preview();
     await browser.$(FIGURE + ' input[id$="-widthPx"]').setValue("900"); await browser.$(FIGURE + ' input[id$="-heightPx"]').setValue("600");
     await browser.$(FIGURE + ' input[id$="-pngDpi"]').setValue("150"); const current = await preview();
@@ -338,12 +391,12 @@ describe("M7.4 current native conversion, recovery and figures", function () {
     const inspected = inspectNativePng(readFileSync(png)); expect(inspected).toMatchObject({ width: 900, height: 600, unit: 1 });
     expect(inspected.ppmX).toBe(Math.round(150 / .0254)); expect(inspected.ppmY).toBe(inspected.ppmX); record({ kind: "PNG content", inspected });
     await browser.$(FIGURE + ' input[id$="-pngDpi"]').setValue("1e"); await preview();
-    expect(await browser.$(FIGURE + " button=Export PNG…").getAttribute("aria-disabled")).toBe("true");
+    expect(await browser.$(FIGURE).$("button=Export PNG…").getAttribute("aria-disabled")).toBe("true");
     await save(FIGURE, "Export SVG…", "Export spectrum figure", join(output, "spectrum-invalid-png-dpi.svg"));
     expect(readFileSync(join(output, "spectrum-invalid-png-dpi.svg"), "utf8")).toBe(current.svg);
     await browser.$(FIGURE + ' input[id$="-pngDpi"]').setValue("150"); await preview();
     await save(FIGURE, "Export PNG…", "Export spectrum figure", join(output, "cancelled-dialog.png"), true);
-    await capture("04-native-preview-and-saved-content"); await browser.$(FIGURE + " button=Return to viewer").click();
+    await capture("04-native-preview-and-saved-content"); await browser.$(FIGURE).$("button=Return to viewer").click();
 
     const dataPanel = ".spectrum-panel";
     await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
@@ -356,34 +409,34 @@ describe("M7.4 current native conversion, recovery and figures", function () {
     expect(data(fullCsv, ",")).toHaveLength(12);
     await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
     await save(dataPanel + " .figure-quick-group", "Quick PNG", "Export spectrum figure", join(output, "cancelled-quick.png"), true);
-    const before = await calls(); await browser.$(dataPanel + ' .figure-quick-actions button=Copy plot').click();
+    const before = await calls(); await browser.$(dataPanel + ' .figure-quick-actions').$('button=Copy plot').click();
     await browser.waitUntil(async () => (await calls()).filter(call => call.command === "copy_selected_spectrum_plot").length > before.filter(call => call.command === "copy_selected_spectrum_plot").length);
     await browser.waitUntil(async () => !(await browser.$(dataPanel).getText()).includes("Copying plot"));
     const clipboard = await helper("read-clipboard-image", [], false);
     expect(clipboard).toMatchObject({ present: true, width: 900, height: 600 }); expect(Number(clipboard.distinct)).toBeGreaterThan(1); record({ kind: "clipboard dimensions and sampled colors only", clipboard });
     expect((await calls()).filter(call => call.command === "begin_selected_spectrum_export")).toHaveLength(before.filter(call => call.command === "begin_selected_spectrum_export").length);
 
-    await edit("mz", "225", "240"); await browser.$(dataPanel + ' button=Export figure').click(); await scope(FIGURE, "Current range"); const empty = await preview();
+    await edit("mz", "225", "240"); await browser.$(dataPanel).$('button=Export figure').click(); await scope(FIGURE, "Current range"); const empty = await preview();
     expect(await browser.$(FIGURE).getText()).toContain("empty spectrum figure");
     const emptySvg = join(output, "spectrum-empty-current.svg"); await save(FIGURE, "Export SVG…", "Export spectrum figure", emptySvg); expect(readFileSync(emptySvg, "utf8")).toBe(empty.svg);
-    await browser.$(FIGURE + " button=Return to viewer").click(); await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
+    await browser.$(FIGURE).$("button=Return to viewer").click(); await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
     const emptyCsv = join(output, "spectrum-empty-current.csv"); await save(dataPanel, "Export CSV…", "Export spectrum data", emptyCsv); expect(data(emptyCsv, ",")).toHaveLength(0);
     await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
 
     await edit("rt", "60", "180");
-    await browser.$('.chromatogram-panel button=Export figure').click(); await scope(FIGURE, "Current range"); const chrom = await preview();
+    await browser.$('.chromatogram-panel').$('button=Export figure').click(); await scope(FIGURE, "Current range"); const chrom = await preview();
     const chromSvg = join(output, "chromatogram-current.svg"); await save(FIGURE, "Export SVG…", "Export chromatogram figure", chromSvg); expect(readFileSync(chromSvg, "utf8")).toBe(chrom.svg);
-    expect(await browser.$(FIGURE).getText()).toContain("Full run"); await browser.$(FIGURE + " button=Return to viewer").click();
+    expect(await browser.$(FIGURE).getText()).toContain("Full run"); await browser.$(FIGURE).$("button=Return to viewer").click();
     await browser.$("#chromatogram-export-toggle").click();
     const rtCsv = join(output, "chromatogram-current.csv"); await save(".chromatogram-panel", "Export CSV…", "Export chromatogram data", rtCsv);
     expect(data(rtCsv, ",").map(row => row[0])).toEqual([1, 2, 3]);
     expect(data(rtCsv, ",").map(row => row[3])).toEqual([60, 120, 180]);
-    await browser.$('.chromatogram-panel button=Preview linked figure').click(); const linked = await preview();
+    await browser.$('.chromatogram-panel').$('button=Preview linked figure').click(); const linked = await preview();
     expect(await browser.$(FIGURE).getText()).toContain("lower panel always shows that scan's complete spectrum");
     const linkedSvg = join(output, "linked-current.svg"); await save(FIGURE, "Export SVG…", "Export linked figure", linkedSvg); expect(readFileSync(linkedSvg, "utf8")).toBe(linked.svg);
     await scope(FIGURE, "Full run"); const linkedFull = await preview(); const linkedFullSvg = join(output, "linked-full.svg");
     await save(FIGURE, "Export SVG…", "Export linked figure", linkedFullSvg); expect(readFileSync(linkedFullSvg, "utf8")).toBe(linkedFull.svg);
-    await capture("05-native-linked-scope"); await browser.$(FIGURE + " button=Return to viewer").click();
+    await capture("05-native-linked-scope"); await browser.$(FIGURE).$("button=Return to viewer").click();
     record({ kind: "real synthetic scientific outputs", sourceSha256: digest(path), spectrumCurrentRows: data(csv, ","), spectrumFullRows: data(fullCsv, ","), emptyRows: data(emptyCsv, ","), currentRtRows: data(rtCsv, ",") });
   });
 
@@ -464,13 +517,13 @@ describe("M7.4 current native conversion, recovery and figures", function () {
     const folder = destination("handler-open"); await start(folder); const completed = await terminal(); expect(completed.queue.finalizedCount).toBe(1);
     const item = completed.queue.items[0]!, target = join(folder, item.finalizedOutputs[0]!.fileName), targetHash = digest(target);
     const before = await calls(), queue = JSON.stringify(await state()), rows = JSON.stringify(await roster());
-    await browser.$(".output-open-actions button=Open file").click();
-    await browser.waitUntil(async () => await browser.$('.output-open-actions button=Open file').getAttribute("aria-disabled") !== "true" && (await browser.$('.output-open-actions [role="status"]').getText()).length > 0);
+    await browser.$(".output-open-actions").$("button=Open file").click();
+    await browser.waitUntil(async () => await browser.$('.output-open-actions').$('button=Open file').getAttribute("aria-disabled") !== "true" && (await browser.$('.output-open-actions [role="status"]').getText()).length > 0);
     expect(await browser.$('.output-open-actions [role="status"]').getText()).toMatch(/Windows accepted|Windows has no application associated/u);
     record({ kind: "actual OS file opening result", text: await browser.$('.output-open-actions [role="status"]').getText(), owned: metrics() });
     // A second explicit rendered action. No foreground API or focus rescue is
     // used when the first action intentionally launches an external handler.
-    await browser.$(".output-open-actions button=Open folder").click();
+    await browser.$(".output-open-actions").$("button=Open folder").click();
     await browser.waitUntil(async () => (await browser.$('.output-open-actions [role="status"]').getText()).includes("Windows accepted"));
     record({ kind: "actual OS folder opening result", text: await browser.$('.output-open-actions [role="status"]').getText(), owned: metrics() });
     expect(digest(target)).toBe(targetHash); expect(JSON.stringify(await state())).toBe(queue); expect(JSON.stringify(await roster())).toBe(rows);

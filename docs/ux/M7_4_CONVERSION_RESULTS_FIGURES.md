@@ -179,9 +179,26 @@ completion. It passes with no application console entries. The prior nine-case
 browser campaign is retained without an unrelated rerun. These checks do not
 qualify Windows Save return; the repaired native build must do that directly.
 
-No whole native business scenario has passed yet. Real active Clear, both lock
+Build 04 passed the first whole native scenario: exact Fail/Skip outcomes,
+explicit diagnostics and single-output adoption. Its cancelled destination
+picker and diagnostics Save both returned naturally to their initiating controls
+without focus rescue. This qualifies the diagnostics repair; it does not explain
+the older external-foreground loss.
+
+The second scenario opened Clear with Return focused, then the harness sent an
+invalid combined CSS/text selector. Its failed capture also showed five bound
+members including the outsider, whereas the scenario intended eight members.
+There was no click-result or exact-set precondition. This confirms a harness
+verification gap; possible focus-triggered row scrolling remains an unproven
+cause of the missed checkbox changes. The repair chains scoped CSS/text lookups,
+shows each complete row before one real click, checks stable geometry and the
+resulting checkbox state, and asserts the exact set before conversion plus the
+actual running queue. Passive event traces preserve further failures.
+
+The first-scenario evidence remains bound to the unchanged Build 04 production
+inputs. The remaining six scenarios must establish real active Clear, both lock
 topologies, scientific figure/data/clipboard content, complete SCIEX set adoption
-and Windows opening outcomes remain mandatory before protected publication.
+and Windows opening outcomes before protected publication.
 
 ## Retained failures and attribution
 
