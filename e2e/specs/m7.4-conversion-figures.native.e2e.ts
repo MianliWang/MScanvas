@@ -466,8 +466,20 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       expect(next.svg).toContain("&quot;Selected scan&quot; at 120.");
       record({ kind: "linked entry real source and recovery", sourceSha256: digest(path), loadedRoster, firstRequest, restoredRequest, nextRequest,
         firstSpecId: first.specId, restoredSpecId: restored.specId, nextSpecId: next.specId });
+      const saved = join(output, "linked-entry-current-source.svg");
+      await save(FIGURE, "Export SVG…", "Export linked figure", saved);
+      expect(readFileSync(saved)).toEqual(Buffer.from(next.svg, "utf8"));
+      expect(matchesNativePreviewDigest(readFileSync(saved, "utf8"), next.specId)).toBe(true);
+      const savedHash = digest(saved);
+      expect((await preview()).specId).toBe(next.specId);
+      await save(FIGURE, "Export SVG…", "Export linked figure", join(output, "linked-entry-cancelled.svg"), true);
+      expect(digest(saved)).toBe(savedHash);
+      expect((await preview()).specId).toBe(next.specId);
+      record({ kind: "linked entry actual saved consumer and cancelled picker", fileName: basename(saved),
+        bytes: statSync(saved).size, sha256: savedHash, previewSpecId: next.specId, previewBytesEqual: true });
       await capture("linked-entry-restored-source");
       await browser.$(FIGURE).$("button=Return to viewer").click();
+      await browser.waitUntil(async () => browser.execute(css => document.hasFocus() && document.activeElement === document.querySelector(css), entrySelector));
     } finally {
       const observer = await browser.execute(() => (Reflect.get(window, "__m74StopPreviewBlobs") as () => {
         created: number; revoked: number; overflow: boolean; captureFailed: boolean; wrappersUnchanged: boolean; restored: boolean;

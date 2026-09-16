@@ -350,7 +350,9 @@ range was committed; their logs show the whole-run state. The final test uses
 an explicit typed RT commit and waits for the positive outside-range reason.
 Failed attempts remain preserved. The original seven native scenarios retain
 their Build04 attribution. Build05 is required for a new focused native
-entry/source-binding scenario; its acceptance is pending. The previous native
+entry/source-binding scenario, including a saved SVG with actual preview-byte
+equality, a cancelled save with no new file and unchanged prior output, and
+natural initiating-control returns. Its acceptance is pending. The previous native
 operator window ended, so preparation must finish before a new actual readiness
 reply. Publication is held for this affected acceptance and review.
 
