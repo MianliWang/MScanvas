@@ -392,13 +392,70 @@ new primary evidence without rerunning tests. Evidence SHA-256 is
 the native log SHA-256 is
 `15dadb74e687abf9abe7c9e47d10ffdade686f444859078d339407d0a69c50e3`.
 
-Local acceptance is complete. Ordinary task push and PR updates were rejected
+At that checkpoint, local acceptance was complete. Ordinary task push and PR updates were rejected
 before execution because approval was required while the active policy was
 `Never`. The remote PR still describes the earlier candidate; current-candidate
 natural PR CI and public finding disposition remain pending. No rejected write
 was rerouted or retried during this continuation. Protected true merge,
 natural-main CI, ff-only synchronization and inclusion-proved task-branch
 cleanup remain mandatory. M7.4 is incomplete until that sequence finishes.
+
+## Active Clear focus delta after final-head review
+
+The approval-capable continuation published ordinary candidate
+`f900ddf7d1bdd96f6ddc00be0c7942e2791c2d29`. Its natural Frontend, Rust and
+Repository quality PR runs all passed at attempt 1: `35159811382`,
+`35159811433`, `35159811391`. Automatic review `5229185292` then raised
+confirmed findings `4031527952` and `4031527958`: executing Clear disabled
+its focused initiator, and an empty roster removed the Clear return target.
+The PR returned to Draft for this concrete repair and acceptance change.
+The historical policy denials and Build04/Build05 acceptance remain preserved.
+
+The executing action now stays natively focusable with `aria-disabled`, while
+the synchronous in-flight guard refuses duplicate activation. Other actions
+and Return stay disabled; Escape cannot interrupt settlement. A refusal or
+exception returns the still-owned keyboard to Check current rows.
+
+An authoritative empty result creates one focus claim before modal unmount.
+The same claim crosses Radix's delayed close callback and waits for Add files
+to become usable. A newer external focus destination, even if later removed,
+or window blur/hidden state permanently cancels it. It never reacquires focus
+merely because the document returns or the new destination disappears. Listener
+ownership ends on invalidation, consumption or workspace teardown. Nonempty
+removal retains the original Clear return. Rust cancellation, membership and
+filesystem semantics are unchanged.
+
+The two affected component files pass **21 tests**, included in the current
+full frontend **1882 tests / 89 files**. Controlled cases cover both pending
+actions and duplicate activation, refusal/exception recovery, immediate and
+delayed conversion unlock, nonempty results, and newer/detached/foreground
+ownership at both close and unlock. A no-op close-handoff negative control
+fails both empty-return assertions; source bytes were restored afterward.
+That control unintentionally selected the full suite through CLI argument
+forwarding (**1872 passed / 2 expected failures**), retained separately from
+the final full pass. Earlier composition attempts reached the closed modal
+but timed out waiting for missing focus; their logs are retained, and the
+final controls explicitly drive the registered conversion poll without
+changing production intervals or test timeouts.
+
+Four affected headless Chrome cases pass on the repaired source, with actual
+pending initiator focus, refusal recovery and both empty-return orderings.
+CSS1366x768/DPR1 and CSS960x640/DPR1.25 captures show no horizontal overflow,
+duplicate IDs or external resources. Screenshots were inspected. Browser IPC
+is synthetic; existing browser-mode service warnings are recorded separately
+from application console observations. The bounded read-only UI delta review
+accepted the final source and ownership controls without executing tests.
+
+Build05 binary/frontend originals were copied and verified before replacement.
+Build06 preparation and one affected real eight-member active Clear scenario
+remain required. Its harness retains the original membership, Return/Escape,
+outsider removal, confirmed cancellation and non-quarantine obligations, adds
+passive busy-focus observation and final Add-files focus, and checks natural
+input picker returns. It introduces no provider hold or focus rescue. No
+Build06 native acceptance is yet claimed; readiness04 is consumed. A fresh
+actual operator reply is required after preparation, followed by final-head
+checks, review disposition and protected publication. Unrelated Build04 and
+Build05 campaigns are not repeated or relabeled.
 
 ## Retained failures and attribution
 

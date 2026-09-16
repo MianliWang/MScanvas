@@ -330,6 +330,68 @@ describe("M7.4 conversion, recovery and export composition", () => {
     await browser.keys("Escape");
   });
 
+  for (const action of ["Remove non-running", "Cancel and clear"]) {
+    it(`active Clear focus retains ${action} while pending and recovers a refusal`, async () => {
+      await open(1366, 768, 1, true);
+      const clear = browser.$("#workbench-roster").$("button=" + UI_RESOURCES.en.clearList);
+      await clear.click();
+      const dialog = browser.$('[role="dialog"]');
+      const initiator = dialog.$("button=" + action);
+      await expect(initiator).toBeEnabled();
+      await holdInvoke("execute_workspace_clear");
+      await initiator.click();
+      await browser.waitUntil(async () => await heldCallers("execute_workspace_clear") === 1);
+      await expect(initiator).toBeEnabled();
+      await expect(initiator).toHaveAttribute("aria-disabled", "true");
+      await expect(initiator).toBeFocused();
+      await browser.keys(["Enter", "Enter", "Escape"]);
+      await initiator.click();
+      expect(await heldCallers("execute_workspace_clear")).toBe(1);
+      await expect(dialog.$("button=Return")).toBeDisabled();
+      await expect(dialog.$("button=" + (action === "Cancel and clear" ? "Remove non-running" : "Cancel and clear"))).toBeDisabled();
+      await capture("active-clear-pending-" + action.replaceAll(" ", "-"));
+      await releaseInvokeHold("execute_workspace_clear");
+      await expect(dialog.$("button=" + UI_RESOURCES.en.clearReevaluate)).toBeFocused();
+      await expect(dialog).toHaveText(expect.stringContaining(UI_RESOURCES.en.clearStale));
+      expect((await ipcCalls()).filter(call => call.command === "execute_workspace_clear")).toHaveLength(1);
+      await capture("active-clear-refusal-" + action.replaceAll(" ", "-"));
+      await browser.keys("Escape");
+      await expect(clear).toBeFocused();
+    });
+  }
+
+  for (const timing of ["before", "after"]) {
+    it(`active Clear focus returns to Add files when conversion settles ${timing} close`, async () => {
+      await open(960, 640, 1.25, true);
+      const clear = browser.$("#workbench-roster").$("button=" + UI_RESOURCES.en.clearList);
+      if (!await clear.isDisplayed()) await browser.$('[aria-controls="workbench-roster"]').click();
+      await clear.click();
+      const cancel = browser.$('[role="dialog"]').$("button=Cancel and clear");
+      await expect(cancel).toBeEnabled();
+      await holdInvoke("execute_workspace_clear");
+      await setInvokeResult("execute_workspace_clear", { status: "removed", result: { roster: { capacity: 1024, datasets: [] }, removedHandles: [selectedFile.handle, "synthetic-raw"], unknownHandles: [] } });
+      await setInvokeResult("get_workspace_roster", { capacity: 1024, datasets: [] });
+      await cancel.click();
+      await browser.waitUntil(async () => await heldCallers("execute_workspace_clear") === 1);
+      const settle = async () => {
+        const reads = (await ipcCalls()).filter(call => call.command === "get_workspace_conversion_state").length;
+        await setInvokeResult("get_workspace_conversion_state", { ...queueUpdate(true), sequence: 3,
+          state: { status: "terminal", reason: "stopped", operationId: "m74-queue", queue: queueOf([queueItem("synthetic-raw", "Synthetic active acquisition.raw", { state: "cancelled", attempts: 1 })]) } });
+        await browser.waitUntil(async () => (await ipcCalls()).filter(call => call.command === "get_workspace_conversion_state").length > reads);
+      };
+      if (timing === "before") await settle();
+      await releaseInvokeHold("execute_workspace_clear");
+      await browser.$('[role="dialog"]').waitForExist({ reverse: true });
+      const add = browser.$("#workbench-roster").$("button=" + UI_RESOURCES.en.addFiles);
+      if (timing === "after") { await expect(add).toBeDisabled(); await settle(); }
+      await expect(add).toBeEnabled(); await expect(add).toBeFocused();
+      await expect(clear).not.toExist();
+      expect((await ipcCalls()).filter(call => call.command === "execute_workspace_clear")).toHaveLength(1);
+      expect((await ipcCalls()).filter(call => call.command === "begin_workspace_conversion_queue")).toHaveLength(0);
+      await capture("active-clear-empty-" + timing);
+    });
+  }
+
   it("uses the latest preview, keeps DPI PNG-only and makes save cancel distinct from copy", async () => {
     await open(); await viewer();
     await holdInvoke("preview_figure");

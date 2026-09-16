@@ -69,6 +69,30 @@ async function naturalReturn(label: string, replacementConvert = false) {
     }, replacementConvert), { timeout: 15_000, interval: 500, timeoutMsg: "The native picker did not return naturally to its initiating action." });
   } finally { record({ kind: "natural picker return", label, replacementConvert, owned: metrics(), focus: await browser.execute(() => ({ focused: document.hasFocus(), element: document.activeElement?.outerHTML })) }); }
 }
+async function activeClearAction(name: "Remove non-running" | "Cancel and clear") {
+  await browser.execute(label => {
+    const button = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(node => node.textContent === label);
+    if (!button || Reflect.has(window, "__m74StopClearFocusObserver")) throw Error("Active Clear observer ownership is invalid.");
+    const samples: { pending: boolean; disabled: boolean; focused: boolean; documentFocused: boolean; active: string | undefined }[] = [];
+    const sample = () => samples.push({ pending: button.isConnected && button.getAttribute("aria-disabled") === "true", disabled: button.disabled,
+      focused: document.activeElement === button, documentFocused: document.hasFocus(), active: document.activeElement?.outerHTML });
+    const observer = new MutationObserver(sample);
+    observer.observe(button, { attributes: true, attributeFilter: ["disabled", "aria-disabled"] });
+    sample();
+    Reflect.set(window, "__m74StopClearFocusObserver", () => { sample(); observer.disconnect(); Reflect.deleteProperty(window, "__m74StopClearFocusObserver"); return samples; });
+  }, name);
+  let samples: { pending: boolean; disabled: boolean; focused: boolean; documentFocused: boolean }[] = [];
+  try {
+    await browser.$('[role="dialog"]').$("button=" + name).click();
+    await browser.$('[role="dialog"]').waitForExist({ reverse: true, ...(name === "Cancel and clear" ? { timeout: 60_000 } : {}) });
+  } finally {
+    samples = await browser.execute(() => (Reflect.get(window, "__m74StopClearFocusObserver") as () => typeof samples)());
+    record({ kind: "passive active Clear initiator focus", action: name, samples, focusRescue: false, providerHold: false });
+  }
+  const pending = samples.filter(sample => sample.pending);
+  expect(pending.length).toBeGreaterThan(0);
+  expect(pending.every(sample => !sample.disabled && sample.focused && sample.documentFocused)).toBe(true);
+}
 async function capture(label: string, validate = true) {
   const owned = metrics();
   const screenState = await browser.execute(() => ({ css: { width: innerWidth, height: innerHeight }, dpr: devicePixelRatio,
@@ -346,8 +370,11 @@ describe("M7.4 current native conversion, recovery and figures", function () {
     await clearIdle();
     const members = Array.from({ length: 8 }, (_, index) => source("M74-active-" + index + ".raw", join(input!, "retained-thermo.raw")));
     const outsider = source("M74-outside-queue.raw", join(input!, "retained-thermo.raw"));
-    for (const member of members) await add(member);
-    await add(outsider); await selectOnly(members);
+    for (const member of [...members, outsider]) {
+      await remember("#workbench-roster button", "Add files…");
+      await add(member); await naturalReturn("active Clear input " + basename(member));
+    }
+    await selectOnly(members);
     await browser.$('input[name="conversion-conflict-policy"][value="fail"]').click(); await browser.$(CONVERT).waitForEnabled();
     await start(destination("active-clear")); await browser.waitUntil(async () => (await state()).status === "running");
     await showRoster(); const before = (await calls()).filter(call => call.command === "execute_workspace_clear").length;
@@ -357,16 +384,23 @@ describe("M7.4 current native conversion, recovery and figures", function () {
     record({ kind: "active Clear exact queue membership", state: running });
     await browser.$("button=Clear list").click(); await browser.$('[role="dialog"]').$('button=Return').waitForDisplayed();
     expect(await browser.execute(() => document.activeElement?.textContent)).toBe("Return"); await browser.$('[role="dialog"]').$('button=Return').click();
-    await browser.$('[role="dialog"]').waitForExist({ reverse: true }); await browser.$("button=Clear list").click(); await browser.keys("Escape");
+    await browser.$('[role="dialog"]').waitForExist({ reverse: true }); await expect(browser.$("button=Clear list")).toBeFocused();
+    await browser.$("button=Clear list").click(); await browser.keys("Escape");
     await browser.$('[role="dialog"]').waitForExist({ reverse: true });
+    await expect(browser.$("button=Clear list")).toBeFocused();
     expect((await calls()).filter(call => call.command === "execute_workspace_clear")).toHaveLength(before);
     await browser.$("button=Clear list").click(); await browser.$('[role="dialog"]').$('button=Remove non-running').waitForEnabled();
-    await browser.$('[role="dialog"]').$('button=Remove non-running').click(); await browser.$('[role="dialog"]').waitForExist({ reverse: true });
+    await activeClearAction("Remove non-running");
+    await expect(browser.$("button=Clear list")).toBeFocused();
     expect((await roster()).datasets.map(row => row.fileName).sort()).toEqual(members.map(member => basename(member)).sort());
     expect((await state()).status).toBe("running"); await browser.$("button=Clear list").click(); await browser.$('[role="dialog"]').$('button=Cancel and clear').waitForEnabled();
-    await browser.$('[role="dialog"]').$('button=Cancel and clear').click(); await browser.waitUntil(async () => (await roster()).datasets.length === 0, { timeout: 60_000 });
+    await activeClearAction("Cancel and clear");
+    await browser.waitUntil(async () => (await roster()).datasets.length === 0, { timeout: 60_000 });
     const update = await read<WorkspaceConversionUpdate>("get_workspace_conversion_state"); expect(update.backendQuarantined).toBe(false);
     expect(update.state.status).not.toBe("running"); record({ kind: "cancel-and-clear authoritative outcome", update });
+    await browser.$("button=Add files…").waitForEnabled(); await expect(browser.$("button=Add files…")).toBeFocused();
+    expect((await calls()).filter(call => call.command === "execute_workspace_clear")).toHaveLength(before + 2);
+    await capture("02-native-active-clear-focus-return");
   });
 
   for (const topology of ["single", "set"] as const) it("recovers real locked " + topology + " staging only after release and starts a fresh reviewed conversion", async () => {

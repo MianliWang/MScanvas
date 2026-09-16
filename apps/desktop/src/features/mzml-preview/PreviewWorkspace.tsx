@@ -6,6 +6,7 @@ import { WorkbenchHeader, type WorkbenchSurface } from "../workbench/WorkbenchHe
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 
 import { ActiveClearDialog } from "./ActiveClearDialog";
+import type { ActiveClearFocusReturn } from "./activeClearFocusReturn";
 import { BackendStatus } from "./BackendStatus";
 import { Chromatogram } from "./Chromatogram";
 import { ChromatogramExportPanel, ChromatogramExportResult, LinkedFigureResult } from "./ChromatogramExportPanel";
@@ -66,6 +67,10 @@ export function PreviewWorkspace() {
   const [chromatogramExportOpen, setChromatogramExportOpen] = useState(false);
   const [restoreAddFolderFocusToken, setRestoreAddFolderFocusToken] = useState(0);
   const [restoreAddFilesFocusToken, setRestoreAddFilesFocusToken] = useState(0);
+  const [activeClearFocusReturn, setActiveClearFocusReturn] = useState<ActiveClearFocusReturn | null>(null);
+  const focusReturnOwnerLive = useRef(true);
+  useEffect(() => { focusReturnOwnerLive.current = true; return () => { focusReturnOwnerLive.current = false; }; }, []);
+  useEffect(() => () => activeClearFocusReturn?.release(), [activeClearFocusReturn]);
 
   // Derived once per roster change and handed down, so the rows the list
   // renders are the same list the reducer ranges over rather than a second
@@ -558,7 +563,9 @@ export function PreviewWorkspace() {
         {announceConversion(workspace.conversion, t)}
       </p>
 
-      {activeClear !== null ? <ActiveClearDialog returnTo={activeClear.returnTo} onClose={() => setActiveClear(null)} onExecute={workspace.executeActiveClear} /> : null}
+      {activeClear !== null ? <ActiveClearDialog returnTo={activeClear.returnTo} onClose={() => setActiveClear(null)} onEmptyRosterClosed={claim => {
+        if (focusReturnOwnerLive.current) setActiveClearFocusReturn(claim); else claim.release();
+      }} onExecute={workspace.executeActiveClear} /> : null}
       {figureDialog !== null ? <ExportFigureDialog
         kind={figureDialog.kind}
         sourceLabel={`${previewFile?.fileName ?? (preview.status === "loaded" ? preview.preview.file.fileName : t("viewerSpectrumNone"))} · ${figureDialog.kind === "chromatogram" ? t("viewerChromatogram") : spectrum.status === "loaded" ? t("viewerSpectrumIndex", { index: String(spectrum.spectrum.index) }) : t("viewerSpectrumNone")}`}
@@ -575,6 +582,7 @@ export function PreviewWorkspace() {
       <main className="workspace-layout">
         <aside id="workbench-roster" className="workspace-sidebar" hidden={!rosterOpen}>
           <DatasetRoster
+            activeClearFocusReturn={activeClearFocusReturn}
             canAddFiles={canAcquire}
             canAddFolder={canAddFolder}
             canMutate={canClear}

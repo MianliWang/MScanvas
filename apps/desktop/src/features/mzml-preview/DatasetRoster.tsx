@@ -20,8 +20,10 @@ import {
   type RosterProjection,
 } from "./rosterView";
 import type { RosterLoadState } from "./usePreviewWorkspace";
+import type { ActiveClearFocusReturn } from "./activeClearFocusReturn";
 
 export interface DatasetRosterProps {
+  readonly activeClearFocusReturn?: ActiveClearFocusReturn | null;
   readonly state: RosterState;
   /**
    * What the state puts on screen. Passed in rather than derived here so the
@@ -149,6 +151,7 @@ const CLEAR_DURING_DROP_IMPORT_DESCRIPTION =
  * this is what keeps a thousand rows out of the cursor's frame budget.
  */
 export const DatasetRoster = memo(function DatasetRoster({
+  activeClearFocusReturn = null,
   state,
   projection,
   load,
@@ -450,6 +453,14 @@ export const DatasetRoster = memo(function DatasetRoster({
       control.focus({ preventScroll: true });
     }
   }, []);
+
+  useEffect(() => {
+    if (activeClearFocusReturn === null || !activeClearFocusReturn.isCurrent()) return;
+    const control = addFilesRef.current;
+    if (control === null || control.disabled) return;
+    activeClearFocusReturn.release();
+    if (document.activeElement === document.body) control.focus({ preventScroll: true });
+  }, [activeClearFocusReturn, canAddFiles]);
 
   const payOwnedAddFilesDebt = useCallback(
     (debtRef: { current: { readonly focusOwnershipToken: number } | null }) => {
