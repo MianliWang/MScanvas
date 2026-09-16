@@ -51,14 +51,14 @@ and must not be added to their totals. Raw evidence remains ignored under
 
 | Required outcome | Current evidence | Remaining acceptance |
 | --- | --- | --- |
-| One intent and exact plan/retry | Configuration/lifecycle suites and `M74ConversionComposition`; before/after authority and unavailable-row controls | Current native admitted conversion |
-| Five judgments and inspectable result details | Final frontend run: 1862 tests in 89 files; owned error details and invalid-width scope covered through the App | Native adoption/diagnostics |
+| One intent and exact plan/retry | Configuration/lifecycle suites and `M74ConversionComposition`; Build 04 native Fail/Skip conversion and fresh plans after single/set recovery | Passed for the current native conversion scenarios |
+| Five judgments and inspectable result details | Final frontend run: 1862 tests in 89 files; Build 04 native diagnostics and explicit single-output adoption | Complete SCIEX set first/repeat adoption |
 | File/folder opening | Seven platform/service tests, unknown/replaced/modified/locked controls and real directory write exclusion; final read-only adoption hold: ten focused tests | Actual Windows handler result and independently validated folder |
-| Active Clear | Six Rust service tests plus dialog/composition checks: whole-queue protection, captured members, post-stop additions, stale plans and unconfirmed stop | Current native active-run choices and confirmed cancellation |
-| G18 live staging recovery | Real lock/unlock/reclaim controls; forged/foreign/reparse/hard-link refusals; creation FSCTL regression failed before repair and passes after | Actual provider lock → residue → unlock → reclaim → fresh conversion, for affected single/set mechanisms |
+| Active Clear | Seven Rust service/control tests plus dialog/composition checks; Build 04 exact eight-member native Return/Escape, nonrunning removal, confirmed cancellation and Clear | Passed; earlier failed selection attempt retained |
+| G18 live staging recovery | Real lock/unlock/reclaim controls; forged/foreign/reparse/hard-link refusals; Build 04 actual provider single/set lock → refused reclaim → unlock → reclaim → fresh conversion | Passed for these native paths; set publication was refused before any member finalized |
 | Canonical figure preview | Five service tests: actual exported SVG equals preview, current/full/empty, linked/chromatogram, late source/document change and DPI scope | Actual native SVG/PNG/data/clipboard and natural picker return |
-| Bilingual layout and keyboard | Browser run 07: 9 passing scenarios across 1920×1080, 1366×768, 1200×800 and 960×640; DPR 1/1.5/1.25/2, both densities, reduced motion; invalid-width scope and cleanup focus verified | Actual host scale/native composition |
-| Conversion focus / #122 | Before-failing foreground obligation; stable mounted frame, current commit facts, user-intent and detached Settings-owner controls; latest affected suite passes | Native cancelled destination picker and published issue disposition |
+| Bilingual layout and keyboard | Browser run 07: 9 passing scenarios across 1920×1080, 1366×768, 1200×800 and 960×640; DPR 1/1.5/1.25/2, both densities, reduced motion; native host-scale checks pass for completed scenarios | Remaining figure/set-adoption/OS native composition |
+| Conversion focus / #122 | Before-failing foreground obligation; stable mounted frame, current commit facts, user-intent and detached Settings-owner controls; Build 04 cancelled destination and diagnostics Save return naturally | Attributable published issue disposition; historical external-foreground failure remains undetermined |
 
 The latest Rust workspace/all-target run, using CI's default features, passed:
 desktop **945 passed,
@@ -153,7 +153,7 @@ inputs unchanged during compilation, inventory digest
 `45fed3d2d37d6ae65dd1c28fea13f2ea5397b0e21973c94d7e5a583e2c89d083`,
 and a 16,580,096-byte QA binary with SHA-256
 `1fe841c2b72100ccb65dddf8cdecb2b59b95b2d89060d1966ab2a2ad913e58bd`.
-Its native acceptance remains pending; Build 03 cannot qualify that repair.
+Its remaining native acceptance is pending; Build 03 cannot qualify that repair.
 
 ## Native diagnostics focus repair
 
@@ -195,10 +195,88 @@ shows each complete row before one real click, checks stable geometry and the
 resulting checkbox state, and asserts the exact set before conversion plus the
 actual running queue. Passive event traces preserve further failures.
 
-The first-scenario evidence remains bound to the unchanged Build 04 production
-inputs. The remaining six scenarios must establish real active Clear, both lock
-topologies, scientific figure/data/clipboard content, complete SCIEX set adoption
-and Windows opening outcomes before protected publication.
+The corrected harness then passed exact eight-member active Clear and both real
+single/set lock, refused reclaim, release, cleanup and fresh-plan conversions.
+Those three passes plus the first scenario remain bound to unchanged Build 04
+production inputs. Selection trace checks passed; the earlier missed-click
+mechanism is still unestablished.
+
+The figure scenario rendered its spectrum preview, then its observer's
+`fetch(blob URL)` failed before saving. Native CSP permits Blob images but does
+not admit Blob connect requests. No violation event was captured for that exact
+throw, so a revoked-URL race was not independently excluded. The harness now
+observes the original SVG Blob under the exact URL returned by the native URL
+method, preserving original calls, returns and revocation. A bounded review
+caught missing request correlation in the first draft. The repaired observer
+snapshots the existing QA call log's actual `preview_figure` request: call index,
+request ID, source and settings. It checks that identity and the same loaded image,
+URL and attributes before and after reading the original Blob, then checks the
+bytes against the current preview digest. Display is checked independently.
+Neither CSP nor IPC responses nor scientific state are changed. It restores the
+original URL descriptors in `finally`. The actual saved-file byte comparisons
+and scientific content assertions remain intact.
+
+Six focused controls pass in the existing headless Chrome harness: actual Blob
+reading with connect requests blocked, original URL call behavior, stale/request
+and uncaptured-URL refusal, element/request/revocation races, and read failure
+with descriptor restoration. They use a separate synthetic document and prove
+the observation mechanism only. Native SVG/file equality remains pending.
+The runner's browser-mode window-state and post-session mock-store warnings are
+retained. Native/overlay typechecks also pass; no application rebuild is needed
+while Build 04's production inventory remains unchanged.
+
+Four of seven whole native scenarios have passed. Figure/data/clipboard content,
+complete SCIEX set first/repeat adoption and Windows opening outcomes remain
+mandatory before protected publication; completed scenarios are reused by exact
+Build 04 and primary-evidence identities. This is four complete scenarios across
+two failed suite runs, not a previously successful seven-scenario campaign:
+
+| Scenario | Build 04 primary attribution | Outcome |
+| --- | --- | --- |
+| Exact plan, Fail/Skip, diagnostics, single adoption | `native-launch-20260916T052931645Z` / `native-LltSFS`; harness head `13f0e5621868248a655f9dcdcea8b31718eaa1ab` | Passed; suite later failed in active-Clear harness |
+| Exact active Clear membership and choices | `native-launch-20260916T054338575Z` / `native-gqceUQ`; harness head `671e7f1364b0b2e1d35d94c8667beb822b860589` | Passed; suite later failed in figure observation |
+| Real single staging recovery and replan | Same second run | Passed |
+| Real set staging recovery and replan | Same second run | Passed; zero members finalized before the refusal |
+| Figure/data/clipboard | Remaining guarded campaign | Pending |
+| Complete SCIEX first/repeat adoption | Remaining guarded campaign | Pending |
+| Actual OS file/folder opening | Remaining guarded campaign | Pending |
+
+Published-member preservation is separately attributed. The retained Rust CI
+run [35059627262](https://github.com/MianliWang/MScanvas/actions/runs/35059627262)
+passes the actual partial-publication prefix/drop controls, real live-lock
+partial-teardown/reclaim control, and preservation/adoption of another finalized
+queue item after cleanup. The initial and explicit cleanup paths share teardown
+and retain the same frozen staging children. These controls satisfy the original
+separate preservation and recovery requirements, which permit controlled tests
+for additional set-member cases. They do not constitute an observed same-partial-set
+explicit-reclaim/hash sequence. That CI checkout was merge
+`0056fad07be11e1f3d782c2bfc94b3302c1a5ca1` with head `13f0e562...`;
+the relevant Rust files remain unchanged. No native partial-publication
+preservation is claimed from the zero-finalized set-lock run.
+
+## One-time history deviation disposition
+
+At 2026-09-16 05:25:43 UTC, `git commit --amend --no-edit` violated the original
+No amend instruction. It replaced unpublished
+`316779b85348d782776a42833503b538c996b40a` with
+`13f0e5621868248a655f9dcdcea8b31718eaa1ab`, sharing parent
+`9ec7a0a6c86ab349bfe0e5628f1b2db846d29cbf`. The retained objects and exact diff
+confirm only two documentation-line corrections and no source/test-byte change.
+There was no remote history rewrite. Ordinary successor
+`671e7f1364b0b2e1d35d94c8667beb822b860589` remains in place.
+
+The actual subsequent user disposition accepted this history once and authorized
+continuation. Its recorded receipt observation is 2026-09-16 06:44:19 UTC; the
+original report, objects and diff were preserved, with the reply appended.
+This resolves that history pause without making the amend compliant or accepting
+unfinished tests. All future corrections use ordinary new commits.
+
+The pause materially interrupted the operator campaign. Earlier readiness is
+invalid for the next window; a new actual reply is required after preparation.
+The launcher binds that reply and its hash to the new window before initial
+automated input. Three required PR checks passed on pre-observer head `671e7f1`;
+every successor requires its own natural PR CI. Draft status continues until
+mandatory acceptance and review finish.
 
 ## Retained failures and attribution
 
@@ -252,8 +330,8 @@ and Windows opening outcomes before protected publication.
 - The isolated lock-helper check first failed because attribute-only access
   did not prevent publication. Its corrected GENERIC_READ handle permits the
   writer, blocks rename until release and then permits byte-identical
-  publication. This proves the helper only; actual provider/native recovery
-  remains pending. See the Windows
+  publication. This proves the helper only; the later Build 04 single/set native
+  recovery passes are separately attributed above. See the Windows
   [CreateFileW sharing contract](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew).
 - Earlier integration, fixture/path-expectation, resource-parameter and helper
   closeout failures remain in the ignored evidence directory. Every gate uses

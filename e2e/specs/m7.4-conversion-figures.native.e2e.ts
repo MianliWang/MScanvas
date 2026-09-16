@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import type { WorkspaceConversionUpdate, WorkspaceRoster } from "../../apps/desktop/src/features/mzml-preview/contracts";
 import { nativeResourceOrigins } from "../support/nativeResourceOrigins";
 import { inspectNativePng } from "../support/m74NativeFixture";
+import { installM74PreviewBlobObserver } from "../support/m74PreviewBlobObserver";
+import type { ObservedPreviewBlob } from "../support/m74PreviewBlobObserver";
 
 const HERE = dirname(fileURLToPath(import.meta.url)), REPO = resolve(HERE, "../..");
 const PANEL = ".conversion-panel", CONVERT = PANEL + " .conversion-plan button.primary-button", RESULT = PANEL + " .conversion-running";
@@ -219,12 +221,21 @@ async function save(selector: string, name: string, title: string, path: string,
   if (cancel) expect(existsSync(path)).toBe(false); else { await browser.waitUntil(() => existsSync(path)); record({ kind: "real export", name: basename(path), bytes: readFileSync(path).length, sha256: digest(path) }); }
 }
 async function preview() {
-  await browser.$(FIGURE + " .figure-preview img").waitForExist();
-  await browser.waitUntil(async () => await browser.$(FIGURE).$('button=Export SVG…').getAttribute("aria-disabled") === "false");
-  return browser.execute(async css => {
-    const img = document.querySelector<HTMLImageElement>(css + " .figure-preview img")!;
-    return { svg: await (await fetch(img.src)).text(), specId: img.dataset.specId, width: img.width, height: img.height };
-  }, FIGURE);
+  await browser.$(FIGURE + " .figure-preview img").waitForDisplayed();
+  const current: { value: ObservedPreviewBlob | null } = { value: null };
+  await browser.waitUntil(async () => {
+    if (await browser.$(FIGURE).$('button=Export SVG…').getAttribute("aria-disabled") !== "false") return false;
+    const observed = await browser.execute(async css => {
+      const read = Reflect.get(window, "__m74ReadPreviewBlob") as (selector: string) => Promise<ObservedPreviewBlob | null>;
+      return read(css + " .figure-preview img");
+    }, FIGURE);
+    if (observed === null || createHash("sha256").update(observed.svg).digest("hex") !== observed.specId) return false;
+    current.value = observed; return true;
+  });
+  if (current.value === null) throw Error("No current rendered preview Blob was observed.");
+  record({ kind: "actual rendered preview Blob", specId: current.value.specId, bytes: Buffer.byteLength(current.value.svg), request: current.value.request,
+    width: current.value.width, height: current.value.height, naturalWidth: current.value.naturalWidth, naturalHeight: current.value.naturalHeight });
+  return current.value;
 }
 async function scope(panel: string, name: "Current range" | "Full spectrum" | "Full run") {
   const label = browser.$(panel).$("label*=" + name); await label.click();
@@ -376,68 +387,77 @@ describe("M7.4 current native conversion, recovery and figures", function () {
   });
 
   it("binds real preview, SVG, PNG, CSV and TSV to committed scopes and keeps quick paths separate", async () => {
-    await clearIdle(); const path = source("M74-synthetic-12-scans.mzML", join(input!, "synthetic-12-scans.mzML")); await add(path);
-    await browser.$(ROWS).click(); await browser.$(".spectrum-table-panel").waitForDisplayed(); await workbench();
-    await browser.$('.spectrum-table-panel [data-source-index="1"]').click();
-    await browser.waitUntil(async () => (await browser.$("#selected-spectrum-summary").getText()).startsWith("Spectrum 1,"));
-    await edit("mz", "200", "550"); await pendingSpectrumBand(); await browser.$('.spectrum-panel').$('button=Export figure').click();
-    await scope(FIGURE, "Current range"); await preview();
-    await browser.$(FIGURE + ' input[id$="-widthPx"]').setValue("900"); await browser.$(FIGURE + ' input[id$="-heightPx"]').setValue("600");
-    await browser.$(FIGURE + ' input[id$="-pngDpi"]').setValue("150"); const current = await preview();
-    expect(createHash("sha256").update(current.svg).digest("hex")).toBe(current.specId);
-    const svg = join(output, "spectrum-current.svg"); await save(FIGURE, "Export SVG…", "Export spectrum figure", svg);
-    expect(readFileSync(svg, "utf8")).toBe(current.svg);
-    const png = join(output, "spectrum-current.png"); await save(FIGURE, "Export PNG…", "Export spectrum figure", png);
-    const inspected = inspectNativePng(readFileSync(png)); expect(inspected).toMatchObject({ width: 900, height: 600, unit: 1 });
-    expect(inspected.ppmX).toBe(Math.round(150 / .0254)); expect(inspected.ppmY).toBe(inspected.ppmX); record({ kind: "PNG content", inspected });
-    await browser.$(FIGURE + ' input[id$="-pngDpi"]').setValue("1e"); await preview();
-    expect(await browser.$(FIGURE).$("button=Export PNG…").getAttribute("aria-disabled")).toBe("true");
-    await save(FIGURE, "Export SVG…", "Export spectrum figure", join(output, "spectrum-invalid-png-dpi.svg"));
-    expect(readFileSync(join(output, "spectrum-invalid-png-dpi.svg"), "utf8")).toBe(current.svg);
-    await browser.$(FIGURE + ' input[id$="-pngDpi"]').setValue("150"); await preview();
-    await save(FIGURE, "Export PNG…", "Export spectrum figure", join(output, "cancelled-dialog.png"), true);
-    await capture("04-native-preview-and-saved-content"); await browser.$(FIGURE).$("button=Return to viewer").click();
+    await browser.execute(installM74PreviewBlobObserver);
+    try {
+      await clearIdle(); const path = source("M74-synthetic-12-scans.mzML", join(input!, "synthetic-12-scans.mzML")); await add(path);
+      await browser.$(ROWS).click(); await browser.$(".spectrum-table-panel").waitForDisplayed(); await workbench();
+      await browser.$('.spectrum-table-panel [data-source-index="1"]').click();
+      await browser.waitUntil(async () => (await browser.$("#selected-spectrum-summary").getText()).startsWith("Spectrum 1,"));
+      await edit("mz", "200", "550"); await pendingSpectrumBand(); await browser.$('.spectrum-panel').$('button=Export figure').click();
+      await scope(FIGURE, "Current range"); await preview();
+      await browser.$(FIGURE + ' input[id$="-widthPx"]').setValue("900"); await browser.$(FIGURE + ' input[id$="-heightPx"]').setValue("600");
+      await browser.$(FIGURE + ' input[id$="-pngDpi"]').setValue("150"); const current = await preview();
+      expect(createHash("sha256").update(current.svg).digest("hex")).toBe(current.specId);
+      const svg = join(output, "spectrum-current.svg"); await save(FIGURE, "Export SVG…", "Export spectrum figure", svg);
+      expect(readFileSync(svg, "utf8")).toBe(current.svg);
+      const png = join(output, "spectrum-current.png"); await save(FIGURE, "Export PNG…", "Export spectrum figure", png);
+      const inspected = inspectNativePng(readFileSync(png)); expect(inspected).toMatchObject({ width: 900, height: 600, unit: 1 });
+      expect(inspected.ppmX).toBe(Math.round(150 / .0254)); expect(inspected.ppmY).toBe(inspected.ppmX); record({ kind: "PNG content", inspected });
+      await browser.$(FIGURE + ' input[id$="-pngDpi"]').setValue("1e"); await preview();
+      expect(await browser.$(FIGURE).$("button=Export PNG…").getAttribute("aria-disabled")).toBe("true");
+      await save(FIGURE, "Export SVG…", "Export spectrum figure", join(output, "spectrum-invalid-png-dpi.svg"));
+      expect(readFileSync(join(output, "spectrum-invalid-png-dpi.svg"), "utf8")).toBe(current.svg);
+      await browser.$(FIGURE + ' input[id$="-pngDpi"]').setValue("150"); await preview();
+      await save(FIGURE, "Export PNG…", "Export spectrum figure", join(output, "cancelled-dialog.png"), true);
+      await capture("04-native-preview-and-saved-content"); await browser.$(FIGURE).$("button=Return to viewer").click();
 
-    const dataPanel = ".spectrum-panel";
-    await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
-    const csv = join(output, "spectrum-current.csv"); await save(dataPanel, "Export CSV…", "Export spectrum data", csv);
-    const data = (path: string, separator: string) => readFileSync(path, "utf8").split(/\r?\n/u).filter(line => line && !line.startsWith("#")).slice(1).map(line => line.split(separator).map(Number));
-    expect(data(csv, ",").map(row => row[0])).toEqual([200, 250, 300, 350, 400, 450, 500, 550]);
-    expect(await browser.$(dataPanel).getText()).toContain("Zoom to selection");
-    const tsv = join(output, "spectrum-current.tsv"); await save(dataPanel, "Export TSV…", "Export spectrum data", tsv); expect(data(tsv, "\t")).toEqual(data(csv, ","));
-    await scope(dataPanel, "Full spectrum"); const fullCsv = join(output, "spectrum-full.csv"); await save(dataPanel, "Export CSV…", "Export spectrum data", fullCsv);
-    expect(data(fullCsv, ",")).toHaveLength(12);
-    await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
-    await save(dataPanel + " .figure-quick-group", "Quick PNG", "Export spectrum figure", join(output, "cancelled-quick.png"), true);
-    const before = await calls(); await browser.$(dataPanel + ' .figure-quick-actions').$('button=Copy plot').click();
-    await browser.waitUntil(async () => (await calls()).filter(call => call.command === "copy_selected_spectrum_plot").length > before.filter(call => call.command === "copy_selected_spectrum_plot").length);
-    await browser.waitUntil(async () => !(await browser.$(dataPanel).getText()).includes("Copying plot"));
-    const clipboard = await helper("read-clipboard-image", [], false);
-    expect(clipboard).toMatchObject({ present: true, width: 900, height: 600 }); expect(Number(clipboard.distinct)).toBeGreaterThan(1); record({ kind: "clipboard dimensions and sampled colors only", clipboard });
-    expect((await calls()).filter(call => call.command === "begin_selected_spectrum_export")).toHaveLength(before.filter(call => call.command === "begin_selected_spectrum_export").length);
+      const dataPanel = ".spectrum-panel";
+      await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
+      const csv = join(output, "spectrum-current.csv"); await save(dataPanel, "Export CSV…", "Export spectrum data", csv);
+      const data = (path: string, separator: string) => readFileSync(path, "utf8").split(/\r?\n/u).filter(line => line && !line.startsWith("#")).slice(1).map(line => line.split(separator).map(Number));
+      expect(data(csv, ",").map(row => row[0])).toEqual([200, 250, 300, 350, 400, 450, 500, 550]);
+      expect(await browser.$(dataPanel).getText()).toContain("Zoom to selection");
+      const tsv = join(output, "spectrum-current.tsv"); await save(dataPanel, "Export TSV…", "Export spectrum data", tsv); expect(data(tsv, "\t")).toEqual(data(csv, ","));
+      await scope(dataPanel, "Full spectrum"); const fullCsv = join(output, "spectrum-full.csv"); await save(dataPanel, "Export CSV…", "Export spectrum data", fullCsv);
+      expect(data(fullCsv, ",")).toHaveLength(12);
+      await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
+      await save(dataPanel + " .figure-quick-group", "Quick PNG", "Export spectrum figure", join(output, "cancelled-quick.png"), true);
+      const before = await calls(); await browser.$(dataPanel + ' .figure-quick-actions').$('button=Copy plot').click();
+      await browser.waitUntil(async () => (await calls()).filter(call => call.command === "copy_selected_spectrum_plot").length > before.filter(call => call.command === "copy_selected_spectrum_plot").length);
+      await browser.waitUntil(async () => !(await browser.$(dataPanel).getText()).includes("Copying plot"));
+      const clipboard = await helper("read-clipboard-image", [], false);
+      expect(clipboard).toMatchObject({ present: true, width: 900, height: 600 }); expect(Number(clipboard.distinct)).toBeGreaterThan(1); record({ kind: "clipboard dimensions and sampled colors only", clipboard });
+      expect((await calls()).filter(call => call.command === "begin_selected_spectrum_export")).toHaveLength(before.filter(call => call.command === "begin_selected_spectrum_export").length);
 
-    await edit("mz", "225", "240"); await browser.$(dataPanel).$('button=Export figure').click(); await scope(FIGURE, "Current range"); const empty = await preview();
-    expect(await browser.$(FIGURE).getText()).toContain("empty spectrum figure");
-    const emptySvg = join(output, "spectrum-empty-current.svg"); await save(FIGURE, "Export SVG…", "Export spectrum figure", emptySvg); expect(readFileSync(emptySvg, "utf8")).toBe(empty.svg);
-    await browser.$(FIGURE).$("button=Return to viewer").click(); await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
-    const emptyCsv = join(output, "spectrum-empty-current.csv"); await save(dataPanel, "Export CSV…", "Export spectrum data", emptyCsv); expect(data(emptyCsv, ",")).toHaveLength(0);
-    await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
+      await edit("mz", "225", "240"); await browser.$(dataPanel).$('button=Export figure').click(); await scope(FIGURE, "Current range"); const empty = await preview();
+      expect(await browser.$(FIGURE).getText()).toContain("empty spectrum figure");
+      const emptySvg = join(output, "spectrum-empty-current.svg"); await save(FIGURE, "Export SVG…", "Export spectrum figure", emptySvg); expect(readFileSync(emptySvg, "utf8")).toBe(empty.svg);
+      await browser.$(FIGURE).$("button=Return to viewer").click(); await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
+      const emptyCsv = join(output, "spectrum-empty-current.csv"); await save(dataPanel, "Export CSV…", "Export spectrum data", emptyCsv); expect(data(emptyCsv, ",")).toHaveLength(0);
+      await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
 
-    await edit("rt", "60", "180");
-    await browser.$('.chromatogram-panel').$('button=Export figure').click(); await scope(FIGURE, "Current range"); const chrom = await preview();
-    const chromSvg = join(output, "chromatogram-current.svg"); await save(FIGURE, "Export SVG…", "Export chromatogram figure", chromSvg); expect(readFileSync(chromSvg, "utf8")).toBe(chrom.svg);
-    expect(await browser.$(FIGURE).getText()).toContain("Full run"); await browser.$(FIGURE).$("button=Return to viewer").click();
-    await browser.$("#chromatogram-export-toggle").click();
-    const rtCsv = join(output, "chromatogram-current.csv"); await save(".chromatogram-panel", "Export CSV…", "Export chromatogram data", rtCsv);
-    expect(data(rtCsv, ",").map(row => row[0])).toEqual([1, 2, 3]);
-    expect(data(rtCsv, ",").map(row => row[3])).toEqual([60, 120, 180]);
-    await browser.$('.chromatogram-panel').$('button=Preview linked figure').click(); const linked = await preview();
-    expect(await browser.$(FIGURE).getText()).toContain("lower panel always shows that scan's complete spectrum");
-    const linkedSvg = join(output, "linked-current.svg"); await save(FIGURE, "Export SVG…", "Export linked figure", linkedSvg); expect(readFileSync(linkedSvg, "utf8")).toBe(linked.svg);
-    await scope(FIGURE, "Full run"); const linkedFull = await preview(); const linkedFullSvg = join(output, "linked-full.svg");
-    await save(FIGURE, "Export SVG…", "Export linked figure", linkedFullSvg); expect(readFileSync(linkedFullSvg, "utf8")).toBe(linkedFull.svg);
-    await capture("05-native-linked-scope"); await browser.$(FIGURE).$("button=Return to viewer").click();
-    record({ kind: "real synthetic scientific outputs", sourceSha256: digest(path), spectrumCurrentRows: data(csv, ","), spectrumFullRows: data(fullCsv, ","), emptyRows: data(emptyCsv, ","), currentRtRows: data(rtCsv, ",") });
+      await edit("rt", "60", "180");
+      await browser.$('.chromatogram-panel').$('button=Export figure').click(); await scope(FIGURE, "Current range"); const chrom = await preview();
+      const chromSvg = join(output, "chromatogram-current.svg"); await save(FIGURE, "Export SVG…", "Export chromatogram figure", chromSvg); expect(readFileSync(chromSvg, "utf8")).toBe(chrom.svg);
+      expect(await browser.$(FIGURE).getText()).toContain("Full run"); await browser.$(FIGURE).$("button=Return to viewer").click();
+      await browser.$("#chromatogram-export-toggle").click();
+      const rtCsv = join(output, "chromatogram-current.csv"); await save(".chromatogram-panel", "Export CSV…", "Export chromatogram data", rtCsv);
+      expect(data(rtCsv, ",").map(row => row[0])).toEqual([1, 2, 3]);
+      expect(data(rtCsv, ",").map(row => row[3])).toEqual([60, 120, 180]);
+      await browser.$('.chromatogram-panel').$('button=Preview linked figure').click(); const linked = await preview();
+      expect(await browser.$(FIGURE).getText()).toContain("lower panel always shows that scan's complete spectrum");
+      const linkedSvg = join(output, "linked-current.svg"); await save(FIGURE, "Export SVG…", "Export linked figure", linkedSvg); expect(readFileSync(linkedSvg, "utf8")).toBe(linked.svg);
+      await scope(FIGURE, "Full run"); const linkedFull = await preview(); const linkedFullSvg = join(output, "linked-full.svg");
+      await save(FIGURE, "Export SVG…", "Export linked figure", linkedFullSvg); expect(readFileSync(linkedFullSvg, "utf8")).toBe(linkedFull.svg);
+      await capture("05-native-linked-scope"); await browser.$(FIGURE).$("button=Return to viewer").click();
+      record({ kind: "real synthetic scientific outputs", sourceSha256: digest(path), spectrumCurrentRows: data(csv, ","), spectrumFullRows: data(fullCsv, ","), emptyRows: data(emptyCsv, ","), currentRtRows: data(rtCsv, ",") });
+    } finally {
+      const observer = await browser.execute(() => (Reflect.get(window, "__m74StopPreviewBlobs") as () => {
+        created: number; revoked: number; overflow: boolean; captureFailed: boolean; wrappersUnchanged: boolean; restored: boolean;
+      })());
+      record({ kind: "preview Blob observer restored", observer });
+      expect(observer).toMatchObject({ overflow: false, captureFailed: false, wrappersUnchanged: true, restored: true });
+    }
   });
 
   it("verifies the real SCIEX bundle, complete output set and first/repeat adoption", async () => {
