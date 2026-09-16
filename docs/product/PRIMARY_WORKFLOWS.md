@@ -242,7 +242,7 @@ See also
 
 **Success:** valid outputs are easy to locate and failures do not require rebuilding the batch.
 
-**Current M7.4 candidate; native acceptance/publication pending.** WF-004a
+**M7.4 implementation; Build 04 native acceptance verified.** WF-004a
 below remains the bounded serial queue for three evidenced
 vendor families, with semantic settings and explicit output adoption. M6.6's
 destination policies and conflict explanations shipped in PR #99. M6.7 adds the
@@ -521,7 +521,7 @@ exists but could not be read. See
 **Idle:** `Clear list` → Rust releases workspace rows and supersedes stale imports.
 **Active run:** `Clear list` → choose remove non-running / cancel and clear / return.
 
-The M7.4 candidate protects every active-queue member, including waiting and
+M7.4 protects every active-queue member, including waiting and
 finished rows, and the active single source. Remove non-running releases only
 the captured eligible set. Cancel and clear requests whole-operation stop,
 waits outside worker locks, then revalidates operation, roster revision and
@@ -529,7 +529,8 @@ removal set under the mutation/adoption authority. Stale confirmation,
 unconfirmed stop or quarantine preserves rows and offers re-evaluation.
 Return/Escape is inert. New imports cannot be erased by a late clear.
 There is no whole-workspace snapshot Undo; organization Undo stays narrower.
-Current native acceptance and publication remain pending.
+Build 04 verifies the exact eight-member active Clear path. Publication and
+natural-main CI attribution belong to PR #124.
 
 **Success:** no restart and no source-file deletion.
 
@@ -541,7 +542,7 @@ Current native acceptance and publication remain pending.
 4. Preview the export-specific render.
 5. Export image and optionally underlying data.
 
-**Current M7.4 candidate; native acceptance/publication pending.** The actual
+**M7.4 implementation; Build 04 native acceptance verified.** The actual
 Export figure dialog covers spectrum, chromatogram and linked figures. Rust
 renders an inert bounded SVG from the same canonical specification as saving.
 Current means the committed range; Full means the retained source. Old replies,

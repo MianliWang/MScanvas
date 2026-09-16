@@ -24,12 +24,13 @@ session-only virtual organization and one drag transform/hit-test owner. M7.3
 owns whole-row scan activation and the pending-range gesture: release does not
 zoom; later explicit activation/Enter commits once; Escape cancels, with
 discoverable keyboard/non-gesture equivalents and no permanent mode strip.
-The M7.4 candidate consolidates one typed intent into basic/advanced views,
+M7.4 consolidates one typed intent into basic/advanced views,
 keeps independent result judgments inspectable, and places quick PNG/Copy plot
 beside canonical figure preview. Clear, output opening and owned staging
 cleanup expose explicit recovery without changing scientific claims.
 [Its implementation record](M7_4_CONVERSION_RESULTS_FIGURES.md) distinguishes
-passing controlled/browser checks from pending native acceptance/publication.
+passing controlled/browser checks from seven attributed native scenario passes;
+PR #124 tracks protected publication and natural-main CI.
 
 Motion must be interruptible, useful and compatible with reduced motion. Drag
 feedback uses group/gap highlighting and compact counts. Preserve legibility,

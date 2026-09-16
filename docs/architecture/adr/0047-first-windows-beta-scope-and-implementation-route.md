@@ -1,6 +1,6 @@
 # ADR 0047 — First Windows beta scope and implementation route
 
-Status: **accepted route; M7.1–M7.3 published; M7.4 candidate in progress.**
+Status: **accepted route; M7.1–M7.3 published; M7.4 implementation/native acceptance verified; publication tracked in PR #124.**
 Date: 2026-09-12. Baseline: `8c8b1cc1e503f0885f30e54109bfc2eb0fb0001e`
 ([PR #118](https://github.com/MianliWang/MScanvas/pull/118)).
 Authority: the owner's separate M7.0 authorization, including continuation of
@@ -8,9 +8,9 @@ the accepted v5.11 design. M7.0 is Markdown only. Its completion means **ROUTE
 PUBLISHED**, after review and protected publication, not UI complete or beta
 released. Every implementation slice below needs its own authorization.
 
-Implementation update, 2026-09-15: the separately authorized M7.4 candidate
-implements the consumers described below. Controlled/browser evidence passes;
-current native acceptance and publication remain pending in
+Implementation update, 2026-09-16: the separately authorized M7.4 implementation
+delivers the consumers described below. Controlled/browser checks and all seven
+mandatory Build 04 native scenarios pass. Publication attribution is linked in
 [its record](../../ux/M7_4_CONVERSION_RESULTS_FIGURES.md). At M7.0 route
 publication, implementation had not started. M7.5 remains next/not started;
 there is no public beta build or release from M7.4.
@@ -45,9 +45,9 @@ the subsequently authorized implementation state.
 
 | Reference feature | Existing capability to re-present | Proposed M7 adapter and consumer | Later or excluded capability |
 | --- | --- | --- | --- |
-| Home, imports, roster | Native file picker admits mzML and evidenced Thermo RAW, Shimadzu LCD, SCIEX WIFF bundles; folder/Explorer drop admits mzML only; non-destructive remove/idle clear | M7.2 shell/session virtual folders over stable dataset IDs; M7.4 candidate active-run Clear choices, native acceptance pending | New RAW families, directory acquisitions, scientific classification persistence |
+| Home, imports, roster | Native file picker admits mzML and evidenced Thermo RAW, Shimadzu LCD, SCIEX WIFF bundles; folder/Explorer drop admits mzML only; non-destructive remove/idle clear | M7.2 shell/session virtual folders over stable dataset IDs; M7.4 active-run Clear choices, Build 04 native acceptance verified | New RAW families, directory acquisitions, scientific classification persistence |
 | TIC/BPC, spectrum, scans | mzML linked selection, bounded table, admitted RT/m/z viewports; TIC/BPC from a complete loaded scan table, with unreported units preserved | M7.3 whole-row activation, bounded search/sort, range adapter | Direct vendor preview, whole-file scan query, XIC, overlays/comparison |
-| Compact configuration and results | Source-qualified typed intent, selected/all queue, destination policies, cancellation, five judgements, explicit adoption | M7.4 candidate basic/advanced views, compact result/details and Open file / Open folder; native acceptance pending | Arbitrary methods/graphs, additional centroiding admission, mzXML, overwrite, ETA |
+| Compact configuration and results | Source-qualified typed intent, selected/all queue, destination policies, cancellation, five judgements, explicit adoption | M7.4 basic/advanced views, compact result/details and Open file / Open folder; Build 04 native acceptance verified | Arbitrary methods/graphs, additional centroiding admission, mzXML, overwrite, ETA |
 | Figures/data | Rust full-source/current-range SVG, direct native-save PNG, clipboard Copy plot, CSV/TSV; linked figure with full-source lower spectrum | M7.4 retains quick Copy plot/PNG entry points beside the new Export figure dialog/preview; shared controls; M7.3 proves committed-range handoff | New formats, feature/statistics export, saved FigureSpec/composer |
 | Settings and layout | Session backend choice and existing figure settings | M7.1 real localized settings; M7.5 allowlisted UI preferences/restoration | Durable project/artifact/run/classification/provenance store; scientific-run resume |
 | Analysis, nodes, code, AI | No production consumer | Omit future navigation or state honest unavailability where context requires it | Smoothing, peak detection/alignment/gap filling, matching, statistics, arbitrary execution, Python/R and AI automation |
@@ -191,7 +191,7 @@ Until M7.5 persistence lands, it explicitly says settings last for this session.
 Shared fields must serve this dialog and an existing settings consumer, such as
 FigureSettingsFields; a component inventory alone fails acceptance.
 
-The M7.4 candidate implements WF-004's Open file / Open folder recovery. A narrow
+M7.4 implements WF-004's Open file / Open folder recovery. A narrow
 operation takes a finalized-output identity; Rust resolves and revalidates the
 stored object before invoking the platform handler. React receives no path or
 shell command. Missing/replaced outputs and unavailable file associations give
@@ -199,7 +199,7 @@ actionable refusal, with folder access where still valid. Opening neither adopts
 an output nor upgrades a partial set's integrity/completeness. M7.6 exercises
 both actions and their failures in the installed application.
 
-The M7.4 candidate implements WF-005's active-run Clear choices. **Remove non-running**
+M7.4 implements WF-005's active-run Clear choices. **Remove non-running**
 lists/counts only rows Rust can release; all active-queue members remain
 protected, including waiting/finished rows, preserving bound order and outcomes.
 An empty eligible set explains refusal. **Cancel and clear** stops the whole
@@ -209,7 +209,7 @@ Unconfirmed stop, quarantine or a race preserves rows and offers recovery;
 delayed clearing cannot erase newly added rows.
 React never clears optimistically. **Return/Escape** preserves work and focus.
 Idle clear still supersedes stale imports. WF-004/005 now describe these
-candidate consumers, with native acceptance pending. M7.2's historical guard
+consumers, with Build 04 native acceptance verified. M7.2's historical guard
 remains its published baseline behavior.
 Sources and finalized outputs are never deleted.
 
@@ -223,14 +223,14 @@ substitute; preview never saves or adopts automatically.
 M7.4 also owns [ADR 0043's G18](0043-conversion-completion-route.md): failed
 cleanup can strand a deterministic staging name. The historical marker-based
 `reclaim_staging_area` has only test callers and is not the new consumer.
-The candidate's explicit reclaim command requires Rust-held same-session
+The explicit reclaim command requires Rust-held same-session
 ownership retained from staging creation and confirmed process quiescence.
 Parent/root/output handles exclude rename and in-place reparse writes; a
 checked parent transition permits ordinary child publication only while the
 pinned root keeps that parent nonempty. Reclaim freezes quiescent child
 identities and preserves narrow proof across partial cleanup. A name or marker
 cannot grant deletion authority. Busy/quarantined, replaced, linked, foreign
-or unproved targets stay untouched. Current native lock/recovery is pending.
+or unproved targets stay untouched. Build 04 passes real single/set lock, refused reclaim, release, cleanup and fresh conversion.
 After a transient lock clears, the user can retry owned cleanup and then make a
 fresh reviewed conversion. If ownership cannot be proved, including after
 restart, refuse cleanup and offer a different destination/new plan when backend
@@ -304,8 +304,8 @@ The existing residuals have first consumers, rather than a new audit campaign:
 | ADR 0045's failing M4.1 empty-spectrum export and M5.2 Tab cases | M7.3 owns viewport Tab; M7.4 owns empty-spectrum export, or earlier touched consumer. Diagnose test versus product and prove intended semantics; baseline failure is not green |
 | M6.6–M6.9 native campaign NOT RE-RUN; stop-row harness race; save-dialog/clipboard/window-focus limits | First changed mechanism: M7.1 dialog/focus, M7.2 OS drop, M7.3 input/export, M7.4 conversion/adoption; M7.6 integrated native smoke. Retain measured driver/port facts and attribution; manual native evidence where automation cannot observe |
 | `NOTICE_ORDER` coverage and advisory-code presentation | M7.4, or earlier localization consumer, must keep every applicable reason visible and translated; unknown structured codes remain inspectable without invented meaning |
-| ADR 0043 G18, application recovery absent at route lock | M7.4 candidate implements the guarded cleanup/replan flow above, with native acceptance pending; M7.6 owns installed fault/recovery proof. This required exit cannot borrow G16's forgeable marker as deletion authority |
-| WF-005 active-run Clear and WF-006 preview absent at route lock | M7.4 candidate implements the explicit flows above, with native acceptance pending; M7.6 owns installed scenario/specification-agreement proof. Mandatory acceptance cannot be waived as historical behavior |
+| ADR 0043 G18, application recovery absent at route lock | M7.4 implements the guarded cleanup/replan flow above, with Build 04 native acceptance verified; M7.6 owns installed fault/recovery proof. This required exit cannot borrow G16's forgeable marker as deletion authority |
+| WF-005 active-run Clear and WF-006 preview absent at route lock | M7.4 implements the explicit flows above, with Build 04 native acceptance verified; M7.6 owns installed scenario/specification-agreement proof. Mandatory acceptance cannot be waived as historical behavior |
 | WF-006 quick-PNG versus clipboard wording | M7.4 resolves the contract: Quick PNG uses the existing direct PNG operation with its native save picker, without opening the full Export figure dialog; Copy plot remains the clipboard path. Re-present these existing authorities with visible committed scope/settings, no implicit destination or overwrite. M7.6 verifies both quick paths and PNG picker cancel/refusal/failure separately from the full preview flow; no new PNG backend or duplicate clipboard capability is implied |
 | Closed evidence gates, source-family lists, hypothetical retry/fault/cost questions | Keep ADR 0045's named owners. No source-family expansion, overwrite cure, provider investigation or cache work is required by this UI route; any new observed release-critical defect still blocks release |
 

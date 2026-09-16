@@ -1,6 +1,6 @@
 # M7.4 — Conversion, results and figures
 
-Status: **IMPLEMENTATION IN PROGRESS; NATIVE ACCEPTANCE AND PUBLICATION PENDING**.
+Status: **IMPLEMENTATION AND NATIVE ACCEPTANCE VERIFIED; PUBLICATION TRACKED IN PR #124**.
 Authorized baseline: `95e7926aa207820242d450b57b06ee64f6119b1a`.
 Baseline tree: `c1b45a9b01a12708d3e745fc4dfaf6d33767f755`.
 
@@ -45,19 +45,19 @@ messages; original provider text and filenames remain inspectable.
 
 ## Current acceptance table
 
-These are working-candidate observations. Focused subsets overlap full suites
+These are attributed implementation observations. Focused subsets overlap full suites
 and must not be added to their totals. Raw evidence remains ignored under
 `.tmp/m74-evidence/`; browser mock IPC is not filesystem/process evidence.
 
-| Required outcome | Current evidence | Remaining acceptance |
+| Required outcome | Current evidence | Outcome and boundary |
 | --- | --- | --- |
 | One intent and exact plan/retry | Configuration/lifecycle suites and `M74ConversionComposition`; Build 04 native Fail/Skip conversion and fresh plans after single/set recovery | Passed for the current native conversion scenarios |
-| Five judgments and inspectable result details | Final frontend run: 1862 tests in 89 files; Build 04 native diagnostics and explicit single-output adoption | Complete SCIEX set first/repeat adoption |
-| File/folder opening | Seven platform/service tests, unknown/replaced/modified/locked controls and real directory write exclusion; final read-only adoption hold: ten focused tests | Actual Windows handler result and independently validated folder |
+| Five judgments and inspectable result details | Final frontend run: 1862 tests in 89 files; Build 04 native diagnostics and explicit single-output adoption | Passed: real ten-member set, first 10 added, repeat 10 already present |
+| File/folder opening | Seven platform/service tests, unknown/replaced/modified/locked controls and real directory write exclusion; final read-only adoption hold: ten focused tests | Passed: actual Windows accepted file/folder handoff; Explorer task folder verified; no external viewer rendering claimed |
 | Active Clear | Seven Rust service/control tests plus dialog/composition checks; Build 04 exact eight-member native Return/Escape, nonrunning removal, confirmed cancellation and Clear | Passed; earlier failed selection attempt retained |
 | G18 live staging recovery | Real lock/unlock/reclaim controls; forged/foreign/reparse/hard-link refusals; Build 04 actual provider single/set lock → refused reclaim → unlock → reclaim → fresh conversion | Passed for these native paths; set publication was refused before any member finalized |
-| Canonical figure preview | Five service tests: actual exported SVG equals preview, current/full/empty, linked/chromatogram, late source/document change and DPI scope | Actual native SVG/PNG/data/clipboard and natural picker return |
-| Bilingual layout and keyboard | Browser run 07: 9 passing scenarios across 1920×1080, 1366×768, 1200×800 and 960×640; DPR 1/1.5/1.25/2, both densities, reduced motion; native host-scale checks pass for completed scenarios | Remaining figure/set-adoption/OS native composition |
+| Canonical figure preview | Five service tests: actual exported SVG equals preview, current/full/empty, linked/chromatogram, late source/document change and DPI scope | Passed: actual native SVG equality, PNG dimensions/DPI/CRC, data rows, clipboard dimensions/colors and 14 natural Save/Cancel returns |
+| Bilingual layout and keyboard | Browser run 07: 9 passing scenarios across 1920×1080, 1366×768, 1200×800 and 960×640; DPR 1/1.5/1.25/2, both densities, reduced motion; native host-scale checks pass for completed scenarios | All seven native scenarios pass at measured 150% Windows scaling |
 | Conversion focus / #122 | Before-failing foreground obligation; stable mounted frame, current commit facts, user-intent and detached Settings-owner controls; Build 04 cancelled destination and diagnostics Save return naturally | Attributable published issue disposition; historical external-foreground failure remains undetermined |
 
 The latest Rust workspace/all-target run, using CI's default features, passed:
@@ -129,7 +129,8 @@ between copied inputs and their pinned manifest identities. Both SCIEX paths now
 compare each copy's name, length and full hash before admission; the review closed
 that finding at harness SHA-256
 `19bfe3f6c1f32459578e4d4dbe5687b825c376c3d20538440edda352c25d8c63`.
-The affected e2e typecheck passes; complete set-native acceptance remains pending.
+The affected e2e typecheck passed at that preparation stage; the later
+remaining-two run supplies current complete-set native acceptance.
 Single-output native results cannot replace this set-native evidence.
 
 The planned campaign covers real Fail/Skip conversion, explicit diagnostics
@@ -153,7 +154,7 @@ inputs unchanged during compilation, inventory digest
 `45fed3d2d37d6ae65dd1c28fea13f2ea5397b0e21973c94d7e5a583e2c89d083`,
 and a 16,580,096-byte QA binary with SHA-256
 `1fe841c2b72100ccb65dddf8cdecb2b59b95b2d89060d1966ab2a2ad913e58bd`.
-Its remaining native acceptance is pending; Build 03 cannot qualify that repair.
+The Build 04 native passes below qualify that repair; Build 03 does not.
 
 ## Native diagnostics focus repair
 
@@ -220,7 +221,7 @@ Six focused controls pass in the existing headless Chrome harness: actual Blob
 reading with connect requests blocked, original URL call behavior, stale/request
 and uncaptured-URL refusal, element/request/revocation races, and read failure
 with descriptor restoration. They use a separate synthetic document and prove
-the observation mechanism only. Native SVG/file equality remains pending.
+the observation mechanism only. The later native pass separately proves SVG/file equality.
 The runner's browser-mode window-state and post-session mock-store warnings are
 retained. Native/overlay typechecks also pass; no application rebuild is needed
 while Build 04's production inventory remains unchanged.
@@ -251,11 +252,10 @@ recorded, so the exact scroll cause remains undetermined. The navigation helper
 now reveals Home and records/checks its visible rectangle and hit target before
 the ordinary click; it performs no focus or native-window operation.
 
-Five of seven whole native scenarios have passed. Complete SCIEX set
-first/repeat adoption and Windows opening outcomes remain
-mandatory before protected publication; completed scenarios are reused by exact
-Build 04 and primary-evidence identities. These five scenarios come from three
-failed suite runs; there is no successful seven-scenario suite:
+All seven whole native scenarios have passed. Completed scenarios are reused
+by exact Build 04 and primary-evidence identities. They come from three retained
+failed suite runs plus one passing remaining-two suite; no single seven-test
+passing suite is claimed:
 
 | Scenario | Build 04 primary attribution | Outcome |
 | --- | --- | --- |
@@ -264,8 +264,20 @@ failed suite runs; there is no successful seven-scenario suite:
 | Real single staging recovery and replan | Same second run | Passed |
 | Real set staging recovery and replan | Same second run | Passed; zero members finalized before the refusal |
 | Figure/data/clipboard | `native-launch-20260916T163020545Z` / `native-r5m6L9`; harness head `66fc70b745cc777f9969b65d369cd636ac7cd282` | Passed; suite later failed on Home navigation before SCIEX import |
-| Complete SCIEX first/repeat adoption | Remaining guarded campaign | Pending |
-| Actual OS file/folder opening | Remaining guarded campaign | Pending |
+| Complete SCIEX first/repeat adoption | `native-launch-20260916T164220794Z` / `native-MipIIK`; harness head `5d5cd3954ade143ec758b36ed324f00acbb2ada3` | Passed: 10 added/0 already; repeat 0 added/10 already; unchanged 11-row roster |
+| Actual OS file/folder opening | Same remaining-two run | Passed: Windows accepted both; task-folder Explorer window independently observed |
+
+The actual set contains the ten independently expected member names, all fully
+length/hash checked. Two source objects form one acquisition; the output set has
+ten members, `reader_error_audit_v1` completeness with ten samples, and
+`output_only` validation (`fullyVerified: false`). First/repeat adoption preserves
+operation/run/attempt/result/output IDs and source identities. Windows accepted
+both open requests. The foreground timeline identifies system `OpenWith.exe`;
+this does not prove a chosen viewer displayed data or establish an association.
+The exact task-folder Explorer window was observed and closed after the suite.
+The exact task-created OpenWith window was also closed without changing an
+association or forcing focus. Native application/driver processes and ports
+are gone. Raw outputs, screenshots, hashes and input provenance stay local.
 
 Published-member preservation is separately attributed. The retained Rust CI
 run [35059627262](https://github.com/MianliWang/MScanvas/actions/runs/35059627262)
@@ -297,10 +309,11 @@ original report, objects and diff were preserved, with the reply appended.
 This resolves that history pause without making the amend compliant or accepting
 unfinished tests. All future corrections use ordinary new commits.
 
-The pause materially interrupted the operator campaign. Earlier readiness is
-invalid for the next window; a new actual reply is required after preparation.
-The launcher binds that reply and its hash to the new window before initial
-automated input. Three required PR checks passed on pre-observer head `671e7f1`;
+The pause materially interrupted the earlier operator campaign. New actual
+readiness was received and first clock-observed at 2026-09-16 16:15:41 UTC.
+The launcher bound that exact reply and its hash to the announced contiguous
+window. Exact initial TOPMOST/click/restore preceded business interaction;
+there was no post-picker focus rescue. Three required PR checks passed on pre-observer head `671e7f1`;
 every successor requires its own natural PR CI. Draft status continues until
 mandatory acceptance and review finish.
 
@@ -363,7 +376,10 @@ mandatory acceptance and review finish.
   closeout failures remain in the ignored evidence directory. Every gate uses
   its actual process exit; a log tail or helper shutdown is not a pass.
 
-M7.4 is not complete or published. M7.5 remains **NEXT / NOT STARTED**.
+Publication status and the protected-merge, natural-main CI and ff-only local
+closeout identities are tracked in [PR #124](https://github.com/MianliWang/MScanvas/pull/124) and the
+retained local closeout. M7.4 completion requires that publication sequence;
+native acceptance alone does not complete it. M7.5 remains **NEXT / NOT STARTED**.
 M7 remains in progress; this slice builds/releases no public beta. M6 and the
 post-M6 XIC non-admission branch remain complete: the XIC provider is not
 admitted and production XIC is not implemented.
