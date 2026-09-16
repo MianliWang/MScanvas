@@ -1,6 +1,12 @@
 /** New explicitly synthetic inputs for M7.4; no physical acquisition claim. */
 import { closeSync, openSync, readFileSync, writeFileSync, writeSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { writeM73NativeFixture } from "./m73NativeFixture";
+
+/** Rust displays uppercase hex; compare all 256 bits, preserving the raw ID. */
+export function matchesNativePreviewDigest(svg: string, specId: string) {
+  return /^[0-9a-f]{64}$/iu.test(specId) && createHash("sha256").update(svg).digest("hex") === specId.toLowerCase();
+}
 
 export function writeM74NativeFixture(path: string, count = 12) {
   writeM73NativeFixture(path);

@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { installM74PreviewBlobObserver } from "../support/m74PreviewBlobObserver";
 import type { ObservedPreviewBlob } from "../support/m74PreviewBlobObserver";
+import { matchesNativePreviewDigest } from "../support/m74NativeFixture";
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10" fill="red"/></svg>';
 const SPEC = createHash("sha256").update(SVG).digest("hex");
@@ -20,6 +21,16 @@ async function makePreview() {
 }
 
 describe("M7.4 preview Blob observation controls", () => {
+  it("compares the full digest across native hex casing and refuses changed bytes or malformed identities", () => {
+    expect(matchesNativePreviewDigest(SVG, SPEC.toUpperCase())).toBe(true);
+    expect(matchesNativePreviewDigest(SVG, SPEC)).toBe(true);
+    expect(matchesNativePreviewDigest(SVG + "\n", SPEC)).toBe(false);
+    const changed = (SPEC[0] === "0" ? "1" : "0") + SPEC.slice(1);
+    for (const id of [changed, SPEC.slice(1), SPEC + "0", " " + SPEC, "g" + SPEC.slice(1)]) {
+      expect(matchesNativePreviewDigest(SVG, id)).toBe(false);
+    }
+  });
+
   beforeEach(async () => {
     // A separate inert document, never the application or its production CSP.
     await browser.url("data:text/html," + encodeURIComponent('<!doctype html><meta http-equiv="Content-Security-Policy" content="connect-src \'none\'; img-src blob:"><title>Synthetic observer control</title>'));

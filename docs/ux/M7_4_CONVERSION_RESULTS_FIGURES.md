@@ -225,6 +225,21 @@ The runner's browser-mode window-state and post-session mock-store warnings are
 retained. Native/overlay typechecks also pass; no application rebuild is needed
 while Build 04's production inventory remains unchanged.
 
+After fresh readiness on 2026-09-16, an initial-only attempt raised the exact
+window but refused its pointer read-back before clicking; its cause remains
+undetermined. Added read-only pointer diagnostics preserve the original click
+predicate. The next run passed exact initial input and restored non-topmost,
+then displayed the current-spectrum preview but timed out at the digest check.
+Rust's SHA-256 formatter uses uppercase hexadecimal while Node emits lowercase;
+the harness's literal comparison could never accept that product digest. The
+repair validates all 64 hexadecimal digits and compares their value without
+changing the raw recorded ID or saved SVG byte assertions. Read-check diagnostics
+now retain the raw spec ID, independently computed digest and request correlation
+when a stable Blob is returned; otherwise they retain the last observation phase.
+The failed run did not retain its raw Blob read outcome and also logged
+`read2 is not a function` after the timeout. Its exact callback ordering was not
+recorded, so other refusal reasons are not independently excluded.
+
 Four of seven whole native scenarios have passed. Figure/data/clipboard content,
 complete SCIEX set first/repeat adoption and Windows opening outcomes remain
 mandatory before protected publication; completed scenarios are reused by exact

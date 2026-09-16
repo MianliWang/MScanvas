@@ -6,7 +6,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WorkspaceConversionUpdate, WorkspaceRoster } from "../../apps/desktop/src/features/mzml-preview/contracts";
 import { nativeResourceOrigins } from "../support/nativeResourceOrigins";
-import { inspectNativePng } from "../support/m74NativeFixture";
+import { inspectNativePng, matchesNativePreviewDigest } from "../support/m74NativeFixture";
 import { installM74PreviewBlobObserver } from "../support/m74PreviewBlobObserver";
 import type { ObservedPreviewBlob } from "../support/m74PreviewBlobObserver";
 
@@ -223,15 +223,21 @@ async function save(selector: string, name: string, title: string, path: string,
 async function preview() {
   await browser.$(FIGURE + " .figure-preview img").waitForDisplayed();
   const current: { value: ObservedPreviewBlob | null } = { value: null };
-  await browser.waitUntil(async () => {
-    if (await browser.$(FIGURE).$('button=Export SVG…').getAttribute("aria-disabled") !== "false") return false;
-    const observed = await browser.execute(async css => {
-      const read = Reflect.get(window, "__m74ReadPreviewBlob") as (selector: string) => Promise<ObservedPreviewBlob | null>;
-      return read(css + " .figure-preview img");
-    }, FIGURE);
-    if (observed === null || createHash("sha256").update(observed.svg).digest("hex") !== observed.specId) return false;
-    current.value = observed; return true;
-  });
+  let lastRead: object = { phase: "waiting for export readiness" };
+  try {
+    await browser.waitUntil(async () => {
+      if (await browser.$(FIGURE).$('button=Export SVG…').getAttribute("aria-disabled") !== "false") return false;
+      const observed = await browser.execute(async css => {
+        const read = Reflect.get(window, "__m74ReadPreviewBlob") as (selector: string) => Promise<ObservedPreviewBlob | null>;
+        return read(css + " .figure-preview img");
+      }, FIGURE);
+      if (observed === null) { lastRead = { phase: "no stable current Blob" }; return false; }
+      const matches = matchesNativePreviewDigest(observed.svg, observed.specId);
+      lastRead = { phase: "digest compared", specId: observed.specId, sha256: createHash("sha256").update(observed.svg).digest("hex"), request: observed.request, matches };
+      if (!matches) return false;
+      current.value = observed; return true;
+    });
+  } finally { record({ kind: "preview Blob read check", lastRead }); }
   if (current.value === null) throw Error("No current rendered preview Blob was observed.");
   record({ kind: "actual rendered preview Blob", specId: current.value.specId, bytes: Buffer.byteLength(current.value.svg), request: current.value.request,
     width: current.value.width, height: current.value.height, naturalWidth: current.value.naturalWidth, naturalHeight: current.value.naturalHeight });
@@ -397,7 +403,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       await scope(FIGURE, "Current range"); await preview();
       await browser.$(FIGURE + ' input[id$="-widthPx"]').setValue("900"); await browser.$(FIGURE + ' input[id$="-heightPx"]').setValue("600");
       await browser.$(FIGURE + ' input[id$="-pngDpi"]').setValue("150"); const current = await preview();
-      expect(createHash("sha256").update(current.svg).digest("hex")).toBe(current.specId);
+      expect(matchesNativePreviewDigest(current.svg, current.specId)).toBe(true);
       const svg = join(output, "spectrum-current.svg"); await save(FIGURE, "Export SVG…", "Export spectrum figure", svg);
       expect(readFileSync(svg, "utf8")).toBe(current.svg);
       const png = join(output, "spectrum-current.png"); await save(FIGURE, "Export PNG…", "Export spectrum figure", png);
