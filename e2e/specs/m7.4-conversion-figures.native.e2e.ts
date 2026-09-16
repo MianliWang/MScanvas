@@ -94,7 +94,17 @@ async function showRoster() {
   const toggle = browser.$('[aria-controls="workbench-roster"]');
   if (await toggle.isExisting() && await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
 }
-async function workbench() { await browser.$(".workbench-home").click(); }
+async function workbench() {
+  await reveal(".workbench-home");
+  const target = await browser.execute(() => {
+    const home = document.querySelector<HTMLElement>(".workbench-home")!, rect = home.getBoundingClientRect();
+    return { rect: rect.toJSON(), scrollY, visible: rect.top >= 0 && rect.bottom <= innerHeight && rect.left >= 0 && rect.right <= innerWidth,
+      hit: home.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)) };
+  });
+  record({ kind: "native Home navigation target after reveal", target });
+  expect(target.visible).toBe(true); expect(target.hit).toBe(true);
+  await browser.$(".workbench-home").click();
+}
 async function conversion() { await browser.$("button=Conversion & results").click(); await browser.$(PANEL).waitForDisplayed(); }
 async function add(path: string) {
   const before = (await roster()).datasets.length;

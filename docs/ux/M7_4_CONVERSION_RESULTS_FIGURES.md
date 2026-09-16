@@ -240,11 +240,22 @@ The failed run did not retain its raw Blob read outcome and also logged
 `read2 is not a function` after the timeout. Its exact callback ordering was not
 recorded, so other refusal reasons are not independently excluded.
 
-Four of seven whole native scenarios have passed. Figure/data/clipboard content,
-complete SCIEX set first/repeat adoption and Windows opening outcomes remain
+The next run passed the entire figure/data/clipboard scenario: real SVG preview
+bytes match saved SVG, PNG dimensions/150-DPI metadata/CRCs pass, committed m/z
+and RT data match the expected source rows, and actual clipboard dimensions and
+sampled colors pass. All 14 recorded Save/Cancel returns satisfy the natural
+initiator check. The observer restored its original descriptors. The suite then
+failed before SCIEX import when Home was outside the visible viewport and the
+WebDriver click was not interactable. Original header/ancestor geometry was not
+recorded, so the exact scroll cause remains undetermined. The navigation helper
+now reveals Home and records/checks its visible rectangle and hit target before
+the ordinary click; it performs no focus or native-window operation.
+
+Five of seven whole native scenarios have passed. Complete SCIEX set
+first/repeat adoption and Windows opening outcomes remain
 mandatory before protected publication; completed scenarios are reused by exact
-Build 04 and primary-evidence identities. This is four complete scenarios across
-two failed suite runs, not a previously successful seven-scenario campaign:
+Build 04 and primary-evidence identities. These five scenarios come from three
+failed suite runs; there is no successful seven-scenario suite:
 
 | Scenario | Build 04 primary attribution | Outcome |
 | --- | --- | --- |
@@ -252,7 +263,7 @@ two failed suite runs, not a previously successful seven-scenario campaign:
 | Exact active Clear membership and choices | `native-launch-20260916T054338575Z` / `native-gqceUQ`; harness head `671e7f1364b0b2e1d35d94c8667beb822b860589` | Passed; suite later failed in figure observation |
 | Real single staging recovery and replan | Same second run | Passed |
 | Real set staging recovery and replan | Same second run | Passed; zero members finalized before the refusal |
-| Figure/data/clipboard | Remaining guarded campaign | Pending |
+| Figure/data/clipboard | `native-launch-20260916T163020545Z` / `native-r5m6L9`; harness head `66fc70b745cc777f9969b65d369cd636ac7cd282` | Passed; suite later failed on Home navigation before SCIEX import |
 | Complete SCIEX first/repeat adoption | Remaining guarded campaign | Pending |
 | Actual OS file/folder opening | Remaining guarded campaign | Pending |
 
