@@ -1,6 +1,6 @@
 # M7.4 — Conversion, results and figures
 
-Status: **IMPLEMENTATION AND NATIVE ACCEPTANCE VERIFIED; PUBLICATION TRACKED IN PR #124**.
+Status: **LOCAL IMPLEMENTATION AND NATIVE ACCEPTANCE VERIFIED; PUBLICATION HELD IN PR #124**.
 Authorized baseline: `95e7926aa207820242d450b57b06ee64f6119b1a`.
 Baseline tree: `c1b45a9b01a12708d3e745fc4dfaf6d33767f755`.
 
@@ -52,13 +52,14 @@ and must not be added to their totals. Raw evidence remains ignored under
 | Required outcome | Current evidence | Outcome and boundary |
 | --- | --- | --- |
 | One intent and exact plan/retry | Configuration/lifecycle suites and `M74ConversionComposition`; Build 04 native Fail/Skip conversion and fresh plans after single/set recovery | Passed for the current native conversion scenarios |
-| Five judgments and inspectable result details | Final frontend run: 1862 tests in 89 files; Build 04 native diagnostics and explicit single-output adoption | Passed: real ten-member set, first 10 added, repeat 10 already present |
+| Five judgments and inspectable result details | Current frontend run: 1867 tests in 89 files; Build 04 native diagnostics and explicit single-output adoption | Passed: real ten-member set, first 10 added, repeat 10 already present |
 | File/folder opening | Seven platform/service tests, unknown/replaced/modified/locked controls and real directory write exclusion; final read-only adoption hold: ten focused tests | Passed: actual Windows accepted file/folder handoff; Explorer task folder verified; no external viewer rendering claimed |
 | Active Clear | Seven Rust service/control tests plus dialog/composition checks; Build 04 exact eight-member native Return/Escape, nonrunning removal, confirmed cancellation and Clear | Passed; earlier failed selection attempt retained |
 | G18 live staging recovery | Real lock/unlock/reclaim controls; forged/foreign/reparse/hard-link refusals; Build 04 actual provider single/set lock → refused reclaim → unlock → reclaim → fresh conversion | Passed for these native paths; set publication was refused before any member finalized |
 | Canonical figure preview | Five service tests: actual exported SVG equals preview, current/full/empty, linked/chromatogram, late source/document change and DPI scope | Passed: actual native SVG equality, PNG dimensions/DPI/CRC, data rows, clipboard dimensions/colors and 14 natural Save/Cancel returns |
+| Linked-preview prerequisite repair | Build 05 one affected native case; current source/trace tokens, saved SVG byte/digest equality, cancellation and initiating-control focus | Passed: three natural picker returns; missing/loading and dialog-correctable states retain composition/browser coverage |
 | Bilingual layout and keyboard | Browser run 07: 9 passing scenarios across 1920×1080, 1366×768, 1200×800 and 960×640; DPR 1/1.5/1.25/2, both densities, reduced motion; native host-scale checks pass for completed scenarios | All seven native scenarios pass at measured 150% Windows scaling |
-| Conversion focus / #122 | Before-failing foreground obligation; stable mounted frame, current commit facts, user-intent and detached Settings-owner controls; Build 04 cancelled destination and diagnostics Save return naturally | Attributable published issue disposition; historical external-foreground failure remains undetermined |
+| Conversion focus / #122 | Before-failing foreground obligation; stable mounted frame, current commit facts, user-intent and detached Settings-owner controls; Build 04 cancelled destination and diagnostics Save return naturally | Publication and issue closure remain pending; historical external-foreground failure remains undetermined |
 
 The latest Rust workspace/all-target run, using CI's default features, passed:
 desktop **945 passed,
@@ -348,13 +349,56 @@ filter. Resource and overflow checks pass.
 The first two new outside-range test attempts reached the assertion before a
 range was committed; their logs show the whole-run state. The final test uses
 an explicit typed RT commit and waits for the positive outside-range reason.
-Failed attempts remain preserved. The original seven native scenarios retain
-their Build04 attribution. Build05 is required for a new focused native
-entry/source-binding scenario, including a saved SVG with actual preview-byte
-equality, a cancelled save with no new file and unchanged prior output, and
-natural initiating-control returns. Its acceptance is pending. The previous native
-operator window ended, so preparation must finish before a new actual readiness
-reply. Publication is held for this affected acceptance and review.
+Failed attempts remain preserved. The current full frontend run passes
+**1867 tests in 89 files**; focused subsets are not extra totals. Build05 is
+**16,580,096 bytes**, SHA-256
+`a82a3f60d2c107da8198fa7a018802e45e5445f50ff3b9e423e7db00678fa399`,
+with production inventory
+`c8e8090588efcd7b79f77a8935ae678f323d160228374485b49cd8c372934468`.
+All 283 production inputs and the three frontend artifacts still match the build.
+The original seven native scenarios retain their separate Build04 attribution.
+
+The fresh affirmative readiness reply was observed at 2026-09-16 21:55:48 UTC.
+The guarded Build05 run `native-launch-20260916T215629605Z`, with primary output
+`native-c5SeqN`, passes its **one affected case in 16.4 seconds, direct exit 0**.
+Executed source is `13d686149c2a044e72423af3ac0de7489bf94426`, tree
+`aa5cd19458bcfcf92316691efab12e1436e6219c`; native harness SHA-256 is
+`58dadea897299ec3f75d7db434a75ae1c00a7f42653c6214811f09766e08ef2f`.
+This is real Windows/Tauri provider execution on the explicitly synthetic
+12-scan mzML, at CSS 1366x768 and 150% Windows scaling. It is not a new vendor
+conversion, physical-device qualification or repetition of the Build04 suite.
+
+No-spectrum and no-trace states refuse the linked entry without opening the
+dialog or issuing a new preview. Restoring BPC preserves chromatogram token 4
+and spectrum token 5; selecting source index 2 changes the spectrum token to 6.
+The actual SVG describes index 2 and a selected-scan marker at 120. Saving
+produces **4,921 bytes, 1200x640**, equal to the actual preview bytes, with
+SHA-256 `fbd209a73ba2e4ad85ef0006534a842933087bf0f4e853404527512ef225cc3f`.
+Its rendered CSS size is 757x404. Cancellation creates no new file and preserves
+the prior SVG and current preview identity. Import, Save and Cancel each return
+naturally to their initiating control; Return to viewer restores the entry focus.
+The Blob observer creates/revokes three objects and restores its wrappers.
+Native snapshots show no console entries, external resources or horizontal
+overflow. Controlled loading and alternate layouts retain their separate
+composition/browser attribution.
+
+The initial owned PID 13156/HWND 8195480 received one temporary-TOPMOST click;
+non-topmost state was restored before the case. No post-picker focus rescue was
+used. All four original inputs and the new source copy retain their hashes.
+Post-run application/driver processes and owned ports are empty, and the
+operator window has ended. The two bounded read-only reviewers accepted this
+new primary evidence without rerunning tests. Evidence SHA-256 is
+`5095e4bd556e50b0add070e8f02e96a6c12399ced0f691e1ac85cc6a2ec26d98`;
+the native log SHA-256 is
+`15dadb74e687abf9abe7c9e47d10ffdade686f444859078d339407d0a69c50e3`.
+
+Local acceptance is complete. Ordinary task push and PR updates were rejected
+before execution because approval was required while the active policy was
+`Never`. The remote PR still describes the earlier candidate; current-candidate
+natural PR CI and public finding disposition remain pending. No rejected write
+was rerouted or retried during this continuation. Protected true merge,
+natural-main CI, ff-only synchronization and inclusion-proved task-branch
+cleanup remain mandatory. M7.4 is incomplete until that sequence finishes.
 
 ## Retained failures and attribution
 
