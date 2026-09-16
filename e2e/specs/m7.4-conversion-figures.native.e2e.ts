@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { WorkspaceConversionUpdate, WorkspaceRoster } from "../../apps/desktop/src/features/mzml-preview/contracts";
+import type { FigurePreviewRequest, WorkspaceConversionUpdate, WorkspaceRoster } from "../../apps/desktop/src/features/mzml-preview/contracts";
 import { nativeResourceOrigins } from "../support/nativeResourceOrigins";
 import { inspectNativePng, matchesNativePreviewDigest } from "../support/m74NativeFixture";
 import { installM74PreviewBlobObserver } from "../support/m74PreviewBlobObserver";
@@ -400,6 +400,81 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       const next = await terminal(); expect(next.queue.finalizedCount).toBe(1); expect(next.operationId).not.toBe(failed.operationId);
       for (const member of publishedBeforeCleanup) expect(digest(member.path)).toBe(member.sha256);
     } finally { if (!existsSync(release)) writeFileSync(release, "bounded cleanup after test\n"); await locked; record({ kind: "real lock evidence", value: existsSync(journal) ? JSON.parse(readFileSync(journal, "utf8").replace(/^\uFEFF/u, "")) : null, lockError: String(lockError ?? "") }); }
+  });
+
+  it("gates linked preview on viewer prerequisites and restores the real selected source", async () => {
+    await browser.execute(installM74PreviewBlobObserver);
+    try {
+      await clearIdle();
+      expect(await browser.$("button=Preview linked figure").isExisting()).toBe(false);
+      const path = source("M74-linked-entry-12-scans.mzML", join(input!, "synthetic-12-scans.mzML"));
+      await workbench(); await showRoster(); await remember("button", "Add files…");
+      await add(path); await naturalReturn("linked-entry input picker");
+      const loadedRoster = await roster();
+      expect(loadedRoster.datasets).toHaveLength(1);
+      expect(loadedRoster.datasets[0]).toMatchObject({ fileName: basename(path), sourceKind: "mzml" });
+      await browser.$(ROWS).click(); await browser.$(".spectrum-table-panel").waitForDisplayed(); await workbench();
+      await browser.$("#chromatogram-export-toggle").click();
+      const entrySelector = "#chromatogram-export-panel > button", entry = browser.$(entrySelector);
+      const previewCalls = async () => (await calls()).filter(call => call.command === "preview_figure");
+      const blocked = async (reason: string, phase: string) => {
+        expect(await entry.isEnabled()).toBe(false);
+        expect(await entry.getAttribute("aria-describedby")).toBe("chromatogram-linked-unavailable");
+        expect(await browser.$("#chromatogram-linked-unavailable").getText()).toBe(reason);
+        await reveal(entrySelector); await entry.click();
+        expect(await browser.$(FIGURE).isExisting()).toBe(false);
+        record({ kind: "linked preview entry refused in viewer", phase, reason, entry: await entry.getHTML(), previewCalls: await previewCalls() });
+        await capture("linked-entry-" + phase);
+      };
+      await blocked("Select a scan and wait for its spectrum to load.", "no-spectrum");
+      expect(await previewCalls()).toHaveLength(0);
+      await reveal('.spectrum-table-panel [data-source-index="1"]');
+      await browser.$('.spectrum-table-panel [data-source-index="1"]').click();
+      await browser.waitUntil(async () => (await browser.$("#selected-spectrum-summary").getText()).startsWith("Spectrum 1,"));
+      await entry.waitForEnabled(); await reveal(entrySelector); await entry.click();
+      const first = await preview(), firstRequest = JSON.parse(first.request.requestJson) as FigurePreviewRequest;
+      expect(firstRequest.source).toMatchObject({ kind: "linked", traces: { tic: true, bpc: false } });
+      if (firstRequest.source.kind !== "linked") throw Error("The actual preview is not linked.");
+      expect(firstRequest.source.spectrumToken.length).toBeGreaterThan(0);
+      expect(firstRequest.source.chromatogramToken.length).toBeGreaterThan(0);
+      expect(first.svg).toContain("spectrum index 1");
+      expect(first.svg).toContain("&quot;Selected scan&quot; at 60.");
+      await capture("linked-entry-selected-source");
+      await browser.$(FIGURE).$("button=Return to viewer").click();
+      const beforeNoTrace = (await previewCalls()).length;
+      await browser.$("label=TIC").scrollIntoView({ block: "center" }); await browser.$("label=TIC").click();
+      await blocked("Show at least one chromatogram trace to create a linked figure.", "no-trace");
+      expect(await previewCalls()).toHaveLength(beforeNoTrace);
+      await browser.$("label=BPC").scrollIntoView({ block: "center" }); await browser.$("label=BPC").click();
+      await entry.waitForEnabled(); await reveal(entrySelector); await entry.click();
+      const restored = await preview(), restoredRequest = JSON.parse(restored.request.requestJson) as FigurePreviewRequest;
+      expect(restoredRequest.source).toMatchObject({ kind: "linked", chromatogramToken: firstRequest.source.chromatogramToken,
+        spectrumToken: firstRequest.source.spectrumToken, traces: { tic: false, bpc: true } });
+      expect(restored.svg).toContain("spectrum index 1");
+      expect(restored.svg).toContain("&quot;Selected scan&quot; at 60.");
+      await browser.$(FIGURE).$("button=Return to viewer").click();
+      await reveal('.spectrum-table-panel [data-source-index="2"]');
+      await browser.$('.spectrum-table-panel [data-source-index="2"]').click();
+      await browser.waitUntil(async () => (await browser.$("#selected-spectrum-summary").getText()).startsWith("Spectrum 2,"));
+      await entry.waitForEnabled(); await reveal(entrySelector); await entry.click();
+      const next = await preview(), nextRequest = JSON.parse(next.request.requestJson) as FigurePreviewRequest;
+      expect(nextRequest.source).toMatchObject({ kind: "linked", chromatogramToken: firstRequest.source.chromatogramToken, traces: { tic: false, bpc: true } });
+      if (nextRequest.source.kind !== "linked") throw Error("The replacement preview is not linked.");
+      expect(nextRequest.source.spectrumToken).not.toBe(firstRequest.source.spectrumToken);
+      expect(next.specId).not.toBe(restored.specId);
+      expect(next.svg).toContain("spectrum index 2");
+      expect(next.svg).toContain("&quot;Selected scan&quot; at 120.");
+      record({ kind: "linked entry real source and recovery", sourceSha256: digest(path), loadedRoster, firstRequest, restoredRequest, nextRequest,
+        firstSpecId: first.specId, restoredSpecId: restored.specId, nextSpecId: next.specId });
+      await capture("linked-entry-restored-source");
+      await browser.$(FIGURE).$("button=Return to viewer").click();
+    } finally {
+      const observer = await browser.execute(() => (Reflect.get(window, "__m74StopPreviewBlobs") as () => {
+        created: number; revoked: number; overflow: boolean; captureFailed: boolean; wrappersUnchanged: boolean; restored: boolean;
+      })());
+      record({ kind: "linked entry preview Blob observer restored", observer });
+      expect(observer).toMatchObject({ overflow: false, captureFailed: false, wrappersUnchanged: true, restored: true });
+    }
   });
 
   it("binds real preview, SVG, PNG, CSV and TSV to committed scopes and keeps quick paths separate", async () => {

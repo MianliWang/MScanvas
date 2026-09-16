@@ -317,6 +317,43 @@ there was no post-picker focus rescue. Three required PR checks passed on pre-ob
 every successor requires its own natural PR CI. Draft status continues until
 mandatory acceptance and review finish.
 
+## Linked-preview prerequisite repair after automatic review
+
+The automatic review triggered by Ready on candidate
+`6d1f3e643d2f3aca1b4c1857afff7ee33d89504f` reported
+[an enabled linked-preview entry before spectrum selection](https://github.com/MianliWang/MScanvas/pull/124#discussion_r4028713245).
+This was confirmed by a failing regression in both languages. The dialog has
+Return to viewer, but opening an unavailable preview requires an unnecessary
+round trip before the user can select a scan.
+
+The entry now waits for the chromatogram, selected spectrum and at least one
+visible trace. Its disabled state refers to the existing visible live reason.
+Range and size issues keep the entry available because the dialog contains
+their correction controls. No source selection, export authority, rendering,
+data semantics or Rust behavior changes.
+
+Five new composition cases cover bilingual missing/loading/trace prerequisites,
+restoration with current tokens, invalid width, linked minimum height and
+outside-range recovery through Full run. The composition suite passes 9/9;
+the existing linked-export and binding files have 25/25 and 17/17 passing cases
+within the retained combined run that also failed the new outside-range test.
+Two additional browser cases pass at English 1366x768 and Chinese 960x640,
+including visible reasons, disabled activation, recovery and Enter/Escape
+focus. These use synthetic IPC and do not qualify scientific output. The
+inherited browser-mode Tauri service warnings remain in the primary log.
+The Chinese narrow-window page records two existing Reduced Motion development
+warnings; console assertions pass with the previously defined exact warning
+filter. Resource and overflow checks pass.
+
+The first two new outside-range test attempts reached the assertion before a
+range was committed; their logs show the whole-run state. The final test uses
+an explicit typed RT commit and waits for the positive outside-range reason.
+Failed attempts remain preserved. The original seven native scenarios retain
+their Build04 attribution. Build05 is required for a new focused native
+entry/source-binding scenario; its acceptance is pending. The previous native
+operator window ended, so preparation must finish before a new actual readiness
+reply. Publication is held for this affected acceptance and review.
+
 ## Retained failures and attribution
 
 - PR Rust run [34953173614](https://github.com/MianliWang/MScanvas/actions/runs/34953173614),

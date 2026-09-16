@@ -88,13 +88,14 @@ async function conversion() {
   await browser.$('.workbench-navigation button:nth-child(2)').click();
   await browser.$(".conversion-running").waitForDisplayed();
 }
-async function viewer() {
+async function viewer(selectSpectrum = true) {
   await browser.$(".workbench-home").click();
   const row = browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]');
   if (!await row.isDisplayed()) await browser.$('[aria-controls="workbench-roster"]').click();
   await row.click();
   if (await browser.$('[aria-controls="workbench-roster"]').getAttribute("aria-expanded") === "true") await browser.$(".workbench-home").click();
   await browser.$('.spectrum-table-panel [data-source-index="0"]').waitForDisplayed();
+  if (!selectSpectrum) return;
   await browser.$('.spectrum-table-panel [data-source-index="0"]').click();
   await browser.$(".spectrum-panel .figure-quick-actions").waitForDisplayed();
 }
@@ -141,6 +142,55 @@ describe("M7.4 conversion, recovery and export composition", () => {
     const reducedMotion = await browser.execute(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
     const motionDevelopmentNotice = "You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled";
     expect((await consoleEntries()).filter(entry => !(reducedMotion && entry.level === "warn" && entry.text === motionDevelopmentNotice))).toEqual([]);
+  });
+
+  for (const locale of ["en", "zh-CN"] as const) it("keeps linked preview behind viewer prerequisites and restores it in " + locale, async () => {
+    const words = UI_RESOURCES[locale];
+    await open(locale === "en" ? 1366 : 960, locale === "en" ? 768 : 640);
+    await preferences(locale, "comfortable");
+    await expect(browser.$("button=" + words.figurePreviewLinked)).not.toExist();
+    await viewer(false);
+    await click("#chromatogram-export-toggle");
+    const entry = browser.$("button=" + words.figurePreviewLinked);
+    const previewCalls = async () => (await ipcCalls()).filter(call => call.command === "preview_figure");
+    const blocked = async (reason: string, phase: string) => {
+      await expect(entry).toBeDisabled();
+      await expect(entry).toHaveAttribute("aria-describedby", "chromatogram-linked-unavailable");
+      await expect(browser.$("#chromatogram-linked-unavailable")).toHaveText(reason);
+      await entry.scrollIntoView({ block: "center" }); await entry.click();
+      await expect(browser.$(".figure-export-dialog")).not.toExist();
+      await capture("linked-entry-" + phase + "-" + locale);
+    };
+    await blocked(words.linkedNoSpectrum, "no-spectrum");
+    expect(await previewCalls()).toHaveLength(0);
+    await holdInvoke("load_selected_spectrum");
+    await click('.spectrum-table-panel [data-source-index="0"]');
+    await browser.waitUntil(async () => await heldCallers("load_selected_spectrum") === 1);
+    await blocked(words.linkedLoading, "loading");
+    expect(await previewCalls()).toHaveLength(0);
+    await releaseInvokeHold("load_selected_spectrum");
+    await expect(entry).toBeEnabled();
+    await click("button=" + words.figurePreviewLinked);
+    await browser.$(".figure-preview img").waitForDisplayed();
+    expect((await previewCalls()).at(-1)?.args?.request).toMatchObject({ source: { kind: "linked", traces: { tic: true, bpc: false } } });
+    await capture("linked-entry-selected-" + locale);
+    await browser.$("button=" + words.figureExportReturn).click();
+    await expect(entry).toBeFocused();
+    const prior = (await previewCalls()).length;
+    await click("label=TIC");
+    await blocked(words.linkedNoTrace, "no-trace");
+    expect(await previewCalls()).toHaveLength(prior);
+    await click("label=BPC");
+    await expect(entry).toBeEnabled();
+    await click("button=" + words.figurePreviewLinked);
+    await browser.$(".figure-preview img").waitForDisplayed();
+    expect((await previewCalls()).at(-1)?.args?.request).toMatchObject({ source: { kind: "linked", traces: { tic: false, bpc: true } } });
+    await browser.$("button=" + words.figureExportReturn).click();
+    await expect(entry).toBeFocused();
+    await browser.keys("Enter");
+    await browser.$(".figure-preview img").waitForDisplayed();
+    await browser.keys("Escape");
+    await expect(entry).toBeFocused();
   });
 
   for (const scenario of [

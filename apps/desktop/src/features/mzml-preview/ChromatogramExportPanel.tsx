@@ -200,6 +200,12 @@ export function ChromatogramExportPanel({
   // A panel of no series is refused by the contract, so a figure with neither
   // trace visible is not offered either. The data exports are untouched.
   const nothingDrawn = !traces.tic && !traces.bpc;
+  // Scan and trace choices belong to the viewer. Range and size corrections
+  // remain available inside the figure dialog.
+  const linkedPreviewBlocked = linkedUnavailable !== null && (
+    linkedUnavailable.code === "noChromatogram" || linkedUnavailable.code === "loading" ||
+    linkedUnavailable.code === "noSpectrum" || linkedUnavailable.code === "noTrace"
+  );
 
   return (
     <div className="chromatogram-export-panel spectrum-export" id="chromatogram-export-panel">
@@ -321,7 +327,13 @@ export function ChromatogramExportPanel({
       >
         <ChromatogramExportResult onDismiss={onDismiss} state={exportState} />
       </div>
-      <button type="button" className="secondary-button" onClick={onOpenLinkedFigure}>{t("figurePreviewLinked")}</button>
+      <button
+        type="button"
+        className="secondary-button"
+        disabled={linkedPreviewBlocked}
+        aria-describedby={linkedPreviewBlocked ? LINKED_UNAVAILABLE_ID : undefined}
+        onClick={onOpenLinkedFigure}
+      >{t("figurePreviewLinked")}</button>
       <LinkedFigureSection
         linkedRunning={linkedRunning}
         onCopyLinkedPlot={onCopyLinkedPlot}
