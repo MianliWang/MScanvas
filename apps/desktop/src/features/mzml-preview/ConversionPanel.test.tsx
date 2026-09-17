@@ -1037,9 +1037,12 @@ describe("queueing selected Thermo RAW conversions", () => {
     await pressConvert(panel, "Convert 2 selected…");
 
     await waitFor(() => {
+      // The code is owned and now has its own resource, so the panel shows
+      // this build's whole sentence for it rather than the one line the
+      // boundary happened to send.
       expect(
         within(panel).getByText(
-          "MSCanvas saves converted files to this computer's own drives.",
+          /MSCanvas saves converted files to this computer.s own drives\./u,
           VISIBLE,
         ),
       ).toBeVisible();

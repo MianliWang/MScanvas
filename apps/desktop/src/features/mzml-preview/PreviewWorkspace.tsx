@@ -21,6 +21,7 @@ import { QuickFigureActions } from "./QuickFigureActions";
 import type { FigurePreviewKind } from "./contracts";
 import { SpectrumTable } from "./SpectrumTable";
 import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
+import { spectrumSelectionMessage } from "./viewer/selectionMessages";
 import { formatCount, formatDatasetLabel } from "./format";
 import { rosterProjection, type WorkspaceNotice } from "./rosterSelection";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
@@ -667,7 +668,7 @@ export function PreviewWorkspace() {
               }
             >
               {workspace.spectrumSelection.status === "unavailable"
-                ? t(({ "no-loaded-run": "viewerSelectionEmpty", "backend-unavailable": "viewerSelectionBackend", "backend-changing": "viewerSelectionChecking", "conversion-running": "viewerSelectionConverting" } as const)[workspace.spectrumSelection.reason])
+                ? spectrumSelectionMessage(workspace.spectrumSelection.reason, t)
                 : ""}
             </p>
             <div className="viewer-stack">

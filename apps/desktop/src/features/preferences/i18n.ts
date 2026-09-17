@@ -185,6 +185,12 @@ export interface MessageParameters {
   readonly backendBuiltOn: { readonly date: string };
   readonly backendProblemCode: { readonly code: string };
   readonly backendUnknownProblem: { readonly code: string };
+  readonly summaryIdentity: { readonly name: string; readonly size: string };
+  readonly summaryCountsDisagree: { readonly summary: string; readonly list: string };
+  readonly summaryMsLevelsTruncated: { readonly shown: string; readonly total: string };
+  readonly summarySectionTruncated: { readonly shown: string; readonly total: string };
+  readonly errorUnknownProblem: { readonly code: string };
+  readonly errorReportedAsSent: { readonly summary: string };
   readonly unknownFigureProblem: { readonly code: string };
 }
 export type MessageArguments<K extends MessageKey> = K extends keyof MessageParameters

@@ -16,6 +16,10 @@
 
 import { describe, expect, it } from "vitest";
 
+import { bindUiMessages, UI_RESOURCES } from "../preferences/i18n";
+import type { UiMessage } from "../preferences/i18n";
+import { conversionNoticeMessage } from "./conversionMessages";
+
 import type { ConversionLane, ConversionUnavailableReason } from "./conversionAvailability";
 import type { ConversionStartPlan } from "./conversionPlanAuthority";
 import {
@@ -71,6 +75,16 @@ function retryReason(
     queueCompleted,
   });
   return decision.status === "available" ? null : decision.reason;
+}
+
+/** The typed message binding over one bundled locale's own values. */
+function messages(locale: "en" | "zh-CN"): UiMessage {
+  const bundle = UI_RESOURCES[locale] as Record<string, string>;
+  return bindUiMessages(((key: string, values?: Record<string, unknown>) =>
+    Object.entries(values ?? {}).reduce<string>(
+      (text, [name, value]) => text.replaceAll(`{{${name}}}`, String(value)),
+      bundle[key],
+    )) as never);
 }
 
 describe("the conversion lane's availability decision", () => {
@@ -222,15 +236,27 @@ describe("the conversion lane's availability decision", () => {
       expect(decision.status).toBe("unavailable");
       if (decision.status === "unavailable") {
         expect(decision.reason).toBe(reason);
-        // A sentence, not a code. Nothing here may name a lane, a ref, a claim
-        // or a slot: that describes the machinery that refused rather than the
-        // situation the reader is in.
-        expect(decision.message).toMatch(/^[A-Z].*\.$/su);
-        expect(decision.message).not.toMatch(/\b(ref|slot|lane|claim|boolean|flag)\b/iu);
+        // The reason is the contract; the sentence is the resource bundle's,
+        // and this asserts it where it now lives. A sentence, not a code, and
+        // nothing that names a ref, a claim, a slot, a boolean or a flag: that
+        // describes the machinery that refused rather than the situation the
+        // reader is in.
+        //
+        // "The ProteoWizard lane" is deliberately not on that list. It is
+        // shipped product vocabulary -- one backend, one thing at a time --
+        // and naming it is how a reader learns why two unrelated actions wait
+        // for each other.
+        const english = conversionNoticeMessage(decision.reason, messages("en"));
+        expect(english).toMatch(/^[A-Z].*\.$/su);
+        expect(english).not.toMatch(/\b(ref|slot|claim|boolean|flag)\b/iu);
+        // In Simplified Chinese too, and not by falling back to the English.
+        const chinese = conversionNoticeMessage(decision.reason, messages("zh-CN"));
+        expect(chinese.trim()).not.toBe("");
+        expect(chinese).not.toBe(english);
         // And each says its own thing, so two controls refused for two facts
         // cannot read as one explanation repeated.
-        expect(said.has(decision.message)).toBe(false);
-        said.add(decision.message);
+        expect(said.has(english)).toBe(false);
+        said.add(english);
       }
     }
     expect(said.size).toBe(reasons.length);

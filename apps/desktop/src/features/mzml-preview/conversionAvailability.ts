@@ -148,81 +148,17 @@ export type ConversionUnavailableReason =
  * again what was wrong -- which is a second authority however carefully it is
  * written. Before this slice no surface even tried: a refused conversion was a
  * grey button and nothing else.
+ *
+ * It carries the reason and not the words. The words are the resource bundle's,
+ * and a sentence held here would be English in a Chinese session the first time
+ * anything rendered it.
  */
 export type ConversionAvailability =
   | { readonly status: "available" }
   | {
       readonly status: "unavailable";
       readonly reason: ConversionUnavailableReason;
-      /** What the reader is told. Never implementation vocabulary. */
-      readonly message: string;
     };
-
-/**
- * What each refusal says.
- *
- * One map for both actions, deliberately. A retry *is* a conversion -- same
- * backend, same lane, same process -- so a second map keyed by action could
- * only come to describe the same lane two ways. The two entries that are
- * genuinely about a rerun say so, and every other sentence is true of either
- * control.
- *
- * Named after something on screen or something the reader can change. A lane,
- * a ref, a claim or a slot is true and useless: it describes the machinery
- * that refused rather than the situation the reader is in.
- */
-const CONVERSION_MESSAGES: Record<ConversionUnavailableReason, string> = {
-  "staging-reclaiming": "Temporary-output cleanup is in progress. Wait before starting another conversion.",
-  // Neither "a converter" nor "stopped". This state is reached from a preview,
-  // a spectrum read and a discovery help probe as well as from a conversion,
-  // and by a root that could neither be started nor reclaimed with nothing in
-  // flight -- so naming a stop names an action the user may never have taken.
-  "backend-quarantined":
-    "MSCanvas could not confirm that a ProteoWizard process it started has ended. " +
-    // Not "before starting another conversion": the refusal is over every lane
-    // that starts a process, and this control is only where the reader happens
-    // to be standing.
-    "Restart MSCanvas before starting another preview or conversion.",
-  "backend-changing":
-    "Converting is unavailable while the installed ProteoWizard backend is being checked.",
-  "backend-unavailable":
-    "Converting needs ProteoWizard, and this session has no usable backend. " +
-    "See the backend status above.",
-  "conversion-running": "Converting is unavailable while a conversion is running.",
-  "preview-running": "Converting is unavailable while a run is being read.",
-  "configuration-probing":
-    "Converting is unavailable while MSCanvas is reading the conversion options from ProteoWizard.",
-  "adoption-running":
-    "Converting is unavailable while converted outputs are being added to the workspace.",
-  "diagnostics-exporting":
-    "Converting is unavailable while failure diagnostics are being saved.",
-  "workspace-settling": "Converting is unavailable while the file list is being changed.",
-  "no-convertible-target": "Choose a scope containing supported vendor acquisitions to convert.",
-  "plan-capacity-exceeded": "Choose fewer eligible rows before converting.",
-  // Three sentences for three situations a single "no plan" could not tell
-  // apart, and the difference is what the reader can do. One is a wait, one is
-  // a control to press, and one is a change to make above.
-  "plan-reading": "MSCanvas is working out what this conversion would do.",
-  "plan-failed":
-    "MSCanvas could not work out what this conversion would do. " +
-    "Try describing it again.",
-  "plan-settings-unknown":
-    "MSCanvas does not yet know what this ProteoWizard installation can convert, " +
-    "so it cannot describe this conversion. See the conversion settings above.",
-  "plan-selection-unavailable":
-    "The installed ProteoWizard does not offer the conversion settings you chose, " +
-    "so there is nothing to convert with. Choose settings it offers above.",
-  // The fourth sentence, and the one a different build would not change.
-  // Naming the installation here would send a reader after a release that
-  // behaves identically, because what is missing is a measurement.
-  "plan-selection-not-evidenced":
-    "MSCanvas has not measured the conversion settings you chose on the kinds of " +
-    "acquisition it converts, so there is nothing to convert with. Choose settings " +
-    "it has measured above.",
-  "queue-not-retryable":
-    "A stopped queue is not rerun in place. Convert those acquisitions again from the list.",
-  "nothing-to-retry": "Nothing in this queue would change on another attempt.",
-};
 
 /**
  * The one conversion-start answer, with its reason.
@@ -255,18 +191,21 @@ const CONVERSION_MESSAGES: Record<ConversionUnavailableReason, string> = {
  * 5. the target. Last, because "select something to convert" said while a
  *    conversion is running is a true sentence about the wrong problem.
  *
- * There is no message for `available`, because a control that can be used has
- * nothing to explain and an explanation shown beside a working control is a
- * reason to doubt it.
+ * There is nothing to say for `available`, because a control that can be used
+ * has nothing to explain and an explanation shown beside a working control is
+ * a reason to doubt it.
+ *
+ * The reason is the whole answer, and the words for it belong to the resource
+ * bundle: `conversionNoticeMessage` looks them up where a notice is rendered.
+ * This rule is read by the operation as well, from refs, and an operation has
+ * no locale.
  */
 export function conversionAvailability(
   lane: ConversionLane,
   action: ConversionAction,
 ): ConversionAvailability {
   const reason = unavailableReason(lane, action);
-  return reason === null
-    ? { status: "available" }
-    : { status: "unavailable", reason, message: CONVERSION_MESSAGES[reason] };
+  return reason === null ? { status: "available" } : { status: "unavailable", reason };
 }
 
 function unavailableReason(

@@ -4,7 +4,6 @@ import {
   acceptProjection,
   describesRenderedBinding,
   readingIsSuperseded,
-  receiptOf,
   type RenderedAuthority,
 } from "./backendAuthority";
 import type { BackendAuthorityProjection } from "./contracts";

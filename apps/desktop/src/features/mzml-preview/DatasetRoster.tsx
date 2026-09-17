@@ -3,22 +3,9 @@ import { memo, useCallback, useEffect, useRef } from "react";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { ChangeEvent, KeyboardEvent, MouseEvent } from "react";
 
-import { SOURCE_KIND_LABEL, isConvertibleSourceKind } from "./contracts";
-import { formatByteLength, formatCount } from "./format";
-import {
-  rowPresentation,
-  type RosterAction,
-  type RosterState,
-  type RowPresentation,
-} from "./rosterSelection";
-import {
-  describeProjection,
-  isSortMode,
-  PIN_REASON_LABEL,
-  SORT_MODE_LABEL,
-  SORT_MODES,
-  type RosterProjection,
-} from "./rosterView";
+import { isConvertibleSourceKind } from "./contracts";
+import type { RosterAction, RosterState } from "./rosterSelection";
+import { isSortMode, SORT_MODES, type RosterProjection } from "./rosterView";
 import type { RosterLoadState } from "./usePreviewWorkspace";
 import type { ActiveClearFocusReturn } from "./activeClearFocusReturn";
 
@@ -112,29 +99,6 @@ export interface DatasetRosterProps {
 // one family two things. They stay words rather than a colour or a glyph,
 // because which family a row is decides whether it can be previewed at all,
 // and that is not a fact to encode as a shade.
-
-/** What a row says about itself when it is not simply listed. */
-const ROW_STATE_LABEL: Record<RowPresentation, string> = {
-  ready: "",
-  opening: "Reading…",
-  loaded: "",
-  replaced: "Replaced",
-  missing: "Missing",
-  failed: "Could not be read",
-};
-
-/**
- * Why a vendor row cannot be previewed, and what to do instead.
- *
- * Rust refuses the read as well; this is the sentence, not the rule. Saying it
- * where the disabled action is means the answer arrives with the question.
- */
-const PREVIEW_NEEDS_CONVERSION = "Convert to mzML before previewing this acquisition.";
-
-const CLEAR_DURING_FOLDER_IMPORT_DESCRIPTION =
-  "Clear list also prevents the pending folder import from adding files.";
-const CLEAR_DURING_DROP_IMPORT_DESCRIPTION =
-  "Clear list also prevents the pending drop from adding files.";
 
 /**
  * The session's workspace: every file it holds, and the actions that curate it.
@@ -788,7 +752,6 @@ export const DatasetRoster = memo(function DatasetRoster({
 
   const rowCount = state.datasets.length;
   const visible = projection.datasets;
-  const focusStop = state.focused ?? visible[0]?.handle ?? null;
   // Read from the roster Rust gave us rather than from the visible projection:
   // a focused row pinned outside a search is still the focused row, and the
   // reason `Preview focused` is unavailable does not change with a query.

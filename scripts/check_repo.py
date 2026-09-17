@@ -5485,6 +5485,78 @@ def validate_the_preference_store_ships_bound_and_isolated(errors: list[str]) ->
             )
 
 
+def validate_every_boundary_error_code_is_accounted_for(errors: list[str]) -> None:
+    """Every code the Rust boundary can send is either localized or declared.
+
+    A `PreviewErrorDto` carries an owned code and an owned English sentence. The
+    frontend looks the code up in a resource map; a code that is not there falls
+    through to the sentence, which is English -- so in a Chinese session the
+    difference between "translated" and "not translated" is whether someone
+    remembered to add a key. Nothing announced it either way, and M7.5 found
+    sixty-two codes that had quietly been reaching readers in English.
+
+    So the remainder is declared rather than discovered.
+    `ownedErrorMessages.test.ts` lists the codes that are deliberately shown
+    through the honest untranslated-original wrapper -- the ones whose message
+    interpolates evidence a paraphrase would lose, and the test seams -- and
+    this requires every code Rust can produce to be in one list or the other.
+
+    Adding a boundary code therefore fails here until it is either given a
+    resource or written into the declared remainder with the rest.
+    """
+    source = ROOT / "apps" / "desktop" / "src-tauri" / "src"
+    frontend = ROOT / "apps" / "desktop" / "src" / "features" / "mzml-preview"
+    if not source.is_dir() or not frontend.is_dir():
+        return
+
+    produced: set[str] = set()
+    for rust in sorted(source.glob("**/*.rs")):
+        text = rust.read_text(encoding="utf-8")
+        produced.update(re.findall(r'PreviewErrorDto::new\(\s*"([a-z0-9_]+)"', text))
+        produced.update(re.findall(r'kind:\s*"([a-z0-9_]+)"\.to_owned\(\)', text))
+
+    localized: set[str] = set()
+    for name in ("ownedErrorMessages.ts", "conversionMessages.ts", "backendPresentation.ts"):
+        path = frontend / name
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        # Each map entry is `some_code: "resourceKey"`. The code is snake_case
+        # and the key is camelCase, which is what tells one from the other --
+        # and several entries share a line in the oldest of these tables, so
+        # this is deliberately not anchored to the start of one.
+        localized.update(
+            re.findall(r'([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\s*:\s*"[a-z][A-Za-z0-9]*"', text)
+        )
+        # And the two that are worded from their recovery *context* rather than
+        # from the code alone: a refused figure setting and a misnamed export
+        # both need the parameters Rust decided, so they are branches rather
+        # than map entries.
+        localized.update(re.findall(r'error\.kind === "([a-z0-9_]+)"', text))
+
+    declared: set[str] = set()
+    test = frontend / "ownedErrorMessages.test.ts"
+    if test.is_file():
+        body = test.read_text(encoding="utf-8")
+        listing = body.partition("SHOWN_AS_UNTRANSLATED_ORIGINAL: readonly string[] = [")[2]
+        declared.update(re.findall(r'"([a-z0-9_]+)"', listing.partition("];")[0]))
+
+    for code in sorted(produced - localized - declared):
+        errors.append(
+            f"the boundary can send the error code {code} and nothing accounts for it: give "
+            "it a resource in apps/desktop/src/features/mzml-preview/ownedErrorMessages.ts, or "
+            "add it to SHOWN_AS_UNTRANSLATED_ORIGINAL in that module's test with the reason it "
+            "keeps the boundary's own words"
+        )
+    # And the declared remainder stays a list of codes that exist. A stale entry
+    # is a claim that something is handled which nothing produces.
+    for code in sorted(declared - produced):
+        errors.append(
+            f"SHOWN_AS_UNTRANSLATED_ORIGINAL names {code}, which the Rust boundary no longer "
+            "sends; the declared remainder must describe codes that exist"
+        )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_required(errors)
@@ -5499,6 +5571,7 @@ def main() -> int:
         validate_test_support_stays_a_dev_dependency(errors)
         validate_e2e_capability_never_ships(errors)
         validate_the_preference_store_ships_bound_and_isolated(errors)
+        validate_every_boundary_error_code_is_accounted_for(errors)
         validate_clipboard_stays_write_only(errors)
         validate_no_font_is_bundled_or_fetched(errors)
         validate_every_raster_entry_point_asks_the_budget(errors)

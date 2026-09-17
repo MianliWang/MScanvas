@@ -300,7 +300,6 @@ interface PlotProps {
 function ChromatogramPlot({
   points,
   domain,
-  full,
   traces,
   selected,
   hover,

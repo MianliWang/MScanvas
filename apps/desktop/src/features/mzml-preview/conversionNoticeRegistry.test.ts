@@ -10,15 +10,21 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { ConversionAvailability, ConversionLane } from "./conversionAvailability";
+import { bindUiMessages, UI_RESOURCES } from "../preferences/i18n";
+import type { UiMessage } from "../preferences/i18n";
+import { conversionNoticeMessage } from "./conversionMessages";
+import type {
+  ConversionAvailability,
+  ConversionLane,
+  ConversionUnavailableReason,
+} from "./conversionAvailability";
 import { conversionAvailability, conversionNoticeId } from "./conversionAvailability";
 import type { ProbeRefusal } from "./conversionConfigurationAuthority";
-import type { ConversionRefusal } from "./conversionNoticeRegistry";
+import type { ConversionAvailabilityFact, ConversionRefusal } from "./conversionNoticeRegistry";
 import {
   CONVERSION_LANE_FACTS,
   conversionNotices,
   conversionRefusalNoticeId,
-  isConversionLaneFact,
   probeRefusalFact,
 } from "./conversionNoticeRegistry";
 
@@ -57,6 +63,41 @@ function probe(refusal: ProbeRefusal): ConversionRefusal {
   return { source: "probe", refusal };
 }
 
+/** The typed message binding over one bundled locale's own values. */
+function messages(locale: "en" | "zh-CN"): UiMessage {
+  const bundle = UI_RESOURCES[locale] as Record<string, string>;
+  return bindUiMessages(((key: string, values?: Record<string, unknown>) =>
+    Object.entries(values ?? {}).reduce<string>(
+      (text, [name, value]) => text.replaceAll(`{{${name}}}`, String(value)),
+      bundle[key],
+    )) as never);
+}
+
+/**
+ * What a reader is actually told for one reason.
+ *
+ * The registry decides which reason survives; this is where that reason becomes
+ * words, which is the only place with a locale. Asserting through it is
+ * asserting the shipped sentence rather than a copy of it.
+ */
+function said(reason: ConversionUnavailableReason | undefined, locale: "en" | "zh-CN" = "en"): string {
+  if (reason === undefined) {
+    throw new Error("no notice was emitted, so there is no sentence to read");
+  }
+  return conversionNoticeMessage(reason, messages(locale));
+}
+
+/**
+ * Whether a reason names a fact more than one action can be refused by.
+ *
+ * Derived from the exported list rather than from a predicate in the module:
+ * the production side has no use for one, and a predicate only a test calls is
+ * production code kept alive by its test.
+ */
+function isLaneFact(reason: ConversionUnavailableReason): reason is ConversionAvailabilityFact {
+  return (CONVERSION_LANE_FACTS as readonly string[]).includes(reason);
+}
+
 describe("the facts a notice can be keyed on", () => {
   it("is exactly the lane's own fields", () => {
     // `backendUsable` included -- it is shared by every conversion action
@@ -90,7 +131,7 @@ describe("the facts a notice can be keyed on", () => {
       "plan-settings-unknown",
       "plan-selection-unavailable",
     ] as const) {
-      expect(isConversionLaneFact(reason)).toBe(false);
+      expect(isLaneFact(reason)).toBe(false);
     }
   });
 });
@@ -141,13 +182,10 @@ describe("the two vocabularies over one set of facts", () => {
 describe("what the surviving element says", () => {
   it("phrases a shared fact about the fact, not about either action", () => {
     const [notice] = conversionNotices([action(startOn({ laneClaimed: true }))]);
-    expect(notice?.message).toBe("A conversion currently owns the ProteoWizard lane.");
-    // The action-phrased sentence is untouched and stays on the control's own
-    // decision, which is where it belongs.
-    const decision = startOn({ laneClaimed: true });
-    expect(decision.status === "unavailable" && decision.message).toBe(
-      "Converting is unavailable while a conversion is running.",
-    );
+    expect(notice?.reason).toBe("conversion-running");
+    expect(said(notice?.reason)).toBe("A conversion currently owns the ProteoWizard lane.");
+    // And in Simplified Chinese, rather than falling back to the English.
+    expect(said(notice?.reason, "zh-CN")).toBe("ProteoWizard 正用于转换。");
   });
 
   it("says the same thing whether one action points at it or three", () => {
@@ -160,7 +198,8 @@ describe("what the surviving element says", () => {
       probe("backendChanging"),
     ]);
     expect(crowded).toHaveLength(1);
-    expect(crowded[0]?.message).toBe(alone[0]?.message);
+    expect(crowded[0]?.reason).toBe(alone[0]?.reason);
+    expect(said(crowded[0]?.reason)).toBe(said(alone[0]?.reason));
   });
 
   it("names no action and no consequence in any shared sentence", () => {
@@ -185,7 +224,13 @@ describe("what the surviving element says", () => {
       const [notice] = conversionNotices([action(startOn(lane))]);
       expect(notice?.reason).toBe(fact);
       for (const forbidden of ["Converting is", "Try again", "cannot start", "You cannot"]) {
-        expect(notice?.message).not.toContain(forbidden);
+        expect(said(notice?.reason)).not.toContain(forbidden);
+      }
+      // The same rule in the other bundled locale: a shared sentence that
+      // named an action in one language would be wrong in exactly the way this
+      // registry exists to prevent.
+      for (const forbidden of ["无法转换", "转换不可用"]) {
+        expect(said(notice?.reason, "zh-CN")).not.toContain(forbidden);
       }
     }
   });
@@ -196,7 +241,7 @@ describe("what the surviving element says", () => {
     const [failed] = conversionNotices([
       action(conversionAvailability(CLEAR, { kind: "start", targetCount: 1, plan: "failed" })),
     ]);
-    expect(failed?.message).toContain("Try describing it again.");
+    expect(said(failed?.reason)).toContain("Try describing it again.");
     const [empty] = conversionNotices([
       action(conversionAvailability(CLEAR, {
         kind: "retry",
@@ -204,7 +249,7 @@ describe("what the surviving element says", () => {
         queueCompleted: true,
       })),
     ]);
-    expect(empty?.message).toBe("Nothing in this queue would change on another attempt.");
+    expect(said(empty?.reason)).toBe("Nothing in this queue would change on another attempt.");
   });
 });
 
@@ -215,7 +260,7 @@ describe("what the registry emits", () => {
     expect(notices).toHaveLength(1);
     expect(notices[0]?.reason).toBe("plan-capacity-exceeded");
     expect(notices[0]?.id).toBe(conversionRefusalNoticeId(refusal));
-    expect(notices[0]?.message).not.toBe("");
+    expect(said(notices[0]?.reason)).not.toBe("");
     expect(conversionNotices([action(startOn({}))])).toEqual([]);
   });
 
@@ -252,7 +297,7 @@ describe("what the registry emits", () => {
     expect(notices.map((notice) => notice.id)).toEqual([
       "conversion-availability-configuration-probing",
     ]);
-    expect(notices[0]?.message).toBe(
+    expect(said(notices[0]?.reason)).toBe(
       "MSCanvas is reading the conversion options from ProteoWizard.",
     );
     expect(conversionRefusalNoticeId(refusal)).toBe(notices[0]?.id);

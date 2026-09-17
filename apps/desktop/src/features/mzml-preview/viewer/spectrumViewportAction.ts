@@ -22,6 +22,7 @@
  * restated.
  */
 
+import type { MessageKey } from "../../preferences/i18n";
 import type { MzDomain, SpectrumViewportEvent, SpectrumViewportState } from "./spectrumViewport";
 import {
   activeMzGestureEpoch,
@@ -69,11 +70,19 @@ export type VisibleSpectrumViewportAction = "zoom-in" | "zoom-out" | "reset";
  */
 export const VISIBLE_SPECTRUM_VIEWPORT_ACTIONS: readonly {
   readonly action: VisibleSpectrumViewportAction;
-  readonly label: string;
+  /**
+   * The resource the control is named by.
+   *
+   * The key rather than the words: the viewport renders these controls from
+   * this list and from the bundle, and holding a second copy of the English
+   * here is how one of them comes to say something the other does not -- in
+   * English only, because a Chinese session would render the bundle's.
+   */
+  readonly messageKey: MessageKey;
 }[] = [
-  { action: "zoom-in", label: "Zoom in m/z" },
-  { action: "zoom-out", label: "Zoom out m/z" },
-  { action: "reset", label: "Reset m/z range" },
+  { action: "zoom-in", messageKey: "viewerMzZoomIn" },
+  { action: "zoom-out", messageKey: "viewerMzZoomOut" },
+  { action: "reset", messageKey: "viewerMzReset" },
 ];
 
 /** What one keyboard pan moves, as a fraction of the visible span. */

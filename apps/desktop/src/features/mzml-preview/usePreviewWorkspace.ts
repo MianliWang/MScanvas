@@ -51,7 +51,6 @@ import {
   acceptProjection,
   backendIsUsable,
   readingIsSuperseded,
-  receiptOf,
   type RenderedAuthority,
 } from "./backendAuthority";
 import {

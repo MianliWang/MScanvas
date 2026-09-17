@@ -2469,10 +2469,6 @@ function selectedRowNames(): string[] {
     .map((row) => row.textContent ?? "");
 }
 
-function folderAction(): HTMLElement {
-  return screen.getByRole("button", { name: /Add mzML folder…|Scanning folder…/ });
-}
-
 /** Two acquisitions of one name, which is the case relative context exists for. */
 const NESTED_ONE: SelectedFile = {
   handle: "folder-0",

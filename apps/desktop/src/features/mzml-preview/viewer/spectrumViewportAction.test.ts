@@ -39,6 +39,8 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { bindUiMessages, UI_RESOURCES } from "../../preferences/i18n";
+import type { UiMessage } from "../../preferences/i18n";
 
 import type { SpectrumViewportDomain } from "../contracts";
 import { initialViewerInteractionState, viewerInteractionReducer } from "./interactionState";
@@ -226,6 +228,16 @@ function width(domain: MzDomain): number {
  * nothing about a file says which it will be.
  */
 const FUZZY: MzDomain = mzDomain(110.3, 2000);
+
+/** The typed message binding over one bundled locale's own values. */
+function messages(locale: "en" | "zh-CN"): UiMessage {
+  const bundle = UI_RESOURCES[locale] as Record<string, string>;
+  return bindUiMessages(((key: string, values?: Record<string, unknown>) =>
+    Object.entries(values ?? {}).reduce<string>(
+      (text, [name, value]) => text.replaceAll(`{{${name}}}`, String(value)),
+      bundle[key],
+    )) as never);
+}
 
 describe("what an m/z viewport control would do", () => {
   const cases: readonly {
@@ -1443,12 +1455,17 @@ describe("the controls the panel draws", () => {
     // accessible name -- the chromatogram already offers one -- and two surfaces
     // offering the same verb have to be distinguishable to someone who is being
     // read the interface rather than looking at it.
-    for (const control of VISIBLE_SPECTRUM_VIEWPORT_ACTIONS) {
-      expect(control.label, control.action).toMatch(/m\/z/);
+    // Read from the bundle each control names, in both locales: the axis is
+    // `m/z` in either language, and a Chinese label that dropped it would leave
+    // two indistinguishable zoom controls.
+    for (const locale of ["en", "zh-CN"] as const) {
+      const t = messages(locale);
+      for (const control of VISIBLE_SPECTRUM_VIEWPORT_ACTIONS) {
+        expect(t(control.messageKey), `${control.action} in ${locale}`).toMatch(/m\/z/);
+      }
+      const labels = VISIBLE_SPECTRUM_VIEWPORT_ACTIONS.map((control) => t(control.messageKey));
+      expect(new Set(labels).size, locale).toBe(labels.length);
     }
-
-    const labels = VISIBLE_SPECTRUM_VIEWPORT_ACTIONS.map((control) => control.label);
-    expect(new Set(labels).size).toBe(labels.length);
   });
 
   it("draws a button for the three actions that have one, and for no other", () => {

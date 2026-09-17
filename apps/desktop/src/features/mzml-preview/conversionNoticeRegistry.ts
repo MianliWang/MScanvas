@@ -26,9 +26,10 @@
  * three, because a sentence that changed when a second action appeared would be
  * exactly the wobble this removes.
  *
- * That is a second text rather than a rewrite of the first.
- * `ConversionAvailability.message` is action-phrased and untouched; it stays
- * where it belongs, on the control it describes.
+ * Since M7.1 that distinction lives in the resource bundle: one key per
+ * reason, worded for the fact where the fact is shared and for the action where
+ * it is not. This module decides *which* reason survives; the words are looked
+ * up where the notice is rendered, which is the only place with a locale.
  */
 
 import type {
@@ -65,42 +66,6 @@ export const CONVERSION_LANE_FACTS = [
 ] as const;
 
 export type ConversionAvailabilityFact = (typeof CONVERSION_LANE_FACTS)[number];
-
-/**
- * What each shared fact says, in terms of the fact.
- *
- * Every sentence has to stay true whichever action is pointing at it, so none
- * of them names an action or a consequence. What a reader cannot do about it is
- * the control's business: a disabled `Convert` beside "a conversion currently
- * owns the ProteoWizard lane" needs no second sentence saying that converting
- * is unavailable.
- */
-const CONVERSION_FACT_MESSAGES: Record<ConversionAvailabilityFact, string> = {
-  "staging-reclaiming": "Temporary-output cleanup is in progress.",
-  // The same correction as the availability copy: not "a converter", and not
-  // "stopped".
-  "backend-quarantined":
-    "MSCanvas could not confirm that a ProteoWizard process it started has ended. " +
-    "Restart MSCanvas before running anything else on ProteoWizard.",
-  "backend-changing": "MSCanvas is checking the installed ProteoWizard.",
-  "backend-unavailable":
-    "This session has no usable ProteoWizard backend. See the backend status above.",
-  "conversion-running": "A conversion currently owns the ProteoWizard lane.",
-  "preview-running": "A run is being read over the ProteoWizard lane.",
-  "configuration-probing": "MSCanvas is reading the conversion options from ProteoWizard.",
-  "adoption-running": "Converted outputs are being added to the workspace.",
-  "diagnostics-exporting": "Failure diagnostics are being saved.",
-  "workspace-settling": "The file list is being changed.",
-};
-
-const LANE_FACTS: ReadonlySet<string> = new Set(CONVERSION_LANE_FACTS);
-
-/** Whether a refusal names a fact more than one action can be refused by. */
-export function isConversionLaneFact(
-  reason: ConversionUnavailableReason,
-): reason is ConversionAvailabilityFact {
-  return LANE_FACTS.has(reason);
-}
 
 /**
  * The order notices are rendered in.
@@ -175,43 +140,38 @@ export type ConversionRefusal =
   | { readonly source: "action"; readonly availability: ConversionAvailability }
   | { readonly source: "probe"; readonly refusal: ProbeRefusal };
 
-/** One rendered sentence, and the id the controls it explains point at. */
+/**
+ * One notice, and the id the controls it explains point at.
+ *
+ * The reason, not the sentence. `conversionNoticeMessage` turns it into words
+ * where the notice is rendered, which is the only place that has a locale --
+ * and a sentence held here would be English in a Chinese session.
+ */
 export interface ConversionNotice {
   readonly id: string;
   readonly reason: ConversionUnavailableReason;
-  readonly message: string;
 }
 
 /**
  * What one refusal contributes, or `null` where it contributes nothing.
  *
- * The reason and the sentence are decided together, in one pass over the
- * refusal, so there is no shape in which a notice exists with no text to put in
- * it -- a described-by target with no words is a promise of an explanation that
- * is not there, and splitting this into "which reason" and "which message"
- * needed an unreachable branch to answer the second.
+ * The reason is the whole contribution, and every reason has a resource, so
+ * there is no shape in which a notice exists with no text to put in it -- a
+ * described-by target with no words is a promise of an explanation that is not
+ * there.
  *
- * The fact's sentence wherever the fact is shared, and the action's own where it
- * is not: a `plan-failed` or a `nothing-to-retry` belongs to the one action
- * asking, so re-phrasing it away from that action would lose what the reader can
- * do about it.
+ * Which sentence a reason gets is the resource bundle's answer, and it keeps
+ * the distinction this module exists for: a shared fact is worded in terms of
+ * the fact, and a reason only one action can reach -- a `plan-failed`, a
+ * `nothing-to-retry` -- is worded for that action, because re-phrasing it away
+ * from the action would lose what the reader can do about it.
  */
-function noticeOf(refusal: ConversionRefusal): Omit<ConversionNotice, "id"> | null {
+function noticeOf(refusal: ConversionRefusal): ConversionUnavailableReason | null {
   if (refusal.source === "probe") {
     // Every reason a probe contributes is a lane fact, by the mapping above.
-    const fact = probeRefusalFact(refusal.refusal);
-    return fact === null ? null : { reason: fact, message: CONVERSION_FACT_MESSAGES[fact] };
+    return probeRefusalFact(refusal.refusal);
   }
-  if (refusal.availability.status !== "unavailable") {
-    return null;
-  }
-  const reason = refusal.availability.reason;
-  return {
-    reason,
-    message: isConversionLaneFact(reason)
-      ? CONVERSION_FACT_MESSAGES[reason]
-      : refusal.availability.message,
-  };
+  return refusal.availability.status === "unavailable" ? refusal.availability.reason : null;
 }
 
 /**
@@ -227,33 +187,30 @@ function noticeOf(refusal: ConversionRefusal): Omit<ConversionNotice, "id"> | nu
  * document.
  */
 export function conversionRefusalNoticeId(refusal: ConversionRefusal | null): string | null {
-  const notice = refusal === null ? null : noticeOf(refusal);
-  return notice === null ? null : conversionNoticeId(notice.reason);
+  const reason = refusal === null ? null : noticeOf(refusal);
+  return reason === null ? null : conversionNoticeId(reason);
 }
 
 /**
- * Every sentence the panel is currently giving as a reason, said once each.
+ * Every reason the panel is currently giving, once each.
  *
- * Deduplicated by fact, ordered by the registry's own precedence, and phrased
- * for the fact wherever more than one action could reach it.
+ * Deduplicated by fact and ordered by the registry's own precedence. Two
+ * refusals that key on one fact collapse to one notice, which is the whole
+ * point: one element, one id, one sentence.
  */
 export function conversionNotices(
   refusals: readonly (ConversionRefusal | null)[],
 ): readonly ConversionNotice[] {
-  const said = new Map<ConversionUnavailableReason, string>();
+  const said = new Set<ConversionUnavailableReason>();
   for (const refusal of refusals) {
-    const notice = refusal === null ? null : noticeOf(refusal);
-    // First writer wins, and nothing turns on which: two refusals that key on
-    // one *fact* carry that fact's one sentence, and the reasons that are not
-    // facts belong to a single action, so no two refusals can reach one of
-    // those with different words.
-    if (notice !== null && !said.has(notice.reason)) {
-      said.set(notice.reason, notice.message);
+    const reason = refusal === null ? null : noticeOf(refusal);
+    if (reason !== null) {
+      said.add(reason);
     }
   }
   // Order the actual observations. A presentation order must never filter a
   // refusal out of the UI; the total rank map also requires every typed reason.
-  return [...said.entries()]
-    .sort(([left], [right]) => NOTICE_ORDER[left] - NOTICE_ORDER[right])
-    .map(([reason, message]) => ({ id: conversionNoticeId(reason), reason, message }));
+  return [...said]
+    .sort((left, right) => NOTICE_ORDER[left] - NOTICE_ORDER[right])
+    .map(reason => ({ id: conversionNoticeId(reason), reason }));
 }

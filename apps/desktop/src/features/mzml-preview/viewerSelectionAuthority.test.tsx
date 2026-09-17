@@ -20,6 +20,10 @@ import type { ReactNode } from "react";
 import { createElement } from "react";
 import { describe, expect, it } from "vitest";
 
+import { bindUiMessages, UI_RESOURCES } from "../preferences/i18n";
+import type { UiMessage } from "../preferences/i18n";
+import { spectrumSelectionMessage } from "./viewer/selectionMessages";
+
 import type { PreviewApi } from "./api";
 import { PreviewApiProvider } from "./api";
 import type {
@@ -226,6 +230,16 @@ async function select(result: { current: Workspace }, index: number): Promise<vo
     result.current.selectSpectrum(index);
     await Promise.resolve();
   });
+}
+
+/** The typed message binding over one bundled locale's own values. */
+function messages(locale: "en" | "zh-CN"): UiMessage {
+  const bundle = UI_RESOURCES[locale] as Record<string, string>;
+  return bindUiMessages(((key: string, values?: Record<string, unknown>) =>
+    Object.entries(values ?? {}).reduce<string>(
+      (text, [name, value]) => text.replaceAll(`{{${name}}}`, String(value)),
+      bundle[key],
+    )) as never);
 }
 
 describe("one selection authority", () => {
@@ -668,11 +682,17 @@ describe("the global spectrum-selection lane", () => {
         continue;
       }
       expect(availability.reason).toBe(reason);
-      // Something on screen or something the reader can change. A lane, a ref,
+      // The reason is the contract; the sentence is the resource bundle's.
+      // Something on screen or something the reader can change: a lane, a ref,
       // a token or a mutex is true and useless.
-      expect(availability.message).not.toMatch(/lane|token|ref\b|mutex|busy flag/iu);
-      expect(availability.message.length).toBeGreaterThan(20);
-      expect(availability.message.endsWith(".")).toBe(true);
+      const english = spectrumSelectionMessage(availability.reason, messages("en"));
+      expect(english).not.toMatch(/lane|token|ref\b|mutex|busy flag/iu);
+      expect(english.length).toBeGreaterThan(20);
+      expect(english.endsWith(".")).toBe(true);
+      // Bundled in Simplified Chinese too, rather than left in English.
+      const chinese = spectrumSelectionMessage(availability.reason, messages("zh-CN"));
+      expect(chinese.trim()).not.toBe("");
+      expect(chinese).not.toBe(english);
     }
   });
 

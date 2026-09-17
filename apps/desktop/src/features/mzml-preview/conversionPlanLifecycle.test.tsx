@@ -562,7 +562,11 @@ describe("the plan the panel is showing", () => {
       await Promise.resolve();
     });
     await waitFor(() => {
-      expect(within(panel).getByText("The plan was not read.")).toBeVisible();
+      // A code this build has no sentence for. The boundary's words are kept
+      // whole and labelled as untranslated original, rather than handed over
+      // as though they were this build's localized copy.
+      expect(within(panel).getByText(/The plan was not read\./u)).toBeVisible();
+      expect(within(panel).getByText(/untranslated/u)).toBeVisible();
     });
     // A refused plan reads as failed, not as one being reread -- and it offers
     // the reader the one control that changes it.

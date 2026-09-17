@@ -253,7 +253,7 @@ function rangeBetween(
   return datasets.slice(low, high + 1).map((dataset) => dataset.handle);
 }
 
-function keptIn<T>(values: Iterable<string>, live: ReadonlySet<string>): Set<string> {
+function keptIn(values: Iterable<string>, live: ReadonlySet<string>): Set<string> {
   const kept = new Set<string>();
   for (const value of values) {
     if (live.has(value)) {

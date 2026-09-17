@@ -69,32 +69,17 @@ export type SpectrumSelectionUnavailableReason =
  * that wanted to explain itself had to decide again what was wrong -- which is
  * a second authority however carefully it is written. This is the one answer,
  * and the boolean is a projection of it.
+ *
+ * It carries the reason and not the words. The words are the resource bundle's,
+ * and a sentence held here would be English in a Chinese session the first time
+ * anything rendered it.
  */
 export type SpectrumSelectionAvailability =
   | { readonly status: "available" }
   | {
       readonly status: "unavailable";
       readonly reason: SpectrumSelectionUnavailableReason;
-      /** What the reader is told. Never implementation vocabulary. */
-      readonly message: string;
     };
-
-/**
- * What each refusal says.
- *
- * Named after something on screen or something the reader can change. A lane,
- * a ref, a token or a mutex is true and useless: it describes the machinery
- * that refused rather than the situation the reader is in.
- */
-const SPECTRUM_SELECTION_MESSAGES: Record<SpectrumSelectionUnavailableReason, string> = {
-  "no-loaded-run": "Load a run to select a scan from.",
-  "backend-unavailable":
-    "Selecting a scan needs ProteoWizard, and this session has no usable backend. " +
-    "See the backend status above.",
-  "backend-changing":
-    "Selecting a scan is unavailable while the installed ProteoWizard backend is being checked.",
-  "conversion-running": "Selecting a scan is unavailable while a conversion is running.",
-};
 
 /**
  * The one selection-start answer, with its reason.
@@ -113,17 +98,19 @@ const SPECTRUM_SELECTION_MESSAGES: Record<SpectrumSelectionUnavailableReason, st
  * 4. a conversion, which ends by itself. Last, because naming it while one of
  *    the two above also holds would promise that waiting is enough.
  *
- * There is no message for `available`, because a control that can be used has
- * nothing to explain and an explanation shown beside a working control is a
- * reason to doubt it.
+ * There is nothing to say for `available`, because a control that can be used
+ * has nothing to explain and an explanation shown beside a working control is
+ * a reason to doubt it.
+ *
+ * The reason is the whole answer. What a reader is *told* is the resource for
+ * that reason, looked up where it is rendered: this rule is read by the
+ * operation as well, from refs, and an operation has no locale.
  */
 export function spectrumSelectionAvailability(
   lane: SpectrumSelectionLane,
 ): SpectrumSelectionAvailability {
   const reason = unavailableReason(lane);
-  return reason === null
-    ? { status: "available" }
-    : { status: "unavailable", reason, message: SPECTRUM_SELECTION_MESSAGES[reason] };
+  return reason === null ? { status: "available" } : { status: "unavailable", reason };
 }
 
 function unavailableReason(lane: SpectrumSelectionLane): SpectrumSelectionUnavailableReason | null {
